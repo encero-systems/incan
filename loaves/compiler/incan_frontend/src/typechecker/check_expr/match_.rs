@@ -151,16 +151,7 @@ impl TypeChecker {
     /// A retained storage key is compared through that same canonical declaration identity, never by parsing its
     /// spelling.
     fn pattern_type_spelling_names_subject(&self, written: &str, subject_name: &str) -> bool {
-        written == subject_name
-            || self.source_nominal_carrier_key(written).as_deref() == Some(subject_name)
-            || self.source_nominal_carrier_key(subject_name).as_deref() == Some(written)
-            || matches!(
-                (
-                    self.public_library_type_identities.get(written),
-                    self.public_library_type_identities.get(subject_name),
-                ),
-                (Some(written_identity), Some(subject_identity)) if written_identity == subject_identity
-            )
+        self.source_type_names_same_declaration(written, subject_name)
     }
 
     /// Whether an explicit pattern qualifier names the same enum-like scrutinee type being matched.
@@ -230,6 +221,7 @@ impl TypeChecker {
     ) -> ResolvedType {
         let subject_ty = self.check_expr(subject);
         let subject_ty = self.settle_open_constructor_sides_in_place(subject, subject_ty);
+        self.note_loan_free_scrutinee(&subject_ty, subject.span);
         let subject_binding = if let Expr::Ident(name) = &subject.node {
             self.lookup_variable_info(name)
                 .cloned()
@@ -660,8 +652,12 @@ impl TypeChecker {
                         self.type_info.record_resolved_identity(field_name.span, identity);
                     }
                     if self.private_field_is_inaccessible(type_name, info) {
-                        self.errors
-                            .push(errors::private_field(type_name, &field_name.node, field_name.span));
+                        self.errors.push(Self::private_field_error(
+                            type_name,
+                            info,
+                            &field_name.node,
+                            field_name.span,
+                        ));
                         continue;
                     }
                     if !provided.insert(canonical_name.clone()) {

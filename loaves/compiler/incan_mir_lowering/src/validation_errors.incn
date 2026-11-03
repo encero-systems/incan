@@ -4,7 +4,10 @@ from rust::incan_semantics_core::body_ir import ArgumentElement, Place as RustPl
 from pub::incan_mir_plan import PlanType, SourceSpan, Place, Operand, RvalueKind, CalleeKind, ExternalFunction
 from pub::incan_mir_plan import assign as plan_assign
 from frame import Builder, place_type, temporary, read_place, external_call
-from lowering import argument_type, fixed_arguments, scalar_place, lower_callable_result
+from sequence_builtins import argument_type
+from call_arguments import fixed_arguments
+from checked_values import scalar_place
+from callable_calls import lower_callable_result
 
 
 pub def lower_validation_error(

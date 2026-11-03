@@ -9,7 +9,7 @@ use std::sync::Arc;
 use crate::ast::*;
 use crate::diagnostics::errors::SelfMutation;
 use crate::diagnostics::{CompileError, errors};
-use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
+use crate::resolved_type_subst::{map_resolved_type_leaves, substitute_resolved_type, type_param_subst_map};
 use crate::symbols::*;
 use crate::typechecker::derive_requirements::DeriveSupport;
 use crate::typechecker::helpers::{
@@ -76,7 +76,7 @@ const SLICE_HOOK: &str = "__getslice__";
 /// checked, while the enum's own arguments are what the construction's result type reports afterwards.
 #[derive(Debug, Clone)]
 struct EnumVariantInstantiation {
-    /// The enum's type arguments, taken from the destination type.
+    /// The enum's type arguments, supplied explicitly or taken from a same-declaration destination.
     arguments: Vec<ResolvedType>,
     /// The variant's declared payload types, substituted through those arguments.
     payloads: Vec<ResolvedType>,
@@ -2673,16 +2673,28 @@ impl TypeChecker {
     /// Resolve metadata fields from their published declaration and retain the exact selected member identity.
     /// Generated `__fields__()` results need no explicit import; the SDK remains the single field schema authority.
     fn resolve_surface_type_field_type(&mut self, type_name: &str, field: &str, span: Span) -> Option<ResolvedType> {
-        if surface_types::from_str(type_name) != Some(SurfaceTypeId::FieldInfo) {
-            return None;
-        }
-        if self.lookup_symbol(type_name).is_some() && self.surface_type_identity(SurfaceTypeId::FieldInfo).is_none() {
-            return None;
-        }
+        let name = surface_types::as_str(SurfaceTypeId::FieldInfo);
         let module = vec![stdlib::STDLIB_ROOT.to_owned(), stdlib::STDLIB_REFLECTION.to_owned()];
+        if type_name == name {
+            if self.lookup_symbol(type_name).is_some() && self.surface_type_identity(SurfaceTypeId::FieldInfo).is_none()
+            {
+                return None;
+            }
+        } else {
+            // Generated metadata keeps its selected owner even when a local declaration shadows the SDK name.
+            // Only the retained checked identity authorizes this implicit field schema lookup.
+            let selected = self
+                .type_info
+                .declarations
+                .body_ir_native_type_identities
+                .get(type_name)?;
+            if self.loaf_member_identity(&module, name).as_ref() != Some(selected) {
+                return None;
+            }
+        }
         let (library, path) = self.loaf_module(&module)?;
         let (SymbolKind::Type(TypeInfo::Class(info)), _) =
-            self.lookup_pub_library_module_symbol_member(&library, &path, type_name)?
+            self.lookup_pub_library_module_symbol_member(&library, &path, name)?
         else {
             return None;
         };
@@ -2777,10 +2789,17 @@ impl TypeChecker {
         let name = surface_types::as_str(SurfaceTypeId::FieldInfo);
         let module = vec![stdlib::STDLIB_ROOT.to_owned(), stdlib::STDLIB_REFLECTION.to_owned()];
         if let Some(identity) = self.loaf_member_identity(&module, name) {
+            let SymbolOrigin::Package { library, module_path } = &identity.origin else {
+                return ResolvedType::FrozenList(Box::new(ResolvedType::Named(name.to_owned())));
+            };
+            let mut path = module_path.clone();
+            path.push(identity.declaration_name.clone());
+            let carrier = crate::typechecker::canonical_public_library_type_name(library, &path.join("::"));
             self.type_info
                 .declarations
                 .body_ir_native_type_identities
-                .insert(name.to_owned(), identity);
+                .insert(carrier.clone(), identity);
+            return ResolvedType::FrozenList(Box::new(ResolvedType::Named(carrier)));
         }
         ResolvedType::FrozenList(Box::new(ResolvedType::Named(name.to_owned())))
     }
@@ -3018,7 +3037,8 @@ impl TypeChecker {
                     self.type_info.record_resolved_identity(span, identity);
                 }
                 if self.private_field_is_inaccessible(type_name, &info) {
-                    self.errors.push(errors::private_field(type_name, field, span));
+                    self.errors
+                        .push(Self::private_field_error(type_name, &info, field, span));
                     return Some(ResolvedType::Unknown);
                 }
                 self.retain_declared_nominal_field(span, &info.ty, &subst, info.identity.as_ref());
@@ -3033,7 +3053,8 @@ impl TypeChecker {
                     self.type_info.record_resolved_identity(span, identity);
                 }
                 if self.private_field_is_inaccessible(type_name, &info) {
-                    self.errors.push(errors::private_field(type_name, field, span));
+                    self.errors
+                        .push(Self::private_field_error(type_name, &info, field, span));
                     return Some(ResolvedType::Unknown);
                 }
                 self.retain_declared_nominal_field(span, &info.ty, &subst, info.identity.as_ref());
@@ -3522,6 +3543,10 @@ impl TypeChecker {
     /// Metadata-defaulted receiver arguments use the same storage arity as constructors and retained dereferences.
     /// The impl's instantiated Self owns the receiver slot; source collection and text projections never replace it.
     /// The selecting caller supplies written method binders; associated owner arguments never occupy those slots.
+    /// A callee that cannot be retained returns the call's refusal, which the caller reports unless the call is already
+    /// refused: no accepted call leaves checking without a callee. Argument validation refuses an unsafe method, and
+    /// an associated call with open owner arguments or a method with open result parameters is retained again once
+    /// its binding's first typed use fixes them, or refused (#1720, #2481).
     #[allow(clippy::too_many_arguments)]
     fn retain_checked_rust_method(
         &mut self,
@@ -3534,10 +3559,14 @@ impl TypeChecker {
         receiver: Option<&ResolvedType>,
         result: &ResolvedType,
         span: Span,
-    ) {
-        if method.signature.is_unsafe || owner.has_const_params {
-            return;
+    ) -> Result<(), CompileError> {
+        if method.signature.is_unsafe {
+            return Ok(());
         }
+        if owner.has_const_params {
+            return Err(errors::rust_receiver_const_generics_not_supported(path, span));
+        }
+        let callee = format!("rust::{path}.{}", method.name);
         let native_parameters = method
             .impl_type_params
             .iter()
@@ -3556,14 +3585,20 @@ impl TypeChecker {
             result,
             span,
         );
-        let Some(type_arguments) = self.rust_method_type_arguments(&native_parameters, owner, &bindings) else {
-            if crate::trace_flags::trace_rust_facts() {
-                eprintln!(
-                    "rust method unresolved: {path}.{} parameters {native_parameters:?}, receiver {receiver:?}, template {:?}, bindings {bindings:?}",
-                    method.name, method.impl_self_type
+        let type_arguments = match self.rust_method_type_arguments(&native_parameters, owner, &bindings) {
+            Ok(type_arguments) => type_arguments,
+            Err(open) => {
+                return self.refuse_open_rust_method(
+                    method,
+                    path,
+                    &native_parameters,
+                    &bindings,
+                    receiver,
+                    result,
+                    &open,
+                    span,
                 );
             }
-            return;
         };
         if crate::trace_flags::trace_rust_facts() {
             eprintln!(
@@ -3585,16 +3620,11 @@ impl TypeChecker {
             parameter.ty = self.instantiate_rust_signature_type(&template, &native_parameters, &bindings);
         }
         if let Some(receiver) = receiver {
-            let storage = match method.impl_self_type.as_deref() {
-                Some(template) => self.instantiate_rust_signature_type(
-                    &self.native_rust_signature_type(template, path),
-                    &native_parameters,
-                    &bindings,
-                ),
-                None => self.rust_storage_owner(receiver, owner, path),
-            };
-            let Some(parameter) = self.checked_rust_receiver_parameter(&method.signature, &storage) else {
-                return;
+            let Some(parameter) =
+                self.checked_rust_method_receiver(method, owner, path, &native_parameters, &bindings, receiver)
+            else {
+                let gap = errors::NativeCalleeGap::NoCandidate;
+                return Err(errors::rust_callee_not_selected(&callee, gap, span));
             };
             parameters.insert(0, parameter);
         }
@@ -3632,6 +3662,85 @@ impl TypeChecker {
                 has_receiver: receiver.is_some(),
             },
         );
+        Ok(())
+    }
+
+    /// Refuse a native call whose binders stay open, unless the statement watches its associated owner arguments or
+    /// its method's result parameters. The open native result lets a later typed use fix those arguments. Input-only
+    /// method binders cannot be determined from a result and keep their immediate refusal (#1720, #2481).
+    #[allow(clippy::too_many_arguments)]
+    fn refuse_open_rust_method(
+        &mut self,
+        method: &incan_lang::interop::RustMethodSig,
+        path: &str,
+        native_parameters: &[String],
+        bindings: &HashMap<String, ResolvedType>,
+        receiver: Option<&ResolvedType>,
+        result: &ResolvedType,
+        open: &[String],
+        span: Span,
+    ) -> Result<(), CompileError> {
+        if crate::trace_flags::trace_rust_facts() {
+            eprintln!(
+                "rust method unresolved: {path}.{} parameters {native_parameters:?}, receiver {receiver:?}, template {:?}, bindings {bindings:?}",
+                method.name, method.impl_self_type
+            );
+        }
+        if self.open_rust_generic_calls.contains_key(&span) {
+            let native = self.native_method_result(method, path, native_parameters, bindings, receiver, result);
+            let native_item = self
+                .rust_result_item_path(&render_resolved_type_as_rust_arg(&native), path)
+                .or_else(|| self.rust_result_item_path(&method.signature.return_type, path));
+            if let Some(call) = self.open_rust_generic_calls.get_mut(&span) {
+                call.native = Some(native);
+                call.native_item = native_item;
+            }
+            return Ok(());
+        }
+        let native = self.native_method_result(method, path, native_parameters, bindings, receiver, result);
+        if Self::native_result_carries_parameters(&native, open)
+            && open
+                .iter()
+                .all(|parameter| method.signature.type_params.contains(parameter))
+        {
+            self.open_rust_generic_calls.insert(
+                span,
+                crate::typechecker::OpenRustGenericCall {
+                    owner: path.to_owned(),
+                    method: method.name.clone(),
+                    type_params: open.to_vec(),
+                    owner_parameters: false,
+                    native: Some(native),
+                    native_item: None,
+                },
+            );
+            return Ok(());
+        }
+        let callee = format!("rust::{path}.{}", method.name);
+        let gap = errors::NativeCalleeGap::OpenTypeParameters(open);
+        Err(errors::rust_callee_not_selected(&callee, gap, span))
+    }
+
+    /// Apply an inherent method's declared receiver mode to its instantiated impl Self, or to the receiver's storage
+    /// owner when metadata records no impl Self. `None` means the method takes no receiver form this value has.
+    fn checked_rust_method_receiver(
+        &self,
+        method: &incan_lang::interop::RustMethodSig,
+        owner: &incan_lang::interop::RustTypeInfo,
+        path: &str,
+        native_parameters: &[String],
+        bindings: &HashMap<String, ResolvedType>,
+        receiver: &ResolvedType,
+    ) -> Option<CallableParam> {
+        let storage = match method.impl_self_type.as_deref() {
+            Some(template) => self.instantiate_rust_signature_type(
+                &self.native_rust_signature_type(template, path),
+                native_parameters,
+                bindings,
+            ),
+            None => self.rust_storage_owner(receiver, owner, path),
+        };
+        self.checked_rust_receiver_parameter(&method.signature, &storage)
     }
 
     /// Read argument types after contextual checking, falling back to the original types when no refinement was
@@ -3803,7 +3912,7 @@ impl TypeChecker {
                 .calls
                 .call_site_monomorph_type_args
                 .insert(span, written);
-            checker.retain_checked_rust_method(
+            let retained = checker.retain_checked_rust_method(
                 &method,
                 &method.signature.type_params,
                 &owner,
@@ -3814,6 +3923,7 @@ impl TypeChecker {
                 &result,
                 span,
             );
+            assert!(retained.is_ok(), "a closed callee must be retained: {retained:?}");
             // Closing the receiver projects its owned String to source Str; unsized native Q must stay distinct.
             assert_eq!(
                 checker
@@ -3828,21 +3938,25 @@ impl TypeChecker {
     }
 
     /// Select native arguments in declaration order after the receiver and written arguments constrain them.
-    /// Only metadata-declared owner defaults fill absent bindings; unresolved inputs grant no executable call.
+    /// Only metadata-declared owner defaults fill absent bindings; unresolved inputs grant no executable call, and the
+    /// parameters left open are returned by name. A binding that names a type variable other than an enclosing source
+    /// type parameter, such as the callee's own `K` read back from its unresolved result, is open too.
     fn rust_method_type_arguments(
         &self,
         parameters: &[String],
         owner: &incan_lang::interop::RustTypeInfo,
         bindings: &HashMap<String, ResolvedType>,
-    ) -> Option<Vec<ResolvedType>> {
+    ) -> Result<Vec<ResolvedType>, Vec<String>> {
+        let source_parameters = self.native_call_type_parameters();
         let closed = |parameter: &str| {
             bindings
                 .get(parameter)
                 .filter(|ty| !matches!(ty, ResolvedType::Unknown | ResolvedType::CallSiteInfer))
+                .filter(|ty| !Self::mentions_foreign_type_variable(ty, &source_parameters))
                 .cloned()
         };
         let owner_arguments = self.owner_arguments_with_defaults(owner, closed, "");
-        parameters
+        let arguments = parameters
             .iter()
             .map(|parameter| {
                 closed(parameter).or_else(|| {
@@ -3850,7 +3964,33 @@ impl TypeChecker {
                     owner_arguments.get(index).cloned().flatten()
                 })
             })
-            .collect()
+            .collect::<Vec<_>>();
+        let open = parameters
+            .iter()
+            .zip(&arguments)
+            .filter(|(_, argument)| argument.is_none())
+            .map(|(parameter, _)| parameter.clone())
+            .collect::<Vec<_>>();
+        if open.is_empty() {
+            Ok(arguments.into_iter().flatten().collect())
+        } else {
+            Err(open)
+        }
+    }
+
+    /// Return whether `ty` names a type variable that is not one of the enclosing source type parameters.
+    pub(in crate::typechecker) fn mentions_foreign_type_variable(
+        ty: &ResolvedType,
+        source_parameters: &[String],
+    ) -> bool {
+        let foreign = std::cell::Cell::new(false);
+        map_resolved_type_leaves(ty, &|leaf| {
+            if matches!(leaf, ResolvedType::TypeVar(name) if !source_parameters.contains(name)) {
+                foreign.set(true);
+            }
+            None
+        });
+        foreign.get()
     }
 
     /// Apply the declared receiver mode to an already selected native Self, including Self that is itself a reference.
@@ -4344,7 +4484,7 @@ impl TypeChecker {
     /// For method **bodies**, `TypeChecker::concretize_self_type_in_annotation` in `check_decl.rs` maps `Self` to the
     /// owner's `self_ty` while checking the implementation. At a **call site**, `Self` means the instantiated
     /// receiver (for example `DataFrame[Order]` when calling on `x: DataFrame[Order]`).
-    pub(in crate::typechecker::check_expr) fn substitute_self_in_resolved_type(
+    pub(in crate::typechecker) fn substitute_self_in_resolved_type(
         &self,
         ty: ResolvedType,
         receiver: &ResolvedType,
@@ -4975,7 +5115,21 @@ impl TypeChecker {
         receiver_ty: &ResolvedType,
         expected_return_ty: Option<&ResolvedType>,
     ) -> Option<usize> {
-        let (params, return_type) = self.method_types_substituting_call_site_self(candidate, receiver_ty);
+        let (mut params, mut return_type) = self.method_types_substituting_call_site_self(candidate, receiver_ty);
+        if let Some(identity) = &candidate.identity {
+            if let Some(values) = self
+                .ownership_call_value_parameters(Some(identity), &params, Some(receiver_ty), identity.declaration_span)
+                .ok()?
+            {
+                params = values;
+            }
+            if let Some(value) = self
+                .ownership_call_value_result(Some(identity), &return_type, identity.declaration_span)
+                .ok()?
+            {
+                return_type = value;
+            }
+        }
         let mut score = 0usize;
         if let Some(expected) = expected_return_ty
             && !self.types_compatible(&return_type, expected)
@@ -5571,7 +5725,8 @@ impl TypeChecker {
     }
 
     /// Type-check a slicing expression (`base[start:end:step]`) and return the sliced type. Text and byte slices
-    /// produce owned values, including when the receiver is frozen; every bound is checked exactly once.
+    /// produce owned values, including when the receiver is frozen. Native byte views use their inspected Deref
+    /// targets and retain an ordinary borrowed slice call; every bound is checked exactly once.
     pub(in crate::typechecker::check_expr) fn check_slice(
         &mut self,
         base: &Spanned<Expr>,
@@ -5596,6 +5751,13 @@ impl TypeChecker {
                 check_intlike_ty(ty, expr.span, errors);
             }
         };
+
+        if self.retain_rust_byte_slice(base, &base_ty, span).is_some() {
+            check_component(start_ty.as_ref(), slice.start.as_deref(), &mut self.errors);
+            check_component(end_ty.as_ref(), slice.end.as_deref(), &mut self.errors);
+            check_component(step_ty.as_ref(), slice.step.as_deref(), &mut self.errors);
+            return ResolvedType::Bytes;
+        }
 
         match base_ty {
             ty if self.is_user_operator_receiver(&ty) => {
@@ -6019,7 +6181,10 @@ impl TypeChecker {
             return None;
         };
         self.record_rust_call_site_params(span, &method.signature.params, path);
-        self.retain_checked_rust_method(method, &[], owner, path, &[], &[], None, result, span);
+        if let Err(refusal) = self.retain_checked_rust_method(method, &[], owner, path, &[], &[], None, result, span) {
+            self.errors.push(refusal);
+            return None;
+        }
         self.publish_rust_function_value(span)
     }
 
@@ -6454,8 +6619,8 @@ impl TypeChecker {
         Some(Self::c_raw_call_type(&slot.binding, &slot.value))
     }
 
-    /// Type-check a method call with an optional expected result type for overload disambiguation. Resolve one
-    /// `Enum.Variant(...)` construction against the destination type it is being built for.
+    /// Resolve a declared enum variant using explicit receiver arguments first, then a same-declaration destination.
+    /// Imported aliases and module-qualified names use retained identities rather than matching display spellings.
     ///
     /// A variant payload is declared in the enum's own vocabulary — `Items(list[Elem])` — and that vocabulary is bound
     /// nowhere at a construction site. A model constructor can recover from this by falling back to the supplied
@@ -6465,19 +6630,22 @@ impl TypeChecker {
     ///
     /// The destination is the *immediate* expected type, never the enclosing function's return type read directly.
     /// That distinction is what keeps this sound: a function returning `Holder[Picked]` may legitimately build a
-    /// `Holder[str]` for a local, and there the local's own annotation is the expectation. Only a same-name,
+    /// `Holder[str]` for a local, and there the local's own annotation is the expectation. Only a same-declaration,
     /// arity-matching instantiation is usable — anything else would substitute one declaration's parameters with
     /// another's arguments — so every other shape yields `None` and leaves the unsubstituted behavior in place.
     ///
     /// See #1516, and #1507 for the model half of the same defect.
     fn enum_variant_construction_instantiation(
-        &self,
+        &mut self,
         base_ty: &ResolvedType,
         method: &str,
         expected_return_ty: Option<&ResolvedType>,
+        span: Span,
     ) -> Option<EnumVariantInstantiation> {
-        let ResolvedType::Named(enum_name) = base_ty else {
-            return None;
+        let (enum_name, explicit_arguments) = match base_ty {
+            ResolvedType::Named(name) => (name, None),
+            ResolvedType::Generic(name, arguments) => (name, Some(arguments)),
+            _ => return None,
         };
         let Some(TypeInfo::Enum(enum_info)) = self.lookup_semantic_type_info(enum_name) else {
             return None;
@@ -6487,15 +6655,28 @@ impl TypeChecker {
         {
             return None;
         }
-        if enum_info.type_params.is_empty() {
-            return None;
-        }
-        let ResolvedType::Generic(expected_name, arguments) = expected_return_ty? else {
-            return None;
+        let arguments = if let Some(arguments) = explicit_arguments {
+            if arguments.len() != enum_info.type_params.len() {
+                let written = arguments.iter().map(ToString::to_string).collect::<Vec<_>>();
+                let error = errors::explicit_type_arg_arity(enum_name, &enum_info.type_params, &written, span);
+                self.errors.push(error);
+                return None;
+            }
+            arguments
+        } else {
+            if enum_info.type_params.is_empty() {
+                return None;
+            }
+            let ResolvedType::Generic(expected_name, arguments) = expected_return_ty? else {
+                return None;
+            };
+            if !self.source_type_names_same_declaration(expected_name, enum_name)
+                || arguments.len() != enum_info.type_params.len()
+            {
+                return None;
+            }
+            arguments
         };
-        if expected_name != enum_name || arguments.len() != enum_info.type_params.len() {
-            return None;
-        }
         // An alias shares its target's payload, and `variant_fields` is keyed by the canonical name only.
         let canonical_variant = enum_info
             .variant_aliases
@@ -6885,21 +7066,36 @@ impl TypeChecker {
         };
         let source_list_method = matches!(base_ty, ResolvedType::Generic(name, _)
             if collection_type_id(name) == Some(CollectionTypeId::List) && list_methods::from_str(call.method).is_some());
-        let rust_receiver_path = self.rust_canonical_path_for_receiver_type(base_ty).or_else(|| {
-            let source_builtin_method = (*base_ty == ResolvedType::Str
-                && string_methods::from_str(call.method).is_some())
-                || (*base_ty == ResolvedType::Bytes && bytes_methods::from_str(call.method).is_some())
-                || result_callback.is_some();
-            if source_list_method || source_builtin_method {
-                return None;
+        let source_variant = match base_ty {
+            ResolvedType::Named(name) | ResolvedType::Generic(name, _) => {
+                matches!(self.lookup_semantic_type_info(name), Some(TypeInfo::Enum(info))
+            if info.variants.iter().any(|variant| variant == call.method)
+                || info.variant_aliases.contains_key(call.method))
             }
-            self.rust_value_item_path(call.base)
-                .or_else(|| self.rust_method_receiver_path(call.base))
-        });
+            _ => false,
+        };
+        // A checked source variant owns its constructor even when its admitted name contains namespace segments.
+        let rust_receiver_path = if source_variant {
+            None
+        } else {
+            self.rust_canonical_path_for_receiver_type(base_ty).or_else(|| {
+                let source_builtin_method = (*base_ty == ResolvedType::Str
+                    && string_methods::from_str(call.method).is_some())
+                    || (*base_ty == ResolvedType::Bytes && bytes_methods::from_str(call.method).is_some())
+                    || result_callback.is_some();
+                if source_list_method || source_builtin_method {
+                    return None;
+                }
+                self.rust_value_item_path(call.base)
+                    .or_else(|| self.rust_method_receiver_path(call.base))
+            })
+        };
         let enum_variant_construction =
-            self.enum_variant_construction_instantiation(base_ty, call.method, call.expected_return_ty);
+            self.enum_variant_construction_instantiation(base_ty, call.method, call.expected_return_ty, call.span);
         let enum_variant_parameters = match base_ty {
-            ResolvedType::Named(enum_name) => self.checked_enum_variant_parameters(enum_name, call.method),
+            ResolvedType::Named(enum_name) | ResolvedType::Generic(enum_name, _) => {
+                self.checked_enum_variant_parameters(enum_name, call.method)
+            }
             _ => None,
         };
         MethodArgumentContext {
@@ -7333,10 +7529,10 @@ impl TypeChecker {
         Some(result)
     }
 
-    /// Check generated enum members or retain the already checked payload signature of a variant construction.
+    /// Check generated enum members, validate constructor arguments and retain the selected payload signature.
     ///
-    /// A constructor reports the destination's concrete type arguments rather than erasing them to the enum name;
-    /// payload expectations were applied before this result-selection stage (#1516).
+    /// A constructor preserves explicit or expected type arguments instead of erasing them to the enum name. Payload
+    /// expressions are checked once with their context, then ordinary call binding validates their types and arity.
     fn check_enum_method_call(
         &mut self,
         call: &MethodCallSite<'_>,
@@ -7363,13 +7559,32 @@ impl TypeChecker {
             self.record_compiler_generated_member_identity(enum_name, call.method, Some(call.base.span), call.span);
             return Some(result);
         }
-        if let ResolvedType::Named(enum_name) = base_ty
+        if let (ResolvedType::Named(enum_name) | ResolvedType::Generic(enum_name, _)) = base_ty
             && let Some(TypeInfo::Enum(info)) = self.lookup_semantic_type_info(enum_name)
             && (info.variants.iter().any(|variant| variant == call.method)
                 || info.variant_aliases.contains_key(call.method))
         {
             let identity = info.variant_identities.get(call.method).cloned();
+            let parameters = construction
+                .as_ref()
+                .map(|value| {
+                    value
+                        .payloads
+                        .iter()
+                        .cloned()
+                        .map(CallableParam::positional)
+                        .collect::<Vec<_>>()
+                })
+                .or(parameters);
             if let Some(parameters) = parameters {
+                self.validate_callable_arg_bindings(
+                    &format!("{enum_name}.{}", call.method),
+                    &parameters,
+                    call.args,
+                    arg_types,
+                    &mut HashMap::new(),
+                    call.span,
+                );
                 self.type_info
                     .record_call_site_callable_params_exact(call.span, &parameters);
             }
@@ -7378,7 +7593,7 @@ impl TypeChecker {
             }
             return Some(match construction {
                 Some(construction) => ResolvedType::Generic(enum_name.clone(), construction.arguments),
-                None => ResolvedType::Named(enum_name.clone()),
+                None => base_ty.clone(),
             });
         }
         None

@@ -5,10 +5,13 @@ from pub::incan_mir_plan import assign as plan_assign
 from rust::incan_semantics_core::body_ir import Operand as RustOperand, OwnershipFact
 from frame import Builder, temporary, read_place, place_type
 from text_plan import clone_text
-from lowering import scalar_place, display_operand, clone_nominal_operand
+from checked_values import scalar_place
+from formatting import display_operand
+from model_construction import clone_nominal_operand
 from lists import parameter_storage_type
 from tuples import is_tuple_type
 from options import clone_tuple_operand
+from table_views import borrowed_at
 
 
 pub def mutable_argument(
@@ -24,13 +27,13 @@ pub def mutable_argument(
     a loop variable, or a value the checker reads by copy reaches the callee as a fresh owned copy, as legacy passes
     `&mut value.clone()`; the copy drops when its scope ends.
     """
-    source = argument_source(builder, value, referent(reference)?, span)?
+    source = argument_source(builder, value, exclusive_referent(reference)?, span)?
     exclusive = temporary(builder, reference, span)
     builder.emit(plan_assign(exclusive, RvalueKind.MutBorrow(source), span))
     return Ok(read_place(exclusive, true, span))
 
 
-def referent(reference: PlanType) -> Result[PlanType, str]:
+pub def exclusive_referent(reference: PlanType) -> Result[PlanType, str]:
     """The value type an exclusive parameter reference names."""
     match reference:
         PlanType.StringMutRef => return Ok(PlanType.String)
@@ -50,7 +53,7 @@ def argument_source(mut builder: Builder, value: &RustOperand, ty: PlanType, spa
             place = scalar_place(builder, read.place, span)?
             # A `mut` parameter handed on to another one is reborrowed, so the changes still reach its own caller.
             exclusive = parameter_storage_type(ty, true)
-            if place.projection == Projection.Whole and builder.locals[place.local].ty == exclusive:
+            if place.projection == Projection.Whole and borrowed_at(builder.locals, place.local).ty == exclusive:
                 handed_on = Place(local=place.local, projection=Projection.Deref(ty), span=span)
                 return checked_source(builder, handed_on, read.fact, span)
             if place_type(builder.locals, place) != ty:
@@ -68,7 +71,7 @@ def argument_source(mut builder: Builder, value: &RustOperand, ty: PlanType, spa
 
 def checked_source(mut builder: Builder, place: Place, fact: &OwnershipFact, span: SourceSpan) -> Result[Place, str]:
     """Borrow a value the checker hands over exclusively in place, and copy one it only reads."""
-    match builder.locals[place.local].ty:
+    match borrowed_at(builder.locals, place.local).ty:
         PlanType.ModelRef(_owner, _name) =>
             site = f"{builder.name} frame local {place.local} at {span.file}:{span.line}"
             return Err(f"unsupported Body IR mutable argument through a shared receiver in {site} ({fact:?})")

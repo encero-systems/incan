@@ -1,6 +1,6 @@
 //! Lowering for `await` and `race` suspension points.
 
-use super::control_flow::intersect_range_layouts;
+use super::control_flow::intersect_local_states;
 use super::reads::*;
 use super::*;
 
@@ -191,7 +191,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
         // Code after the race follows exactly one selected arm. A range layout is usable only if it survives
         // every possible winner; an empty arm set conservatively carries no constructed-layout fact.
-        self.materialized_range_locals = intersect_range_layouts(range_layouts_after_arms);
+        self.materialized_range_locals = intersect_local_states(range_layouts_after_arms);
 
         let ty = self.resolve_ty(span);
         let destination = self.new_temp(ty.clone(), scope, hir_span_value);

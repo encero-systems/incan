@@ -58,6 +58,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+pub use free_function_baseline::verify_module as verify_free_function_inputs;
 pub(crate) use nominal_carriers::{retain_published_frame, retain_published_module};
 pub use primitive_adapter_requirements::required as required_primitive_adapters;
 pub use source_comparison::required_published_defaults as required_comparison_defaults;
@@ -149,6 +150,36 @@ pub fn build_body_ir_module(
     type_info: &TypeCheckInfo,
     context: &BodyIrContext<'_>,
 ) -> bir::BodyIrModule {
+    let mut module = build_module_seed(program, module_path, type_info, context);
+    retain_module_representations(&mut module, program, type_info, context.modules);
+    module
+}
+
+/// Construct the compatibility module before representation refinement. This remains the whole-module route;
+/// separating its seed lets the cold baseline compare individual representation operations from identical inputs.
+fn build_module_seed(
+    program: &ast::Program,
+    module_path: &[String],
+    type_info: &TypeCheckInfo,
+    context: &BodyIrContext<'_>,
+) -> bir::BodyIrModule {
+    build_module_seed_observed(program, module_path, type_info, context, &mut |_, _, _, _| None)
+}
+
+/// Build the compatibility seed while exposing each free-function seed to an optional migration comparison. The
+/// observer can substitute an independently built seed for comparison and is absent from production fact selection.
+fn build_module_seed_observed(
+    program: &ast::Program,
+    module_path: &[String],
+    type_info: &TypeCheckInfo,
+    context: &BodyIrContext<'_>,
+    observer: &mut dyn FnMut(
+        &ast::FunctionDecl,
+        ast::Span,
+        &BodyIrLoweringFacts<'_, '_>,
+        &bir::Body,
+    ) -> Option<bir::Body>,
+) -> bir::BodyIrModule {
     let provider_operations = context.provider_operations;
     let registry_package = context.registry_package;
     let module_identity = match context.library_package {
@@ -226,14 +257,14 @@ pub fn build_body_ir_module(
     };
     defaults::attach_nominal_field_defaults(program, &mut nominal_declarations, &lowering_facts);
     defaults::attach_method_partial_defaults(program, &mut nominal_declarations, &lowering_facts);
-    let mut bodies = lower_source_bodies(program, &lowering_facts);
+    let mut bodies = lower_source_bodies(program, &lowering_facts, observer);
     let mut static_declarations = collect_source_storage(program, &lowering_facts, &constant_declarations);
     let decorated_bindings =
         decorated_bindings::collect(program, &lowering_facts, &mut bodies, &mut static_declarations);
     retain_source_body_contracts(program, type_info, &mut bodies);
     static_declarations.sort_by_key(|declaration| declaration.canonical.declaration_span.start);
     registry_effects::collect(program, &lowering_facts, &mut static_declarations);
-    let mut module = bir::BodyIrModule {
+    bir::BodyIrModule {
         runtime_callable_bindings: Vec::new(),
         string_conversion_contract: bir::StringConversionContract::Unselected,
         decorated_bindings,
@@ -257,9 +288,7 @@ pub fn build_body_ir_module(
         fieldless_enum_declarations,
         value_enum_declarations,
         bodies,
-    };
-    retain_module_representations(&mut module, program, type_info, context);
-    module
+    }
 }
 
 /// Collect explicit storage before computed constants; decoration and registry effects append their declarations
@@ -342,7 +371,16 @@ fn collect_published_constants(
 
 /// Lower executable declarations in source order using the module's already collected checked facts. Attribute
 /// externs and transparent native stubs supply compiler adapters rather than executable source bodies.
-fn lower_source_bodies(program: &ast::Program, facts: &BodyIrLoweringFacts<'_, '_>) -> Vec<bir::Body> {
+fn lower_source_bodies(
+    program: &ast::Program,
+    facts: &BodyIrLoweringFacts<'_, '_>,
+    observer: &mut dyn FnMut(
+        &ast::FunctionDecl,
+        ast::Span,
+        &BodyIrLoweringFacts<'_, '_>,
+        &bir::Body,
+    ) -> Option<bir::Body>,
+) -> Vec<bir::Body> {
     program
         .declarations
         .iter()
@@ -361,7 +399,9 @@ fn lower_source_bodies(program: &ast::Program, facts: &BodyIrLoweringFacts<'_, '
                     Vec::new()
                 }
                 ast::Declaration::Function(function) => {
-                    vec![lower_function_body(function, decl.span, facts)]
+                    let body = lower_function_body(function, decl.span, facts);
+                    let selected = observer(function, decl.span, facts, &body);
+                    vec![selected.unwrap_or(body)]
                 }
                 ast::Declaration::Model(model) => lower_owner_member_bodies(
                     &model.methods,
@@ -1112,6 +1152,23 @@ impl ReadCountdown {
     }
 }
 
+/// A block that ends by returning, such as a match arm that refuses its input. Only its own statements follow a read
+/// in it, so the reads it holds decide whether a read is an enclosing owner's last on this path. Inside a loop the
+/// block qualifies only when no `break` or `continue` in it can leave for the statements after the loop.
+struct TerminalPath {
+    /// The block's scope; owners declared inside it keep their ordinary countdown.
+    scope: bir::ScopeId,
+    /// Conditional depth when the block was entered. A read in a branch nested inside the block can leave the owner
+    /// live on a sibling path, and a read in a loop nested inside it can repeat, so only a read at this depth and
+    /// this loop depth transfers.
+    conditionals: usize,
+    /// Loop depth when the block was entered. A read deeper than this is inside a loop nested in the block and can
+    /// repeat; a `return` lowers its value outside every loop it leaves, so a shallower read is still on this path.
+    loops: usize,
+    /// Source reads the block still holds of each non-Copy owner declared before it.
+    reads: HashMap<bir::LocalId, usize>,
+}
+
 /// Per-function lowering state: fresh local/scope allocation, current name bindings, and accumulated body-level
 /// facts (runtime requirements, panic facts, which locals have been moved out of their declaring scope).
 struct BodyBuilder<'type_info, 'source> {
@@ -1135,6 +1192,28 @@ struct BodyBuilder<'type_info, 'source> {
     /// Immutable values decoded from the selected package representation, indexed by canonical declaration.
     published_constants: &'source HashMap<CanonicalSymbolId, bir::Constant>,
     type_info: &'type_info TypeCheckInfo,
+    /// A source ownership proof is retained only for this exact callable. Nested evaluators start without it;
+    /// invalid or incomplete evidence refuses the body before ordinary lowering can choose repair copies.
+    input_body: Result<Option<crate::typechecker::CheckedInputBody<'type_info>>, &'static str>,
+    /// Canonical whole owners authenticated by complete source-access coverage before branch lowering.
+    input_transfer_subjects: std::collections::BTreeSet<CanonicalSymbolId>,
+    /// Complete source path coverage permits omitting a structurally unreachable statement suffix.
+    input_paths_checked: bool,
+    /// Actual whole non-Copy Owned initializer assignments retained for staged conditional cleanup.
+    input_owned_initializers: Vec<bir::CheckedOwnedInitializer>,
+    /// Explicit local bindings, retained on the body so they still require a profile if the profile is lost.
+    input_local_bindings: Vec<bir::ExplicitInputBinding>,
+    /// The declared view this body returns, once its parameter locals exist.
+    returned_view: Option<returned_views::ReturnedViewSource>,
+    /// Each lowered call carrying a view in its `Result` or `Option`, by call span: its substituted place, access and
+    /// the payload carrying the view.
+    carried_view_places: HashMap<ast::Span, (bir::Place, incan_semantics_core::IncanInputAccess, usize)>,
+    /// Each local bound to such a call, by identity: the call's span, whose substituted place a match takes out.
+    carried_view_locals: HashMap<incan_semantics_core::CanonicalSymbolId, ast::Span>,
+    /// Statement-if scopes whose branch states are independently joined for authenticated whole owners.
+    input_if_scopes: Vec<bir::ScopeId>,
+    /// Statement loops whose exit states are joined for authenticated whole owners, innermost last.
+    input_loops: Vec<conditional_inputs::InputLoop>,
     /// Canonical provider context that requires an explicit refusal for ambiguous bare builtin spellings.
     runtime_type_conflicts: &'source std::collections::BTreeSet<String>,
     /// Project-aware entry points retain selected pattern carriers before source aliases are erased.
@@ -1179,6 +1258,8 @@ struct BodyBuilder<'type_info, 'source> {
     /// write; [`Self::bindings`] remains only as a lexical bookkeeping projection for lowering constructs that
     /// introduce and restore source names.
     identity_bindings: HashMap<CanonicalSymbolId, bir::LocalId>,
+    /// Explicit local loans select existing places; they do not allocate reference-valued owners or drops.
+    input_aliases: HashMap<CanonicalSymbolId, input_locals::LocalInputAlias>,
     /// Canonical storage currently selected by a direct local static binding; reads retain a global place rather than
     /// a snapshot.
     static_aliases: HashMap<bir::LocalId, bir::GlobalPlace>,
@@ -1201,6 +1282,9 @@ struct BodyBuilder<'type_info, 'source> {
     /// Active conditional bodies. An enclosing owner cannot be marked unconditionally moved by just one path;
     /// locals created within that body retain ordinary final transfers.
     conditional_scopes: Vec<bir::ScopeId>,
+    /// Active blocks that end by returning, innermost last. Statements after such a block are not on its path, so
+    /// an enclosing owner's last read in it transfers the owner although later statements still read it.
+    terminal_paths: Vec<TerminalPath>,
     /// Assignment destination whose current value ends when its right-hand side completes, with the enclosing loop
     /// depth. A loop nested inside that expression still repeats reads of the current value.
     replacing_local: Option<(bir::LocalId, usize)>,
@@ -1272,6 +1356,16 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             published_newtype_returns: lowering_facts.published_newtype_returns,
             published_storage_types: lowering_facts.published_storage_types,
             type_info: lowering_facts.type_info,
+            input_body: Ok(None),
+            input_transfer_subjects: std::collections::BTreeSet::new(),
+            input_paths_checked: false,
+            input_owned_initializers: Vec::new(),
+            input_local_bindings: Vec::new(),
+            returned_view: None,
+            carried_view_places: HashMap::new(),
+            carried_view_locals: HashMap::new(),
+            input_if_scopes: Vec::new(),
+            input_loops: Vec::new(),
             runtime_type_conflicts: lowering_facts.runtime_type_conflicts,
             retain_nominal_carriers: lowering_facts.retain_nominal_carriers,
             function_default_sources: lowering_facts.function_default_sources,
@@ -1293,6 +1387,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             scopes: Vec::new(),
             bindings: HashMap::new(),
             identity_bindings: HashMap::new(),
+            input_aliases: HashMap::new(),
             static_aliases: HashMap::new(),
             static_binding_locals: HashSet::new(),
             external_locals: HashMap::new(),
@@ -1300,6 +1395,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             pending_argument_reads: Vec::new(),
             loop_scopes: Vec::new(),
             conditional_scopes: Vec::new(),
+            terminal_paths: Vec::new(),
             replacing_local: None,
             function_pointer_locals: Vec::new(),
             closure_holding_locals: Vec::new(),
@@ -1464,13 +1560,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     && args.len() == 1
                     && (self.intrinsic_result_constructor(callee, value.span).is_some()
                         || (self.intrinsic_option_constructor(callee)
-                            && primitives::collection_member_types(destination, CollectionTypeId::Option)
-                                .is_some())) =>
+                            && destination.collection_arguments(CollectionTypeId::Option).is_some())) =>
             {
                 self.settle_open_value_type(value.span, destination);
             }
             ast::Expr::List(entries) => {
-                let Some([member]) = primitives::collection_member_types(destination, CollectionTypeId::List) else {
+                let Some([member]) = destination.collection_arguments(CollectionTypeId::List) else {
                     return;
                 };
                 for entry in entries {
@@ -1481,7 +1576,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 self.settle_open_value_type(value.span, destination);
             }
             ast::Expr::Set(elements) => {
-                let Some([member]) = primitives::collection_member_types(destination, CollectionTypeId::Set) else {
+                let Some([member]) = destination.collection_arguments(CollectionTypeId::Set) else {
                     return;
                 };
                 for element in elements {
@@ -1490,8 +1585,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 self.settle_open_value_type(value.span, destination);
             }
             ast::Expr::Dict(entries) => {
-                let Some([key_ty, value_ty]) = primitives::collection_member_types(destination, CollectionTypeId::Dict)
-                else {
+                let Some([key_ty, value_ty]) = destination.collection_arguments(CollectionTypeId::Dict) else {
                     return;
                 };
                 for entry in entries {
@@ -1589,8 +1683,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             },
             (IncanType::Unknown | IncanType::Infer, _) => settled.clone(),
             (IncanType::TypeVar(name), _) if !self.type_parameters.contains(name) => settled.clone(),
-            (_, IncanType::Generic { base, args })
-                if base == "Union" && recorded != settled && args.iter().any(|member| member == recorded) =>
+            (_, _)
+                if recorded != settled
+                    && settled
+                        .union_members()
+                        .is_some_and(|members| members.contains(recorded)) =>
             {
                 settled.clone()
             }
@@ -1769,6 +1866,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .or_else(|| self.type_info.calls.body_ir_native_argument_identities.get(&span))
             .cloned()
         {
+            if let Some(alias) = self.input_alias(&identity) {
+                return Some(alias.place.clone());
+            }
             if let Some(&id) = self.identity_bindings.get(&identity) {
                 if let Some(global) = self.static_aliases.get(&id) {
                     return Some(bir::Place::from_global(global.clone()));
@@ -1884,10 +1984,55 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Consume one seeded read through its canonical owner, returning the remaining source occurrences.
     /// Source projections and shared comparisons count once; generated projections must not consume this budget.
     fn consume_place_read(&mut self, place: &bir::Place) -> Option<usize> {
-        let remaining = self.remaining_reads.get_mut(&place.local_id()?)?;
+        let local = place.local_id()?;
+        for path in &mut self.terminal_paths {
+            if let Some(reads) = path.reads.get_mut(&local) {
+                *reads = reads.saturating_sub(1);
+            }
+        }
+        let remaining = self.remaining_reads.get_mut(&local)?;
         remaining.remaining = remaining.remaining.saturating_sub(1);
         remaining.projected |= !place.projection.is_empty();
         Some(remaining.remaining)
+    }
+
+    /// Enter a block that ends by returning, counting the reads it holds of each non-Copy owner declared before it.
+    /// The count is textual over the block, as the ordinary countdown is over a suffix, so it is never too low.
+    pub(super) fn enter_terminal_path(&mut self, stmts: &[ast::Spanned<ast::Statement>], scope: bir::ScopeId) {
+        let owners = self
+            .remaining_reads
+            .iter()
+            .filter(|(_, countdown)| countdown.remaining > 0)
+            .map(|(local, _)| *local)
+            .filter(|local| self.local_is_outside_scope(*local, scope))
+            .collect::<Vec<_>>();
+        let reads = owners
+            .into_iter()
+            .filter_map(|local| {
+                let declaration = self.locals.get(local.index())?;
+                if declaration.ty.abi_v0_facts().ownership.is_trivially_copy() {
+                    return None;
+                }
+                Some((local, count_reads_in_stmts(declaration.name.as_deref()?, stmts)))
+            })
+            .collect();
+        self.terminal_paths.push(TerminalPath {
+            scope,
+            conditionals: self.conditional_scopes.len(),
+            loops: self.loop_scopes.len(),
+            reads,
+        });
+    }
+
+    /// Whether the read just consumed was `local`'s last on the innermost block that ends by returning, read at that
+    /// block's own depth, so no statement on this path reads it again.
+    fn last_read_on_terminal_path(&self, local: bir::LocalId) -> bool {
+        self.terminal_paths.last().is_some_and(|path| {
+            path.reads.get(&local) == Some(&0)
+                && self.loop_scopes.len() <= path.loops
+                && path.conditionals == self.conditional_scopes.len()
+                && self.local_is_outside_scope(local, path.scope)
+        })
     }
 
     /// Select the Duckborrower fact and last-use marker for reading `place`.
@@ -1914,7 +2059,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// [`Self::source_place_operand`]; synthetic projections do not. A newly eligible final read in a conditional body
     /// retains an enclosing owner for the other paths' scope-exit drops. Bare-only native transfers retain their
     /// existing contract, including owners without Clone. After the join, a final whole-owner read may transfer
-    /// normally. This remains conservative across shadowed names and unvisited source-read forms.
+    /// normally. An owner's last read in a block that ends by returning transfers it on that path alone, since no
+    /// later statement is on that path (see [`TerminalPath`]). This remains conservative across shadowed names and
+    /// unvisited source-read forms.
     fn ownership_fact_for_place(&mut self, place: &bir::Place, ty: &IncanType) -> (bir::OwnershipFact, bool) {
         let is_copy = matches!(ty, IncanType::Ref(_)) || ty.abi_v0_facts().ownership.is_trivially_copy();
         if !place.projection.is_empty() {
@@ -1961,6 +2108,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         };
         if remaining == 0 && !self.pending_argument_reads.contains(&local) && !reused_by_loop && !conditional_owner {
             self.moved_out.insert(local);
+            (bir::OwnershipFact::Move, true)
+        } else if !self.pending_argument_reads.contains(&local) && self.last_read_on_terminal_path(local) {
+            // The block returns after this read, so the owner transfers on this path alone. Other paths still own
+            // it, and its scope-exit drop stays for them.
             (bir::OwnershipFact::Move, true)
         } else {
             (bir::OwnershipFact::Clone, false)
@@ -2016,7 +2167,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.borrowed_parameters.contains(&local)
             || self.locals.get(local.index()).is_some_and(|decl| {
                 matches!(decl.origin, bir::LocalOrigin::Parameter)
-                    && matches!(&decl.ty, IncanType::Generic { base, .. } if matches!(collections::from_str(base), Some(CollectionTypeId::List | CollectionTypeId::Set | CollectionTypeId::Dict)))
+                    && matches!(
+                        decl.ty.collection(),
+                        Some((
+                            CollectionTypeId::List | CollectionTypeId::Set | CollectionTypeId::Dict,
+                            _
+                        ))
+                    )
             })
     }
 
@@ -2210,6 +2367,10 @@ mod newtype_sum;
 mod validation_errors;
 
 mod closures;
+mod conditional_inputs;
+mod input_access;
+mod input_arguments;
+mod input_locals;
 mod local_partials;
 mod trait_partials;
 
@@ -2259,14 +2420,17 @@ mod collect;
 mod collection_context;
 mod decorated_bindings;
 mod entrypoint_effects;
+mod free_function_baseline;
 mod model_constants;
 mod published_methods;
 mod registry_descriptions;
 mod registry_effects;
 mod representation_facts;
 mod result_channels;
+mod returned_views;
 mod static_aliases;
 mod union_layouts;
+pub use union_layouts::reaches_union;
 
 mod bodies;
 mod enum_types;
@@ -2291,6 +2455,33 @@ use collect::*;
 pub use provider_ops::ProviderOperationCatalog;
 use provider_ops::ProviderOperationRecord;
 use reads::*;
+
+#[cfg(test)]
+mod representation_tests;
+
+#[cfg(test)]
+#[path = "body_ir/baselines/union_layouts.rs"]
+mod legacy_union_layouts;
+
+#[cfg(test)]
+#[path = "body_ir/baselines/opaque_returns.rs"]
+mod legacy_opaque_returns;
+
+#[cfg(test)]
+#[path = "body_ir/baselines/shared_reads.rs"]
+mod legacy_shared_reads;
+
+#[cfg(test)]
+#[path = "body_ir/baselines/source_comparison.rs"]
+mod legacy_source_comparison;
+
+#[cfg(test)]
+#[path = "body_ir/baselines/trait_returns.rs"]
+mod legacy_trait_returns;
+
+#[cfg(test)]
+#[path = "body_ir/baselines/trait_values.rs"]
+mod legacy_trait_values;
 
 #[cfg(test)]
 mod tuple_destructure_interop_tests {

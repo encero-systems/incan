@@ -173,6 +173,7 @@ nav:
           - Feature inventory (generated): language/reference/feature_inventory.md
           - Code style guide: language/reference/code_style.md
           - Assignments: language/reference/assignments.md
+          - Explicit ownership: language/reference/explicit_ownership.md
           - Functions and calls: language/reference/functions.md
           - Generators: language/reference/generators.md
           - Symbol aliases: language/reference/symbol_aliases.md
@@ -237,6 +238,7 @@ nav:
       - Explanation:
           - Why Incan?: language/explanation/why_incan.md
           - Why not just Rust?: language/explanation/why_not_just_rust.md
+          - Ownership declarations: language/explanation/ownership_declarations.md
           - How Incan works: language/explanation/how_incan_works.md
           - Compile time and runtime: language/explanation/compile_time_and_runtime.md
           - Checked catalogs and loaded registries: language/explanation/checked_and_loaded_registries.md
@@ -337,7 +339,6 @@ nav:
           - Layering rules: contributing/explanation/layering.md
           - Oven and toolchain ownership map: contributing/explanation/oven_toolchain_ownership_map.md
           - Build engine architecture: contributing/explanation/build_engine_architecture.md
-          - Build engine design: contributing/explanation/build_engine_design.md
           - Bakery storage design: contributing/explanation/bakery_storage_design.md
           - Native linkage during development: contributing/explanation/development-linking.md
           - "Post-mortem: v0.5.1": contributing/explanation/postmortem_v051.md

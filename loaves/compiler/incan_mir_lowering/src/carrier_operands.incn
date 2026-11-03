@@ -1,0 +1,524 @@
+"""Convert operands at carrier boundaries, test union members, and bind enum payloads."""
+
+from pub::incan_mir_plan import (
+    Carrier,
+    semantic_type_matches,
+    Constant,
+    ListLeaf,
+    Operand,
+    OperandKind,
+    Place,
+    PlanType,
+    Projection,
+    FieldProjection,
+    RvalueKind,
+    SourceSpan,
+    TerminatorKind,
+    assign as plan_assign,
+    place as plan_place,
+)
+from layout_types import shared_receiver_type, native_alias_boundary, native_source_type
+from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind
+from rust::incan_semantics_core::body_ir import Pattern as RustPattern, Operand as RustOperand, OwnershipFact
+from rust::incan_lang::lang::types::collections import from_str as collection_type, CollectionTypeId
+from generators import generator_shape
+from table_views import borrowed_at
+from decls import library_enum_item
+from option_tests import is_option_carrier, option_isinstance, enum_tag
+from enums import enum_owner
+from unions import union_test_slots, test_union_tag, carrier_injection
+from text_plan import owned_slice_text
+from options import assign_carrier, variant_condition
+from numerics import numeric_carrier
+from patterns import pattern_binds, carrier_pattern_slot, carrier_payload_types
+from frame import (
+    place_type,
+    Builder,
+    temporary,
+    forget_owned,
+    bind_read_value,
+    track_rvalue_moves,
+    forget_moved_arguments,
+    read_place,
+    literal,
+    appended_field,
+)
+from lists import is_list, exclusive_reference, is_exclusive_borrow
+from closures import function_assignment
+from checked_values import reference_read_fact, scalar_place
+from operators import operand_type
+from callable_calls import carrier_callable_operand, owned_callable_value
+from builtin_calls import clone_enum_reference, clone_model_reference, coerce_numeric_operand
+from formatting import display_plan_operand
+from static_storage import snapshot_owns
+from list_values import sequence_read_storage
+from matches import bind_enum_payload, bind_structural_pattern, enum_payload_read
+from result_carriers import frozen_operand, typed_carrier_operand
+
+
+pub def boundary_operand(
+    mut builder: Builder,
+    value: &RustOperand,
+    target: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Materialize union construction before passing or returning an owned value."""
+    if target == PlanType.FrozenStr:
+        return frozen_operand(builder, value, span)
+    operand = typed_carrier_operand(builder, value, target, span)?
+    match generator_shape(operand_type(builder, operand)?):
+        Some(_shape) =>
+            if is_list(target):
+                return Err("unsupported Body IR generator value at a list boundary")
+        None => pass
+    return boundary_plan_operand(builder, operand, target, span)
+
+
+pub def element_operand(
+    mut builder: Builder,
+    value: &RustOperand,
+    element: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """
+    Evaluate a collection element at the element's checked carrier.
+
+    The checker types each element against the collection, so a frozen `str` constant becomes owned text and a
+    narrower numeric carrier widens to the element's carrier, exactly as at any other typed boundary.
+    """
+    operand = boundary_operand(builder, value, element, span)?
+    return coerce_numeric_operand(builder, operand, element, span)
+
+
+pub def element_plan_operand(
+    mut builder: Builder,
+    value: Operand,
+    element: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Convert an already evaluated collection element to the element's checked carrier, as `element_operand` does."""
+    operand = boundary_plan_operand(builder, value, element, span)?
+    return coerce_numeric_operand(builder, operand, element, span)
+
+
+pub def boundary_plan_operand(
+    mut builder: Builder,
+    value: Operand,
+    target: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Convert an evaluated value to its checked boundary carrier, retaining exact native aliases, tuple layouts and ownership without repeating source effects."""
+    source = operand_type(builder, value)?
+    if source == PlanType.FrozenBytes and target == PlanType.List(ListLeaf.U8, 1):
+        frozen = temporary(builder, source, span)
+        builder.emit(plan_assign(frozen, RvalueKind.Use(value), span))
+        storage = sequence_read_storage(builder, frozen, span)?
+        return Ok(read_place(storage, true, span))
+    if source == PlanType.StrRef and target == PlanType.String:
+        owned = owned_slice_text(builder, value, span)
+        return Ok(read_place(owned, true, span))
+    # A `const` str reaching a destination that owns text, such as an `Err` payload or a list element, becomes owned
+    # text there, as at a `str` parameter.
+    if source == PlanType.FrozenStr and target == PlanType.String:
+        text = display_plan_operand(builder, value, span)?
+        return Ok(read_place(text, true, span))
+    # A borrowed source model that reaches a destination owning one was admitted by the checker there, so it is cloned.
+    match (source, target):
+        (PlanType.Tuple(_source_fields), PlanType.Tuple(_target_fields)) =>
+            if source != target:
+                return Err("unsupported Body IR tuple value with differing checked field carriers")
+        (PlanType.ModelRef(owner, name), PlanType.Model(target_owner, _target_name)) =>
+            if owner == target_owner:
+                return Ok(clone_model_reference(builder, value, owner, name, span))
+        (PlanType.EnumRef(owner, name), PlanType.Enum(target_owner, _target_name)) =>
+            if owner == target_owner:
+                return Ok(clone_enum_reference(builder, value, owner, name, span))
+        _ => pass
+    match converted_carrier_operand(builder, value, target, span)?:
+        Some(converted) => return Ok(converted)
+        None => pass
+    match target:
+        PlanType.Closure(signature) => return owned_callable_value(builder, value, signature, span)
+        PlanType.FunctionPointer(_signature) =>
+            ty, operation = function_assignment(
+                target,
+                operand_type(builder, value)?,
+                value,
+                true,
+                f"value boundary in {builder.name}",
+            )?
+            pointer = temporary(builder, ty, span)
+            builder.emit(plan_assign(pointer, operation, span))
+            return Ok(read_place(pointer, false, span))
+        _ => pass
+    mut operand = value
+    if operand_type(builder, operand)? == PlanType.FrozenStr:
+        match target:
+            PlanType.Enum(owner, _name) =>
+                if (
+                    owner >= len(builder.enums)
+                    and builder.intrinsics[owner - len(builder.enums)].carrier == Carrier.Declared
+                ):
+                    mut convert = false
+                    for union in builder.unions:
+                        if not semantic_type_matches(builder.intrinsics[owner - len(builder.enums)], union):
+                            continue
+                        mut members: list[PlanType] = []
+                        for variant in builder.intrinsics[owner - len(builder.enums)].variants:
+                            members.append(variant.fields[0])
+                        convert = PlanType.FrozenStr not in members and PlanType.String in members
+                        break
+                    if convert:
+                        text = display_plan_operand(builder, operand, span)?
+                        operand = read_place(text, true, span)
+            _ => pass
+    operand = carrier_callable_operand(builder, operand, target, span)?
+    operand = option_payload_operand(builder, operand, target.clone(), span)?
+    actual_source = operand_type(builder, operand)?
+    operation = carrier_injection(
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        operand,
+        actual_source,
+        target,
+        builder.intrinsics,
+    )?
+    match operation:
+        RvalueKind.Use(result) =>
+            if actual_source == target or not native_alias_boundary(builder.nominals, actual_source, target):
+                return Ok(result)
+            alias = temporary(builder, target, span)
+            alias_operation = RvalueKind.NativeAlias(result, actual_source, target)
+            forget_moved_arguments(builder, [result])
+            builder.emit(plan_assign(alias, alias_operation, span))
+            if snapshot_owns(target):
+                builder.owned.append(alias.local)
+            return Ok(read_place(alias, snapshot_owns(target), span))
+        _ =>
+            output = temporary(builder, target, span)
+            track_rvalue_moves(builder, operation)
+            builder.emit(plan_assign(output, operation, span))
+            builder.owned.append(output.local)
+            return Ok(read_place(output, true, span))
+
+
+def converted_carrier_operand(
+    mut builder: Builder,
+    value: Operand,
+    target: PlanType,
+    span: SourceSpan,
+) -> Result[Option[Operand], str]:
+    """Convert checked Option/Result payload carriers without changing the active variant or duplicating owners; exact Option payloads stay on the wrapping boundary."""
+    source_type = operand_type(builder, value)?
+    if source_type == target:
+        return Ok(None)
+    mut source_owner = -1
+    mut target_owner = -1
+    match source_type:
+        PlanType.Enum(owner, _name) => source_owner = owner
+        _ => return Ok(None)
+    match target:
+        PlanType.Enum(owner, _name) => target_owner = owner
+        _ => return Ok(None)
+    if source_owner < len(builder.enums) or target_owner < len(builder.enums):
+        return Ok(None)
+    before = builder.intrinsics[source_owner - len(builder.enums)]
+    after = builder.intrinsics[target_owner - len(builder.enums)]
+    if before.carrier == Carrier.Declared or before.carrier != after.carrier:
+        return Ok(None)
+    # An existing optional payload lifts as a whole, including None inside Some(None).
+    if after.carrier == Carrier.Option and after.variants[1].fields == [source_type]:
+        return Ok(None)
+    mut source = plan_place(-1, span)
+    match value.kind:
+        OperandKind.Move(place) => source = place
+        _ => return Err("unsupported Body IR carrier conversion without an owned value")
+    output = temporary(builder, target, span)
+    selected = builder.new_block(span)
+    other = builder.new_block(span)
+    joined = builder.new_block(span)
+    condition = variant_condition(builder, source, 0, span)
+    builder.finish(TerminatorKind.SwitchBool(condition, other, selected), span)
+    forget_owned(builder, source.local)
+    owners = builder.owned
+    for slot in range(2):
+        builder.current = selected
+        if slot == 1:
+            builder.current = other
+        builder.owned = owners
+        if len(before.variants[slot].fields) != len(after.variants[slot].fields):
+            return Err("unsupported Body IR carrier conversion variant layout")
+        mut fields: list[Operand] = []
+        for index in range(len(before.variants[slot].fields)):
+            payload_type = before.variants[slot].fields[index]
+            payload = Place(local=source.local, projection=Projection.VariantField(slot, index, payload_type), span=span)
+            fields.append(
+                boundary_plan_operand(builder, read_place(payload, true, span), after.variants[slot].fields[index], span)?,
+            )
+        assign_carrier(builder, output, target_owner, slot, fields, span)
+        builder.finish(TerminatorKind.Goto(joined), span)
+    builder.current = joined
+    builder.owned = owners
+    builder.owned.append(output.local)
+    return Ok(Some(read_place(output, true, span)))
+
+
+def option_payload_operand(
+    mut builder: Builder,
+    value: Operand,
+    target: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """
+    Bring a value written into an `Option` to the type of that `Option`'s payload, which then wraps it in `Some`.
+
+    A value written into an `Option` of an `Option` or union is first injected into that inner carrier, so each layer
+    wraps it, and a number written into an `Option` of another numeric type converts first, as legacy writes it.
+    Every other value is returned unchanged.
+    """
+    mut payload = PlanType.Unit
+    match target:
+        PlanType.Enum(owner, _name) =>
+            if owner < len(builder.enums):
+                return Ok(value)
+            declaration = builder.intrinsics[owner - len(builder.enums)]
+            if declaration.carrier != Carrier.Option:
+                return Ok(value)
+            payload = declaration.variants[1].fields[0]
+        _ => return Ok(value)
+    source = operand_type(builder, value)?
+    if source == target or source == payload:
+        return Ok(value)
+    if numeric_carrier(source) and numeric_carrier(payload):
+        return coerce_numeric_operand(builder, value, payload, span)
+    match payload:
+        PlanType.Enum(_owner, _name) => return boundary_plan_operand(builder, value, payload, span)
+        _ => return Ok(value)
+
+
+pub def lower_union_isinstance(
+    mut builder: Builder,
+    value: &RustOperand,
+    ty: &RustType,
+    target: &RustType,
+    span: SourceSpan,
+) -> Result[RvalueKind, str]:
+    """Inspect carrier tags or a statically known nominal identity without consuming storage; distinct class tests remain refused."""
+    source_ty = isinstance_source_type(builder, value, ty, span)?
+    member = native_source_type(
+        builder.constructors,
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        target,
+        builder.intrinsics,
+    )?
+    match source_ty:
+        PlanType.Int => return Ok(RvalueKind.Use(literal(Constant.Bool(source_ty == member), span)))
+        PlanType.Float => return Ok(RvalueKind.Use(literal(Constant.Bool(source_ty == member), span)))
+        PlanType.Bool => return Ok(RvalueKind.Use(literal(Constant.Bool(source_ty == member), span)))
+        PlanType.String =>
+            return Ok(RvalueKind.Use(literal(Constant.Bool(member in [PlanType.String, PlanType.FrozenStr]), span)))
+        PlanType.FrozenStr =>
+            return Ok(RvalueKind.Use(literal(Constant.Bool(member in [PlanType.String, PlanType.FrozenStr]), span)))
+        PlanType.Model(owner, _name) =>
+            if source_ty == member:
+                return Ok(RvalueKind.Use(literal(Constant.Bool(true), span)))
+            if (
+                owner < 0
+                or owner >= len(builder.nominals)
+                or builder.nominals[owner].canonical.kind != SemanticSourceTargetKind.Newtype
+            ):
+                return Err("unsupported Body IR isinstance over a non-newtype nominal")
+            return Ok(RvalueKind.Use(literal(Constant.Bool(source_ty == member), span)))
+        _ => pass
+    owner = enum_owner(source_ty)?
+    if is_option_carrier(builder, owner):
+        option = isinstance_place(builder, value, span)?
+        return option_isinstance(builder, option, owner, member, span)
+    slots = union_test_slots(builder.nominals, builder.enums, builder.unions, owner, member, builder.intrinsics)?
+    if len(slots) == 0:
+        return Ok(RvalueKind.Use(literal(Constant.Bool(false), span)))
+    source = isinstance_place(builder, value, span)?
+    tag = enum_tag(builder, source, span)
+    return Ok(test_union_tag(builder, tag, slots, span))
+
+
+def isinstance_source_type(
+    mut builder: Builder,
+    value: &RustOperand,
+    checked: &RustType,
+    span: SourceSpan,
+) -> Result[PlanType, str]:
+    """Use retained place storage for carrier views, preserving full union indexes after a checker-proven narrowing."""
+    match checked:
+        RustType.Generic(base=base, args=_arguments) =>
+            if checked.is_union() or collection_type(str(base)) == Some(CollectionTypeId.Option):
+                source = isinstance_place(builder, value, span)?
+                return Ok(place_type(builder.locals, source))
+        _ => pass
+    return native_source_type(
+        builder.constructors,
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        checked,
+        builder.intrinsics,
+    )
+
+
+def isinstance_place(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
+    """The storage whose tag `isinstance` reads in place."""
+    match value:
+        RustOperand.Place(read) => return scalar_place(builder, read.place, span)
+        _ => return Err("unsupported Body IR nonplace union isinstance")
+
+
+def bind_shared_enum_payload(
+    mut builder: Builder,
+    local: int,
+    payload: Place,
+    fact: &OwnershipFact,
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """Preserve a checker-retained shared reference binding: copy a reference payload or borrow its owned nominal field. Match declaration slots rather than diagnostic names, and never materialize owned text or move an owner's payload into a reference slot."""
+    target = borrowed_at(builder.locals, local).ty
+    if local not in builder.reference_values or is_exclusive_borrow(target):
+        return Ok(false)
+    if not reference_read_fact(fact):
+        return Err(f"unsupported Body IR shared enum payload reference read {fact:?} in {builder.name}")
+    source = place_type(builder.locals, payload)
+    if source == target:
+        builder.emit(plan_assign(plan_place(local, span), RvalueKind.Use(read_place(payload, false, span)), span))
+        return Ok(true)
+    match (target, source):
+        (PlanType.ModelRef(owner, _name), PlanType.Model(source, _source_name)) =>
+            if owner != source:
+                return Err("unsupported Body IR shared model payload owner mismatch")
+        (PlanType.EnumRef(owner, _name), PlanType.Enum(source, _source_name)) =>
+            if owner != source:
+                return Err("unsupported Body IR shared enum payload owner mismatch")
+        _ => return Ok(false)
+    builder.emit(plan_assign(plan_place(local, span), RvalueKind.Borrow(payload), span))
+    return Ok(true)
+
+
+pub def bind_enum_fields(
+    mut builder: Builder,
+    source: Place,
+    variant: int,
+    fields: &list[RustPattern],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Bind checked enum payload slots through the same downcast and ownership path for source enums and unions."""
+    owner = enum_owner(place_type(builder.locals, source))?
+    payload_types = carrier_payload_types(builder, owner, variant)?
+    for slot in range(len(fields)):
+        match fields[slot]:
+            RustPattern.Var(binding) =>
+                local = int(binding.local.index()) + 1 + builder.local_offset
+                ty = borrowed_at(builder.locals, local).ty
+                projected = appended_field(
+                    source,
+                    FieldProjection(slot=slot, ty=payload_types[slot], variant=variant),
+                    span,
+                )?
+                if ty != payload_types[slot]:
+                    # A reference binding borrows its exact payload. Other representation changes, such as native
+                    # borrowed text becoming owned source text, keep their ordinary materialization path below.
+                    match shared_receiver_type(payload_types[slot]):
+                        Ok(reference) =>
+                            if ty == reference:
+                                builder.emit(plan_assign(plan_place(local, span), RvalueKind.Borrow(projected), span))
+                                continue
+                        Err(_reason) => pass
+                    # An exclusive subject binds each payload as an exclusive reference to it.
+                    match exclusive_reference(payload_types[slot]):
+                        Some(exclusive) =>
+                            if ty == exclusive:
+                                builder.emit(plan_assign(plan_place(local, span), RvalueKind.MutBorrow(projected), span))
+                                continue
+                        None => pass
+                if binding.fact == OwnershipFact.MutBorrow:
+                    bind_payload_in_place(builder, local, projected, span)?
+                else:
+                    if bind_shared_enum_payload(builder, local, projected, binding.fact, span)?:
+                        continue
+                    payload = moved_native_enum_payload(builder, source, projected, fields, binding.fact, span)?
+                    bind_read_value(builder, local, boundary_plan_operand(builder, payload, ty, span)?, span)
+            _ =>
+                if pattern_binds(fields[slot]):
+                    bind_nested_payload(builder, source, variant, slot, fields[slot], span)?
+    return Ok(None)
+
+
+def moved_native_enum_payload(
+    mut builder: Builder,
+    source: Place,
+    payload: Place,
+    fields: &list[RustPattern],
+    fact: &OwnershipFact,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """
+    Transfer a checked payload move, retiring its carrier's drop entry when present.
+    Intrinsic call temporaries can be drop-free; checked Body IR supplies their move authority. A source enum the
+    frame owns gives its single payload up the same way; any other source carrier keeps its payload, and the binding
+    takes a clone that it owns.
+    """
+    owner = enum_owner(place_type(builder.locals, source))?
+    if fact != OwnershipFact.Move:
+        return enum_payload_read(builder, payload, fact, span)
+    if owner < len(builder.enums):
+        if library_enum_item(builder.enums[owner]) == "":
+            if len(fields) != 1 or source.projection != Projection.Whole or source.local not in builder.owned:
+                return enum_payload_read(builder, payload, fact, span)
+    else:
+        carrier = builder.intrinsics[owner - len(builder.enums)].carrier
+        if carrier == Carrier.Declared:
+            return enum_payload_read(builder, payload, fact, span)
+    if len(fields) != 1 or source.projection != Projection.Whole:
+        return Err("unsupported Body IR native enum payload move outside a whole owned single-field carrier")
+    if owner < len(builder.enums) and source.local not in builder.owned:
+        return Err("unsupported Body IR native enum payload move without its carrier's drop owner")
+    forget_owned(builder, source.local)
+    return Ok(read_place(payload, true, span))
+
+
+def bind_nested_payload(
+    mut builder: Builder,
+    source: Place,
+    variant: int,
+    slot: int,
+    pattern: &RustPattern,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Bind the names a nested carrier or tuple payload pattern names, from the payload its tests already matched."""
+    mut owner = -1
+    match place_type(builder.locals, source):
+        PlanType.Enum(index, _name) => owner = index
+        _ => return Err("invalid Body IR nested payload carrier")
+    types = carrier_payload_types(builder, owner, variant)?
+    payload = appended_field(source, FieldProjection(slot=slot, ty=types[slot], variant=variant), span)?
+    match place_type(builder.locals, payload):
+        PlanType.Enum(nested_owner, _name) =>
+            nested = carrier_pattern_slot(builder, nested_owner, pattern)?
+            return bind_enum_payload(builder, payload, nested, pattern, span)
+        _ => return bind_structural_pattern(builder, payload, pattern, span)
+
+
+pub def bind_payload_in_place(mut builder: Builder, local: int, payload: Place, span: SourceSpan) -> Result[None, str]:
+    """
+    Bind a name its arm changes as an exclusive reference to the payload it names, as legacy matches `&mut`.
+
+    The change then lands in the scrutinee itself. The reference owns nothing, so the binding never enters the drop
+    ledger. Tuple payloads retain their complete layout behind that reference; scalar payloads keep copy bindings.
+    """
+    mut reference = PlanType.Unit
+    match exclusive_reference(place_type(builder.locals, payload)):
+        Some(exclusive) => reference = exclusive
+        None => return Err("unsupported Body IR in-place pattern payload without an exclusive reference")
+    builder.locals[local].ty = reference
+    builder.emit(plan_assign(plan_place(local, span), RvalueKind.MutBorrow(payload), span))
+    return Ok(None)

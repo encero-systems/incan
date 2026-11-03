@@ -1,0 +1,95 @@
+"""Read-only memory mappings of immutable files."""
+
+from rust::incan_std_system::mapping import MappedFile as NativeMapping, MappedView as NativeView
+
+
+pub type MappedFile = newtype NativeMapping:
+    """
+    A read-only memory mapping of one whole file.
+
+    Reads go through views and touch the pages they need. Processes mapping the same immutable inode can share its
+    clean file-backed pages. The inode must not be modified or truncated until this handle and all its views are gone.
+    Replacing its pathname does not change the mapped inode. Read-only permissions alone do not establish this
+    guarantee.
+    """
+
+    def len(self) -> int:
+        """The number of mapped bytes."""
+        return self.0.len()
+
+    def view(self, offset: int, length: int) -> Option[MappedView]:
+        """
+        Retain a bounded range without copying its bytes, or return `None` for an invalid range.
+
+        The view keeps the mapping alive even after this handle leaves scope. Negative, overflowing and past-end
+        ranges are rejected; an empty range at the end is valid. Keeping even a small view retains the entire virtual
+        mapping, not necessarily all its resident pages.
+        """
+        return self.0.view(offset, length).map((view) => MappedView(view))
+
+
+pub type MappedView = newtype NativeView:
+    """
+    A zero-copy byte range with a shared owner anchor to its immutable mapping.
+
+    This is an owner-anchored view, not a lexical borrow. It cannot outlive the backing mapping because it retains it.
+    Every slice and scalar offset is relative to this view, not the original file. Scalar reads are bounds-checked,
+    accept unaligned offsets, and allocate no heap buffer. `to_bytes()` is the explicit copying operation.
+    """
+
+    def len(self) -> int:
+        """The number of bytes in this view."""
+        return self.0.len()
+
+    def slice(self, offset: int, length: int) -> Option[MappedView]:
+        """A zero-copy subview, or `None` when the range is negative, overflows, or exceeds this view."""
+        return self.0.slice(offset, length).map((view) => MappedView(view))
+
+    def to_bytes(self) -> bytes:
+        """Copy this view into independently owned bytes."""
+        return self.0.to_bytes()
+
+    def read_u8(self, offset: int) -> Option[u8]:
+        """An unsigned byte at `offset`, or `None` outside this view."""
+        return self.0.read_u8(offset)
+
+    def read_i8(self, offset: int) -> Option[i8]:
+        """A signed byte at `offset`, or `None` outside this view."""
+        return self.0.read_i8(offset)
+
+    def read_u16_le(self, offset: int) -> Option[u16]:
+        """A little-endian unsigned 16-bit scalar, or `None` when it exceeds this view."""
+        return self.0.read_u16_le(offset)
+
+    def read_u32_le(self, offset: int) -> Option[u32]:
+        """A little-endian unsigned 32-bit scalar, or `None` when it exceeds this view."""
+        return self.0.read_u32_le(offset)
+
+    def read_u64_le(self, offset: int) -> Option[u64]:
+        """A little-endian unsigned 64-bit scalar, or `None` when it exceeds this view."""
+        return self.0.read_u64_le(offset)
+
+    def read_i16_le(self, offset: int) -> Option[i16]:
+        """A little-endian signed 16-bit scalar, or `None` when it exceeds this view."""
+        return self.0.read_i16_le(offset)
+
+    def read_i32_le(self, offset: int) -> Option[i32]:
+        """A little-endian signed 32-bit scalar, or `None` when it exceeds this view."""
+        return self.0.read_i32_le(offset)
+
+    def read_i64_le(self, offset: int) -> Option[i64]:
+        """A little-endian signed 64-bit scalar, or `None` when it exceeds this view."""
+        return self.0.read_i64_le(offset)
+
+    def read_f32_le(self, offset: int) -> Option[f32]:
+        """A little-endian IEEE-754 32-bit scalar, or `None` when it exceeds this view."""
+        return self.0.read_f32_le(offset)
+
+    def read_f64_le(self, offset: int) -> Option[f64]:
+        """A little-endian IEEE-754 64-bit scalar, or `None` when it exceeds this view."""
+        return self.0.read_f64_le(offset)
+
+
+pub def map_read(path: str) -> Result[MappedFile, str]:
+    """Map the file at `path` read-only; its inode must stay unmodified while the mapping or any view lives."""
+    return NativeMapping.open(path).map((mapped) => MappedFile(mapped))

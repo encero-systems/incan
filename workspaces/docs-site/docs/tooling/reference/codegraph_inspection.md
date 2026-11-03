@@ -9,7 +9,7 @@ incan inspect codegraph . --format jsonl --strict
 
 ## Stream
 
-- Every line is one JSON object with a `record` discriminator. The first record is the `header`. Each selected unit's `diagnostic` records follow that unit's other records; with `--risk`, `risk_signal` records come last.
+- Every line is one JSON object with a `record` discriminator. The first record is the `header`. An export carries the requested project's records; dependency records remain in their published graphs, addressed by the header's `dependencies`. The unit's `diagnostic` records follow its other records; with `--risk`, `risk_signal` records come last.
 - The record kinds are `header`, `file`, `namespace`, `module`, `declaration`, `import`, `export`, `reference`, `call`, `containment`, `registry`, `capability`, `c_binding`, `c_binding_call`, `c_binding_facade` and `diagnostic`, and with `--risk`, `risk_signal`.
 - The records and their order are deterministic for the same compiler version, source and filesystem layout. An `id` is unique within one export. Ids are not stable across file moves, renames or schema versions.
 
@@ -51,11 +51,14 @@ A source span has `file`, an inclusive `start` and an exclusive `end` byte offse
 | `package` | `name`, `version` and `root_path` from the nearest `loaf.toml`, each `null` when absent; `null` without a manifest. |
 | `semantic_contexts` | The selected projects and Loaves. |
 | `degraded` | See [Modes and degraded state](#modes-and-degraded-state). |
-| `identity_schema` | `incan.graph.identity/1`. |
+| `identity_schema` | `incan.graph.identity/2`. |
 | `declaration_digests` | See [Export identity and snapshots](agent_context_cli.md#export-identity-and-snapshots). |
 | `snapshot_id` | See [Export identity and snapshots](agent_context_cli.md#export-identity-and-snapshots). |
+| `dependencies` | Array of dependency graph references, each with `id` (`graph:sha256:` followed by the graph's byte digest), `graph` (artifact path), `root_path` (source anchor root), `package` and `version` (empty strings when unavailable). Dependency payloads are absent from this export. |
 
 A semantic context has `project_root` and `loaves`. Each Loaf has `key`, `name`, `version`, `standard` and a `sha256:` artifact `digest`. Consumer identities, snapshots, context packs and optional process records are specified in [Agent context CLI and MCP](agent_context_cli.md).
+
+When a unit is refused before the compiler can export any facts, its presentation header retains request metadata and dependency addresses. Compiler-owned fields, including `schema_version`, `compiler_version` and `package`, are absent in that header.
 
 ## Files, namespaces and modules
 
@@ -79,7 +82,7 @@ A module path segment that starts with one underscore, and not two, marks a modu
 | `type_params` | Generic parameter names. |
 | `signature` | A rendered signature, or `null`. |
 | `canonical_identity`, `stable_identity` | See [Identities](#identities). |
-| `semantic_digest` | A `sha256:` digest of the declaration's checked meaning, excluding position, formatting, comments and documentation; omitted when not proven. |
+| `semantic_digest` | A `sha256:` digest of checked executable facts; omitted when not proven. It does not guarantee stability across position-only source edits. |
 | `doc_digest` | A `sha256:` digest of the declaration's documentation; omitted when there is none. |
 | `span` | The declaration's source span. |
 
@@ -116,7 +119,7 @@ Provenance is `checked` when a binding carries a `canonical_identity`, else `syn
 | `module_id`, `owner_id` | The module record, and the containing declaration record or `null`. |
 | `name` | The referenced spelling. |
 | `kind` | `identifier`, `field`, `self`, `surface_path`, `type`, `imported_module` or `imported_item`. |
-| `target_id` | The target's `declaration` record in this export, or `null`. |
+| `target_id` | The target's declaration ID, in this export or a referenced dependency graph, or `null`. |
 | `canonical_identity` | The resolved target's identity, unchanged through imports, aliases and re-exports; `null` when resolution proves none. |
 | `canonical_owner` | The closest checked declaring owner of the target; omitted when none is proven. |
 | `stable_identity` | See [Identities](#identities). |
@@ -245,11 +248,13 @@ A record with a proven identity carries it even when this export holds no `decla
 
 `stable_identity` identifies the same declaration without positions. It appears on `declaration`, import `bindings`, `export`, `reference` and `call` records, and is omitted when not proven. It has `namespace`, `origin`, `declaration_name` and `declaration_kind` as above, a `location`, and a canonical `signature` that tells apart declarations sharing the other fields; `signature` is omitted when not proven.
 
+Checked Incan callable signatures use `incan.source-signature/2:sha256:` followed by 64 hexadecimal digits. The signature includes checked source types, generic binder positions, parameter kinds, default presence, mutation markers, explicit input-access facts and asyncness. Nominal references retain their declaring identities, and methods retain their nominal owners. Comments, declaration coordinates and native representations do not enter this signature. An unresolved source type leaves the signature unproved. Frozen dependency graphs retain the signature profile recorded in their publication; different profile values produce different declaration keys. The frozen example below retains its original profile 1 signature.
+
 `location` is `{"kind":"module_level"}` for a declaration unique at module, package, crate or registry level, or a `nested` location that names the nearest named owner's stable identity and a zero-based `binding_ordinal` among same-name, same-kind bindings in that owner:
 
 ```json
 {"kind":"module_level"}
-{"kind":"nested","owner":{"namespace":"ordinary_lexical","origin":{"kind":"module","path":["main"]},"declaration_name":"outer","declaration_kind":"function","location":{"kind":"module_level"},"signature":"()->Int"},"binding_ordinal":0}
+{"kind":"nested","owner":{"namespace":"ordinary_lexical","origin":{"kind":"module","path":["main"]},"declaration_name":"outer","declaration_kind":"function","location":{"kind":"module_level"},"signature":"incan.source-signature/1:sha256:b86ba7daa65b2985370b641aacbe31c524be2687b9fd8641a905e07fbb7afe0b"},"binding_ordinal":0}
 ```
 
 Inserting or reordering an indistinguishable binding in the owner changes the ordinals after it. Comments, unrelated names and scope-table indices do not change a stable identity.

@@ -343,7 +343,7 @@ def compile_groups(
         mut executions: list[tuple[int, list[str]]] = []
         for parent in range(len(attempts)):
             first = len(requests)
-            selected = queue_entries(incan, scratch, attempts[parent], parent, requests)
+            selected = queue_entries(scratch, attempts[parent], parent, requests)
             executions.append((first, selected))
         results = invoke_many(requests, jobs)
         for index in range(len(names)):
@@ -419,14 +419,13 @@ def split_group(entries: list[Entry], mut retry: list[list[Entry]], refusal: str
     retry.append(entries[middle:])
 
 
-def queue_entries(
-    incan: str,
-    scratch: Path,
-    group: GroupProject,
-    parent: int,
-    mut requests: list[Invocation],
-) -> list[str]:
-    """Prepare fresh selected executions gated on their group's successful build in the owning worker pool."""
+def queue_entries(scratch: Path, group: GroupProject, parent: int, mut requests: list[Invocation]) -> list[str]:
+    """
+    Prepare fresh selected executions gated on their group's successful build in the owning worker pool.
+
+    The build verified the group's program, so each selected case starts it directly under the case's own program name,
+    with the arguments, environment and exit status `incan run` gives a program.
+    """
     mut names: list[str] = []
     executable = built_program(group.project, "contract_batch")
     for index in range(len(group.entries)):
@@ -440,12 +439,10 @@ def queue_entries(
                     Ok(_) => trace_ready = true
                 if not trace_ready:
                     continue
-                original = built_program(case_project, fixture.name)
-                arguments = ["_run-built", executable.0, "--argv0", original.0]
                 requests.append(
                     Invocation(
-                        program=incan,
-                        arguments=arguments,
+                        program=executable.0,
+                        arguments=[],
                         project=case_project,
                         selector=Some(str(index)),
                         after=Some(parent),
@@ -456,7 +453,7 @@ def queue_entries(
 
 
 def group_arguments(command: str, project: Path, entries: list[Entry]) -> list[str]:
-    """Describe selected entries for a shared build; execution uses its already-verified binary through Oven."""
+    """Describe selected entries for a shared build; execution starts its already-verified binary directly."""
     mut arguments = [command, project.joinpath("src").joinpath("main.incn").0]
     for index in range(len(entries)):
         mut path = f"src/case_{index}.incn"

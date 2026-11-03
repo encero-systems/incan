@@ -9,6 +9,7 @@ from native_type_identity import ConstructorIndex
 from unions import collect_unions
 from tuples import tuple_element
 from symbols import model_symbol
+from table_views import borrowed_at, borrowed_table
 
 
 pub def runtime_zip_carriers(
@@ -47,10 +48,10 @@ def closed_zip_carriers(
     """Associate builtin element layouts only with closed instances of the source result's canonical declaration."""
     mut carriers: list[ZipCarrier] = []
     mut unions = collect_unions(module)
-    mut nominals = module.nominal_declarations
-    mut enums = module.enum_declarations
+    nominals = borrowed_table(module.nominal_declarations)
+    enums = borrowed_table(module.enum_declarations)
     for index in range(len(module.nominal_declarations)):
-        declaration = module.nominal_declarations[index]
+        declaration = borrowed_at(module.nominal_declarations, index)
         candidate: &CanonicalSymbolId = declaration.canonical
         if candidate != owner or len(declaration.native_type_arguments) != 2:
             continue

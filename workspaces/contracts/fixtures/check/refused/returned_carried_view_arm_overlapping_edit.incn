@@ -1,0 +1,17 @@
+# behavior: inside the `Ok` arm of a match on a call that carries a view, editing the source while the view is still used is refused (#2500).
+# expect-diagnostic: INCAN-T0126
+
+class Counter:
+    pub value: int
+
+    def bump(mut self) -> Result[Reference[Self], str] from self:
+        self.value += 1
+        return Ok(self)
+
+
+def overlap(mut counter: BorrowedMut[Counter]) -> int:
+    match counter.bump():
+        Ok(view) =>
+            counter.value = 10
+            return view.value
+        Err(_) => return 0

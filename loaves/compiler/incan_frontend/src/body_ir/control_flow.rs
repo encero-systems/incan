@@ -52,8 +52,8 @@ fn index_read(idx_local: bir::LocalId) -> bir::Operand {
     bir::Operand::place(bir::Place::from_local(idx_local), bir::OwnershipFact::Copy, false)
 }
 
-/// Retain a local range-layout fact only when every control-flow successor retains it.
-pub(super) fn intersect_range_layouts(
+/// Retain a local fact only when every supplied continuing control-flow state retains it.
+pub(super) fn intersect_local_states(
     states: Vec<std::collections::HashSet<bir::LocalId>>,
 ) -> std::collections::HashSet<bir::LocalId> {
     let mut states = states.into_iter();
@@ -116,28 +116,44 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         };
         let cond = self.lower_expr_to_operand(cond_expr, scope, out);
 
+        let subjects = self.input_subject_locals();
+        let mut pending_moves = self.input_move_state(&subjects);
+        let mut reaching_moves = Vec::new();
         let range_layouts_before = self.materialized_range_locals.clone();
-        let then_block = self.lower_branch_block(&if_stmt.then_body, scope, span);
+        let then_block = self.lower_input_branch_block(&if_stmt.then_body, scope, span);
+        self.retain_reaching_input_moves(&if_stmt.then_body, &subjects, &mut reaching_moves);
         let mut range_layouts_after_branches = vec![self.materialized_range_locals.clone()];
 
         let mut lowered_branches = Vec::with_capacity(if_stmt.elif_branches.len());
         for (elif_cond, elif_body) in &if_stmt.elif_branches {
+            self.restore_input_move_state(&subjects, &pending_moves);
             self.materialized_range_locals = range_layouts_before.clone();
             let mut wrapper = Vec::new();
             let wrapper_scope = self.new_scope(Some(scope), span);
             self.conditional_scopes.push(wrapper_scope);
+            self.input_if_scopes.push(wrapper_scope);
             let cond_operand = self.lower_expr_to_operand(elif_cond, wrapper_scope, &mut wrapper);
+            self.input_if_scopes.pop();
             self.conditional_scopes.pop();
-            let then_block = self.lower_branch_block(elif_body, wrapper_scope, span);
+            pending_moves = self.input_move_state(&subjects);
+            let then_block = self.lower_input_branch_block(elif_body, wrapper_scope, span);
+            self.retain_reaching_input_moves(elif_body, &subjects, &mut reaching_moves);
             lowered_branches.push((wrapper_scope, wrapper, cond_operand, then_block));
             range_layouts_after_branches.push(self.materialized_range_locals.clone());
         }
 
+        self.restore_input_move_state(&subjects, &pending_moves);
         self.materialized_range_locals = range_layouts_before;
         let mut else_block = if_stmt
             .else_body
             .as_ref()
-            .map(|else_body| self.lower_branch_block(else_body, scope, span));
+            .map(|else_body| self.lower_input_branch_block(else_body, scope, span));
+        if let Some(body) = &if_stmt.else_body {
+            self.retain_reaching_input_moves(body, &subjects, &mut reaching_moves);
+        } else {
+            reaching_moves.push(self.input_move_state(&subjects));
+        }
+        self.restore_input_move_state(&subjects, &intersect_local_states(reaching_moves));
         range_layouts_after_branches.push(self.materialized_range_locals.clone());
 
         // Only assembly runs backward; every read's ownership fact is already fixed in written order.
@@ -157,7 +173,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             });
         }
 
-        self.materialized_range_locals = intersect_range_layouts(range_layouts_after_branches);
+        self.materialized_range_locals = intersect_local_states(range_layouts_after_branches);
 
         out.push(bir::Statement {
             kind: bir::StatementKind::If {
@@ -179,6 +195,27 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         parent_scope: bir::ScopeId,
         span: HirSourceSpan,
     ) -> bir::Block {
+        self.lower_branch_with_input_policy(body, parent_scope, span, false)
+    }
+
+    /// Statement-if branches join authenticated whole-owner state separately; expression and pattern branches do not.
+    fn lower_input_branch_block(
+        &mut self,
+        body: &[ast::Spanned<ast::Statement>],
+        parent_scope: bir::ScopeId,
+        span: HirSourceSpan,
+    ) -> bir::Block {
+        self.lower_branch_with_input_policy(body, parent_scope, span, true)
+    }
+
+    /// Keep lexical binding restoration common while recording only the conditional scopes with an explicit join.
+    fn lower_branch_with_input_policy(
+        &mut self,
+        body: &[ast::Spanned<ast::Statement>],
+        parent_scope: bir::ScopeId,
+        span: HirSourceSpan,
+        input_policy: bool,
+    ) -> bir::Block {
         // Body IR retains every branch local for the backend to lower, but its name lookup must return to the
         // enclosing lexical environment afterwards. Without this snapshot a `let x` in one branch becomes the
         // binding read after the `if`, even though source resolution scopes it to the branch alone.
@@ -186,7 +223,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let branch_scope = self.new_scope(Some(parent_scope), span);
         let mut stmts = Vec::new();
         self.conditional_scopes.push(branch_scope);
+        if input_policy {
+            self.input_if_scopes.push(branch_scope);
+        }
         self.lower_block_into(body, branch_scope, &mut stmts);
+        if input_policy {
+            self.input_if_scopes.pop();
+        }
         self.conditional_scopes.pop();
         self.insert_scope_drops(&mut stmts, branch_scope);
         self.bindings = enclosing_bindings;
@@ -220,7 +263,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .as_ref()
             .map(|body| self.lower_branch_block(body, scope, hir_span_value));
         self.materialized_range_locals =
-            intersect_range_layouts(vec![then_range_layouts, self.materialized_range_locals.clone()]);
+            intersect_local_states(vec![then_range_layouts, self.materialized_range_locals.clone()]);
         out.push(bir::Statement {
             kind: bir::StatementKind::If {
                 cond,
@@ -277,7 +320,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.loop_scopes.pop();
         self.loop_continue_actions.pop();
         self.materialized_range_locals =
-            intersect_range_layouts(vec![range_layouts_before, self.materialized_range_locals.clone()]);
+            intersect_local_states(vec![range_layouts_before, self.materialized_range_locals.clone()]);
         self.bindings = enclosing_bindings;
 
         out.push(bir::Statement {
@@ -318,7 +361,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
         let scrutinee_ty = self.resolve_ty(value.span);
         let in_place = self.matches_in_place(value.span, &scrutinee_ty);
+        let first_temporary = self.locals.len();
         let scrutinee_place = self.lower_expr_to_place(value, scope, out);
+        self.end_scrutinee_temporaries(value.span, &scrutinee_place, in_place, first_temporary, scope, out);
         let scrutinee = bir::Operand::place(scrutinee_place.clone(), bir::OwnershipFact::Borrow, false);
 
         let layouts_before = self.materialized_range_locals.clone();
@@ -334,7 +379,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let layouts_after_match = self.materialized_range_locals.clone();
 
         // The unmatched path runs none of the body, so it leaves the entry facts untouched.
-        self.materialized_range_locals = intersect_range_layouts(vec![layouts_before, layouts_after_match]);
+        self.materialized_range_locals = intersect_local_states(vec![layouts_before, layouts_after_match]);
 
         let unmatched_arm = bir::MatchArm {
             pattern: bir::Pattern::Wildcard,
@@ -380,7 +425,16 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.push_loop(loop_scope, None, span, out, |builder, loop_scope, body_stmts| {
             let scrutinee_ty = builder.resolve_ty(value.span);
             let in_place = builder.matches_in_place(value.span, &scrutinee_ty);
+            let first_temporary = builder.locals.len();
             let scrutinee_place = builder.lower_expr_to_place(value, loop_scope, body_stmts);
+            builder.end_scrutinee_temporaries(
+                value.span,
+                &scrutinee_place,
+                in_place,
+                first_temporary,
+                loop_scope,
+                body_stmts,
+            );
             let scrutinee = bir::Operand::place(scrutinee_place.clone(), bir::OwnershipFact::Borrow, false);
 
             // Exactly one arm runs per iteration, so a fact the matched arm established must not survive into code
@@ -398,7 +452,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 span,
             );
             builder.materialized_range_locals =
-                intersect_range_layouts(vec![layouts_before_arms, builder.materialized_range_locals.clone()]);
+                intersect_local_states(vec![layouts_before_arms, builder.materialized_range_locals.clone()]);
             let exhausted_arm = bir::MatchArm {
                 pattern: bir::Pattern::Wildcard,
                 guard_stmts: Vec::new(),
@@ -622,13 +676,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             );
             self.bindings = enclosing_bindings;
             self.materialized_range_locals =
-                intersect_range_layouts(vec![range_layouts_before, self.materialized_range_locals.clone()]);
+                intersect_local_states(vec![range_layouts_before, self.materialized_range_locals.clone()]);
             return;
         };
         self.lower_range_counting_loop(for_stmt, &item_ty, &range, scope, span, out);
         self.bindings = enclosing_bindings;
         self.materialized_range_locals =
-            intersect_range_layouts(vec![range_layouts_before, self.materialized_range_locals.clone()]);
+            intersect_local_states(vec![range_layouts_before, self.materialized_range_locals.clone()]);
     }
 
     /// The item type a `for` loop's pattern binds, falling back to a range value's own element type.
@@ -640,7 +694,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// requires local materialization provenance before field projection.
     pub(super) fn for_item_type(&self, pattern: &ast::Spanned<ast::Pattern>, iter_ty: &IncanType) -> IncanType {
         let checked = self.resolve_ty(pattern.span);
-        if let Some([element]) = collection_member_types(iter_ty, CollectionTypeId::List) {
+        if let Some([element]) = iter_ty.collection_arguments(CollectionTypeId::List) {
             if !self.leaves_type_open(element) {
                 return element.clone();
             }
@@ -1558,7 +1612,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// A materialized list expression owns its items, as legacy iterates a call result, literal, or comprehension
     /// directly by value. Named places and projections require the checker's explicit consumption decision.
     pub(super) fn temporary_list_iterable(&self, place: &bir::Place, ty: &IncanType) -> bool {
-        collection_member_types(ty, CollectionTypeId::List).is_some()
+        ty.collection_arguments(CollectionTypeId::List).is_some()
             && place.projection.is_empty()
             && place
                 .local_id()
@@ -1596,7 +1650,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return None;
         };
         if !self.type_info.rust.iteration_hooks.contains_key(&source.span) {
-            collection_member_types(&self.resolve_ty(source.span), CollectionTypeId::List)?;
+            self.resolve_ty(source.span)
+                .collection_arguments(CollectionTypeId::List)?;
         }
         Some(source)
     }
@@ -1835,7 +1890,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             if self.checked_range_source(source) {
                 continue;
             }
-            collection_member_types(&self.resolve_ty(source.span), CollectionTypeId::List)?;
+            self.resolve_ty(source.span)
+                .collection_arguments(CollectionTypeId::List)?;
         }
         Some([left, right])
     }
@@ -2051,7 +2107,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         {
             return None;
         }
-        collection_member_types(&self.resolve_ty(source.span), CollectionTypeId::Dict)?;
+        self.resolve_ty(source.span)
+            .collection_arguments(CollectionTypeId::Dict)?;
         Some(source)
     }
 
@@ -2069,7 +2126,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     ) {
         // ---- Original map storage and its polled key ----
         let source_ty = self.resolve_ty(source.span);
-        let key_ty = collection_member_types(&source_ty, CollectionTypeId::Dict)
+        let key_ty = source_ty
+            .collection_arguments(CollectionTypeId::Dict)
             .map(|types| types[0].clone())
             .unwrap_or(IncanType::Unknown);
         let (iterator, initializer) = self.initialize_iteration_source(source, outer_scope, span, out);

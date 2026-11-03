@@ -1,0 +1,18 @@
+# behavior: a loop over bytes reaches the runtime's list operations, and no standard package
+# cli-commands:
+#   inspect dependencies src/main.incn
+# expect-stdout-contains:
+#   program `closure_of_a_byte_loop` reaches 1 package
+#   incan_native_runtime
+#     function pub::incan_native_runtime::lists::get_list
+# expect-exit: 0
+
+def total(data: bytes) -> int:
+    mut sum = 0
+    for byte in data:
+        sum += byte
+    return sum
+
+
+def main() -> None:
+    println(total(b"abc"))

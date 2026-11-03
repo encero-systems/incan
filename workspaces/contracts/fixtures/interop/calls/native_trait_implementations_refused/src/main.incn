@@ -1,0 +1,31 @@
+# behavior: Rust refuses a class's trait implementation with the wrong method receiver or a missing required method (#2481)
+# expect-exit: 1
+# expect-stderr-contains:
+#   E0053
+#   E0046
+
+"""Refuse Rust trait implementations that do not match the trait."""
+
+from rust::tiny_driver import Callbacks, Config, Reporter
+
+
+class WrongReceiver with Callbacks:
+    """Implement the callback with a shared receiver where the trait takes a mutable one."""
+
+    marker: int = 0
+
+    def config(self, config: &mut Config) -> None:
+        """Deliberately take a shared receiver."""
+        pass
+
+
+class Silent with Reporter:
+    """Omit the trait's required method."""
+
+    marker: int = 0
+
+
+def main() -> None:
+    """Never runs: the program is refused."""
+    hooks = WrongReceiver()
+    silent = Silent()

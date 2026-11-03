@@ -1,12 +1,21 @@
-# behavior: user decorators initialize once and replace the callable and its checked input signature (RFC 036)
+# behavior: decorators replace signatures; inferred and explicit generic calls share initialization (#2477)
 # expect-stdout:
 #   decorating label
 #   main
 #   7
 #   9
 #   11
+#   0
+#   12
+#   13
+#   1
+#   inferred
+#   2
+#   shadow local
 
-# RFC 036: user-defined decorators
+"""Observe replacement signatures and once-only initialization through inferred generic calls."""
+
+static decorations: int = 0
 
 
 def parse(value: int) -> int:
@@ -32,7 +41,7 @@ def parse_text(value: str) -> int:
     return int(value)
 
 
-def from_text(func: (int) -> int) -> ((str) -> int):
+def from_text(func: (int) -> int) -> (str) -> int:
     """Replace the original with a required ordinary parameter of a different checked type."""
     return parse_text
 
@@ -43,8 +52,45 @@ def number(value: int) -> int:
     return value
 
 
+def preserve[F]() -> (F) -> F:
+    """Preserve the whole callable's generic signature."""
+    decorations += 1
+    return (func) => func
+
+
+@preserve()
+def identity[T](value: T) -> T:
+    """Return the same type through inferred and explicit decorated calls."""
+    return value
+
+
+def local_text(value: str) -> str:
+    """Supply a nongeneric callable distinct from the decorated declaration."""
+    return f"{value} local"
+
+
+def call_shadow(identity: (str) -> str) -> str:
+    """Call the local parameter even though its name shadows a decorated generic declaration."""
+    return identity("shadow")
+
+
 def main() -> None:
+    """
+    Observe checked decorator replacements and generic instance inference.
+
+    1. Call nongeneric replacements with their checked input signatures.
+    2. Share initialization between inferred and explicit generic instances.
+    """
+    # 1. Replacements retain their public signatures and initialize before main.
     println("main")
     println(run(7))
     println(run(9))
     println(number("11"))
+    # 2. Inference selects the same closed instance as explicit type arguments.
+    println(decorations)
+    println(identity(12))
+    println(identity[int](13))
+    println(decorations)
+    println(identity("inferred"))
+    println(decorations)
+    println(call_shadow(local_text))

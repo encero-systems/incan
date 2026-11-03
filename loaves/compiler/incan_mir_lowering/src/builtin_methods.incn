@@ -1,0 +1,424 @@
+"""Lower builtin members on text, integers, floats, and generators."""
+
+from pub::incan_mir_plan import (
+    Carrier,
+    BinaryOp,
+    ListLeaf,
+    Operand,
+    Place,
+    PlanType,
+    Projection,
+    RvalueKind,
+    SourceSpan,
+    assign as plan_assign,
+    place as plan_place,
+)
+from text_ownership import drop_borrowed_text_temporaries
+from derived_methods import lower_derived_clone
+from rust::incan_semantics_core::body_ir import (
+    ArgumentElement as RustArgumentElement,
+    Operand as RustOperand,
+    OwnershipFact,
+    Place as RustPlace,
+    MethodTarget,
+)
+from rust::incan_semantics_core import SymbolOrigin
+from generator_adapters import generator_adapter
+from generator_consumers import is_generator_consumer, consumer_result, generator_consumer
+from element_places import is_element_place
+from options import carrier_layout
+from numerics import numeric_name, numeric_carrier, integer_carrier
+from strings import emit_text_helper, text_method
+from resize import resize_policy, emit_resize
+from frame import place_type, Builder, temporary, drop_owned, external_call, read_place
+from lists import require_list_shape
+from checked_values import scalar_operand, scalar_place
+from operators import operand_type
+from builtin_calls import coerce_numeric_operand
+from operand_borrows import assign_text_result, borrow_text_operand, lower_text_helper
+from list_methods import (
+    argument_place,
+    argument_value,
+    borrowed_list_argument,
+    call_destination,
+    lower_list_builtin,
+    lower_list_method,
+)
+from list_iteration import frozen_dictionary_contains, list_root_place
+from hashed_collections import collection_contains
+from sequence_builtins import argument_type, text_argument
+
+
+pub def lower_builtin_method(
+    mut builder: Builder,
+    target: &MethodTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Dispatch retained builtin registry members to text, numeric resize, or collection boundaries."""
+    mut member = ""
+    match target.canonical:
+        Some(identity) =>
+            if identity.origin != SymbolOrigin.Builtin:
+                return Err("unsupported Body IR non-builtin list Method")
+            member = str(identity.declaration_name)
+        None =>
+            return Err(
+                f"unsupported Body IR Method {str(target.name)} without canonical identity in {builder.name} at {span.file}:{span.line}:{span.column}",
+            )
+    # Builtin Clone calls use the exact retained native carrier rather than a same-named list member.
+    if member in ["Clone.clone", "Option.clone"]:
+        return lower_derived_clone(builder, arguments, destination, span)
+    receiver_type = argument_type(builder, arguments, 0, span)?
+    if lower_integer_helper(builder, member, receiver_type, arguments, destination, span)?:
+        return Ok(None)
+    match receiver_type:
+        PlanType.FrozenCollection(name, _elements) =>
+            if member == f"{name}.len":
+                return lower_list_builtin(builder, arguments, destination, span)
+            if name == "FrozenDict" and member == "FrozenDict.contains_key":
+                return frozen_dictionary_contains(builder, arguments, destination, false, span)
+            if name == "FrozenSet" and member == "FrozenSet.contains":
+                return collection_contains(builder, false, arguments, destination, span)
+        _ => pass
+    if receiver_type == PlanType.FrozenBytes and member == "frozenbytes.len":
+        return lower_list_builtin(builder, arguments, destination, span)
+    if lower_text_codec_method(builder, member, arguments, destination, span)?:
+        return Ok(None)
+    if member == "str.__slice__":
+        return lower_string_slice(builder, arguments, destination, span)
+    match text_method(member, receiver_type):
+        Some((name, result)) => return lower_text_helper(builder, name, result, arguments, destination, span)
+        None => pass
+    match resize_policy(member, receiver_type):
+        Some(policy) =>
+            if len(arguments) != 1:
+                return Err("invalid Body IR resize arity")
+            match destination:
+                Some(place) =>
+                    output = scalar_place(builder, place, span)?
+                    operand = numeric_receiver(builder, arguments, span)?
+                    return emit_resize(builder, policy, receiver_type, operand, output, span)
+                None => return Err("unsupported Body IR resize without checked destination")
+        None => pass
+    # The checker types every non-predicate float member as `float`, but an `f32` receiver's own `powf` returns `f32`.
+    # Lowering either width would disagree with one of them, so the member stays refused until they agree.
+    if member == "f32.powf":
+        return Err("unsupported Body IR f32 powf: its checked float result differs from the carrier's f32 powf")
+    if member in ["f32.sqrt", "f64.sqrt"]:
+        return lower_float_square_root(builder, member, receiver_type, arguments, destination, span)
+    match float_method(member, receiver_type):
+        Some((name, parameters, result)) =>
+            return lower_float_method(builder, name, parameters, result, arguments, destination, span)
+        None => pass
+    return lower_list_method(builder, member, arguments, destination, span)
+
+
+def lower_integer_helper(
+    mut builder: Builder,
+    member: str,
+    receiver: PlanType,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """Lower wrapping arithmetic directly and call native checked and saturating u8 methods at their exact widths."""
+    if lower_wrapping_integer(builder, member, receiver, arguments, destination, span)?:
+        return Ok(true)
+    if receiver != PlanType.U8:
+        return Ok(false)
+    for operation in [
+        "checked_add",
+        "checked_sub",
+        "checked_mul",
+        "checked_pow",
+        "wrapping_pow",
+        "saturating_add",
+        "saturating_sub",
+        "saturating_mul",
+        "saturating_pow",
+    ]:
+        if member != f"u8.{operation}":
+            continue
+        if len(arguments) != 2:
+            return Err("unsupported Body IR integer helper arity")
+        mut operand_type = PlanType.U8
+        if operation.endswith("_pow"):
+            operand_type = PlanType.U32
+        mut result = PlanType.U8
+        if operation.startswith("checked_"):
+            match destination:
+                Some(place) =>
+                    output = scalar_place(builder, place, span)?
+                    result = place_type(builder.locals, output)
+                None => return Err("unsupported Body IR checked integer helper without destination")
+        output = call_destination(builder, destination, result, span)?
+        value = argument_value(builder, arguments, 1, span)?
+        operands = [
+            numeric_receiver(builder, arguments, span)?,
+            coerce_numeric_operand(builder, value, operand_type, span)?,
+        ]
+        external_call(builder, f"u8::{operation}", [PlanType.U8, operand_type], result, operands, output, span)
+        return Ok(true)
+    return Ok(false)
+
+
+def lower_wrapping_integer(
+    mut builder: Builder,
+    member: str,
+    receiver: PlanType,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """Emit the checked integer member as native modular arithmetic without invoking a runtime wrapper recursively."""
+    if not integer_carrier(receiver):
+        return Ok(false)
+    mut owner = numeric_name(receiver)
+    if receiver == PlanType.Int:
+        owner = "i64"
+    for name, operation in [
+        ("wrapping_add", BinaryOp.Add),
+        ("wrapping_sub", BinaryOp.Subtract),
+        ("wrapping_mul", BinaryOp.Multiply),
+    ]:
+        if member != f"{owner}.{name}":
+            continue
+        if len(arguments) != 2:
+            return Err("unsupported Body IR wrapping integer arity")
+        output = call_destination(builder, destination, receiver, span)?
+        left = numeric_receiver(builder, arguments, span)?
+        value = argument_value(builder, arguments, 1, span)?
+        right = coerce_numeric_operand(builder, value, receiver, span)?
+        if receiver == PlanType.Int:
+            pair = temporary(builder, PlanType.CheckedInt, span)
+            builder.emit(plan_assign(pair, RvalueKind.Binary(operation, left, right), span))
+            wrapped = Place(local=pair.local, projection=Projection.Value, span=span)
+            builder.emit(plan_assign(output, RvalueKind.Use(read_place(wrapped, false, span)), span))
+            return Ok(true)
+        builder.emit(plan_assign(output, RvalueKind.Binary(operation, left, right), span))
+        return Ok(true)
+    return Ok(false)
+
+
+def lower_string_slice(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Consume the checked primitive slice member with its borrowed receiver and two signed int endpoints."""
+    if len(arguments) != 3:
+        return Err("unsupported Body IR string slice argument count")
+    incoming = builder.owned
+    mut operands: list[Operand] = []
+    match arguments[0].as_one():
+        Some(value) => operands.append(borrow_text_operand(builder, value, span)?)
+        None => return Err("unsupported Body IR string slice receiver spread")
+    for index in [1, 2]:
+        match arguments[index].as_one():
+            Some(value) =>
+                operand = scalar_operand(builder, value, span)?
+                if operand_type(builder, operand)? != PlanType.Int:
+                    return Err("unsupported Body IR non-int string slice bound")
+                operands.append(operand)
+            None => return Err("unsupported Body IR string slice bound spread")
+    text = emit_text_helper(
+        builder,
+        "slice_text_bounds",
+        PlanType.String,
+        [PlanType.StringRef, PlanType.Int, PlanType.Int],
+        operands,
+        span,
+    )
+    drop_borrowed_text_temporaries(builder, incoming, text.local, span)
+    return assign_text_result(builder, text, destination, span)
+
+
+def lower_text_codec_method(
+    mut builder: Builder,
+    member: str,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """Call the exact borrowed UTF-8 runtime boundary after the frontend fills all checked codec slots."""
+    if member not in ["str.encode", "frozenstr.encode", "bytes.decode", "frozenbytes.decode"]:
+        return Ok(false)
+    decoding = member in ["bytes.decode", "frozenbytes.decode"]
+    mut arity = 2
+    if decoding:
+        arity = 3
+    if len(arguments) != arity:
+        return Err("unsupported Body IR incomplete builtin codec arguments")
+    incoming = builder.owned
+    receiver_type = argument_type(builder, arguments, 0, span)?
+    mut parameters: list[PlanType] = []
+    mut operands: list[Operand] = []
+    mut name = ""
+    if member == "str.encode" and receiver_type in [PlanType.String, PlanType.StringRef]:
+        name = "encode_text"
+        parameters.append(PlanType.StringRef)
+        operands.append(text_argument(builder, arguments, 0, span)?)
+    elif member == "frozenstr.encode" and receiver_type == PlanType.FrozenStr:
+        name = "encode_frozen_text"
+        parameters.append(PlanType.FrozenStr)
+        operands.append(argument_value(builder, arguments, 0, span)?)
+    elif member == "bytes.decode":
+        leaf, depth = require_list_shape(receiver_type, "unsupported Body IR nonbytes codec receiver")?
+        if leaf != ListLeaf.U8 or depth != 1:
+            return Err("unsupported Body IR nonbytes codec receiver")
+        name = "decode_bytes"
+        parameters.append(PlanType.ListRef(ListLeaf.U8, 1))
+        operands.append(borrowed_list_argument(builder, arguments, 0, false, span)?)
+    elif member == "frozenbytes.decode" and receiver_type == PlanType.FrozenBytes:
+        name = "decode_frozen_bytes"
+        parameters.append(PlanType.FrozenBytes)
+        operands.append(argument_value(builder, arguments, 0, span)?)
+    else:
+        return Err("unsupported Body IR builtin codec identity with a different receiver")
+    for index in range(1, arity):
+        parameters.append(PlanType.StringRef)
+        operands.append(text_argument(builder, arguments, index, span)?)
+    mut result = PlanType.List(ListLeaf.U8, 1)
+    mut output = plan_place(0, span)
+    if decoding:
+        match destination:
+            Some(place) =>
+                output = list_root_place(builder, place, span)?
+                result = place_type(builder.locals, output)
+            None => return Err("unsupported Body IR discarded codec result without a checked carrier")
+        _owner, declaration = carrier_layout(builder, result)?
+        if declaration.carrier != Carrier.Result or declaration.variants[0].fields != [PlanType.String]:
+            return Err("unsupported Body IR decode result carrier")
+        if len(declaration.variants[1].fields) != 1:
+            return Err("unsupported Body IR decode error carrier")
+        match declaration.variants[1].fields[0]:
+            PlanType.ValidationError => pass
+            PlanType.Model(owner, _name) =>
+                if builder.nominals[owner].native_item != "incan_std_core::validation::ValidationError":
+                    return Err("unsupported Body IR decode error identity")
+            _ => return Err("unsupported Body IR decode error identity")
+    else:
+        output = call_destination(builder, destination, result, span)?
+        if place_type(builder.locals, output) != result:
+            return Err("unsupported Body IR encode result carrier")
+    drop_owned(builder, output.local, span)
+    external_call(builder, f"incan_native_runtime::{name}", parameters, result, operands, output, span)
+    builder.owned.append(output.local)
+    drop_borrowed_text_temporaries(builder, incoming, output.local, span)
+    return Ok(true)
+
+
+def lower_float_square_root(
+    mut builder: Builder,
+    member: str,
+    receiver: PlanType,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Call native square root at the checker's float result type, widening an f32 receiver before evaluation."""
+    if len(arguments) != 1:
+        return Err("invalid Body IR square-root arity")
+    mut width = "f64"
+    if receiver == PlanType.F32:
+        width = "f32"
+    elif receiver != PlanType.Float and receiver != PlanType.F64:
+        return Err("invalid Body IR square-root receiver")
+    if member != f"{width}.sqrt":
+        return Err("invalid Body IR square-root declaration identity")
+    output = call_destination(builder, destination, PlanType.Float, span)?
+    operand = numeric_receiver(builder, arguments, span)?
+    widened = coerce_numeric_operand(builder, operand, PlanType.Float, span)?
+    external_call(builder, "std::primitive::f64::sqrt", [PlanType.Float], PlanType.Float, [widened], output, span)
+    return Ok(None)
+
+
+def float_method(member: str, receiver: PlanType) -> Option[tuple[str, list[PlanType], PlanType]]:
+    """Select the checked native float member; these primitives must not reenter their runtime wrappers."""
+    mut width = ""
+    if receiver == PlanType.F32:
+        width = "f32"
+    elif receiver == PlanType.Float or receiver == PlanType.F64:
+        width = "f64"
+    else:
+        return None
+    if member == "f64.powf":
+        return Some(("f64::powf", [receiver, receiver], receiver))
+    if member == f"{width}.is_finite":
+        return Some((f"{width}::is_finite", [receiver], PlanType.Bool))
+    if member == f"{width}.is_nan":
+        return Some((f"{width}::is_nan", [receiver], PlanType.Bool))
+    return None
+
+
+def lower_float_method(
+    mut builder: Builder,
+    name: str,
+    parameters: list[PlanType],
+    result: PlanType,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Call the native float member with the copied receiver and each argument at its checked carrier."""
+    if len(arguments) != len(parameters):
+        return Err("unsupported Body IR float Method arity")
+    mut operands = [numeric_receiver(builder, arguments, span)?]
+    for index in range(1, len(parameters)):
+        argument = argument_value(builder, arguments, index, span)?
+        operands.append(coerce_numeric_operand(builder, argument, parameters[index], span)?)
+    output = call_destination(builder, destination, result, span)?
+    external_call(builder, name, parameters, result, operands, output, span)
+    return Ok(None)
+
+
+def numeric_receiver(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Read a canonical numeric method's shared receiver without consuming its Copy storage."""
+    match arguments[0].as_one():
+        Some(RustOperand.Place(read)) =>
+            # A list or dictionary element has no storage to copy from; its materialized value is read below.
+            if read.fact == OwnershipFact.Borrow and not is_element_place(builder, read.place)?:
+                place = scalar_place(builder, read.place, span)?
+                if not numeric_carrier(place_type(builder.locals, place)):
+                    return Err("invalid Body IR numeric receiver outside numeric storage")
+                return Ok(read_place(place, false, span))
+        _ => pass
+    return argument_value(builder, arguments, 0, span)
+
+
+pub def lower_generator_member(
+    mut builder: Builder,
+    method: str,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    receiver_ty: PlanType,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Move the owned generator receiver into one runtime adapter or consumer, as legacy's member consumes its receiver.
+
+    An adapter's result is another owned generator; a consumer drains the receiver into its checked destination.
+    """
+    receiver = argument_place(builder, arguments, 0, span)?
+    if receiver.projection != Projection.Whole or place_type(builder.locals, receiver) != receiver_ty:
+        return Err("unsupported Body IR generator member receiver")
+    mut operands: list[Operand] = []
+    for index in range(1, len(arguments)):
+        operands.append(argument_value(builder, arguments, index, span)?)
+    source = read_place(receiver, true, span)
+    if is_generator_consumer(method):
+        output = call_destination(builder, destination, consumer_result(method, receiver_ty), span)?
+        drop_owned(builder, output.local, span)
+        return generator_consumer(builder, method, source, operands, output, span)
+    output = call_destination(builder, destination, receiver_ty, span)?
+    drop_owned(builder, output.local, span)
+    generator_adapter(builder, method, source, operands, output, span)?
+    builder.owned.append(output.local)
+    return Ok(None)

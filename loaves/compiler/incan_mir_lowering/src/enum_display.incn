@@ -5,7 +5,8 @@ from rust::incan_semantics_core import SymbolOrigin
 from pub::incan_mir_plan import PlanType, Place, Operand, SourceSpan, RvalueKind
 from pub::incan_mir_plan import assign as plan_assign
 from frame import Builder, temporary, place_type, read_place
-from lowering import scalar_place, native_format_text
+from checked_values import scalar_place
+from formatting import native_format_text
 from element_places import is_element_place
 from decls import library_enum_item
 

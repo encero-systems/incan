@@ -50,11 +50,28 @@ use crate::body_ir::{
 /// Version 34 retains checked private pointer carriers and foreign bridge operations.
 /// Version 35 retains expansion contexts in every checked source span and canonical identity.
 /// Version 36 appends the typed C span bridge operations.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 36;
+/// Version 37 carries explicit input access independently of binding mutability and native collection ownership.
+/// Version 38 retains checked generic value metadata; version 39 adds a source-owned explicit-input body profile.
+/// Version 40 combines the input and reflection contracts. Their independently developed positional layouts are
+/// incompatible with this combined representation and require regenerated providers.
+/// Version 41 retains canonical whole-owner initializer transfers independently of ordinary native assignments.
+/// Every provider must be rebuilt; an older profile cannot silently discard the added positional field.
+/// Version 42 retains each explicit local binding on its body, so a body that loses its checked profile still
+/// exposes the explicit-input obligation.
+/// Version 43 retains a body's returned view: the parameter slot its result borrows and the view's access.
+/// Version 44 executes conditional explicit bodies: a checked input profile 2 is admitted, and its owned initializer
+/// transfers travel with the body.
+/// Version 45 marks a returned view carried in a `Result` or `Option` payload, so a caller keeps the source loan
+/// through `?` instead of taking the carrier as an owned value.
+/// Version 46 records which payload carries a returned view, so a view may travel in a `Result` error as well as in
+/// its success payload.
+/// Version 47 lets a tuple element carry a returned view, so a result can pair a view with owned values.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 47;
 
-/// Version 36 only appends enum variants, so a version 35 payload decodes unchanged; older layouts are incompatible
-/// with this reader and require regenerated providers.
-const OLDEST_SUPPORTED_VERSION: u32 = 35;
+/// Only the binding-aware combined layout is admitted. Missing input authority cannot be reconstructed from a
+/// native ABI, and a prior layout cannot silently omit initializer transfers, explicit local obligations, returned
+/// views, conditional profiles or the component carrying a view.
+const OLDEST_SUPPORTED_VERSION: u32 = 47;
 
 /// Required-field witnesses transported separately from the legacy positional nominal layout.
 #[derive(Serialize, Deserialize)]
@@ -314,7 +331,7 @@ pub enum ExecutableDeclaration {
         /// Checked replacement storage and computation under the same canonical source identity.
         storage: Box<crate::body_ir::StaticDeclaration>,
     },
-    /// The generic wrapper evaluates its checked decorator chain per invocation and retains its source original.
+    /// Retired serialized discriminant; identity validation refuses the former per-call decorator fragment.
     InvocationDecoratedBody {
         /// Ordinary calls select this wrapper using the call site's checked type arguments.
         body: Box<Body>,
@@ -336,6 +353,15 @@ pub enum ExecutableDeclaration {
         /// Producer-selected native callees used by retained default computations.
         callables: Vec<crate::body_ir::LoafCallable>,
     },
+    /// A generic wrapper, original and initializer template close together and use the checked per-instance policy.
+    GenericDecoratedBody {
+        /// Ordinary calls select this wrapper with their checked type arguments.
+        body: Box<Body>,
+        /// The original and initializer retain the same canonical declaration and exact type parameters.
+        binding: Box<crate::body_ir::DecoratedBinding>,
+        /// Producer-selected native callees required by any of the three retained frames.
+        callables: Vec<crate::body_ir::LoafCallable>,
+    },
 }
 
 impl ExecutableDeclaration {
@@ -352,21 +378,16 @@ impl ExecutableDeclaration {
                 && crate::body_ir::LoafCallable::from_body(frame).is_some())
             .then_some(frame.canonical.as_ref())
             .flatten(),
-            Self::InvocationDecoratedBody { body, binding } => {
+            Self::InvocationDecoratedBody { .. } => None,
+            Self::GenericDecoratedBody {
+                body,
+                binding,
+                callables,
+            } => {
                 let identity = body.canonical.as_ref()?;
-                (binding.initialization == crate::body_ir::DecoratedInitialization::PerInvocation
-                    && binding.initializer.is_none()
-                    && identity.kind == crate::SemanticSourceTargetKind::Function
-                    && !body.type_parameters.is_empty()
-                    && !body.is_async
-                    && !binding.original_body.is_async
-                    && binding.original_body.canonical.as_ref() == Some(identity)
-                    && binding.original_body.direct_call_id == body.direct_call_id
-                    && binding.original_body.decl_id == body.decl_id
-                    && binding.original_body.type_parameters == body.type_parameters
-                    && binding.original_body.params == body.params
-                    && binding.original_body.return_type == body.return_type)
-                    .then_some(identity)
+                let mut module = BodyIrModule::declarations_only(crate::canonical_module_identity(identity)?);
+                module.bodies.push(body.as_ref().clone());
+                (valid_native_calls(callables) && module.is_well_formed_decorated_binding(binding)).then_some(identity)
             }
             Self::DecoratedBody { body, binding, storage } => {
                 let identity = body.canonical.as_ref()?;
@@ -977,6 +998,7 @@ fn record_type_context_members(
             | ExecutableDeclaration::CompiledCallableFrame { .. }
             | ExecutableDeclaration::DecoratedBody { .. }
             | ExecutableDeclaration::InvocationDecoratedBody { .. }
+            | ExecutableDeclaration::GenericDecoratedBody { .. }
             | ExecutableDeclaration::Trait(_)
             | ExecutableDeclaration::Constant(_) => Vec::new(),
             ExecutableDeclaration::TypeAlias(_) | ExecutableDeclaration::Static(_) => Vec::new(),
@@ -1271,6 +1293,7 @@ impl<'bytes> SurfaceReader<'bytes> {
             ExecutableDeclaration::Body(body)
             | ExecutableDeclaration::NativeBody { body, .. }
             | ExecutableDeclaration::DecoratedBody { body, .. }
+            | ExecutableDeclaration::GenericDecoratedBody { body, .. }
             | ExecutableDeclaration::InvocationDecoratedBody { body, .. } => Ok(*body),
             _ => Err(malformed(
                 "selected declaration is type context, not an executable body",
@@ -1308,7 +1331,8 @@ mod tests {
 
     use super::{
         CoverageReason, DeclarationCoverage, EXECUTABLE_REPRESENTATION_VERSION, ExecutableDeclaration,
-        ExecutableRepresentationError, SurfaceReader, build_surface, decode_module,
+        ExecutableRepresentationError, SurfaceReader, build_surface, decode_module, publication,
+        require_supported_version,
     };
     use crate::body_ir::{
         ArgumentBinding, Block, Body, BodyIrModule, CallableParam, CallableParamDefault, CallableTarget, Callee,
@@ -1356,6 +1380,9 @@ mod tests {
             name: name.into(),
             span: identity.declaration_span,
             return_type: IncanType::Primitive(IncanPrimitiveType::Unit),
+            checked_input_profile: None,
+            explicit_input_bindings: Vec::new(),
+            returned_view: None,
             callable_representation: None,
             named_type_identities: Default::default(),
             locals: Vec::new(),
@@ -1375,7 +1402,7 @@ mod tests {
     }
 
     /// Synthetic module context used only for codec and public-closure invariants.
-    fn module(bodies: Vec<Body>) -> BodyIrModule {
+    pub(super) fn module(bodies: Vec<Body>) -> BodyIrModule {
         BodyIrModule {
             runtime_callable_bindings: Vec::new(),
             decorated_bindings: Vec::new(),
@@ -1406,6 +1433,70 @@ mod tests {
         build_surface(std::slice::from_ref(module), "probe", "1.2.3", public, &BTreeSet::new())
     }
 
+    /// Publication rebases the profile's proven owner together with the body, without repairing a wrong owner.
+    #[test]
+    fn input_profile_publication_retains_canonical_owner() -> Result<(), Box<dyn std::error::Error>> {
+        let mut source = body("input", 1);
+        source.type_parameters.clear();
+        source.canonical = Some(CanonicalSymbolId::module_declaration(
+            vec!["lib".into()],
+            "input",
+            SemanticSourceTargetKind::Function,
+            source.span,
+        ));
+        let owner = source.canonical.clone().ok_or("missing source owner")?;
+        source.checked_input_profile = Some(crate::body_ir::CheckedInputProfile {
+            version: 1,
+            owner: owner.clone(),
+            parameters: Vec::new(),
+            owned_initializers: Vec::new(),
+        });
+        source
+            .explicit_input_bindings
+            .push(crate::body_ir::ExplicitInputBinding {
+                declaration: source.span,
+                identity: Some(identity("view", 3)),
+                access: crate::IncanInputAccess::Shared,
+            });
+        let context = module(vec![source.clone()]);
+        let eligible = BTreeSet::from([identity("input", 1)]);
+        let projected =
+            publication::project_body(&source, &context, "probe", &eligible).map_err(|error| format!("{error:?}"))?;
+        // The obligation is published; the session-local binding identity is not.
+        assert!(matches!(
+            projected.body.explicit_input_bindings.as_slice(),
+            [crate::body_ir::ExplicitInputBinding { identity: None, .. }]
+        ));
+        assert_eq!(
+            projected
+                .body
+                .checked_input_profile
+                .as_ref()
+                .map(|profile| &profile.owner),
+            projected.body.canonical.as_ref()
+        );
+        let (frame, _) = publication::project_compiled_frame(&source, &context, "probe", &eligible)
+            .map_err(|error| format!("{error:?}"))?;
+        let ExecutableDeclaration::CompiledCallableFrame { frame, .. } = frame else {
+            return Err("expected compiled frame".into());
+        };
+        assert_eq!(
+            frame.checked_input_profile.as_ref().map(|profile| &profile.owner),
+            frame.canonical.as_ref()
+        );
+        assert!(matches!(
+            frame.explicit_input_bindings.as_slice(),
+            [crate::body_ir::ExplicitInputBinding { identity: None, .. }]
+        ));
+        source.checked_input_profile.as_mut().ok_or("missing profile")?.owner = identity("other", 2);
+        assert!(publication::project_body(&source, &context, "probe", &eligible).is_err());
+        assert!(publication::project_compiled_frame(&source, &context, "probe", &eligible).is_err());
+        for obsolete in [36_u32, 37, 38, 39, 40, 41, 42, 43, 44] {
+            assert!(require_supported_version(&postcard::to_allocvec(&obsolete)?).is_err());
+        }
+        Ok(())
+    }
+
     /// A canonical call participates in closure even before any branch is executed.
     fn call(target: CanonicalSymbolId) -> Statement {
         Statement {
@@ -1431,6 +1522,8 @@ mod tests {
     #[test]
     fn version_refusal_precedes_incompatible_header_or_module_decode() -> Result<(), Box<dyn std::error::Error>> {
         for version in [
+            37,
+            38,
             super::OLDEST_SUPPORTED_VERSION - 1,
             EXECUTABLE_REPRESENTATION_VERSION + 1,
         ] {
@@ -1662,6 +1755,7 @@ mod tests {
         let mut exported = body("exported", 1);
         exported.params.push(CallableParam {
             mutable: false,
+            input_access: crate::IncanInputAccess::Inferred,
             native_owned: false,
             kind: crate::IncanCallableParamKind::Normal,
             local: crate::body_ir::LocalId(0),
@@ -1706,6 +1800,7 @@ mod tests {
         Ok(())
     }
 
+    /// Public indexes and generic decorator frames refuse overlapping addresses and substituted callable identities.
     #[test]
     fn index_refuses_overlaps_and_payload_identity_substitution() -> Result<(), Box<dyn std::error::Error>> {
         let public = BTreeSet::from([identity("alpha", 1), identity("beta", 2)]);
@@ -1726,6 +1821,36 @@ mod tests {
                 .decode_declaration(&identity("alpha", 1), &wrong)
                 .is_err()
         );
+
+        let wrapper = body("cached", 3);
+        let mut initializer = wrapper.clone();
+        initializer.return_type = IncanType::Function {
+            params: Vec::new(),
+            return_type: Box::new(wrapper.return_type.clone()),
+        };
+        let mut generic = module(vec![wrapper.clone()]);
+        generic.decorated_bindings.push(crate::body_ir::DecoratedBinding {
+            original_body: wrapper,
+            initializer: Some(Box::new(initializer)),
+            initialization: crate::body_ir::DecoratedInitialization::PerInstantiation,
+        });
+        let generic_public = BTreeSet::from([identity("cached", 3)]);
+        let generic_bytes = publish(&generic, &generic_public)?;
+        let generic_reader = SurfaceReader::open(&generic_bytes)?;
+        let fragment = generic_reader.fragment(&identity("cached", 3))?;
+        assert_eq!(fragment.identity(), Some(&identity("cached", 3)));
+        let mut substituted = fragment.clone();
+        let ExecutableDeclaration::GenericDecoratedBody { body, .. } = &mut substituted else {
+            return Err("generic decorator fragment missing".into());
+        };
+        body.direct_call_id = CompilerNodeId::declaration_span("foreign", 300, 399);
+        assert!(substituted.identity().is_none());
+        let mut asynchronous = fragment;
+        let ExecutableDeclaration::GenericDecoratedBody { body, .. } = &mut asynchronous else {
+            return Err("generic decorator fragment missing".into());
+        };
+        body.is_async = true;
+        assert!(asynchronous.identity().is_none());
         Ok(())
     }
     /// A public scalar union alias retains its expanded semantic type without introducing a runtime body.
@@ -2159,6 +2284,7 @@ mod tests {
         ]);
         exported.params.push(CallableParam {
             mutable: false,
+            input_access: crate::IncanInputAccess::Inferred,
             native_owned: false,
             kind: crate::IncanCallableParamKind::Normal,
             local: crate::body_ir::LocalId(0),
@@ -2171,13 +2297,15 @@ mod tests {
             ("First".into(), first.clone()),
             ("Second".into(), second.clone()),
             ("unused_private_secret".into(), identity("unused_private_secret", 3)),
-        ]);
+        ])
+        .into();
         let bytes = publish(&module(vec![exported]), &BTreeSet::from([identity("exported", 1)]))?;
         let reader = SurfaceReader::open(&bytes)?;
         let decoded = reader.declaration(&identity("exported", 1))?;
         assert_eq!(
             decoded.named_type_identities,
             std::collections::BTreeMap::from([("First".into(), first.clone()), ("Second".into(), second.clone())])
+                .into()
         );
         let DeclarationCoverage::Covered { requirements, .. } = reader.index().coverage(&identity("exported", 1))?
         else {

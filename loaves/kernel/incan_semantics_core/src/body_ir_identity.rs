@@ -7,7 +7,7 @@
 //! coherent-looking foreign record. These checks never mint or complete an identity; they only confirm that the
 //! retained ones agree with each other and belong to this module. They answer the same question for every consumer.
 
-use incan_lang::lang::types::collections::{self, CollectionTypeId};
+use incan_lang::lang::types::collections::CollectionTypeId;
 use std::collections::BTreeSet;
 
 use crate::body_ir::{
@@ -26,7 +26,7 @@ fn decorated_parameter_matches(
     left: &crate::IncanCallableParam,
     right: &crate::body_ir::CallableParam,
 ) -> bool {
-    if left.kind != right.kind || left.native_owned != right.native_owned {
+    if left.kind != right.kind || left.native_owned != right.native_owned || left.input_access != right.input_access {
         return false;
     }
     match body.locals.get(right.local.index()).map(|local| &local.origin) {
@@ -104,7 +104,7 @@ impl BodyIrModule {
         modules: &[BodyIrModule],
     ) -> bool {
         if binding.initialization == crate::body_ir::DecoratedInitialization::PerInvocation {
-            return binding.initializer.is_none() && self.is_well_formed_invocation_binding(binding);
+            return false;
         }
         let original = &binding.original_body;
         if let Some(initializer) = &binding.initializer {
@@ -145,7 +145,8 @@ impl BodyIrModule {
     }
 
     /// Validate a per-instantiation initializer against its original and wrapper, without granting module storage.
-    /// The same formal binders must govern both templates; another source declaration cannot provide either body.
+    /// All three frames retain their canonical direct-call identity and exact formal binders; another declaration
+    /// cannot provide any frame.
     fn is_well_formed_generic_decorated_binding(&self, original: &Body, initializer: &Body) -> bool {
         let Some(identity) = &original.canonical else {
             return false;
@@ -154,10 +155,6 @@ impl BodyIrModule {
             || original.type_parameters.is_empty()
             || original.type_parameters.iter().any(String::is_empty)
             || original.type_parameters.iter().collect::<BTreeSet<_>>().len() != original.type_parameters.len()
-            || original.params.iter().any(|parameter| {
-                crate::body_ir::decorated_signature_uses_parameters(&parameter.ty, &original.type_parameters)
-            })
-            || crate::body_ir::decorated_signature_uses_parameters(&original.return_type, &original.type_parameters)
             || original.is_async
             || initializer.is_async
             || !self.body_has_canonical_direct_call_id(original)
@@ -185,6 +182,8 @@ impl BodyIrModule {
         };
         wrappers.next().is_none()
             && wrapper.decl_id == original.decl_id
+            && self.body_has_canonical_direct_call_id(wrapper)
+            && !wrapper.is_async
             && wrapper.type_parameters == original.type_parameters
             && params.len() == wrapper.params.len()
             && params
@@ -192,44 +191,6 @@ impl BodyIrModule {
                 .zip(&wrapper.params)
                 .all(|(left, right)| decorated_parameter_matches(wrapper, left, right))
             && **return_type == wrapper.return_type
-    }
-
-    /// Require one source generic frame and its visible wrapper, with identical declared binders and no storage.
-    /// Only signatures using those binders have per-call semantics; closed signatures require the separate cache
-    /// policy.
-    fn is_well_formed_invocation_binding(&self, binding: &crate::body_ir::DecoratedBinding) -> bool {
-        let original = &binding.original_body;
-        let Some(identity) = original.canonical.as_ref() else {
-            return false;
-        };
-        if identity.kind != SemanticSourceTargetKind::Function
-            || original.type_parameters.is_empty()
-            || original.type_parameters.iter().any(String::is_empty)
-            || original.type_parameters.iter().collect::<BTreeSet<_>>().len() != original.type_parameters.len()
-            || original.is_async
-            || original.is_generator()
-            || !self.body_has_canonical_direct_call_id(original)
-            || self
-                .static_declarations
-                .iter()
-                .any(|storage| &storage.canonical == identity)
-        {
-            return false;
-        }
-        let uses_parameters =
-            original.params.iter().any(|parameter| {
-                crate::body_ir::decorated_signature_uses_parameters(&parameter.ty, &original.type_parameters)
-            }) || crate::body_ir::decorated_signature_uses_parameters(&original.return_type, &original.type_parameters);
-        uses_parameters
-            && self.callable_declaration_frames().any(|wrapper| {
-                wrapper.canonical.as_ref() == Some(identity)
-                    && wrapper.decl_id == original.decl_id
-                    && self.body_has_canonical_direct_call_id(wrapper)
-                    && wrapper.type_parameters == original.type_parameters
-                    && wrapper.params == original.params
-                    && wrapper.return_type == original.return_type
-                    && !wrapper.is_async
-            })
     }
 
     /// Whether a normal enum layout and every variant belong to their exact declared owner. A native enum may retain
@@ -905,14 +866,11 @@ impl BodyIrModule {
                 args: vec![underlying.clone()],
             }
         };
-        body.return_type
-            == IncanType::Generic {
-                base: "Result".to_owned(),
-                args: vec![
-                    owner,
-                    IncanType::NativeBuiltin(crate::RuntimeBuiltinType::ValidationError),
-                ],
-            }
+        let expected = [
+            owner,
+            IncanType::NativeBuiltin(crate::RuntimeBuiltinType::ValidationError),
+        ];
+        body.return_type.collection_arguments(CollectionTypeId::Result) == Some(expected.as_slice())
     }
 
     /// Check retained storage consistency without inferring support or activation from a raw tuple layout.
@@ -1079,19 +1037,19 @@ fn static_initializer_matches_parts(ty: &IncanType, initial: &StaticInitializer)
                 && body.return_type == *ty
         }
         StaticInitializer::Literal(value) => literal_static_carrier_matches(ty, value),
-        StaticInitializer::List(values) => match collection_arguments(ty, CollectionTypeId::List) {
+        StaticInitializer::List(values) => match ty.collection_arguments(CollectionTypeId::List) {
             Some([element]) => {
-                primitive_static_carrier(element)
+                element.static_literal_carrier()
                     && values
                         .iter()
                         .all(|value| literal_static_carrier_matches(element, value))
             }
             _ => false,
         },
-        StaticInitializer::Dict(entries) => match collection_arguments(ty, CollectionTypeId::Dict) {
+        StaticInitializer::Dict(entries) => match ty.collection_arguments(CollectionTypeId::Dict) {
             Some([key, value]) => {
-                hashed_static_carrier(key)
-                    && primitive_static_carrier(value)
+                key.hashed_static_literal_carrier()
+                    && value.static_literal_carrier()
                     && entries.iter().all(|(entry_key, entry_value)| {
                         literal_static_carrier_matches(key, entry_key)
                             && literal_static_carrier_matches(value, entry_value)
@@ -1099,9 +1057,9 @@ fn static_initializer_matches_parts(ty: &IncanType, initial: &StaticInitializer)
             }
             _ => false,
         },
-        StaticInitializer::Set(members) => match collection_arguments(ty, CollectionTypeId::Set) {
+        StaticInitializer::Set(members) => match ty.collection_arguments(CollectionTypeId::Set) {
             Some([element]) => {
-                hashed_static_carrier(element)
+                element.hashed_static_literal_carrier()
                     && members
                         .iter()
                         .all(|member| literal_static_carrier_matches(element, member))
@@ -1109,29 +1067,6 @@ fn static_initializer_matches_parts(ty: &IncanType, initial: &StaticInitializer)
             _ => false,
         },
     }
-}
-
-/// The type arguments of a checked builtin collection type of the expected kind.
-fn collection_arguments(ty: &IncanType, expected: CollectionTypeId) -> Option<&[IncanType]> {
-    match ty {
-        IncanType::Generic { base, args } if collections::from_str(base) == Some(expected) => Some(args.as_slice()),
-        _ => None,
-    }
-}
-
-/// A primitive storage carrier a static literal may hold, even when an initializer has no element to validate.
-fn primitive_static_carrier(ty: &IncanType) -> bool {
-    matches!(
-        ty,
-        IncanType::Primitive(
-            IncanPrimitiveType::Int | IncanPrimitiveType::Float | IncanPrimitiveType::Bool | IncanPrimitiveType::Str
-        )
-    )
-}
-
-/// A primitive hash key or set member: floating point lacks the Eq and Hash legacy hashed collections require.
-fn hashed_static_carrier(ty: &IncanType) -> bool {
-    primitive_static_carrier(ty) && !matches!(ty, IncanType::Primitive(IncanPrimitiveType::Float))
 }
 
 /// Validate a literal payload against its exact primitive storage or collection element carrier.

@@ -5,7 +5,9 @@ from rust::incan_semantics_core import (
     SemanticSourceTargetKind,
     IncanCallableParam,
     IncanCallableParamKind,
+    IncanInputAccess,
 )
+from rust::incan_lang::lang::types::collections import from_str as collection_type, CollectionTypeId
 from rust::incan_semantics_core::body_ir import (
     BodyIrModule,
     Body,
@@ -21,11 +23,11 @@ from pub::incan_mir_plan import (
     EnumDeclaration,
 )
 from nominal_instances import NominalInstance
-from decls import library_item
+from decls import library_item, library_enum_item
 from layout_types import native_source_type
 from native_type_identity import ConstructorIndex
 from closures import callable_component, packed_input
-from table_views import borrowed_table
+from table_views import borrowed_table, borrowed_at
 from pub::incan_mir_plan import source_span as plan_span
 
 
@@ -46,7 +48,8 @@ pub def generic_models(
     referenced = referenced_templates(module)
     mut models: list[GenericModelDeclaration] = []
     # 2. Keep private templates that a retained source frame or field can instantiate later.
-    for declaration in module.nominal_declarations:
+    for declaration_position in range(len(module.nominal_declarations)):
+        declaration = borrowed_at(module.nominal_declarations, declaration_position)
         if len(declaration.type_parameters) == 0 or library_item(declaration) != "":
             continue
         mut instantiated = false
@@ -116,17 +119,20 @@ pub def generic_models(
     return Ok(models)
 
 
-def referenced_templates(module: &BodyIrModule) -> list[str]:
+pub def referenced_templates(module: &BodyIrModule) -> list[str]:
     """Inventory checked template heads without selecting implementations or inferring bindings from source names."""
     mut referenced: list[str] = []
-    for body in module.bodies:
+    for body_position in range(len(module.bodies)):
+        body = borrowed_at(module.bodies, body_position)
         retain_frame_templates(body, referenced)
-    for declaration in module.nominal_declarations:
+    for declaration_position in range(len(module.nominal_declarations)):
+        declaration = borrowed_at(module.nominal_declarations, declaration_position)
         for field in declaration.field_types:
             retain_type_templates(field, referenced)
     for declaration in module.type_alias_declarations:
         retain_type_templates(declaration.ty, referenced)
-    for declaration in module.enum_declarations:
+    for declaration_position in range(len(module.enum_declarations)):
+        declaration = borrowed_at(module.enum_declarations, declaration_position)
         for variant in declaration.variants:
             for field in variant.fields:
                 retain_type_templates(field, referenced)
@@ -165,7 +171,7 @@ def retain_type_templates(ty: &RustType, mut referenced: list[str]) -> None:
         _ => pass
 
 
-def generic_field_type(
+pub def generic_field_type(
     constructors: &ConstructorIndex,
     module: &BodyIrModule,
     ty: &RustType,
@@ -217,27 +223,39 @@ def generic_callable_input(
     """
     match parameter.ty:
         RustType.TypeVar(_name) =>
-            if parameter.kind != IncanCallableParamKind.Normal or parameter.is_mut:
+            if (
+                parameter.kind != IncanCallableParamKind.Normal
+                or parameter.is_mut
+                or parameter.input_access != IncanInputAccess.Inferred
+            ):
                 return Err("unsupported Body IR generic callable field input ownership")
             return generic_field_type(constructors, module, parameter.ty, parameters)
         _ => pass
     component = callable_component(parameter.ty)?
-    storage = packed_input(component, parameter.kind, parameter.is_mut, parameter.native_owned)?
+    storage = packed_input(component, parameter.kind, parameter.is_mut, parameter.native_owned, parameter.input_access)?
     return Ok(GenericLayoutType.Concrete(storage))
 
 
 def generic_layout_path(module: &BodyIrModule, base: str) -> Result[str, str]:
     """Use the checked declaration's native item or its local carrier; collection heads have fixed native ADTs."""
-    if base == "List":
-        return Ok("std::vec::Vec")
-    if base == "Option":
-        return Ok("std::option::Option")
-    if base == "Result":
-        return Ok("std::result::Result")
-    for declaration in module.nominal_declarations:
+    match collection_type(base):
+        Some(CollectionTypeId.List) => return Ok("std::vec::Vec")
+        Some(CollectionTypeId.Option) => return Ok("std::option::Option")
+        Some(CollectionTypeId.Result) => return Ok("std::result::Result")
+        _ => pass
+    for declaration_position in range(len(module.nominal_declarations)):
+        declaration = borrowed_at(module.nominal_declarations, declaration_position)
         if str(declaration.name) != base:
             continue
         item = library_item(declaration)
+        if item != "":
+            return Ok(item)
+        return Ok("crate::" + base)
+    for declaration_position in range(len(module.enum_declarations)):
+        declaration = borrowed_at(module.enum_declarations, declaration_position)
+        if declaration.carrier_name() != base:
+            continue
+        item = library_enum_item(declaration)
         if item != "":
             return Ok(item)
         return Ok("crate::" + base)

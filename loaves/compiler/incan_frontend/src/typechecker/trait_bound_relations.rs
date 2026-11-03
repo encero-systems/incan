@@ -4,10 +4,10 @@ use std::collections::{HashMap, HashSet};
 
 use super::TypeChecker;
 use super::derive_requirements::DeriveSupport;
-use crate::ast::TypeParam;
+use crate::ast::{Type, TypeParam};
 use crate::diagnostics::errors::{self, CallableMarkerRefusal, GenericBoundTarget};
 use crate::resolved_type_subst::substitute_resolved_type;
-use crate::symbols::{ResolvedType, SymbolKind, TypeBoundInfo, TypeInfo};
+use crate::symbols::{ResolvedType, SymbolKind, TypeBoundInfo, TypeInfo, resolve_type};
 use crate::typechecker::helpers::collection_type_id;
 use incan_lang::interop::{
     is_rust_callable_capability_bound, is_rust_capability_bound, is_rust_future_capability_bound,
@@ -56,12 +56,12 @@ impl TypeChecker {
         format!("{}[{}]", bound.name, args)
     }
 
-    /// Classify what a `with` bound names, for the remedy a bound-violation diagnostic offers (#1373).
+    /// Classify what a `with` bound names, for the bound relation and the remedy a violation offers (#1373, #1033).
     ///
     /// Anything the checker can satisfy as a trait — a source trait, a builtin trait, an imported Rust trait, or a
     /// Rust capability marker — is a trait target. A name that resolves to a declared or builtin type is a type
-    /// target, because no type argument can satisfy it. An active type-parameter placeholder and an unresolvable
-    /// name keep the trait wording, which is the only actionable one for them.
+    /// target, which only that type satisfies. An active type-parameter placeholder and an unresolvable name keep
+    /// the trait wording, which is the only actionable one for them.
     pub(in crate::typechecker) fn generic_bound_target(&self, bound: &str) -> GenericBoundTarget {
         if bound.starts_with("::")
             || is_rust_capability_bound(bound)
@@ -79,10 +79,29 @@ impl TypeChecker {
             .current_type_param_bound_details
             .iter()
             .any(|frame| frame.contains_key(bound));
-        if !is_active_type_param && self.lookup_type_info(bound).is_some() {
+        // A builtin type is a type in either spelling (`int` or `Int`), whether or not that spelling is a symbol.
+        if !is_active_type_param
+            && (ResolvedType::builtin_simple(bound).is_some() || self.lookup_type_info(bound).is_some())
+        {
             return GenericBoundTarget::Type;
         }
         GenericBoundTarget::Trait
+    }
+
+    /// The type a `with` bound names, when it names a type rather than a trait (#1033).
+    ///
+    /// A type in bound position constrains the type parameter to that type, so `with int` keys an overload set on
+    /// the type argument itself (RFC 107). Only a name [`Self::generic_bound_target`] classifies as a type qualifies,
+    /// so a trait bound keeps its meaning and a type never shadows a trait of the same name. The name resolves the
+    /// way a parameter annotation does, aliases expanded, so a builtin, a model and an alias of either agree.
+    fn bound_names_a_type(&self, bound: &str) -> Option<ResolvedType> {
+        if self.generic_bound_target(bound) != GenericBoundTarget::Type {
+            return None;
+        }
+        match self.expand_type_aliases(resolve_type(&Type::Simple(bound.to_string()), &self.symbols)) {
+            ResolvedType::Unknown | ResolvedType::TypeVar(_) => None,
+            resolved => Some(resolved),
+        }
     }
 
     /// Return whether a type satisfies one explicit bound, including generic trait arguments.
@@ -298,21 +317,25 @@ impl TypeChecker {
         }
     }
 
-    /// Resolve a checked bound to the canonical source callable trait registry.
+    /// Resolve a checked bound to the canonical source callable trait registry. Published package spellings must
+    /// select the same admitted declaration as the standard namespace; an equal name or path suffix grants no
+    /// callable behavior, and missing provider evidence does not fall back to source-name recognition.
     pub(in crate::typechecker) fn callable_trait_for_bound(
         &self,
         bound: &TypeBoundInfo,
     ) -> Option<callables::CallableTraitId> {
-        if let Some(module_path) = &bound.module_path {
-            if !callables::module_path_matches(module_path) {
-                return None;
-            }
-            return callables::from_str(Self::type_bound_source_name(bound));
+        let (module_path, trait_name) = self.type_bound_identity(bound)?;
+        if callables::module_path_matches(&module_path) {
+            return callables::from_str(&trait_name);
         }
-        let (module_path, trait_name) = self.resolve_bound_trait_path(&bound.name)?;
-        callables::module_path_matches(&module_path)
-            .then(|| callables::from_str(&trait_name))
-            .flatten()
+        let selected = self.package_trait_declaration(&module_path, &trait_name)?;
+        let callable = callables::from_str(&selected.declaration_name)?;
+        let standard_path = callables::MODULE_PATH
+            .iter()
+            .map(|part| (*part).to_string())
+            .collect::<Vec<_>>();
+        let standard = self.package_trait_declaration(&standard_path, callables::info_for(callable).name)?;
+        (selected == standard).then_some(callable)
     }
 
     /// Return whether a bound names a capability marker that requires a future (`RuntimeFuture`), under any spelling.
@@ -341,6 +364,10 @@ impl TypeChecker {
     pub(in crate::typechecker) fn type_satisfies_explicit_bound(&self, ty: &ResolvedType, bound: &str) -> bool {
         if Self::function_value_misses_future_bound(ty, bound) {
             return false;
+        }
+        // A bound that names a type is satisfied by that type and no other (#1033).
+        if let Some(bound_type) = self.bound_names_a_type(bound) {
+            return self.expand_type_aliases(ty.clone()) == bound_type;
         }
         if let Some(defer) = self.foreign_trait_bound_requires_native_check(bound) {
             return defer;
@@ -1370,8 +1397,10 @@ impl TypeChecker {
 
     /// Return whether a named user type explicitly satisfies a generic trait bound.
     fn named_type_satisfies_bound(&self, type_name: &str, bound: &str) -> bool {
-        match self.lookup_type_info(type_name) {
-            Some(TypeInfo::Builtin) => matches!(builtin_traits::from_str(bound), Some(TraitId::Clone | TraitId::Debug)),
+        let spelled = match self.lookup_type_info(type_name) {
+            Some(TypeInfo::Builtin) => {
+                return matches!(builtin_traits::from_str(bound), Some(TraitId::Clone | TraitId::Debug));
+            }
             Some(TypeInfo::Model(info)) => {
                 info.traits.iter().any(|t| t == bound) || info.derives.iter().any(|d| d == bound)
             }
@@ -1388,8 +1417,10 @@ impl TypeChecker {
                         .iter()
                         .any(|derive| self.builtin_derive_satisfies_trait(derive, bound))
             }
-            Some(TypeInfo::TypeAlias) => false,
-            None => false,
-        }
+            Some(TypeInfo::TypeAlias) | None => return false,
+        };
+        // An adoption and a bound that spell one declaration differently meet through its identity: a model adopting
+        // `std.primitives.errors.Error` satisfies `E with Error` imported through the `std.traits.error` facade.
+        spelled || self.type_implements_trait(type_name, bound)
     }
 }

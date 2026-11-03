@@ -175,6 +175,7 @@ fn guard_owned_leaf(
         | ListLeaf::Bool
         | ListLeaf::Str
         | ListLeaf::U8
+        | ListLeaf::Numeric(_)
         | ListLeaf::USize
         | ListLeaf::Unit
         | ListLeaf::Decimal

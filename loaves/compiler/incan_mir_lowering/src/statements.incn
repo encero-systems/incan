@@ -1,0 +1,647 @@
+"""Lower statements and structured control flow: blocks, returns, loop exits, races, branches, and loops."""
+
+from pub::incan_mir_plan import (
+    CalleeKind,
+    Constant,
+    Function,
+    Operand,
+    OperandKind,
+    Parameter,
+    Place,
+    PlanType,
+    Projection,
+    RvalueKind,
+    SourceSpan,
+    Statement,
+    StatementKind,
+    TerminatorKind,
+    assign as plan_assign,
+    place as plan_place,
+)
+from explicit_arguments import explicit_place_argument, reference_contract
+from loop_exits import exits_to
+from rust::incan_semantics_core import IncanInputAccess
+from rust::incan_semantics_core::body_ir import (
+    RaceArm as RustRaceArm,
+    Block as RustBlock,
+    Operand as RustOperand,
+    OwnershipFact,
+    Place as RustPlace,
+    Rvalue as RustRvalue,
+    Statement as RustStatement,
+    StatementKind as RustStatementKind,
+    UnsafeAcknowledgment as RustUnsafeAcknowledgment,
+)
+from owned_lists import is_owned_list_iterator
+from generators import generator_yield, generator_element
+from generator_expressions import step_result, step_pointer
+from generator_clauses import clause_iterator, whole_local
+from table_views import borrowed_at
+from tuples import tuple_has_owners
+from numerics import numeric_carrier
+from frame import (
+    place_type,
+    Builder,
+    temporary,
+    forget_owned,
+    drop_owned,
+    drop_all_owned,
+    track_rvalue_moves,
+    read_place,
+    literal,
+    finish_fallthrough,
+)
+from assertions import lower_assertion
+from async_ import construct_boxed_future, await_future
+from closures import callable_copy_type
+from lowering import BodyIrModule
+from checked_values import builder_location, scalar_place
+from assignments import lower_assignment
+from closure_lifting import (
+    adopt_lifted,
+    assign_callable,
+    bind_closure_input,
+    later_clause_index,
+    lifted_frame,
+    lower_later_clause,
+    synthesize,
+)
+from calls import lower_call
+from builtin_calls import coerce_numeric_operand, validate_exact_float
+from formatting import display_operand
+from operand_borrows import lower_discarded_operand
+from list_values import value_operand
+from list_iteration import list_next
+from matches import join_branch_owners
+from carrier_operands import boundary_operand
+from result_carriers import lower_try_propagation
+
+
+pub def is_nominal_type(ty: PlanType) -> bool:
+    """Identify nominal, generator, zip, and tuple values whose owned payloads require transfer or destruction."""
+    match ty:
+        PlanType.ValidationError => return true
+        PlanType.Enum(_index, _name) => return true
+        PlanType.Model(_index, _name) => return true
+        PlanType.ZipIterator(_left, _right) => return true
+        PlanType.Generator(_leaf, _depth) => return true
+        PlanType.Tuple(_elements) => return tuple_has_owners(ty)
+        _ => return false
+
+
+pub def is_text_or_nominal(ty: PlanType) -> bool:
+    """Text and source nominals compare only through runtime operations, never through a native binary operator."""
+    match ty:
+        PlanType.String => return true
+        PlanType.StringRef => return true
+        PlanType.StrRef => return true
+        PlanType.Model(_index, _name) => return true
+        PlanType.Enum(_index, _name) => return true
+        _ => return false
+
+
+pub def is_owned_callable(ty: PlanType) -> bool:
+    """Identify an environment owner, which transfers and drops separately from copied callable references."""
+    match ty:
+        PlanType.Closure(_signature) => return true
+        PlanType.BorrowingClosure(_signature) => return true
+        _ => return false
+
+
+pub def drop_loop_owners(mut builder: Builder, span: SourceSpan) -> Result[None, str]:
+    """Release loop-local owners on a backedge, requiring enclosing storage to remain initialized for repetition."""
+    incoming = builder.loop_owners[-1]
+    for owner in incoming:
+        if owner not in builder.owned:
+            return Err("unsupported Body IR loop changes incoming formatting ownership")
+    drop_loop_local_owners(builder, span)
+    return Ok(None)
+
+
+def drop_loop_local_owners(mut builder: Builder, span: SourceSpan) -> None:
+    """Release only the exited iteration's local storage, retaining its result and all surviving enclosing owners."""
+    incoming = builder.loop_owners[-1]
+    retained = builder.owned
+    for index in range(len(retained)):
+        owner = retained[len(retained) - index - 1]
+        if owner not in incoming and loop_local_owner(builder, owner):
+            drop_owned(builder, owner, span)
+
+
+def loop_local_owner(mut builder: Builder, local: int) -> bool:
+    """Use Body IR's lexical scope tree to distinguish loop-local storage from values declared outside the loop."""
+    for slot in range(len(builder.scoped_locals)):
+        index = builder.scoped_locals[slot][0]
+        scope = builder.scoped_locals[slot][1]
+        if index != local:
+            continue
+        mut current = scope
+        for _ in range(len(builder.scope_parents) + 1):
+            if current == builder.loop_scopes[-1]:
+                return true
+            mut parent = -1
+            for ancestor in range(len(builder.scope_parents)):
+                enclosing_scope = builder.scope_parents[ancestor][0]
+                enclosing = builder.scope_parents[ancestor][1]
+                if enclosing_scope == current:
+                    parent = enclosing
+            if parent < 0:
+                return false
+            current = parent
+        return true
+    # Native temporaries have no source scope and belong to the current evaluation.
+    return true
+
+
+pub def lower_block(module: &BodyIrModule, mut builder: Builder, block: &RustBlock) -> Result[None, str]:
+    """Validate source acknowledgments, retain refusal locations, and stop after termination."""
+    # Receipts are minted by the frame's own source module, which for an imported body is not the entry module.
+    if not block.unsafe_acknowledgments_valid(builder.module_identity):
+        return Err("unsupported Body IR invalid unsafe acknowledgment receipt or enclosing scope")
+    # Borrow each statement: a copied statement would copy every block nested inside it.
+    for position in range(len(block.stmts)):
+        statement = borrowed_at(block.stmts, position)
+        match lower_statement(module, builder, statement):
+            Err(reason) =>
+                site = builder_location(builder, statement.span)
+                return Err(f"{reason} at {site.file}:{site.line}:{site.column}")
+            Ok(_) => pass
+        if builder.closed[builder.current]:
+            return Ok(None)
+    return Ok(None)
+
+
+pub def lower_statement(module: &BodyIrModule, mut builder: Builder, statement: &RustStatement) -> Result[None, str]:
+    """Preserve statement order and refuse constructs outside the supported slice."""
+    mut span = builder_location(builder, statement.span)
+    match builder.anchor:
+        Some(site) => span = site
+        None => pass
+    match statement.kind:
+        RustStatementKind.Assign(place=destination, rvalue=value) =>
+            # A later clause's iterator is never materialized: the clause's own chain draws from the source.
+            if later_clause_index(builder, whole_local(destination)) >= 0:
+                return Ok(None)
+            return lower_assignment(module, builder, destination, value, span)
+        RustStatementKind.UnsafeRegion(acknowledgment=acknowledgment, body=body) =>
+            return lower_unsafe_region(module, builder, statement, acknowledgment, body)
+        RustStatementKind.If(cond=condition, then_block=then_body, else_block=else_body) =>
+            return lower_if(module, builder, condition, then_body, else_body, span)
+        RustStatementKind.Loop(body=body) =>
+            clause = later_clause_index(builder, clause_iterator(body))
+            if clause >= 0:
+                return lower_later_clause(module, builder, clause, body, span)
+            return lower_loop(module, builder, body, span)
+        RustStatementKind.Return(value=value) => return lower_return(builder, value, span)
+        RustStatementKind.Break(value=value) =>
+            match value:
+                Some(_operand) => return Err("unsupported Body IR value-producing Break")
+                None => return lower_loop_exit(builder, false, span)
+        RustStatementKind.Continue => return lower_loop_exit(builder, true, span)
+        RustStatementKind.Drop(local=local) =>
+            index = int(local.index()) + 1 + builder.local_offset
+            drop_owned(builder, index, span)
+            # Parameters stay in caller-provided storage for the whole invocation, even after their value drops.
+            if index > builder.parameter_count:
+                builder.emit(Statement(kind=StatementKind.StorageDead(index), span=span))
+        RustStatementKind.Expr(value=value) =>
+            # An expression statement only needs its operand to be valid; its value is discarded.
+            return lower_discarded_operand(builder, value, span)
+        RustStatementKind.Call(destination=_destination, callee=_callee, args=_args, may_panic=_may_panic) =>
+            return lower_call(module, builder, statement, span)
+        RustStatementKind.Await(destination=destination, awaited=awaited) =>
+            future = source_future_place(builder, awaited, span)?
+            match destination:
+                Some(place) =>
+                    output = scalar_place(builder, place, span)?
+                    return await_future(module, builder, future, output, span)
+                None => return Err("unsupported Body IR Await without destination")
+        RustStatementKind.Race(destination=destination, arms=arms) =>
+            return lower_native_race(module, builder, destination, arms, span)
+        RustStatementKind.Yield(value=value) => return lower_yield(builder, value, span)
+        RustStatementKind.Assert(kind=kind, message=message, may_panic=_panic) =>
+            return lower_assertion(builder, kind, message, span)
+        RustStatementKind.TryPropagate(destination=destination, operand=operand, error_routing=routing) =>
+            return lower_try_propagation(builder, destination, operand, routing, span)
+        RustStatementKind.IterNext(destination=destination, iterator=iterator, protocol=protocol) =>
+            return list_next(builder, destination, iterator, protocol, span)
+        RustStatementKind.Unsupported(description=description) =>
+            return Err(f"unsupported Body IR Unsupported: {description}")
+    return Ok(None)
+
+
+def lower_unsafe_region(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    statement: &RustStatement,
+    acknowledgment: &RustUnsafeAcknowledgment,
+    body: &RustBlock,
+) -> Result[None, str]:
+    """Validate the typed source receipt before lowering exactly the operations retained under its acknowledgment."""
+    if not acknowledgment.matches_region(builder.module_identity, statement.span, body.scope):
+        return Err("unsupported Body IR invalid unsafe acknowledgment receipt")
+    return lower_block(module, builder, body)
+
+
+def source_future_place(mut builder: Builder, awaited: &RustOperand, span: SourceSpan) -> Result[Place, str]:
+    """Consume a frontend-owned source future; copying or borrowing one cannot realize its one-shot await."""
+    match awaited:
+        RustOperand.Place(read) =>
+            if read.fact != OwnershipFact.Move:
+                return Err("unsupported Body IR async future ownership")
+            return scalar_place(builder, read.place, span)
+        _ => return Err("unsupported Body IR Await constant")
+
+
+def lower_native_race(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    destination: &Option[RustPlace],
+    arms: list[RustRaceArm],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Run two owned native futures through the SDK's source-order race with planned winner callbacks."""
+    target = race_destination(builder, destination, span)?
+    ty = place_type(builder.locals, target)
+    if not numeric_carrier(ty) and ty != PlanType.Bool and ty != PlanType.Unit:
+        return Err("unsupported Body IR Race owned result")
+    if len(arms) != 2:
+        return Err("unsupported Body IR native Race arm count")
+    mut futures: list[Place] = []
+    mut inputs: list[PlanType] = []
+    mut callbacks: list[Operand] = []
+    for arm in arms:
+        futures.append(source_future_place(builder, arm.awaitable, span)?)
+        input = borrowed_at(builder.locals, int(arm.binding.index()) + 1 + builder.local_offset).ty
+        inputs.append(input)
+        callbacks.append(race_callback(module, builder, arm, input, ty, span)?)
+    types = [inputs[0], inputs[1], ty, place_type(builder.locals, futures[0]), place_type(builder.locals, futures[1])]
+    parameters = [
+        types[3],
+        PlanType.FunctionPointer([inputs[0], ty]),
+        types[4],
+        PlanType.FunctionPointer([inputs[1], ty]),
+    ]
+    future = temporary(builder, PlanType.Future([ty]), span)
+    construct_boxed_future(
+        builder,
+        CalleeKind.Instantiated("incan_native_runtime::race_pair", types),
+        parameters,
+        ty,
+        [read_place(futures[0], true, span), callbacks[0], read_place(futures[1], true, span), callbacks[1]],
+        future,
+        span,
+    )?
+    return await_future(module, builder, future, target, span)
+
+
+def race_callback(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    arm: &RustRaceArm,
+    input: PlanType,
+    result: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Lift an arm's explicit Body IR block; enclosing lexical values stay refused until captures are retained."""
+    name = f"__incan_race_callback_{builder.name}_{len(builder.synthesized)}"
+    mut lifted = lifted_frame(builder, name, [input], result, span)
+    binding = int(arm.binding.index()) + 2
+    for slot in range(len(lifted.scoped_locals)):
+        local = lifted.scoped_locals[slot][0]
+        scope = lifted.scoped_locals[slot][1]
+        if local != binding and not scope_within(lifted, scope, int(arm.body.scope.0)):
+            lifted.forbidden_reads.append(local)
+    bind_closure_input(lifted, binding, 1, input, input, span)?
+    lower_race_callback(module, lifted, arm.body)?
+    value = return_operand(lifted, arm.result, span)?
+    finish_return(lifted, value, span)?
+    for nested in lifted.synthesized:
+        synthesize(builder, nested)
+    adopt_lifted(builder, lifted)
+    synthesize(
+        builder,
+        Function(
+            name=name,
+            parameters=[Parameter(name="value", ty=input, span=span)],
+            return_type=result,
+            locals=lifted.locals,
+            blocks=lifted.blocks,
+            span=span,
+        ),
+    )
+    return Ok(step_pointer(builder, name, [input, result], span))
+
+
+def scope_within(mut builder: Builder, scope: int, root: int) -> bool:
+    """Use retained lexical ancestry to distinguish callback locals from unretained enclosing captures."""
+    mut current = scope
+    for _ in range(len(builder.scope_parents) + 1):
+        if current == root:
+            return true
+        mut parent = -1
+        for edge in builder.scope_parents:
+            if edge[0] == current:
+                parent = edge[1]
+        if parent < 0:
+            return false
+        current = parent
+    return false
+
+
+pub def validate_callback_place(mut builder: Builder, value: &RustPlace) -> Result[None, str]:
+    """Reject a lexical capture before any source read or write can enter an uninitialized callback frame."""
+    match value.local_id():
+        Some(local) =>
+            index = int(local.index()) + 1 + builder.local_offset
+            if index in builder.forbidden_reads:
+                return Err("unsupported Body IR Race callback capture")
+        None => pass
+    return Ok(None)
+
+
+def race_destination(mut builder: Builder, destination: &Option[RustPlace], span: SourceSpan) -> Result[Place, str]:
+    """Require the frontend's shared race result slot before building any winner branch."""
+    match destination:
+        Some(place) => return scalar_place(builder, place, span)
+        None => return Err("unsupported Body IR Race without destination")
+
+
+def lower_race_callback(module: &BodyIrModule, mut builder: Builder, body: &RustBlock) -> Result[None, str]:
+    """Lower straight-line winner callbacks; unretained control transfers and suspension remain refused."""
+    for statement in body.stmts:
+        match statement.kind:
+            RustStatementKind.If(cond=_condition, then_block=_then, else_block=_else) =>
+                return Err("unsupported Body IR Race callback control flow")
+            RustStatementKind.Loop(body=_body) => return Err("unsupported Body IR Race callback control flow")
+            RustStatementKind.Return(value=_value) => return Err("unsupported Body IR Race callback Return")
+            RustStatementKind.Break(value=_value) => return Err("unsupported Body IR Race callback Break")
+            RustStatementKind.Continue => return Err("unsupported Body IR Race callback Continue")
+            RustStatementKind.Race(destination=_destination, arms=_arms) =>
+                return Err("unsupported Body IR nested Race callback")
+            RustStatementKind.TryPropagate(destination=_destination, operand=_operand, error_routing=_routing) =>
+                return Err("unsupported Body IR Race callback TryPropagate")
+            RustStatementKind.Await(destination=_destination, awaited=_awaited) =>
+                return Err("unsupported Body IR Race callback Await")
+            RustStatementKind.Assign(place=_place, rvalue=rvalue) =>
+                validate_race_assignment(rvalue)?
+                lower_statement(module, builder, statement)?
+            _ => lower_statement(module, builder, statement)?
+    return Ok(None)
+
+
+def validate_race_assignment(value: &RustRvalue) -> Result[None, str]:
+    """Require an assignment without nested arm blocks that could transfer control out of the callback."""
+    match value:
+        RustRvalue.Match(scrutinee=_value, arms=_arms) => return Err("unsupported Body IR Race callback Match")
+        _ => return Ok(None)
+
+
+def lower_return(mut builder: Builder, value: &Option[RustOperand], span: SourceSpan) -> Result[None, str]:
+    """Store the result in the return slot, drop every live owner, and return."""
+    mut result = literal(Constant.Unit, span)
+    match value:
+        Some(operand) => result = return_operand(builder, operand, span)?
+        None => pass
+    return finish_return(builder, result, span)
+
+
+pub def return_operand(mut builder: Builder, operand: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
+    """Materialize a returned value for the return slot's type, taking ownership of an owned result."""
+    return_type = borrowed_at(builder.locals, 0).ty
+    if builder.returned_view != IncanInputAccess.Inferred:
+        return view_return_operand(builder, operand, return_type, span)
+    if return_type == PlanType.String:
+        text = display_operand(builder, operand, span)?
+        forget_owned(builder, text.local)
+        return Ok(read_place(text, true, span))
+    result = boundary_operand(builder, operand, return_type, span)?
+    track_rvalue_moves(builder, RvalueKind.Use(result))
+    return Ok(result)
+
+
+def view_return_operand(
+    mut builder: Builder,
+    operand: &RustOperand,
+    return_type: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Borrow a returned view's source place with the view's access; the checker proved the place is the declared one."""
+    access = builder.returned_view
+    return view_operand(builder, operand, return_type, access, span)
+
+
+def view_operand(
+    mut builder: Builder,
+    operand: &RustOperand,
+    expected: PlanType,
+    access: IncanInputAccess,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """The one loan of a view's source place, for a direct view's return and a carried view's payload alike."""
+    match operand:
+        RustOperand.Place(read) =>
+            source = scalar_place(builder, read.place, span)?
+            return explicit_place_argument(builder, source, read.fact, expected, access, span)
+        _ => return Err("unsupported Body IR returned view without a source place")
+
+
+pub def carrier_payload(
+    mut builder: Builder,
+    payload: &RustOperand,
+    field: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """
+    In a body that carries a view, a reference payload Body IR borrows from a source place is that view's loan; any
+    other payload, such as an already borrowed parameter wrapped for a call, crosses the ordinary value boundary.
+    """
+    if builder.carries_view and borrowed_payload(payload):
+        match reference_contract(field):
+            Ok((_referent, writable)) =>
+                mut access = IncanInputAccess.Shared
+                if writable:
+                    access = IncanInputAccess.Exclusive
+                return view_operand(builder, payload, field, access, span)
+            Err(_reason) => pass
+    return boundary_operand(builder, payload, field, span)
+
+
+pub def borrowed_payload(payload: &RustOperand) -> bool:
+    """Whether Body IR reads the payload's place under a shared or exclusive borrow."""
+    match payload:
+        RustOperand.Place(read) => return read.fact == OwnershipFact.Borrow or read.fact == OwnershipFact.MutBorrow
+        _ => return false
+
+
+pub def finish_return(mut builder: Builder, value: Operand, span: SourceSpan) -> Result[None, str]:
+    """Store a materialized result in the return slot, drop every live owner, and return."""
+    return_type = borrowed_at(builder.locals, 0).ty
+    result = coerce_numeric_operand(builder, value, return_type, span)?
+    if callable_copy_type(return_type):
+        assign_callable(builder, plan_place(0, span), result, true, span)?
+    else:
+        builder.emit(plan_assign(plan_place(0, span), RvalueKind.Use(result), span))
+    validate_exact_float(builder, plan_place(0, span), span)
+    drop_all_owned(builder, span)
+    builder.finish(TerminatorKind.Return, span)
+    return Ok(None)
+
+
+def lower_loop_exit(mut builder: Builder, repeat: bool, span: SourceSpan) -> Result[None, str]:
+    """Clean the innermost iteration before an exit or backedge, requiring incoming owners only for repetition."""
+    if len(builder.loops) == 0:
+        return Err("Body IR Break or Continue outside Loop")
+    header, after = builder.loops[-1]
+    if repeat:
+        drop_loop_owners(builder, span)?
+        builder.finish(TerminatorKind.Goto(header), span)
+        return Ok(None)
+    drop_loop_local_owners(builder, span)
+    end = builder.current
+    owners = builder.owned
+    builder.loop_exit_blocks[-1].append(end)
+    builder.loop_exit_owners[-1].append(owners)
+    builder.finish(TerminatorKind.Goto(after), span)
+    return Ok(None)
+
+
+def lower_yield(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[None, str]:
+    """Apply the checked generator's element boundary conversion before transferring an owned yield."""
+    # A generator-expression step hands its one accepted element back to the chain instead of suspending.
+    match builder.step_element:
+        Some(element) =>
+            # A later `for` clause would yield many elements per item; one step returns exactly one.
+            if len(builder.loops) != 0:
+                return Err("unsupported Body IR generator expression with a later for clause")
+            operand = value_operand(builder, value, span)?
+            accepted = coerce_numeric_operand(builder, operand, element, span)?
+            result = step_result(builder, Some(accepted), span)?
+            return finish_return(builder, result, span)
+        None => pass
+    if builder.generator_handle < 0:
+        return Err("unsupported Body IR Yield outside generator producer")
+    match borrowed_at(builder.locals, builder.generator_handle).ty:
+        PlanType.GeneratorYield(leaf, depth) =>
+            operand = value_operand(builder, value, span)?
+            converted = coerce_numeric_operand(builder, operand, generator_element(leaf, depth), span)?
+            return generator_yield(builder, converted, span)
+        _ => return Err("invalid native generator yield handle")
+
+
+def lower_if(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    condition: &RustOperand,
+    then_body: &RustBlock,
+    else_body: &Option[RustBlock],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Lower a proven constant branch directly; otherwise join the independently lowered branches and their owners."""
+    # `SwitchBool` takes its false target first, then its true target.
+    # Legacy E0499: materialize before borrowing the builder receiver again, until dev.8.
+    condition_value = value_operand(builder, condition, span)?
+    match constant_boolean(builder, condition_value):
+        Some(selected) =>
+            if selected:
+                return lower_block(module, builder, then_body)
+            match else_body:
+                Some(body) => return lower_block(module, builder, body)
+                None => return Ok(None)
+        None => pass
+    then_index = builder.new_block(span)
+    else_index = builder.new_block(span)
+    after = builder.new_block(span)
+    builder.finish(TerminatorKind.SwitchBool(condition_value, else_index, then_index), span)
+
+    incoming = builder.owned
+    mut branch_ends: list[int] = []
+    mut branch_owners: list[list[int]] = []
+    builder.current = then_index
+    lower_block(module, builder, then_body)?
+    if not builder.closed[builder.current]:
+        branch_ends.append(builder.current)
+        branch_owners.append(builder.owned)
+
+    builder.owned = incoming
+    builder.current = else_index
+    match else_body:
+        Some(body) => lower_block(module, builder, body)?
+        None => pass
+    if not builder.closed[builder.current]:
+        branch_ends.append(builder.current)
+        branch_owners.append(builder.owned)
+
+    builder.owned = incoming
+    if len(branch_ends) != 0:
+        builder.owned = join_branch_owners(builder, after, branch_ends, branch_owners, span)?
+    builder.current = after
+    builder.closed[after] = len(branch_ends) == 0
+    return Ok(None)
+
+
+def constant_boolean(mut builder: Builder, operand: Operand) -> Option[bool]:
+    """Read a literal or the latest whole-slot boolean literal in this block, never propagating across control-flow edges."""
+    match operand.kind:
+        OperandKind.Literal(Constant.Bool(value)) => return Some(value)
+        OperandKind.Copy(place) =>
+            if place.projection != Projection.Whole:
+                return None
+            statements = builder.blocks[builder.current].statements
+            for offset in range(len(statements)):
+                match statements[len(statements) - offset - 1].kind:
+                    StatementKind.Assign(target, value) =>
+                        if target.local == place.local:
+                            if target.projection != Projection.Whole:
+                                return None
+                            match value.kind:
+                                RvalueKind.Use(value) =>
+                                    match value.kind:
+                                        OperandKind.Literal(Constant.Bool(flag)) => return Some(flag)
+                                        _ => return None
+                                _ => return None
+                    StatementKind.StorageDead(local) =>
+                        if local == place.local:
+                            return None
+                    _ => pass
+        _ => pass
+    return None
+
+
+def lower_loop(module: &BodyIrModule, mut builder: Builder, body: &RustBlock, span: SourceSpan) -> Result[None, str]:
+    """Lower a normalized loop: a header block that the body jumps back to, and an `after` block for `break`."""
+    header = builder.new_block(span)
+    after = builder.new_block(span)
+    builder.finish(TerminatorKind.Goto(header), span)
+    builder.current = header
+    incoming = builder.owned
+    builder.loops.append((header, after))
+    builder.loop_owners.append(incoming)
+    builder.loop_scopes.append(int(body.scope.0))
+    builder.loop_exit_blocks.append([])
+    builder.loop_exit_owners.append([])
+    lower_block(module, builder, body)?
+    if not builder.closed[builder.current]:
+        drop_loop_owners(builder, span)?
+    _loop = builder.loops.pop()
+    _owners = builder.loop_owners.pop()
+    _scope = builder.loop_scopes.pop()
+    ends = builder.loop_exit_blocks.pop()
+    owners = builder.loop_exit_owners.pop()
+    finish_fallthrough(builder, header, span)
+    builder.owned = incoming
+    if len(ends) != 0:
+        builder.owned = join_branch_owners(builder, after, ends, owners, span)?
+    builder.current = after
+    # Exhaustion and break share this exit; drop the iterator once, including any unvisited items.
+    for position in range(len(body.stmts)):
+        statement = borrowed_at(body.stmts, position)
+        match statement.kind:
+            RustStatementKind.IterNext(destination=_item, iterator=RustOperand.Place(read), protocol=_protocol) =>
+                receiver = scalar_place(builder, read.place, span)?
+                if is_owned_list_iterator(place_type(builder.locals, receiver)):
+                    drop_owned(builder, receiver.local, span)
+            _ => pass
+    # A loop nothing leaves (`loop:` or `while true:` without `break`) never falls through to what follows it.
+    builder.closed[after] = not exits_to(builder.blocks, header, after)
+    return Ok(None)

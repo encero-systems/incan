@@ -315,6 +315,19 @@ const COLLECTION_ANNOTATION_REQUIRES_TYPE_ARGUMENTS: DiagnosticCatalogEntry = Di
     docs_url: Some("https://encero-systems.github.io/incan/language/reference/language/"),
 };
 
+const ITERATED_PLACE_REPLACEMENT: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0121",
+    title: "Replacement of an iterated collection",
+    severity: "error",
+    phase: "typecheck",
+    summary: "A statement loop still borrows a list whose storage an assignment would replace.",
+    explanation: "Direct list iteration borrows the existing collection. Replacing that collection or its parent invalidates the iterator and its item views. Duckborrowing cannot repair the conflict with an implicit clone because that would change which storage the loop observes.",
+    examples: &["for item in client.pending:\n    client.pending = []"],
+    common_causes: &["Replacing a list field inside a loop over the same field."],
+    fixes: &["Finish the borrowed iteration before replacing the collection, or iterate an explicit clone."],
+    docs_url: None,
+};
+
 const RUST_BORROW_WITHOUT_LIFETIME_CONTRACT: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     code: "INCAN-T0120",
     title: "Returned or stored Rust borrow requires a lifetime contract",
@@ -332,18 +345,39 @@ const RUST_BORROW_WITHOUT_LIFETIME_CONTRACT: DiagnosticCatalogEntry = Diagnostic
     docs_url: None,
 };
 
+const RUST_CALLEE_NOT_SELECTED: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0122",
+    title: "Rust callee cannot be selected",
+    severity: "error",
+    phase: "typecheck",
+    summary: "A Rust method call's arguments check, but no single native callee can be selected for it, so it cannot be compiled.",
+    explanation: "A native method call compiles only through the one Rust function the compiler selects for it: an inherent method of the receiver's type, or the method of one trait implementation. Selection fails in three ways. A type parameter of the callee stays open, because nothing in the receiver, the arguments, the type the result is expected to have or the first use of the local the result is bound to fixes it. No admitted implementation applies, as when an imported trait declares the method but the receiver's type does not implement that trait. Or several implementations apply equally and nothing in the call chooses one. The message names the callee and which of the three it is.",
+    examples: &[
+        "from rust::std::io import Write\nfrom rust::std::string import String as RustString\n\ndef main() -> None:\n    mut text = RustString.from(\"a\")\n    text.flush()",
+        "from rust::std::convert import AsRef\nfrom rust::std::path import PathBuf\n\ndef main() -> None:\n    path = PathBuf.from(\"a\")\n    path.as_ref()",
+    ],
+    common_causes: &[
+        "Calling a method of an imported trait on a value whose type does not implement that trait.",
+        "A generic method whose type parameter only its result names, with nothing fixing the result's type.",
+        "A method that several trait implementations of the receiver's type provide, such as `as_ref()`.",
+    ],
+    fixes: &[
+        "Write the type arguments in the call, or annotate the type the result is bound to.",
+        "Call the method on a value whose type implements the trait that declares it.",
+        "Call a method or conversion whose signature names the type it produces.",
+    ],
+    docs_url: Some("https://encero-systems.github.io/incan/language/how-to/rust_interop/"),
+};
+
 const RUST_OWNER_TYPE_ARGS_NOT_INFERRED: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     code: "INCAN-T0105",
     title: "Rust type arguments cannot be inferred",
     severity: "error",
     phase: "typecheck",
     summary: "A Rust associated call leaves its owner's type arguments open and nothing later in the program fixes them.",
-    explanation: "`HashMap.new()` on `rust::std::collections::HashMap` leaves `K` and `V` open. Rust fills them from a later use of the binding, such as an insert, a typed return, or an annotation on the binding; a binding that is never read again, or a result that is not bound at all, gives it nothing to work with, and the build stops on the call. The check fires only when the compiler can see the owner's type parameters and the value has no later reader.",
+    explanation: "`HashMap.new()` on `rust::std::collections::HashMap` leaves `K` and `V` open. The first use whose checking needs those parameters must fix them: an insert, passing the binding to a typed parameter, a typed return, or assigning it to an annotated place. Reads whose checking needs no open parameter, such as `len(m)` or `m.is_empty()`, leave the binding available for a later fixing use. A discarded result or a binding with no type-determining use is refused here, naming the binding to annotate. A first use that needs the parameters but fixes nothing is refused with `INCAN-T0122`.",
     examples: &["from rust::std::collections import HashMap\n\ndef main() -> None:\n    mut untyped = HashMap.new()"],
-    common_causes: &[
-        "A collection constructed and then never used.",
-        "A binding whose only later uses do not mention the element types, such as `len(m)`.",
-    ],
+    common_causes: &["A collection constructed and then never used."],
     fixes: &[
         "Write the type arguments in the call: `HashMap.new[str, int]()`.",
         "Annotate the binding: `untyped: HashMap[str, int] = HashMap.new()`.",
@@ -736,7 +770,85 @@ const UNKNOWN: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     docs_url: Some("https://encero-systems.github.io/incan/tooling/reference/cli_reference/"),
 };
 
+const OWNERSHIP_BOUNDARY_UNPROVABLE: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0123",
+    title: "Ownership boundary cannot be proved",
+    severity: "error",
+    phase: "typecheck",
+    summary: "An explicit ownership obligation at this boundary cannot be expressed or proved, so the program is refused instead of copying, retaining or weakening the access.",
+    explanation: "Borrowed, BorrowedMut, Owned and Reference are canonical prelude contracts, and an explicit mode is an obligation for both the caller and the implementation. A stored field cannot declare an ownership mode, an annotation is not a constructor, a borrow cannot outlive its source, and a callable annotation or native lifetime relationship must be able to represent each dependency it carries. A user declaration shadowing a mode name remains an ordinary declaration.",
+    examples: &[
+        "model Page:\n    title: Borrowed[str]",
+        "def main() -> None:\n    value = Owned(\"text\")",
+    ],
+    common_causes: &[
+        "Declaring a stored field with an ownership mode.",
+        "Returning or storing a closure, task or view that keeps a borrow after its source ends.",
+        "Calling a native function whose result borrows from more than one input.",
+    ],
+    fixes: &[
+        "Store an owned value, or expose the field through a method whose result names its source with `from`.",
+        "End the borrow before its source ends, or transfer an owned value explicitly with `Owned[T]` or a clone.",
+    ],
+    docs_url: Some("https://encero-systems.github.io/incan/language/reference/explicit_ownership/"),
+};
+
+const RESULT_SOURCE_INVALID: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0124",
+    title: "Borrowed result source is missing or invalid",
+    severity: "error",
+    phase: "typecheck",
+    summary: "An explicit borrowed result must name its source parameter or receiver.",
+    explanation: "The from clause names one parameter or receiver followed by static field projections. It is required even with a single possible input; a global, local, call or index cannot stand in for that declaration relationship.",
+    examples: &["def view(value: Borrowed[str]) -> Borrowed[str] from value:\n    return value"],
+    common_causes: &["Omitting the source or naming a binding outside the callable signature."],
+    fixes: &["Add from followed by the source parameter or receiver and any static field path."],
+    docs_url: None,
+};
+
+const PLACE_BINDING_MIGRATION: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0125",
+    title: "Local binding copies a place that a place binding borrows",
+    severity: "warning",
+    phase: "typecheck",
+    summary: "This local receives an independent value from a place that a read-only or writable place binding borrows.",
+    explanation: "Under place bindings, bare and let declarations from a place borrow it read-only and mut declarations borrow it with write-through replacement. This declaration receives an independent value, and the warning does not change runtime behavior. Type annotations do not request copies; an explicit clone states an independent value.",
+    examples: &["mut title: str = page.title", "let saved = page.title"],
+    common_causes: &["Creating a local from an existing local, parameter, stored field or collection element."],
+    fixes: &[
+        "Use an explicit clone for an independent snapshot, or preserve the source through the borrow's last use.",
+    ],
+    docs_url: None,
+};
+
+const EXPLICIT_OWNERSHIP_CONFLICT: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0126",
+    title: "Explicit ownership access conflicts with a source dependency",
+    severity: "error",
+    phase: "typecheck",
+    summary: "An operation lacks the requested permission, overlaps a live borrow, or uses unavailable storage.",
+    explanation: "Checked control flow retains borrow origins and ownership transfers across branches and loops. The diagnostic identifies the conflicting operation, its source grant or earlier move, and a reachable dependent use when one keeps a loan live. This source check does not itself enable executable ownership annotations.",
+    examples: &[
+        "def update(mut value: Owned[int]) -> int:\n    let view: Borrowed[int] = value\n    value = 2\n    return view",
+    ],
+    common_causes: &[
+        "Replacing or moving a source while a borrow remains live.",
+        "Writing through a shared or read-only input.",
+        "Using a moved value on one branch or a later loop iteration.",
+    ],
+    fixes: &[
+        "Finish dependent uses before accessing overlapping storage.",
+        "Request the access permission the operation needs at its declaration boundary.",
+        "Reinitialize a moved place before using it again.",
+    ],
+    docs_url: None,
+};
+
 const CATALOG: &[DiagnosticCatalogEntry] = &[
+    OWNERSHIP_BOUNDARY_UNPROVABLE,
+    RESULT_SOURCE_INVALID,
+    PLACE_BINDING_MIGRATION,
+    EXPLICIT_OWNERSHIP_CONFLICT,
     PARSER_SYNTAX,
     TYPECHECK,
     UNREACHABLE_CODE,
@@ -745,6 +857,8 @@ const CATALOG: &[DiagnosticCatalogEntry] = &[
     COLLECTION_ANNOTATION_REQUIRES_TYPE_ARGUMENTS,
     RUST_OWNER_TYPE_ARGS_NOT_INFERRED,
     RUST_BORROW_WITHOUT_LIFETIME_CONTRACT,
+    RUST_CALLEE_NOT_SELECTED,
+    ITERATED_PLACE_REPLACEMENT,
     CALLABLE_MARKER_NOT_SUPPORTED,
     ROUTE_HANDLER_RETURN_NOT_RESPONSE,
     ROUTE_HANDLER_PARAMETER_UNBOUND,
@@ -1104,6 +1218,14 @@ mod tests {
             Some("untyped"),
             Span::default(),
         );
+        let open_parameter = ["S".to_string()];
+        let candidates = ["AsRef<OsStr>::as_ref".to_string(), "AsRef<Path>::as_ref".to_string()];
+        let unselected = [
+            errors::NativeCalleeGap::OpenTypeParameters(&open_parameter),
+            errors::NativeCalleeGap::NoCandidate,
+            errors::NativeCalleeGap::Ambiguous(&candidates),
+        ]
+        .map(|gap| errors::rust_callee_not_selected("rust::native::Owner.method", gap, Span::default()));
 
         assert_eq!(
             code_for_error(&self_mutation, DiagnosticPhase::Typecheck),
@@ -1126,7 +1248,27 @@ mod tests {
             code_for_error(&open_generics, DiagnosticPhase::Typecheck),
             "INCAN-T0105"
         );
-        for code in ["INCAN-T0102", "INCAN-T0103", "INCAN-T0104", "INCAN-T0105"] {
+        for refusal in &unselected {
+            assert_eq!(code_for_error(refusal, DiagnosticPhase::Typecheck), "INCAN-T0122");
+        }
+        assert_eq!(
+            unselected.each_ref().map(|refusal| refusal.message.as_str()),
+            [
+                "Cannot select the Rust callee of `rust::native::Owner.method`: its type parameter `S` is not fixed by \
+                 the call",
+                "Cannot select the Rust callee of `rust::native::Owner.method`: no admitted implementation of the \
+                 method applies to this receiver and these arguments",
+                "Cannot select the Rust callee of `rust::native::Owner.method`: `AsRef<OsStr>::as_ref` and \
+                 `AsRef<Path>::as_ref` apply equally",
+            ]
+        );
+        for code in [
+            "INCAN-T0102",
+            "INCAN-T0103",
+            "INCAN-T0104",
+            "INCAN-T0105",
+            "INCAN-T0122",
+        ] {
             let Some(entry) = explain(code) else {
                 return Err(format!("{code} must have a catalog explanation").into());
             };

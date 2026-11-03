@@ -13,6 +13,7 @@ from semver_req import parse_version, parse_requirement, requirement_matches
 from std.collections import Deque, OrderedSet
 from rust_source import RustDependencyCatalog, RustDependencyDeclaration, RustDependencyRole, RustDependencySource
 from manifest_errors import IntakeError, IntakeErrorKind
+from pub::incan_platform.trace import Operation
 from jec import begin, record
 
 
@@ -419,7 +420,7 @@ pub def activate_unit(
             sorted(context.requested_features),
         )}|{context.default_features}"
     )
-    record("feature_resolution", key, clock)
+    record(Operation.FeatureResolution, key, clock)
     return Ok(RustActivation(effective_features=closure.names, slots=slots))
 
 

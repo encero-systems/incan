@@ -1,6 +1,6 @@
 //! Lowering for `match` expressions and their patterns.
 
-use super::control_flow::intersect_range_layouts;
+use super::control_flow::intersect_local_states;
 use super::primitives::*;
 use super::reads::*;
 use super::refusals::*;
@@ -31,13 +31,43 @@ impl PatternReadScope<'_> {
     }
 }
 
+/// The same constructor pattern with its one payload binding replaced by `_`, for an arm whose name is bound elsewhere.
+fn without_payload_binding(pattern: &ast::Spanned<ast::Pattern>) -> ast::Spanned<ast::Pattern> {
+    let mut pattern = pattern.clone();
+    if let ast::Pattern::Constructor(_, arguments) = &mut pattern.node
+        && let [ast::PatternArg::Positional(payload)] = arguments.as_mut_slice()
+    {
+        payload.node = ast::Pattern::Wildcard;
+    }
+    pattern
+}
+
+/// Whether storage of type `ty` can hold a reference at any depth; a type still open counts, since it may become one.
+fn storage_names_reference(ty: &IncanType) -> bool {
+    match ty {
+        IncanType::Ref(_)
+        | IncanType::RefMut(_)
+        | IncanType::Function { .. }
+        | IncanType::TypeVar(_)
+        | IncanType::SelfType
+        | IncanType::Infer
+        | IncanType::Unknown
+        | IncanType::Unsupported(_) => true,
+        IncanType::Generic { args, .. } | IncanType::Tuple(args) => args.iter().any(storage_names_reference),
+        IncanType::NativeArray { element, .. } => storage_names_reference(element),
+        _ => false,
+    }
+}
+
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Lower a match expression into one structured [`bir::Rvalue::Match`] with arm-scoped bindings and results.
     ///
-    /// The scrutinee is borrowed; each payload read retains its checked ownership fact. Guards and bodies see only
-    /// their arm's bindings. Range-layout facts after the match are the intersection of the arm outcomes, since
-    /// textual arm order does not establish which arm executes. Source reads in an arm preserve enclosing owners
-    /// across alternative paths; arm-local payload transfers remain governed by their checked pattern facts.
+    /// The scrutinee is borrowed; each payload read retains its checked ownership fact. The temporaries made while
+    /// evaluating it end before the arms when its value holds no loan ([`Self::end_scrutinee_temporaries`]). Guards
+    /// and bodies see only their arm's bindings. Range-layout facts after the match are the intersection of the arm
+    /// outcomes, since textual arm order does not establish which arm executes. Source reads in an arm preserve
+    /// enclosing owners across alternative paths; arm-local payload transfers remain governed by their checked
+    /// pattern facts.
     ///
     /// A byte-string literal pattern is outside the supported pattern vocabulary. Refuse the whole expression
     /// before lowering its scrutinee so an unsupported pattern cannot leave partially lowered effects.
@@ -62,6 +92,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             );
         }
 
+        let first_temporary = self.locals.len();
         let scrutinee_place = self.lower_expr_to_place(subject, scope, out);
         let scrutinee_ty = if scrutinee_place.projection.is_empty() {
             scrutinee_place
@@ -72,27 +103,41 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             self.resolve_ty(subject.span)
         };
         let in_place = self.matches_in_place(subject.span, &scrutinee_ty);
+        self.end_scrutinee_temporaries(subject.span, &scrutinee_place, in_place, first_temporary, scope, out);
         // Always read as `Borrow` -- see `bir::Rvalue::Match::scrutinee`'s own docs for why the overall scrutinee
         // read must not risk an unconditional move while individual pattern bindings below compute their own,
         // more precise facts against projected places rooted at this same scrutinee.
         let scrutinee_operand = bir::Operand::place(scrutinee_place.clone(), bir::OwnershipFact::Borrow, false);
+        let carried_view = self.carried_view_of(subject);
 
         let range_layouts_before = self.materialized_range_locals.clone();
         let mut range_layouts_after_arms = Vec::with_capacity(arms.len());
         let mut lowered_arms = Vec::with_capacity(arms.len());
+        // Explicit transfer subjects join like statement-if branches: every arm starts from the scrutinee's state,
+        // and the state after the match is what every continuing arm leaves.
+        let subjects = self.input_subject_locals();
+        let entry_moves = self.input_move_state(&subjects);
+        let mut reaching_moves = Vec::new();
         for arm in arms {
             // At runtime exactly one arm executes. Lower every arm from the predecessor fact set so a range
             // constructed only in an earlier textual arm cannot authorize field projections in a later one.
             self.materialized_range_locals = range_layouts_before.clone();
+            self.restore_input_move_state(&subjects, &entry_moves);
             let arm_span = hir_span(arm.span);
             let arm_scope = self.new_scope(Some(scope), arm_span);
 
             // ---- Lower the pattern, declaring one fresh arm-scoped local per distinct bound name ----
+            // The arm of the variant holding a carried view names the call's substituted place, as `?` does; the
+            // carrier's own reference is never read, so that pattern binds no payload.
+            let arm_view = carried_view
+                .as_ref()
+                .and_then(|view| self.bind_carried_arm_view(&arm.node.pattern, view));
+            let unbound_pattern = arm_view.as_ref().map(|_| without_payload_binding(&arm.node.pattern));
             let mut seen: HashMap<String, bir::LocalId> = HashMap::new();
             let mut saved_bindings: Vec<(String, Option<bir::LocalId>)> = Vec::new();
             let enclosing_in_place = std::mem::replace(&mut self.in_place_pattern, in_place);
             let mut pattern = self.lower_match_pattern(
-                &arm.node.pattern,
+                unbound_pattern.as_ref().unwrap_or(&arm.node.pattern),
                 &scrutinee_ty,
                 &scrutinee_place,
                 arm_scope,
@@ -109,6 +154,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             // ----
             let mut guard_stmts = Vec::new();
             self.conditional_scopes.push(arm_scope);
+            // A guard is a further condition inside the arm; only unguarded arms have an explicit join.
+            let joined = arm.node.guard.is_none();
+            if joined {
+                self.input_if_scopes.push(arm_scope);
+            }
             let guard = arm
                 .node
                 .guard
@@ -128,10 +178,22 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     (stmts, bir::Operand::Constant(bir::Constant::Unit))
                 }
             };
+            if joined {
+                self.input_if_scopes.pop();
+            }
             self.conditional_scopes.pop();
+            match &arm.node.body {
+                ast::MatchBody::Expr(_) => reaching_moves.push(self.input_move_state(&subjects)),
+                ast::MatchBody::Block(block_stmts) => {
+                    self.retain_reaching_input_moves(block_stmts, &subjects, &mut reaching_moves)
+                }
+            }
 
             // ---- Restore the enclosing scope's bindings before moving on to the next (mutually exclusive) arm ----
             self.restore_local_bindings(saved_bindings);
+            if let Some(identity) = arm_view {
+                self.input_aliases.remove(&identity);
+            }
             range_layouts_after_arms.push(self.materialized_range_locals.clone());
 
             lowered_arms.push(bir::MatchArm {
@@ -144,7 +206,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
         // Code after a match must be valid for whichever arm matched. Preserve a layout fact only when every
         // arm leaves it true; no-arm matches conservatively retain no constructed-layout fact.
-        self.materialized_range_locals = intersect_range_layouts(range_layouts_after_arms);
+        self.materialized_range_locals = intersect_local_states(range_layouts_after_arms);
+        self.restore_input_move_state(&subjects, &intersect_local_states(reaching_moves));
 
         let ty = self.resolve_ty(expr_span);
         self.push_assign_temp(
@@ -159,9 +222,45 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         )
     }
 
-    /// Transfer a single owned native payload from an unguarded match on a fresh enum temporary or the last
-    /// read of an owned native iterator item, local binding or owned parameter. No later read can reuse that carrier,
-    /// and a successful arm has no other payload to preserve. Borrowed parameters, loop-reused carriers, nested
+    /// End the temporaries that evaluating a scrutinee made, except the scrutinee's own value, before its arms run.
+    ///
+    /// They would otherwise end with the enclosing statement, keeping their loans across the arms: in
+    /// `match connected.stream.borrow_mut().write_all(sent):` the `RefMut` guard would still borrow `connected` when
+    /// an arm returns, and so moves, `connected`. Only a whole local whose value the checker proved holds no loan
+    /// ([`TypeCheckInfo::scrutinee_holds_no_loan`]), and whose storage names no reference, is independent of them. A
+    /// projected or in-place scrutinee keeps its temporaries until the statement ends.
+    ///
+    /// [`TypeCheckInfo::scrutinee_holds_no_loan`]: crate::typechecker::TypeCheckInfo::scrutinee_holds_no_loan
+    pub(super) fn end_scrutinee_temporaries(
+        &mut self,
+        subject: ast::Span,
+        scrutinee: &bir::Place,
+        in_place: bool,
+        first_temporary: usize,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) {
+        if in_place || !scrutinee.projection.is_empty() || !self.type_info.scrutinee_holds_no_loan(subject) {
+            return;
+        }
+        let Some(kept) = scrutinee.local_id() else {
+            return;
+        };
+        if self
+            .locals
+            .get(kept.index())
+            .is_none_or(|local| storage_names_reference(&local.ty))
+        {
+            return;
+        }
+        self.insert_statement_temporary_drops(out, scope, first_temporary, Some(kept), hir_span(subject));
+    }
+
+    /// Transfer a single owned payload from an unguarded match on a carrier no later read can reuse: a fresh enum
+    /// temporary, or the last read of an owned local binding. A successful arm has no other payload to preserve, so
+    /// the binding takes the payload and is its only owner: cloning it would leave the clone and the carrier to be
+    /// dropped, running the payload's drop twice. A native payload, which cannot be cloned, also transfers from the
+    /// last read of an owned native iterator item or owned parameter. Borrowed parameters, loop-reused carriers, nested
     /// patterns and guards retain their facts. A final owned local read authorizes transfer independently of whether
     /// its payload's declaration is available in this consumer. Checked non-Clone tuple newtypes retain the same
     /// transfer boundary as their native payload; reference payloads retain their existing facts.
@@ -203,10 +302,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let Some(payload) = self.locals.get(binding.local.index()) else {
             return;
         };
-        let owned_local = local.origin == bir::LocalOrigin::UserBinding
-            && owned_last_read
+        let unread_carrier = (local.origin == bir::LocalOrigin::Temporary
+            || (local.origin == bir::LocalOrigin::UserBinding && owned_last_read))
             && !matches!(payload.ty, IncanType::Ref(_) | IncanType::RefMut(_));
-        if (owned_local || self.payload_needs_owned_transfer(&payload.ty))
+        if (unread_carrier || self.payload_needs_owned_transfer(&payload.ty))
             && matches!(
                 binding.fact,
                 bir::OwnershipFact::Borrow | bir::OwnershipFact::Clone | bir::OwnershipFact::Move
@@ -256,8 +355,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// binds (#1561); legacy then matches through `&mut` so the change lands in the place. A union-typed scrutinee
     /// keeps the ordinary match, because its arms bind narrowed members rather than parts of the place.
     pub(super) fn matches_in_place(&self, span: ast::Span, scrutinee_ty: &IncanType) -> bool {
-        !matches!(scrutinee_ty, IncanType::Generic { base, .. } if base == "Union")
-            && self.type_info.match_scrutinee_is_changed_in_place(span)
+        scrutinee_ty.union_members().is_none() && self.type_info.match_scrutinee_is_changed_in_place(span)
     }
 
     /// Lower one pattern arm whose body is a statement block, restoring the enclosing bindings afterwards.
@@ -470,7 +568,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 .and_then(|id| self.locals.get(id.index()))
                 .is_some_and(|local| {
                     local.origin == bir::LocalOrigin::Temporary
-                        && matches!(&local.ty, IncanType::Generic { base, .. } if base == "Option" || base == "Result")
+                        && matches!(
+                            local.ty.collection(),
+                            Some((CollectionTypeId::Option | CollectionTypeId::Result, _))
+                        )
                 })
     }
 
@@ -598,7 +699,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // A member pattern over an optional union (`int | str | None`) selects `Some` first, then the member
         // of its union payload.
         let optional_union = is_optional_union(&subject_ty);
-        if (matches!(&subject_ty, IncanType::Generic { base, .. } if base == "Union") || optional_union)
+        if (subject_ty.union_members().is_some() || optional_union)
             && !matches!(target_ty, IncanType::Unknown)
             && args.iter().all(|arg| matches!(arg, ast::PatternArg::Positional(_)))
         {
@@ -904,7 +1005,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if constructors::from_str(&name.node) != Some(ConstructorId::Some) {
             return None;
         }
-        let [payload_type] = collection_member_types(expected_ty, CollectionTypeId::Option)? else {
+        let [payload_type] = expected_ty.collection_arguments(CollectionTypeId::Option)? else {
             return None;
         };
         let [ast::PatternArg::Positional(payload)] = args else {

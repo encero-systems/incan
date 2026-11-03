@@ -1,0 +1,38 @@
+# behavior: a provider Loaf's methods that return a view, directly or carried in a `Result`, give a consumer's explicit bodies a view of the consumer's own value: `?` chains and `match` arms edit the buffer itself and recover after an error, and a direct field view appends to the original list (#2500).
+# expect-stdout:
+#   full
+#   [10, 20]
+#   0
+#   3
+#   [10, 20, 30, 40]
+
+"""Use a provider's returned and carried views from a separately compiled consumer."""
+
+from pub::viewlib import SampleBuffer
+
+
+def fill(mut buffer: BorrowedMut[SampleBuffer]) -> Result[None, str]:
+    (buffer.append(10)?).append(20)?
+    buffer.append(30)?
+    return Ok(None)
+
+
+def add_or_grow(mut buffer: BorrowedMut[SampleBuffer], sample: int) -> int:
+    match buffer.append(sample):
+        Ok(view) => return len(view.samples)
+        Err(_) =>
+            buffer.capacity += 1
+            return 0
+
+
+def main() -> None:
+    mut buffer = SampleBuffer(capacity=2, samples=[])
+    match fill(buffer):
+        Ok(_) => println("filled")
+        Err(error) => println(error)
+    println(buffer.samples)
+    println(add_or_grow(buffer, 30))
+    println(add_or_grow(buffer, 30))
+    mut samples = buffer.edit_samples()
+    samples.append(40)
+    println(buffer.samples)

@@ -7,6 +7,20 @@ from std.environ import EnvironError, EnvironErrorKind
 from std.environ import args, get, get_as, get_optional, get_or
 ```
 
+## Precise primitive observation
+
+```incan
+from std.primitives.environ import EnvironErrorKind, read
+```
+
+| Signature | Contract |
+| --- | --- |
+| `read(key: str) -> Result[str, EnvironErrorKind]` | Returns the current Unicode value, including an empty string. Returns `Missing` for an absent key, `InvalidKey` for an empty key or a key containing `=` or NUL, and `NotUnicode` for a host value that cannot be represented as Unicode text. It does not apply a default or convert the value. |
+
+`EnvironErrorKind` is the same declaration exported by `std.environ`. `InvalidValue` is used by the higher-level typed conversion functions, and `Other` remains available for compatibility; `read` does not produce these categories. Error values contain only the category, never the observed environment value. A call observes the process environment at that time; it does not create a configuration snapshot or mutate the environment.
+
+`get` adds the requested key and redacted error context. `get_optional` and `get_or` intentionally collapse all failed observations. `get_as` applies its default only for a missing key. These behaviors are unchanged by the primitive import path.
+
 ## Functions
 
 | Signature | Contract |
@@ -19,6 +33,10 @@ from std.environ import args, get, get_as, get_optional, get_or
 | `get_as[T with TryFrom[str]](key: str, default: T) -> Result[T, EnvironError]` | Returns `default` only when `key` is absent; the default may be passed positionally or as `default=`. A present value that fails conversion returns `invalid_value` even when a default is supplied. |
 
 A key is invalid when it is empty or contains `=` or NUL.
+
+NUL validation examines the actual key bytes. A literal backslash followed by `0` is not a NUL character and does not itself make a key invalid.
+
+For a program started by `incan run`, the first argument names its executable view under the project's `target/` directory. Oven executes that view; a host executable-path query such as `rust::std::env::current_exe()` therefore reports the view's location, subject to the host's path resolution. `args()` itself does not resolve or authenticate its first argument.
 
 ```incan
 from std.environ import EnvironError, args, get, get_as, get_optional, get_or

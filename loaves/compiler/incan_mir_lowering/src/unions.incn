@@ -12,6 +12,7 @@ from rust::incan_semantics_core::body_ir import (
     EnumDeclaration as RustEnumDeclaration,
     StaticInitializer,
 )
+from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import (
     semantic_type_matches,
     ListLeaf,
@@ -98,8 +99,8 @@ def retain_body_union_types(
 ) -> None:
     """Visit a body's types against the caller's accumulated index, including computed statics during collection."""
     retain_union(unions, retained, added, body.return_type)
-    for local in body.locals:
-        retain_union(unions, retained, added, local.ty)
+    for position in range(len(body.locals)):
+        retain_union(unions, retained, added, borrowed_at(body.locals, position).ty)
 
 
 def retain_union(
@@ -108,21 +109,24 @@ def retain_union(
     mut added: BTreeSet[RustType],
     ty: &RustType,
 ) -> None:
-    """Test exact borrowed keys before copying a new union into its ordered slot and the instance's membership index."""
+    """
+    Test exact borrowed keys before copying a new union into its ordered slot and the instance's membership index.
+    Children are borrowed: this visits every frame local's type, so a copied subtree per level would dominate.
+    """
     match ty:
-        RustType.Generic(base=base, args=arguments) =>
-            for argument in arguments:
-                retain_union(unions, retained, added, argument)
-            if str(base) == "Union" and not retained.contains(ty) and not added.contains(ty):
+        RustType.Generic(base=_base, args=arguments) =>
+            for position in range(len(arguments)):
+                retain_union(unions, retained, added, borrowed_at(arguments, position))
+            if ty.is_union() and not retained.contains(ty) and not added.contains(ty):
                 added.insert(ty.clone())
                 unions.append(ty.clone())
         RustType.Function(params=parameters, return_type=result) =>
-            for parameter in parameters:
-                retain_union(unions, retained, added, parameter.ty)
+            for position in range(len(parameters)):
+                retain_union(unions, retained, added, borrowed_at(parameters, position).ty)
             retain_union(unions, retained, added, result)
         RustType.Tuple(elements) =>
-            for element in elements:
-                retain_union(unions, retained, added, element)
+            for position in range(len(elements)):
+                retain_union(unions, retained, added, borrowed_at(elements, position))
         RustType.Ref(inner) => retain_union(unions, retained, added, inner)
         RustType.RefMut(inner) => retain_union(unions, retained, added, inner)
         _ => pass
@@ -140,8 +144,8 @@ pub def union_members(
     mut keys: list[str] = []
     unions: list[RustType] = []
     match ty:
-        RustType.Generic(base=base, args=args) =>
-            if str(base) != "Union":
+        RustType.Generic(base=_base, args=args) =>
+            if not ty.is_union():
                 return Err(f"unsupported Body IR union type {ty}")
             for arg in args:
                 member = native_source_type(constructors, nominals, enums, unions, arg, intrinsics)?
@@ -218,9 +222,14 @@ pub def publish_unions(
     """Publish the emitted wrapper and payload order, preserving the checker's semantic carrier and nominal owners."""
     unions: list[RustType] = []
     for ty in collect_unions(module):
+        key = Some(ty.clone())
         for index in range(len(intrinsics)):
-            declaration = intrinsics[index]
-            if not semantic_type_matches(declaration, ty) or declaration.carrier != "" or declaration.library_item != "":
+            declaration = borrowed_at(intrinsics, index)
+            if (
+                declaration.semantic_key != key
+                or declaration.carrier != Carrier.Declared
+                or declaration.library_item != ""
+            ):
                 continue
             mut members: list[RustType] = []
             match ty:
@@ -275,13 +284,15 @@ pub def require_native_union_signature(
 ) -> Result[None, str]:
     """Require retained union carriers: checked Rust generics admit source carriers; linked Loaves need their owner."""
     match ty:
-        RustType.Generic(base=base, args=arguments) =>
+        RustType.Generic(base=_base, args=arguments) =>
             for argument in arguments:
                 _ = require_native_union_signature(argument, intrinsics, source_carriers)?
-            if str(base) != "Union":
+            if not ty.is_union():
                 return Ok(None)
-            for declaration in intrinsics:
-                if semantic_type_matches(declaration, ty) and (source_carriers or declaration.library_item != ""):
+            key = Some(ty.clone())
+            for declaration_position in range(len(intrinsics)):
+                declaration = borrowed_at(intrinsics, declaration_position)
+                if declaration.semantic_key == key and (source_carriers or declaration.library_item != ""):
                     return Ok(None)
             return Err("unsupported Body IR Loaf union without admitted native representation")
         RustType.Tuple(elements) =>
@@ -379,8 +390,8 @@ def published_union_members(
     for member in declaration.members:
         ordered.append(native_union_payload(constructors, module, declaration, member, intrinsics)?)
     match declaration.ty:
-        RustType.Generic(base=base, args=arguments) =>
-            if str(base) != "Union" or len(arguments) != len(ordered):
+        RustType.Generic(base=_base, args=arguments) =>
+            if not declaration.ty.is_union() or len(arguments) != len(ordered):
                 return Err("unsupported Body IR admitted union payload mismatch")
             for argument in arguments:
                 if argument not in declaration.members:
@@ -421,10 +432,11 @@ def retained_union(
 ) -> Result[RustType, str]:
     """Resolve a union by its exact retained layout slot, independently of neighboring Option and Result layouts."""
     index = owner - len(enums)
-    if index < 0 or index >= len(intrinsics) or intrinsics[index].carrier != "":
+    if index < 0 or index >= len(intrinsics) or intrinsics[index].carrier != Carrier.Declared:
         return Err("unsupported Body IR nonunion enum isinstance")
+    carrier = borrowed_at(intrinsics, index)
     for ty in unions:
-        if semantic_type_matches(intrinsics[index], ty):
+        if semantic_type_matches(carrier, ty):
             return Ok(ty)
     return Err("invalid Body IR unretained union layout")
 
@@ -504,11 +516,11 @@ pub def carrier_injection(
             index = owner - len(enums)
             if index >= len(intrinsics):
                 return Err("invalid Body IR union destination owner")
-            if intrinsics[index].carrier == "Option":
+            if intrinsics[index].carrier == Carrier.Option:
                 if intrinsics[index].variants[1].fields != [source]:
                     return Err("unsupported Body IR implicit Option payload type")
                 return Ok(RvalueKind.Enum(owner, 1, [operand]))
-            if intrinsics[index].carrier != "":
+            if intrinsics[index].carrier != Carrier.Declared:
                 return Ok(RvalueKind.Use(operand))
             slot = union_slot(nominals, enums, unions, owner, source, intrinsics)?
             return Ok(RvalueKind.Enum(owner, slot, [operand]))
@@ -568,7 +580,7 @@ pub def union_projection(mut builder: Builder, value: &RustPlace, span: SourceSp
             match value.local_id():
                 Some(local) =>
                     index = int(local.index()) + 1 + builder.local_offset
-                    owner = enum_owner(builder.locals[index].ty)?
+                    owner = enum_owner(borrowed_at(builder.locals, index).ty)?
                     member = native_source_type(
                         builder.constructors,
                         builder.nominals,

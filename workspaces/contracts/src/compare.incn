@@ -77,6 +77,11 @@ def ran(header: Header, outcome: Outcome) -> list[str]:
 def stderr_and_exit(header: Header, outcome: Outcome) -> list[str]:
     """The stderr substrings and the exit code every invocation is held to."""
     mut failures: list[str] = []
+    if header.declares("expect-stderr"):
+        expected = header.items("expect-stderr")
+        actual = lines_of(outcome.stderr)
+        if actual != expected:
+            failures.append(f"stderr differs\n{block("expected", expected)}\n{block("actual", actual)}")
     for item in header.items("expect-stderr-contains"):
         if item not in outcome.stderr:
             failures.append(f"stderr does not contain `{item}`")

@@ -45,6 +45,7 @@ use incan_lang::errors::ErrorKind;
 pub use incan_lang::lang::builtins::BuiltinFnId;
 use incan_lang::lang::errors;
 use incan_lang::lang::surface::string_methods::StringMethodId;
+use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_lang::lang::types::numerics::NumericTypeId;
 use serde::{Deserialize, Serialize};
 
@@ -215,53 +216,29 @@ pub struct StaticDeclaration {
 ///
 /// The original and the visible wrapper share a source declaration, but are different runtime items. Only the
 /// replacement evaluation's explicit original-callable read may select this body; ordinary calls select the visible
-/// wrapper. Nongeneric replacements initialize in module declaration order. A closed generic replacement retains
-/// its checked initializer template for one initialization per closed instantiation. A replacement signature using
-/// its declaration's type parameters evaluates in the visible wrapper on every invocation.
+/// wrapper. Nongeneric replacements initialize in module declaration order. Every generic replacement retains its
+/// checked initializer template for one initialization per closed instantiation, including signatures using binders.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DecoratedBinding {
     /// Executable source body and original signature, before applying user-defined decorators.
     pub original_body: Body,
-    /// Source-owned template required only by PerInstantiation; module storage and per-invocation wrappers retain
-    /// None. The template has the original's exact binders and declaration identity; consumers must close it
-    /// before use.
+    /// Source-owned template required by PerInstantiation; module storage retains None. The template has the
+    /// original's exact binders and declaration identity; consumers must close it before use.
     #[serde(default)]
     pub initializer: Option<Box<Body>>,
     /// Checked evaluation policy; consumers must not infer generic cache behavior from a storage lookup.
     pub initialization: DecoratedInitialization,
 }
 
-/// Checked lifetime of a decorator replacement, preserving legacy's observable factory evaluation.
+/// Checked lifetime of a decorator replacement, with once-only initialization for each declaration instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DecoratedInitialization {
     /// A callable without type parameters initializes its replacement once in module declaration order.
     ModuleStorage,
     /// A closed generic replacement initializes once for each checked instantiation, using its retained template.
     PerInstantiation,
-    /// A replacement signature using declared type parameters evaluates its chain on every call.
+    /// Retired serialized discriminant. Validation refuses the former per-call initialization policy.
     PerInvocation,
-}
-
-/// Whether a checked replacement signature uses one of its own declaration's type parameters.
-/// A closed generic signature requires the independent per-instantiation cache policy rather than invocation admission.
-pub fn decorated_signature_uses_parameters(ty: &IncanType, parameters: &[String]) -> bool {
-    match ty {
-        IncanType::TypeVar(name) => parameters.contains(name),
-        IncanType::Function { params, return_type } => {
-            params
-                .iter()
-                .any(|parameter| decorated_signature_uses_parameters(&parameter.ty, parameters))
-                || decorated_signature_uses_parameters(return_type, parameters)
-        }
-        IncanType::Generic { args, .. } | IncanType::Tuple(args) => args
-            .iter()
-            .any(|argument| decorated_signature_uses_parameters(argument, parameters)),
-        IncanType::Ref(inner)
-        | IncanType::RefMut(inner)
-        | IncanType::TypeToken(inner)
-        | IncanType::NativeArray { element: inner, .. } => decorated_signature_uses_parameters(inner, parameters),
-        _ => false,
-    }
 }
 
 /// Checked storage initialization, independent of its eventual native representation.
@@ -1112,8 +1089,9 @@ pub struct EnumDeclaration {
     /// Older publications retain an empty list and cannot authorize a generic payload layout.
     #[serde(default)]
     pub type_parameters: Vec<String>,
-    /// Concrete arguments of a specialized SDK enum alias, in declaration order. Source enums redeclare their closed
-    /// layout instead; only an SDK package owner and native metadata validation authorize this alias representation.
+    /// Concrete arguments of a specialized enum layout, in declaration order. Published generic source enums and SDK
+    /// enums alias their provider-owned templates; native metadata verification checks the instantiated variants and
+    /// payloads.
     #[serde(default)]
     pub native_type_arguments: Vec<IncanType>,
     /// Declaration-ordered variants; each index selects rustc's actual discriminant value for native matching.
@@ -1334,9 +1312,24 @@ pub struct Body {
     /// consumers must refuse callable signatures when this is absent rather than assume function-pointer coercion.
     #[serde(default)]
     pub callable_representation: Option<CallableRepresentation>,
+    /// Source-owned admission for explicit inputs, independent of callable ABI classification. Missing legacy
+    /// metadata does not authorize an explicit mode; consumers validate the owner and complete frame-slot inventory.
+    #[serde(default)]
+    pub checked_input_profile: Option<CheckedInputProfile>,
+    /// Explicit local bindings this body declares, in source order. Each requires the checked profile independently
+    /// of the parameter inventory, so a body whose profile is lost still exposes its explicit-input obligation.
+    #[serde(default)]
+    pub explicit_input_bindings: Vec<ExplicitInputBinding>,
+    /// The result is a view of one source place, returned as a reference that borrows a parameter slot. Callers
+    /// alias the substituted place rather than holding the reference; the field path is in the ownership contract.
+    #[serde(default)]
+    pub returned_view: Option<ReturnedView>,
     /// Checked nominal bindings used by this body's retained type positions. Publication prunes unused bindings,
     /// rebases source-local identities, and records their public requirements; consumers never resolve the keys.
-    pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
+    ///
+    /// Shared, not copied: a cloned body shares the map, and a writer copies it once through `Arc::make_mut`.
+    #[serde(with = "shared_identities")]
+    pub named_type_identities: SharedIdentities,
     /// Every local (parameter, user binding, or compiler-introduced temporary) declared in this body, in
     /// declaration order. Referenced elsewhere by [`LocalId`] index.
     pub locals: Vec<LocalDecl>,
@@ -1449,7 +1442,95 @@ impl ExternDelegation {
     }
 }
 
+/// The checked source body admitted by the current direct-input implementation profile. This is not inferred from
+/// a borrowed native ABI: only the source ownership checker and its complete Body IR projection can publish it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CheckedInputProfile {
+    /// Semantic profile version, distinct from the surrounding positional executable representation version.
+    pub version: u32,
+    /// Exact declaration that owns the checked source flow and the resulting native frame.
+    pub owner: CanonicalSymbolId,
+    /// Complete physical parameter-slot inventory, including ordinary slots next to explicit ones.
+    pub parameters: Vec<CheckedInputParameter>,
+    /// Canonical whole-owner initializer transfers required by the conditional cleanup profile. Version 1 carries
+    /// no entries; a source annotation or an unrelated native Move cannot stand in for this retained authority.
+    pub owned_initializers: Vec<CheckedOwnedInitializer>,
+}
+
+/// An explicit Owned initializer that transferred an existing whole owner. The source checker authenticates this
+/// relationship before lowering; consumers must match one exact whole assignment and both canonical local slots.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CheckedOwnedInitializer {
+    /// Canonical parameter or local whose existing value was transferred, not an alias or a temporary.
+    pub source: CanonicalSymbolId,
+    /// Canonical Owned local receiving the transferred value.
+    pub destination: CanonicalSymbolId,
+    /// Full assignment-statement span, retaining expansion identity independently of the initializer expression.
+    pub assignment: HirSourceSpan,
+}
+
+/// A body's result borrows one slot of `Body::params` (a method's receiver is slot 0) with shared or exclusive
+/// access, either as the whole result or as one payload of a `Result` or `Option` result. The body requires a
+/// checked profile, and so does every caller.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReturnedView {
+    /// Zero-based index in the owning `Body::params` inventory.
+    pub slot: usize,
+    /// `Shared` for a `Borrowed[T]` result, `Exclusive` for a `Reference[T]` result.
+    pub access: crate::IncanInputAccess,
+    /// The result payload carrying the view: `0` for the `Ok` or `Some` payload, `1` for the `Err` payload; `None` for
+    /// a view that is the whole result.
+    pub carried: Option<usize>,
+}
+
+/// An explicit local binding's checked input access, retained on its body independently of the checked profile.
+///
+/// A loan names existing storage rather than a frame slot, so the obligation is keyed by the binding's declaration
+/// span. The checker identity is session-local; publication erases it as it erases other local identities.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExplicitInputBinding {
+    /// Span of the binding's name at its declaration.
+    pub declaration: HirSourceSpan,
+    /// Checker identity of the binding within its source compilation; absent once published.
+    pub identity: Option<CanonicalSymbolId>,
+    /// Checked access: `Shared` or `Exclusive` for a loan, `Owned` for an owned initializer.
+    pub access: crate::IncanInputAccess,
+}
+
+/// One frame slot's checked input request. The slot is explicit so reordered or duplicated metadata refuses.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CheckedInputParameter {
+    /// Zero-based index in the owning Body.params inventory.
+    pub slot: usize,
+    /// Checked input access, independent of mutability and native-owned collection storage.
+    pub access: crate::IncanInputAccess,
+}
+
 impl Body {
+    /// A resolved source callee's explicit inputs require independent caller authority, even when the caller has
+    /// no explicit parameters, and a caller's own explicit local bindings require it even when the callee is
+    /// ordinary. Consumers must check this relationship after canonical call resolution: a missing persisted caller
+    /// profile cannot be detected from its ordinary parameter ABI alone.
+    pub fn input_call_profile_gap(&self, callee: &Body) -> Option<&'static str> {
+        if callee.returned_view.is_some()
+            || callee
+                .params
+                .iter()
+                .any(|parameter| !parameter.input_access.is_inferred())
+        {
+            if let Some(gap) = callee.input_profile_gap() {
+                return Some(gap);
+            }
+        } else if self.explicit_input_bindings.is_empty() {
+            return None;
+        }
+        if self.checked_input_profile.is_none() {
+            Some("explicit source call lacks a checked caller body profile")
+        } else {
+            self.input_profile_gap()
+        }
+    }
+
     /// Store the exact owner bindings used by Incan nominal specialization, independently of method binders.
     pub fn set_nominal_instantiation(&mut self, arguments: Vec<TraitTypeArgument>) {
         self.nominal_instantiation = arguments;
@@ -1565,12 +1646,100 @@ impl Body {
     /// statements of a deferred default computation, including closures' own parameters. This is the fact a consumer
     /// of Body IR needs before it commits to a body, and it does not depend on what any one consumer can execute.
     pub fn first_representation_gap(&self) -> Option<&str> {
-        params_representation_gap(&self.params).or_else(|| statements_representation_gap(&self.block.stmts))
+        self.input_profile_gap()
+            .or_else(|| params_default_representation_gap(&self.params))
+            .or_else(|| statements_representation_gap(&self.block.stmts))
+    }
+
+    /// Missing or mismatched source authority cannot be replaced by parameter ABI inference. The initial profile
+    /// admits fixed synchronous source-function and method frames, a method's receiver keeping its ordinary borrowed
+    /// slot; deferred, generic and native boundaries remain staged.
+    pub fn input_profile_gap(&self) -> Option<&'static str> {
+        let explicit = self
+            .params
+            .iter()
+            .any(|parameter| !parameter.input_access.is_inferred());
+        let Some(profile) = &self.checked_input_profile else {
+            if explicit {
+                return Some("explicit input access lacks a checked body profile");
+            }
+            if self.returned_view.is_some() {
+                return Some("returned view lacks a checked body profile");
+            }
+            return (!self.explicit_input_bindings.is_empty())
+                .then_some("explicit local binding lacks a checked body profile");
+        };
+        // Profile 1 is a straight-line body; profile 2 a body with statement-ifs, whose owned initializers record the
+        // whole-owner transfers its branches may perform.
+        if !matches!(profile.version, 1 | 2) || self.canonical.as_ref() != Some(&profile.owner) {
+            return Some("explicit input profile has an unsupported version or different canonical owner");
+        }
+        if let Some(view) = &self.returned_view {
+            let source = self.params.get(view.slot);
+            if !matches!(
+                view.access,
+                crate::IncanInputAccess::Shared | crate::IncanInputAccess::Exclusive
+            ) || source.is_none_or(|source| source.input_access == crate::IncanInputAccess::Owned)
+            {
+                return Some("returned view must borrow an existing parameter slot with shared or exclusive access");
+            }
+            // A `Result` carries a view in either payload, an `Option` only in its one payload, a tuple in any element.
+            if let Some(payload) = view.carried
+                && !match (&self.return_type, self.return_type.collection()) {
+                    (crate::IncanType::Tuple(elements), _) => payload < elements.len(),
+                    (_, Some((CollectionTypeId::Tuple, elements))) => payload < elements.len(),
+                    (_, Some((CollectionTypeId::Result, [_, _]))) => payload < 2,
+                    (_, Some((CollectionTypeId::Option, [_]))) => payload == 0,
+                    _ => false,
+                }
+            {
+                return Some(
+                    "carried returned view requires a payload of a Result or Option result or a tuple element",
+                );
+            }
+        }
+        if profile.version == 1 && !profile.owned_initializers.is_empty() {
+            return Some("straight-line input profile cannot authorize conditional initializer cleanup");
+        }
+        if !matches!(
+            profile.owner.kind,
+            crate::SemanticSourceTargetKind::Function | crate::SemanticSourceTargetKind::Method
+        ) || self.is_async
+            || self.is_generator()
+            || !self.type_parameters.is_empty()
+            || self.extern_delegation.is_some()
+            || !self.native_attributes.is_empty()
+        {
+            return Some("explicit input profile does not admit this callable boundary");
+        }
+        if profile.parameters.len() != self.params.len() {
+            return Some("explicit input profile does not cover every parameter");
+        }
+        for (slot, (retained, parameter)) in profile.parameters.iter().zip(&self.params).enumerate() {
+            if retained.slot != slot || retained.access != parameter.input_access {
+                return Some("explicit input profile disagrees with its parameter slot or access");
+            }
+            if parameter.kind != crate::IncanCallableParamKind::Normal
+                || !matches!(parameter.default, CallableParamDefault::Required)
+                || (!parameter.input_access.is_inferred() && parameter.native_owned)
+            {
+                return Some("explicit input profile does not admit packed, deferred or native-owned inputs");
+            }
+        }
+        None
     }
 }
 
-/// The first unrepresentable default among `params`, including inside a sourced default's own statements.
+/// Refuse unimplemented explicit input access and any gap inside a parameter's deferred default computation.
 fn params_representation_gap(params: &[CallableParam]) -> Option<&str> {
+    if params.iter().any(|param| !param.input_access.is_inferred()) {
+        return Some("explicit input access in a nested callable lacks its own checked body profile");
+    }
+    params_default_representation_gap(params)
+}
+
+/// Deferred default computations retain their own representation obligations even in an admitted parent frame.
+fn params_default_representation_gap(params: &[CallableParam]) -> Option<&str> {
     params.iter().find_map(|param| match &param.default {
         CallableParamDefault::Unsupported { description, .. } => Some(description.as_str()),
         CallableParamDefault::Source(computation) => statements_representation_gap(&computation.stmts),
@@ -2712,6 +2881,9 @@ pub struct CallableParam {
     /// The local may still be mutable; that does not turn this by-value ABI into an exclusive caller loan.
     #[serde(default)]
     pub native_owned: bool,
+    /// Checked explicit source input access, separate from binding mutation and native collection ownership.
+    #[serde(default)]
+    pub input_access: crate::IncanInputAccess,
 }
 
 /// Preserve the ordinary passing convention when reading a Body IR parameter published before source roles.
@@ -2726,7 +2898,9 @@ impl CallableParam {
             "{}{}: {} local=_{} span={}..{}{}",
             if self.mutable { "mut " } else { "" },
             self.name,
-            self.ty,
+            self.input_access
+                .source_form()
+                .map_or_else(|| self.ty.to_string(), |form| format!("{form}[{}]", self.ty)),
             self.local.0,
             self.span.start,
             self.span.end,
@@ -4210,6 +4384,33 @@ pub struct MethodTarget {
 }
 
 impl MethodTarget {
+    /// Authenticate generic metadata against its checked binder without treating a method spelling as authority.
+    /// Publication additionally proves that the binder belongs to its enclosing callable before rebasing either
+    /// identity; native lowering checks the concrete receiver's retained reflection capability.
+    pub fn has_valid_generic_metadata(&self) -> bool {
+        let Some(ReflectionOperation::GenericMetadata(owner)) = &self.reflection else {
+            return false;
+        };
+        let Some(member) = &self.canonical else {
+            return false;
+        };
+        owner.kind == crate::SemanticSourceTargetKind::GenericBinder
+            && owner.namespace == crate::SymbolNamespace::OrdinaryLexical
+            && owner.scope_discriminant.is_some()
+            && owner.declaration_span.start < owner.declaration_span.end
+            && member.kind == crate::SemanticSourceTargetKind::Method
+            && member.namespace == crate::SymbolNamespace::Member
+            && member.declaration_name == "__fields__"
+            && member.origin == owner.origin
+            && member.scope_discriminant == owner.scope_discriminant
+            && member.declaration_span == owner.declaration_span
+            && self.type_args.is_empty()
+            && self.intrinsic_carrier.is_none()
+            && self.loaf_trait.is_none()
+            && self.trait_arguments.is_none()
+            && self.native_trait_delegation.is_none()
+    }
+
     /// Validate the selected SDK signature's relation to this call without granting native execution. The driver
     /// still authenticates the item, receiver implementation and fully instantiated signature against SDK metadata.
     pub fn has_valid_native_trait_selection(&self) -> bool {
@@ -4285,6 +4486,8 @@ pub enum ReflectionOperation {
     StringValue,
     /// Items through a type parameter stringify eligible scalar fields in declaration order.
     StringItems,
+    /// Return immutable metadata after substituting this checked generic binder with its reflectable declaration.
+    GenericMetadata(CanonicalSymbolId),
 }
 
 impl PartialEq<str> for MethodTarget {
@@ -5152,8 +5355,10 @@ pub const NOMINAL_CARRIER_KEY_PREFIX: &str = "__incan_carrier_";
 
 /// Encode one checked source nominal's complete owning module and declaration into an identifier-safe carrier key.
 ///
-/// Only Body IR producers publish these keys, beside the original canonical identity in their type maps. Standard
-/// and foreign storage keep their native names. A key grants no declaration lookup or layout without that identity.
+/// Only Body IR producers publish these keys, beside the original canonical identity in their type maps. Ordinary
+/// standard and foreign storage keep their native names. A standard source declaration backed by a registry-owned
+/// native carrier uses the same identity key as other source declarations, so its source and native owners cannot
+/// collide with an equal-spelled local type. A key grants no lookup or layout without its retained identity.
 pub fn nominal_carrier_key(identity: &CanonicalSymbolId) -> Option<String> {
     if identity.namespace != SymbolNamespace::OrdinaryLexical || identity.scope_discriminant.is_some() {
         return None;
@@ -5166,7 +5371,11 @@ pub fn nominal_carrier_key(identity: &CanonicalSymbolId) -> Option<String> {
         _ => return None,
     };
     match &identity.origin {
-        SymbolOrigin::Package { library, .. } if library.starts_with("incan_stdlib_") => return None,
+        SymbolOrigin::Package { library, .. }
+            if library.starts_with("incan_stdlib_") && native_nominal_item(identity).is_none() =>
+        {
+            return None;
+        }
         SymbolOrigin::Module(path) if path.first().is_some_and(|root| root == "std" || root == "__incan_std") => {
             return None;
         }
@@ -5298,6 +5507,39 @@ impl EnumDeclaration {
 
 #[cfg(test)]
 mod tests {
+    /// Only an authenticated SDK native bridge gains a source carrier key; equal names remain distinct owners.
+    #[test]
+    fn sdk_native_carrier_key_preserves_source_identity() -> Result<(), String> {
+        let mut sdk = crate::CanonicalSymbolId::module_declaration(
+            vec!["reflection".into()],
+            "FieldInfo",
+            crate::SemanticSourceTargetKind::Class,
+            crate::HirSourceSpan::new(52, 423),
+        );
+        sdk.origin = crate::SymbolOrigin::Package {
+            library: "incan_stdlib_core".into(),
+            module_path: vec!["reflection".into()],
+        };
+        let key = super::nominal_carrier_key(&sdk).ok_or("missing SDK source carrier")?;
+        assert!(!key.contains("::"));
+        assert_eq!(
+            super::native_nominal_item(&sdk).as_deref(),
+            Some("incan_std_core::reflection::FieldInfo")
+        );
+        let mut local = sdk.clone();
+        local.origin = crate::SymbolOrigin::Package {
+            library: "application".into(),
+            module_path: vec!["reflection".into()],
+        };
+        assert_ne!(super::nominal_carrier_key(&local), Some(key));
+        assert!(super::native_nominal_item(&local).is_none());
+        let mut ordinary = sdk;
+        ordinary.declaration_name = "OtherRecord".into();
+        assert!(super::nominal_carrier_key(&ordinary).is_none());
+        assert!(super::native_nominal_item(&ordinary).is_none());
+        Ok(())
+    }
+
     /// Carrier bytes remain identical to the original formatting, including UTF-8 owners and expanded declarations.
     #[test]
     fn nominal_carrier_encoding_preserves_identity_bytes() -> Result<(), String> {
@@ -5438,6 +5680,9 @@ mod tests {
             name: "add".to_string(),
             span: HirSourceSpan::new(0, 30),
             return_type: IncanType::Primitive(IncanPrimitiveType::Int),
+            checked_input_profile: None,
+            explicit_input_bindings: Vec::new(),
+            returned_view: None,
             callable_representation: None,
             named_type_identities: Default::default(),
             locals: vec![
@@ -5472,6 +5717,7 @@ mod tests {
             params: vec![
                 CallableParam {
                     mutable: false,
+                    input_access: crate::IncanInputAccess::Inferred,
                     native_owned: false,
                     kind: IncanCallableParamKind::Normal,
                     local: local_x,
@@ -5482,6 +5728,7 @@ mod tests {
                 },
                 CallableParam {
                     mutable: false,
+                    input_access: crate::IncanInputAccess::Inferred,
                     native_owned: false,
                     kind: IncanCallableParamKind::Normal,
                     local: local_y,
@@ -5567,6 +5814,187 @@ mod tests {
     fn body_snapshot_is_deterministic() {
         let body = sample_body();
         assert_eq!(body.render_snapshot(), body.render_snapshot());
+    }
+
+    /// A parameter mode cannot grant execution by itself; owner, version and complete slot inventory are required.
+    #[test]
+    fn explicit_inputs_require_matching_body_profile() -> Result<(), Box<dyn std::error::Error>> {
+        let mut body = sample_body();
+        body.canonical = Some(CanonicalSymbolId::module_declaration(
+            vec!["main".into()],
+            "add",
+            SemanticSourceTargetKind::Function,
+            body.span,
+        ));
+        body.params[0].input_access = crate::IncanInputAccess::Shared;
+        assert!(body.first_representation_gap().is_some());
+        let profile = super::CheckedInputProfile {
+            version: 1,
+            owner: body.canonical.clone().ok_or("missing owner")?,
+            owned_initializers: Vec::new(),
+            parameters: body
+                .params
+                .iter()
+                .enumerate()
+                .map(|(slot, param)| super::CheckedInputParameter {
+                    slot,
+                    access: param.input_access,
+                })
+                .collect(),
+        };
+        body.checked_input_profile = Some(profile.clone());
+        assert!(body.first_representation_gap().is_none());
+        let encoded = postcard::to_allocvec(&body)?;
+        let decoded: Body = postcard::from_bytes(&encoded)?;
+        assert_eq!(decoded.checked_input_profile, body.checked_input_profile);
+        assert!(decoded.first_representation_gap().is_none());
+        let mut old_profile = serde_json::to_value(&profile)?;
+        old_profile
+            .as_object_mut()
+            .ok_or("profile is not an object")?
+            .remove("owned_initializers");
+        assert!(serde_json::from_value::<super::CheckedInputProfile>(old_profile).is_err());
+        let assignment = HirSourceSpan::new(10, 30).with_expansion(Some([7; 32]));
+        let initializer = super::CheckedOwnedInitializer {
+            source: CanonicalSymbolId::module_declaration(
+                vec!["main".into()],
+                "source",
+                SemanticSourceTargetKind::Parameter,
+                HirSourceSpan::new(1, 8),
+            ),
+            destination: CanonicalSymbolId::module_declaration(
+                vec!["main".into()],
+                "destination",
+                SemanticSourceTargetKind::Local,
+                HirSourceSpan::new(14, 25),
+            ),
+            assignment,
+        };
+        // Initializer transfers travel with both profiles; only the conditional profile may execute them.
+        for version in [1, 2] {
+            body.checked_input_profile = Some(super::CheckedInputProfile {
+                version,
+                owned_initializers: vec![initializer.clone()],
+                ..profile.clone()
+            });
+            let decoded: Body = postcard::from_bytes(&postcard::to_allocvec(&body)?)?;
+            assert_eq!(decoded.checked_input_profile, body.checked_input_profile);
+            assert_eq!(
+                decoded.first_representation_gap().is_some(),
+                version == 1,
+                "profile {version} with an initializer transfer"
+            );
+        }
+        body.checked_input_profile = Some(profile.clone());
+        let mut named = serde_json::to_value(&body)?;
+        named
+            .as_object_mut()
+            .ok_or("body is not an object")?
+            .remove("checked_input_profile");
+        let legacy: Body = serde_json::from_value(named)?;
+        assert!(legacy.first_representation_gap().is_some());
+        for invalid in [
+            super::CheckedInputProfile {
+                version: 3,
+                ..profile.clone()
+            },
+            super::CheckedInputProfile {
+                parameters: Vec::new(),
+                ..profile.clone()
+            },
+            super::CheckedInputProfile {
+                owner: CanonicalSymbolId::module_declaration(
+                    vec!["other".into()],
+                    "add",
+                    SemanticSourceTargetKind::Function,
+                    body.span,
+                ),
+                ..profile.clone()
+            },
+            super::CheckedInputProfile {
+                parameters: vec![
+                    super::CheckedInputParameter {
+                        slot: 0,
+                        access: crate::IncanInputAccess::Owned,
+                    },
+                    profile.parameters[1].clone(),
+                ],
+                ..profile.clone()
+            },
+        ] {
+            body.checked_input_profile = Some(invalid);
+            assert!(body.first_representation_gap().is_some());
+        }
+        body.checked_input_profile = Some(profile);
+        body.params[0].native_owned = true;
+        assert!(body.first_representation_gap().is_some());
+        Ok(())
+    }
+
+    /// Removing a caller profile from named persisted data must not grant an explicit source call merely because
+    /// all caller parameters use ordinary types. Positional transport preserves the same independent obligation.
+    #[test]
+    fn explicit_calls_require_persisted_caller_authority() -> Result<(), Box<dyn std::error::Error>> {
+        let mut caller = sample_body();
+        let owner = CanonicalSymbolId::module_declaration(
+            vec!["main".into()],
+            "caller",
+            SemanticSourceTargetKind::Function,
+            caller.span,
+        );
+        caller.canonical = Some(owner.clone());
+        caller.checked_input_profile = Some(super::CheckedInputProfile {
+            version: 1,
+            owner,
+            owned_initializers: Vec::new(),
+            parameters: caller
+                .params
+                .iter()
+                .enumerate()
+                .map(|(slot, parameter)| super::CheckedInputParameter {
+                    slot,
+                    access: parameter.input_access,
+                })
+                .collect(),
+        });
+        let mut callee = caller.clone();
+        let callee_owner = CanonicalSymbolId::module_declaration(
+            vec!["main".into()],
+            "callee",
+            SemanticSourceTargetKind::Function,
+            callee.span,
+        );
+        callee.canonical = Some(callee_owner.clone());
+        callee.params[0].input_access = crate::IncanInputAccess::Shared;
+        let profile = callee.checked_input_profile.as_mut().ok_or("missing callee profile")?;
+        profile.owner = callee_owner;
+        profile.parameters[0].access = crate::IncanInputAccess::Shared;
+        assert!(caller.input_call_profile_gap(&callee).is_none());
+        let decoded: Body = postcard::from_bytes(&postcard::to_allocvec(&caller)?)?;
+        assert!(decoded.input_call_profile_gap(&callee).is_none());
+
+        let mut named = serde_json::to_value(&caller)?;
+        named
+            .as_object_mut()
+            .ok_or("caller is not an object")?
+            .remove("checked_input_profile");
+        let stripped: Body = serde_json::from_value(named)?;
+        assert!(stripped.input_profile_gap().is_none());
+        assert_eq!(
+            stripped.input_call_profile_gap(&callee),
+            Some("explicit source call lacks a checked caller body profile")
+        );
+        caller
+            .checked_input_profile
+            .as_mut()
+            .ok_or("missing caller profile")?
+            .owner = callee.canonical.clone().ok_or("missing callee identity")?;
+        assert!(caller.input_call_profile_gap(&callee).is_some());
+        callee.checked_input_profile = None;
+        assert!(decoded.input_call_profile_gap(&callee).is_some());
+        callee.params[0].input_access = crate::IncanInputAccess::Inferred;
+        assert!(stripped.input_call_profile_gap(&callee).is_none());
+        Ok(())
     }
 
     #[test]
@@ -5737,6 +6165,7 @@ mod tests {
         assert_eq!(
             CallableParam {
                 mutable: false,
+                input_access: crate::IncanInputAccess::Inferred,
                 native_owned: false,
                 kind: IncanCallableParamKind::Normal,
                 local: LocalId(7),
@@ -5758,6 +6187,7 @@ mod tests {
     fn callable_parameter_default_origins_are_distinct_and_deterministic() {
         let source = CallableParam {
             mutable: false,
+            input_access: crate::IncanInputAccess::Inferred,
             native_owned: false,
             kind: IncanCallableParamKind::Normal,
             local: LocalId(1),
@@ -5778,6 +6208,7 @@ mod tests {
         };
         let preset = CallableParam {
             mutable: false,
+            input_access: crate::IncanInputAccess::Inferred,
             native_owned: false,
             kind: IncanCallableParamKind::Normal,
             local: LocalId(2),
@@ -5788,6 +6219,7 @@ mod tests {
         };
         let unsupported = CallableParam {
             mutable: false,
+            input_access: crate::IncanInputAccess::Inferred,
             native_owned: false,
             kind: IncanCallableParamKind::Normal,
             local: LocalId(4),
@@ -6029,6 +6461,7 @@ mod tests {
                     rvalue: Rvalue::Closure {
                         params: vec![CallableParam {
                             mutable: false,
+                            input_access: crate::IncanInputAccess::Inferred,
                             native_owned: false,
                             kind: IncanCallableParamKind::Normal,
                             local: param_local,
@@ -6547,5 +6980,23 @@ mod tests {
         );
         assert_eq!(serde_json::to_value(&binding)?, original);
         Ok(())
+    }
+}
+
+/// A body's checked nominal bindings, shared between clones of the body.
+pub type SharedIdentities = std::sync::Arc<std::collections::BTreeMap<String, CanonicalSymbolId>>;
+
+/// Serialize [`SharedIdentities`] as the map itself, so the published representation is unchanged.
+mod shared_identities {
+    use super::{CanonicalSymbolId, SharedIdentities};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::collections::BTreeMap;
+
+    pub fn serialize<S: Serializer>(value: &SharedIdentities, serializer: S) -> Result<S::Ok, S::Error> {
+        value.as_ref().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<SharedIdentities, D::Error> {
+        BTreeMap::<String, CanonicalSymbolId>::deserialize(deserializer).map(std::sync::Arc::new)
     }
 }

@@ -396,9 +396,43 @@ impl TypeChecker {
         }
         self.reject_unbound_c_abi_span_constructors();
         self.reject_unbound_scoped_c_string_views(&stmt.node);
-        // A call nested somewhere other than a direct binding or a bare statement may still be fixed by its
-        // context (an argument's declared type, a typed return); only the two shapes above are refused (#1720).
-        self.open_rust_generic_calls.clear();
+        self.settle_open_rust_generic_calls();
+    }
+
+    /// End the statement's native call selection facts. A call nested somewhere other than a direct binding or a
+    /// bare statement is closed by its context (an argument's declared type, a typed return) when its callee was
+    /// retained; one without a callee is refused (#1720, #2481). A watched binding this statement read first takes
+    /// the type its use fixed, or is refused.
+    fn settle_open_rust_generic_calls(&mut self) {
+        let mut nested = std::mem::take(&mut self.open_rust_generic_calls)
+            .into_iter()
+            .collect::<Vec<_>>();
+        nested.sort_by_key(|(span, _)| *span);
+        for (span, call) in nested {
+            self.refuse_unselected_open_rust_generic_call(&call, span);
+        }
+        self.tied_rust_trait_callees.clear();
+        self.settle_read_open_rust_generic_bindings(self.statement_blocks.current);
+    }
+
+    /// Refuse the watched bindings first read in statement block `block` for their open parameters: a first use that
+    /// fixes them stops the watch at once, so a binding still watched here was read by a use that fixed nothing
+    /// (#2481).
+    fn settle_read_open_rust_generic_bindings(&mut self, block: usize) {
+        if !self
+            .open_rust_generic_bindings
+            .iter()
+            .any(|binding| binding.read_in == Some(block))
+        {
+            return;
+        }
+        let (read, still_watched): (Vec<_>, Vec<_>) = std::mem::take(&mut self.open_rust_generic_bindings)
+            .into_iter()
+            .partition(|binding| binding.read_in == Some(block));
+        self.open_rust_generic_bindings = still_watched;
+        for binding in read {
+            self.refuse_unselected_open_rust_generic_call(&binding.call, binding.span);
+        }
     }
 
     /// Check a tuple unpack before introducing its names. Plain names reassign the nearest active binding while
@@ -597,6 +631,11 @@ impl TypeChecker {
     /// Validate assignment to an object field, including generic-owner field substitution. Mutable references expose
     /// their referent's fields; encountering a shared reference still refuses the write.
     fn check_field_assignment(&mut self, field_assign: &FieldAssignmentStmt, span: Span) {
+        self.refuse_iterated_place_replacement(
+            &field_assign.object,
+            Some(&field_assign.field),
+            field_assign.target_span,
+        );
         // Check the object expression
         let obj_ty = self.check_expr(&field_assign.object);
         let mut obj_ty = &obj_ty;
@@ -846,9 +885,14 @@ impl TypeChecker {
     /// Validate an assignment statement, then remember a local bound directly to a module static (see
     /// [`Self::note_static_alias_binding`]).
     ///
-    /// A new binding of a capturing callable takes the callable's own type, and a reassignment of one, or to one, is
-    /// refused (see `capturing_callables.rs`).
+    /// A discard checks its value without introducing a symbol or retaining binding facts. A new binding of a
+    /// capturing callable takes the callable's own type, and a reassignment of one, or to one, is refused (see
+    /// `capturing_callables.rs`).
     fn check_assignment(&mut self, assign: &AssignmentStmt, span: Span) {
+        if assign.name == "_" {
+            self.check_discard_assignment(assign, span);
+            return;
+        }
         self.check_assignment_binding(assign, span);
         self.refuse_owned_native_tuple_field(assign);
         self.note_static_alias_binding(assign);
@@ -862,19 +906,61 @@ impl TypeChecker {
         }
     }
 
+    /// Check a discarded value and its optional annotation without making `_` a readable or writable binding.
+    /// Each discard owns its type independently; open Rust generics must resolve here because no later read can
+    /// constrain them. Retain the value's checked carrier for Body IR, but no local ownership or alias facts.
+    fn check_discard_assignment(&mut self, assign: &AssignmentStmt, span: Span) {
+        let annotated_ty = assign
+            .ty
+            .as_ref()
+            .map(|annotation| self.resolve_type_checked(annotation));
+        let value_ty = self.check_expr_with_expected(&assign.value, annotated_ty.as_ref());
+        let ty = self.new_assignment_binding_type(assign, annotated_ty, value_ty);
+        self.record_assignment_binding_type(span, ty);
+        self.reject_discarded_open_rust_generic_call(assign.value.span);
+    }
+
     /// Validate assignment statements, including declarations, reassignments, and local annotation compatibility.
     ///
     /// This is the frontend boundary for rejecting unsupported local type annotations before lowering. In particular,
     /// trait-typed locals must not proceed to codegen because Rust has no valid bare trait type for `let` annotations.
     fn check_assignment_binding(&mut self, assign: &AssignmentStmt, span: Span) {
         let target_span = assign.name_span;
-        let annotated_ty = assign.ty.as_ref().map(|ty_ann| self.resolve_type_checked(ty_ann));
+        let new_local = Self::binding_introduces_name(assign.binding)
+            || (self.lookup_variable_info_in_scope_chain(&assign.name).is_none()
+                && self.lookup_static_info(&assign.name).is_none());
+        let defer_local = new_local
+            && self.current_body_identity().is_some_and(|owner| {
+                matches!(
+                    owner.kind,
+                    incan_semantics_core::SemanticSourceTargetKind::Function
+                        | incan_semantics_core::SemanticSourceTargetKind::Method
+                )
+            });
+        let annotated_ty = assign
+            .ty
+            .as_ref()
+            .map(|ty_ann| self.resolve_type_checked_for_input(ty_ann, defer_local));
+        let explicit_mode = assign
+            .ty
+            .as_ref()
+            .zip(annotated_ty.as_ref())
+            .and_then(|(annotation, ty)| self.explicit_root_contract(&annotation.node, ty));
+        let annotated_ty = explicit_mode
+            .as_ref()
+            .map(|mode| mode.underlying.clone())
+            .or(annotated_ty);
         // `let` and `mut` are declaration forms: they introduce a binding that may deliberately shadow an active
         // outer one, so they never resolve against the scope chain. Only a bare `x = value` asks "does this name
         // already exist somewhere out there", and the two halves have to move together — walking outward without
         // this branch would turn every in-block `let` into a reassignment of the outer binding (#1072).
         let introduces_binding = Self::binding_introduces_name(assign.binding);
         if !introduces_binding {
+            self.refuse_iterated_place_replacement(
+                &Spanned::new(Expr::Ident(assign.name.clone()), target_span),
+                None,
+                target_span,
+            );
             self.record_write_target_identity(target_span, &assign.name);
         }
         let reassignment_ty = (!introduces_binding)
@@ -926,7 +1012,7 @@ impl TypeChecker {
             self.consumed_iterator_bindings.remove(&assign.name);
             self.transferred_c_resource_bindings.remove(&assign.name);
             self.note_list_reassignment(&assign.name, span);
-            self.mark_open_rust_generic_binding_read(&assign.name);
+            self.mark_open_rust_generic_binding_read(&assign.name, assign.name_span);
             return;
         }
 
@@ -950,8 +1036,15 @@ impl TypeChecker {
             return;
         }
 
+        if explicit_mode.is_none() {
+            self.warn_place_binding_migration(assign);
+        }
+
         // New binding
-        let is_mutable = matches!(assign.binding, BindingKind::Mutable);
+        let is_mutable = matches!(assign.binding, BindingKind::Mutable)
+            && explicit_mode
+                .as_ref()
+                .is_none_or(|mode| mode.mode != incan_lang::lang::types::ownership::OwnershipMode::Borrowed);
 
         if is_mutable {
             self.mutable_bindings.insert(assign.name.clone());
@@ -959,6 +1052,34 @@ impl TypeChecker {
 
         let ty = self.new_assignment_binding_type(assign, annotated_ty, value_ty);
         self.declare_assignment_binding(assign, ty, is_mutable, introduces_binding, span);
+        self.record_explicit_local_mode(assign, explicit_mode, is_mutable);
+    }
+
+    /// Preserve the requested mode on this exact newly declared local and callable. Capturing it before lookup is
+    /// changed prevents a binding named like a prelude mode from rewriting its own or another body's contract.
+    fn record_explicit_local_mode(
+        &mut self,
+        assign: &AssignmentStmt,
+        explicit_mode: Option<crate::ownership_metadata::AccessMode<ResolvedType>>,
+        is_mutable: bool,
+    ) {
+        if let Some(mode) = explicit_mode
+            && let Some(annotation) = &assign.ty
+            && let Some(identity) = self.type_info.resolved_write_identity(assign.name_span, &assign.name)
+            && identity.declaration_span == assign.name_span
+            && let Some(owner) = self.current_body_identity().cloned()
+        {
+            self.type_info.protocols.explicit_local_modes.insert(
+                identity.clone(),
+                super::ownership_contracts::LocalMode {
+                    owner,
+                    mode: mode.mode,
+                    value_type: mode.underlying,
+                    writable: is_mutable,
+                    annotation: annotation.span,
+                },
+            );
+        }
     }
 
     /// Settle a new local's declared or inferred carrier after its value has checked. Unsupported trait annotations
@@ -1040,7 +1161,7 @@ impl TypeChecker {
         self.bind_scoped_c_string_view_assignment(target_span, assign.value.span);
         if assign.ty.is_none() {
             // An annotation is itself what fixes the arguments; only an unannotated binding is watched (#1720).
-            self.bind_open_rust_generic_assignment(&assign.name, assign.value.span);
+            self.bind_open_rust_generic_assignment(assign, span);
         }
         self.consumed_iterator_bindings.remove(&assign.name);
         self.transferred_c_resource_bindings.remove(&assign.name);
@@ -1155,7 +1276,7 @@ impl TypeChecker {
                 self.consumed_iterator_bindings.remove(name);
                 self.transferred_c_resource_bindings.remove(name);
                 self.note_list_reassignment(name, target_span);
-                self.mark_open_rust_generic_binding_read(name);
+                self.mark_open_rust_generic_binding_read(name, target_span);
                 return;
             }
             if let Some(static_info) = self.lookup_static_info(name) {
@@ -1297,17 +1418,22 @@ impl TypeChecker {
         self.c_abi_raw_call_results.push(result);
     }
 
-    /// Attach the open Rust associated call a new binding received to that binding, or refuse it at once when
+    /// Attach the open native call result a new binding received to that binding, or refuse it at once when
     /// the binding is the discard `_` (#1720).
     ///
-    /// The call was recorded by its span when the method call resolved; a direct `name = call()` is the one place
-    /// a later reader can still fix the owner's type arguments, so the binding is watched until its block ends
-    /// instead of being refused here. `_` is never read, so nothing can fix them and the call is refused at once.
-    fn bind_open_rust_generic_assignment(&mut self, name: &str, value_span: Span) {
+    /// The call was recorded by its span when the method call resolved. A direct `name = call()` binding is watched
+    /// until its first use fixes the parameters, or until its block ends, so the refusal can name the binding to
+    /// annotate if nothing reads it. `_` is never read, so the call is refused at once.
+    fn bind_open_rust_generic_assignment(&mut self, assign: &AssignmentStmt, statement: Span) {
+        let value_span = assign.value.span;
         let Some(call) = self.open_rust_generic_calls.remove(&value_span) else {
             return;
         };
-        if name == "_" {
+        if assign.name == "_" {
+            if !call.owner_parameters {
+                self.refuse_unselected_open_rust_generic_call(&call, value_span);
+                return;
+            }
             self.errors.push(errors::rust_owner_type_args_not_inferred(
                 &call.owner,
                 &call.method,
@@ -1317,15 +1443,41 @@ impl TypeChecker {
             ));
             return;
         }
+        let identity = self
+            .type_info
+            .resolved_write_identity(assign.name_span, &assign.name)
+            .cloned();
+        // The open native carrier and its item let the binding's methods dispatch to the native owner, so a method
+        // call can be the use that fixes the parameters (#2481).
+        if let Some(identity) = &identity {
+            if let Some(native) = &call.native {
+                self.type_info
+                    .rust
+                    .value_native_types
+                    .insert(identity.clone(), native.clone());
+            }
+            if let Some(item) = &call.native_item {
+                self.type_info
+                    .rust
+                    .value_item_paths
+                    .insert(identity.clone(), item.clone());
+            }
+        }
         self.open_rust_generic_bindings.push(super::OpenRustGenericBinding {
-            name: name.to_string(),
+            name: assign.name.clone(),
             block: self.statement_blocks.current,
             span: value_span,
             call,
+            assignment: assign.clone(),
+            statement,
+            identity,
+            read_in: None,
+            active_reads: Vec::new(),
+            passive_uses: Vec::new(),
         });
     }
 
-    /// Refuse an open Rust associated call whose value a bare expression statement throws away (#1720).
+    /// Refuse an open native call whose value a bare expression statement throws away (#1720, #2481).
     ///
     /// `HashMap.new()` on its own line binds nothing, so no later statement can supply the type arguments Rust
     /// would need; the call is refused where it stands.
@@ -1333,6 +1485,10 @@ impl TypeChecker {
         let Some(call) = self.open_rust_generic_calls.remove(&expr_span) else {
             return;
         };
+        if !call.owner_parameters {
+            self.refuse_unselected_open_rust_generic_call(&call, expr_span);
+            return;
+        }
         self.errors.push(errors::rust_owner_type_args_not_inferred(
             &call.owner,
             &call.method,
@@ -1342,27 +1498,58 @@ impl TypeChecker {
         ));
     }
 
-    /// Stop watching the open Rust generic bindings named `name`: a read or a reassignment reached it (#1720).
+    /// Note the first read of the open Rust generic bindings named `name`, by a read or a reassignment (#1720).
     ///
-    /// Any later reader is taken as the one that fixes the type arguments. That is deliberately generous, since
-    /// Rust's own inference decides which uses fix them; the checker refuses only a binding nothing reads at all.
-    pub(in crate::typechecker) fn mark_open_rust_generic_binding_read(&mut self, name: &str) {
-        if self.open_rust_generic_bindings.is_empty() {
-            return;
+    /// The use that read is the one that must fix the owner's type arguments, and it fixes them while it is checked;
+    /// the end of the statement holding the read refuses a binding it left open (#2481).
+    pub(in crate::typechecker) fn mark_open_rust_generic_binding_read(&mut self, name: &str, span: Span) {
+        let block = self.statement_blocks.current;
+        for binding in &mut self.open_rust_generic_bindings {
+            if binding.name == name {
+                binding.read_in.get_or_insert(block);
+                if !binding.active_reads.contains(&span) {
+                    binding.active_reads.push(span);
+                }
+            }
         }
-        self.open_rust_generic_bindings.retain(|binding| binding.name != name);
     }
 
-    /// Refuse every open Rust generic binding that the statement block `block` declared and nothing read (#1720).
+    /// Refuse an open Rust associated call that is no longer watched when checking retained no callee for it.
+    pub(in crate::typechecker) fn refuse_unselected_open_rust_generic_call(
+        &mut self,
+        call: &super::OpenRustGenericCall,
+        span: Span,
+    ) {
+        if self.type_info.rust.checked_calls.contains_key(&span) {
+            return;
+        }
+        let callee = format!("{}.{}", call.owner, call.method);
+        self.errors.push(errors::rust_callee_not_selected(
+            &callee,
+            errors::NativeCalleeGap::OpenTypeParameters(&call.type_params),
+            span,
+        ));
+    }
+
+    /// Refuse every open native generic binding that block `block` declared and no fixing use settled (#1720).
     ///
-    /// Called when that block ends. Bindings of enclosing blocks stay watched: a read inside this block already
-    /// released them, and one after it still can.
+    /// Called when that block ends, after settling a read the block's last statement did not. Bindings of enclosing
+    /// blocks stay watched: one after this block can still read them.
     pub(in crate::typechecker) fn reject_unread_open_rust_generic_bindings_of_block(&mut self, block: usize) {
-        let (left_unread, still_watched): (Vec<_>, Vec<_>) = std::mem::take(&mut self.open_rust_generic_bindings)
+        self.settle_read_open_rust_generic_bindings(block);
+        let (left, still_watched): (Vec<_>, Vec<_>) = std::mem::take(&mut self.open_rust_generic_bindings)
             .into_iter()
             .partition(|binding| binding.block == block);
         self.open_rust_generic_bindings = still_watched;
+        let (read, left_unread): (Vec<_>, Vec<_>) = left.into_iter().partition(|binding| binding.read_in.is_some());
+        for binding in read {
+            self.refuse_unselected_open_rust_generic_call(&binding.call, binding.span);
+        }
         for binding in left_unread {
+            if !binding.call.owner_parameters {
+                self.refuse_unselected_open_rust_generic_call(&binding.call, binding.span);
+                continue;
+            }
             self.errors.push(errors::rust_owner_type_args_not_inferred(
                 &binding.call.owner,
                 &binding.call.method,
@@ -1843,6 +2030,7 @@ impl TypeChecker {
             // ---- Context: pattern-driven `while let` loop ----
             Condition::Let { pattern, value } => {
                 let value_ty = self.check_expr(value);
+                self.note_loan_free_scrutinee(&value_ty, value.span);
                 let view_param = self.pattern_view_param(value);
                 self.symbols.enter_scope(ScopeKind::Block);
                 self.check_pattern(pattern, &value_ty);
@@ -1903,6 +2091,11 @@ impl TypeChecker {
         let owns_items = self.plan_for_item_taking(for_stmt, &elem_ty);
 
         // The iterated place is resolved before the loop's bindings shadow it (`for items in items:`).
+        let previous_borrows = if owns_items {
+            self.iteration_borrows.len()
+        } else {
+            self.enter_iteration_borrow(&for_stmt.iter)
+        };
         let loop_view_param = self.loop_view_param(&for_stmt.iter);
         let derived_views = if loop_view_param.is_none() {
             self.read_only_derived_loop_views(&for_stmt.iter, &for_stmt.pattern.node)
@@ -1922,6 +2115,7 @@ impl TypeChecker {
         let loop_body = self.enter_for_loop_body(&for_stmt.pattern.node, loop_view_param, derived_views);
 
         self.check_statement_block(&for_stmt.body);
+        self.iteration_borrows.truncate(previous_borrows);
         self.exit_for_loop_body(loop_body);
         let _ = self.pop_loop_context();
         self.symbols.exit_scope();
@@ -2125,6 +2319,7 @@ impl TypeChecker {
             Condition::Expr(expr) => self.check_expr_condition_body(expr, body, incoming_refinements),
             Condition::Let { pattern, value } => {
                 let value_ty = self.check_expr(value);
+                self.note_loan_free_scrutinee(&value_ty, value.span);
                 let view_param = self.pattern_view_param(value);
                 self.symbols.enter_scope(ScopeKind::Block);
                 self.apply_branch_refinements(incoming_refinements);

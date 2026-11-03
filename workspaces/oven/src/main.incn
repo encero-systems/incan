@@ -4,14 +4,20 @@ from rust::std::env import args
 from rust::std::io import Write, stderr
 from rust::std::process import exit
 from rust::std::string import String as RustString
+from std.environ import get_or
 from std.fs import Path
+from engine_selector import Engine, select as select_engine
+from engine_client import execute as execute_records
+from engine_proofs import report as proof_report
+from engine_service import serve as serve_engine, refusal_code
+from bakery import bakery, bakery_command, parse_bakery, repair_payload_command
 from features import FeatureRequest
 from home import TOOLCHAIN, dependency_artifact_dir
 from intake import read_project, source_root_of, ManifestReader
 from unit import describe, project_root_of
 from unit_rust import compile_incan_library, describe_native, toolchain_for
-from incan_units import check_unit, compile_unit, program_binary, run_program
-from unit_compiler import crate_name
+from incan_units import check_unit, compile_unit, make_unit, program_binary, report_dependencies, run_program
+from unit_compiler import crate_name, run_compiler
 from rust_units import RustBuild, build_rust, read_registry_units, rust_facet
 from rust_testing import build_rust_tests
 from toolchain import load_toolchain, rust_compiler
@@ -21,12 +27,18 @@ from owner_client import owned, status_code
 from owner_protocol import Reply
 from owner_endpoint import stop_owners
 from observation import trace_boundary
+from installation_page import begin_command as begin_installation_command
 from owner_service import serve_owner
 from graph_inspection import inspect_codegraph, options as graph_options
 from graph_mcp import serve_graph, parse_path
 from toolchain_archive import toolchain_command, parse_arguments as archive_options
 from cli_help import HELP_HINT, unknown_option
 from command_help import UNIT_VALUE_OPTIONS, command_help, usage
+from pub::incan_platform.trace import WorkObserver
+from segment_store import observe_work
+from trace_adapter import finish as finish_trace
+from jec import begin as begin_work, record as record_work
+from pub::incan_platform.trace import Operation
 
 
 pub model Options:
@@ -39,11 +51,19 @@ pub model Options:
     pub program_entries: list[str] = []
     pub argv0: Option[str] = None
     pub feature_options: bool = false
+    pub engine_report: bool = false
     # One CLI preparation owns its source readings, including its provider callbacks.
     pub manifests: ManifestReader = ManifestReader()
 
 
 def main() -> None:
+    """Dispatch the CLI and drain observations on normal return; explicit exits drain at their own boundary."""
+    observe_work(WorkObserver(start=Some(begin_work), finish=Some(record_work)))
+    command_line()
+    finish_trace()
+
+
+def command_line() -> None:
     """
     Dispatch the public CLI with syntax errors reported as exit status two.
 
@@ -51,6 +71,7 @@ def main() -> None:
     2. Answer help before accessing projects, installations or transports.
     3. Execute the selected command.
     """
+    starting = begin_work()
     trace_boundary("command_entered")
     # 1. A missing command is a syntax error.
     mut arguments: list[str] = []
@@ -71,6 +92,7 @@ def main() -> None:
             return
         None => pass
     # 3. Each command keeps its own parsing and execution boundary.
+    record_work(Operation.CliStart, command, starting)
     dispatch(command, rest)
 
 
@@ -80,11 +102,24 @@ def dispatch(command: str, rest: list[str]) -> None:
         require_no_arguments(command, rest)
         println(f"incan {TOOLCHAIN}")
         return
+    if command in ["run", "check", "test", "build", "describe-unit", "fmt", "inspect"]:
+        begin_installation_command()
+    if command == "--internal-engine":
+        match serve_engine(rest):
+            Ok(_) => return
+            Err(reason) => fail(f"incan engine: refusal {refusal_code(reason.kind)}: {reason.detail}", 1)
+        return
+    if command == "explain":
+        explain(rest)
+        return
+    match select_engine(get_or("INCAN_ENGINE", "legacy")):
+        Err(reason) => fail(f"incan {command}: engine refusal {refusal_code(reason.kind)}: {reason.detail}", 2)
+        Ok(Engine.Records) =>
+            records_command(command, rest)
+            return
+        Ok(Engine.Legacy) => pass
     if command == "run":
         run(rest)
-        return
-    if command == "_run-built":
-        run_built(rest)
         return
     if command == "check":
         check(rest)
@@ -109,6 +144,11 @@ def dispatch(command: str, rest: list[str]) -> None:
     if command == "owner":
         owner(rest)
         return
+    if command == "inspect" and len(rest) > 0 and rest[0] == "dependencies":
+        match parse_options(rest[1:]):
+            Err(reason) => syntax_error("inspect", reason)
+            Ok(options) => finish("inspect", inspected_dependencies(validated("inspect", options)))
+        return
     if command == "inspect":
         match graph_options(rest):
             Err(reason) => argument_error("inspect", reason)
@@ -124,6 +164,14 @@ def dispatch(command: str, rest: list[str]) -> None:
             Err(reason) => argument_error("toolchain", reason)
             Ok(options) => finish("toolchain", toolchain_command(options))
         return
+    if command == "bakery":
+        if len(rest) > 0 and rest[0] == "repair-payload":
+            finish("bakery", repair_payload_command(rest))
+            return
+        match parse_bakery(rest):
+            Err(reason) => argument_error("bakery", reason)
+            Ok(keep_days) => finish("bakery", bakery_command(keep_days))
+        return
     if command.startswith("-"):
         fail(f"incan: unknown option `{command}`", 2)
     fail(f"incan: unknown command `{command}`", 2)
@@ -136,6 +184,18 @@ def require_no_arguments(command: str, arguments: list[str]) -> None:
         None => pass
     if len(arguments) > 0:
         syntax_error(command, f"unexpected argument `{arguments[0]}`")
+
+
+def explain(arguments: list[str]) -> None:
+    """Resolve one diagnostic through the installed compiler's catalog, independently of a project or engine."""
+    match unknown_option(arguments):
+        Some(reason) => syntax_error("explain", reason)
+        None => pass
+    if len(arguments) != 1:
+        syntax_error("explain", "requires exactly one CODE")
+    match load_toolchain():
+        Err(reason) => fail(f"incan explain: {reason}", 1)
+        Ok(toolchain) => finish("explain", run_compiler(toolchain, ["--explain", arguments[0]]))
 
 
 def syntax_error(command: str, reason: str) -> None:
@@ -158,6 +218,7 @@ def fail(message: str, code: i32) -> None:
     if code == 2:
         text += f"{HELP_HINT}\n"
     _ = err.write_all(RustString.from(text).into_bytes())
+    finish_trace()
     exit(code)
 
 
@@ -175,7 +236,9 @@ def parse_options(arguments: list[str]) -> Result[Options, str]:
                 options.feature_options = true
             index += 2
             continue
-        if argument == "--no-default-features":
+        if argument == "--engine-report":
+            options.engine_report = true
+        elif argument == "--no-default-features":
             options.feature_options = true
             options.request.default_features = false
         elif argument == "--all-features":
@@ -191,6 +254,36 @@ def parse_options(arguments: list[str]) -> Result[Options, str]:
     if options.path == "":
         return Err("a PATH is required")
     return Ok(options)
+
+
+def records_command(command: str, arguments: list[str]) -> None:
+    """Dispatch only connected records capabilities; unsupported commands never enter the legacy path."""
+    if command == "inspect" and len(arguments) == 3 and arguments[0] == "run" and arguments[2] == "--proofs":
+        match bakery().and_then((store) => proof_report(store, arguments[1])):
+            Ok(text) => println(text)
+            Err(reason) => fail(f"incan inspect: {reason}", 1)
+        return
+    if command not in ["run", "build"]:
+        fail(f"incan {command}: records engine does not implement `{command}`", 1)
+    own, passed = program_arguments(arguments)
+    match parse_options(own):
+        Err(reason) => syntax_error(command, reason)
+        Ok(options) =>
+            if options.feature_options or len(options.substitutes) > 0 or len(options.program_entries) > 0:
+                fail(f"incan {command}: unit records do not implement feature, substitution or program-entry options", 1)
+            if command == "build" and (len(passed) > 0 or options.argv0 is not None):
+                syntax_error(command, "program arguments and --argv0 require run")
+            finish(
+                command,
+                execute_records(
+                    command,
+                    Path(options.path),
+                    options.profile,
+                    passed,
+                    options.argv0,
+                    options.engine_report,
+                ),
+            )
 
 
 def apply_option(mut options: Options, name: str, value: str) -> Result[None, str]:
@@ -236,21 +329,6 @@ def program_arguments(arguments: list[str]) -> tuple[list[str], list[str]]:
     return (own, passed)
 
 
-def run_built(arguments: list[str]) -> None:
-    """
-    Execute a program the calling build just verified, through run's canonical process policy.
-
-    This internal caller owns input freshness.
-    """
-    own, passed = program_arguments(arguments)
-    match parse_options(own):
-        Err(reason) => fail(f"incan run: {reason}", 2)
-        Ok(options) =>
-            if len(options.program_entries) > 0:
-                fail("a built program already has its selected entries", 2)
-            finish("run", run_program(Path(options.path), passed, options.argv0))
-
-
 def ran(options: Options, passed: list[str]) -> Result[i32, str]:
     """
     Make the unit's executable, through its owner or in this process, and become it; a refused compile is the run's
@@ -261,22 +339,27 @@ def ran(options: Options, passed: list[str]) -> Result[i32, str]:
     3. Become the program.
     """
     # 1. When the project's owner serves the unit, it made the executable, and a refused compile is the run's result.
-    match via_owner("run", options, Path(options.path)):
+    requesting = begin_work()
+    owned = via_owner("run", options, Path(options.path))
+    record_work(Operation.LegacyRequest, options.path, requesting)
+    match owned:
         Some(reply) =>
             if reply.exit != 0:
                 return Ok(status_code(reply.exit))
             return run_program(Path(reply.binary), passed, options.argv0)
         None => pass
     # 2. Otherwise this process describes and compiles the unit, keeping the stored executable while its inputs hold.
+    preparing = begin_work()
     mut unit = describe(Path(options.path), options.profile, options.request, options.manifests)?
     unit.program_entries = options.program_entries
     toolchain = toolchain_for(unit)?
     binary = program_binary(unit)
-    compiled = compile_unit(unit, toolchain, binary, true)?
-    if compiled != 0:
-        return Ok(compiled)
-    # 3. The process becomes the program, so its exit status is the run's.
-    return run_program(binary, passed, options.argv0)
+    made = make_unit(unit, toolchain, binary, true)?
+    record_work(Operation.LegacyPrepare, options.path, preparing)
+    if made.code != 0:
+        return Ok(made.code)
+    # 3. The process becomes the program, so its exit status is the run's; it keeps the view's name as its own.
+    return run_program(made.launch, passed, Some(options.argv0.unwrap_or(binary.0)))
 
 
 def via_owner(command: str, options: Options, entry: Path) -> Option[Reply]:
@@ -297,19 +380,26 @@ def test(arguments: list[str]) -> None:
 def tested(options: Options) -> Result[i32, str]:
     """Make a test unit's executable, through its owner or in this process, and report each test's fresh outcome."""
     if Path(options.path).is_dir():
-        declared = rust_facet(options.path, false)?
-        if declared.kind != "" or len(declared.binaries) > 0:
-            return tested_project(options)
+        return tested_project(options)
     return tested_incan(options)
 
 
 def tested_project(options: Options) -> Result[i32, str]:
-    """Run Rust harnesses and Incan test modules, retaining failure from either language."""
+    """
+    Run a Loaf's Rust harnesses, when it declares a Rust facet, and its Incan test modules, retaining failure from
+    either language. A Loaf with neither is refused rather than reported as passing.
+    """
+    declared = rust_facet(options.path, false)?
+    facet = declared.kind != "" or len(declared.binaries) > 0
+    sources = test_sources(Path(options.path))?
+    if not facet and len(sources) == 0:
+        return Err(f"{options.path}: the Loaf has no test_*.incn modules and no Rust facet tests")
     mut failed = false
-    for binary in build_rust_tests(rust_request(options)?)?:
-        if run_rust_harness(Path(binary), Path(options.path))? != 0:
-            failed = true
-    for source in test_sources(Path(options.path))?:
+    if facet:
+        for binary in build_rust_tests(rust_request(options)?)?:
+            if run_rust_harness(Path(binary), Path(options.path))? != 0:
+                failed = true
+    for source in sources:
         mut selected = options
         selected.path = source.0
         if tested_incan(selected)? != 0:
@@ -357,11 +447,25 @@ def checked(options: Options, format: str) -> Result[i32, str]:
     return check_unit(unit, toolchain_for(unit)?, format)
 
 
+def inspected_dependencies(options: Options) -> Result[i32, str]:
+    """
+    Describe the unit a build of PATH compiles, then let the compiler settle and print the dependency closure that
+    build links. As for `build`, a `lib.incn` source is a library unit.
+    """
+    source = Path(options.path)
+    mut unit = describe(source, options.profile, options.request, options.manifests)?
+    if source.name() == "lib.incn":
+        unit.kind = "library"
+    return report_dependencies(unit, toolchain_for(unit)?)
+
+
 def finish(command: str, result: Result[i32, str]) -> None:
     """Exit with a command's exit code, or report why it could not run."""
     match result:
         Err(reason) => fail(f"incan {command}: {reason}", 1)
-        Ok(code) => exit(code)
+        Ok(code) =>
+            finish_trace()
+            exit(code)
 
 
 def validated(command: str, options: Options) -> Options:
@@ -374,6 +478,8 @@ def validated(command: str, options: Options) -> Options:
 
 def require_command_options(command: str, options: Options) -> Result[None, str]:
     """Each command admits only options it applies, and feature selection requires an owning project."""
+    if options.engine_report:
+        return Err("--engine-report requires INCAN_ENGINE=records run or build")
     if options.argv0 != None and command != "run":
         return Err("--argv0 requires run")
     if len(options.program_entries) > 0 and command not in ["run", "build"]:

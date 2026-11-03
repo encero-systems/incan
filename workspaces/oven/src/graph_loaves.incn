@@ -8,10 +8,17 @@ from graph_dependencies import unit_natives
 from graph_incan import inspect_incan
 from graph_queries import text
 from home import standard_artifact_dir, standard_packages
-from intake import library_source
+from intake import ManifestReader, library_source
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets
 from rust_activation import DependencyDomain
-from rust_units import RustBuild, read_registry_units, registry_selection, selected_registry, target_configuration
+from rust_units import (
+    RegistryUnits,
+    RustBuild,
+    project_registry,
+    registry_selection,
+    selected_registry,
+    target_configuration,
+)
 from toolchain import Toolchain, rust_compiler
 
 
@@ -20,7 +27,9 @@ pub def standard_graphs(
     profile: str,
     toolchain: Toolchain,
     units: list[GraphUnit],
+    registry: RegistryUnits,
     exclude: str = "",
+    reader: ManifestReader = ManifestReader(),
 ) -> Result[list[GraphUnit], str]:
     """
     Follow compiler-proven package origins into standard Loaves, without treating ambient availability as a dependency.
@@ -32,7 +41,7 @@ pub def standard_graphs(
     """
     # 1. Every standard package of the toolchain is available to follow; ambient availability makes none a dependency.
     mut available: Dict[str, str] = {}
-    for package in standard_packages()?:
+    for package in standard_packages(reader)?:
         available[package.name] = package.root
     # 2. The origins to follow are the ones each unit's graph records, starting from the units selected.
     mut graphs: list[GraphUnit] = []
@@ -48,7 +57,7 @@ pub def standard_graphs(
                 None => pass
                 Some(name) =>
                     seen.append(name)
-                    unit = standard_graph(owner, profile, toolchain, name, available[name])?
+                    unit = standard_graph(owner, profile, toolchain, name, available[name], registry, reader)?
                     graphs.append(unit)
                     queue.append(unit)
     return Ok(graphs)
@@ -69,35 +78,39 @@ def standard_graph(
     toolchain: Toolchain,
     package: str,
     source_root: str,
+    registry: RegistryUnits,
+    reader: ManifestReader,
 ) -> Result[GraphUnit, str]:
     """
-    Read a published standard graph, or cache a legacy source export entirely under the requesting project.
+    Read a published standard graph, or ask the home bakery for a checked legacy source export.
 
     1. A standard package compiled with a graph publishes it beside its artifacts.
-    2. Otherwise export the package's own source, under the requesting project's cache.
+    2. Otherwise export the package's own source through the home-wide checked export path.
     """
     # 1. A package compiled with a graph is read from the graph it published.
     graph = standard_artifact_dir(package, profile)?.joinpath(f"{package}.incngraph")
     if graph.is_file():
         return Ok(GraphUnit(path=graph, root=Path(f"@std/{package}"), package=package))
-    # 2. Any other is exported from its source, once, into the requesting project's own cache.
+    # 2. Any other is exported from its source once per content identity in the home bakery.
     rustc = rust_compiler(toolchain)
     demand = LocalDemand(project=source_root, domain=DependencyDomain.Target, features=[], defaults=true)
-    facets = local_facets(demand, target_configuration(rustc)?)?
+    facets = local_facets(demand, target_configuration(rustc)?, reader=reader)?
     request = RustBuild(
         project=owner.0,
         profile=profile,
         rustc=rustc,
-        registry=selected_registry(read_registry_units(Path(toolchain.registry_units), source_root)?, facets, profile)?,
+        registry=selected_registry(project_registry(registry, source_root, reader)?, facets, profile)?,
         toolchain_search=toolchain.search,
         toolchain=Some(toolchain),
     )
     for facet in facets:
         if facet.project != source_root or facet.domain != DependencyDomain.Target:
             continue
-        source = library_source(Path(source_root))?
+        source = library_source(Path(source_root), reader)?
         natives = unit_natives(facet, {}, request)?
-        legacy = inspect_incan(source, toolchain, natives, {}, facet.features, false, [], Some(owner))?
+        legacy = inspect_incan(
+            source, toolchain, natives, {}, facet.features, false, [], Some(owner), Some(registry), reader, facets,
+        )?
         return Ok(GraphUnit(path=legacy, root=Path(f"@std/{package}"), package=package, source_root=source_root))
     return Err(f"no standard graph source selected for {package}")
 

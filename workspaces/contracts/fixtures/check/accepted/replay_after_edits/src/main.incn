@@ -1,4 +1,4 @@
-# behavior: an unchanged check replays its report and status byte for byte without checking again, and editing the entry or a path dependency checks the unit again with the same report (#2256)
+# behavior: unchanged checks replay byte for byte; new edits of the entry or a dependency check once then replay, even in a populated bakery (#2256, #2481)
 # expect-accepted:
 # check-edits:
 #   src/main.incn

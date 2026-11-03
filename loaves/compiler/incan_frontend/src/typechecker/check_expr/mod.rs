@@ -571,6 +571,12 @@ impl TypeChecker {
         }
     }
 
+    /// Report a private field under the source name of the class or model that declares it. The receiver's type
+    /// may name the declaration's generated carrier, which no diagnostic shows.
+    fn private_field_error(type_name: &str, field: &FieldInfo, name: &str, span: Span) -> CompileError {
+        errors::private_field(field.owner.as_deref().unwrap_or(type_name), name, span)
+    }
+
     /// Resolve an expression receiver like `math` to an imported module binding path.
     ///
     /// This is intentionally module-kind driven (`SymbolKind::Module`) instead of name-driven so member access does not
@@ -951,11 +957,15 @@ impl TypeChecker {
                 self.check_match(subject, arms, expr.span, Some(expected_ty))
             }
             _ => {
-                let ty = self.check_expr(expr);
+                let mut ty = self.check_expr(expr);
                 if self.errors.len() == errors_before
                     && let Some(expected) = expected
                 {
                     self.constrain_open_value_destination(expr.span, expected);
+                    // A typed destination can fix a watched local's open owner arguments (#2481).
+                    if let Some(fixed) = self.fix_open_rust_binding_by_destination(expr, expected) {
+                        ty = fixed;
+                    }
                 }
                 return self.retain_declared_conversion(expr, &ty, expected);
             }

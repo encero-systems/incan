@@ -110,12 +110,15 @@ impl TypeChecker {
         self.type_info.calls.body_ir_constructor_types.insert(span, carrier);
     }
 
-    /// Validate model/class constructor arguments, including RFC 017 coercions for typed field initializers.
+    /// Validate model/class constructor arguments against the selected declaration, including RFC 017 coercions for
+    /// typed field initializers. The ordered fields belong to that same declaration; module-qualified owners need not
+    /// have a lexical type binding.
     pub(in crate::typechecker::check_expr::calls) fn check_model_or_class_constructor_call(
         &mut self,
         type_name: &str,
         display_name: &str,
         fields: &std::collections::HashMap<String, FieldInfo>,
+        field_order: &[String],
         args: &[CallArg],
         call_span: Span,
     ) -> ResolvedType {
@@ -179,8 +182,12 @@ impl TypeChecker {
 
             let is_model = matches!(self.lookup_type_info(type_name), Some(TypeInfo::Model(_)));
             if is_model && self.private_field_is_inaccessible(type_name, field_info) {
-                self.errors
-                    .push(errors::private_field(type_name, &field_name.node, field_name.span));
+                self.errors.push(Self::private_field_error(
+                    type_name,
+                    field_info,
+                    &field_name.node,
+                    field_name.span,
+                ));
                 continue;
             }
 
@@ -218,7 +225,7 @@ impl TypeChecker {
         }
 
         if every_required_field_supplied {
-            self.record_constructor_field_binding_for_lowering(type_name, &bound_fields, &provided, call_span);
+            self.record_constructor_field_binding_for_lowering(field_order, &bound_fields, &provided, call_span);
         }
 
         // ---- Fields that bind one type parameter bind it to one type (#1561) ----
@@ -350,17 +357,11 @@ impl TypeChecker {
     /// because lowering only consumes these facts after a clean check.
     fn record_constructor_field_binding_for_lowering(
         &mut self,
-        type_name: &str,
+        field_order: &[String],
         bound_fields: &[Option<String>],
         provided: &std::collections::HashMap<String, Span>,
         call_span: Span,
     ) {
-        let field_order: Vec<String> = match self.lookup_type_info(type_name) {
-            Some(TypeInfo::Model(info)) => info.field_order.clone(),
-            Some(TypeInfo::Class(info)) => info.field_order.clone(),
-            _ => return,
-        };
-
         let mut argument_slots = Vec::with_capacity(bound_fields.len());
         for bound in bound_fields {
             let Some(field_name) = bound.as_deref() else {
@@ -814,14 +815,14 @@ impl TypeChecker {
                     );
                     return self.constructor_result_type(name);
                 }
-                let ctor_fields: Option<std::collections::HashMap<String, FieldInfo>> =
+                let ctor_fields: Option<(std::collections::HashMap<String, FieldInfo>, Vec<String>)> =
                     self.lookup_type_info(name).and_then(|info| match info {
-                        TypeInfo::Model(m) => Some(m.fields.clone()),
-                        TypeInfo::Class(c) => Some(c.fields.clone()),
+                        TypeInfo::Model(m) => Some((m.fields.clone(), m.field_order.clone())),
+                        TypeInfo::Class(c) => Some((c.fields.clone(), c.field_order.clone())),
                         _ => None,
                     });
-                if let Some(fields) = ctor_fields {
-                    self.check_model_or_class_constructor_call(name, name, &fields, args, span)
+                if let Some((fields, field_order)) = ctor_fields {
+                    self.check_model_or_class_constructor_call(name, name, &fields, &field_order, args, span)
                 } else {
                     self.errors.push(errors::type_constructor_unavailable(name, span));
                     ResolvedType::Unknown
@@ -979,5 +980,87 @@ impl TypeChecker {
             TypeInfo::Newtype(info) => &info.type_params,
             _ => &[],
         }
+    }
+}
+
+#[cfg(test)]
+mod selected_module_binding_tests {
+    use super::super::PublicModuleConstructorContext;
+    use super::TypeChecker;
+    use crate::ast::{Declaration, Expr, Program, Statement};
+    use crate::symbols::ResolvedType;
+
+    /// Parse the provider and consumer independently so the consumer has no accidental lexical owner binding.
+    fn parse_module(source: &str) -> Result<Program, Box<dyn std::error::Error>> {
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        Ok(crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?)
+    }
+
+    /// Module resolution supplies the exact declaration; constructor checking must retain its slots without a second
+    /// lexical lookup.
+    #[test]
+    fn qualified_generic_constructor_retains_selected_owner_and_field_slots() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let provider_source =
+            "pub model Holder[T]:\n    pub first: T\n    pub middle: int = 9\n    pub last: str = \"default\"\n";
+        let provider = parse_module(provider_source)?;
+        let mut provider_checker = TypeChecker::new();
+        provider_checker.set_current_module_path(Some(vec!["shapes".to_owned()]));
+        provider_checker
+            .check_program(&provider)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let declaration = provider_checker
+            .lookup_type_info("Holder")
+            .cloned()
+            .ok_or("missing provider model")?;
+        let owner = provider_checker
+            .symbols
+            .lookup("Holder")
+            .and_then(|id| provider_checker.symbols.identity_of(id))
+            .cloned()
+            .ok_or("missing canonical model owner")?;
+
+        let consumer = parse_module("def main() -> None:\n    value = shapes.Holder[int](last=\"tail\", first=7)\n")?;
+        let Declaration::Function(function) = &consumer.declarations.first().ok_or("missing consumer function")?.node
+        else {
+            return Err("expected a consumer function".into());
+        };
+        let Statement::Assignment(assignment) = &function.body.first().ok_or("missing constructor assignment")?.node
+        else {
+            return Err("expected a constructor assignment".into());
+        };
+        let Expr::MethodCall(_, _, type_args, arguments) = &assignment.value.node else {
+            return Err("expected a module-qualified constructor call".into());
+        };
+        let span = assignment.value.span;
+        let canonical_name = "pub::shapes::Holder";
+        let mut checker = TypeChecker::new();
+        assert!(checker.lookup_type_info(canonical_name).is_none());
+        checker.type_info.record_resolved_identity(span, owner.clone());
+        let result = checker.check_public_module_type_constructor_call(
+            PublicModuleConstructorContext {
+                display_name: "shapes.Holder",
+                canonical_name,
+                type_info: &declaration,
+            },
+            type_args,
+            arguments,
+            span,
+            span,
+        );
+        assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+        assert_eq!(
+            result,
+            ResolvedType::Generic(canonical_name.to_owned(), vec![ResolvedType::Int])
+        );
+        assert_eq!(checker.type_info.resolved_identity(span), Some(&owner));
+        let binding = checker
+            .type_info
+            .body_ir_constructor_field_binding(span)
+            .ok_or("missing checked field slots")?;
+        assert_eq!(binding.argument_slots, vec![2, 0]);
+        assert_eq!(binding.defaulted_slots, vec![1]);
+        assert_eq!(binding.field_count, 3);
+        Ok(())
     }
 }

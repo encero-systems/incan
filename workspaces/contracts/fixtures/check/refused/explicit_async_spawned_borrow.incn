@@ -1,0 +1,17 @@
+# behavior: a task spawned from an explicit body would outlive the body's borrowed inputs, so spawning a call that borrows one is refused (#2500).
+# expect-diagnostic: INCAN-T0123
+
+import std.async
+from std.async import spawn
+
+
+class Buffer:
+    pub items: list[int]
+
+
+async def measure(buffer: Borrowed[Buffer]) -> int:
+    return len(buffer.items)
+
+
+async def start(buffer: Borrowed[Buffer]) -> None:
+    spawn(measure(buffer))

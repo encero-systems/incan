@@ -93,24 +93,6 @@ pub def has_sized_numeric(ty: PlanType) -> bool:
         None => return false
 
 
-pub def sized_plan_type(kind: SizedNumeric) -> PlanType:
-    """Recover the scalar plan type carried by a sized overflow pair."""
-    match kind:
-        SizedNumeric.I8 => return PlanType.I8
-        SizedNumeric.I16 => return PlanType.I16
-        SizedNumeric.I32 => return PlanType.I32
-        SizedNumeric.I128 => return PlanType.I128
-        SizedNumeric.U8 => return PlanType.U8
-        SizedNumeric.U16 => return PlanType.U16
-        SizedNumeric.U32 => return PlanType.U32
-        SizedNumeric.U64 => return PlanType.U64
-        SizedNumeric.U128 => return PlanType.U128
-        SizedNumeric.F32 => return PlanType.F32
-        SizedNumeric.F64 => return PlanType.F64
-        SizedNumeric.ISize => return PlanType.ISize
-        SizedNumeric.USize => return PlanType.USize
-
-
 pub def numeric_name(ty: PlanType) -> str:
     """Name the matching monomorphic legacy-runtime boundary."""
     match ty:

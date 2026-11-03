@@ -1,7 +1,9 @@
 //! Declarations enter as AST items; only MIR supplies executable bodies.
 
 use crate::ast_build::ident;
-use crate::plan::{Function, ListLeaf, PlanType, SizedNumeric, list_leaf_type, range_field_types, tuple_element_type};
+use crate::plan::{
+    Carrier, Function, ListLeaf, PlanType, SizedNumeric, list_leaf_type, range_field_types, tuple_element_type,
+};
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_semantics_core::RuntimeCarrier;
 use rustc_ast as ast;
@@ -22,6 +24,42 @@ fn standard_path(segments: &[&str], span: Span) -> ast::Path {
         path.segments.push(ast::PathSegment::from_ident(ident(segment, span)));
     }
     path
+}
+
+/// The standard enum a native Option/Result carrier aliases, below `std`, and its type arguments in variant order.
+pub(crate) fn standard_carrier(carrier: &crate::plan::EnumDeclaration) -> ([&'static str; 2], Vec<PlanType>) {
+    let path = if carrier.carrier == Carrier::Option {
+        ["option", "Option"]
+    } else {
+        ["result", "Result"]
+    };
+    let arguments = carrier
+        .variants
+        .iter()
+        .flat_map(|variant| variant.fields.iter().cloned())
+        .collect();
+    (path, arguments)
+}
+
+/// Spell a carried view's result as its standard enum, so each payload reference is a signature loan position.
+fn carried_output_ty(carrier: &crate::plan::EnumDeclaration, span: Span) -> Box<ast::Ty> {
+    let (segments, arguments) = standard_carrier(carrier);
+    let mut path = standard_path(&segments, span);
+    if let Some(segment) = path.segments.last_mut() {
+        segment.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
+            span,
+            args: arguments
+                .iter()
+                .map(|argument| ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(argument, span))))
+                .collect(),
+        })));
+    }
+    Box::new(ast::Ty {
+        id: ast::DUMMY_NODE_ID,
+        kind: ast::TyKind::Path(None, path),
+        span,
+        tokens: None,
+    })
 }
 
 /// Name the shared builtin carrier directly, so compiling the runtime never needs its own already-built facade.
@@ -222,6 +260,13 @@ fn admitted_value_ty_kind(kind: &PlanType, span: Span) -> ast::TyKind {
             None,
             ast::Path::from_ident(ident(&crate::shared_callables::name(signature), span)),
         ),
+        PlanType::Boxed(elements) => boxed_object_ast(
+            elements
+                .first()
+                .map(|referent| ty(referent, span))
+                .unwrap_or_else(|| ty(&PlanType::Unit, span)),
+            span,
+        ),
         PlanType::Closure(signature) | PlanType::ClosureOnce(signature) => boxed_object_ast(
             callable_object_ast(signature, span, matches!(kind, PlanType::ClosureOnce(_))),
             span,
@@ -231,6 +276,10 @@ fn admitted_value_ty_kind(kind: &PlanType, span: Span) -> ast::TyKind {
         }
         PlanType::NativeTraitObject(path, send, sync) => native_object_ast(path, *send, *sync, span),
         PlanType::ClosureRef(signature) => reference_ast(callable_object_ast(signature, span, false), false),
+        PlanType::BorrowingClosure(signature) => boxed_object_ast(borrowing_callable_object_ast(signature, span), span),
+        PlanType::BorrowingClosureRef(signature) => {
+            reference_ast(borrowing_callable_object_ast(signature, span), false)
+        }
         PlanType::CheckedInt => ast::TyKind::Tup(thin_vec![ty(&PlanType::Int, span), ty(&PlanType::Bool, span)]),
         other => primitive_or_nominal_ty(other, span),
     }
@@ -565,6 +614,19 @@ fn native_callable_object_ast(
     })
 }
 
+/// The Fn object of an environment holding a borrowed reference, outliving that borrow's elided lifetime: a
+/// constructor has exactly one reference input, the capture it boxes.
+fn borrowing_callable_object_ast(signature: &[PlanType], span: Span) -> Box<ast::Ty> {
+    let mut object = native_callable_object_ast(signature, span, false, false, false);
+    if let ast::TyKind::TraitObject(bounds, _) = &mut object.kind {
+        bounds.push(ast::GenericBound::Outlives(ast::Lifetime {
+            id: ast::DUMMY_NODE_ID,
+            ident: rustc_span::Ident::new(rustc_span::kw::UnderscoreLifetime, span),
+        }));
+    }
+    object
+}
+
 /// Construct a function-pointer signature structurally; preflight has proved a final return entry exists.
 fn function_pointer_ast(signature: &[PlanType], span: Span) -> ast::TyKind {
     let Some((result, parameters)) = signature.split_last() else {
@@ -604,8 +666,13 @@ fn placeholder(span: Span) -> Box<ast::Block> {
 }
 
 /// Inject one source-named function's declaration with no authored body in the AST. Future boxing constructors tie
-/// their explicit reference inputs and boxed result to the same lifetime before rustc checks the native call.
-pub fn function(function: &Function, span: Span) -> Result<Box<ast::Item>, crate::error::PlanError> {
+/// their explicit reference inputs and boxed result to the same lifetime before rustc checks the native call; a
+/// carried view's result exposes its payload loan to the retained lifetime contract.
+pub fn function(
+    plan: &crate::plan::Plan,
+    function: &Function,
+    span: Span,
+) -> Result<Box<ast::Item>, crate::error::PlanError> {
     let inputs = function
         .parameters
         .iter()
@@ -625,7 +692,11 @@ pub fn function(function: &Function, span: Span) -> Result<Box<ast::Item>, crate
         })
         .collect();
     let output = ast::FnRetTy::Ty(
-        crate::futures::constructor_return_type(function, span).unwrap_or_else(|| ty(&function.return_type, span)),
+        crate::futures::constructor_return_type(function, span)
+            .or_else(|| {
+                crate::validation::carried_output(plan, function).map(|carrier| carried_output_ty(carrier, span))
+            })
+            .unwrap_or_else(|| ty(&function.return_type, span)),
     );
     let mut declaration = ast::FnDecl { inputs, output };
     let mut generics = crate::futures::constructor_generics(function, span);
@@ -679,6 +750,45 @@ pub(crate) fn item(kind: ast::ItemKind, span: Span) -> Box<ast::Item> {
         kind,
         tokens: None,
     })
+}
+
+/// Names a crate-root module that holds one partition of a unit's planned callables.
+pub(crate) const PARTITION_MODULE_PREFIX: &str = "__incan_unit_";
+
+/// One module holding a group of callables with every crate-root name in scope, re-exported at the crate root so
+/// each callable keeps its root path. Returns the module and its root re-export.
+pub(crate) fn partition_module(index: usize, items: Vec<Box<ast::Item>>, span: Span) -> [Box<ast::Item>; 2] {
+    let name = format!("{PARTITION_MODULE_PREFIX}{index}");
+    let name = name.as_str();
+    let glob = |prefix: ast::Path| {
+        ast::ItemKind::Use(ast::UseTree {
+            prefix,
+            kind: ast::UseTreeKind::Glob(span),
+        })
+    };
+    // The module only imports the root's names; it re-exports nothing of its own beyond its callables.
+    let root = rustc_span::Ident::new(rustc_span::symbol::kw::Super, span);
+    let mut scope = item(glob(ast::Path::from_ident(root)), span);
+    scope.vis.kind = ast::VisibilityKind::Inherited;
+    let mut contents: ThinVec<Box<ast::Item>> = ThinVec::with_capacity(items.len() + 1);
+    contents.push(scope);
+    contents.extend(items);
+    let module = item(
+        ast::ItemKind::Mod(
+            ast::Safety::Default,
+            ident(name, span),
+            ast::ModKind::Loaded(
+                contents,
+                ast::Inline::Yes,
+                ast::ModSpans {
+                    inner_span: span,
+                    inject_use_span: span,
+                },
+            ),
+        ),
+        span,
+    );
+    [module, item(glob(ast::Path::from_ident(ident(name, span))), span)]
 }
 
 /// Load metadata without reserving a source type's name at the crate root. The original dependency alias remains
@@ -1215,7 +1325,7 @@ fn hashed_type(name: &str, leaves: &[&ListLeaf], span: Span) -> Box<ast::Ty> {
 
 /// Inject source-ordered unit and tuple variants as AST nodes; executable bodies still enter only through MIR.
 pub fn enum_declaration(value: &crate::plan::EnumDeclaration, span: Span) -> Box<ast::Item> {
-    if !value.carrier.is_empty() || !value.library_item.is_empty() {
+    if value.carrier != Carrier::Declared || !value.library_item.is_empty() {
         return library_alias(&value.name, value.public, span);
     }
     let variants = value

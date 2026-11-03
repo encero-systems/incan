@@ -1,0 +1,120 @@
+"""
+The rustc-internal access a manifest declares, read by one validator for every table that declares it.
+
+`[build]` declares it for the Loaf's Incan units with `unstable-features`, `toolchain-components` and
+`sysroot-dependencies`; each `[[rust.bin]]` declares it for its own binary with the same keys spelled with
+underscores. Oven records an Incan unit's declaration in its unit description and its identity, and the compiler
+grants it only from there. A unit that declares nothing gets nothing.
+"""
+
+from std.json import JsonValue
+from std.toml import TomlValue
+from cfg_predicate import identifier
+from manifest_errors import IntakeError, IntakeErrorKind
+
+# The word separator of the keys in `[build]`, which is kebab-case.
+pub const BUILD_SEPARATOR: str = "-"
+# The word separator of the keys in `[[rust.bin]]`, which is snake_case.
+pub const BINARY_SEPARATOR: str = "_"
+
+
+@derive(Eq)
+pub model ToolchainAccess:
+    """The unstable features, toolchain components and toolchain libraries a unit is declared to use."""
+
+    # Each enables one feature of the pinned compiler in the unit's crate, such as `rustc_private`.
+    pub unstable_features: list[str] = []
+    # Each names a component the pinned toolchain must have installed, such as `rustc-dev`.
+    pub toolchain_components: list[str] = []
+    # Each names a library of the pinned toolchain the unit links, such as `rustc_driver`.
+    pub sysroot_dependencies: list[str] = []
+
+    def declared(self) -> bool:
+        """Whether the unit declares any access at all."""
+        return len(self.unstable_features) + len(self.toolchain_components) + len(self.sysroot_dependencies) > 0
+
+    def to_json(self) -> JsonValue:
+        """The declaration as the unit description spells it."""
+        return JsonValue.object(
+            {"unstable_features": names(self.unstable_features), "toolchain_components": names(self.toolchain_components), "sysroot_dependencies": names(
+                self.sysroot_dependencies,
+            )},
+        )
+
+    def identity_lines(self) -> list[str]:
+        """One line per declared value for the unit's identity, in a canonical order; none for an undeclared unit."""
+        features = [f"unstable-feature={name}" for name in sorted(self.unstable_features)]
+        components = [f"toolchain-component={name}" for name in sorted(self.toolchain_components)]
+        return features + components + [f"sysroot-dependency={name}" for name in sorted(self.sysroot_dependencies)]
+
+
+def names(items: list[str]) -> JsonValue:
+    """A JSON array of names."""
+    return JsonValue.array([JsonValue.string(item) for item in items])
+
+
+pub def read_access(
+    values: Dict[str, TomlValue],
+    separator: str,
+    manifest: str,
+    field: list[str],
+) -> Result[ToolchainAccess, IntakeError]:
+    """
+    The declaration in one manifest table, whose keys join their words with `separator`.
+
+    Each key is optional and lists distinct names. Features and libraries are Rust identifiers; components are
+    rustup component names, of ASCII letters, digits, `-` and `_`.
+    """
+    return Ok(
+        ToolchainAccess(
+            unstable_features=declared_names(values, f"unstable{separator}features", true, manifest, field)?,
+            toolchain_components=declared_names(values, f"toolchain{separator}components", false, manifest, field)?,
+            sysroot_dependencies=declared_names(values, f"sysroot{separator}dependencies", true, manifest, field)?,
+        ),
+    )
+
+
+pub def access_keys(separator: str) -> list[str]:
+    """The declaration's keys in one table's spelling."""
+    return [f"unstable{separator}features", f"toolchain{separator}components", f"sysroot{separator}dependencies"]
+
+
+def declared_names(
+    values: Dict[str, TomlValue],
+    key: str,
+    rust_names: bool,
+    manifest: str,
+    field: list[str],
+) -> Result[list[str], IntakeError]:
+    """The distinct names one key lists, in their written order; empty when the key is absent."""
+    if key not in values:
+        return Ok([])
+    place = field + [key]
+    entries = values[key].as_array().map_err((error) => invalid(manifest, place, error.message()))?
+    mut found: list[str] = []
+    for index in range(len(entries)):
+        at = place + [str(index)]
+        name = entries[index].as_str().map_err((error) => invalid(manifest, at, error.message()))?
+        if rust_names and not identifier(name):
+            return Err(invalid(manifest, at, f"`{name}` is not a Rust identifier"))
+        if not rust_names and not component_name(name):
+            return Err(invalid(manifest, at, f"`{name}` is not a toolchain component name"))
+        if name in found:
+            return Err(invalid(manifest, at, f"`{name}` is listed twice"))
+        found.append(name)
+    return Ok(found)
+
+
+def component_name(value: str) -> bool:
+    """A rustup component name: nonempty ASCII letters, digits, `-` and `_`."""
+    if value == "":
+        return false
+    for character in value:
+        if character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_":
+            return false
+    return true
+
+
+def invalid(manifest: str, field: list[str], detail: str) -> IntakeError:
+    """An invalid declaration, located at its literal key path."""
+    return IntakeError(kind=IntakeErrorKind.Invalid, manifest=manifest, field=field, detail=detail, location=None)

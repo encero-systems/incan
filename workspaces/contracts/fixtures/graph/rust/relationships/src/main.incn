@@ -1,4 +1,4 @@
-# behavior: Rust graph CLI and MCP agree on identities, bounded context, freshness, git evidence and expiring feedback
+# behavior: Rust graph readers agree on evidence and follow file and environment inputs without stale reuse
 # graph-commands:
 #   . --query defs helper
 #   . --query callers helper

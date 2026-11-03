@@ -210,7 +210,7 @@ impl BodyBuilder<'_, '_> {
 
     /// Evaluate one checked native adjustment chain once. Reference parameters borrow the original place; owned
     /// storage constructions consume their input instead of silently borrowing it.
-    fn lower_native_adjustment_value(
+    pub(super) fn lower_native_adjustment_value(
         &mut self,
         expr: &ast::Spanned<ast::Expr>,
         steps: &[RustCheckedCall],
@@ -304,6 +304,7 @@ impl BodyBuilder<'_, '_> {
                 span,
                 default: bir::CallableParamDefault::Required,
                 mutable: false,
+                input_access: incan_semantics_core::IncanInputAccess::Inferred,
                 native_owned: super::runtime_nominals::owned_collection_storage(ty),
             });
             arguments.push(bir::ArgumentElement::One(self.temp_operand(local, ty)));
@@ -485,6 +486,16 @@ impl BodyBuilder<'_, '_> {
                 )
                 .ok_or("native receiver adjustment without an identity")?;
             adjusted = bir::ArgumentElement::One(value);
+        }
+        // A checked exclusive receiver lends the adjusted referent again. The temporary owns the reference, not
+        // its referent; retaining Move here loses the authority required by a mutable native slice boundary.
+        if call
+            .parameters
+            .first()
+            .is_some_and(|parameter| matches!(parameter.ty, crate::symbols::ResolvedType::RefMut(_)))
+            && let bir::ArgumentElement::One(bir::Operand::Place(read)) = &mut adjusted
+        {
+            self.retain_argument_borrow(read, true);
         }
         let slots = call
             .parameters

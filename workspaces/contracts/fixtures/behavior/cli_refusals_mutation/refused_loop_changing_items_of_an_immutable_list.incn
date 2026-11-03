@@ -1,5 +1,6 @@
-# behavior: a for loop or a list comprehension that changes its items through its variable, over a local declared without mut read directly, through enumerate, zip or values(), through a field, a list element or a tuple element, is refused at check time
+# behavior: a for loop or a list comprehension that changes its items through its variable, over a local declared without mut read directly, through enumerate, zip or values(), through a field, a list element or a tuple element, is refused at check time; replacing the borrowed list or its parent is also refused (#2498)
 # expect-diagnostic: INCAN-T0001
+# expect-diagnostic: INCAN-T0121
 
 class Holder:
     pub rows: list[list[int]]
@@ -27,3 +28,30 @@ def main() -> None:
         row.append(7)
     popped = [row.pop() for row in rows]
     println(len(rows[0]))
+
+
+model Pending:
+    pub token: str
+
+
+class Client:
+    pub pending: list[Pending]
+
+
+def settle(mut client: Client) -> None:
+    for pending in client.pending:
+        client.pending = [item for item in client.pending if item.token != pending.token]
+
+
+def replace_parent() -> None:
+    mut client = Client(pending=[Pending(token="one")])
+    for pending in client.pending:
+        client = Client(pending=[])
+        println(pending.token)
+
+
+def replace_list() -> None:
+    mut values = [1, 2]
+    for value in values:
+        values = []
+        println(value)

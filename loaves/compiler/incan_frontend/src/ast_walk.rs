@@ -41,6 +41,15 @@ where
         .any(|decl| declaration_has_expr(decl, &mut pred))
 }
 
+/// Visit one already parsed declaration with the same expression coverage and ordering as a program walk. Signature
+/// influence producers use this boundary to retain one source contribution without cloning or reparsing its owner.
+pub fn any_expr_in_declaration<F>(declaration: &Spanned<Declaration>, mut pred: F) -> bool
+where
+    F: FnMut(&Expr) -> bool,
+{
+    declaration_has_expr(declaration, &mut pred)
+}
+
 /// Returns `true` if any expression reachable from `body` satisfies `pred`.
 ///
 /// Use this when a caller already has a statement slice (for example function/method bodies) and does not need to walk

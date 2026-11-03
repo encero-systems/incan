@@ -1,0 +1,19 @@
+"""
+The compiler worker host: the `incan.compiler-worker/1` protocol and the lifecycle of one worker process.
+
+The compiler's executable entry asks the host for one request at a time, runs it, and gives the host the outcome:
+
+```text
+host = start(arguments, footprint())
+while request = next_request(host):
+    complete(host, run(request), footprint())
+```
+
+The host owns the socket, peer identity, decoding, replies and every retirement decision. The entry owns running the
+compiler, containing its panics, and reading the process's physical footprint.
+"""
+
+pub from protocol import SCHEMA, CompileRequest, WorkerCommand
+pub from lifecycle import ActivationOutcome
+pub from endpoint import CallerWatch, SocketFile, abandon
+pub from host import WorkerHost, start, next_request, complete, caller_watch

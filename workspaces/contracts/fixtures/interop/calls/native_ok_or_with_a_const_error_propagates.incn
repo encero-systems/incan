@@ -1,0 +1,95 @@
+# behavior: `?` on a Rust `Option.ok_or(...)` preserves shared and exclusive success payload references and propagates a `const` str as the enclosing `Result[T, str]` error (#2481)
+# expect-stdout:
+#   3
+#   nothing to take
+
+"""Take a value out of a Rust cell, refusing an empty cell with a constant message."""
+
+from rust::std::cell import RefCell
+from rust::std::rc import Rc
+from rust::std::vec import Vec
+
+const NOTHING: str = "nothing to take"
+
+
+class SourceScores:
+    """Return a source mapping without granting physical Rust-container method authority."""
+
+    marker: int
+
+    def values(self) -> Result[dict[str, int], str]:
+        """Provide an authored mapping whose scalar lookups remain owned."""
+        return Ok({"x": 1})
+
+
+def taken(cell: RefCell[Option[int]]) -> Result[int, str]:
+    value = cell.replace(None).ok_or(NOTHING)?
+    return Ok(value)
+
+
+def borrowed(cell: Rc[RefCell[Option[Vec[int]]]]) -> Result[None, str]:
+    """Preserve exclusive and shared native payload loans through the success edge of `?`."""
+    mut guard = cell.borrow_mut()
+    value = guard.as_mut().ok_or(NOTHING)?
+    value.push(7)
+    assert value.len() == 1usize
+    return Ok(None)
+
+
+def shared(cell: Rc[RefCell[Option[Vec[int]]]]) -> Result[usize, str]:
+    """Use a shared success payload directly as another native method's receiver."""
+    return Ok(cell.borrow().as_ref().ok_or(NOTHING)?.len())
+
+
+def check_reference_payloads() -> None:
+    """
+    Check reference success payloads and propagated errors.
+
+    1. Mutate through an exclusive loan and read through a shared loan.
+    2. Propagate the error from an empty cell through both loan forms.
+    """
+    # 1. Mutate through an exclusive loan and read through a shared loan.
+    values: Vec[int] = Vec.new()
+    cell = Rc.new(RefCell.new(Some(values)))
+    match borrowed(cell):
+        Ok(_) => pass
+        Err(_) =>
+            assert false
+    assert shared(cell).unwrap_or(0usize) == 1usize
+    # 2. Propagate the error from an empty cell through both loan forms.
+    empty: Rc[RefCell[Option[Vec[int]]]] = Rc.new(RefCell.new(None))
+    match borrowed(empty):
+        Ok(_) =>
+            assert false
+        Err(error) =>
+            assert error == NOTHING
+    match shared(empty):
+        Ok(_) =>
+            assert false
+        Err(error) =>
+            assert error == NOTHING
+
+
+def main() -> None:
+    """Observe borrowed success payloads and print the constant error from an owned payload."""
+    check_reference_payloads()
+    match check_source_projection():
+        Ok(_) => pass
+        Err(_) =>
+            assert false
+    match taken(RefCell.new(Some(3))):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+    match taken(RefCell.new(None)):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+
+
+def check_source_projection() -> Result[None, str]:
+    """Keep source mapping lookups as owned scalar values after `?`."""
+    source = SourceScores(marker=1)
+    scores = source.values()?
+    mut score = scores.get("x").unwrap_or(0)
+    score += 2
+    assert score == 3
+    return Ok(None)

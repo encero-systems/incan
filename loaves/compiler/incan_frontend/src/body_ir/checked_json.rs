@@ -1,6 +1,9 @@
 //! Source-local checked JSON selection projected only into Body IR reconstruction facts.
 
-use super::{IncanPrimitiveType, IncanType, SemanticSourceTargetKind, TypeCheckInfo, ast, bodies, parameter_types};
+use super::{
+    CollectionTypeId, IncanPrimitiveType, IncanType, SemanticSourceTargetKind, TypeCheckInfo, ast, bodies,
+    parameter_types,
+};
 use incan_semantics_core::{
     CanonicalSymbolId, CompilerNodeId, RuntimeBuiltinType, SymbolNamespace, body_ir::NewtypeDeserialize,
     canonical_module_identity,
@@ -148,16 +151,11 @@ pub(super) fn checked_deserialize_selection(
         parameter_types::checked_parameter_type(&binding.return_type, info, &facts.type_params),
         &owner_type,
     );
-    let IncanType::Generic { base, args } = &result else {
-        return None;
-    };
-    if base != "Result"
-        || args.as_slice()
-            != [
-                owner_type,
-                IncanType::NativeBuiltin(RuntimeBuiltinType::ValidationError),
-            ]
-    {
+    let expected = [
+        owner_type,
+        IncanType::NativeBuiltin(RuntimeBuiltinType::ValidationError),
+    ];
+    if result.collection_arguments(CollectionTypeId::Result) != Some(expected.as_slice()) {
         return None;
     }
     Some(hook.clone())

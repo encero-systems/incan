@@ -3,9 +3,10 @@
 from rust::incan_semantics_core::body_ir import Place as RustPlace, PlaceElem
 from pub::incan_mir_plan import PlanType, SourceSpan, Operand, Place as OperandPlace
 from frame import Builder
-from models import model_prefix, field_projection
+from models import model_prefix, field_step_type
 from tuples import is_tuple_type
-from lowering import projected_element_read
+from list_values import projected_element_read
+from table_views import borrowed_table, borrowed_at
 
 
 pub def model_list_read(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Option[Operand], str]:
@@ -33,7 +34,7 @@ pub def structural_prefix(mut builder: Builder, source: &RustPlace) -> Result[Op
     match source.local_id():
         None => return Ok(None)
         Some(local) =>
-            root = builder.locals[int(local.index()) + 1 + builder.local_offset].ty
+            root = borrowed_at(builder.locals, int(local.index()) + 1 + builder.local_offset).ty
             match root:
                 PlanType.Model(_owner, _name) => ty = root
                 PlanType.Enum(_owner, _name) => ty = root
@@ -55,7 +56,7 @@ pub def structural_prefix(mut builder: Builder, source: &RustPlace) -> Result[Op
                 if not is_tuple_type(ty):
                     break
             _ => break
-        ty = field_projection(
+        ty = field_step_type(
             builder.constructors,
             builder.nominals,
             ty,
@@ -63,7 +64,7 @@ pub def structural_prefix(mut builder: Builder, source: &RustPlace) -> Result[Op
             builder.enums,
             builder.unions,
             builder.intrinsics,
-        )?.ty
+        )?
         count += 1
     return Ok(Some((count, through_tuple)))
 
@@ -75,17 +76,17 @@ pub def prefix_place(
     span: SourceSpan,
 ) -> Result[OperandPlace, str]:
     """Project the first `count` structural steps of a place without reading or copying anything."""
-    mut frame_locals = builder.locals[builder.local_offset:]
     mut place = model_prefix(
         builder.constructors,
         builder.nominals,
-        frame_locals,
+        borrowed_table(builder.locals),
         source,
         count,
         span,
         builder.enums,
         builder.unions,
         builder.intrinsics,
+        builder.local_offset,
     )?
     place.local += builder.local_offset
     return Ok(place)

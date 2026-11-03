@@ -2151,8 +2151,7 @@ pub fn callable_marker_not_supported(
 pub enum GenericBoundTarget {
     /// The bound names a trait (source, builtin, or imported Rust), so a type argument can satisfy it.
     Trait,
-    /// The bound names a type such as `float` or a model. A `with` bound names a trait, so no type argument
-    /// satisfies this bound; the declaration needs a different shape, not a different call.
+    /// The bound names a type such as `float` or a model, which only that type satisfies (#1033).
     Type,
 }
 
@@ -2169,7 +2168,7 @@ pub enum TypeArgumentOrigin {
 ///
 /// The hint names the type that failed rather than "the argument type", because with an explicit bracket list the
 /// value arguments are not what is wrong, and it branches on what the bound names: a trait can be implemented or the
-/// bound widened, while a type in bound position cannot be satisfied by any argument. See #1373.
+/// bound widened, while a type in bound position is satisfied only by that type. See #1373 and #1033.
 pub fn generic_bound_not_satisfied(
     function_name: &str,
     type_param: &str,
@@ -2188,9 +2187,8 @@ pub fn generic_bound_not_satisfied(
     );
     match (bound_target, actual_origin) {
         (GenericBoundTarget::Type, _) => error.with_hint(format!(
-            "'{bound}' is a type, not a trait, so no type argument satisfies this bound; a `with` bound names a \
-             trait the type argument must implement. To accept only '{bound}', declare the parameter as '{bound}' \
-             instead of '{type_param}'"
+            "'{bound}' is a type, so only '{bound}' itself satisfies this bound; pass '{bound}' as the type \
+             argument for '{type_param}', or call an overload whose bound accepts '{actual}'"
         )),
         (GenericBoundTarget::Trait, TypeArgumentOrigin::Explicit) => error.with_hint(format!(
             "Type argument '{actual}' for '{type_param}' must implement '{bound}'; pass a type that implements it \
@@ -2360,6 +2358,15 @@ pub fn missing_field(type_name: &str, field: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("Type '{}' has no field '{}'", type_name, field), span)
 }
 
+/// Report a class field that holds its own class by value, which leaves the class without a finite layout.
+pub fn direct_recursive_class_field(class_name: &str, field: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Class '{class_name}' holds itself through field '{field}' with no Option or collection in between"),
+        span,
+    )
+    .with_hint("Store the field as `Option[...]` or in a collection such as `list[...]`")
+}
+
 /// Report access to a class field that is not visible from the current member-access context.
 pub fn private_field(type_name: &str, field: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("Field '{field}' on '{type_name}' is private"), span)
@@ -2428,12 +2435,13 @@ pub fn rust_receiver_const_generics_not_supported(path: &str, span: Span) -> Com
 
 /// Report a Rust associated call whose owner type arguments nothing in the program fixes (#1720).
 ///
-/// `HashMap.new()` leaves `K` and `V` open; Rust would fill them from a later insert, a typed return, or an
-/// annotation on the binding, but a binding that is never read again gives it nothing to work with, and the build
-/// stops on it. `owner` is the receiver as the source spells it (`HashMap`), `method` the associated function,
-/// `type_params` the owner's open parameters, and `binding` the local the result was bound to, or `None` when the
-/// value was discarded. The hint shows both spellings that close the parameters, with example types sized to the
-/// parameter count. `INCAN-T0105` is its stable code.
+/// `HashMap.new()` leaves `K` and `V` open; a later use of the binding fixes them, such as an insert, a typed parameter
+/// or a typed return. Reads whose checking needs no open parameter, such as a length query, leave them open. This
+/// refusal covers a discarded result or a binding with no type-determining use; a first use that needs them but fixes
+/// nothing is refused with `INCAN-T0122` instead. `owner` is the receiver as the source spells it (`HashMap`), `method`
+/// the associated function, `type_params` the owner's open parameters, and `binding` the local the result was bound to,
+/// or `None` when the value was discarded. The hint shows both spellings that close the parameters, with example
+/// types sized to the parameter count. `INCAN-T0105` is its stable code.
 pub fn rust_owner_type_args_not_inferred(
     owner: &str,
     method: &str,
@@ -2457,7 +2465,7 @@ pub fn rust_owner_type_args_not_inferred(
     .with_stable_code("INCAN-T0105");
     match binding {
         Some(name) => error
-            .with_note(format!("'{name}' is never read after this binding, so nothing later fixes them"))
+            .with_note(format!("'{name}' has no later use that determines these type arguments"))
             .with_hint(format!(
                 "Write them in the call, '{owner}.{method}[{examples}]()', or annotate the binding, '{name}: {owner}[{examples}] = {owner}.{method}()'"
             )),
@@ -2496,6 +2504,61 @@ pub fn rust_trait_method_not_declared(trait_path: &str, method: &str, span: Span
         span,
     )
     .with_hint("Qualify the call with the trait that declares the method, or call it as a method on the receiver value")
+}
+
+/// Why native callee selection found no single Rust callee for a call whose arguments check (#2481).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativeCalleeGap<'a> {
+    /// Type parameters of the callee that nothing in the call fixes, by name.
+    OpenTypeParameters(&'a [String]),
+    /// No admitted implementation of the method applies to the receiver and the arguments.
+    NoCandidate,
+    /// Several implementations apply equally, by native path.
+    Ambiguous(&'a [String]),
+}
+
+/// A native method call whose arguments check, but for which no single Rust callee can be selected (#2481).
+///
+/// A native call compiles only through the callee the checker selects for it, so a call without one cannot be built;
+/// it is refused at checking instead of at the build. `callee` names the requested method
+/// (`rust::std::process::Command.args`) and `gap` says why selection failed. `INCAN-T0122` is its stable code.
+pub fn rust_callee_not_selected(callee: &str, gap: NativeCalleeGap<'_>, span: Span) -> CompileError {
+    let quoted = |names: &[String]| {
+        let names = names.iter().map(|name| format!("`{name}`")).collect::<Vec<_>>();
+        match names.as_slice() {
+            [] => String::new(),
+            [only] => only.clone(),
+            [init @ .., last] => format!("{} and {last}", init.join(", ")),
+        }
+    };
+    let (reason, note, hint) = match gap {
+        NativeCalleeGap::OpenTypeParameters(names) => (
+            match names {
+                [_] => format!("its type parameter {} is not fixed by the call", quoted(names)),
+                _ => format!("its type parameters {} are not fixed by the call", quoted(names)),
+            },
+            "Nothing in the receiver, the arguments, the type the result is expected to have or the first use of the \
+             local it is bound to fixes them, and a native call compiles only through a callee whose type arguments \
+             are all known",
+            "Write the type arguments in the call, annotate the type the result is bound to, or pass an argument \
+             whose type fixes them",
+        ),
+        NativeCalleeGap::NoCandidate => (
+            "no admitted implementation of the method applies to this receiver and these arguments".to_string(),
+            "An imported trait may declare the method while the receiver's type has no admitted implementation of \
+             that trait",
+            "Call the method on a value whose type implements it, or convert the receiver to such a type first",
+        ),
+        NativeCalleeGap::Ambiguous(candidates) => (
+            format!("{} apply equally", quoted(candidates)),
+            "Several implementations accept the receiver and the arguments, and nothing in the call chooses one",
+            "Call a method or conversion whose signature names the type it produces",
+        ),
+    };
+    CompileError::type_error(format!("Cannot select the Rust callee of `{callee}`: {reason}"), span)
+        .with_stable_code("INCAN-T0122")
+        .with_note(note)
+        .with_hint(hint)
 }
 
 /// A Rust import is being used as a constructor, but the compiler lacks enough metadata to emit valid Rust.
@@ -2580,6 +2643,29 @@ pub fn rusttype_forwarding_generic_trait_blocked(type_name: &str, trait_name: &s
         span,
     )
     .with_hint("Use a local newtype wrapper for a handwritten impl when Rust metadata omits trait type arguments")
+}
+
+/// A class implements a Rust trait only when both are concrete and the trait declares nothing but methods.
+pub fn class_rust_trait_adoption_unsupported(class_name: &str, trait_name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Class `{class_name}` cannot implement Rust trait `{trait_name}`"),
+        span,
+    )
+    .with_hint("A class implements a Rust trait without type parameters, associated types or associated constants")
+}
+
+/// A class method fills a Rust trait method only as a concrete instance method with a body.
+pub fn class_rust_trait_method_unsupported(
+    class_name: &str,
+    method_name: &str,
+    trait_name: &str,
+    span: Span,
+) -> CompileError {
+    CompileError::type_error(
+        format!("Method `{method_name}` of class `{class_name}` cannot implement Rust trait `{trait_name}`"),
+        span,
+    )
+    .with_hint("Implement a Rust trait method as an instance method with a body and without type parameters")
 }
 
 /// Awaitable-to-Future rusttype bridging is intentionally gated until pin/projection metadata exists.

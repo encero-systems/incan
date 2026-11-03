@@ -1,0 +1,851 @@
+"""Lower enum and structural matches: arm dispatch, pattern bindings, guards, and payload reads."""
+
+from pub::incan_mir_plan import (
+    CalleeKind,
+    Operand,
+    OperandKind,
+    Place,
+    PlanType,
+    Projection,
+    RvalueKind,
+    SourceSpan,
+    TerminatorKind,
+    assign as plan_assign,
+    place as plan_place,
+)
+from rust::incan_semantics_core::body_ir import (
+    GlobalPlace as RustGlobalPlace,
+    MatchArm as RustMatchArm,
+    Pattern as RustPattern,
+    Operand as RustOperand,
+    OwnershipFact,
+    Place as RustPlace,
+    PlaceElem,
+)
+from table_views import borrowed_at
+from decorator_caches import validate_instance_binding, builder_signature, binding_accessor_name
+from model_lists import structural_prefix, prefix_place
+from element_places import is_element_place, element_place_type
+from enums import enum_owner
+from tuples import is_tuple_type, tuple_has_owners, tuple_fields, owned_carrier
+from text_plan import clone_text
+from options import variant_condition, carrier_payload_value, clone_tuple_operand
+from numerics import numeric_carrier
+from builtins import list_call
+from patterns import (
+    enum_pattern_place,
+    pattern_tests,
+    pattern_binds,
+    binds_in_place,
+    nominal_field,
+    carrier_pattern_slot,
+    has_refutable_payload,
+)
+from frame import (
+    place_type,
+    Builder,
+    temporary,
+    drop_owned,
+    bind_read_value,
+    track_rvalue_moves,
+    terminate_call,
+    read_place,
+    finish_fallthrough,
+    dereferenced_place,
+)
+from collections import is_collection, is_owned_collection
+from lists import require_list_shape, list_element, is_list
+from closures import callable_copy_type
+from mutable_parameters import exclusive_referent
+from lowering import BodyIrModule
+from checked_values import scalar_operand, scalar_place
+from statements import is_nominal_type, lower_statement
+from model_construction import clone_nominal_operand
+from list_values import list_base_place, list_borrow, list_index_operand, value_operand
+from hashed_collections import cloned_collection
+from carrier_operands import bind_enum_fields, bind_payload_in_place, boundary_operand
+
+
+pub def lower_enum_match(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: Place,
+    scrutinee: &RustOperand,
+    arms: &list[RustMatchArm],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Dispatch checked variants in source arm order, with independent owner snapshots on each branch."""
+    if target.local in builder.owned:
+        return Err("unsupported Body IR initialized owned match destination")
+    source = match_scrutinee_place(builder, scrutinee, arms, span)?
+    match place_type(builder.locals, source):
+        PlanType.Enum(_owner, _name) => pass
+        _ => return lower_structural_match(module, builder, target, source, arms, span)
+    owner = enum_owner(place_type(builder.locals, source))?
+    join = builder.new_block(span)
+    mut owners = builder.owned
+    mut arm_ends: list[int] = []
+    mut arm_owners: list[list[int]] = []
+    for arm in arms:
+        selected = builder.new_block(span)
+        missed = builder.new_block(span)
+        next_arm = builder.new_block(span)
+        mut slot = -2
+        if binds_through_alternation(arm.pattern):
+            bound = bind_alternatives(builder, source, arm.pattern, selected, missed, owners, span)?
+            builder.current = selected
+            builder.owned = bound
+        else:
+            slot = dispatch_enum_arm(builder, source, owner, arm.pattern, selected, missed, span)?
+            builder.current = selected
+            builder.owned = owners
+            bind_enum_payload(builder, source, slot, arm.pattern, span)?
+        consumed = lower_arm_guard(module, builder, arm, owners, source.local, next_arm, span)?
+        lower_enum_arm_body(module, builder, arm)?
+        if not builder.closed[builder.current]:
+            value = boundary_operand(builder, arm.result, place_type(builder.locals, target), span)?
+            track_rvalue_moves(builder, RvalueKind.Use(value))
+            builder.emit(plan_assign(target, RvalueKind.Use(value), span))
+            # Pattern-bound owners are branch locals; release them before the arm's owners meet the others at the join.
+            mut branch_owners = builder.owned
+            for local in branch_owners:
+                if local not in owners:
+                    drop_owned(builder, local, span)
+            arm_ends.append(builder.current)
+            arm_owners.append(builder.owned)
+        owners = skip_consumed_guard(builder, missed, next_arm, owners, consumed, span)
+        # A catch-all arm ends the dispatch unless its guard can still reject.
+        if slot == -1 and arm.guard.is_none():
+            break
+    builder.finish(TerminatorKind.Unreachable, span)
+    join_owners = join_branch_owners(builder, join, arm_ends, arm_owners, span)?
+    reaches_join = len(arm_ends) != 0
+    builder.current = join
+    builder.closed[join] = not reaches_join
+    builder.owned = join_owners
+    ty = place_type(builder.locals, target)
+    if reaches_join and (ty == PlanType.String or is_nominal_type(ty) or is_owned_collection(ty)):
+        builder.owned.append(target.local)
+    return Ok(None)
+
+
+def dispatch_enum_arm(
+    mut builder: Builder,
+    source: Place,
+    owner: int,
+    pattern: &RustPattern,
+    selected: int,
+    rejected: int,
+    span: SourceSpan,
+) -> Result[int, str]:
+    """
+    Branch to `selected` when an arm's pattern matches the scrutinee and to `rejected` otherwise; return the variant.
+
+    A plain variant pattern tests its checked native variant. A pattern with a literal or nested payload, or an
+    alternation, runs the full pattern tests in source order. A wildcard selects every value (-1), and an alternation
+    names no single variant to bind (-2).
+    """
+    if has_refutable_payload(pattern):
+        pattern_tests(builder, source, pattern, selected, rejected, span)?
+        match pattern:
+            RustPattern.Or(_alternatives) => return Ok(-2)
+            _ => return carrier_pattern_slot(builder, owner, pattern)
+    slot = carrier_pattern_slot(builder, owner, pattern)?
+    if slot < 0:
+        builder.finish(TerminatorKind.Goto(selected), span)
+        return Ok(slot)
+    condition = variant_condition(builder, source, slot, span)
+    builder.finish(TerminatorKind.SwitchBool(condition, rejected, selected), span)
+    return Ok(slot)
+
+
+def is_binding_alternation(pattern: &RustPattern) -> bool:
+    """Report whether a pattern is an alternation whose alternatives bind names."""
+    match pattern:
+        RustPattern.Or(_alternatives) => return pattern_binds(pattern)
+        _ => return false
+
+
+def binds_through_alternation(pattern: &RustPattern) -> bool:
+    """Report whether an arm's pattern binds through an alternation: at its top, or as an item of a tuple there."""
+    if is_binding_alternation(pattern):
+        return true
+    match pattern:
+        RustPattern.Tuple(items) =>
+            for item in items:
+                if is_binding_alternation(item):
+                    return true
+        _ => pass
+    return false
+
+
+def bind_alternatives(
+    mut builder: Builder,
+    source: Place,
+    pattern: &RustPattern,
+    selected: int,
+    rejected: int,
+    incoming: list[int],
+    span: SourceSpan,
+) -> Result[list[int], str]:
+    """
+    Test each alternative of a binding alternation in source order; the first that matches binds and selects the arm.
+
+    The checker requires every alternative to bind the same names, which share one local each, so every path reaches
+    `selected` owning the same bound locals. The owners at `selected` are returned. A pattern that is not itself an
+    alternation is its own single alternative.
+    """
+    match pattern:
+        RustPattern.Or(alternatives) =>
+            mut bound: list[int] = []
+            mut first = true
+            for alternative in alternatives:
+                next_alternative = builder.new_block(span)
+                owners = bind_alternative(builder, source, alternative, selected, next_alternative, incoming, span)?
+                if first:
+                    bound = owners
+                    first = false
+                elif not same_owners(owners, bound):
+                    return Err("unsupported Body IR binding alternation ownership")
+                builder.current = next_alternative
+            builder.finish(TerminatorKind.Goto(rejected), span)
+            return Ok(bound)
+        _ => return bind_alternative(builder, source, pattern, selected, rejected, incoming, span)
+
+
+def bind_alternative(
+    mut builder: Builder,
+    source: Place,
+    alternative: &RustPattern,
+    selected: int,
+    rejected: int,
+    incoming: list[int],
+    span: SourceSpan,
+) -> Result[list[int], str]:
+    """Test one alternative and, when it matches, bind it and select the arm, returning the owners at `selected`."""
+    match alternative:
+        RustPattern.Tuple(items) =>
+            if binds_through_alternation(alternative):
+                fields = tuple_fields(source, place_type(builder.locals, source), span)?
+                if len(fields) != len(items):
+                    return Err("invalid Body IR tuple pattern layout")
+                mut choices: list[int] = []
+                for _item in items:
+                    choices.append(-1)
+                return tuple_paths(builder, fields, items, 0, choices, selected, rejected, incoming, span)
+        _ => pass
+    matched = builder.new_block(span)
+    pattern_tests(builder, source, alternative, matched, rejected, span)?
+    builder.current = matched
+    builder.owned = incoming
+    bind_structural_pattern(builder, source, alternative, span)?
+    owners = builder.owned
+    builder.finish(TerminatorKind.Goto(selected), span)
+    return Ok(owners)
+
+
+def tuple_paths(
+    mut builder: Builder,
+    fields: list[Place],
+    items: &list[RustPattern],
+    index: int,
+    choices: list[int],
+    selected: int,
+    rejected: int,
+    incoming: list[int],
+    span: SourceSpan,
+) -> Result[list[int], str]:
+    """
+    Test a tuple pattern's items from `index` on, trying each alternative of an item that binds through an alternation.
+
+    `(A | B, C)` matches as `(A, C) | (B, C)`: a later item's failure tries the item's next alternative, and its last
+    alternative's failure rejects. A path on which every item matched binds each item, an alternation item through the
+    alternative `choices` records for it, and selects the arm. The owners at `selected` are returned.
+    """
+    if index == len(items):
+        builder.owned = incoming
+        for position in range(len(items)):
+            bind_tuple_item(builder, fields[position], items[position], choices[position], span)?
+        owners = builder.owned
+        builder.finish(TerminatorKind.Goto(selected), span)
+        return Ok(owners)
+    if not is_binding_alternation(items[index]):
+        next_item = builder.new_block(span)
+        pattern_tests(builder, fields[index], items[index], next_item, rejected, span)?
+        builder.current = next_item
+        return tuple_paths(builder, fields, items, index + 1, choices, selected, rejected, incoming, span)
+    mut bound: list[int] = []
+    match items[index]:
+        RustPattern.Or(alternatives) =>
+            for choice in range(len(alternatives)):
+                matched = builder.new_block(span)
+                # A miss in this alternative or in any later item retries with the item's next alternative.
+                retry = builder.new_block(span)
+                pattern_tests(builder, fields[index], alternatives[choice], matched, retry, span)?
+                builder.current = matched
+                mut chosen = choices.clone()
+                chosen[index] = choice
+                owners = tuple_paths(builder, fields, items, index + 1, chosen, selected, retry, incoming, span)?
+                if choice == 0:
+                    bound = owners
+                elif not same_owners(owners, bound):
+                    return Err("unsupported Body IR binding alternation ownership")
+                builder.current = retry
+        _ => return Err("invalid Body IR binding alternation")
+    builder.finish(TerminatorKind.Goto(rejected), span)
+    return Ok(bound)
+
+
+def bind_tuple_item(
+    mut builder: Builder,
+    field: Place,
+    item: &RustPattern,
+    choice: int,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Bind one tuple item: the alternative `choice` selects of an item that binds through an alternation, or the item."""
+    if choice < 0:
+        return bind_structural_pattern(builder, field, item, span)
+    match item:
+        RustPattern.Or(alternatives) => return bind_structural_pattern(builder, field, alternatives[choice], span)
+        _ => return Err("invalid Body IR binding alternation")
+
+
+def same_owners(left: list[int], right: list[int]) -> bool:
+    """Report whether two owner ledgers hold the same locals, in any order."""
+    if len(left) != len(right):
+        return false
+    for local in left:
+        if local not in right:
+            return false
+    return true
+
+
+def match_scrutinee_place(
+    mut builder: Builder,
+    scrutinee: &RustOperand,
+    arms: &list[RustMatchArm],
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """
+    Select the place a match inspects, borrowing the matched storage itself when an arm changes it in place.
+
+    A list element is read as a copy unless an arm changes its payload in place; then it is reborrowed in its list, as
+    legacy's checked `list_get_mut` does. A local, a field of one, a `mut` parameter and an exclusive loop item are
+    already places the change reaches. A copied loop variable is not, so an in-place match over one stays refused.
+    """
+    mut in_place = false
+    for arm in arms:
+        if binds_in_place(arm.pattern):
+            in_place = true
+    match scrutinee:
+        RustOperand.Place(read) =>
+            mut indexed = false
+            for projection in read.place.projection:
+                match projection:
+                    PlaceElem.Index(_index) => indexed = true
+                    _ => pass
+            if indexed and in_place:
+                return exclusive_element(builder, read.place, span)
+            if indexed:
+                # Collection reads clone one element before inspecting its tag. Evaluate the checked index once
+                # and keep the parent alive; an index cannot be interpreted as a model field projection.
+                operand = value_operand(builder, scrutinee, span)?
+                match operand.kind:
+                    OperandKind.Move(place) => return Ok(place)
+                    OperandKind.Copy(place) => return Ok(place)
+                    _ => return Err("unsupported Body IR nonplace enum match scrutinee")
+            source = scalar_place(builder, read.place, span)?
+            if in_place and source.local in builder.borrowed_items:
+                return Err("unsupported Body IR in-place match on a copied loop variable")
+            return Ok(enum_pattern_place(builder, source, span))
+        _ => return Err("unsupported Body IR nonplace enum match scrutinee")
+
+
+def exclusive_element(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+    """
+    Reborrow the list element an in-place match names through the runtime's checked `borrow_list_mut`.
+
+    The list is the scrutinee's local or a structural field path of it; the index is evaluated before the list is
+    borrowed. An enum carrier or list element is matched this way; nested and sliced element paths stay refused.
+    """
+    last = len(source.projection) - 1
+    match source.projection[last]:
+        PlaceElem.Index(_index) => pass
+        _ => return Err("unsupported Body IR in-place match on a list slice")
+    mut container = plan_place(0, span)
+    if last == 0:
+        container = list_base_place(builder, source, span)?
+    else:
+        match structural_prefix(builder, source)?:
+            Some((count, _through_tuple)) =>
+                if count != last:
+                    return Err("unsupported Body IR in-place match on a nested list element")
+            None => return Err("unsupported Body IR in-place match on a nested list element")
+        container = prefix_place(builder, source, last, span)?
+    leaf, depth = require_list_shape(
+        place_type(builder.locals, container),
+        "unsupported Body IR in-place match off a list",
+    )?
+    element = list_element(leaf, depth)
+    mut reference_type = PlanType.Unit
+    match element:
+        PlanType.Enum(owner, name) => reference_type = PlanType.EnumMutRef(owner, name)
+        PlanType.List(inner_leaf, inner_depth) => reference_type = PlanType.ListMutRef(inner_leaf, inner_depth)
+        _ => return Err("unsupported Body IR in-place match on a non-carrier element")
+    index = list_index_operand(builder, source, last, span)?
+    exclusive_list = list_borrow(builder, container, true, span)?
+    reference = temporary(builder, reference_type, span)
+    list_call(
+        builder,
+        "borrow_list_mut",
+        element,
+        [PlanType.ListMutRef(leaf, depth), PlanType.Int],
+        reference_type,
+        [exclusive_list, index],
+        reference,
+        span,
+    )
+    return Ok(Place(local=reference.local, projection=Projection.Deref(element), span=span))
+
+
+def validate_in_place_list_match(source: PlanType, arms: &list[RustMatchArm]) -> Result[bool, str]:
+    """Admit only an owned list referent with checked exclusive variable bindings or ignored wildcard arms."""
+    match source:
+        PlanType.List(_leaf, _depth) => pass
+        _ => return Ok(false)
+    for arm in arms:
+        validate_in_place_list_pattern(arm.pattern)?
+    return Ok(true)
+
+
+def validate_in_place_list_pattern(pattern: &RustPattern) -> Result[None, str]:
+    """Borrow the opaque Rust pattern without moving its binding record out of a shared match arm."""
+    match pattern:
+        RustPattern.Var(binding) =>
+            if binding.fact != OwnershipFact.MutBorrow:
+                return Err("unsupported Body IR list match without an in-place binding")
+        RustPattern.Wildcard => pass
+        _ => return Err("unsupported Body IR list match pattern")
+    return Ok(None)
+
+
+def lower_structural_match(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: Place,
+    source: Place,
+    arms: &list[RustMatchArm],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Dispatch primitive and structural patterns, retaining checked list bindings as references to matched storage."""
+    source_type = place_type(builder.locals, source)
+    in_place_list = validate_in_place_list_match(source_type, arms)?
+    if (
+        not numeric_carrier(source_type)
+        and source_type not in [PlanType.Bool, PlanType.Unit, PlanType.String]
+        and not is_tuple_type(source_type)
+        and not is_model_type(source_type)
+        and not in_place_list
+    ):
+        return Err("unsupported Body IR nonprimitive structural match scrutinee")
+    result_type = place_type(builder.locals, target)
+    join = builder.new_block(span)
+    mut owners = builder.owned
+    mut arm_ends: list[int] = []
+    mut arm_owners: list[list[int]] = []
+    for arm in arms:
+        selected = builder.new_block(span)
+        missed = builder.new_block(span)
+        next_arm = builder.new_block(span)
+        if binds_through_alternation(arm.pattern):
+            bound = bind_alternatives(builder, source, arm.pattern, selected, missed, owners, span)?
+            builder.current = selected
+            builder.owned = bound
+        else:
+            pattern_tests(builder, source, arm.pattern, selected, missed, span)?
+            builder.current = selected
+            bind_structural_pattern(builder, source, arm.pattern, span)?
+        consumed = lower_arm_guard(module, builder, arm, owners, source.local, next_arm, span)?
+        lower_enum_arm_body(module, builder, arm)?
+        if not builder.closed[builder.current]:
+            value = boundary_operand(builder, arm.result, result_type, span)?
+            track_rvalue_moves(builder, RvalueKind.Use(value))
+            builder.emit(plan_assign(target, RvalueKind.Use(value), span))
+            release_match_scratch(builder, owners, span)
+            arm_ends.append(builder.current)
+            arm_owners.append(builder.owned)
+        owners = skip_consumed_guard(builder, missed, next_arm, owners, consumed, span)
+    builder.finish(TerminatorKind.Unreachable, span)
+    # An arm or its guard may move an incoming owner the other arms keep; the join keeps only what every arm kept.
+    join_owners = join_branch_owners(builder, join, arm_ends, arm_owners, span)?
+    reaches_join = len(arm_ends) != 0
+    builder.current = join
+    builder.closed[join] = not reaches_join
+    builder.owned = join_owners
+    if (
+        reaches_join
+        and (
+            result_type == PlanType.String
+            or tuple_has_owners(result_type)
+            or is_nominal_type(result_type)
+            or is_owned_collection(result_type)
+        )
+    ):
+        builder.owned.append(target.local)
+    return Ok(None)
+
+
+def is_model_type(ty: PlanType) -> bool:
+    """Report whether a scrutinee is a plain model, whose patterns name its fields."""
+    match ty:
+        PlanType.Model(_owner, _name) => return true
+        _ => return false
+
+
+def lower_arm_guard(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    arm: &RustMatchArm,
+    incoming: list[int],
+    scrutinee: int,
+    rejected: int,
+    span: SourceSpan,
+) -> Result[list[int], str]:
+    """
+    Run a matched arm's guard after its pattern bound, falling through to `rejected` when the guard is false.
+
+    The guard reads the arm's bindings and the incoming owners. A rejecting guard releases the bindings and guard
+    temporaries it owns before falling through; an admitting guard keeps them for the arm's body. The guard may make
+    the last use of an incoming owner, moving it on every path through the guard (Body IR counts last uses in source
+    order, so no later arm reads it); those owners are returned for the caller to release on the paths that skip the
+    guard. The scrutinee, which later arms test, and an owner whose release does more than free memory stay refused.
+    """
+    mut consumed: list[int] = []
+    match arm.guard:
+        Some(guard) =>
+            for statement in arm.guard_stmts:
+                lower_statement(module, builder, statement)?
+                if builder.closed[builder.current]:
+                    return Err("unsupported Body IR diverging match guard")
+            condition = scalar_operand(builder, guard, span)?
+            for local in incoming:
+                if local not in builder.owned:
+                    if local == scrutinee or not releases_only_memory(borrowed_at(builder.locals, local).ty):
+                        return Err("unsupported Body IR match guard consuming an owner")
+                    consumed.append(local)
+            admitted = builder.new_block(span)
+            refused = builder.new_block(span)
+            builder.finish(TerminatorKind.SwitchBool(condition, refused, admitted), span)
+            kept = builder.owned
+            builder.current = refused
+            release_match_scratch(builder, incoming, span)
+            builder.finish(TerminatorKind.Goto(rejected), span)
+            builder.current = admitted
+            builder.owned = kept
+        None => pass
+    return Ok(consumed)
+
+
+def skip_consumed_guard(
+    mut builder: Builder,
+    missed: int,
+    next_arm: int,
+    owners: list[int],
+    consumed: list[int],
+    span: SourceSpan,
+) -> list[int]:
+    """
+    Close an arm's pattern-miss path into the next arm and return the owners the next arm starts with.
+
+    The arm's guard moved `consumed` on every path through it, so the miss path, which skips the guard, releases them
+    too; both ways into the next arm then hold the same owners.
+    """
+    builder.current = missed
+    builder.owned = owners
+    for local in consumed:
+        drop_owned(builder, local, span)
+    builder.finish(TerminatorKind.Goto(next_arm), span)
+    mut remaining: list[int] = []
+    for local in owners:
+        if local not in consumed:
+            remaining.append(local)
+    builder.current = next_arm
+    builder.owned = remaining
+    return remaining
+
+
+def release_match_scratch(mut builder: Builder, incoming: list[int], span: SourceSpan) -> None:
+    """Release branch-local bindings and literal materializations without dropping incoming owners."""
+    owners = builder.owned
+    for local in owners:
+        if local not in incoming:
+            drop_owned(builder, local, span)
+
+
+pub def bind_structural_pattern(
+    mut builder: Builder,
+    source: Place,
+    pattern: &RustPattern,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Initialize structural bindings through the retained payload ownership policy after every component matched."""
+    match pattern:
+        RustPattern.Var(binding) =>
+            local = int(binding.local.index()) + 1 + builder.local_offset
+            ty = place_type(builder.locals, source)
+            if borrowed_at(builder.locals, local).ty != ty:
+                # A borrowed subject binds its components as shared references to them.
+                reference = borrowed_binding_type(ty)
+                if reference == PlanType.Unit or borrowed_at(builder.locals, local).ty != reference:
+                    return Err("invalid Body IR structural pattern binding carrier")
+                builder.emit(plan_assign(plan_place(local, span), RvalueKind.Borrow(source), span))
+                return Ok(None)
+            if binding.fact == OwnershipFact.MutBorrow and is_list(ty):
+                return bind_payload_in_place(builder, local, source, span)
+            match binding.fact:
+                OwnershipFact.Unknown => return Err("unsupported Body IR pattern binding ownership Unknown")
+                OwnershipFact.MutBorrow => return Err("unsupported Body IR mutable pattern binding")
+                _ => pass
+            # A component with owned storage is read through the payload policy, which clones or moves it; any other
+            # is copied. Either way the binding owns exactly what its read produced.
+            mut value = read_place(source, false, span)
+            if ty == PlanType.String or tuple_has_owners(ty) or owned_carrier(ty) or is_owned_collection(ty):
+                value = enum_payload_read(builder, source, binding.fact, span)?
+            bind_read_value(builder, local, value, span)
+        RustPattern.Tuple(items) =>
+            ty = place_type(builder.locals, source)
+            fields = tuple_fields(source, ty, span)?
+            if len(fields) != len(items):
+                return Err("invalid Body IR tuple pattern binding layout")
+            for index in range(len(items)):
+                bind_structural_pattern(builder, fields[index], items[index], span)?
+        RustPattern.Nominal(target=target, fields=fields) =>
+            for name, field_pattern in fields:
+                field = nominal_field(builder, source, target, str(name), span)?
+                # A field binding reads out of the borrowed scrutinee, so it may only copy the value or clone text.
+                match field_pattern:
+                    RustPattern.Var(_binding) =>
+                        if not structural_binding_carrier(place_type(builder.locals, field)):
+                            return Err("unsupported Body IR owned model field pattern binding")
+                    _ => pass
+                bind_structural_pattern(builder, field, field_pattern, span)?
+        RustPattern.Or(_alternatives) =>
+            # A carrier pattern inside a structure binds its payload names like a match over that carrier.
+            if pattern_binds(pattern):
+                return Err("unsupported Body IR binding alternation")
+        RustPattern.Wildcard => pass
+        RustPattern.Literal(_value) => pass
+        _ =>
+            if pattern_binds(pattern):
+                carrier = enum_pattern_place(builder, source, span)
+                match place_type(builder.locals, carrier):
+                    PlanType.Enum(owner, _name) =>
+                        slot = carrier_pattern_slot(builder, owner, pattern)?
+                        return bind_enum_payload(builder, carrier, slot, pattern, span)
+                    _ => return Err("unsupported Body IR structural pattern binding")
+    return Ok(None)
+
+
+def borrowed_binding_type(ty: PlanType) -> PlanType:
+    """The shared-reference carrier a binding takes to a matched scalar, text or model component; Unit when none."""
+    if numeric_carrier(ty) or ty == PlanType.Bool:
+        return PlanType.ScalarRef([ty])
+    match ty:
+        PlanType.String => return PlanType.StringRef
+        PlanType.Model(index, name) => return PlanType.ModelRef(index, name)
+        _ => return PlanType.Unit
+
+
+def structural_binding_carrier(ty: PlanType) -> bool:
+    """Report whether a binding copies its matched value or clones it as text."""
+    return numeric_carrier(ty) or ty == PlanType.Bool or ty == PlanType.Unit or ty == PlanType.String
+
+
+pub def join_branch_owners(
+    mut builder: Builder,
+    join: int,
+    ends: list[int],
+    arm_owners: list[list[int]],
+    span: SourceSpan,
+) -> Result[list[int], str]:
+    """
+    Close each `if` branch or match arm reaching the join, keeping live only the owners every such branch left live.
+
+    Body IR counts last uses across branches in source order, so one branch may move a value that another only borrows,
+    and a branch's own temporaries (a condition's constructed model, a comparison's enum value) end with it. Rust drops
+    such a value at scope end through a drop flag. Destroying text, collections and nominal values only releases their
+    memory, so releasing the value at the end of the branch that kept it is equivalent. An owner of any other type
+    left live on only some paths stays refused.
+    """
+    mut live: list[int] = []
+    if len(ends) != 0:
+        for local in arm_owners[0]:
+            if kept_by_every_arm(local, arm_owners):
+                live.append(local)
+    for index in range(len(ends)):
+        builder.current = ends[index]
+        builder.owned = arm_owners[index]
+        for local in arm_owners[index]:
+            if local in live:
+                continue
+            if not releases_only_memory(borrowed_at(builder.locals, local).ty):
+                return Err("unsupported Body IR owned-value branch merge")
+            drop_owned(builder, local, span)
+        finish_fallthrough(builder, join, span)
+    return Ok(live)
+
+
+def releases_only_memory(ty: PlanType) -> bool:
+    """Report whether destroying an owner of this type only frees memory: text, owned collections and nominal values."""
+    if ty == PlanType.String or is_owned_collection(ty):
+        return true
+    match ty:
+        PlanType.Model(_index, _name) => return true
+        PlanType.Enum(_index, _name) => return true
+        PlanType.Tuple(_elements) => return true
+        _ => return false
+
+
+def kept_by_every_arm(local: int, arm_owners: list[list[int]]) -> bool:
+    """Report whether every arm reaching a join still owns `local`."""
+    for owned in arm_owners:
+        if local not in owned:
+            return false
+    return true
+
+
+def lower_enum_arm_body(module: &BodyIrModule, mut builder: Builder, arm: &RustMatchArm) -> Result[None, str]:
+    """Borrow the retained arm's statements and stop once its control flow terminates."""
+    for statement in arm.body_stmts:
+        lower_statement(module, builder, statement)?
+        if builder.closed[builder.current]:
+            return Ok(None)
+    return Ok(None)
+
+
+pub def bind_enum_payload(
+    mut builder: Builder,
+    source: Place,
+    variant: int,
+    pattern: &RustPattern,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Bind payloads through native downcasts, preserving checked copies, borrows, clones and single-owner moves."""
+    match pattern:
+        RustPattern.UnionMember(ty=_ty, fields=fields) =>
+            return bind_enum_fields(builder, source, variant, fields, span)
+        RustPattern.Enum(canonical=_identity, name=_name, variant=_variant, fields=fields) =>
+            return bind_enum_fields(builder, source, variant, fields, span)
+        RustPattern.Result(variant=_kind, fields=fields) =>
+            return bind_enum_fields(builder, source, variant, fields, span)
+        _ => pass
+    return Ok(None)
+
+
+pub def enum_payload_read(
+    mut builder: Builder,
+    place: Place,
+    fact: &OwnershipFact,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Preserve checked native reference payloads and copy facts; clone only payloads with owned storage."""
+    # Legacy matches a cloned enum by value, so a moved payload binding is materialized like a cloned one.
+    match fact:
+        OwnershipFact.Copy => return Ok(read_place(place, false, span))
+        OwnershipFact.Clone => pass
+        OwnershipFact.Borrow => pass
+        OwnershipFact.Move => pass
+        _ => return Err("unsupported Body IR enum payload binding ownership")
+    # The canonical frozen wrapper's Clone is its Copy value; it owns no allocation or custom clone hook.
+    if place_type(builder.locals, place) == PlanType.FrozenStr:
+        return Ok(read_place(place, false, span))
+    # A type parameter's payload binding is cloned by its checked fact, which is Rust's copy-valued Clone once the
+    # instance makes the payload a concrete scalar.
+    payload_type = place_type(builder.locals, place)
+    if callable_copy_type(payload_type):
+        return Ok(read_place(place, false, span))
+    match payload_type:
+        PlanType.ModelRef(_owner, _name) => return Ok(read_place(place, false, span))
+        PlanType.EnumRef(_owner, _name) => return Ok(read_place(place, false, span))
+        PlanType.SliceRef(_elements) => return Ok(read_place(place, false, span))
+        PlanType.NativeArrayRef(_elements, _length) => return Ok(read_place(place, false, span))
+        PlanType.StrRef => return Ok(read_place(place, false, span))
+        (PlanType.ModelMutRef(_, _) | PlanType.EnumMutRef(_, _) | PlanType.StringMutRef | PlanType.TupleMutRef(_)) =>
+            return reborrowed_payload(builder, place, payload_type, span)
+        _ => pass
+    if numeric_carrier(payload_type) or payload_type == PlanType.Bool or payload_type == PlanType.Unit:
+        return Ok(read_place(place, false, span))
+    if is_tuple_type(payload_type):
+        return clone_tuple_operand(builder, place, span)
+    if is_list(place_type(builder.locals, place)):
+        return carrier_payload_value(builder, place, span)
+    if is_collection(place_type(builder.locals, place)):
+        return cloned_collection(builder, place, span)
+    # Legacy matches a cloned enum by value. Cloning just the selected payload preserves that owned-binding contract
+    # while the canonical match scrutinee stays borrowed; unselected payloads remain owned by their original enum.
+    if place_type(builder.locals, place) == PlanType.String:
+        cloned = clone_text(builder, place, span)?
+        return Ok(read_place(cloned, true, span))
+    return clone_nominal_operand(builder, place, span)
+
+
+def reborrowed_payload(
+    mut builder: Builder,
+    place: Place,
+    reference: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """
+    Lend an exclusive reference payload's referent again, as `Option.as_mut()` hands it out. An exclusive reference can
+    be neither copied nor cloned; reborrowing leaves the carrier whole for any later reader.
+    """
+    referent = dereferenced_place(place, exclusive_referent(reference)?, span)?
+    reborrow = temporary(builder, reference, span)
+    builder.emit(plan_assign(reborrow, RvalueKind.MutBorrow(referent), span))
+    return Ok(read_place(reborrow, true, span))
+
+
+pub def enum_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[bool, str]:
+    """Classify the retained value type without reading an index; enum comparison materializes the value only once."""
+    match value:
+        RustOperand.Place(read) =>
+            # Retained static cells are scalar-only; the ordinary read validates their canonical storage identity.
+            match read.place.global():
+                Some(_global) => return Ok(false)
+                None => pass
+            mut ty = PlanType.Unit
+            if is_element_place(builder, read.place)?:
+                ty = element_place_type(builder, read.place)?
+            else:
+                place = scalar_place(builder, read.place, span)?
+                ty = place_type(builder.locals, place)
+            match ty:
+                PlanType.Enum(_owner, _name) => return Ok(true)
+                _ => pass
+        _ => pass
+    return Ok(false)
+
+
+pub def read_generic_decorator(
+    mut builder: Builder,
+    value: &RustPlace,
+    global: &RustGlobalPlace,
+    span: SourceSpan,
+) -> Result[Option[Operand], str]:
+    """Read only a validated wrapper's own closed binding through its instance's publishing accessor."""
+    slot = builder.cached_decorator
+    if slot < 0:
+        return Ok(None)
+    if slot >= len(builder.decorated_bindings):
+        return Err("invalid Body IR generic decorator frame slot")
+    binding = builder.decorated_bindings[slot]
+    if binding.original_body.canonical != Some(global.identity.clone()):
+        return Ok(None)
+    if builder.body_identity != binding.original_body.canonical or len(value.projection) != 0:
+        return Err("unsupported Body IR generic decorator read outside its whole checked wrapper binding")
+    validate_instance_binding(binding)?
+    # The wrapper shares the original's closed signature, which the accessor returns as a reified pointer.
+    output = temporary(builder, PlanType.FunctionPointer(builder_signature(builder)), span)
+    terminate_call(builder, CalleeKind.Planned(binding_accessor_name(builder.name)), [], output, span)
+    return Ok(Some(read_place(output, false, span)))

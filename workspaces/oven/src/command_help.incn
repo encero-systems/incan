@@ -9,10 +9,13 @@ from toolchain_archive import PACK_USAGE, INSTALL_USAGE, help_text as archive_he
 const VERSION_USAGE: str = "incan --version"
 const RUN_USAGE: str = "incan run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"
 const CHECK_USAGE: str = "incan check PATH [--format text|json] [UNIT OPTIONS]"
+const EXPLAIN_USAGE: str = "incan explain CODE"
 const TEST_USAGE: str = "incan test PATH [UNIT OPTIONS]"
 const DESCRIBE_USAGE: str = "incan describe-unit PATH [UNIT OPTIONS]"
 const BUILD_USAGE: str = "incan build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"
 const OWNER_USAGE: str = "incan owner stop"
+const BAKERY_USAGE: str = "incan bakery gc [--keep-days N] | verify | repair-payload SHA256 FILE"
+const DEPENDENCIES_USAGE: str = "incan inspect dependencies PATH [UNIT OPTIONS]"
 pub const UNIT_VALUE_OPTIONS: FrozenList[str] = [
     "--profile",
     "--features",
@@ -29,12 +32,15 @@ pub def usage() -> str:
             VERSION_USAGE,
             RUN_USAGE,
             CHECK_USAGE,
+            EXPLAIN_USAGE,
             TEST_USAGE,
             DESCRIBE_USAGE,
             BUILD_USAGE,
             FORMAT_USAGE,
             OWNER_USAGE,
+            BAKERY_USAGE,
             GRAPH_USAGE,
+            DEPENDENCIES_USAGE,
             MCP_USAGE,
             PACK_USAGE,
             INSTALL_USAGE,
@@ -47,6 +53,12 @@ pub def command_help(command: str, arguments: list[str]) -> Option[str]:
     if command in ["run", "check", "test", "describe-unit", "build"]:
         if requested(arguments, list(UNIT_VALUE_OPTIONS) + ["--format"]):
             return Some(unit_help(command))
+    elif command == "explain" and requested(arguments):
+        return Some(render(EXPLAIN_USAGE, [], "incan explain INCAN-T0001"))
+    elif command == "bakery":
+        for subcommand in ["gc", "verify", "repair-payload"]:
+            if nested_help(arguments, subcommand):
+                return Some(render(BAKERY_USAGE, [], "incan bakery verify"))
     elif command == "fmt" and requested(arguments):
         return Some(format_help())
     elif command == "mcp" and requested(arguments):
@@ -57,6 +69,16 @@ pub def command_help(command: str, arguments: list[str]) -> Option[str]:
         return Some(render(OWNER_USAGE, [], "incan owner stop"))
     elif command == "inspect" and nested_help(arguments, "codegraph", list(GRAPH_VALUE_OPTIONS)):
         return Some(graph_help())
+    elif command == "inspect" and nested_help(arguments, "dependencies", list(UNIT_VALUE_OPTIONS)):
+        return Some(unit_help("inspect dependencies"))
+    elif command == "inspect" and nested_help(arguments, "run"):
+        return Some(
+            render(
+                "incan inspect run ID --proofs",
+                [],
+                "INCAN_ENGINE=records incan inspect run 0123456789abcdef0123456789abcdef --proofs",
+            ),
+        )
     elif command == "toolchain":
         if nested_help(arguments, "pack"):
             return Some(archive_help("pack"))
@@ -86,6 +108,7 @@ def unit_help(command: str) -> str:
             options + [
                 "  --argv0 TEXT          Set the program's argument zero.",
                 "  --program-entry PATH  Add a program entry; repeatable.",
+                "  --engine-report       Retain and print unit counters with INCAN_ENGINE=records.",
                 "  --                    Pass remaining arguments to the program.",
             ],
             "incan run src/main.incn -- hello",
@@ -100,11 +123,14 @@ def unit_help(command: str) -> str:
         return render(TEST_USAGE, options, "incan test tests/test_example.incn")
     if command == "describe-unit":
         return render(DESCRIBE_USAGE, options, "incan describe-unit src/main.incn")
+    if command == "inspect dependencies":
+        return render(DEPENDENCIES_USAGE, options, "incan inspect dependencies src/main.incn")
     return render(
         BUILD_USAGE,
         options + [
             "  --substitute NAME=DIR  Supply a local Rust dependency substitution; repeatable.",
             "  --program-entry PATH   Add a program entry to a program build; repeatable.",
+            "  --engine-report        Retain and print unit counters with INCAN_ENGINE=records.",
         ],
         "incan build src/main.incn --profile debug",
     )

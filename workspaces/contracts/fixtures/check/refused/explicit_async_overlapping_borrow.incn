@@ -1,0 +1,20 @@
+# behavior: in an async body, a borrow held across an await keeps its source borrowed, so awaiting a call that changes that source first is refused (#2500).
+# expect-diagnostic: INCAN-T0126
+
+import std.async
+
+
+class Buffer:
+    pub items: list[int]
+    pub label: str
+
+
+async def grow(mut buffer: BorrowedMut[Buffer], item: int) -> int:
+    buffer.items.append(item)
+    return len(buffer.items)
+
+
+async def overlap(mut buffer: BorrowedMut[Buffer]) -> int:
+    label: Borrowed[str] = buffer.label
+    grown = await grow(buffer, 1)
+    return grown + len(label)

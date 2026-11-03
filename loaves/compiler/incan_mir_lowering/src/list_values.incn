@@ -1,0 +1,793 @@
+"""Borrow, clone, read, slice, and assign list values and their elements."""
+
+from pub::incan_mir_plan import (
+    Constant,
+    ListLeaf,
+    Operand,
+    OperandKind,
+    Place,
+    PlanType,
+    Projection,
+    RvalueKind,
+    SourceSpan,
+    assign as plan_assign,
+    place as plan_place,
+)
+from bytes_plan import bytes_literal
+from rust::incan_semantics_core::body_ir import (
+    AggregateKind as RustAggregateKind,
+    ArgumentElement as RustArgumentElement,
+    Constant as RustConstant,
+    Operand as RustOperand,
+    OwnershipFact,
+    Place as RustPlace,
+    Rvalue as RustRvalue,
+    PlaceElem,
+)
+from tuple_iterators import zip_shape, clone_zip
+from generators import generator_collect
+from table_views import borrowed_at
+from model_lists import model_list_read
+from element_places import is_element_place
+from element_borrows import mutable_element_place
+from models import field_steps
+from tuples import is_tuple_type, tuple_fields
+from text_plan import clone_text, owned_literal
+from options import replace_owned_destination
+from numerics import numeric_carrier
+from builtins import list_call
+from strings import emit_text_helper
+from frame import (
+    place_type,
+    Builder,
+    temporary,
+    forget_owned,
+    drop_owned,
+    external_call,
+    read_place,
+    literal,
+    appended_field,
+    dereferenced_place,
+)
+from array_views import borrow_array_slice
+from collections import is_collection, is_owned_collection, borrow_collection
+from lists import list_shape, require_list_shape, list_element, is_owned_list
+from closures import callable_copy_type
+from checked_values import reference_value_read, scalar_operand, scalar_place
+from operators import operand_type
+from statements import is_nominal_type, validate_callback_place
+from calls import instantiated_external_call
+from model_construction import clone_nominal_operand
+from formatting import display_plan_operand
+from static_storage import read_static
+from list_methods import materialized_receiver
+from list_iteration import frozen_dictionary_element, frozen_list_snapshot, frozen_list_snapshot_type, list_root_place
+from hashed_collections import (
+    cloned_collection,
+    collection_place_value,
+    collection_value,
+    dictionary_index_read,
+    read_dictionary_element,
+)
+from carrier_operands import boundary_operand, element_operand
+
+
+pub def list_borrow(mut builder: Builder, place: Place, mutable: bool, span: SourceSpan) -> Result[Operand, str]:
+    """Borrow an owner or reborrow a parameter; frozen bytes materialize only for shared access."""
+    if mutable and place.local in builder.borrowed_items:
+        return Err("unsupported Body IR mutation of borrowed list iteration item")
+    ty = place_type(builder.locals, place)
+    if is_collection(ty):
+        return borrow_collection(builder, place, mutable, span)
+    if ty == PlanType.FrozenBytes and not mutable:
+        # A read-only observation may own a copy; it cannot grant mutation authority over a constant.
+        storage = sequence_read_storage(builder, place, span)?
+        return list_borrow(builder, storage, false, span)
+    leaf, depth = require_list_shape(ty, "unsupported Body IR non-list borrow")?
+    mut source = place
+    match ty:
+        PlanType.ListRef(_leaf, _depth) =>
+            if mutable:
+                return Err("unsupported Body IR mutable access through shared list parameter")
+            source.projection = Projection.Deref(PlanType.List(leaf, depth))
+        PlanType.ListMutRef(_leaf, _depth) => source.projection = Projection.Deref(PlanType.List(leaf, depth))
+        _ => pass
+    mut reference_type = PlanType.ListRef(leaf, depth)
+    mut operation = RvalueKind.Borrow(source)
+    if mutable:
+        reference_type = PlanType.ListMutRef(leaf, depth)
+        operation = RvalueKind.MutBorrow(source)
+    reference = temporary(builder, reference_type, span)
+    builder.emit(plan_assign(reference, operation, span))
+    return Ok(read_place(reference, mutable, span))
+
+
+pub def checked_list_argument(
+    mut builder: Builder,
+    value: &RustOperand,
+    mutable: bool,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """
+    Preserve checked exclusive-access authority before borrowing a local for an Incan parameter or method receiver.
+
+    An exclusive borrow also takes a value the caller last uses (a list literal, a temporary) in place, since nothing
+    reads it again. A copied loop variable stays refused for an exclusive borrow, because a change to it could never
+    reach the iterated list.
+    """
+    match value:
+        RustOperand.Place(read) =>
+            if mutable:
+                match read.place.global():
+                    Some(_global) => return Err("unsupported Body IR mutable static borrow through source function")
+                    None => pass
+            if mutable and read.fact != OwnershipFact.MutBorrow and read.fact != OwnershipFact.Move:
+                return Err("unsupported Body IR list argument without mutable borrow fact")
+            if is_element_place(builder, read.place)?:
+                # A shared parameter reads an indexed or sliced list through a copy that stays owned until its scope
+                # ends.
+                if not mutable:
+                    copied = materialized_receiver(builder, read.place, span)?
+                    return list_borrow(builder, copied, false, span)
+                # An exclusive argument reaches the list stored in the container, so its change lands there.
+                stored = mutable_element_place(builder, read.place, span)?
+                return list_borrow(builder, stored, true, span)
+            root = list_root_place(builder, read.place, span)?
+            if place_type(builder.locals, root) == PlanType.Generator(ListLeaf.Int, 0):
+                if read.fact != OwnershipFact.Move and not read.last_use:
+                    return Err("unsupported Body IR list argument without an owned range")
+                snapshot = temporary(builder, PlanType.List(ListLeaf.Int, 1), span)
+                generator_collect(builder, root, snapshot, span)?
+                builder.owned.append(snapshot.local)
+                return list_borrow(builder, snapshot, mutable, span)
+            return list_borrow(builder, root, mutable, span)
+        RustOperand.Constant(constant) =>
+            match constant:
+                RustConstant.Bytes(_bytes) =>
+                    if mutable:
+                        return Err("unsupported Body IR mutable byte literal argument")
+                    literal_place = bytes_literal(builder, constant, span)?
+                    return list_borrow(builder, literal_place, false, span)
+                _ => return Err("unsupported Body IR constant list argument")
+        _ => return Err("unsupported Body IR constant list argument")
+
+
+pub def cloned_list(mut builder: Builder, source: Place, span: SourceSpan) -> Result[Place, str]:
+    """Copy a list into a new owned temporary, which drops when its scope ends."""
+    leaf, depth = require_list_shape(place_type(builder.locals, source), "unsupported Body IR non-list borrow")?
+    reference = list_borrow(builder, source, false, span)?
+    output = temporary(builder, PlanType.List(leaf, depth), span)
+    list_call(
+        builder,
+        "clone_list",
+        list_element(leaf, depth),
+        [PlanType.ListRef(leaf, depth)],
+        PlanType.List(leaf, depth),
+        [reference],
+        output,
+        span,
+    )
+    return Ok(output)
+
+
+pub def value_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
+    """Materialize owned list and string values using each checked read's fact."""
+    match value:
+        RustOperand.Constant(constant) =>
+            match constant:
+                RustConstant.Bytes(_bytes) => return Ok(read_place(bytes_literal(builder, constant, span)?, true, span))
+                _ => pass
+            match constant.clone():
+                RustConstant.Str(text) =>
+                    text_place = owned_literal(builder, str(text), span)
+                    return Ok(read_place(text_place, true, span))
+                _ => return scalar_operand(builder, value, span)
+        RustOperand.Place(read) =>
+            validate_callback_place(builder, read.place)?
+            match reference_value_read(builder, read.place, read.fact, span)?:
+                Some(reference) => return Ok(reference)
+                None => pass
+            match read.place.global():
+                Some(global) => return read_static(builder, read.place, global, read.fact, span)
+                None => pass
+            match element_read(builder, read.place, span)?:
+                Some(item) => return Ok(item)
+                None => pass
+            base = list_base_place(builder, read.place, span)?
+            if is_collection(borrowed_at(builder.locals, base.local).ty):
+                return collection_value(builder, read, span)
+            place = scalar_place(builder, read.place, span)?
+            ty = place_type(builder.locals, place)
+            if is_collection(ty):
+                return collection_place_value(builder, place, read.fact, span)
+            match zip_shape(ty):
+                Some(_shape) =>
+                    if read.fact == OwnershipFact.Move:
+                        return Ok(read_place(place, true, span))
+                    if read.fact == OwnershipFact.Clone or read.fact == OwnershipFact.Borrow:
+                        return clone_zip(builder, place, span)
+                    return Err("unsupported Body IR zip value ownership")
+                None => pass
+            match list_shape(ty):
+                Some((leaf, depth)) =>
+                    if read.fact == OwnershipFact.Move and ty == PlanType.List(leaf, depth):
+                        return Ok(read_place(place, true, span))
+                    # A list parameter is a view of the caller's list, so moving it out hands over a copy, which is the
+                    # value legacy's by-value parameter would carry.
+                    shared = read.fact == OwnershipFact.Move and ty == PlanType.ListRef(leaf, depth)
+                    if read.fact != OwnershipFact.Clone and read.fact != OwnershipFact.Borrow and not shared:
+                        return Err("unsupported Body IR list value ownership")
+                    return Ok(read_place(cloned_list(builder, place, span)?, true, span))
+                None => pass
+            if ty == PlanType.String:
+                if read.fact == OwnershipFact.Move:
+                    return Ok(read_place(place, true, span))
+                if read.fact == OwnershipFact.Clone or read.fact == OwnershipFact.Borrow:
+                    text_place = clone_text(builder, place, span)?
+                    return Ok(read_place(text_place, true, span))
+                return Err("unsupported Body IR string list element ownership")
+            return scalar_operand(builder, value, span)
+
+
+pub def element_read(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Option[Operand], str]:
+    """Copy a collection element or text slice without changing its source storage; `None` for structural places."""
+    match source.local_id():
+        Some(local) =>
+            root = plan_place(int(local.index()) + 1 + builder.local_offset, span)
+            root_type = place_type(builder.locals, root)
+            if (
+                root_type in [
+                    PlanType.String,
+                    PlanType.StringRef,
+                    PlanType.StringMutRef,
+                    PlanType.FrozenStr,
+                    PlanType.FrozenBytes,
+                ]
+                and len(source.projection) != 0
+            ):
+                mut text = root
+                if root_type in [PlanType.StringRef, PlanType.StringMutRef]:
+                    text = Place(local=root.local, projection=Projection.Deref(PlanType.String), span=span)
+                return Ok(Some(projected_element_read(builder, source, text, 0, span)?))
+            match place_type(builder.locals, root):
+                PlanType.NativeArray(_elements, _length) =>
+                    if len(source.projection) != 0:
+                        return Ok(Some(projected_element_read(builder, source, root, 0, span)?))
+                PlanType.FrozenCollection(_name, _elements) =>
+                    if len(source.projection) != 0:
+                        return Ok(Some(projected_element_read(builder, source, root, 0, span)?))
+                _ => pass
+        None => pass
+    match model_list_read(builder, source, span)?:
+        Some(item) => return Ok(Some(item))
+        None => pass
+    if not is_element_place(builder, source)?:
+        return Ok(None)
+    base = list_base_place(builder, source, span)?
+    if is_collection(borrowed_at(builder.locals, base.local).ty):
+        return Ok(Some(dictionary_index_read(builder, source, span)?))
+    return Ok(Some(indexed_read(builder, source, span)?))
+
+
+pub def indexed_read(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Operand, str]:
+    """Use the retained list projection and legacy negative-index error behavior; a final slice copies a new list."""
+    if len(source.projection) == 0:
+        return Err("unsupported Body IR list read without index")
+    container = list_base_place(builder, source, span)?
+    return projected_element_read(builder, source, container, 0, span)
+
+
+pub def projected_element_read(
+    mut builder: Builder,
+    source: &RustPlace,
+    container: Place,
+    start: int,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """
+    Copy the value the indexes, slices and element fields after `start` steps select out of `container`.
+
+    Each index clones its element, or the value its key selects in a dictionary, and each slice copies a new sequence, so
+    the container stays whole; a field of a copied element is read from that copy.
+    """
+    mut place = sequence_read_storage(builder, container, span)?
+    for slot in range(start, len(source.projection)):
+        match source.projection[slot]:
+            PlaceElem.Slice(start=_start, end=_end, step=_step) =>
+                place = read_sequence_slice(builder, place, source.projection[slot], span)?
+            PlaceElem.Field(name=_name, canonical=_canonical, structural=_structural) =>
+                place = read_element_field(builder, place, source.projection[slot], span)?
+            PlaceElem.OptionPayload(option_type=_container, payload_type=_payload) =>
+                place = read_element_field(builder, place, source.projection[slot], span)?
+            PlaceElem.UnionMember(ty=_member) =>
+                place = read_element_field(builder, place, source.projection[slot], span)?
+            _ => place = read_indexed_element(builder, place, source, slot, span)?
+    ty = place_type(builder.locals, place)
+    owned = ty == PlanType.String or is_owned_list(ty) or is_nominal_type(ty) or is_owned_collection(ty)
+    return Ok(read_place(place, owned, span))
+
+
+pub def sequence_read_storage(mut builder: Builder, source: Place, span: SourceSpan) -> Result[Place, str]:
+    """Materialize immutable frozen text and bytes through their canonical runtime observations before a sequence read."""
+    ty = place_type(builder.locals, source)
+    if ty == PlanType.FrozenStr:
+        return display_plan_operand(builder, read_place(source, false, span), span)
+    if ty == PlanType.FrozenBytes:
+        output = temporary(builder, PlanType.List(ListLeaf.U8, 1), span)
+        external_call(
+            builder,
+            "incan_native_runtime::copy_frozen_bytes",
+            [ty],
+            PlanType.List(ListLeaf.U8, 1),
+            [read_place(source, false, span)],
+            output,
+            span,
+        )
+        builder.owned.append(output.local)
+        return Ok(output)
+    return Ok(source)
+
+
+def read_indexed_element(
+    mut builder: Builder,
+    place: Place,
+    source: &RustPlace,
+    slot: int,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Read a checked tuple field, Unicode scalar, frozen item, or cloned collection element from the place earlier steps reached."""
+    if is_tuple_type(place_type(builder.locals, place)):
+        return read_element_field(builder, place, source.projection[slot], span)
+    match place_type(builder.locals, place):
+        PlanType.NativeArray(elements, _length) =>
+            index = list_index_operand(builder, source, slot, span)?
+            return read_native_text_array(builder, place, elements, index, span)
+        PlanType.FrozenCollection(name, _elements) =>
+            if name == "FrozenDict":
+                return frozen_dictionary_element(builder, place, source, slot, span)
+            snapshot = frozen_list_snapshot(builder, read_place(place, false, span), span)?
+            argument = list_index_operand(builder, source, slot, span)?
+            return read_list_element(builder, snapshot, argument, span)
+        _ => pass
+    if is_collection(place_type(builder.locals, place)):
+        return read_dictionary_element(builder, place, source, slot, span)
+    argument = list_index_operand(builder, source, slot, span)?
+    if place_type(builder.locals, place) == PlanType.String:
+        return read_text_element(builder, place, argument, span)
+    return read_list_element(builder, place, argument, span)
+
+
+def read_native_text_array(
+    mut builder: Builder,
+    place: Place,
+    elements: list[PlanType],
+    index: Operand,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Borrow a native array of sized text references as a slice and reuse core's checked signed-index operation."""
+    if elements != [PlanType.StrRef]:
+        return Err("unsupported Body IR native array element carrier")
+    match borrow_array_slice(builder, place, elements, false, OwnershipFact.Borrow, span)?:
+        None => return Err("unsupported Body IR native array element read without an array carrier")
+        Some(view) =>
+            result_type = PlanType.ScalarRef([PlanType.StrRef])
+            result = temporary(builder, result_type, span)
+            instantiated_external_call(
+                builder,
+                "incan_std_core::collections::list_get",
+                [PlanType.StrRef],
+                [PlanType.SliceRef(elements), PlanType.Int],
+                result_type,
+                [view, index],
+                result,
+                span,
+            )?
+            return Ok(Place(local=result.local, projection=Projection.Deref(PlanType.StrRef), span=span))
+
+
+def read_text_element(mut builder: Builder, place: Place, index: Operand, span: SourceSpan) -> Result[Place, str]:
+    """Borrow retained String storage for the canonical Unicode-scalar index helper, preserving negative indices and IndexError behavior."""
+    reference = temporary(builder, PlanType.StringRef, span)
+    builder.emit(plan_assign(reference, RvalueKind.Borrow(place), span))
+    output = temporary(builder, PlanType.String, span)
+    instantiated_external_call(
+        builder,
+        "incan_std_core::strings::str_index",
+        [PlanType.StringRef],
+        [PlanType.StringRef, PlanType.Int],
+        PlanType.String,
+        [read_place(reference, false, span), index],
+        output,
+        span,
+    )?
+    return Ok(output)
+
+
+pub def read_list_element(
+    mut builder: Builder,
+    place: Place,
+    argument: Operand,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Clone a projected element instead of moving caller or container-owned storage."""
+    ty = place_type(builder.locals, place)
+    site = f"{builder.file}:{span.line}:{span.column} in {builder.name}"
+    leaf, depth = require_list_shape(ty, f"unsupported Body IR indexing non-list at {site}; type {ty:?}; element read")?
+    reference = list_borrow(builder, place, false, span)?
+    element = list_element(leaf, depth)
+    output = temporary(builder, element, span)
+    list_call(
+        builder,
+        "get_list",
+        element,
+        [PlanType.ListRef(leaf, depth), PlanType.Int],
+        element,
+        [reference, argument],
+        output,
+        span,
+    )
+    return Ok(output)
+
+
+def sequence_slice_bounds(mut builder: Builder, projection: &PlaceElem, span: SourceSpan) -> Result[list[Operand], str]:
+    """Read each retained slice bound once, retaining the distinction between omitted and written zero."""
+    mut bounds: list[Operand] = []
+    # Each component travels with its presence, so an omitted bound or step keeps the slice default.
+    match projection:
+        PlaceElem.Slice(start=start, end=end, step=step) =>
+            match start:
+                Some(value) => bounds.extend(slice_bound(builder, value, span)?)
+                None => bounds.extend(absent_slice_bound(span))
+            match end:
+                Some(value) => bounds.extend(slice_bound(builder, value, span)?)
+                None => bounds.extend(absent_slice_bound(span))
+            match step:
+                Some(value) => bounds.extend(slice_bound(builder, value, span)?)
+                None => bounds.extend(absent_slice_bound(span))
+        _ => return Err("unsupported Body IR sequence slice or field projection")
+    return Ok(bounds)
+
+
+def read_sequence_slice(
+    mut builder: Builder,
+    place: Place,
+    projection: &PlaceElem,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Copy a typed string or list slice through its own legacy runtime boundary."""
+    if place_type(builder.locals, place) != PlanType.String:
+        return read_list_slice(builder, place, projection, span)
+    bounds = sequence_slice_bounds(builder, projection, span)?
+    reference = temporary(builder, PlanType.StringRef, span)
+    builder.emit(plan_assign(reference, RvalueKind.Borrow(place), span))
+    mut operands = [read_place(reference, false, span)]
+    operands.extend(bounds)
+    return Ok(
+        emit_text_helper(
+            builder,
+            "slice_text",
+            PlanType.String,
+            [PlanType.StringRef, PlanType.Bool, PlanType.Int, PlanType.Bool, PlanType.Int, PlanType.Bool, PlanType.Int],
+            operands,
+            span,
+        ),
+    )
+
+
+def read_list_slice(mut builder: Builder, place: Place, projection: &PlaceElem, span: SourceSpan) -> Result[Place, str]:
+    """Copy the selected elements into a new owned list through legacy's Python-style slice helper."""
+    leaf, depth = require_list_shape(place_type(builder.locals, place), "unsupported Body IR slicing non-list")?
+    bounds = sequence_slice_bounds(builder, projection, span)?
+    reference = list_borrow(builder, place, false, span)?
+    output = temporary(builder, PlanType.List(leaf, depth), span)
+    mut operands = [reference]
+    operands.extend(bounds)
+    list_call(
+        builder,
+        "slice_list",
+        list_element(leaf, depth),
+        [
+            PlanType.ListRef(leaf, depth),
+            PlanType.Bool,
+            PlanType.Int,
+            PlanType.Bool,
+            PlanType.Int,
+            PlanType.Bool,
+            PlanType.Int,
+        ],
+        PlanType.List(leaf, depth),
+        operands,
+        output,
+        span,
+    )
+    return Ok(output)
+
+
+def read_element_field(
+    mut builder: Builder,
+    place: Place,
+    projection: &PlaceElem,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Read a field from a list element, copying scalars and function pointers while cloning owned values."""
+    steps = field_steps(
+        builder.constructors,
+        builder.nominals,
+        place_type(builder.locals, place),
+        projection,
+        builder.enums,
+        builder.unions,
+        builder.intrinsics,
+    )?
+    mut field = place
+    for step in steps:
+        field = appended_field(field, step, span)?
+    ty = steps[len(steps) - 1].ty
+    if ty == PlanType.String:
+        return clone_text(builder, field, span)
+    if is_nominal_type(ty):
+        match clone_nominal_operand(builder, field, span)?.kind:
+            OperandKind.Move(cloned) => return Ok(cloned)
+            _ => return Err("invalid Body IR cloned list element field")
+    if is_owned_list(ty):
+        leaf, depth = require_list_shape(ty, "invalid Body IR list element field")?
+        reference = list_borrow(builder, field, false, span)?
+        output = temporary(builder, ty, span)
+        list_call(
+            builder,
+            "clone_list",
+            list_element(leaf, depth),
+            [PlanType.ListRef(leaf, depth)],
+            ty,
+            [reference],
+            output,
+            span,
+        )
+        return Ok(output)
+    if is_owned_collection(ty):
+        match cloned_collection(builder, field, span)?.kind:
+            OperandKind.Move(cloned) => return Ok(cloned)
+            _ => return Err("invalid Body IR cloned collection element field")
+    if not numeric_carrier(ty) and ty != PlanType.Bool and not callable_copy_type(ty):
+        return Err(f"unsupported Body IR list element field type {ty:?} in {builder.name}")
+    output = temporary(builder, ty, span)
+    builder.emit(plan_assign(output, RvalueKind.Use(read_place(field, false, span)), span))
+    return Ok(output)
+
+
+def slice_bound(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[list[Operand], str]:
+    """Pass a written slice bound or step as a present int component, presence flag first as `slice_list` takes it."""
+    operand = scalar_operand(builder, value, span)?
+    if operand_type(builder, operand)? != PlanType.Int:
+        return Err("unsupported Body IR non-int list slice component")
+    return Ok([literal(Constant.Bool(true), span), operand])
+
+
+def absent_slice_bound(span: SourceSpan) -> list[Operand]:
+    """Mark an omitted slice bound or step absent, as legacy passes `None` for it."""
+    return [literal(Constant.Bool(false), span), literal(Constant.Int(0), span)]
+
+
+pub def list_base_place(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+    """Map a frame root or materialize a primitive static list's current owned snapshot."""
+    match source.global():
+        Some(global) =>
+            root = RustPlace.from_global(global.clone())
+            operand = read_static(builder, root, global, OwnershipFact.Borrow, span)?
+            match operand.kind:
+                OperandKind.Move(place) => return Ok(place)
+                _ => return Err("unsupported Body IR non-list global receiver")
+        None => pass
+    match source.local_id():
+        Some(local) => return Ok(plan_place(int(local.index()) + 1 + builder.local_offset, span))
+        None => return Err("unsupported Body IR global list place")
+
+
+pub def list_index_operand(
+    mut builder: Builder,
+    source: &RustPlace,
+    slot: int,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Read one retained index after the caller has checked the projection count."""
+    match source.projection[slot]:
+        PlaceElem.Index(index) => return scalar_operand(builder, index, span)
+        _ => return Err("unsupported Body IR list slice or field projection")
+
+
+pub def list_assignment(
+    mut builder: Builder,
+    destination: Place,
+    value: &RustRvalue,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Construct list literals or transfer checked list values, dropping an initialized destination first."""
+    if destination.projection == Projection.Whole:
+        match borrowed_at(builder.locals, destination.local).ty:
+            PlanType.ListMutRef(leaf, depth) =>
+                # A whole exclusive list input writes through its borrow: the caller's old list drops, then the new
+                # value takes its place.
+                referent = dereferenced_place(destination, PlanType.List(leaf, depth), span)?
+                return list_assignment(builder, referent, value, span)
+            _ => pass
+    if destination.projection != Projection.Whole:
+        replacement = temporary(builder, place_type(builder.locals, destination), span)
+        _ = list_assignment(builder, replacement, value, span)?
+        replace_owned_destination(builder, destination, RvalueKind.Use(read_place(replacement, true, span)), span)
+        return Ok(None)
+    leaf, depth = require_list_shape(
+        borrowed_at(builder.locals, destination.local).ty,
+        "unsupported Body IR non-list assignment",
+    )?
+    ty = PlanType.List(leaf, depth)
+    if borrowed_at(builder.locals, destination.local).ty != ty:
+        return Err("unsupported Body IR whole borrowed list assignment")
+    element = list_element(leaf, depth)
+    output = temporary(builder, ty, span)
+    match value:
+        RustRvalue.Aggregate(kind, elements) =>
+            if kind != RustAggregateKind.List:
+                return Err("unsupported Body IR non-list Aggregate")
+            list_call(builder, "empty_list", element, [], ty, [], output, span)
+            for item in elements:
+                match item.as_one():
+                    Some(value) =>
+                        argument = element_operand(builder, value, element, span)?
+                        if operand_type(builder, argument)? != element:
+                            return Err(
+                                f"unsupported Body IR list element coercion from {operand_type(builder, argument)?:?} to {element:?}",
+                            )
+                        append_list_value(builder, output, argument, leaf, depth, span)?
+                    None => splice_list_spread(builder, output, item, leaf, depth, span)?
+        RustRvalue.Use(value) =>
+            argument = boundary_operand(builder, value, ty, span)?
+            # The checker types a builtin range call as a list, but its value is a lazy range only iteration consumes.
+            if operand_type(builder, argument)? != ty:
+                return Err("unsupported Body IR list assignment from a non-list value")
+            match argument.kind:
+                OperandKind.Move(place) => forget_owned(builder, place.local)
+                _ => pass
+            builder.emit(plan_assign(output, RvalueKind.Use(argument), span))
+            builder.owned.append(output.local)
+        _ => return Err("unsupported Body IR list assignment rvalue")
+    drop_owned(builder, destination.local, span)
+    forget_owned(builder, output.local)
+    builder.emit(plan_assign(destination, RvalueKind.Use(read_place(output, true, span)), span))
+    builder.owned.append(destination.local)
+    return Ok(None)
+
+
+pub def append_list_value(
+    mut builder: Builder,
+    output: Place,
+    value: Operand,
+    leaf: ListLeaf,
+    depth: int,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Append one checked element to a list literal under construction."""
+    element = list_element(leaf, depth)
+    reference = list_borrow(builder, output, true, span)?
+    unit = temporary(builder, PlanType.Unit, span)
+    list_call(
+        builder,
+        "append_list",
+        element,
+        [PlanType.ListMutRef(leaf, depth), element],
+        PlanType.Unit,
+        [reference, value],
+        unit,
+        span,
+    )
+    return Ok(None)
+
+
+pub def frozen_list_assignment(
+    mut builder: Builder,
+    target: Place,
+    value: &RustRvalue,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Freeze a list literal: build the list, then keep it for the program as the frozen list's storage.
+
+    Only a computed constant's initializer constructs a frozen list of values that are not literals, and it runs once.
+    """
+    ty = place_type(builder.locals, target)
+    snapshot = frozen_list_snapshot_type(ty)?
+    values = temporary(builder, snapshot, span)
+    list_assignment(builder, values, value, span)?
+    match ty:
+        PlanType.FrozenCollection(_name, elements) =>
+            instantiated_external_call(
+                builder,
+                "incan_native_runtime::freeze_list",
+                elements,
+                [snapshot],
+                ty,
+                [read_place(values, true, span)],
+                target,
+                span,
+            )?
+        _ => return Err("unsupported Body IR frozen list assignment")
+    forget_owned(builder, values.local)
+    return Ok(None)
+
+
+def splice_list_spread(
+    mut builder: Builder,
+    output: Place,
+    item: &RustArgumentElement,
+    leaf: ListLeaf,
+    depth: int,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Append a `*source` spread to a list literal at its written position."""
+    match item:
+        RustArgumentElement.Spread(spread) =>
+            # A whole tuple has a fixed arity, so it splices field by field without a runtime helper.
+            match tuple_spread_place(builder, spread.source, span)?:
+                Some(tuple_place) => return append_tuple_fields(builder, output, tuple_place, leaf, depth, span)
+                None => pass
+            # A list spread's own ownership fact materializes one owner: the moved list, or a clone of a list that is
+            # read again. `extend_list` copies from it and it is then dropped, as set and dictionary spreads do.
+            source = value_operand(builder, spread.source, span)?
+            match source.kind:
+                OperandKind.Move(place) =>
+                    if place.projection != Projection.Whole:
+                        return Err("unsupported Body IR projected list spread owner")
+                    if place_type(builder.locals, place) != PlanType.List(leaf, depth):
+                        return Err("unsupported Body IR list spread source type")
+                    target = list_borrow(builder, output, true, span)?
+                    reference = list_borrow(builder, place, false, span)?
+                    unit = temporary(builder, PlanType.Unit, span)
+                    list_call(
+                        builder,
+                        "extend_list",
+                        list_element(leaf, depth),
+                        [PlanType.ListMutRef(leaf, depth), PlanType.ListRef(leaf, depth)],
+                        PlanType.Unit,
+                        [target, reference],
+                        unit,
+                        span,
+                    )
+                    drop_owned(builder, place.local, span)
+                    return Ok(None)
+                _ => return Err("unsupported Body IR list spread without owned source")
+        _ => return Err("unsupported Body IR named list element")
+
+
+def tuple_spread_place(mut builder: Builder, source: &RustOperand, span: SourceSpan) -> Result[Option[Place], str]:
+    """Select a spread source that is a whole tuple local; every other source splices as a list."""
+    match source:
+        RustOperand.Place(read) =>
+            if len(read.place.projection) != 0:
+                return Ok(None)
+            match read.place.global():
+                Some(_global) => return Ok(None)
+                None => pass
+            place = scalar_place(builder, read.place, span)?
+            if is_tuple_type(place_type(builder.locals, place)):
+                return Ok(Some(place))
+            return Ok(None)
+        RustOperand.Constant(_constant) => return Ok(None)
+
+
+def append_tuple_fields(
+    mut builder: Builder,
+    output: Place,
+    source: Place,
+    leaf: ListLeaf,
+    depth: int,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Splice each tuple field in order, copying scalars and cloning text so the tuple itself stays whole."""
+    element = list_element(leaf, depth)
+    for field in tuple_fields(source, place_type(builder.locals, source), span)?:
+        if place_type(builder.locals, field) != element:
+            return Err("unsupported Body IR tuple spread element type")
+        mut value = read_place(field, false, span)
+        if element == PlanType.String:
+            value = read_place(clone_text(builder, field, span)?, true, span)
+        append_list_value(builder, output, value, leaf, depth, span)?
+    return Ok(None)

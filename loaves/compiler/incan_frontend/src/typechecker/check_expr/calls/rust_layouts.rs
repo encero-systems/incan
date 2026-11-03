@@ -184,10 +184,19 @@ impl TypeChecker {
         let Some(native) = self.rust_argument_native_type(expression) else {
             return false;
         };
-        if !self.rust_trait_carriers_match(&native, target) {
+        let path = "std::ops::Range";
+        let Some(arguments) = self.rust_owner_type_args(target, path) else {
+            return false;
+        };
+        let [element] = arguments.as_slice() else { return false };
+        if !self.rust_trait_carriers_match(&native, target)
+            && !(super::super::ops::is_unsuffixed_integer_literal(start)
+                && super::super::ops::is_unsuffixed_integer_literal(end))
+        {
             return false;
         }
-        let path = "std::ops::Range";
+        self.check_expr_with_expected(start, Some(element));
+        self.check_expr_with_expected(end, Some(element));
         let Some(metadata) = self.rust_item_metadata_for_path(path) else {
             return false;
         };

@@ -5,6 +5,8 @@
 
 use std::fmt;
 
+use incan_lang::lang::types::UNION_TYPE_NAME;
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_lang::lang::types::numerics::{self, NumericTypeId};
 
 use serde::{Deserialize, Serialize};
@@ -261,6 +263,65 @@ impl IncanType {
             Self::Never | Self::Infer | Self::Unknown | Self::Unsupported(_) => AbiV0Representation::Unknown,
         }
     }
+
+    /// The builtin collection type `id` applied to `args`, spelled with the collection's canonical name.
+    pub fn builtin_collection(id: CollectionTypeId, args: Vec<IncanType>) -> IncanType {
+        Self::Generic {
+            base: collections::as_str(id).to_string(),
+            args,
+        }
+    }
+
+    /// The builtin collection this type instantiates, with its checked type arguments.
+    ///
+    /// The collection is read through the language's one collection vocabulary, so every accepted spelling of a
+    /// builtin (`Result` and `result`) names the same collection. Callers consult this rather than comparing the
+    /// written base name.
+    pub fn collection(&self) -> Option<(CollectionTypeId, &[IncanType])> {
+        match self {
+            Self::Generic { base, args } => collections::from_str(base).map(|id| (id, args.as_slice())),
+            _ => None,
+        }
+    }
+
+    /// The type arguments of this type when it instantiates the expected builtin collection.
+    pub fn collection_arguments(&self, expected: CollectionTypeId) -> Option<&[IncanType]> {
+        self.collection()
+            .and_then(|(id, args)| (id == expected).then_some(args))
+    }
+
+    /// The member types of an anonymous union (`int | str`), read through the language's one union name.
+    pub fn union_members(&self) -> Option<&[IncanType]> {
+        match self {
+            Self::Generic { base, args } if base == UNION_TYPE_NAME => Some(args.as_slice()),
+            _ => None,
+        }
+    }
+
+    /// Whether this is an anonymous union (`int | str`), for callers that need only the answer.
+    pub fn is_union(&self) -> bool {
+        self.union_members().is_some()
+    }
+
+    /// Whether a static literal may be stored in this primitive carrier, alone or as a collection element. Body IR's
+    /// static initializers and their validation both read this rule.
+    pub fn static_literal_carrier(&self) -> bool {
+        matches!(
+            self,
+            Self::Primitive(
+                IncanPrimitiveType::Int
+                    | IncanPrimitiveType::Float
+                    | IncanPrimitiveType::Bool
+                    | IncanPrimitiveType::Str
+            )
+        )
+    }
+
+    /// Whether a static literal may be a hash key or set member of this carrier: floating point lacks the Eq and Hash
+    /// that hashed collections require.
+    pub fn hashed_static_literal_carrier(&self) -> bool {
+        self.static_literal_carrier() && !matches!(self, Self::Primitive(IncanPrimitiveType::Float))
+    }
 }
 
 impl fmt::Display for IncanType {
@@ -360,6 +421,38 @@ impl fmt::Display for IncanPrimitiveType {
     }
 }
 
+/// Source input access, independent of binding mutability and the native collection ABI. Missing named metadata
+/// means ordinary inference only; positional executable records require their matching schema version.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum IncanInputAccess {
+    /// Preserve the existing unannotated parameter convention and its checked inference.
+    #[default]
+    Inferred,
+    /// Shared access without ownership transfer or permission to write.
+    Shared,
+    /// Exclusive access; the separate mutable binding flag governs writes.
+    Exclusive,
+    /// Ownership transfer, or a checked Copy value; never an implicit repair clone.
+    Owned,
+}
+
+impl IncanInputAccess {
+    /// Distinguish ordinary inference without interpreting a source type's display spelling.
+    pub const fn is_inferred(&self) -> bool {
+        matches!(self, Self::Inferred)
+    }
+
+    /// Render an explicit contract for diagnostics; this spelling is not used to recognize its identity.
+    pub const fn source_form(self) -> Option<&'static str> {
+        match self {
+            Self::Inferred => None,
+            Self::Shared => Some("Borrowed"),
+            Self::Exclusive => Some("BorrowedMut"),
+            Self::Owned => Some("Owned"),
+        }
+    }
+}
+
 /// Callable parameter metadata preserved in semantic function types.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct IncanCallableParam {
@@ -384,6 +477,9 @@ pub struct IncanCallableParam {
     /// collection. This passing fact is separate from the source callable's `mut` marker and preserves nested loans.
     #[serde(default)]
     pub native_owned: bool,
+    /// Checked explicit input access; ordinary legacy metadata grants no explicit borrowing or transfer.
+    #[serde(default)]
+    pub input_access: IncanInputAccess,
 }
 
 impl fmt::Display for IncanCallableParam {
@@ -392,9 +488,13 @@ impl fmt::Display for IncanCallableParam {
             write!(f, "mut ")?;
         }
         match self.kind {
-            IncanCallableParamKind::Normal => write!(f, "{}", self.ty),
-            IncanCallableParamKind::RestPositional => write!(f, "*{}", self.ty),
-            IncanCallableParamKind::RestKeyword => write!(f, "**{}", self.ty),
+            IncanCallableParamKind::Normal => {}
+            IncanCallableParamKind::RestPositional => write!(f, "*")?,
+            IncanCallableParamKind::RestKeyword => write!(f, "**")?,
+        }
+        match self.input_access.source_form() {
+            Some(mode) => write!(f, "{mode}[{}]", self.ty),
+            None => write!(f, "{}", self.ty),
         }
     }
 }
@@ -509,6 +609,7 @@ mod tests {
                     is_partial_preset: false,
                     is_mut: false,
                     native_owned: false,
+                    input_access: IncanInputAccess::Inferred,
                 },
                 IncanCallableParam {
                     name: Some("rest".to_string()),
@@ -518,6 +619,7 @@ mod tests {
                     is_partial_preset: false,
                     is_mut: false,
                     native_owned: false,
+                    input_access: IncanInputAccess::Inferred,
                 },
             ],
             return_type: Box::new(IncanType::Tuple(vec![

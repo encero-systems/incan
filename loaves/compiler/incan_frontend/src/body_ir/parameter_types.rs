@@ -229,7 +229,7 @@ fn retain_checked_nominal_names(ty: IncanType, facts: &TypeCheckInfo) -> IncanTy
                 .into_iter()
                 .map(|ty| retain_checked_nominal_names(ty, facts))
                 .collect();
-            if base == "Union" {
+            if base == crate::symbols::UNION_TYPE_NAME {
                 args.sort_by_cached_key(ToString::to_string);
             }
             IncanType::Generic { base, args }
@@ -270,6 +270,19 @@ pub(super) fn retained_type_identities(
     facts: &TypeCheckInfo,
 ) -> std::collections::BTreeMap<String, super::CanonicalSymbolId> {
     let mut identities = facts.declarations.named_type_identities.clone();
+    // Generated SDK results need no source import. Retain their checked provider binding for publication without
+    // replacing an ordinary source binding or interpreting an equal short spelling as a native declaration.
+    for (name, identity) in &facts.declarations.body_ir_native_type_identities {
+        if !matches!(identity.origin, incan_semantics_core::SymbolOrigin::Package { .. })
+            || bir::native_nominal_item(identity).is_none()
+        {
+            continue;
+        }
+        identities.entry(name.clone()).or_insert_with(|| identity.clone());
+        if let Some(key) = bir::nominal_carrier_key(identity) {
+            identities.entry(key).or_insert_with(|| identity.clone());
+        }
+    }
     // Standard carrier projection uses the declaration's short native name. Preserve the checked binding of that
     // projected name too, including signature-only imports; two different owners never authorize a short alias.
     let mut projected = std::collections::BTreeMap::<String, Option<super::CanonicalSymbolId>>::new();

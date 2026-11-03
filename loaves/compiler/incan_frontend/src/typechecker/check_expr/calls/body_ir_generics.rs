@@ -89,6 +89,11 @@ impl TypeChecker {
         if !concrete(&output) {
             return;
         }
+        // The call produces the declaration's value type, through the same projection as its checked expression type.
+        let output = match method.identity.as_ref() {
+            Some(identity) => self.returned_value_type(identity, &output),
+            None => output,
+        };
         self.type_info.calls.body_ir_call_result_types.insert(span, output);
     }
 

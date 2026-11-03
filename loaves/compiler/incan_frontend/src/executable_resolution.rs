@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
 
-use incan_semantics_core::body_ir::BodyIrModule;
+use incan_semantics_core::body_ir::{BodyIrModule, LoafCallable};
 use incan_semantics_core::executable_representation::{
     DeclarationCoverage, ExecutableDeclaration, ExecutableRepresentationError, SurfaceIndex, require_supported_version,
 };
@@ -41,8 +41,15 @@ pub enum ExecutableResolutionError {
     #[error("`{declaration}` is not a package declaration")]
     NotAPackageDeclaration { declaration: String },
     /// The canonical provider is absent from the selected direct and transitive artifact graph.
-    #[error("package `{library}` is not a resolved dependency of this compilation")]
-    UnknownPackage { library: String },
+    #[error(
+        "package `{library}` is not a resolved dependency of this compilation; required declaration: {}; dependency chain: {}",
+        declaration.render_compact(), render_dependency_chain(chain)
+    )]
+    UnknownPackage {
+        library: String,
+        declaration: Box<CanonicalSymbolId>,
+        chain: Vec<CanonicalSymbolId>,
+    },
     /// Canonical identity cannot distinguish conflicting resolved instances, so choosing one would be unsound.
     #[error(
         "package `{library}` has conflicting resolved artifacts ({versions}); executable resolution requires one unambiguous package instance"
@@ -95,6 +102,10 @@ pub struct ResolvedExecutableModules {
     pub content_bytes_verified: u64,
     /// Package versions bound to the returned module identities for preflight refusal diagnostics.
     pub package_versions: BTreeMap<String, String>,
+    /// Why each reached package is reached: for every declaration that entered it from a requested root or from
+    /// another package, its requester chain from that root. A package selected only by an explicitly uncovered root
+    /// has no entry.
+    pub entries: BTreeMap<String, Vec<Vec<CanonicalSymbolId>>>,
 }
 
 /// One indexed Loaf's manifest and governed-body file.
@@ -171,6 +182,8 @@ fn demand_package<'a>(
     catalog: &BTreeMap<String, String>,
     packages: &'a mut BTreeMap<String, PackageArtifact>,
     library: &str,
+    declaration: &CanonicalSymbolId,
+    parents: &BTreeMap<CanonicalSymbolId, CanonicalSymbolId>,
 ) -> Result<&'a PackageArtifact, ExecutableResolutionError> {
     let slot = match packages.entry(library.to_owned()) {
         Entry::Occupied(slot) => return Ok(slot.into_mut()),
@@ -178,6 +191,8 @@ fn demand_package<'a>(
     };
     let unknown = || ExecutableResolutionError::UnknownPackage {
         library: library.to_owned(),
+        declaration: Box::new(declaration.clone()),
+        chain: dependency_chain(declaration, parents),
     };
     let key = catalog.get(library).ok_or_else(unknown)?;
     let entry = loaves.demand(key)?.ok_or_else(unknown)?;
@@ -202,6 +217,7 @@ fn resolve_from_catalog(
         .cloned()
         .map(|identity| (identity, false, optional_roots))
         .collect();
+    let mut parents = BTreeMap::new();
     let mut visited = BTreeSet::new();
     let mut modules: BTreeMap<String, BodyIrModule> = BTreeMap::new();
     let mut resolved = ResolvedExecutableModules::default();
@@ -214,7 +230,7 @@ fn resolve_from_catalog(
                 declaration: identity.declaration_name.clone(),
             });
         };
-        let package = demand_package(loaves, catalog, &mut packages, library)?;
+        let package = demand_package(loaves, catalog, &mut packages, library, &identity, &parents)?;
         // A checked module binding selects an admitted package namespace; it has no executable body. Calls and
         // type uses retain their own canonical requirements and must still resolve from the selected artifact.
         if identity.kind == incan_semantics_core::SemanticSourceTargetKind::Module {
@@ -248,6 +264,7 @@ fn resolve_from_catalog(
             continue;
         }
         if let DeclarationCoverage::TypeContext { owner } = coverage {
+            retain_dependency_parent(&mut parents, required, owner, &identity);
             pending.insert((owner.clone(), true, false));
             continue;
         }
@@ -262,6 +279,7 @@ fn resolve_from_catalog(
             }));
         };
         pending.extend(requirements.iter().map(|dependency| {
+            retain_dependency_parent(&mut parents, required, dependency, &identity);
             let same_package =
                 matches!(&dependency.origin, SymbolOrigin::Package { library: owner, .. } if owner == library);
             (dependency.clone(), same_package, false)
@@ -275,7 +293,10 @@ fn resolve_from_catalog(
                 implementations
                     .iter()
                     .filter(|implementation| implementation.implementation == implementation.method)
-                    .map(|implementation| (implementation.method.clone(), false, true)),
+                    .map(|implementation| {
+                        retain_dependency_parent(&mut parents, required, &implementation.method, &identity);
+                        (implementation.method.clone(), false, true)
+                    }),
             );
         }
         let owner = canonical_module_identity(&identity)
@@ -287,6 +308,7 @@ fn resolve_from_catalog(
         resolved.decoded_declarations += 1;
         resolved.payload_bytes_read += length;
     }
+    resolved.entries = package_entries(&resolved.package_versions, &visited, &parents);
     for module in modules.values_mut() {
         crate::body_ir::retain_published_module(module);
         // Canonical lookup is name-first; module initialization follows checked physical declaration order.
@@ -296,6 +318,68 @@ fn resolve_from_catalog(
     }
     resolved.modules = modules.into_values().collect();
     Ok(resolved)
+}
+
+/// Preserve the first deterministic incoming edge without turning an explicitly selected root into a child.
+fn retain_dependency_parent(
+    parents: &mut BTreeMap<CanonicalSymbolId, CanonicalSymbolId>,
+    roots: &BTreeSet<CanonicalSymbolId>,
+    dependency: &CanonicalSymbolId,
+    parent: &CanonicalSymbolId,
+) {
+    if !roots.contains(dependency) {
+        parents.entry(dependency.clone()).or_insert_with(|| parent.clone());
+    }
+}
+
+/// Group each loaded declaration that a root or another package requested under its package, with its requester
+/// chain. Same-package edges stay inside the entry that reached them.
+fn package_entries(
+    packages: &BTreeMap<String, String>,
+    visited: &BTreeSet<CanonicalSymbolId>,
+    parents: &BTreeMap<CanonicalSymbolId, CanonicalSymbolId>,
+) -> BTreeMap<String, Vec<Vec<CanonicalSymbolId>>> {
+    let mut entries: BTreeMap<_, Vec<_>> = packages.keys().map(|library| (library.clone(), Vec::new())).collect();
+    for identity in visited {
+        let SymbolOrigin::Package { library, .. } = &identity.origin else {
+            continue;
+        };
+        let crosses = parents.get(identity).is_none_or(
+            |parent| !matches!(&parent.origin, SymbolOrigin::Package { library: owner, .. } if owner == library),
+        );
+        if crosses && let Some(entry) = entries.get_mut(library) {
+            entry.push(dependency_chain(identity, parents));
+        }
+    }
+    entries
+}
+
+/// Recover canonical requester ancestry; a cycle in declaration requirements stops at its first repeated identity.
+fn dependency_chain(
+    declaration: &CanonicalSymbolId,
+    parents: &BTreeMap<CanonicalSymbolId, CanonicalSymbolId>,
+) -> Vec<CanonicalSymbolId> {
+    let mut chain = vec![declaration.clone()];
+    let mut seen = BTreeSet::from([declaration.clone()]);
+    let mut current = declaration;
+    while let Some(parent) = parents.get(current) {
+        if !seen.insert(parent.clone()) {
+            break;
+        }
+        chain.push(parent.clone());
+        current = parent;
+    }
+    chain.reverse();
+    chain
+}
+
+/// Format canonical identities for diagnostics without assigning imported declaration offsets to a source file.
+fn render_dependency_chain(chain: &[CanonicalSymbolId]) -> String {
+    chain
+        .iter()
+        .map(CanonicalSymbolId::render_compact)
+        .collect::<Vec<_>>()
+        .join(" -> ")
 }
 
 /// Retain the selected payload's original declaration kind and associated checked trait or enum context.
@@ -309,19 +393,20 @@ fn retain_declaration(module: &mut BodyIrModule, declaration: ExecutableDeclarat
             if let Some(callable) = incan_semantics_core::body_ir::LoafCallable::from_body(&frame) {
                 module.loaf_callables.push(callable);
             }
-            for callable in callables {
-                if !module.loaf_callables.contains(&callable) {
-                    module.loaf_callables.push(callable);
-                }
-            }
+            retain_native_callables(module, callables);
         }
         ExecutableDeclaration::NativeBody { body, callables } => {
             module.bodies.push(*body);
-            for callable in callables {
-                if !module.loaf_callables.contains(&callable) {
-                    module.loaf_callables.push(callable);
-                }
-            }
+            retain_native_callables(module, callables);
+        }
+        ExecutableDeclaration::GenericDecoratedBody {
+            body,
+            binding,
+            callables,
+        } => {
+            module.bodies.push(*body);
+            module.decorated_bindings.push(*binding);
+            retain_native_callables(module, callables);
         }
         ExecutableDeclaration::DecoratedBody { body, binding, storage } => {
             module.bodies.push(*body);
@@ -350,6 +435,15 @@ fn retain_declaration(module: &mut BodyIrModule, declaration: ExecutableDeclarat
         }
     }
 }
+/// Merge authenticated native call selections without duplicating an already-retained ABI declaration.
+fn retain_native_callables(module: &mut BodyIrModule, callables: Vec<LoafCallable>) {
+    for callable in callables {
+        if !module.loaf_callables.contains(&callable) {
+            module.loaf_callables.push(callable);
+        }
+    }
+}
+
 /// File handle and already-decoded metadata; executable payloads remain on disk until their identity is selected.
 struct OpenSurface {
     file: File,
@@ -535,4 +629,86 @@ impl OpenSurface {
 /// Preserve structural artifact failure without exposing a backend's unsupported-source diagnostic category.
 fn malformed(reason: impl Into<String>) -> ExecutableRepresentationError {
     ExecutableRepresentationError::Malformed { reason: reason.into() }
+}
+#[cfg(test)]
+mod tests {
+    use super::{ExecutableResolutionError, dependency_chain, package_entries, resolve_loaf_declarations};
+    use crate::loaf_index::LoafIndex;
+    use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolOrigin};
+    use std::collections::{BTreeMap, BTreeSet};
+
+    /// Construct a governed identity without source files, so diagnostics must retain its actual package owner.
+    fn declaration(package: &str, name: &str) -> CanonicalSymbolId {
+        let mut identity = CanonicalSymbolId::module_declaration(
+            vec!["api".to_owned()],
+            name,
+            SemanticSourceTargetKind::Function,
+            HirSourceSpan::new(10, 20),
+        );
+        identity.origin = SymbolOrigin::Package {
+            library: package.to_owned(),
+            module_path: vec!["api".to_owned()],
+        };
+        identity
+    }
+
+    /// Missing providers must identify the selected declaration, not only the package that contains it.
+    #[test]
+    fn missing_provider_retains_canonical_requirement() -> Result<(), Box<dyn std::error::Error>> {
+        let wanted = declaration("absent_provider", "read_bytes");
+        let outcome = resolve_loaf_declarations(
+            &LoafIndex::default(),
+            &BTreeSet::from([wanted.clone()]),
+            &BTreeSet::new(),
+        );
+        let error = match outcome {
+            Err(error) => error,
+            Ok(_) => return Err("absent provider unexpectedly resolved".into()),
+        };
+        let rendered = error.to_string();
+        match error {
+            ExecutableResolutionError::UnknownPackage {
+                library,
+                declaration,
+                chain,
+            } => {
+                assert_eq!(library, "absent_provider");
+                assert_eq!(*declaration, wanted);
+                assert_eq!(chain, vec![wanted]);
+            }
+            _ => return Err("missing provider lost its structured requirement".into()),
+        }
+        assert!(rendered.contains("pub::absent_provider::api::read_bytes"));
+        assert!(rendered.contains("dependency chain"));
+        Ok(())
+    }
+
+    /// Cyclic declaration requirements remain finite diagnostics and retain each canonical owner once.
+    #[test]
+    fn cyclic_requester_chain_stops_without_losing_the_required_declaration() {
+        let first = declaration("first", "read");
+        let second = declaration("second", "read");
+        let parents = BTreeMap::from([(first.clone(), second.clone()), (second.clone(), first.clone())]);
+        assert_eq!(dependency_chain(&first, &parents), vec![second, first]);
+    }
+
+    /// A package's entries are its roots and the declarations another package requested; same-package edges stay
+    /// inside the entry that reached them, and a package selected only by an uncovered root keeps an empty entry.
+    #[test]
+    fn package_entries_list_only_declarations_that_cross_into_a_package() {
+        let root = declaration("codecs", "hexlify");
+        let helper = declaration("codecs", "nibble");
+        let runtime = declaration("runtime", "append_list");
+        let parents = BTreeMap::from([(helper.clone(), root.clone()), (runtime.clone(), helper.clone())]);
+        let visited = BTreeSet::from([root.clone(), helper.clone(), runtime.clone()]);
+        let packages = BTreeMap::from([
+            ("codecs".to_owned(), "1".to_owned()),
+            ("runtime".to_owned(), "1".to_owned()),
+            ("uncovered".to_owned(), "1".to_owned()),
+        ]);
+        let entries = package_entries(&packages, &visited, &parents);
+        assert_eq!(entries["codecs"], vec![vec![root.clone()]]);
+        assert_eq!(entries["runtime"], vec![vec![root, helper, runtime]]);
+        assert!(entries["uncovered"].is_empty());
+    }
 }

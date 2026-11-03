@@ -102,6 +102,7 @@ pub(super) fn attach_nominal_field_defaults(
                 span: hir_span(field.span),
                 default: builder.lower_callable_default(field.node.default.as_ref(), scope),
                 mutable: false,
+                input_access: incan_semantics_core::IncanInputAccess::Inferred,
                 native_owned: false,
             });
         }
@@ -127,8 +128,11 @@ pub(super) fn attach_nominal_field_defaults(
             span,
             return_type: IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Unit),
             // Field slots carry no checker callable-representation proof, so consumers refuse function-typed fields.
+            checked_input_profile: None,
+            explicit_input_bindings: Vec::new(),
+            returned_view: None,
             callable_representation: None,
-            named_type_identities,
+            named_type_identities: std::sync::Arc::new(named_type_identities),
             param_locals: params.iter().map(|param| param.local).collect(),
             params,
             locals: builder.locals,
@@ -269,8 +273,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let saved_bindings = std::mem::take(&mut self.bindings);
         let saved_identity_bindings = std::mem::take(&mut self.identity_bindings);
         let saved_external_locals = std::mem::take(&mut self.external_locals);
+        // Defaults run in their own evaluation frame and cannot inherit the callee body's source ownership proof.
+        let saved_input_body = std::mem::replace(&mut self.input_body, Ok(None));
         let mut stmts = Vec::new();
         let result = self.lower_expr_to_operand(default_expr, scope, &mut stmts);
+        self.input_body = saved_input_body;
         let mut unresolved_names: Vec<String> = self.external_locals.keys().cloned().collect();
         unresolved_names.sort();
         self.bindings = saved_bindings;

@@ -9,14 +9,17 @@ which directives a family admits is the family's rule (`families.incn`).
 # The directives the header accepts.
 const DIRECTIVES: FrozenList[str] = [
     "cli-commands",
+    "cli-concurrent",
     "environment",
     "expect-trace-contains",
+    "expect-trace-at-most-once",
     "graph-commands",
     "check-edits",
     "behavior",
     "retires",
     "expect-stdout",
     "expect-stdout-contains",
+    "expect-stderr",
     "expect-stderr-contains",
     "expect-exit",
     "expect-diagnostic",
@@ -30,13 +33,16 @@ const DIRECTIVES: FrozenList[str] = [
 # The directives whose lines follow them as an indented block.
 const BLOCKS: FrozenList[str] = [
     "cli-commands",
+    "cli-concurrent",
     "environment",
     "expect-trace-contains",
+    "expect-trace-at-most-once",
     "graph-commands",
     "check-edits",
     "expect-formatted",
     "expect-stdout",
     "expect-stdout-contains",
+    "expect-stderr",
     "expect-stderr-contains",
     "expect-dependencies",
     "expect-std-packages",
@@ -49,11 +55,13 @@ const SUBSET_BLOCKS: FrozenList[str] = [
     "expect-stderr-contains",
     "expect-std-packages",
     "expect-trace-contains",
+    "expect-trace-at-most-once",
 ]
 # Blocks whose items are compared as a set, so an item listed twice checks nothing.
 const SET_BLOCKS: FrozenList[str] = [
     "environment",
     "expect-trace-contains",
+    "expect-trace-at-most-once",
     "expect-stdout-contains",
     "expect-stderr-contains",
     "expect-dependencies",
@@ -280,10 +288,12 @@ def finish(header: Header) -> Result[Header, str]:
             return Err(f"line {line}: `expect-stderr-contains:` lists an empty substring, which checks nothing")
     if header.declares("expect-stdout") and header.declares("expect-stdout-contains"):
         return Err("`expect-stdout:` and `expect-stdout-contains:` cannot both be declared; pick one")
+    if header.declares("expect-stderr") and header.declares("expect-stderr-contains"):
+        return Err("`expect-stderr:` and `expect-stderr-contains:` cannot both be declared; pick one")
     refused = len(header.diagnostics) > 0
     run = header.declares("expect-stdout") or header.declares("expect-stdout-contains") or header.declares(
-        "expect-stderr-contains",
-    ) or header.declares("expect-exit")
+        "expect-stderr",
+    ) or header.declares("expect-stderr-contains") or header.declares("expect-exit")
     if refused and (run or header.accepted):
         return Err(
             "`expect-diagnostic:` means the program is refused at check time and never run; it cannot be declared beside a run expectation or `expect-accepted:`",

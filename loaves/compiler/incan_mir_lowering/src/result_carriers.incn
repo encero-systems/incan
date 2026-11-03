@@ -1,0 +1,342 @@
+"""Lower `?` propagation, result and option construction, carrier methods, and retained references."""
+
+from pub::incan_mir_plan import (
+    Carrier,
+    Operand,
+    OperandKind,
+    Place,
+    PlanType,
+    RvalueKind,
+    SourceSpan,
+    assign as plan_assign,
+    place as plan_place,
+)
+from layout_types import shared_receiver_type, carrier_name
+from frozen_plan import frozen_literal
+from rust::incan_semantics_core::body_ir import (
+    ArgumentElement as RustArgumentElement,
+    Constant as RustConstant,
+    Operand as RustOperand,
+    OwnershipFact,
+    Place as RustPlace,
+    ResultVariant as RustResultVariant,
+    ResultVariantKind,
+    TryErrorRouting,
+    Rvalue as RustRvalue,
+    PlaceElem,
+    MethodTarget,
+)
+from model_lists import structural_prefix
+from element_places import is_element_place
+from enums import enum_owner
+from options import (
+    propagate_result,
+    carrier_layout,
+    assign_carrier,
+    replace_owned_destination,
+    none_operand,
+    lower_carrier_method_plan,
+)
+from frame import place_type, Builder, temporary, track_rvalue_moves, read_place
+from lists import is_exclusive_borrow
+from checked_values import scalar_place, target_read
+from operators import operand_type
+from statements import carrier_payload, is_nominal_type
+from assignments import assignment_place
+from formatting import display_plan_operand
+from list_values import indexed_read, value_operand
+from list_methods import argument_place, call_destination
+from carrier_operands import boundary_operand
+
+
+pub def lower_try_propagation(
+    mut builder: Builder,
+    destination: &RustPlace,
+    operand: &RustOperand,
+    routing: &TryErrorRouting,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Materialize the checked Result read before consuming its selected payload on either propagation edge. The only
+    error conversion the propagation performs is the owned text a `const` str error becomes; it decides that from the
+    concrete carriers.
+    """
+    match routing:
+        TryErrorRouting.SameType(error_type=_error) => pass
+        TryErrorRouting.ConversionRequired(source_error_type=_source, destination_error_type=_destination) => pass
+        _ => return Err("unsupported Body IR unresolved TryPropagate error routing")
+    value = value_operand(builder, operand, span)?
+    ty = operand_type(builder, value)?
+    source = temporary(builder, ty, span)
+    track_rvalue_moves(builder, RvalueKind.Use(value))
+    builder.emit(plan_assign(source, RvalueKind.Use(value), span))
+    builder.owned.append(source.local)
+    target = assignment_place(builder, destination, span)?
+    return propagate_result(builder, source, target, span)
+
+
+pub def lower_result_construction(
+    mut builder: Builder,
+    target: Place,
+    variant: &RustResultVariant,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Construct the checker-selected Result variant in its concrete standard carrier."""
+    owner = enum_owner(place_type(builder.locals, target))?
+    if owner < len(builder.enums):
+        return Err("invalid Body IR Result destination")
+    declaration = builder.intrinsics[owner - len(builder.enums)]
+    if declaration.carrier != Carrier.Result or not variant.has_complete_canonical_types():
+        return Err("invalid Body IR Result payload identity")
+    mut slot = 0
+    if variant.kind == ResultVariantKind.Err:
+        slot = 1
+    operand = carrier_payload(builder, variant.payload, declaration.variants[slot].fields[0], span)?
+    assign_carrier(builder, target, owner, slot, [operand], span)
+    return Ok(None)
+
+
+pub def lower_option_construction(
+    mut builder: Builder,
+    target: Place,
+    elements: &list[RustArgumentElement],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Build only an explicitly retained intrinsic Some node in the checked Option destination."""
+    owner = enum_owner(place_type(builder.locals, target))?
+    if (
+        owner < len(builder.enums)
+        or builder.intrinsics[owner - len(builder.enums)].carrier != Carrier.Option
+        or len(elements) != 1
+    ):
+        return Err("invalid Body IR Some destination or payload")
+    match elements[0].as_one():
+        Some(payload) =>
+            ty = builder.intrinsics[owner - len(builder.enums)].variants[1].fields[0]
+            value = carrier_payload(builder, payload, ty, span)?
+            assign_carrier(builder, target, owner, 1, [value], span)
+            return Ok(None)
+        _ => return Err("unsupported Body IR Some spread payload")
+
+
+pub def lower_none_assignment(
+    mut builder: Builder,
+    target: Place,
+    _value: &RustRvalue,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Assign the typed None value through the standard carrier ownership path."""
+    ty = place_type(builder.locals, target)
+    value = none_operand(builder, ty, span)?
+    if is_nominal_type(ty):
+        replace_owned_destination(builder, target, RvalueKind.Use(value), span)
+    else:
+        track_rvalue_moves(builder, RvalueKind.Use(value))
+        builder.emit(plan_assign(target, RvalueKind.Use(value), span))
+    return Ok(None)
+
+
+pub def lower_carrier_method(
+    mut builder: Builder,
+    method: &MethodTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Materialize intrinsic call arguments, then delegate the carrier's branch and ownership operations."""
+    source = carrier_receiver(builder, arguments, span)?
+    _owner, declaration = carrier_layout(builder, place_type(builder.locals, source))?
+    if method.intrinsic_carrier != carrier_name(declaration.carrier):
+        return Err("invalid Body IR intrinsic carrier method identity")
+    name = str(method.name)
+    mut ty = PlanType.Bool
+    mut fallback: Option[Operand] = None
+    mut arity = 1
+    if name == "unwrap_or" or name == "unwrap":
+        if name == "unwrap_or":
+            arity = 2
+        # The present payload lives in Option's `Some` slot one and Result's `Ok` slot zero.
+        mut slot = 0
+        if declaration.carrier == Carrier.Option:
+            slot = 1
+        ty = declaration.variants[slot].fields[0]
+    if len(arguments) != arity:
+        return Err("unsupported Body IR intrinsic carrier method arity")
+    if arity == 2:
+        match arguments[1].as_one():
+            Some(value) => fallback = Some(boundary_operand(builder, value, ty, span)?)
+            None => return Err("unsupported Body IR carrier fallback spread")
+    target = call_destination(builder, destination, ty, span)?
+    return lower_carrier_method_plan(builder, name, source, target, fallback, span)
+
+
+def carrier_receiver(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """
+    The place a carrier method reads: the exact scalar referent, a static snapshot, or a copy of a list element.
+
+    An element is read out of its list as any element read is, as legacy's checked `list_get` reads it; the copy drops
+    when its scope ends. Local carrier references use the general place resolver's retained dereference, while globals keep their static snapshot path.
+    """
+    if len(arguments) == 0:
+        return Err("invalid Body IR intrinsic carrier method arity")
+    match arguments[0].as_one():
+        Some(value) =>
+            match value:
+                RustOperand.Place(read) =>
+                    if indexes_a_list(read.place):
+                        return element_copy(builder, read.place, span)
+                    match read.place.global():
+                        None => return scalar_place(builder, read.place, span)
+                        Some(_global) => pass
+                _ => pass
+        None => pass
+    return argument_place(builder, arguments, 0, span)
+
+
+def indexes_a_list(place: &RustPlace) -> bool:
+    """Report whether a place reaches its value through a list index."""
+    for projection in place.projection:
+        match projection:
+            PlaceElem.Index(_index) => return true
+            _ => pass
+    return false
+
+
+def element_copy(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+    """Read a list element into an owned copy and return its place."""
+    match indexed_read(builder, source, span)?.kind:
+        OperandKind.Move(place) => return Ok(place)
+        OperandKind.Copy(place) => return Ok(place)
+        _ => return Err("unsupported Body IR carrier receiver element")
+
+
+pub def retained_reference_value(
+    mut builder: Builder,
+    value: &RustOperand,
+    expected: PlanType,
+    span: SourceSpan,
+) -> Result[Option[Operand], str]:
+    """Transfer an exact exclusive reference, copy a shared reference, or borrow a checked local or structural field."""
+    exclusive = is_exclusive_borrow(expected)
+    if not exclusive:
+        match expected:
+            PlanType.ModelRef(_owner, _name) => pass
+            PlanType.EnumRef(_owner, _name) => pass
+            PlanType.TupleRef(_elements) => pass
+            PlanType.FrozenCollectionRef(_name, _elements) => pass
+            PlanType.StringRef => pass
+            PlanType.ScalarRef(_elements) => pass
+            PlanType.SliceRef(_elements) => pass
+            _ => return Ok(None)
+    match value:
+        RustOperand.Place(read) =>
+            if exclusive and len(read.place.projection) != 0:
+                return Ok(None)
+            match retained_reference_place(builder, read.place, span)?:
+                None => return Ok(None)
+                Some(place) =>
+                    if exclusive:
+                        if read.fact != OwnershipFact.Move or place_type(builder.locals, place) != expected:
+                            return Ok(None)
+                        return Ok(Some(read_place(place, true, span)))
+                    if read.fact == OwnershipFact.Unknown or read.fact == OwnershipFact.MutBorrow:
+                        return Err("unsupported Body IR shared-reference value ownership")
+                    if place_type(builder.locals, place) != expected:
+                        if read.fact != OwnershipFact.Borrow:
+                            return Ok(None)
+                        match shared_receiver_type(place_type(builder.locals, place)):
+                            Ok(reference_type) =>
+                                if reference_type != expected:
+                                    return Ok(None)
+                            Err(_reason) => return Ok(None)
+                        reference = temporary(builder, expected, span)
+                        builder.emit(plan_assign(reference, RvalueKind.Borrow(place), span))
+                        return Ok(Some(read_place(reference, false, span)))
+                    return Ok(Some(read_place(place, read.fact == OwnershipFact.Move, span)))
+        _ => return Ok(None)
+
+
+def retained_reference_place(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Option[Place], str]:
+    """Keep local and structural field storage addressable; collection indexing retains its own borrow path."""
+    match source.local_id():
+        None => return Ok(None)
+        Some(local) =>
+            if len(source.projection) == 0:
+                return Ok(Some(plan_place(int(local.index()) + 1 + builder.local_offset, span)))
+    if len(source.projection) != 0:
+        match structural_prefix(builder, source)?:
+            Some((count, _through_tuple)) =>
+                if count != len(source.projection):
+                    return Ok(None)
+            None => return Ok(None)
+    return Ok(Some(scalar_place(builder, source, span)?))
+
+
+def native_copy_type(builder: &Builder, ty: PlanType) -> bool:
+    """Require retained native Copy capability for the exact owned carrier requested by a typed boundary."""
+    match ty:
+        PlanType.Model(owner, _name) =>
+            if owner < 0 or owner >= len(builder.nominals):
+                return false
+            declaration = builder.nominals[owner]
+            return declaration.native_item != "" and "Copy" in declaration.derives
+        PlanType.Enum(owner, _name) =>
+            if owner < 0 or owner >= len(builder.enums):
+                return false
+            declaration = builder.enums[owner]
+            return declaration.native_item != "" and "Copy" in declaration.derives
+        _ => return false
+
+
+pub def typed_carrier_operand(
+    mut builder: Builder,
+    operand: &RustOperand,
+    ty: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """
+    Materialize checked carrier and text conversions at a concrete call, return, or collection boundary.
+
+    A checked native Copy read can dereference an explicit reference slot only for its matching owned carrier. Other
+    reference values retain the early reference-read boundary, and the adapter verifies the native Copy capability.
+    Indexed fields use the collection read path, which materializes their selected value exactly once.
+    """
+    if ty == PlanType.FrozenStr:
+        return frozen_operand(builder, operand, span)
+    match retained_reference_value(builder, operand, ty, span)?:
+        Some(reference) => return Ok(reference)
+        None => pass
+    match operand:
+        RustOperand.Constant(RustConstant.None) => return none_operand(builder, ty, span)
+        _ => pass
+    match operand:
+        RustOperand.Place(read) =>
+            if (
+                read.fact == OwnershipFact.Copy
+                and native_copy_type(builder, ty)
+                and not is_element_place(builder, read.place)?
+            ):
+                source = scalar_place(builder, read.place, span)?
+                if place_type(builder.locals, source) == ty:
+                    return target_read(builder, source, read.fact, span)
+        _ => pass
+    value = value_operand(builder, operand, span)?
+    if ty == PlanType.String and operand_type(builder, value)? == PlanType.FrozenStr:
+        text = display_plan_operand(builder, value, span)?
+        return Ok(read_place(text, true, span))
+    return Ok(value)
+
+
+pub def frozen_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
+    """Keep only checked static literals or existing frozen values; dynamic text remains named-refused."""
+    match value:
+        RustOperand.Constant(constant) => return frozen_literal(builder, constant, span)
+        RustOperand.Place(_read) =>
+            operand = value_operand(builder, value, span)?
+            if operand_type(builder, operand)? != PlanType.FrozenStr:
+                return Err("unsupported Body IR dynamic text to FrozenStr conversion")
+            return Ok(operand)

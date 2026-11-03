@@ -19,6 +19,11 @@ pub fn required(
 ) -> Result<BTreeSet<CanonicalSymbolId>, LoafIndexError> {
     let mut required = BTreeSet::new();
     for specification in trait_capabilities::PRIMITIVE_SOURCE_ADAPTERS {
+        // Both activation edges are identities the adapter's own package declares, so a graph that reaches nothing
+        // of that package cannot activate it and its manifest stays unread.
+        if !reaches_package(requested, specification.package) {
+            continue;
+        }
         let candidates = loaves
             .identities()
             .filter(|(_, identity)| identity.name == specification.package)
@@ -56,6 +61,13 @@ pub fn required(
         }
     }
     Ok(required)
+}
+
+/// Whether any requested identity is declared in `package`.
+fn reaches_package(requested: &BTreeSet<CanonicalSymbolId>, package: &str) -> bool {
+    requested
+        .iter()
+        .any(|identity| matches!(&identity.origin, SymbolOrigin::Package { library, .. } if library == package))
 }
 
 /// Read activation from canonical dependency edges, including selected trait methods owned by the trait declaration.

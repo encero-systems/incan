@@ -968,6 +968,7 @@ impl Formatter {
         self.format_params(&func.params);
         self.writer.write(") -> ");
         self.format_type(&func.return_type.node);
+        self.format_result_source(func.result_source.as_ref());
         self.writer.write(":");
         if self.writer.line_length_exceeded() {
             self.writer.restore(checkpoint);
@@ -976,6 +977,7 @@ impl Formatter {
             self.format_params_multiline(None, &func.params);
             self.writer.write(") -> ");
             self.format_type(&func.return_type.node);
+            self.format_result_source(func.result_source.as_ref());
             self.writer.write(":");
         }
         self.writer.newline();
@@ -1002,6 +1004,18 @@ impl Formatter {
         self.writer.dedent();
     }
 
+    /// Write the parsed result-source relationship without reconstructing it from a type display.
+    fn format_result_source(&mut self, source: Option<&Spanned<ResultSource>>) {
+        if let Some(source) = source {
+            self.writer.write(" from ");
+            self.writer.write(&source.node.binding.node);
+            for field in &source.node.fields {
+                self.writer.write(".");
+                self.writer.write(&field.node);
+            }
+        }
+    }
+
     /// Format a method declaration, wrapping receiver and parameter lines when the header exceeds the target length.
     fn format_method(&mut self, method: &MethodDecl) {
         for dec in &method.decorators {
@@ -1016,6 +1030,7 @@ impl Formatter {
         self.format_method_trait_target(method);
         self.writer.write(" -> ");
         self.format_type(&method.return_type.node);
+        self.format_result_source(method.result_source.as_ref());
 
         if method.body.is_none() {
             if self.writer.line_length_exceeded() {
@@ -1027,6 +1042,7 @@ impl Formatter {
                 self.format_method_trait_target(method);
                 self.writer.write(" -> ");
                 self.format_type(&method.return_type.node);
+                self.format_result_source(method.result_source.as_ref());
             }
             self.writer.newline();
             return;
@@ -1042,6 +1058,7 @@ impl Formatter {
             self.format_method_trait_target(method);
             self.writer.write(" -> ");
             self.format_type(&method.return_type.node);
+            self.format_result_source(method.result_source.as_ref());
             self.writer.write(":");
         }
         self.writer.newline();

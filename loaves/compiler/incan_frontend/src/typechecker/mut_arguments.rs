@@ -27,7 +27,7 @@
 //! A caller-visible parameter cannot be rebound to a new value in its body: the caller would not see the rebinding.
 //! Temporaries (literals, call results) are always accepted; nothing but the callee holds them.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::ast::{
     CallArg, ComprehensionClause, DictEntry, Expr, ListEntry, MatchBody, Param, ParamKind, Pattern, PatternArg, Span,
@@ -45,8 +45,19 @@ use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 
 use super::TypeChecker;
+
+mod effects;
+#[cfg(test)]
+mod legacy;
+#[cfg(test)]
+mod record_projection;
+
 use super::helpers::collection_type_id;
 use super::receiver_change::ReceiverChange;
+pub(super) use effects::MutEffects;
+
+/// Exact callee/parameter projections selected by one caller's recorded pending arguments.
+pub(super) type MutEffectReads = HashMap<(CanonicalSymbolId, String), Option<bool>>;
 
 /// One declared parameter of a callable that has at least one caller-visible `mut` parameter.
 #[derive(Debug, Clone)]
@@ -88,6 +99,8 @@ pub(crate) enum MutArgumentCallee<'a> {
 /// One argument recorded at a call, resolved once every body of the module has been checked.
 #[derive(Debug, Clone)]
 struct PendingMutArgument {
+    /// Legacy argument traversal order, independent of producer completion.
+    order: usize,
     /// The callee's declaration identity, when the call resolved to one; `None` for a callable known only by its type.
     callee: Option<CanonicalSymbolId>,
     /// The callee's name as the refusal names it.
@@ -235,6 +248,44 @@ pub(crate) struct MutParamFacts {
     current: Option<MutParamBody>,
 }
 
+/// One body's mutation effects, forwarding edges, local reassignment evidence and pending argument decisions.
+/// Declared parameter contracts stay with the collected environment and never become another body's output.
+#[derive(Debug, Clone, Default)]
+pub(super) struct MutBodyLocal {
+    /// Callables whose bodies this check has read, so their changes are known exactly.
+    bodies_checked: HashSet<CanonicalSymbolId>,
+    /// Caller-visible parameters each callable's body changes directly.
+    changed: HashMap<CanonicalSymbolId, HashSet<String>>,
+    /// Caller-visible parameters passed on to another callee's caller-visible parameter.
+    forwards: Vec<MutParamForward>,
+    /// Local bindings that hold a declared callable by reference, `f = extend`, keyed by the binding's declaration
+    /// span, so a call through them is checked too.
+    function_values: HashMap<Span, CanonicalSymbolId>,
+    /// Binding spans of the variables of every `for` loop being checked, which are not mutable bindings, each with
+    /// whether its loop's pattern destructures the element.
+    loop_variables: Vec<(Span, bool)>,
+    /// Local bindings reassigned anywhere in the module, keyed by declaration span. A call through such a local may
+    /// run any callable it was assigned, so it counts as changing every marked parameter.
+    reassigned_locals: HashSet<Span>,
+    /// Arguments waiting for the module's change facts.
+    pending: Vec<PendingMutArgument>,
+    /// The body being checked, when it declares caller-visible parameters.
+    current: Option<MutParamBody>,
+}
+
+/// Deterministically ordered, completed mutation facts accepted by the checker record adapter.
+/// Empty changed-parameter sets remain explicit owner entries. Canonical owners and source spans still belong to
+/// this check; the record adapter must bind them to stable identities and anchors before persistence.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct RecordMutation {
+    /// Source bodies whose mutation effects are known, including bodies that change no parameter.
+    pub(super) bodies: BTreeSet<CanonicalSymbolId>,
+    /// Exact direct changed-parameter sets; an owner with an empty set is not omitted.
+    pub(super) changed: BTreeMap<CanonicalSymbolId, BTreeSet<String>>,
+    /// Exact reassigned binding spans, retaining any generated-source expansion identity.
+    pub(super) reassigned: BTreeSet<Span>,
+}
+
 impl TypeChecker {
     // ========================================================================
     // Declarations
@@ -278,9 +329,10 @@ impl TypeChecker {
 
     /// Enter the body of a function or method declared as `name` at `span`, returning the enclosing body's state.
     ///
-    /// `kind` selects the identity namespace the declaration was collected under. The body's caller-visible `mut`
-    /// parameters become the places whose changes and rebinding this module tracks until
-    /// [`Self::exit_mut_param_body`] restores the returned state.
+    /// `kind` selects the identity namespace the declaration was collected under. The body's ordinary caller-visible
+    /// `mut` parameters become the places whose changes and rebinding this module tracks until
+    /// [`Self::exit_mut_param_body`] restores the returned state. Explicit ownership inputs retain their separate
+    /// source obligations and must not acquire this legacy parameter-rebinding prohibition.
     pub(in crate::typechecker) fn enter_mut_param_body(
         &mut self,
         name: &str,
@@ -296,8 +348,12 @@ impl TypeChecker {
         let caller_visible = params
             .iter()
             .zip(resolved)
-            .filter(|(param, resolved)| self.def_param_shows_changes_to_caller(&param.node, resolved))
-            .map(|(param, _)| (param.node.name.clone(), param.span))
+            .enumerate()
+            // Explicit modes own their access obligations. In particular, assignment through BorrowedMut writes
+            // through, while assignment to Owned replaces a local slot; neither is legacy parameter rebinding.
+            .filter(|(slot, _)| self.checked_input_contract(&identity, *slot).is_none())
+            .filter(|(_, (param, resolved))| self.def_param_shows_changes_to_caller(&param.node, resolved))
+            .map(|(_, (param, _))| (param.node.name.clone(), param.span))
             .collect::<HashMap<_, _>>();
         self.mut_params.bodies_checked.insert(identity.clone());
         let next = MutParamBody {
@@ -312,6 +368,34 @@ impl TypeChecker {
     /// Return the declaration identity of the function or method whose body is being checked, if any.
     pub(in crate::typechecker) fn current_body_identity(&self) -> Option<&CanonicalSymbolId> {
         self.mut_params.current.as_ref().map(|body| &body.identity)
+    }
+
+    /// Detach a validated declaration's mutation frame before its independent body producer is entered. Knowing a
+    /// concrete body exists belongs to its statement activation. Abstract methods retain the legacy known-callable
+    /// contribution with their declaration, without inventing a statement producer.
+    pub(in crate::typechecker) fn suspend_mut_param_body(
+        &mut self,
+        previous: MutParamBodyState,
+        has_statement_body: bool,
+    ) -> MutParamBodyState {
+        let prepared = MutParamBodyState(std::mem::replace(&mut self.mut_params.current, previous.0));
+        if has_statement_body && let Some(frame) = &prepared.0 {
+            self.mut_params.bodies_checked.remove(&frame.identity);
+        }
+        prepared
+    }
+
+    /// Consume a completed declaration's mutation inputs and mark this body known exactly once, without repeating
+    /// parameter classification or declaration validation.
+    pub(in crate::typechecker) fn resume_mut_param_body(
+        &mut self,
+        prepared: MutParamBodyState,
+        has_statement_body: bool,
+    ) -> MutParamBodyState {
+        if has_statement_body && let Some(frame) = &prepared.0 {
+            self.mut_params.bodies_checked.insert(frame.identity.clone());
+        }
+        MutParamBodyState(std::mem::replace(&mut self.mut_params.current, prepared.0))
     }
 
     /// Leave a body entered with [`Self::enter_mut_param_body`].
@@ -1310,6 +1394,7 @@ impl TypeChecker {
                 .filter(|ty| self.value_type_cannot_be_copied(ty))
                 .map(ToString::to_string);
             self.mut_params.pending.push(PendingMutArgument {
+                order: self.check_work.mutation_arguments,
                 callee: identity.clone(),
                 callee_name: callee_name.clone(),
                 param: slot.name.clone(),
@@ -1319,6 +1404,7 @@ impl TypeChecker {
                 span: value.span,
                 through_local,
             });
+            self.check_work.mutation_arguments += 1;
         }
     }
 
@@ -1543,107 +1629,6 @@ impl TypeChecker {
             binding: matches!(expr.node, Expr::Ident(_)).then(|| root.to_string()),
         }
     }
-
-    /// Decide every recorded argument once the module's bodies have been checked.
-    ///
-    /// A callee changes a caller-visible parameter when its body writes through it or through a view into it, calls a
-    /// method that may change it, uses it when it is a `Generator`, or passes it on to a parameter another callee
-    /// changes; a callee whose body this check did not read (an imported declaration, a trait method without a default,
-    /// a method reached by trait dispatch, a callable known only by its type) is taken to change it. An immutable
-    /// binding or field, an element or a static passed to a changed parameter is refused with `INCAN-T0117`, and so is
-    /// a `for` loop variable. An immutable binding or field, or a loop variable, passed to an unchanged one is
-    /// published for lowering as a copy, unless its type cannot be copied (a `Generator`, a type holding one),
-    /// which is refused with `INCAN-T0117` too.
-    pub(in crate::typechecker) fn resolve_mut_arguments(&mut self) {
-        let changed = self.mut_param_change_closure();
-        let pending = std::mem::take(&mut self.mut_params.pending);
-        for argument in pending {
-            let known_callee = argument.callee.as_ref().filter(|callee| {
-                self.mut_params.bodies_checked.contains(*callee)
-                    && !self.call_goes_through_a_reassigned_local(argument.through_local)
-            });
-            let change = match known_callee {
-                Some(_) => MutParameterChange::Changes,
-                None => MutParameterChange::MayChange,
-            };
-            let changes = known_callee.is_none_or(|callee| changed.contains(&(callee.clone(), argument.param.clone())));
-            let immutable_place = match &argument.place {
-                ArgumentPlace::Immutable { binding } => Some(match binding {
-                    Some(name) => MutArgumentPlace::Binding(name.clone()),
-                    None => MutArgumentPlace::Field,
-                }),
-                ArgumentPlace::Detached { place } => Some(place.clone()),
-                ArgumentPlace::Temporary | ArgumentPlace::Mutable { .. } => None,
-            };
-            let Some(place) = immutable_place else {
-                continue;
-            };
-            let parameter = if argument.param.is_empty() {
-                MutParameterLabel::Position(argument.position)
-            } else {
-                MutParameterLabel::Named(&argument.param)
-            };
-            let error = if changes {
-                errors::immutable_argument_to_mut_parameter(
-                    parameter,
-                    &argument.callee_name,
-                    change,
-                    place,
-                    argument.span,
-                )
-            } else if let Some(value_type) = &argument.uncopyable_type {
-                errors::uncopyable_argument_to_mut_parameter(
-                    parameter,
-                    &argument.callee_name,
-                    value_type,
-                    place,
-                    argument.span,
-                )
-            } else {
-                // An element or a static already reaches the call as a copy of the stored value; a binding the caller
-                // cannot change, or a loop variable, handed to a parameter the callee never changes is accepted too:
-                // the call passes it as its parameter's own marker says.
-                continue;
-            };
-            let already_reported = self
-                .errors
-                .iter()
-                .any(|existing| existing.span == error.span && existing.message == error.message);
-            if !already_reported {
-                self.errors.push(error);
-            }
-        }
-    }
-
-    /// Return whether a call went through a local that is reassigned somewhere in the module, so the callable it runs
-    /// is not known at the call.
-    fn call_goes_through_a_reassigned_local(&self, through_local: Option<Span>) -> bool {
-        through_local.is_some_and(|local| self.mut_params.reassigned_locals.contains(&local))
-    }
-
-    /// Return every (callable, parameter) pair whose caller-visible parameter the callable changes, transitively.
-    fn mut_param_change_closure(&self) -> HashSet<(CanonicalSymbolId, String)> {
-        let mut changed = self
-            .mut_params
-            .changed
-            .iter()
-            .flat_map(|(identity, params)| params.iter().map(move |param| (identity.clone(), param.clone())))
-            .collect::<HashSet<_>>();
-        loop {
-            let mut grew = false;
-            for forward in &self.mut_params.forwards {
-                let callee_changes = !self.mut_params.bodies_checked.contains(&forward.callee)
-                    || self.call_goes_through_a_reassigned_local(forward.through_local)
-                    || changed.contains(&(forward.callee.clone(), forward.callee_param.clone()));
-                if callee_changes && changed.insert((forward.owner.clone(), forward.param.clone())) {
-                    grew = true;
-                }
-            }
-            if !grew {
-                return changed;
-            }
-        }
-    }
 }
 
 /// Return the parameters of a function type.
@@ -1819,5 +1804,246 @@ fn place_root_name(expr: &Spanned<Expr>) -> Option<&str> {
         Expr::Ident(name) => Some(name.as_str()),
         Expr::Field(base, _) | Expr::Index(base, _) | Expr::Paren(base) => place_root_name(base),
         _ => None,
+    }
+}
+
+impl MutParamFacts {
+    /// Move body-owned mutation state out while leaving all declared parameter inputs readable.
+    pub(super) fn take_body_local(&mut self) -> MutBodyLocal {
+        MutBodyLocal {
+            bodies_checked: std::mem::take(&mut self.bodies_checked),
+            changed: std::mem::take(&mut self.changed),
+            forwards: std::mem::take(&mut self.forwards),
+            function_values: std::mem::take(&mut self.function_values),
+            loop_variables: std::mem::take(&mut self.loop_variables),
+            reassigned_locals: std::mem::take(&mut self.reassigned_locals),
+            pending: std::mem::take(&mut self.pending),
+            current: std::mem::take(&mut self.current),
+        }
+    }
+
+    /// Restore the enclosing callable's exact mutation writer, including its current parameter frame.
+    pub(super) fn install_body_local(&mut self, local: MutBodyLocal) {
+        self.bodies_checked = local.bodies_checked;
+        self.changed = local.changed;
+        self.forwards = local.forwards;
+        self.function_values = local.function_values;
+        self.loop_variables = local.loop_variables;
+        self.reassigned_locals = local.reassigned_locals;
+        self.pending = local.pending;
+        self.current = local.current;
+    }
+
+    /// Append completed local effects and pending arguments in declaration traversal order.
+    pub(super) fn append_body_local(&mut self, local: MutBodyLocal) {
+        self.bodies_checked.extend(local.bodies_checked);
+        self.changed.extend(local.changed);
+        self.forwards.extend(local.forwards);
+        self.function_values.extend(local.function_values);
+        self.loop_variables.extend(local.loop_variables);
+        self.reassigned_locals.extend(local.reassigned_locals);
+        self.pending.extend(local.pending);
+        debug_assert!(local.current.is_none());
+    }
+}
+
+impl MutBodyLocal {
+    /// Move the prepared callable frame into its statement writer without giving the declaration producer its
+    /// body effects. The frame returns when that writer closes; the known-body contribution stays with the body.
+    pub(super) fn enter_statement_frame(&mut self, writer: &mut MutParamFacts) {
+        writer.current = self.current.take();
+        if let Some(frame) = &writer.current
+            && self.bodies_checked.remove(&frame.identity)
+        {
+            writer.bodies_checked.insert(frame.identity.clone());
+        }
+    }
+
+    /// Return only the active frame to the declaration operation that will restore its enclosing callable.
+    pub(super) fn return_statement_frame(&mut self, enclosing: &mut Self) {
+        enclosing.current = self.current.take();
+    }
+
+    /// Render this caller's pending argument decisions from final callee effects. No syntax or local inference is read.
+    pub(super) fn finalize_arguments(
+        &self,
+        effects: &MutEffects,
+        diagnostics: &mut Vec<(usize, crate::diagnostics::CompileError)>,
+    ) {
+        for argument in &self.pending {
+            let known_callee = argument.callee.as_ref().filter(|callee| {
+                effects.bodies_checked.contains(*callee)
+                    && !argument
+                        .through_local
+                        .is_some_and(|local| self.reassigned_locals.contains(&local))
+            });
+            let change = match known_callee {
+                Some(_) => MutParameterChange::Changes,
+                None => MutParameterChange::MayChange,
+            };
+            let changes =
+                known_callee.is_none_or(|callee| effects.changed.contains(&(callee.clone(), argument.param.clone())));
+            let immutable_place = match &argument.place {
+                ArgumentPlace::Immutable { binding } => Some(match binding {
+                    Some(name) => MutArgumentPlace::Binding(name.clone()),
+                    None => MutArgumentPlace::Field,
+                }),
+                ArgumentPlace::Detached { place } => Some(place.clone()),
+                ArgumentPlace::Temporary | ArgumentPlace::Mutable { .. } => None,
+            };
+            let Some(place) = immutable_place else {
+                continue;
+            };
+            let parameter = if argument.param.is_empty() {
+                MutParameterLabel::Position(argument.position)
+            } else {
+                MutParameterLabel::Named(&argument.param)
+            };
+            let error = if changes {
+                errors::immutable_argument_to_mut_parameter(
+                    parameter,
+                    &argument.callee_name,
+                    change,
+                    place,
+                    argument.span,
+                )
+            } else if let Some(value_type) = &argument.uncopyable_type {
+                errors::uncopyable_argument_to_mut_parameter(
+                    parameter,
+                    &argument.callee_name,
+                    value_type,
+                    place,
+                    argument.span,
+                )
+            } else {
+                // An element or a static already reaches the call as a copy of the stored value; a binding the caller
+                // cannot change, or a loop variable, handed to a parameter the callee never changes is accepted too:
+                // the call passes it as its parameter's own marker says.
+                continue;
+            };
+            diagnostics.push((argument.order, error));
+        }
+    }
+}
+
+impl MutBodyLocal {
+    /// Remove finalized argument obligations while retaining all local effect, forwarding and reassignment evidence.
+    pub(super) fn clear_pending_arguments(&mut self) {
+        self.pending.clear();
+    }
+}
+
+impl MutBodyLocal {
+    /// Retain only effect projections that can change this caller's refusal. Reassigned and unknown callees remain
+    /// conservative and do not subscribe to a known body's more permissive effect projection.
+    pub(super) fn effect_reads(&self, effects: &MutEffects) -> MutEffectReads {
+        self.pending
+            .iter()
+            .filter_map(|argument| {
+                if matches!(argument.place, ArgumentPlace::Temporary | ArgumentPlace::Mutable { .. })
+                    || argument
+                        .through_local
+                        .is_some_and(|local| self.reassigned_locals.contains(&local))
+                {
+                    return None;
+                }
+                let callee = argument.callee.as_ref()?;
+                let key = (callee.clone(), argument.param.clone());
+                let value = effects
+                    .bodies_checked
+                    .contains(callee)
+                    .then(|| effects.changed.contains(&key));
+                Some((key, value))
+            })
+            .collect()
+    }
+}
+
+impl MutBodyLocal {
+    /// Return recorded argument count for a new invocation's traversal binding, without re-evaluating any argument.
+    pub(super) fn argument_count(&self) -> usize {
+        self.pending.len()
+    }
+}
+
+impl MutBodyLocal {
+    /// Expose the known-body contribution only when every other mutation capability is empty. This temporary native
+    /// profile never turns an unrepresented obligation into an empty effect or a successful source result.
+    pub(super) fn plain_bodies(&self) -> Option<&HashSet<CanonicalSymbolId>> {
+        let Self {
+            bodies_checked,
+            changed,
+            forwards,
+            function_values,
+            loop_variables,
+            reassigned_locals,
+            pending,
+            current,
+        } = self;
+        (changed.is_empty()
+            && forwards.is_empty()
+            && function_values.is_empty()
+            && loop_variables.is_empty()
+            && reassigned_locals.is_empty()
+            && pending.is_empty()
+            && current.is_none())
+        .then_some(bodies_checked)
+    }
+
+    /// Restore an explicitly witnessed empty-effect body contribution without running mutation settlement.
+    pub(super) fn from_plain_bodies(bodies: Vec<CanonicalSymbolId>) -> Self {
+        Self {
+            bodies_checked: bodies.into_iter().collect(),
+            ..Self::default()
+        }
+    }
+}
+
+impl MutBodyLocal {
+    /// Project completed facts only when every capability absent from the record shape is empty. Forwarding edges,
+    /// callable bindings, loop views, pending decisions and an active frame are refused rather than silently lost.
+    /// Ordered collections remove hash iteration order without flattening empty changed-owner entries.
+    pub(super) fn record_projection(&self) -> Option<RecordMutation> {
+        let Self {
+            bodies_checked,
+            changed,
+            forwards,
+            function_values,
+            loop_variables,
+            reassigned_locals,
+            pending,
+            current,
+        } = self;
+        if !forwards.is_empty()
+            || !function_values.is_empty()
+            || !loop_variables.is_empty()
+            || !pending.is_empty()
+            || current.is_some()
+        {
+            return None;
+        }
+        Some(RecordMutation {
+            bodies: bodies_checked.iter().cloned().collect(),
+            changed: changed
+                .iter()
+                .map(|(owner, parameters)| (owner.clone(), parameters.iter().cloned().collect()))
+                .collect(),
+            reassigned: reassigned_locals.iter().copied().collect(),
+        })
+    }
+
+    /// Restore all completed facts after the record adapter has rebound their identities and source anchors.
+    /// Unsupported capabilities are empty because the projection admits none, not because restoration drops them.
+    pub(super) fn from_record_projection(record: RecordMutation) -> Self {
+        Self {
+            bodies_checked: record.bodies.into_iter().collect(),
+            changed: record
+                .changed
+                .into_iter()
+                .map(|(owner, parameters)| (owner, parameters.into_iter().collect()))
+                .collect(),
+            reassigned_locals: record.reassigned.into_iter().collect(),
+            ..Self::default()
+        }
     }
 }

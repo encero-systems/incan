@@ -1,0 +1,4 @@
+"""Republish standard declarations through a source-module facade."""
+
+pub from std.math import sqrt as relayed_root
+pub from std.io import IoError as RelayedError

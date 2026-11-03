@@ -11,7 +11,10 @@ from rust::incan_semantics_core::body_ir import (
 from pub::incan_mir_plan import PlanType, Place, Operand, OperandKind, RvalueKind, SourceSpan
 from pub::incan_mir_plan import assign as plan_assign
 from frame import Builder, temporary, place_type, read_place
-from lowering import scalar_place, value_operand, instantiated_external_call, computed_static_root
+from checked_values import scalar_place
+from list_values import value_operand
+from calls import instantiated_external_call
+from static_storage import computed_static_root
 
 
 pub def frozen_place(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Option[Place], str]:

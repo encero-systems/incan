@@ -1,0 +1,161 @@
+"""Encode normalized standard manifest intent without retaining a TOML document or parsing it on command replay."""
+
+from std.io import _BytesIO
+from intake import FeatureDeclaration, LocalDependency, ProjectIntent, RustInputRequest
+from page_codec import Reader, put_flag, put_number, put_optional, put_text, put_texts
+from toolchain_access import ToolchainAccess
+
+
+pub def read_intent(mut reader: Reader) -> Result[ProjectIntent, str]:
+    """Read every normalized manifest field in the schema's fixed order."""
+    name = reader.text()?
+    version = reader.text()?
+    scripts = read_pairs(reader)?
+    mut dependencies: list[LocalDependency] = []
+    for _index in range(reader.count(48)?):
+        dependencies.append(
+            LocalDependency(
+                alias=reader.text()?,
+                path=reader.text()?,
+                optional=reader.flag()?,
+                default_features=reader.flag()?,
+                features=reader.texts()?,
+                rust_facet=reader.flag()?,
+            ),
+        )
+    mut requests: list[RustInputRequest] = []
+    for _index in range(reader.count(80)?):
+        requests.append(
+            RustInputRequest(
+                alias=reader.text()?,
+                package=reader.text()?,
+                loaf=reader.optional()?,
+                version=reader.text()?,
+                features=reader.texts()?,
+                default_features=reader.flag()?,
+                optional=reader.flag()?,
+                target=reader.optional()?,
+                path=reader.optional()?,
+            ),
+        )
+    edition = reader.text()?
+    features = read_features(reader)?
+    return Ok(
+        ProjectIntent(
+            name=name,
+            version=version,
+            scripts=scripts,
+            dependencies=dependencies,
+            rust_inputs=requests,
+            rust_edition=edition,
+            features=features,
+            source_root=reader.optional()?,
+            contract_models=reader.texts()?,
+            c_headers=reader.texts()?,
+            vocab_entry=reader.optional()?,
+            toolchain_access=ToolchainAccess(
+                unstable_features=reader.texts()?,
+                toolchain_components=reader.texts()?,
+                sysroot_dependencies=reader.texts()?,
+            ),
+        ),
+    )
+
+
+pub def write_intent(buffer: _BytesIO, intent: ProjectIntent) -> Result[None, str]:
+    """Preserve complete validated intent, including inactive declarations and toolchain access."""
+    put_text(buffer, intent.name)?
+    put_text(buffer, intent.version)?
+    write_pairs(buffer, intent.scripts)?
+    put_number(buffer, len(intent.dependencies))?
+    for dependency in intent.dependencies:
+        put_text(buffer, dependency.alias)?
+        put_text(buffer, dependency.path)?
+        put_flag(buffer, dependency.optional)?
+        put_flag(buffer, dependency.default_features)?
+        put_texts(buffer, dependency.features)?
+        put_flag(buffer, dependency.rust_facet)?
+    put_number(buffer, len(intent.rust_inputs))?
+    for request in intent.rust_inputs:
+        write_request(buffer, request)?
+    put_text(buffer, intent.rust_edition)?
+    write_features(buffer, intent.features)?
+    put_optional(buffer, intent.source_root)?
+    put_texts(buffer, intent.contract_models)?
+    put_texts(buffer, intent.c_headers)?
+    put_optional(buffer, intent.vocab_entry)?
+    put_texts(buffer, intent.toolchain_access.unstable_features)?
+    put_texts(buffer, intent.toolchain_access.toolchain_components)?
+    return put_texts(buffer, intent.toolchain_access.sysroot_dependencies)
+
+
+def write_request(buffer: _BytesIO, request: RustInputRequest) -> Result[None, str]:
+    """Write a Rust requirement without selecting a native version or conflating optional fields."""
+    put_text(buffer, request.alias)?
+    put_text(buffer, request.package)?
+    put_optional(buffer, request.loaf)?
+    put_text(buffer, request.version)?
+    put_texts(buffer, request.features)?
+    put_flag(buffer, request.default_features)?
+    put_flag(buffer, request.optional)?
+    put_optional(buffer, request.target)?
+    return put_optional(buffer, request.path)
+
+
+def read_pairs(mut reader: Reader) -> Result[Dict[str, str], str]:
+    """Read an exact string map, refusing duplicate keys."""
+    mut values: Dict[str, str] = {}
+    for _index in range(reader.count(16)?):
+        key = reader.text()?
+        if key in values:
+            return Err("installation page has duplicate map keys")
+        values[key] = reader.text()?
+    return Ok(values)
+
+
+def write_pairs(buffer: _BytesIO, values: Dict[str, str]) -> Result[None, str]:
+    """Encode maps in name order, independent of insertion history."""
+    put_number(buffer, len(values))?
+    for key in sorted([key for key in values.keys()]):
+        put_text(buffer, key)?
+        put_text(buffer, values[key])?
+    return Ok(None)
+
+
+def read_features(mut reader: Reader) -> Result[Dict[str, FeatureDeclaration], str]:
+    """Read normalized feature edges while preserving their literal aliases."""
+    mut values: Dict[str, FeatureDeclaration] = {}
+    for _index in range(reader.count(32)?):
+        key = reader.text()?
+        if key in values:
+            return Err("installation page has duplicate features")
+        includes = reader.texts()?
+        optional = reader.texts()?
+        mut dependencies: Dict[str, list[str]] = {}
+        for _dependency in range(reader.count(16)?):
+            alias = reader.text()?
+            if alias in dependencies:
+                return Err("installation page has duplicate feature aliases")
+            dependencies[alias] = reader.texts()?
+        values[key] = FeatureDeclaration(
+            includes=includes,
+            optional_dependencies=optional,
+            dependency_features=dependencies,
+        )
+    return Ok(values)
+
+
+def write_features(buffer: _BytesIO, values: Dict[str, FeatureDeclaration]) -> Result[None, str]:
+    """Encode each feature and its edges in deterministic map order."""
+    put_number(buffer, len(values))?
+    for key in sorted([key for key in values.keys()]):
+        put_text(buffer, key)?
+        feature = values[key]
+        put_texts(buffer, feature.includes)?
+        put_texts(buffer, feature.optional_dependencies)?
+        dependencies = feature.dependency_features
+        put_number(buffer, len(dependencies))?
+        for alias in sorted([alias for alias in dependencies.keys()]):
+            put_text(buffer, alias)?
+            put_texts(buffer, dependencies[alias])?
+    return Ok(None)

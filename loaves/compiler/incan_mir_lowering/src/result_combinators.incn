@@ -13,6 +13,7 @@ from rust::incan_semantics_core::body_ir import (
     OwnershipFact,
     Place as RustPlace,
 )
+from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import (
     CalleeKind,
     EnumDeclaration,
@@ -32,7 +33,10 @@ from classes import frame_type, function_name, parameter_local_index
 from table_views import borrowed_at
 from closures import callable_signature
 from layout_types import native_source_type
-from lowering import scalar_place, lower_callable_result, call_closure, boundary_plan_operand, list_borrow
+from checked_values import scalar_place
+from callable_calls import lower_callable_result, call_closure
+from carrier_operands import boundary_plan_operand
+from list_values import list_borrow
 from collections import is_collection, collection_owned, collection_reference
 from trait_links import contains
 
@@ -80,7 +84,7 @@ pub def lower_result_combinator(
         return Err("invalid Body IR Result combinator arity")
     source = owned_receiver(builder, arguments[0], span)?
     _owner, input = carrier_layout(builder, place_type(builder.locals, source))?
-    if input.carrier != "Result":
+    if input.carrier != Carrier.Result:
         return Err("unsupported Body IR Result combinator on another carrier")
     callback = callback_place(builder, arguments[1], span)?
     if combinator.effect == "observe":
@@ -197,7 +201,7 @@ def transform(
     slot = combinator.slot
     output_type = place_type(builder.locals, output)
     owner, result = carrier_layout(builder, output_type)?
-    if result.carrier != "Result":
+    if result.carrier != Carrier.Result:
         return Err("unsupported Body IR Result combinator output carrier")
     payload_type = input.variants[slot].fields[0]
     mut callback_result = output_type

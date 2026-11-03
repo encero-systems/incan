@@ -157,6 +157,11 @@ impl TypeChecker {
         if let Some(result) = self.check_imported_module_direct_call(&call) {
             return result;
         }
+        if let Some(result) =
+            self.check_source_reexport_overload_call(callee, type_args, args, span, expected_return_ty)
+        {
+            return result;
+        }
         self.check_remaining_direct_call(&call)
     }
 
@@ -462,20 +467,20 @@ impl TypeChecker {
                 self.current_classmethod_self_ty.clone(),
             )
         {
-            let ctor_fields: Option<std::collections::HashMap<String, FieldInfo>> =
+            let ctor_fields: Option<(std::collections::HashMap<String, FieldInfo>, Vec<String>)> =
                 self.lookup_type_info(&owner_name).and_then(|info| match info {
-                    TypeInfo::Model(m) => Some(m.fields.clone()),
-                    TypeInfo::Class(c) => Some(c.fields.clone()),
+                    TypeInfo::Model(m) => Some((m.fields.clone(), m.field_order.clone())),
+                    TypeInfo::Class(c) => Some((c.fields.clone(), c.field_order.clone())),
                     _ => None,
                 });
-            if let Some(fields) = ctor_fields {
+            if let Some((fields, field_order)) = ctor_fields {
                 self.type_info.record_resolved_identity(callee.span, identity);
                 self.record_expr_type(callee.span, self_ty.clone());
                 self.type_info
                     .expressions
                     .ident_kinds
                     .insert(callee.span, IdentKind::TypeName);
-                self.check_model_or_class_constructor_call(&owner_name, &owner_name, &fields, args, span);
+                self.check_model_or_class_constructor_call(&owner_name, &owner_name, &fields, &field_order, args, span);
                 return Some(self_ty);
             }
         }
@@ -590,6 +595,10 @@ impl TypeChecker {
         call: &DirectCallSite<'_>,
     ) -> ResolvedType {
         let (callee, type_args, args, span) = (call.callee, call.type_args, call.args, call.span);
+        if self.refuse_explicit_ownership_constructor(name, span) {
+            self.check_call_args(args);
+            return ResolvedType::Unknown;
+        }
         if let Some(ret) = self.check_type_constructor_hook_call(name, type_info, type_args, args, span) {
             self.record_direct_callee_identity(name, callee.span);
             self.record_expr_type(callee.span, ResolvedType::Named(name.to_owned()));
@@ -675,11 +684,11 @@ impl TypeChecker {
             return contextual_constructor_ty.unwrap_or(constructor_ty);
         }
         let ctor_fields = match type_info {
-            TypeInfo::Model(info) => Some(info.fields.clone()),
-            TypeInfo::Class(info) => Some(info.fields.clone()),
+            TypeInfo::Model(info) => Some((info.fields.clone(), info.field_order.clone())),
+            TypeInfo::Class(info) => Some((info.fields.clone(), info.field_order.clone())),
             _ => None,
         };
-        let Some(mut fields) = ctor_fields else {
+        let Some((mut fields, field_order)) = ctor_fields else {
             return self.check_constructor(name, args, span);
         };
         self.record_direct_callee_identity(name, callee.span);
@@ -689,7 +698,7 @@ impl TypeChecker {
             }
         }
         let errors_before_constructor = self.errors.len();
-        let constructor_ty = self.check_model_or_class_constructor_call(name, name, &fields, args, span);
+        let constructor_ty = self.check_model_or_class_constructor_call(name, name, &fields, &field_order, args, span);
         if self.errors.len() == errors_before_constructor {
             self.retain_body_ir_constructor_type(name, type_info, constructor_context.as_ref(), args, span);
         }
@@ -718,7 +727,15 @@ impl TypeChecker {
         self.record_direct_callee_identity(name, callee.span);
         let declaration = self.type_info.resolved_identity(callee.span).cloned();
         let first_error = self.errors.len();
-        let result = self.validate_function_call(name, func_info, type_args, args, span, expected_return_ty);
+        let result = self.validate_function_call_with_identity(
+            name,
+            func_info,
+            type_args,
+            args,
+            span,
+            expected_return_ty,
+            declaration.clone(),
+        );
         self.check_capturing_call_arguments(declaration.as_ref(), name, &func_info.params, args);
         self.retain_body_ir_async_call_target(func_info.is_async, name, span, callee.span, first_error);
         if let Some(declaration) = declaration {
@@ -871,14 +888,15 @@ impl TypeChecker {
         // Model/class constructor calls: validate field arguments at the Incan level.
         // NOTE: `lookup_type_info` returns a reference into `self`, so we clone the needed field map to avoid
         // borrow conflicts (we need `&mut self` for validation).
-        let ctor_fields: Option<std::collections::HashMap<String, FieldInfo>> =
+        let ctor_fields: Option<(std::collections::HashMap<String, FieldInfo>, Vec<String>)> =
             self.lookup_type_info(name).and_then(|info| match info {
-                TypeInfo::Model(m) => Some(m.fields.clone()),
-                TypeInfo::Class(c) => Some(c.fields.clone()),
+                TypeInfo::Model(m) => Some((m.fields.clone(), m.field_order.clone())),
+                TypeInfo::Class(c) => Some((c.fields.clone(), c.field_order.clone())),
                 _ => None,
             });
-        if let Some(fields) = ctor_fields {
-            let constructor_ty = self.check_model_or_class_constructor_call(name, name, &fields, args, span);
+        if let Some((fields, field_order)) = ctor_fields {
+            let constructor_ty =
+                self.check_model_or_class_constructor_call(name, name, &fields, &field_order, args, span);
             self.record_expr_type(callee.span, ResolvedType::Named(name.to_owned()));
             self.type_info
                 .expressions
@@ -898,7 +916,9 @@ impl TypeChecker {
         None
     }
 
-    /// Bind explicit arguments on decorated generic functions before ordinary callable-value inference.
+    /// Check decorated generic calls through the declaration's binders for explicit and inferred type arguments.
+    /// Ordinary callable-value inference cannot retain the closed declaration instance required by Body IR. The
+    /// resolved symbol's declaration span excludes local values shadowing a decorated declaration's name.
     fn check_decorated_generic_direct_call(&mut self, call: &DirectCallSite<'_>) -> Option<ResolvedType> {
         let (callee, type_args, args, span, expected_return_ty) = (
             call.callee,
@@ -908,12 +928,12 @@ impl TypeChecker {
             call.expected_return_ty,
         );
         if let Expr::Ident(name) = &callee.node
-            && !type_args.is_empty()
+            && let Some(symbol) = self.lookup_symbol(name)
             && let Some(binding) = self
                 .type_info
                 .declarations
-                .decorated_function_bindings
-                .get(name)
+                .decorated_function_bindings_by_span
+                .get(&symbol.span)
                 .cloned()
             && !binding.type_params.is_empty()
             && let ResolvedType::Function(params, ret) = binding.ty
@@ -2223,7 +2243,14 @@ impl TypeChecker {
                         field.ty = substitute_resolved_type(&field.ty, type_bindings);
                     }
                 }
-                self.check_model_or_class_constructor_call(type_name, display_name, &fields, args, span)
+                self.check_model_or_class_constructor_call(
+                    type_name,
+                    display_name,
+                    &fields,
+                    &model.field_order,
+                    args,
+                    span,
+                )
             }
             TypeInfo::Class(class) => {
                 let mut fields = class.fields.clone();
@@ -2232,7 +2259,14 @@ impl TypeChecker {
                         field.ty = substitute_resolved_type(&field.ty, type_bindings);
                     }
                 }
-                self.check_model_or_class_constructor_call(type_name, display_name, &fields, args, span)
+                self.check_model_or_class_constructor_call(
+                    type_name,
+                    display_name,
+                    &fields,
+                    &class.field_order,
+                    args,
+                    span,
+                )
             }
             _ => ResolvedType::Unknown,
         };
@@ -2296,8 +2330,16 @@ impl TypeChecker {
             self.type_info = baseline_type_info.clone();
             self.consumed_iterator_bindings = baseline_consumed_iterator_bindings.clone();
 
-            let result =
-                self.validate_function_call(func_name, &overload.info, type_args, args, span, expected_return_ty);
+            let selected_identity = self.checked_overload_identity(overload);
+            let result = self.validate_function_call_with_identity(
+                func_name,
+                &overload.info,
+                type_args,
+                args,
+                span,
+                expected_return_ty,
+                selected_identity.clone(),
+            );
             if let Some(first_error) = self.errors.get(baseline_errors.len()) {
                 rejections.push((
                     self.overload_candidate_signature(func_name, &overload.info),
@@ -2305,13 +2347,6 @@ impl TypeChecker {
                 ));
             }
             if self.errors.len() == baseline_errors.len() {
-                let selected_identity = overload.identity.clone().or_else(|| {
-                    baseline_type_info
-                        .declarations
-                        .function_bindings_by_span
-                        .get(&overload.span)
-                        .and_then(|binding| binding.identity.clone())
-                });
                 matches.push((
                     selected_identity,
                     result,
@@ -2351,7 +2386,16 @@ impl TypeChecker {
                     .iter()
                     .find(|overload| Self::function_call_shape_accepts(&overload.info, type_args, args));
                 if let Some(candidate) = shape_match.or_else(|| overloads.first()) {
-                    self.validate_function_call(func_name, &candidate.info, type_args, args, span, expected_return_ty)
+                    let identity = self.checked_overload_identity(candidate);
+                    self.validate_function_call_with_identity(
+                        func_name,
+                        &candidate.info,
+                        type_args,
+                        args,
+                        span,
+                        expected_return_ty,
+                        identity,
+                    )
                 } else {
                     ResolvedType::Unknown
                 }
@@ -2368,6 +2412,21 @@ impl TypeChecker {
                 ResolvedType::Unknown
             }
         }
+    }
+
+    /// Retain an overload's own provider identity, or the exact checked source declaration when it is local.
+    /// An overload set's spelling never selects one member's ownership or generic contract.
+    fn checked_overload_identity(
+        &self,
+        candidate: &FunctionOverloadInfo,
+    ) -> Option<incan_semantics_core::CanonicalSymbolId> {
+        candidate.identity.clone().or_else(|| {
+            self.type_info
+                .declarations
+                .function_bindings_by_span
+                .get(&candidate.span)
+                .and_then(|binding| binding.identity.clone())
+        })
     }
 
     /// Render one overload candidate as source-shaped signature text for a rejection listing.

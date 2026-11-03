@@ -1,0 +1,441 @@
+"""Read, assign, and call methods on sets and dictionaries."""
+
+from pub::incan_mir_plan import (
+    Carrier,
+    Constant,
+    Operand,
+    Place,
+    PlanType,
+    Projection,
+    RvalueKind,
+    SourceSpan,
+    UnaryOp,
+    assign as plan_assign,
+    place as plan_place,
+)
+from rust::incan_semantics_core::body_ir import (
+    AggregateKind as RustAggregateKind,
+    ArgumentElement as RustArgumentElement,
+    OwnershipFact,
+    Place as RustPlace,
+    Rvalue as RustRvalue,
+    PlaceElem,
+    DictEntry,
+    PlaceOperand as RustPlaceOperand,
+)
+from table_views import borrowed_at
+from options import carrier_layout, replace_owned_destination
+from builtins import list_call
+from frame import place_type, Builder, temporary, drop_owned, read_place, literal
+from collections import (
+    dictionary_method_signature,
+    require_mutable_receiver,
+    is_collection,
+    collection_owned,
+    collection_reference,
+    collection_arguments,
+    is_owned_collection,
+    begin_collection,
+    finish_collection,
+    transfer_collection,
+    collection_call,
+    borrow_collection,
+    insert_collection,
+    extend_collection,
+)
+from lists import require_list_shape, list_element, is_owned_list
+from statements import is_nominal_type
+from static_storage import persist_static_value
+from list_values import list_base_place, projected_element_read, value_operand
+from list_methods import (
+    argument_place,
+    argument_value,
+    call_destination,
+    lower_list_helper,
+    shared_receiver_place,
+    static_collection_receiver,
+)
+from list_iteration import frozen_dictionary_contains, list_root_place, set_constructor_source
+from carrier_operands import element_operand, element_plan_operand
+from sequence_builtins import argument_type
+
+
+pub def collection_value(mut builder: Builder, read: &RustPlaceOperand, span: SourceSpan) -> Result[Operand, str]:
+    """
+    Materialize a checked collection read while preserving caller-owned bindings.
+
+    Moving a value parameter that uses a shared collection ABI copies its stored value, just as a list parameter
+    does; the caller still owns the borrowed storage.
+    """
+    if len(read.place.projection) != 0:
+        return dictionary_index_read(builder, read.place, span)
+    place = list_root_place(builder, read.place, span)?
+    return collection_place_value(builder, place, read.fact, span)
+
+
+pub def collection_place_value(
+    mut builder: Builder,
+    place: Place,
+    fact: &OwnershipFact,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Materialize whole or structurally projected dictionary/set storage using the same checked read policy; projected moves gain no authority over their containing owner."""
+    ty = place_type(builder.locals, place)
+    owned = collection_owned(ty)
+    if fact == OwnershipFact.Move and ty == owned:
+        return Ok(read_place(place, true, span))
+    shared_move = fact == OwnershipFact.Move and ty != owned
+    if fact != OwnershipFact.Clone and fact != OwnershipFact.Borrow and not shared_move:
+        reason = f"unsupported Body IR collection value ownership {fact:?} for {ty:?}"
+        return Err(f"{reason} in {builder.name} at {span.line}:{span.column}")
+    return cloned_collection(builder, place, span)
+
+
+pub def cloned_collection(mut builder: Builder, place: Place, span: SourceSpan) -> Result[Operand, str]:
+    """
+    Copy a set or dictionary into a new owned temporary that drops when its scope ends.
+
+    A whole local is borrowed, or reborrowed when it is a parameter view; a projected one, such as an enum payload,
+    is owned where it lives and is borrowed in place.
+    """
+    ty = place_type(builder.locals, place)
+    owned = collection_owned(ty)
+    mut reference = literal(Constant.Unit, span)
+    if place.projection == Projection.Whole:
+        reference = borrow_collection(builder, place, false, span)?
+    else:
+        if ty != owned:
+            return Err("unsupported Body IR projected collection view")
+        view = temporary(builder, collection_reference(ty, false), span)
+        builder.emit(plan_assign(view, RvalueKind.Borrow(place), span))
+        reference = read_place(view, false, span)
+    output = temporary(builder, owned, span)
+    collection_call(builder, ty, "clone", [collection_reference(ty, false)], owned, [reference], output, span)?
+    return Ok(read_place(output, true, span))
+
+
+pub def collection_assignment(
+    mut builder: Builder,
+    destination: Place,
+    value: &RustRvalue,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Read checked literal operands before the collection module constructs their exact layout."""
+    if destination.projection != Projection.Whole:
+        replacement = temporary(builder, place_type(builder.locals, destination), span)
+        _ = collection_assignment(builder, replacement, value, span)?
+        replace_owned_destination(builder, destination, RvalueKind.Use(read_place(replacement, true, span)), span)
+        return Ok(None)
+    match value:
+        RustRvalue.Use(value) =>
+            argument = value_operand(builder, value, span)?
+            return transfer_collection(builder, destination, argument, span)
+        RustRvalue.Aggregate(kind, elements) =>
+            if kind != RustAggregateKind.Set:
+                return Err("unsupported Body IR non-set collection Aggregate")
+            output = begin_collection(builder, destination, span)?
+            types = collection_arguments(borrowed_at(builder.locals, output.local).ty)
+            for element in elements:
+                match element.as_one():
+                    Some(value) =>
+                        argument = element_operand(builder, value, types[0], span)?
+                        insert_collection(builder, output, [argument], span)?
+                    None =>
+                        match element:
+                            RustArgumentElement.Spread(spread) =>
+                                source = set_constructor_source(builder, spread.source, span)?
+                                extend_collection(builder, output, source, span)?
+                            _ => return Err("unsupported Body IR set spread")
+            finish_collection(builder, destination, output, span)
+            return Ok(None)
+        RustRvalue.Dict(entries) =>
+            output = begin_collection(builder, destination, span)?
+            types = collection_arguments(borrowed_at(builder.locals, output.local).ty)
+            for entry in entries:
+                match entry:
+                    DictEntry.Pair(key, value) =>
+                        key_operand = element_operand(builder, key, types[0], span)?
+                        item_operand = element_operand(builder, value, types[1], span)?
+                        insert_collection(builder, output, [key_operand, item_operand], span)?
+                    DictEntry.Spread(spread) =>
+                        source = value_operand(builder, spread.source, span)?
+                        extend_collection(builder, output, source, span)?
+            finish_collection(builder, destination, output, span)
+            return Ok(None)
+        _ => return Err("unsupported Body IR collection assignment rvalue")
+
+
+pub def collection_length(
+    mut builder: Builder,
+    receiver: Place,
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Lower canonical len without transferring container ownership."""
+    ty = place_type(builder.locals, receiver)
+    reference = borrow_collection(builder, receiver, false, span)?
+    output = call_destination(builder, destination, PlanType.Int, span)?
+    return collection_call(
+        builder,
+        ty,
+        "length",
+        [collection_reference(ty, false)],
+        PlanType.Int,
+        [reference],
+        output,
+        span,
+    )
+
+
+pub def collection_contains(
+    mut builder: Builder,
+    negated: bool,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Preserve haystack-first membership, copying an indexed collection receiver before its shared read."""
+    if len(arguments) != 2:
+        return Err("unsupported Body IR collection membership arity")
+    match argument_type(builder, arguments, 0, span)?:
+        PlanType.FrozenCollection(name, _elements) =>
+            if name == "FrozenDict":
+                return frozen_dictionary_contains(builder, arguments, destination, negated, span)
+            return lower_list_helper(builder, negated, arguments, destination, span)
+        _ => pass
+    receiver = shared_receiver_place(builder, arguments, 0, span)?
+    ty = place_type(builder.locals, receiver)
+    types = collection_arguments(ty)
+    if len(types) == 0:
+        return Err("unsupported Body IR collection membership on noncollection")
+    argument = argument_value(builder, arguments, 1, span)?
+    reference = borrow_collection(builder, receiver, false, span)?
+    output = call_destination(builder, destination, PlanType.Bool, span)?
+    collection_call(
+        builder,
+        ty,
+        "contains",
+        [collection_reference(ty, false), types[0]],
+        PlanType.Bool,
+        [reference, argument],
+        output,
+        span,
+    )?
+    if negated:
+        builder.emit(plan_assign(output, RvalueKind.Unary(UnaryOp.Not, read_place(output, false, span)), span))
+    return Ok(None)
+
+
+pub def dictionary_index_read(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Operand, str]:
+    """Clone a checked dictionary element through legacy indexing and error behavior, then read what follows from it."""
+    if len(source.projection) == 0:
+        return Err("unsupported Body IR dictionary read without key")
+    receiver = list_base_place(builder, source, span)?
+    return dictionary_value_read(builder, source, receiver, span)
+
+
+pub def dictionary_value_read(
+    mut builder: Builder,
+    source: &RustPlace,
+    receiver: Place,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Look up the place's first key in an already selected dictionary, such as a static's snapshot, then read on."""
+    output = read_dictionary_element(builder, receiver, source, 0, span)?
+    return projected_element_read(builder, source, output, 1, span)
+
+
+pub def read_dictionary_element(
+    mut builder: Builder,
+    receiver: Place,
+    source: &RustPlace,
+    slot: int,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Clone the value the key at projection `slot` selects, through legacy indexing and its missing-key error."""
+    ty = place_type(builder.locals, receiver)
+    types = collection_arguments(ty)
+    if len(types) != 2:
+        return Err("unsupported Body IR set indexing")
+    # Legacy dictionary indexing requires Display for its missing-key diagnostic; tuples and unit lack that bound.
+    match types[0]:
+        PlanType.Tuple(_elements) => return Err("tuple dictionary keys cannot satisfy the lookup's Display requirement")
+        PlanType.Unit => return Err("unit dictionary keys cannot satisfy the lookup's Display requirement")
+        _ => pass
+    mut key = read_place(receiver, false, span)
+    match source.projection[slot]:
+        PlaceElem.Index(index) => key = value_operand(builder, index, span)?
+        _ => return Err("unsupported Body IR dictionary slice or field projection")
+    reference = borrow_collection(builder, receiver, false, span)?
+    output = temporary(builder, types[1], span)
+    collection_call(
+        builder,
+        ty,
+        "get",
+        [collection_reference(ty, false), types[0]],
+        types[1],
+        [reference, key],
+        output,
+        span,
+    )?
+    # A cloned value that owns storage is a new owner, like a cloned list element; the final read moves it out.
+    if is_nominal_type(types[1]) or is_owned_list(types[1]) or is_owned_collection(types[1]):
+        builder.owned.append(output.local)
+    return Ok(output)
+
+
+pub def dictionary_index_assignment(
+    mut builder: Builder,
+    destination: &RustPlace,
+    value: &RustRvalue,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Replace dictionary entries after evaluating the source value and retained key."""
+    receiver = list_base_place(builder, destination, span)?
+    return dictionary_entry_assignment(builder, destination, receiver, 0, value, span)
+
+
+pub def dictionary_entry_assignment(
+    mut builder: Builder,
+    destination: &RustPlace,
+    receiver: Place,
+    start: int,
+    value: &RustRvalue,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Insert an evaluated entry into its retained dictionary, including a dictionary reached through a structural field."""
+    if len(destination.projection) != start + 1:
+        return Err("unsupported Body IR nested dictionary mutation")
+    types = collection_arguments(place_type(builder.locals, receiver))
+    if len(types) != 2:
+        return Err("unsupported Body IR set indexing assignment")
+    match value:
+        RustRvalue.Use(value) =>
+            argument = element_operand(builder, value, types[1], span)?
+            match destination.projection[start]:
+                PlaceElem.Index(index) =>
+                    key = element_operand(builder, index, types[0], span)?
+                    return insert_collection(builder, receiver, [key, argument], span)
+                _ => return Err("unsupported Body IR dictionary mutation projection")
+        _ => return Err("unsupported Body IR dictionary indexed rvalue")
+
+
+pub def collection_method(
+    mut builder: Builder,
+    member: str,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Admit canonical collection methods, materializing indexed read-only receivers before borrowing them."""
+    if member == "Set.contains" or member == "Dict.contains_key":
+        return collection_contains(builder, false, arguments, destination, span)
+    if member == "Set.add" or member == "Dict.insert":
+        return collection_insert_method(builder, member, arguments, span)
+    receiver = shared_receiver_place(builder, arguments, 0, span)?
+    ty = place_type(builder.locals, receiver)
+    if member == "Dict.get" and len(arguments) == 2:
+        return optional_dictionary_get(builder, receiver, arguments, destination, span)
+    operation, parameters, result = dictionary_method_signature(ty, member, len(arguments))?
+    mut operands: list[Operand] = []
+    for slot in range(len(parameters)):
+        operands.append(argument_value(builder, arguments, slot + 1, span)?)
+    reference = borrow_collection(builder, receiver, false, span)?
+    output = call_destination(builder, destination, result, span)?
+    mut all_parameters = [collection_reference(ty, false)]
+    all_parameters.extend(parameters)
+    mut all_operands = [reference]
+    all_operands.extend(operands)
+    return collection_call(builder, ty, operation, all_parameters, result, all_operands, output, span)
+
+
+def collection_insert_method(
+    mut builder: Builder,
+    member: str,
+    arguments: &list[RustArgumentElement],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Insert the evaluated arguments into a set or dictionary receiver.
+
+    A static receiver's snapshot is read only after the arguments and committed after the insertion, as a static list
+    method's is.
+    """
+    types = collection_arguments(argument_type(builder, arguments, 0, span)?)
+    if len(arguments) != len(types) + 1:
+        return Err(f"unsupported Body IR collection method arity {member}")
+    # Use the shared argument check before creating the short mutable runtime borrow.
+    require_mutable_receiver(arguments)?
+    mut operands: list[Operand] = []
+    for slot in range(len(types)):
+        argument = argument_value(builder, arguments, slot + 1, span)?
+        operands.append(element_plan_operand(builder, argument, types[slot], span)?)
+    match static_collection_receiver(builder, arguments, true, span)?:
+        Some((global, receiver)) =>
+            insert_collection(builder, receiver, operands, span)?
+            return persist_static_value(builder, global, receiver, span)
+        None => pass
+    receiver = argument_place(builder, arguments, 0, span)?
+    return insert_collection(builder, receiver, operands, span)
+
+
+def optional_dictionary_get(
+    mut builder: Builder,
+    receiver: Place,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Copy a present value into the checked Option destination, replacing that destination's earlier value."""
+    mut output = plan_place(0, span)
+    match destination:
+        Some(place) => output = list_root_place(builder, place, span)?
+        None => return Err("unsupported Body IR discarded optional dictionary get")
+    ty = place_type(builder.locals, receiver)
+    types = collection_arguments(ty)
+    result = borrowed_at(builder.locals, output.local).ty
+    _owner, declaration = carrier_layout(builder, result)?
+    if declaration.carrier != Carrier.Option or declaration.variants[1].fields != [types[1]]:
+        return Err("unsupported Body IR optional dictionary get carrier")
+    key = argument_value(builder, arguments, 1, span)?
+    reference = borrow_collection(builder, receiver, false, span)?
+    found = temporary(builder, result, span)
+    collection_call(
+        builder,
+        ty,
+        "optional",
+        [collection_reference(ty, false), types[0]],
+        result,
+        [reference, key],
+        found,
+        span,
+    )?
+    drop_owned(builder, output.local, span)
+    builder.emit(plan_assign(output, RvalueKind.Use(read_place(found, true, span)), span))
+    builder.owned.append(output.local)
+    return Ok(None)
+
+
+pub def iterable_call(
+    mut builder: Builder,
+    ty: PlanType,
+    operation: str,
+    tail: list[PlanType],
+    result: PlanType,
+    operands: list[Operand],
+    destination: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Share cursor calls while each collection retains its actual runtime representation."""
+    if is_collection(ty):
+        mut parameters = [collection_reference(ty, false)]
+        parameters.extend(tail)
+        return collection_call(builder, ty, operation, parameters, result, operands, destination, span)
+    leaf, depth = require_list_shape(ty, "unsupported Body IR nonlist cursor")?
+    mut name = "length_list"
+    if operation == "nth":
+        name = "get_list"
+    mut parameters = [PlanType.ListRef(leaf, depth)]
+    parameters.extend(tail)
+    list_call(builder, name, list_element(leaf, depth), parameters, result, operands, destination, span)
+    return Ok(None)

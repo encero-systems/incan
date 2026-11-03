@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use incan_lang::interop::RustAbiCache;
+use crate::rust_abi_cache::RustAbiCache;
 
 use super::manifest_input::{Generation, generation};
 use super::{LoafArtifact, LoafIndexError};

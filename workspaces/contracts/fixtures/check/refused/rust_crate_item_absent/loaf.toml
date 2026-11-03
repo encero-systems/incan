@@ -1,0 +1,9 @@
+[project]
+name = "rust_crate_item_absent"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+libc = { loaf = "crates-io/libc", version = "0.2", default-features = true }

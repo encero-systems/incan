@@ -1,0 +1,19 @@
+# behavior: a local bound to a call that carries a view before a loop cannot be matched inside it, because every iteration would take the view out of the same local (#2500).
+# expect-diagnostic: INCAN-T0123
+
+class Counter:
+    pub value: int
+
+    def bump(mut self) -> Result[Reference[Self], str] from self:
+        self.value += 1
+        return Ok(self)
+
+
+def drain(mut counter: BorrowedMut[Counter]) -> int:
+    result = counter.bump()
+    mut total = 0
+    while total < 3:
+        match result:
+            Ok(view) => total += view.value
+            Err(_) => total += 1
+    return total

@@ -7,6 +7,7 @@ from rust::incan_semantics_core import (
     SemanticSourceTargetKind,
     CanonicalSymbolId,
 )
+from rust::incan_lang::lang::types::collections import from_str as collection_type, CollectionTypeId
 from rust::incan_semantics_core::body_ir import (
     BodyIrModule,
     Body,
@@ -18,6 +19,7 @@ from rust::incan_semantics_core::body_ir import (
 from nominal_instances import NominalInstance, nominal_symbol
 from symbols import symbol_component
 from type_parameters import instantiate
+from table_views import borrowed_at
 
 
 pub def checked_deserialize_name(declaration: &NominalDeclaration) -> Result[str, str]:
@@ -76,7 +78,8 @@ pub def selected_deserialize_hook(
             ):
                 return Err("unsupported Body IR checked Deserialize hook owner provenance")
             mut found: Option[Body] = None
-            for body in module.bodies:
+            for body_position in range(len(module.bodies)):
+                body = borrowed_at(module.bodies, body_position)
                 match body.canonical:
                     Some(identity) =>
                         if identity == hook:
@@ -115,7 +118,7 @@ def require_closed_hook(body: &Body) -> Result[None, str]:
         parameter.mutable
         or parameter.ty != RustType.Primitive(Primitive.Str)
         or int(parameter.local.index()) != 0
-        or body.locals[0].ty != parameter.ty
+        or borrowed_at(body.locals, 0).ty != parameter.ty
     ):
         return Err("unsupported Body IR checked Deserialize hook owned str parameter")
     match body.locals[0].origin:
@@ -127,7 +130,7 @@ def require_closed_hook(body: &Body) -> Result[None, str]:
     match body.return_type:
         RustType.Generic(base=base, args=arguments) =>
             if (
-                base == "Result"
+                collection_type(str(base)) == Some(CollectionTypeId.Result)
                 and len(arguments) == 2
                 and arguments[1] == RustType.NativeBuiltin(RuntimeBuiltinType.ValidationError)
             ):

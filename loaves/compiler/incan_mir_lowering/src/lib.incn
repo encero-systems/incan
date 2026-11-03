@@ -6,8 +6,54 @@ from async_ import future_type, validate_futures, construct_future, await_future
 from defaults import default_arguments, default_type
 from numerics import numeric_carrier as checked_numeric_carrier
 pub from closures import owned_capture
+pub from runtime_requirements import RuntimeRequirement, UnitPlanning, RefusalPlanning
 pub from lowering import BodyIrModule
-from lowering import unit_plan as checked_unit_plan, program_refusals as checked_program_refusals
+from lowering import unit_plan as checked_unit_plan
+from program_refusals import program_refusals as checked_program_refusals
+# The record contracts live in internal_models; these names remain importable from the lowering as before.
+pub from pub::internal_models import (
+    RecordKey,
+    ReadScope,
+    PayloadSelection,
+    MemberSelection,
+    RecordSelection,
+    RecordRequest,
+    RevisionEvidence,
+    SelectedFact,
+    AbsentFact,
+    ReadFault,
+    RecordRead,
+    ReadWitness,
+    RecordSource,
+    RecordReads,
+    ReadReceipt,
+    ReadCounters,
+    PreparationEvidence,
+    READ_SCHEMA,
+)
+pub from pub::internal_models import (
+    RECORD_SERVICE_SCHEMA,
+    prepared_reader,
+    CompilerRecordService,
+    CompilerFault,
+    CompilerFaultKind,
+    DemandPage,
+    Evaluation,
+    InputSnapshot,
+    NeedPrerequisite,
+    Preparation,
+    PreparedInputs,
+    Produced,
+    ProducerCounters,
+    ProducerProfile,
+    ProducerRank,
+    ProducerStage,
+    RankCertificate,
+    ReadyWork,
+    RecordRoot,
+    SemanticRefusal,
+    ValueReference,
+)
 pub from pub::incan_mir_plan import (
     AttributeArgument,
     AttributeValue,
@@ -15,6 +61,7 @@ pub from pub::incan_mir_plan import (
     BinaryOp,
     Callee,
     CalleeKind,
+    Carrier,
     ExternalFunction,
     ForeignFunction,
     FieldProjection,
@@ -35,6 +82,8 @@ pub from pub::incan_mir_plan import (
     Local,
     ModelDeclaration,
     NativeAttribute,
+    NativeTraitAdoption,
+    NativeTraitMethod,
     Operand,
     OperandKind,
     Parameter,
@@ -45,6 +94,8 @@ pub from pub::incan_mir_plan import (
     GenericLayoutType,
     GenericLayoutField,
     GenericModelDeclaration,
+    GenericEnumDeclaration,
+    GenericEnumVariant,
     PlanType,
     Projection,
     Rvalue,
@@ -77,7 +128,7 @@ pub def unit_plan(
     entry: int,
     kind: str,
     mut published: list[NativeUnionDeclaration],
-) -> Result[Option[Plan], str]:
+) -> Result[UnitPlanning, str]:
     """Borrow checked modules and consume their source inputs to lower a program, library or collected test unit."""
     return checked_unit_plan(
         modules,
@@ -98,7 +149,7 @@ pub def program_refusals(
     progress: bool,
     selection: str,
     kind: str,
-) -> list[str]:
+) -> RefusalPlanning:
     """Consume source inputs for complete or exact-body refusal collection, optionally reporting its current body."""
     return checked_program_refusals(
         modules,

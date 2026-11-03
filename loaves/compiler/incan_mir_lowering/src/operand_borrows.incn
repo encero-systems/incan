@@ -1,0 +1,486 @@
+"""Borrow operands for calls: slices, scalars, trait objects, and text, plus discarded operands and text helpers."""
+
+from pub::incan_mir_plan import (
+    CalleeKind,
+    ExternalFunction,
+    Constant,
+    Operand,
+    OperandKind,
+    Place,
+    PlanType,
+    Projection,
+    RvalueKind,
+    SourceSpan,
+    assign as plan_assign,
+    place as plan_place,
+)
+from bytes_plan import bytes_literal
+from layout_types import shared_receiver_type, mutable_receiver_type
+from text_ownership import drop_borrowed_text_temporaries
+from frozen_plan import literal_text
+from rust::incan_semantics_core::body_ir import (
+    ArgumentElement as RustArgumentElement,
+    Constant as RustConstant,
+    Operand as RustOperand,
+    OwnershipFact,
+    Place as RustPlace,
+    PlaceOperand as RustPlaceOperand,
+)
+from element_places import is_element_place
+from text_plan import owned_literal, owned_slice_text
+from numerics import numeric_carrier
+from strings import emit_text_helper, text_helper_arity
+from frame import (
+    place_type,
+    Builder,
+    temporary,
+    forget_owned,
+    drop_owned,
+    terminate_call,
+    external_call,
+    read_place,
+    literal,
+    text_literal,
+)
+from array_views import borrow_array_slice
+from lists import require_list_shape, list_element, is_list
+from checked_values import reference_value_read, scalar_operand, scalar_place
+from operators import operand_type
+from formatting import display_operand, display_plan_operand
+from static_storage import read_static
+from list_values import checked_list_argument, list_borrow, value_operand
+
+
+pub def lower_discarded_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[None, str]:
+    """Evaluate discarded text through retained ownership facts and drop its materialized owner."""
+    mut is_text = false
+    match value:
+        RustOperand.Constant(constant) =>
+            match constant:
+                RustConstant.Str(_text) => is_text = true
+                _ => pass
+        RustOperand.Place(read) =>
+            place = scalar_place(builder, read.place, span)?
+            is_text = place_type(builder.locals, place) == PlanType.String
+    if is_text:
+        text = display_operand(builder, value, span)?
+        drop_owned(builder, text.local, span)
+    else:
+        _ = value_operand(builder, value, span)?
+    return Ok(None)
+
+
+pub def borrow_slice_operand(
+    mut builder: Builder,
+    value: &RustOperand,
+    elements: list[PlanType],
+    mutable: bool,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """
+    Lend exact vector storage through its native slice conversion.
+
+    Nested element layouts and checked exclusive-access authority remain unchanged.
+    """
+    if len(elements) != 1:
+        return Err("invalid Body IR native slice element arity")
+    mut reference_type = PlanType.SliceRef(elements)
+    if mutable:
+        reference_type = PlanType.SliceMutRef(elements)
+    match value:
+        RustOperand.Place(read) =>
+            place = scalar_place(builder, read.place, span)?
+            actual = place_type(builder.locals, place)
+            match borrow_array_slice(builder, place, elements, mutable, read.fact, span)?:
+                Some(view) => return Ok(view)
+                None => pass
+            if actual == PlanType.SliceRef(elements) and not mutable:
+                return Ok(read_place(place, false, span))
+            if actual == PlanType.SliceMutRef(elements):
+                if mutable and read.fact != OwnershipFact.MutBorrow:
+                    return Err("unsupported Body IR mutable slice without exclusive authority")
+                referent = Place(
+                    local=place.local,
+                    projection=Projection.Deref(PlanType.NativeSlice(elements)),
+                    span=span,
+                )
+                output = temporary(builder, reference_type, span)
+                mut operation = RvalueKind.Borrow(referent)
+                if mutable:
+                    operation = RvalueKind.MutBorrow(referent)
+                builder.emit(plan_assign(output, operation, span))
+                return Ok(read_place(output, mutable, span))
+        _ => pass
+    mut reference = literal(Constant.Unit, span)
+    match value:
+        RustOperand.Constant(constant) =>
+            if mutable:
+                return Err("unsupported Body IR mutable slice literal")
+            owner = bytes_literal(builder, constant, span)?
+            reference = list_borrow(builder, owner, false, span)?
+        RustOperand.Place(_read) => reference = checked_list_argument(builder, value, mutable, span)?
+    return list_slice_view(builder, reference, elements, mutable, span)
+
+
+pub def list_slice_view(
+    mut builder: Builder,
+    reference: Operand,
+    elements: list[PlanType],
+    mutable: bool,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Convert an already selected vector loan to its exact slice view without reading or copying its elements."""
+    if len(elements) != 1:
+        return Err("invalid Body IR native slice element arity")
+    mut reference_type = PlanType.SliceRef(elements)
+    mut method = "core::convert::AsRef::as_ref"
+    if mutable:
+        reference_type = PlanType.SliceMutRef(elements)
+        method = "core::convert::AsMut::as_mut"
+    parameter = operand_type(builder, reference)?
+    element, depth = require_list_shape(parameter, "unsupported Body IR native slice owner")?
+    if depth < 1 or list_element(element, depth) != elements[0]:
+        return Err("unsupported Body IR native slice element mismatch")
+    output = temporary(builder, reference_type, span)
+    arguments = [PlanType.List(element, depth), PlanType.NativeSlice(elements)]
+    builder.externals.append(
+        ExternalFunction(
+            path=method,
+            type_arguments=arguments,
+            parameters=[parameter],
+            return_type=reference_type,
+            span=span,
+        ),
+    )
+    terminate_call(builder, CalleeKind.Instantiated(method, arguments), [reference], output, span)
+    return Ok(read_place(output, mutable, span))
+
+
+def lends_shared_referent(actual: PlanType, referent: PlanType) -> bool:
+    """Whether `referent` is the shared nominal reference to a value of type `actual`."""
+    match actual:
+        (PlanType.Model(_, _) | PlanType.Enum(_, _)) =>
+            match shared_receiver_type(actual):
+                Ok(reference) => return reference == referent
+                Err(_) => return false
+        _ => return false
+
+
+pub def borrow_scalar_operand(
+    mut builder: Builder,
+    value: &RustOperand,
+    elements: list[PlanType],
+    mutable: bool,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Borrow checked scalar or reference-value storage in place; only shared literal loans may create an owner."""
+    if len(elements) != 1:
+        return Err("invalid Body IR scalar reference arity")
+    referent = elements[0]
+    mut owner = plan_place(0, span)
+    match value:
+        RustOperand.Place(read) =>
+            if mutable and read.fact != OwnershipFact.MutBorrow:
+                return Err("unsupported Body IR scalar reference without an exclusive borrow fact")
+            owner = scalar_borrow_owner(builder, read, referent, mutable, span)?
+            # A shared reference read through its referent, as a receiver is, is lent as a fresh loan of that
+            # referent: `Read for &UnixStream` takes `&mut &UnixStream`, and the loan's own identity is unobservable.
+            if mutable and lends_shared_referent(place_type(builder.locals, owner), referent):
+                loan = temporary(builder, referent, span)
+                builder.emit(plan_assign(loan, RvalueKind.Borrow(owner), span))
+                owner = loan
+            actual = place_type(builder.locals, owner)
+            match referent:
+                PlanType.NativeTraitObject(_path, _send, _sync) =>
+                    if actual != referent:
+                        return borrow_as_trait_object(builder, owner, actual, referent, mutable, span)
+                _ => pass
+            # An exact reference-valued referent needs another loan; an additional existing loan is reborrowed.
+            if actual != referent:
+                match actual:
+                    PlanType.ScalarRef(inner) =>
+                        if mutable or inner != elements:
+                            return Err("unsupported Body IR scalar reborrow contract")
+                        return Ok(read_place(owner, false, span))
+                    PlanType.ScalarMutRef(inner) =>
+                        if inner != elements:
+                            return Err("unsupported Body IR scalar reborrow referent")
+                        owner = Place(local=owner.local, projection=Projection.Deref(referent), span=span)
+                    _ =>
+                        return Err(
+                            f"unsupported Body IR scalar borrow of another type: {actual:?} for a {referent:?} referent",
+                        )
+        RustOperand.Constant(_constant) =>
+            if mutable:
+                return Err("unsupported Body IR mutable scalar constant borrow")
+            operand = scalar_operand(builder, value, span)?
+            if operand_type(builder, operand)? != referent:
+                return Err("unsupported Body IR scalar literal borrow of another type")
+            owner = temporary(builder, referent, span)
+            builder.emit(plan_assign(owner, RvalueKind.Use(operand), span))
+    mut reference = PlanType.ScalarRef(elements)
+    mut operation = RvalueKind.Borrow(owner)
+    if mutable:
+        reference = PlanType.ScalarMutRef(elements)
+        operation = RvalueKind.MutBorrow(owner)
+    output = temporary(builder, reference, span)
+    builder.emit(plan_assign(output, operation, span))
+    return Ok(read_place(output, mutable, span))
+
+
+def borrow_as_trait_object(
+    mut builder: Builder,
+    owner: Place,
+    actual: PlanType,
+    referent: PlanType,
+    mutable: bool,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """
+    Lend a concrete value as a Rust trait object, keeping the value in place for the loan.
+
+    The loan borrows the value as its own type first, then converts that reference to the object reference. rustc
+    proves the value implements every bound of the object before it builds the conversion.
+    """
+    mut source = shared_receiver_type(actual)?
+    mut target = PlanType.ScalarRef([referent])
+    mut operation = RvalueKind.Borrow(owner)
+    if mutable:
+        source = mutable_receiver_type(actual)?
+        target = PlanType.ScalarMutRef([referent])
+        operation = RvalueKind.MutBorrow(owner)
+    loan = temporary(builder, source, span)
+    builder.emit(plan_assign(loan, operation, span))
+    output = temporary(builder, target, span)
+    builder.emit(
+        plan_assign(output, RvalueKind.UnsizeTraitObject(read_place(loan, mutable, span), source, target), span),
+    )
+    return Ok(read_place(output, mutable, span))
+
+
+def scalar_borrow_owner(
+    mut builder: Builder,
+    read: &RustPlaceOperand,
+    referent: PlanType,
+    mutable: bool,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Retain a checked shared reference as the borrowed value when the native parameter expects that reference."""
+    if not mutable:
+        match reference_value_read(builder, read.place, read.fact, span)?:
+            Some(value) =>
+                match value.kind:
+                    (OperandKind.Copy(place) | OperandKind.Move(place)) =>
+                        if place_type(builder.locals, place) == referent:
+                            return Ok(place)
+                    _ => return Err("invalid Body IR reference read without a place")
+            None => pass
+    return scalar_place(builder, read.place, span)
+
+
+pub def borrow_str_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
+    """Pass literal slice text directly or borrow owned text through String's own as_str method."""
+    match value:
+        RustOperand.Constant(RustConstant.Str(text)) => return Ok(text_literal(str(text), span))
+        RustOperand.Place(read) =>
+            place = scalar_place(builder, read.place, span)?
+            if place_type(builder.locals, place) == PlanType.StrRef:
+                return Ok(read_place(place, false, span))
+        _ => pass
+    reference = borrow_text_operand(builder, value, span)?
+    output = temporary(builder, PlanType.StrRef, span)
+    external_call(
+        builder,
+        "alloc::string::String::as_str",
+        [PlanType.StringRef],
+        PlanType.StrRef,
+        [reference],
+        output,
+        span,
+    )
+    return Ok(read_place(output, false, span))
+
+
+pub def borrow_text_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
+    """Borrow owned text or reuse a checked shared String reference without transferring its owner or adding a reference layer."""
+    match value:
+        RustOperand.Place(read) =>
+            match read.place.global():
+                Some(global) =>
+                    owner = read_static(builder, read.place, global, read.fact, span)?
+                    match owner.kind:
+                        OperandKind.Move(place) =>
+                            reference = temporary(builder, PlanType.StringRef, span)
+                            builder.emit(plan_assign(reference, RvalueKind.Borrow(place), span))
+                            return Ok(read_place(reference, false, span))
+                        _ => return Err("unsupported Body IR non-string static text operand")
+                None => pass
+            if is_element_place(builder, read.place)?:
+                return borrow_element_text(builder, value, read.fact, span)
+            place = scalar_place(builder, read.place, span)?
+            match read.fact:
+                OwnershipFact.MutBorrow => return Err("unsupported Body IR mutable String borrow")
+                OwnershipFact.Unknown => return Err("unsupported Body IR unknown String ownership")
+                _ => pass
+            if place_type(builder.locals, place) == PlanType.StringRef:
+                return Ok(read_place(place, false, span))
+            if place_type(builder.locals, place) == PlanType.StrRef:
+                owner = owned_slice_text(builder, read_place(place, false, span), span)
+                builder.owned.append(owner.local)
+                reference = temporary(builder, PlanType.StringRef, span)
+                builder.emit(plan_assign(reference, RvalueKind.Borrow(owner), span))
+                return Ok(read_place(reference, false, span))
+            if place_type(builder.locals, place) == PlanType.FrozenStr:
+                owner = display_plan_operand(builder, read_place(place, false, span), span)?
+                reference = temporary(builder, PlanType.StringRef, span)
+                builder.emit(plan_assign(reference, RvalueKind.Borrow(owner), span))
+                return Ok(read_place(reference, false, span))
+            if place_type(builder.locals, place) != PlanType.String:
+                return Err(unsupported_text_operand(builder, place_type(builder.locals, place), span))
+            reference = temporary(builder, PlanType.StringRef, span)
+            builder.emit(plan_assign(reference, RvalueKind.Borrow(place), span))
+            return Ok(read_place(reference, false, span))
+        RustOperand.Constant(constant) =>
+            match literal_text(constant):
+                Some(text) =>
+                    owner = owned_literal(builder, text, span)
+                    reference = temporary(builder, PlanType.StringRef, span)
+                    builder.emit(plan_assign(reference, RvalueKind.Borrow(owner), span))
+                    return Ok(read_place(reference, false, span))
+                None => return Err("unsupported Body IR non-string text constant")
+
+
+def unsupported_text_operand(mut builder: Builder, ty: PlanType, span: SourceSpan) -> str:
+    """Identify the checked text boundary's actual carrier and source site when it cannot be borrowed as text."""
+    site = f"{builder.file}:{span.line}:{span.column} in {builder.name}"
+    return f"unsupported Body IR non-string text operand at {site}; type {ty:?}"
+
+
+def borrow_element_text(
+    mut builder: Builder,
+    value: &RustOperand,
+    fact: &OwnershipFact,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Borrow a materialized copy of a list or dictionary text element; the copy is a new owner its caller releases."""
+    match fact:
+        OwnershipFact.MutBorrow => return Err("unsupported Body IR mutable String borrow")
+        OwnershipFact.Unknown => return Err("unsupported Body IR unknown String ownership")
+        _ => pass
+    operand = value_operand(builder, value, span)?
+    match operand.kind:
+        OperandKind.Move(owner) =>
+            if place_type(builder.locals, owner) != PlanType.String:
+                return Err(unsupported_text_operand(builder, place_type(builder.locals, owner), span))
+            reference = temporary(builder, PlanType.StringRef, span)
+            builder.emit(plan_assign(reference, RvalueKind.Borrow(owner), span))
+            return Ok(read_place(reference, false, span))
+        _ =>
+            ty = operand_type(builder, operand)?
+            return Err(unsupported_text_operand(builder, ty, span))
+
+
+pub def lower_text_helper(
+    mut builder: Builder,
+    name: str,
+    result: PlanType,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Bind the retained string-helper identity to shared operands and transfer its owned text or list result."""
+    arity = text_helper_arity(name)
+    if len(arguments) != arity:
+        return Err("invalid Body IR string helper arity")
+    incoming = builder.owned
+    mut parameters: list[PlanType] = []
+    mut operands: list[Operand] = []
+    for argument in arguments:
+        parameters.append(PlanType.StringRef)
+        match argument.as_one():
+            Some(value) => operands.append(borrow_text_operand(builder, value, span)?)
+            None => return Err("unsupported Body IR spread string helper argument")
+    text = emit_text_helper(builder, name, result, parameters, operands, span)
+    # Literal arguments belong to this call, including when its source branch is skipped elsewhere.
+    drop_borrowed_text_temporaries(builder, incoming, text.local, span)
+    match destination:
+        Some(place) =>
+            output = scalar_place(builder, place, span)?
+            forget_owned(builder, text.local)
+            drop_owned(builder, output.local, span)
+            owns_result = result == PlanType.String or is_list(result)
+            builder.emit(plan_assign(output, RvalueKind.Use(read_place(text, owns_result, span)), span))
+            if owns_result:
+                builder.owned.append(output.local)
+        None => drop_owned(builder, text.local, span)
+    return Ok(None)
+
+
+pub def lower_str_builtin(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Materialize str() using the same scalar display conversions as legacy formatting."""
+    mut text = plan_place(0, span)
+    if len(arguments) == 0:
+        text = owned_literal(builder, "", span)
+    elif len(arguments) == 1:
+        match arguments[0].as_one():
+            Some(value) => text = display_operand(builder, value, span)?
+            None => return Err("unsupported Body IR spread str argument")
+    else:
+        return Err("unsupported Body IR str arity")
+    return assign_text_result(builder, text, destination, span)
+
+
+pub def assign_text_result(
+    mut builder: Builder,
+    text: Place,
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Move an owned text temporary into the call's destination, replacing what it held, or drop a discarded one."""
+    match destination:
+        Some(place) =>
+            output = scalar_place(builder, place, span)?
+            forget_owned(builder, text.local)
+            drop_owned(builder, output.local, span)
+            builder.emit(plan_assign(output, RvalueKind.Use(read_place(text, true, span)), span))
+            builder.owned.append(output.local)
+        None => drop_owned(builder, text.local, span)
+    return Ok(None)
+
+
+pub def lower_display_str(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Render the receiver's Display form, as a derived or builtin Display's `__str__` does.
+
+    A number or a bool is copied, though the method call borrows it; any other receiver, a model with a checked derived
+    Display included, displays as `str()` displays it.
+    """
+    if len(arguments) != 1:
+        return Err("invalid Body IR Display __str__ arguments")
+    match arguments[0].as_one():
+        Some(value) =>
+            text = display_receiver(builder, value, span)?
+            return assign_text_result(builder, text, destination, span)
+        None => return Err("unsupported Body IR Display __str__ spread receiver")
+
+
+def display_receiver(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
+    """Select the display rendering for one borrowed receiver."""
+    match value:
+        RustOperand.Place(read) =>
+            place = scalar_place(builder, read.place, span)?
+            ty = place_type(builder.locals, place)
+            if numeric_carrier(ty) or ty == PlanType.Bool:
+                return display_plan_operand(builder, Operand(kind=OperandKind.Copy(place), span=span), span)
+        _ => pass
+    return display_operand(builder, value, span)

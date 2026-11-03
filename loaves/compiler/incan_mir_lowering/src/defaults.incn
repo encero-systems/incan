@@ -13,11 +13,17 @@ from rust::incan_semantics_core::body_ir import (
 from pub::incan_mir_plan import Operand, OperandKind, Constant, PlanType, SourceSpan, Local
 from layout_types import native_source_type
 from frame import literal
-from lowering import BodyIrModule, call_argument_operand, lower_statement, list_root_place
+from lowering import BodyIrModule
+from call_arguments import call_argument_operand
+from statements import lower_statement
+from list_iteration import list_root_place
 from frame import Builder, drop_owned
 from lists import is_list
 from collections import is_collection
 from numerics import numeric_carrier
+from rust::incan_semantics_core import IncanInputAccess
+from explicit_arguments import parameter_accesses, argument_access
+from table_views import borrowed_at
 
 
 pub def model_default_arguments(
@@ -67,7 +73,8 @@ pub def method_default_arguments(
     partial of an admitted owner retains such a frame, so any other call with omitted slots, under the method's name
     or a method alias of it, takes the method's own defaults. `None` means no slot was omitted.
     """
-    for owner in module.nominal_declarations:
+    for position in range(len(module.nominal_declarations)):
+        owner = borrowed_at(module.nominal_declarations, position)
         for preset_binding in owner.method_partial_defaults:
             if preset_binding.name != target.name or Some(preset_binding.target.clone()) != target.canonical:
                 continue
@@ -85,6 +92,7 @@ pub def method_default_arguments(
                 if (
                     frame.params[index].name != body.params[index].name
                     or frame.params[index].ty != body.params[index].ty
+                    or frame.params[index].input_access != body.params[index].input_access
                 ):
                     return Err("invalid Body IR method-partial parameter")
             values = default_arguments(module, builder, target.binding, arguments[1:], frame, types, span, 1, false)?
@@ -118,7 +126,8 @@ pub def default_arguments(
     """
     if parameter_offset < 0 or len(body.params) != len(types) + parameter_offset:
         return Err("invalid Body IR default parameter frame length")
-    mut operands = written_operands(builder, binding, elements, types, span, owned)?
+    accesses = parameter_accesses(body.params, parameter_offset)?
+    mut operands = written_operands(builder, binding, elements, types, span, owned, accesses)?
     for index in omitted_slots(binding, len(types))?:
         operands[index] = evaluate_default(module, builder, body, index + parameter_offset, types[index], span, owned)?
     return Ok(operands)
@@ -163,16 +172,17 @@ def written_operands(
     types: list[PlanType],
     span: SourceSpan,
     owned: bool,
+    accesses: list[IncanInputAccess] = [],
 ) -> Result[list[Operand], str]:
     """Place already evaluated arguments by their retained slots, enforcing retained declaration order and leaving omitted slots as unit placeholders."""
     match binding:
         ArgumentBinding.Resolved(arguments=bindings, defaulted_slots=defaults) =>
-            return mapped_written_operands(builder, bindings, len(defaults), elements, types, span, owned)
+            return mapped_written_operands(builder, bindings, len(defaults), elements, types, span, owned, accesses)
         ArgumentBinding.ResolvedDeclarationOrder(arguments=bindings, defaulted_slots=defaults) =>
             for index in range(1, len(bindings)):
                 if int(bindings[index].slot) <= int(bindings[index - 1].slot):
                     return Err("unsupported Body IR binding outside declaration order")
-            return mapped_written_operands(builder, bindings, len(defaults), elements, types, span, owned)
+            return mapped_written_operands(builder, bindings, len(defaults), elements, types, span, owned, accesses)
         _ => return Err("unsupported Body IR unresolved ArgumentBinding")
 
 
@@ -184,6 +194,7 @@ def mapped_written_operands(
     types: list[PlanType],
     span: SourceSpan,
     owned: bool,
+    accesses: list[IncanInputAccess],
 ) -> Result[list[Operand], str]:
     """Fill the checked written slots once, preserving their already evaluated order and omitted placeholders."""
     if len(bindings) != len(elements) or len(bindings) + default_count != len(types):
@@ -198,7 +209,9 @@ def mapped_written_operands(
             return Err("invalid Body IR argument slot map")
         occupied.append(slot)
         match elements[index].as_one():
-            Some(value) => operands[slot] = call_argument_operand(builder, value, types[slot], span, owned)?
+            Some(value) =>
+                access = argument_access(accesses, len(types), slot)?
+                operands[slot] = call_argument_operand(builder, value, types[slot], span, owned, access)?
             None => return Err("unsupported Body IR spread ArgumentElement")
     return Ok(operands)
 
@@ -261,6 +274,9 @@ pub def evaluate_default(
     With `owned`, a collection default is moved into the slot that stores it; otherwise the call borrows it and its
     owner stays in the caller frame until the call returns.
     """
+    access = body.params[index].input_access
+    if access == IncanInputAccess.Shared or access == IncanInputAccess.Exclusive:
+        return Err("unsupported Body IR borrowed default requires retained invocation owner")
     _ = default_type(ty)?
     match body.params[index].default:
         CallableParamDefault.Source(computation) =>
@@ -287,11 +303,11 @@ pub def evaluate_default(
             # The computation runs for this construction or call, so its statements report that site.
             anchor = builder.anchor
             builder.anchor = Some(span)
-            for statement in computation.stmts:
-                lower_statement(module, builder, statement)?
+            for position in range(len(computation.stmts)):
+                lower_statement(module, builder, borrowed_at(computation.stmts, position))?
             builder.anchor = anchor
             before = builder.owned
-            result = call_argument_operand(builder, computation.result, ty, span, owned)?
+            result = call_argument_operand(builder, computation.result, ty, span, owned, access)?
             mut result_owner = -1
             match result.kind:
                 OperandKind.Move(place) => result_owner = place.local

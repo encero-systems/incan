@@ -7,6 +7,8 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 export LC_ALL=C
+# Qualification never inherits a developer's Rust iteration policy.
+export INCAN_RUST_INCREMENTAL=0
 
 fail() {
     echo "release-dev8: $*" >&2
@@ -131,23 +133,30 @@ build_source_closure() {
     mv "$toolchain/toolchain.json.next" "$toolchain/toolchain.json"
     step support-build "$lane/out/native-builds/toolchain-native" "$source"
     native source-interfaces build-native-interfaces.sh
+    build_runtime_closure ""
+}
+
+# Compile the runtime and both standard profiles with the installed driver; PREFIX names this generation's phases.
+build_runtime_closure() {
+    local prefix=$1
     export SELFBUILD_SOURCE_INTERFACES=$INCAN_HOME/source-interfaces/loaves.json
-    native runtime-build build-native-runtime.sh --release
+    native "${prefix}runtime-build" build-native-runtime.sh --release
     unset SELFBUILD_SOURCE_INTERFACES
     check_runtime_roots
-    build_standard_packages
+    build_standard_packages "$prefix"
 }
 
 # Compile both profiles through the same generation-bound producer used by native lane builds.
 build_standard_packages() {
-    local package profile
-    mkdir "$out/standards"
+    local prefix=$1 package profile
+    mkdir "$out/${prefix}standards"
     for profile in release debug; do
         export SELFBUILD_PROFILE=$profile
-        export SELFBUILD_ADMITTED_STDLIB=$out/standards/$profile-admitted.txt
+        export SELFBUILD_ADMITTED_STDLIB=$out/${prefix}standards/$profile-admitted.txt
         : > "$SELFBUILD_ADMITTED_STDLIB"
-        for package in core testing async system codecs compression web data observability vocab interop; do
-            native "std-$package-$profile" build-native-stdlib.sh "$package"
+        # Core contracts, system observations and codec/data facades import primitive declarations.
+        for package in primitives core testing async system codecs compression web data observability vocab interop; do
+            native "${prefix}std-$package-$profile" build-native-stdlib.sh "$package"
         done
     done
     unset SELFBUILD_PROFILE SELFBUILD_ADMITTED_STDLIB
@@ -259,10 +268,13 @@ builder=$seed_oven
 build_source_closure
 
 # The candidate compiler must come from the clean tree: Oven compiles the Incan lowering with the seed's driver, then
-# the driver, and installs it with its Rust ABI cache into the build home. Relinking prepares the same compiler-only
-# home as lane builds, retaining the installed runtime/std closure while the source graph owns incan_lang.
+# the driver, and installs it with its Rust ABI cache into the build home. Relinking retains one installed native
+# support generation, with every selected producer validated against the current source graph.
 # A seed archive is never relabeled as its output.
 native driver-build relink-driver.sh --release
+# The seed's driver compiled the closure the lowering links. The shipped runtime and standard packages are compiled
+# again by the candidate, so they carry this tree's lowering rather than the seed's.
+build_runtime_closure candidate-
 native oven-build build-native-tools.sh oven --rebuild
 cp "$lane/oven-bin/incan" "$out/bundle/incan"
 oven=$out/bundle/incan
@@ -289,7 +301,7 @@ verification=$out/verification-source
 step verification-clone git clone --shared --no-checkout "$ROOT" "$verification"
 step verification-checkout git -C "$verification" checkout --detach "$sha"
 step relocated-rust relocate_rust "$out/rustup"
-export CI_DEV8_OUT=$out/ci
+export CI_DEV8_OUT=$out/ci CI_DEV8_BUILDER_HOME=$INCAN_HOME CI_DEV8_BUILDER_SOURCE=$source
 step installed-ci env RUSTUP_HOME="$out/rustup" \
     "$verification/scripts/ci-dev8.sh" "$out/bundle/toolchain.tar.zst" "$oven" "$out/bundle/incan-lsp"
 installed=($out/ci/run.*/contracts.log)

@@ -607,6 +607,23 @@ impl LibraryIdentityGraph {
             .collect()
     }
 
+    /// Every distinct function identity published from one declaring source path, in graph order, whichever public
+    /// paths expose it: the identities a consumer's call to that function can select.
+    pub fn function_identities_for_source_path(&self, source_path: &[String]) -> Vec<CanonicalSymbolId> {
+        let mut identities = Vec::new();
+        for identity in self
+            .exports
+            .iter()
+            .filter(|entry| entry.source_path == source_path && entry.kind == ExportIdentityKind::Function)
+            .filter_map(|entry| entry.canonical.as_ref()?.hydrate())
+        {
+            if !identities.contains(&identity) {
+                identities.push(identity);
+            }
+        }
+        identities
+    }
+
     /// Return every canonical identity published at one exact package-visible path, in graph order.
     pub fn canonicals_at_public_path(&self, public_path: &[String]) -> Vec<CanonicalSymbolId> {
         let mut canonicals = Vec::new();
@@ -1182,6 +1199,11 @@ pub enum TypeRef {
     /// It appears only as an element of [`TypeRef::Function`]'s `params` and carries the parameter's type in `inner`.
     /// Appended after every earlier variant so their discriminants are unchanged.
     MutParam { inner: Box<TypeRef> },
+    /// Canonical explicit ownership marker. The containing signature must carry matching checked contract metadata.
+    Ownership {
+        mode: incan_lang::lang::types::ownership::OwnershipMode,
+        inner: Box<TypeRef>,
+    },
 }
 
 /// Exported field metadata for models and classes.
@@ -1258,6 +1280,9 @@ pub enum ReceiverExport {
 /// Exported method signature metadata.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MethodExport {
+    /// Checked explicit access and result-source metadata; absence leaves the ordinary inferred contract.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ownership: Option<super::ownership::OwnershipExport>,
     pub name: String,
     /// Canonical member declaration identity, distinct for same-name overloads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1364,6 +1389,9 @@ pub enum ParamKindExport {
 /// Exported function signature metadata.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FunctionExport {
+    /// Checked explicit access and result-source metadata; absence leaves the ordinary inferred contract.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ownership: Option<super::ownership::OwnershipExport>,
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub emitted_name: Option<String>,
@@ -1717,7 +1745,10 @@ impl LibraryManifest {
         let Ok(declared) = serde_json::from_str::<DeclaredFormat>(content) else {
             return Ok(());
         };
-        if declared.manifest_format != LIBRARY_MANIFEST_FORMAT {
+        if !matches!(
+            declared.manifest_format,
+            LIBRARY_MANIFEST_FORMAT | super::OWNERSHIP_MANIFEST_FORMAT
+        ) {
             return Err(LibraryManifestError::Invalid(format!(
                 "unsupported manifest_format {} (expected {})",
                 declared.manifest_format, LIBRARY_MANIFEST_FORMAT
@@ -1736,7 +1767,7 @@ impl LibraryExports {
             match &export.kind {
                 CheckedExportKind::Function(function_export) => {
                     model.functions.push(super::with_checked_type_origins(
-                        function_export_from_checked(function_export),
+                        function_export_from_checked(package_name, function_export),
                         &export.identity.type_origins,
                     ));
                 }
@@ -1748,7 +1779,7 @@ impl LibraryExports {
                 }
                 CheckedExportKind::Alias(alias_export) => {
                     model.aliases.push(super::with_checked_type_origins(
-                        alias_export_from_checked(alias_export),
+                        alias_export_from_checked(package_name, alias_export),
                         &export.identity.type_origins,
                     ));
                 }
@@ -1931,7 +1962,10 @@ fn rewrite_type_ref_names(
             }
             rewrite_type_ref_names(return_type, owner_module_path, public_names, source_paths_by_leaf);
         }
-        TypeRef::TypeToken { inner } | TypeRef::Ref { inner } | TypeRef::MutParam { inner } => {
+        TypeRef::Ownership { inner, .. }
+        | TypeRef::TypeToken { inner }
+        | TypeRef::Ref { inner }
+        | TypeRef::MutParam { inner } => {
             rewrite_type_ref_names(inner, owner_module_path, public_names, source_paths_by_leaf);
         }
         TypeRef::Tuple { elements } => {
@@ -2002,12 +2036,15 @@ fn export_identity_projection_from_checked(identity: &CheckedExportIdentity) -> 
 }
 
 /// Convert checked alias metadata into manifest alias metadata.
-fn alias_export_from_checked(export: &CheckedAliasExport) -> AliasExport {
+fn alias_export_from_checked(package_name: &str, export: &CheckedAliasExport) -> AliasExport {
     AliasExport {
         name: export.name.clone(),
         target_path: export.target_path.clone(),
         projected_type: export.projected_type.as_ref().map(type_ref_from_resolved),
-        projected_function: export.projected_function.as_ref().map(function_export_from_checked),
+        projected_function: export
+            .projected_function
+            .as_ref()
+            .map(|function| function_export_from_checked(package_name, function)),
     }
 }
 
@@ -2247,7 +2284,11 @@ fn receiver_from_checked(receiver: Option<crate::ast::Receiver>) -> Option<Recei
 
 /// Convert checked method metadata into manifest method metadata.
 fn method_from_checked(package_name: &str, method: &crate::library_exports::CheckedMethod) -> MethodExport {
-    MethodExport {
+    let mut projected = MethodExport {
+        ownership: method
+            .ownership
+            .as_ref()
+            .map(|contract| super::ownership::project(package_name, contract)),
         name: method.name.clone(),
         canonical: method
             .canonical
@@ -2260,7 +2301,13 @@ fn method_from_checked(package_name: &str, method: &crate::library_exports::Chec
         return_type: type_ref_from_resolved(&method.return_type),
         is_async: method.is_async,
         has_body: method.has_body,
-    }
+    };
+    super::ownership::mark_types(
+        projected.ownership.as_ref(),
+        &mut projected.params,
+        &mut projected.return_type,
+    );
+    projected
 }
 
 /// Convert checked field metadata into artifact metadata, including a materializable default when available.
@@ -2298,15 +2345,25 @@ fn property_from_checked(package_name: &str, property: &CheckedProperty) -> Prop
 }
 
 /// Convert a checked source function export into manifest metadata, including the materializable default subset.
-pub(super) fn function_export_from_checked(export: &CheckedFunctionExport) -> FunctionExport {
-    FunctionExport {
+pub(super) fn function_export_from_checked(package_name: &str, export: &CheckedFunctionExport) -> FunctionExport {
+    let mut projected = FunctionExport {
+        ownership: export
+            .ownership
+            .as_ref()
+            .map(|contract| super::ownership::project(package_name, contract)),
         name: export.name.clone(),
         emitted_name: export.emitted_name.clone(),
         type_params: export.type_params.iter().map(type_param_from_checked).collect(),
         params: params_from_checked(&export.params, &export.param_defaults),
         return_type: type_ref_from_resolved(&export.return_type),
         is_async: export.is_async,
-    }
+    };
+    super::ownership::mark_types(
+        projected.ownership.as_ref(),
+        &mut projected.params,
+        &mut projected.return_type,
+    );
+    projected
 }
 
 fn type_alias_export_from_checked(export: &CheckedTypeAliasExport) -> TypeAliasExport {

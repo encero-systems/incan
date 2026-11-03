@@ -64,9 +64,14 @@ resolve_bundle() {
     printf '%s\n' "$input" > "$run/reference.txt"
 }
 
-# Expose only standard packages actually present in this installation, using checkout sources.
+# Use the standard sources the installation ships. A bundle that ships none exposes only the standard packages
+# present in it, using checkout sources.
 select_standard_packages() {
     local artifact package
+    if [[ -f "$INCAN_HOME/toolchains/0.6.0-dev.8/stdlib/core/loaf.toml" ]]; then
+        export INCAN_STDLIB=
+        return
+    fi
     mkdir "$run/stdlib"
     for artifact in "$INCAN_HOME/toolchains/0.6.0-dev.8/loaves/"*; do
         [[ -d "$artifact" ]] || continue
@@ -109,13 +114,22 @@ build_runner() {
     [[ -x "$runner" ]] || fail "runner build produced no executable at $runner"
 }
 
-# Test every Oven unit through the installed toolchain; dev.8 test takes one source file per invocation.
+# Test every Oven unit, and every Loaf's Incan test sources from that Loaf, through the installed toolchain, one source
+# per invocation so a source can be excluded on its own. The expected ids cover both.
 run_oven_tests() {
     local file status=0 passed failed
     for file in "$ROOT"/workspaces/oven/src/test_*.incn; do
         [[ -f "$file" ]] || fail 'Oven test sources are absent'
         (cd "$ROOT/workspaces/oven" && "$oven" test "$file") >> "$run/oven-tests.log" 2>&1 || status=1
     done
+    for file in "$ROOT"/loaves/*/*/tests/test_*.incn; do
+        [[ -f "$file" ]] || continue
+        # The record contracts' canonical controls need the frontend's native adapter, which their manifest omits.
+        [[ $file == "$ROOT"/loaves/compiler/internal_models/tests/* ]] && continue
+        # Compiler Loaves link native support, which an installed bundle ships for the release profile only.
+        (cd "${file%/tests/*}" && "$oven" test "$file" --profile release) >> "$run/oven-tests.log" 2>&1 || status=1
+    done
+    "$ROOT/scripts/test-checker-records.sh" "$oven" "$run/checker-records" >> "$run/oven-tests.log" 2>&1 || status=1
     passed=$(awk '/^test_[[:alnum:]_]+[.]incn::test_[[:alnum:]_]+ PASSED$/ {n++} END {print n+0}' "$run/oven-tests.log")
     failed=$(awk '/^test_[[:alnum:]_]+[.]incn::test_[[:alnum:]_]+ (FAILED|XPASS)( |$)/ {n++} END {print n+0}' "$run/oven-tests.log")
     awk '/^test_[[:alnum:]_]+[.]incn::test_[[:alnum:]_]+ PASSED$/ {print $1}' "$run/oven-tests.log" \
@@ -138,12 +152,12 @@ verify_lsp() {
 }
 
 # Run all families under one worker budget. Existing failures are allowed; lost PASS keys are not.
-# Each case compiles on its own: a fresh runner has no group hints, and discovering shared compilations against a fixed
-# deadline split groups repeatedly and exhausted a 16 GB runner's memory (#2484 adds most of the rest).
+# Isolated cases: cold group discovery splits shared batches against a fixed deadline and, with #2484, can exhaust a
+# CI runner's memory. Verdicts are identical to batched runs.
 run_contracts() {
     local status=0
     "$runner" "$oven" "$ROOT/workspaces/contracts/fixtures" \
-        --scratch "$run/scratch" --isolated --jobs "${CI_DEV8_JOBS:-2}" --timeout "${CI_DEV8_TIMEOUT:-120}" \
+        --scratch "$run/scratch" --jobs "${CI_DEV8_JOBS:-2}" --timeout "${CI_DEV8_TIMEOUT:-120}" --isolated \
         behavior check library interop testing project format graph > "$run/contracts.log" 2>&1 || status=$?
     [[ $status -le 1 ]] || fail "contract runner exited $status; evidence: $run"
     "$ROOT/scripts/check-dev8-baseline.sh" "$ROOT/workspaces/contracts/dev8-pass-baseline.txt" \
@@ -181,7 +195,8 @@ oven=$INCAN_HOME/bin/incan
 lsp=$INCAN_HOME/bin/incan-lsp
 export PATH=$INCAN_HOME/bin:$PATH
 logged_step install 'toolchain installation' "$oven" toolchain install "$archive"
-logged_step relocation 'toolchain relocation audit' bash "$ROOT/scripts/check-toolchain-relocation.sh" "$INCAN_HOME"
+logged_step relocation 'toolchain relocation audit' bash "$ROOT/scripts/check-toolchain-relocation.sh" \
+    "$INCAN_HOME" "${CI_DEV8_BUILDER_HOME:-}" "${CI_DEV8_BUILDER_SOURCE:-$ROOT}"
 select_standard_packages
 if $install_only; then
     export_installation

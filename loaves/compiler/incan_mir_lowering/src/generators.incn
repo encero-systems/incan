@@ -27,7 +27,8 @@ from pub::incan_mir_plan import (
 from pub::incan_mir_plan import assign as plan_assign, block as plan_block, place as plan_place
 from collections import primitive_leaf, leaf_type
 from tuples import type_name, tuple_type, generic_tuple_type
-from frame import Builder, temporary, terminate_call, read_place, drop_owned, value_type
+from frame import Builder, temporary, terminate_call, read_place, drop_owned, exhaust_loop, value_type
+from table_views import borrowed_at
 
 
 pub def generator_type(ty: &RustType) -> Option[Result[PlanType, str]]:
@@ -182,6 +183,8 @@ def swap_rvalue(value: RvalueKind, handle: int) -> RvalueKind:
             return RvalueKind.PointerOffset(swap_operand(pointer, handle), swap_operand(offset, handle))
         RvalueKind.PointerAddress(pointer) => return RvalueKind.PointerAddress(swap_operand(pointer, handle))
         RvalueKind.UnsizeSlice(value) => return RvalueKind.UnsizeSlice(swap_operand(value, handle))
+        RvalueKind.UnsizeTraitObject(value, source, target) =>
+            return RvalueKind.UnsizeTraitObject(swap_operand(value, handle), source, target)
         RvalueKind.UnitFunction(name) => return RvalueKind.UnitFunction(name)
         RvalueKind.FrozenText(value) => return RvalueKind.FrozenText(swap_operand(value, handle))
         RvalueKind.FrozenBytes(values) => return RvalueKind.FrozenBytes(values)
@@ -288,7 +291,7 @@ pub def generator_yield(mut builder: Builder, value: Operand, span: SourceSpan) 
     if builder.generator_handle < 0:
         return Err("unsupported Body IR Yield outside generator producer")
     handle = plan_place(builder.generator_handle, span)
-    match builder.locals[handle.local].ty:
+    match borrowed_at(builder.locals, handle.local).ty:
         PlanType.GeneratorYield(leaf, depth) =>
             if value_type(builder, value)? != generator_element(leaf, depth):
                 return Err("unsupported Body IR generator yield coercion")
@@ -308,9 +311,9 @@ pub def generator_yield(mut builder: Builder, value: Operand, span: SourceSpan) 
 
 pub def generator_collect(mut builder: Builder, receiver: Place, output: Place, span: SourceSpan) -> Result[None, str]:
     """Consume the runtime generator once, preserving its lazy producer and exact yield order."""
-    match generator_shape(builder.locals[receiver.local].ty):
+    match generator_shape(borrowed_at(builder.locals, receiver.local).ty):
         Some((leaf, depth)) =>
-            if builder.locals[receiver.local].ty != PlanType.Generator(leaf, depth):
+            if borrowed_at(builder.locals, receiver.local).ty != PlanType.Generator(leaf, depth):
                 return Err("unsupported Body IR collect of borrowed generator")
             terminate_call(
                 builder,
@@ -325,10 +328,10 @@ pub def generator_collect(mut builder: Builder, receiver: Place, output: Place, 
 
 pub def generator_reference(mut builder: Builder, receiver: Place, span: SourceSpan) -> Result[Operand, str]:
     """Borrow the live generator or reborrow an existing iterator alias without copying its mutable reference."""
-    match generator_shape(builder.locals[receiver.local].ty):
+    match generator_shape(borrowed_at(builder.locals, receiver.local).ty):
         Some((leaf, depth)) =>
             mut source = receiver
-            if builder.locals[receiver.local].ty == PlanType.GeneratorMutRef(leaf, depth):
+            if borrowed_at(builder.locals, receiver.local).ty == PlanType.GeneratorMutRef(leaf, depth):
                 source.projection = Projection.Deref(PlanType.Generator(leaf, depth))
             reference = temporary(builder, PlanType.GeneratorMutRef(leaf, depth), span)
             builder.emit(plan_assign(reference, RvalueKind.MutBorrow(source), span))
@@ -358,7 +361,7 @@ pub def generator_next(mut builder: Builder, receiver: Place, output: Place, spa
     """Poll one lazy item, branching to the existing loop exit on exhaustion without replaying the prefix."""
     if len(builder.loops) == 0:
         return Err("invalid Body IR generator poll outside loop")
-    match generator_shape(builder.locals[receiver.local].ty):
+    match generator_shape(borrowed_at(builder.locals, receiver.local).ty):
         None => return Err("unsupported Body IR generator poll receiver")
         Some((leaf, depth)) =>
             element = generator_element(leaf, depth)
@@ -387,7 +390,7 @@ pub def generator_next(mut builder: Builder, receiver: Place, output: Place, spa
             # Each branch owns the initialized poll buffer independently; even exhaustion must drop it.
             builder.current = exhausted
             drop_owned(builder, storage.local, span)
-            builder.finish(TerminatorKind.Goto(builder.loops[-1][1]), span)
+            exhaust_loop(builder, span)
             builder.current = selected
             builder.owned = owners
             drop_owned(builder, output.local, span)

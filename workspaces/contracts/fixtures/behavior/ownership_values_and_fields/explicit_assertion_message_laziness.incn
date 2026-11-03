@@ -1,0 +1,23 @@
+# behavior: a successful borrowed assertion skips its side-effectful message and retains subsequent source reads (#2500).
+# expect-stdout:
+#   lazy assertion passed
+
+def diagnostic(mut calls: BorrowedMut[int], value: Borrowed[str]) -> str:
+    """A failure-only message has an observable effect and returns an independent string."""
+    calls += 1
+    return f"diagnostic {calls}: {value}"
+
+
+def width(value: Borrowed[str], mut calls: BorrowedMut[int]) -> int:
+    """A successful assertion must skip the message and preserve its later source reads."""
+    assert len(value) > 0, diagnostic(calls, value)
+    return len(value)
+
+
+def main() -> None:
+    mut calls = 0
+    text = "payload"
+    assert width(text, calls) == 7
+    assert calls == 0
+    assert text == "payload"
+    println("lazy assertion passed")

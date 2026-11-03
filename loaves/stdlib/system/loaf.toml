@@ -4,8 +4,17 @@ version = "0.5.0"
 license = "Apache-2.0"
 private = true
 
+[rust]
+name = "incan_std_system"
+type = "lib"
+edition = "2024"
+
+[rust.source]
+root = "rust"
+
 [dependencies]
 byteorder = { loaf = "crates-io/byteorder", version = "1", features = [], default-features = true }
+memmap2 = { loaf = "crates-io/memmap2", version = "=0.9.11", features = [], default-features = true }
 encoding_rs = { loaf = "crates-io/encoding_rs", version = "0.8", features = [], default-features = true }
 rustix = { loaf = "crates-io/rustix", version = "1.1", features = ["fs"], default-features = true }
 tempfile = { loaf = "crates-io/tempfile", version = "3", features = [], default-features = true }

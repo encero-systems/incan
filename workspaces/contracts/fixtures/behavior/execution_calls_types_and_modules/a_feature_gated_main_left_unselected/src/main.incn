@@ -2,7 +2,7 @@
 # expect-stdout:
 # expect-exit: 1
 # expect-stderr-contains:
-#   Error: MissingEntrypoint
+#   selected program has no main entrypoint
 
 
 """A program whose only main is declared under an unselected feature has no main, so the run fails without output."""

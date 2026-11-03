@@ -15,34 +15,45 @@ from std.fs import Path
 from std.json import JsonValue
 from std.hash import sha256
 from std.encoding.hex import hexlify
-from codegen import rust_arguments
-from apple_sdk import sdk_identity
+from codegen import remap_arguments, rust_arguments, rust_incremental_arguments, rust_metadata, unit_metadata
 from driver_command import driver_command
 from files import json_text, parse_json, read, read_json
-from home import dependency_artifact_dir, unit_ledger
+from home import dependency_artifact_dir
 from json_fields import field, required_items, required_text, strings
 from intake import library_source, read_project, ManifestReader
 from native_closure_input import NativeClosureInput
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets
-from observation import SETTLE_SECONDS, load_ledger, observe, trace
+from observation import Observation, observe, trace
+from pub::incan_platform.trace import Operation
 from jec import begin, record as record_work
 from publication import place, publish
 from rust_activation import DependencyDomain
 from registry_units import RegistryUnit, RegistrySelection, RegistryDemand, RegistryUnits, is_dynamic_library
-from registry_metadata import complete_legacy
-from rust_target import decoded, run_text, target_configuration
-from toml_fields import optional_string, optional_strings, read_manifest, required_string
-from toolchain import NativeCrate, Toolchain, load_toolchain, located
+from registry_metadata import complete_legacy, completion_selection
+from registry_pages import artifact_stamps, directory_stamps, question, recall_catalog, retain_catalog
+from registry_pages import current as catalog_current
+from retained_readings import installed_digest
+from rust_target import (
+    compiler_sysroot,
+    compiler_version,
+    decoded,
+    deployment_target,
+    inherited_deployment_selection,
+    target_configuration,
+)
+from toml_fields import optional_string, read_manifest, required_string
+from toolchain import NativeCrate, Toolchain, load_toolchain, located, rust_compiler
+from toolchain_access import BINARY_SEPARATOR, read_access
 from unit_freshness import (
     Key,
     artifact_identity,
+    cache_identities,
     compiler_fingerprint,
     fingerprint,
-    install_all,
     record,
     reusable,
-    rust_key,
     staleness,
+    sdk_content_identity,
 )
 from rust_freshness import (
     compilation_observations,
@@ -50,10 +61,15 @@ from rust_freshness import (
     graph_arguments,
     inputs_unchanged,
     library_key,
+    relocate_dependencies,
     producer_arguments,
     extern_paths,
 )
-from rust_portable import portable_key, portable_reusable, record_portable
+from rust_portable import portable_reusable, record_portable
+from rust_bakery import baked_rust, claim_rust, rust_store, rust_unit_name, seal_rust, view_prior_evidence
+from bakery import bakery, claim, find, forget_view, library_directory, register_root, seal, staging, view
+from unit_publication import import_payload
+from registry_units import sole_library as registry_artifact
 
 # The schema of the receipt a build leaves of the libraries it built.
 const RECEIPT_SCHEMA: str = "incan.rust-units/1"
@@ -103,11 +119,32 @@ pub def read_registry_units(
     """
     Registry units from a closure result (`incan.oven.closure/1`): every compiled unit and its store directory.
 
-    1. The document is a closure of this version.
-    2. The store's entries directory follows from the artifact of the first extern.
-    3. Each unit is read with its store directory, and those directories are the search path.
+    1. Read the typed page selected for this closure and compiler generation.
+    2. Reconcile its exact directory and artifact observations.
+    3. On a miss, claim and complete the closure once; project locks bind only after that shared reading.
     """
-    # 1. Only a closure of this version describes units the way the rest of Oven reads them.
+    # 1. A settled generation can be read directly from its admitted, mapped typed page.
+    clock = begin()
+    observed = observe(path)?
+    selection = completion_selection(rust_compiler(load_toolchain()?))?
+    key = question(path, observed, selection)?
+    if let Some(catalog) = recall_catalog(key)?:
+        record_work(Operation.RegistryIndex, path.0, clock)
+        # 2. Directory membership and artifact rewrites invalidate independently of the closure file.
+        completion_clock = begin()
+        if catalog_current(catalog):
+            record_work(Operation.RegistryCompletion, path.0, completion_clock)
+            return project_registry(catalog_registry(catalog.units, path)?, project, reader)
+    # 3. Only one caller completes a missing generation; waiters recheck after taking its claim.
+    held = claim(bakery()?, f"registry/catalog/{key}")?
+    if let Some(catalog) = recall_catalog(key)?:
+        if catalog_current(catalog):
+            return project_registry(catalog_registry(catalog.units, path)?, project, reader)
+    return project_registry(read_registry_catalog(path, key, observed)?, project, reader)
+
+
+def read_registry_catalog(path: Path, key: str, observed: Observation) -> Result[RegistryUnits, str]:
+    """Complete a missing generation under its claim, bracketing producer observations before sealing its typed page."""
     clock = begin()
     document = read_json(path)?
     schema = required_text(document, "schema")?
@@ -117,24 +154,37 @@ pub def read_registry_units(
     entries = entries_directory(document, path)?
     # 3. Each unit knows its own artifact directory, and every such directory is searched for dependencies.
     mut units: list[RegistryUnit] = []
-    mut search: list[str] = []
+    closure_directory = path.parent()
     for item in required_items(document, "units")?:
-        unit = registry_unit(item, entries)?
+        unit = registry_unit(item, entries, closure_directory)?
         units.append(unit)
+    record_work(Operation.RegistryIndex, path.0, clock)
+    completion_clock = begin()
+    listings = directory_stamps(units)
+    artifacts = artifact_stamps(units)
+    completed = complete_legacy(units)?
+    record_work(Operation.RegistryCompletion, path.0, completion_clock)
+    retain_catalog(key, path, observed, completed, listings, artifacts)?
+    return catalog_registry(completed, path)
+
+
+def catalog_registry(units: list[RegistryUnit], path: Path) -> Result[RegistryUnits, str]:
+    """Bind installation preferences separately from the page so project-specific locks never leak into shared facts."""
+    mut search: list[str] = []
+    for unit in units:
         if unit.directory not in search:
             search.append(unit.directory)
-    record_work("registry_index", path.0, clock)
-    completed = complete_legacy(units)?
-    registry = RegistryUnits(
-        units=completed,
-        search=search,
-        anchors=[],
-        installation_bindings=recorded_registry_bindings(completed, path)?,
+    return Ok(
+        RegistryUnits(
+            units=units,
+            search=search,
+            anchors=[],
+            installation_bindings=recorded_registry_bindings(units, path)?,
+        ),
     )
-    return project_registry(registry, project, reader)
 
 
-def project_registry(registry: RegistryUnits, project: str, reader: ManifestReader) -> Result[RegistryUnits, str]:
+pub def project_registry(registry: RegistryUnits, project: str, reader: ManifestReader) -> Result[RegistryUnits, str]:
     """A project's explicit build.registry-lock supersedes the installation's standard-producer root selection."""
     path = registry_record_path(project, reader)?
     if path == "":
@@ -199,7 +249,7 @@ def entries_directory(document: JsonValue, path: Path) -> Result[str, str]:
     return Err(f"{path.0} names no compiled unit")
 
 
-def registry_unit(item: JsonValue, entries: str) -> Result[RegistryUnit, str]:
+def registry_unit(item: JsonValue, entries: str, closure_directory: Path) -> Result[RegistryUnit, str]:
     """One compiled unit of a closure, with the artifact directory its store entry holds."""
     entry = required_text(item, "entry")?
     directory = Path(entries).joinpath(entry.replace(":", "-")).joinpath("artifacts").0
@@ -216,8 +266,21 @@ def registry_unit(item: JsonValue, entries: str) -> Result[RegistryUnit, str]:
             recorded=item.get("dependencies") != None,
             name=registry_text(item, "name")?,
             kind=registry_text(item, "kind")?,
+            crate_hash=registry_text(item, "crate_hash")?,
+            artifact=registry_artifact_path(item, closure_directory)?,
+            refusal=registry_text(item, "refusal")?,
         ),
     )
+
+
+def registry_artifact_path(item: JsonValue, closure_directory: Path) -> Result[str, str]:
+    """Locate optional baked native metadata relative to its closure, preserving legacy null artifacts."""
+    match item.get("artifact"):
+        None => return Ok("")
+        Some(value) =>
+            if value.is_null():
+                return Ok("")
+            return Ok(located(closure_directory, value.expect_str().map_err((error) => error.message())?))
 
 
 def registry_text(item: JsonValue, key: str) -> Result[str, str]:
@@ -246,7 +309,11 @@ pub def selected_registry(
     for facet in facets:
         for record in facet.registry:
             demands.append(RegistryDemand(selection=registry_selection(record)?, domain=facet.domain.value()))
-    return registry.select(demands, profile)
+    selected = registry.select(demands, profile)?
+    for unit in selected.units:
+        if unit.entry != "":
+            import_payload(Path(registry_artifact(unit)?), unit.entry)?
+    return Ok(selected)
 
 
 pub def registry_features(value: JsonValue) -> Result[list[str], str]:
@@ -346,44 +413,35 @@ def library_type(document: TomlValue, library: Path) -> Result[str, str]:
 
 
 def read_binaries(document: TomlValue, root: Path) -> Result[RustBinaries, str]:
-    """The `[[rust.bin]]` crates, and whether any needs unstable features or the toolchain's own libraries."""
+    """The `[[rust.bin]]` crates, and whether any declares unstable features or links the toolchain's own libraries."""
+    manifest = root.joinpath("loaf.toml").0
     mut crates: list[Tuple[str, str]] = []
     mut unstable = false
     mut sysroot = false
-    for binary in declared_binaries(document)?:
+    binaries = declared_binaries(document)?
+    for index in range(len(binaries)):
+        binary = binaries[index]
         name = required_string(binary, "name")?
         path = required_string(binary, "path")?
         crates.append((name, root.joinpath(path).0))
-        if declares_any(binary, "unstable_features")?:
+        values = binary.as_table().map_err((error) => error.message())?
+        field = ["rust", "bin", str(index)]
+        access = read_access(values, BINARY_SEPARATOR, manifest, field).map_err((error) => error.message())?
+        if len(access.unstable_features) > 0:
             unstable = true
-        if declares_any(binary, "sysroot_dependencies")?:
+        if len(access.sysroot_dependencies) > 0:
             sysroot = true
     return Ok(RustBinaries(crates=crates, unstable=unstable, sysroot=sysroot))
 
 
-def declares_any(table: TomlValue, key: str) -> Result[bool, str]:
-    """Whether a manifest table declares a non-empty list of strings at `key`."""
-    match optional_strings(table, key)?:
-        Some(names) => return Ok(len(names) > 0)
-        None => return Ok(false)
-
-
-pub def identity(facet: LocalFacet, profile: str) -> str:
-    """
-    A unit's identity: its Loaf's name and version, domain, features and profile.
-
-    The checkout a Loaf lives in is not part of it, so an installed unit matches the same source anywhere. A facet
-    without a declared name keeps its project path.
-    """
-    mut owner = facet.project
-    if facet.package != "":
-        owner = f"{facet.package}\n{facet.version}"
-    text = f"{owner}\n{facet.domain.value()}\n{",".join(sorted(facet.features))}\n{profile}"
+pub def facet_slot(facet: LocalFacet, profile: str) -> str:
+    """Locate a project's target slot by path, domain, features and profile; this is never a unit identity."""
+    text = f"{facet.project}\n{facet.domain.value()}\n{",".join(sorted(facet.features))}\n{profile}"
     return hexlify(sha256.digest(text.encode("utf-8")))[0:16]
 
 
 def refuse_shared_identities(facets: list[LocalFacet]) -> Result[None, str]:
-    """Two local Loaves declaring one name and version would compile to one unit; refuse instead of colliding."""
+    """Refuse ambiguous local providers that declare the same package, version and compilation domain."""
     mut owners: Dict[str, str] = {}
     for facet in facets:
         if facet.package == "":
@@ -444,8 +502,6 @@ pub model RustBuild:
     pub manifests: ManifestReader = ManifestReader()
     # Native Rust artifacts depend on the actual rustc, independently of installed Incan providers.
     pub native_compiler: str = ""
-    # The same rustc by content alone, which a relocated producer's proof is checked against on any machine.
-    pub portable_compiler: str = ""
     # One name index retains ambiguity in the selected installed artifact generation.
     pub installed: Dict[str, list[str]] = {}
     # Rust implementations consume native facets; Incan consumers require complete public Loaf facades.
@@ -462,20 +518,22 @@ pub def prepared_build(request: RustBuild) -> Result[RustBuild, str]:
     Select the installed compiler once, then retain its fingerprint for every facet in this build.
 
     1. Preserve a caller's loaded toolchain, or load it once.
-    2. Derive the Incan-generation fingerprint and the actual Rust compiler's native and portable identities once.
+    2. Derive the Incan-generation and actual Rust compiler fingerprints once.
     """
     # 1. The selected generation is shared by native facets and Incan providers.
     selected = selected_toolchain(request)?
     mut prepared = request
     prepared.toolchain = Some(selected)
-    # 2. Reuse the generation identity throughout this build.
+    # 2. Legacy installed producers permit a local bake, but cannot authorize a portable unit identity.
     if prepared.compiler == "":
-        prepared.compiler = compiler_fingerprint(selected)?
+        match compiler_fingerprint(selected):
+            Ok(identity) => prepared.compiler = identity
+            Err(reason) =>
+                if "unit identity refused:" not in reason:
+                    return Err(reason)
     prepared.installed = native_artifacts(selected.externs)
-    if prepared.native_compiler == "" or prepared.portable_compiler == "":
-        rustc = compiler_identity(prepared.rustc, prepared.project)?
-        prepared.native_compiler = rustc.native
-        prepared.portable_compiler = rustc.portable
+    if prepared.native_compiler == "":
+        prepared.native_compiler = native_compiler_fingerprint(prepared.rustc)?
     return Ok(prepared)
 
 
@@ -489,52 +547,20 @@ pub def native_artifacts(externs: list[NativeCrate]) -> Dict[str, list[str]]:
     return artifacts
 
 
-pub model CompilerIdentity:
-    """The pinned rustc as this machine installs it, and as its content identifies it on any machine."""
-
-    # Location, filesystem identity, SDK and content: a moved or replaced compiler is noticed without reading its bytes.
-    pub native: str
-    # Content only, so another machine's copy of the same compiler proves a relocated producer.
-    pub portable: str
-
-
-def compiler_identity(rustc: str, project: str) -> Result[CompilerIdentity, str]:
-    """
-    Identify the actual pinned compiler where it is installed, and by its content alone.
-
-    1. Resolve an installation's sysroot alias, then read the compiler's version output, driver library digest and
-       effective deployment target.
-    2. The native identity adds the compiler's location, its filesystem identity and the selected SDK.
-    3. The portable identity keeps the content only. A Rust library or proc-macro producer links no SDK, so another
-       machine's SDK does not change what it compiled.
-    """
-    # 1. These are the same on every machine that installs this compiler.
+def native_compiler_fingerprint(rustc: str) -> Result[str, str]:
+    """Identify the actual pinned compiler and SDK by content after resolving the installation's sysroot alias."""
     compiler = Path(rustc).resolve().map_err((error) => error.message())?
-    libraries = toolchain_libraries(compiler.0, project)?
+    libraries = toolchain_libraries(compiler.0)?
     version = libraries.environment["INCAN_DRIVER_RUSTC_IDENTITY"]
-    library = libraries.environment["INCAN_DRIVER_LIBRARY_DIGEST"]
-    target = native_deployment_target(compiler.0, version)?
-    # 2. A local check that never reads the compiler's bytes.
-    sdk = sdk_identity(compiler.parent().parent().0)?
-    native = fingerprint([compiler.0, artifact_identity(compiler)?, version, library, sdk, target])?
-    # 3. A check that holds after the toolchain is installed somewhere else.
-    portable = fingerprint(["incan.oven.portable-compiler/1", version, library, target])?
-    return Ok(CompilerIdentity(native=native, portable=portable))
-
-
-def portable_compiler(request: RustBuild) -> Result[str, str]:
-    """The prepared build's portable compiler identity; a direct one-facet caller derives it here."""
-    if request.portable_compiler != "":
-        return Ok(request.portable_compiler)
-    return Ok(compiler_identity(request.rustc, request.project)?.portable)
-
-
-def native_deployment_target(rustc: str, compiler: str) -> Result[str, str]:
-    """Ask rustc for its effective Apple deployment target, including the platform-specific environment policy."""
-    for line in compiler.split("\n"):
-        if line.startswith("host: ") and "-apple-" in line:
-            return run_text(rustc, ["--print", "deployment-target"])
-    return Ok("")
+    return fingerprint(
+        [
+            fingerprint(cache_identities([compiler.0])?)?,
+            version,
+            libraries.environment["INCAN_DRIVER_LIBRARY_DIGEST"],
+            sdk_content_identity(compiler.parent().parent().0)?,
+            deployment_target(compiler.0, version, inherited_deployment_selection()?)?,
+        ],
+    )
 
 
 def selected_toolchain(request: RustBuild) -> Result[Toolchain, str]:
@@ -915,7 +941,17 @@ pub def compile_rust_library(
     if let Some(unit) = selected:
         return Ok(unit)
     # 2. A facet absent from the installed generation retains ordinary local compilation.
-    return compile_local_rust_library(facet, declared, output, request, built, search, toolchain)
+    unit = compile_local_rust_library(facet, declared, output, request, built, search, toolchain)?
+    return stored_library(unit)
+
+
+pub def stored_library(unit: BuiltUnit) -> Result[BuiltUnit, str]:
+    """Bind compiler consumers to the library's store-owned filenames, never a project's replaceable target."""
+    directory = library_directory(bakery()?, Path(unit.directory))?
+    mut stored = unit
+    stored.artifact = directory.joinpath(Path(unit.artifact).name()).0
+    stored.directory = directory.0
+    return Ok(stored)
 
 
 def installed_rust_library(
@@ -942,7 +978,7 @@ def installed_rust_library(
     if len(artifacts[declared.crate_name]) != 1:
         return Err(f"installed native generation has no unique {declared.crate_name} artifact")
     artifact = Path(artifacts[declared.crate_name][0])
-    unit = identity(facet, request.profile)
+    unit = artifact_context(facet, declared, request.profile)?
     if not artifact.name().startswith(f"lib{declared.crate_name}-{unit}."):
         return Err(
             f"installed native {declared.crate_name} does not match the selected source, domain, features and profile",
@@ -950,7 +986,7 @@ def installed_rust_library(
     # 2. A filename selects a candidate; only the complete producer proof authorizes its reuse.
     directory = artifact.parent()
     reading = directory.lock_exclusive().map_err((error) => error.message())?
-    arguments = library_compile_arguments(facet, declared, directory, request, built, search)?
+    arguments = library_compile_arguments(facet, declared, directory, request, built, search, false)?
     environment = package_environment(facet.project, declared, declared.crate_name)
     key = rust_library_producer_key(facet, directory, arguments, environment, request, toolchain).map_err(
         (error) => f"installed native {declared.crate_name} has no current producer proof: {error}",
@@ -962,8 +998,8 @@ def installed_rust_library(
     why = staleness(outputs, stamp, key)?
     mut relocation: Option[Key] = None
     if why != "":
-        portable = portable_key(key, directory, arguments, Path(facet.project), portable_compiler(request)?)?
-        if not stamp.is_file() or not portable_reusable(directory, portable, outputs)?:
+        portable = key
+        if not portable_reusable(directory, portable, outputs)?:
             return Err(f"installed native {declared.crate_name} is stale: {why}; rebuild its support generation")
         current = rust_library_producer_key(facet, directory, arguments, environment, request, toolchain)?
         if current.digest != key.digest:
@@ -976,11 +1012,11 @@ def installed_rust_library(
     retain_rust_library_graph(facet, declared, artifact, arguments, environment, request, toolchain, key)?
     portable = match relocation:
         Some(selected) => selected
-        None => portable_key(key, directory, arguments, Path(facet.project), portable_compiler(request)?)?
+        None => key
 
     record_portable(directory, portable, outputs)?
     # 3. Consumers search the same graph-selected native closure as the installed producer.
-    trace(f"unit {declared.crate_name} rust: reused installed producer")
+    trace(f"unit {declared.crate_name} rust: reused installed producer identity={key.digest}")
     return Ok(
         Some(
             BuiltUnit(
@@ -1001,15 +1037,37 @@ pub def library_compile_arguments(
     request: RustBuild,
     built: Dict[str, BuiltUnit],
     search: list[str],
+    iteration: bool = true,
 ) -> Result[list[str], str]:
-    """Frame one facet's exact native command for both local production and installed-producer verification."""
-    unit = identity(facet, request.profile)
+    """Frame one facet's native command; immutable installed producers retain their qualification policy."""
+    unit = artifact_context(facet, declared, request.profile)?
     dependencies = directory.joinpath("library.d")
     arguments = library_arguments(declared)
-    outputs = ["--out-dir", directory.0, "-C", f"metadata={unit}", "-C", f"extra-filename=-{unit}"]
+    mut metadata = "metadata=incan-unit"
+    if iteration:
+        context = fingerprint([unit, declared.package, declared.version])?
+        metadata = rust_metadata(request.profile, context)
+    outputs = ["--out-dir", directory.0, "-C", metadata, "-C", f"extra-filename=-{unit}"]
     return Ok(
-        arguments + outputs + ["--emit", f"link,dep-info={dependencies.0}"] + linking(facet, request, built, search)?,
+        arguments + outputs + ["--emit", f"link,dep-info={dependencies.0}"] + linking(facet, request, built, search)? + remap_arguments(
+            facet.project,
+        ),
     )
+
+
+pub def artifact_context(facet: LocalFacet, declared: RustFacet, profile: str) -> Result[str, str]:
+    """
+    Name compiler outputs by their location-independent selection context, never a source directory hash.
+
+    rustc records its extra filename in crate metadata, so it is a real invocation fact rather than mere provenance.
+    The full unit identity controls qualification's symbol disambiguator; iteration keeps this context stable.
+    """
+    digest = fingerprint(
+        [declared.crate_name, declared.edition, declared.kind, facet.domain.value()] + sorted(facet.features) + rust_arguments(
+            profile,
+        ),
+    )?
+    return Ok(digest[:16])
 
 
 pub def rust_library_producer_key(
@@ -1023,17 +1081,36 @@ pub def rust_library_producer_key(
     """Reconcile a Rust producer with the actual compiler and exact inputs, independently of installed Incan Loaves."""
     mut compiler = request.native_compiler
     if compiler == "":
-        compiler = compiler_identity(request.rustc, request.project)?.native
+        compiler = native_compiler_fingerprint(request.rustc)?
     return library_key(
         Path(facet.project),
         directory,
         directory.joinpath("library.d"),
-        producer_arguments(arguments),
+        producer_arguments(arguments) + [f"domain={facet.domain.value()}"],
         environment,
         extern_artifacts(arguments),
         toolchain,
         compiler,
     )
+
+
+def materialized_arguments(arguments: list[str], key: Key) -> list[str]:
+    """
+    Derive rustc's symbol disambiguator from the completed unit identity, its conservative external identity.
+
+    The invocation key contains a generated metadata role rather than its own digest, avoiding a circular hash.
+    Refused identities receive an ephemeral local disambiguator and can never authorize reusable publication.
+    """
+    metadata = unit_metadata(key.digest)
+    mut realized: list[str] = []
+    mut previous = ""
+    for argument in arguments:
+        if previous == "-C" and argument.startswith("metadata=incan-unit"):
+            realized.append(metadata)
+        else:
+            realized.append(argument)
+        previous = argument
+    return realized
 
 
 pub def rust_library_graph_key(native: Key, driver: str) -> Result[Key, str]:
@@ -1042,11 +1119,14 @@ pub def rust_library_graph_key(native: Key, driver: str) -> Result[Key, str]:
 
     The driver identity includes its graph observer and encoded schema; changing either refreshes only the graph.
     """
-    producer = fingerprint([driver, artifact_identity(Path(driver))?])?
+    if native.refusal != "":
+        return Ok(native)
+    producer = fingerprint(cache_identities([driver])?)?
     return Ok(
         Key(
             digest=fingerprint(["incan.oven.rust-graph/1", native.digest, producer])?,
             parts=[f"native {native.digest}", f"graph-producer {producer}"],
+            provenance=native.provenance,
         ),
     )
 
@@ -1088,12 +1168,15 @@ def retain_rust_library_graph(
     )?
     pending = directory.joinpath(f"{declared.package}.incngraph.{id()}.checking.pending")
     inspected = ["--rust-codegraph", pending.0, facet.project, "--sysroot", toolchain.sysroot] + graph_arguments(
-        arguments,
+        materialized_arguments(arguments, native),
     )
     invoke_rustc(toolchain.driver, inspected, environment, false, declared.crate_name, Some(toolchain))?
     # 3. A new graph cannot vouch for stale source, a changed native artifact or another observer generation.
     current = rust_library_producer_key(facet, directory, arguments, environment, request, toolchain)?
-    if current.digest != native.digest or not inputs_unchanged(dependencies, observations)?:
+    if (
+        current.digest != native.digest
+        or not inputs_unchanged(dependencies, observations, Some(Path(facet.project)), arguments)?
+    ):
         return Err(f"Rust producer inputs changed while refreshing {declared.crate_name}'s graph")
     if artifact_identity(artifact)? != native_output or artifact_identity(dependencies)? != dependency_output:
         return Err(f"Rust producer outputs changed while refreshing {declared.crate_name}'s graph")
@@ -1114,89 +1197,139 @@ def compile_local_rust_library(
     toolchain: Toolchain,
 ) -> Result[BuiltUnit, str]:
     """
-    Compile or reuse one local producer with complete dep-info observations.
+    Obtain one local Rust producer from the home bakery, compiling it with complete dep-info observations on a miss.
 
-    1. Validate a previous complete library, graph and dependency set.
-    2. Discover dependencies, observe them, and compile without publishing a partial proof.
-    3. Require unchanged inputs and stamp the complete successful outputs.
+    1. Key the unit from its dependency evidence, viewing the evidence last baked under its name when there is none.
+    2. A baked identity is viewed and no compiler starts; concurrent bakers of the name wait for each other.
+    3. Otherwise compile, require unchanged inputs, and bake the library, graph and dependency evidence together.
     """
-    # 1. Describe the compiler command and validate a previous library and graph.
-    unit = identity(facet, request.profile)
+    # 1. The directory is a view; the unit's dependency evidence names what its identity covers.
+    unit = facet_slot(facet, request.profile)
     directory = output.joinpath(f"{declared.crate_name}-{unit}")
     directory.mkdir(true, true).map_err((error) => error.message())?
-    building = directory.lock_exclusive().map_err((error) => error.message())?
     dependencies = directory.joinpath("library.d")
     graph = directory.joinpath(f"{declared.package}.incngraph")
-    stamp = directory.joinpath("library.oven-inputs")
+    context = artifact_context(facet, declared, request.profile)?
     arguments = library_compile_arguments(facet, declared, directory, request, built, search)?
     environment = package_environment(facet.project, declared, declared.crate_name)
     linked = extern_artifacts(arguments)
     reached_search = facet_search(facet, built)?
-    match library_artifact(directory, declared.crate_name, unit, declared.kind)?:
-        None => pass
-        Some(artifact) =>
-            match rust_library_producer_key(facet, directory, arguments, environment, request, toolchain):
-                Err(_) => pass
-                Ok(key) =>
-                    if reusable([artifact, graph, dependencies], stamp, key)?:
-                        retain_rust_library_graph(
-                            facet,
-                            declared,
-                            artifact,
-                            arguments,
-                            environment,
-                            request,
-                            toolchain,
-                            key,
-                        )?
-                        record_portable(
-                            directory,
-                            portable_key(key, directory, arguments, Path(facet.project), portable_compiler(request)?)?,
-                            [artifact, graph, dependencies],
-                        )?
-                        trace(f"unit {declared.crate_name} rust: reused")
-                        return Ok(
-                            BuiltUnit(
-                                crate_name=declared.crate_name,
-                                artifact=artifact.0,
-                                directory=directory.0,
-                                reused=true,
-                                search=reached_search,
-                            ),
-                        )
-    # 2. Withdraw the old proof and compile with rustc's dependency evidence.
-    if stamp.is_file():
-        stamp.unlink().map_err((error) => error.message())?
-    discovered = dependency_arguments(arguments, dependencies) + ["--sysroot", toolchain.sysroot]
-    invoke_rustc(request.rustc, discovered, environment, false, declared.crate_name)?
-    observations = compilation_observations(Path(facet.project), dependencies, arguments, linked, toolchain)?
-    trace(f"unit {declared.crate_name} rust: compiled (no current library proof)")
-    pending = directory.joinpath(f"{declared.package}.incngraph.{id()}.pending")
-    graph_arguments = ["--rust-compile-codegraph", pending.0, facet.project, "--sysroot", toolchain.sysroot] + arguments
-    invoke_rustc(toolchain.driver, graph_arguments, environment, false, declared.crate_name, Some(toolchain))?
-    # 3. Publish the graph and stamp the complete successful output set.
-    place(pending, graph)?
-    match library_artifact(directory, declared.crate_name, unit, declared.kind)?:
+    store = rust_store()?
+    name = rust_unit_name("library", declared.crate_name, context)
+    # 2. One bake per name at a time, in any checkout; a waiter finds what the holder baked.
+    held = claim_rust(store, name)?
+    view_prior_evidence(store, name, directory, dependencies)?
+    if let Some(identity) = baked_identity(facet, directory, arguments, environment, request, toolchain)?:
+        if baked_rust(store, identity, directory, facet.project, name)?:
+            match library_artifact(directory, declared.crate_name, context, declared.kind)?:
+                None => pass
+                Some(artifact) =>
+                    trace(f"unit {declared.crate_name} rust: reused identity={identity}")
+                    return Ok(
+                        BuiltUnit(
+                            crate_name=declared.crate_name,
+                            artifact=artifact.0,
+                            directory=directory.0,
+                            reused=true,
+                            search=reached_search,
+                        ),
+                    )
+    # 3. Compile with rustc's dependency evidence; nothing is baked unless every input held still.
+    artifact = compile_rust_producer(facet, declared, directory, arguments, environment, request, toolchain)?
+    key = rust_library_producer_key(facet, directory, arguments, environment, request, toolchain)?
+    if key.refusal == "":
+        identity = rust_library_graph_key(key, toolchain.driver)?.digest
+        outputs = [artifact, graph, dependencies]
+        record_portable(directory, key, outputs)?
+        portable = directory.joinpath("library.portable-inputs")
+        seal_rust(
+            store,
+            identity,
+            name,
+            key.digest,
+            key.provenance,
+            directory,
+            outputs,
+            [portable],
+            facet.project,
+            linked,
+        )?
+    match library_artifact(directory, declared.crate_name, context, declared.kind)?:
         None => return Err(f"rustc wrote no library for {declared.crate_name} into {directory.0}")
-        Some(artifact) =>
-            key = rust_library_producer_key(facet, directory, arguments, environment, request, toolchain)?
-            if not inputs_unchanged(dependencies, observations)?:
-                return Err(f"Rust producer inputs changed while compiling {declared.crate_name}")
-            record(stamp, key, [artifact, graph, dependencies])?
-            record(directory.joinpath("library.graph-inputs"), rust_library_graph_key(key, toolchain.driver)?, [graph])?
-            record_portable(
-                directory,
-                portable_key(key, directory, arguments, Path(facet.project), portable_compiler(request)?)?,
-                [artifact, graph, dependencies],
-            )?
+        Some(viewed) =>
             return Ok(
                 BuiltUnit(
                     crate_name=declared.crate_name,
-                    artifact=artifact.0,
+                    artifact=viewed.0,
                     directory=directory.0,
+                    reused=false,
                     search=reached_search,
                 ),
             )
+
+
+def baked_identity(
+    facet: LocalFacet,
+    directory: Path,
+    arguments: list[str],
+    environment: Dict[str, str],
+    request: RustBuild,
+    toolchain: Toolchain,
+) -> Result[Option[str], str]:
+    """The bakery identity of a Rust library and its graph, when its dependency evidence admits one."""
+    match rust_library_producer_key(facet, directory, arguments, environment, request, toolchain):
+        Err(reason) =>
+            if directory.joinpath("library.d").is_file():
+                trace(f"unit {facet.project}: dependency evidence names no baked identity: {reason}")
+            return Ok(None)
+        Ok(key) =>
+            if key.refusal != "":
+                trace(f"unit {facet.project}: dependency evidence names no baked identity: {key.refusal}")
+                return Ok(None)
+            return Ok(Some(rust_library_graph_key(key, toolchain.driver)?.digest))
+
+
+def compile_rust_producer(
+    facet: LocalFacet,
+    declared: RustFacet,
+    directory: Path,
+    arguments: list[str],
+    environment: Dict[str, str],
+    request: RustBuild,
+    toolchain: Toolchain,
+) -> Result[Path, str]:
+    """Compile a Rust library and its checked graph into `directory`, refusing inputs that changed meanwhile."""
+    forget_view(directory)?
+    dependencies = directory.joinpath("library.d")
+    graph = directory.joinpath(f"{declared.package}.incngraph")
+    context = artifact_context(facet, declared, request.profile)?
+    linked = extern_artifacts(arguments)
+    discovered = dependency_arguments(arguments, dependencies) + ["--sysroot", toolchain.sysroot]
+    invoke_rustc(request.rustc, discovered, environment, false, declared.crate_name)?
+    observations = compilation_observations(Path(facet.project), dependencies, arguments, linked, toolchain)?
+    identified = rust_library_producer_key(facet, directory, arguments, environment, request, toolchain)?
+    trace(f"unit {declared.crate_name} rust: compiled identity={identified.digest} (not baked)")
+    pending = directory.joinpath(f"{declared.package}.incngraph.{id()}.pending")
+    scratch = incremental_directory(request, facet, "library")
+    incremental = rust_incremental_arguments(scratch, arguments)
+    graph_arguments = ["--rust-compile-codegraph", pending.0, facet.project, "--sysroot", toolchain.sysroot] + incremental + materialized_arguments(
+        arguments,
+        identified,
+    )
+    invoke_rustc(toolchain.driver, graph_arguments, environment, false, declared.crate_name, Some(toolchain))?
+    # 3. Publish the graph and keep dependency evidence independent of the checkout.
+    relocate_dependencies(dependencies, Path(facet.project))?
+    place(pending, graph)?
+    match library_artifact(directory, declared.crate_name, context, declared.kind)?:
+        None => return Err(f"rustc wrote no library for {declared.crate_name} into {directory.0}")
+        Some(artifact) =>
+            key = rust_library_producer_key(facet, directory, arguments, environment, request, toolchain)?
+            if (
+                key.digest != identified.digest
+                or not inputs_unchanged(dependencies, observations, Some(Path(facet.project)), arguments)?
+            ):
+                return Err(f"Rust producer inputs changed while compiling {declared.crate_name}")
+            return Ok(artifact)
 
 
 def library_artifact(directory: Path, crate_name: str, unit: str, kind: str) -> Result[Option[Path], str]:
@@ -1227,18 +1360,19 @@ def compile_incan_library(
     2. Compile its complete Loaf artifact through the ordinary Incan unit compiler.
     3. Return its exact rlib to the Rust consumer.
     """
-    # 1. The graph's selected profile and features identify the provider's artifact.
+    # 1. The graph's profile and features identify the provider; its dependencies must expose Incan facades.
     root = Path(request.project).resolve().map_err((error) => error.message())?
     directory = dependency_artifact_dir(root.0, declared.package, request.profile)
     compiled_name = declared.package.replace("-", "_")
     artifact = directory.joinpath(f"lib{compiled_name}.rlib")
-    mut bindings = facet_bindings(facet, built, request.registry)?
-    mut dependency_search = facet_search(facet, built)?
+    providers = provider_dependencies(facet, request, built)?
+    mut bindings = facet_bindings(facet, providers, request.registry)?
+    mut dependency_search = facet_search(facet, providers)?
     if declared.kind != "incan":
-        native = compile_rust_library(facet, declared, output, request, built, search)?
+        native = compile_rust_library(facet, declared, output, request, providers, search)?
         bindings.append(NativeCrate(name=native.crate_name, path=native.artifact))
         dependency_search = dependency_search + [native.directory] + native.search
-    loaves = incan_artifacts(built)
+    loaves = incan_artifacts(providers)
     # 2. The graph already prepared every dependency; the source compiler only binds these selected artifacts.
     mut code: i32 = 1
     mut readings = NativeClosureInput()
@@ -1264,15 +1398,43 @@ def compile_incan_library(
     if code != 0:
         return Err(f"Incan library {declared.package} failed with exit code {code}")
     # 3. Rust's extern edge names the same public facade an Incan consumer receives.
+    stored = library_directory(bakery()?, directory)?
     return Ok(
         BuiltUnit(
             crate_name=compiled_name,
-            artifact=artifact.0,
-            directory=directory.0,
-            search=native_search(directory.joinpath(f"{declared.package}.native.json"), readings)?,
+            artifact=stored.joinpath(artifact.name()).0,
+            directory=stored.0,
+            search=native_search(stored.joinpath(f"{declared.package}.native.json"), readings)? + dependency_search,
             loaf=declared.package,
         ),
     )
+
+
+def provider_dependencies(
+    facet: LocalFacet,
+    request: RustBuild,
+    built: Dict[str, BuiltUnit],
+) -> Result[Dict[str, BuiltUnit], str]:
+    """An Incan provider consumes complete Loaf facades even when its outer Rust graph selects native facets."""
+    if not request.rust_facet_dependencies:
+        return Ok(built)
+    mut needs_facade = false
+    for edge in facet.local:
+        if edge.key() in built and built[edge.key()].loaf == "":
+            if library_source(Path(edge.project), request.manifests)?.is_file():
+                needs_facade = true
+    if not needs_facade:
+        return Ok(built)
+    # The same graph producer prepares the provider's ordinary Incan dependency closure; compiled units are shared.
+    mut provider = request
+    provider.project = facet.project
+    provider.features = facet.features
+    provider.default_features = false
+    provider.all_features = false
+    provider.rust_facet_dependencies = false
+    demand = LocalDemand(project=facet.project, domain=facet.domain, features=facet.features, defaults=false)
+    dependencies = local_facets(demand, target_configuration(request.rustc)?, request.substitutes, request.manifests)?
+    return build_dependencies(provider, dependencies, false)
 
 
 pub def native_search(closure: Path, readings: NativeClosureInput = NativeClosureInput()) -> Result[list[str], str]:
@@ -1323,6 +1485,9 @@ pub def compile_binary(
     2. Link the root's own library, then everything the facet links.
     3. A binary that links the toolchain's own libraries carries the runpaths to find them.
     4. Reuse an unchanged binary, or compile and atomically publish it.
+
+    Dependency evidence that is absent, stale or cannot identify the selected checkout is rescanned before anything
+    is hashed. Published dep-info names project sources relatively, so a later checkout can validate the same unit.
     """
     # 1. The binary is named after its `[[rust.bin]]` and compiled from its root file, into the profile's `bin`.
     directory = output.joinpath("bin")
@@ -1336,31 +1501,101 @@ pub def compile_binary(
     # 2. The binary links the root's own library first when it has one, then everything the facet links.
     mut libraries: Option[ToolchainLibraries] = None
     if declared.sysroot:
-        libraries = Some(toolchain_libraries(request.rustc, facet.project)?)
+        libraries = Some(toolchain_libraries(request.rustc)?)
     environment = binary_environment(request.rustc, facet.project, declared, crate_id, libraries)?
     # 3. A binary that loads the toolchain's own libraries can find them, wherever its `sysroot` link points.
     if let Some(selected) = libraries:
         arguments = arguments + runpath_arguments(selected)
-    # 4. An unchanged binary is reused; otherwise the completed replacement is published atomically.
-    stamp = directory.joinpath(f"{output_name}.oven-inputs")
-    inputs = binary_key(output_name, source, facet, declared, request, arguments, environment)?
-    why = staleness([binary], stamp, inputs)?
+    # 4. A baked binary of the identity is viewed; otherwise it is compiled and baked.
+    dependencies = directory.joinpath(f"{output_name}.d")
+    mut inputs = binary_key(directory, dependencies, facet, declared, request, arguments, environment)?
     label = f"unit {name} rust binary"
-    if why == "":
-        trace(f"{label}: reused")
-        println(f"reused {name}")
+    store = rust_store()?
+    if view_baked_binary(store, inputs, name, output_name, directory, facet.project)?:
         return Ok(binary.0)
-    building = binary.lock_exclusive().map_err((error) => error.message())?
-    if reusable([binary], stamp, inputs)?:
-        trace(f"{label}: reused (built meanwhile by another command)")
-        println(f"reused {name}")
+    # Old dep-info proposes a hit only. A miss rescans before claiming the complete identity: new modules and
+    # newly selected includes must enter that identity before the native producer runs.
+    discovered = dependency_arguments(arguments, dependencies)
+    invoke_rustc(request.rustc, discovered, environment, declared.unstable, name)?
+    inputs = binary_key(directory, dependencies, facet, declared, request, arguments, environment)?
+    held = claim_rust(store, f"binary {inputs.digest}")?
+    if view_baked_binary(store, inputs, name, output_name, directory, facet.project)?:
         return Ok(binary.0)
-    trace(f"{label}: compiled ({why})")
-    staged = directory.joinpath(f"{name}.pending")
-    invoke_rustc(request.rustc, arguments + ["-o", staged.0], environment, declared.unstable, name)?
-    install_all([staged], [binary], stamp, inputs)?
+    trace(f"{label}: compiled (not baked)")
+    toolchain = selected_toolchain(request)?
+    observations = compilation_observations(Path(facet.project), dependencies, arguments, [], toolchain)?
+    staged = staging(store, f"binary-{name}")?
+    staged_binary = staged.joinpath(output_name)
+    staged_dependencies = staged.joinpath(f"{output_name}.d")
+    emitted = materialized_arguments(arguments, inputs) + [
+        "--emit",
+        f"link,dep-info={staged_dependencies.0}",
+        "-o",
+        staged_binary.0,
+    ]
+    scratch = incremental_directory(request, facet, output_name)
+    invoke_rustc(
+        request.rustc,
+        emitted + rust_incremental_arguments(scratch, arguments),
+        environment,
+        declared.unstable,
+        name,
+    )?
+    current = binary_key(directory, staged_dependencies, facet, declared, request, arguments, environment)?
+    if (
+        current.digest != inputs.digest
+        or not inputs_unchanged(staged_dependencies, observations, Some(Path(facet.project)), arguments)?
+    ):
+        return Err(f"Rust producer inputs changed while compiling {name}")
+    if current.refusal != "":
+        place(staged_binary, binary)?
+        place(staged_dependencies, dependencies)?
+        println(f"compiled {name}")
+        return Ok(binary.0)
+    # Baked evidence is interpreted in each consumer's checkout, just as a library's dependency evidence is.
+    relocate_dependencies(staged_dependencies, Path(facet.project))?
+    fact = seal(
+        store,
+        current.digest,
+        staged,
+        "rust binary",
+        rust_unit_name("binary", output_name, ""),
+        [],
+        "rust binary",
+    )?
+    register_root(store, facet.project, rust_unit_name("binary", output_name, ""), [current.digest])?
+    view(store, fact, output_name, binary)?
+    view(store, fact, f"{output_name}.d", dependencies)?
     println(f"compiled {name}")
     return Ok(binary.0)
+
+
+def incremental_directory(request: RustBuild, facet: LocalFacet, role: str) -> Path:
+    """Keep per-unit rustc scratch in the requesting build's target, even when artifacts publish into a home."""
+    slot = facet_slot(facet, request.profile)
+    return rust_output(Path(request.project), request.profile).joinpath("incremental").joinpath(f"{slot}-{role}")
+
+
+def view_baked_binary(
+    store: Path,
+    key: Key,
+    name: str,
+    output_name: str,
+    directory: Path,
+    project: str,
+) -> Result[bool, str]:
+    """View and report a baked binary with its dep-info; false for a miss or refused identity."""
+    if key.refusal != "":
+        return Ok(false)
+    match find(store, key.digest)?:
+        None => return Ok(false)
+        Some(fact) =>
+            register_root(store, project, rust_unit_name("binary", output_name, ""), [key.digest])?
+            view(store, fact, output_name, directory.joinpath(output_name))?
+            view(store, fact, f"{output_name}.d", directory.joinpath(f"{output_name}.d"))?
+            trace(f"unit {name} rust binary: reused")
+            println(f"reused {name}")
+            return Ok(true)
 
 
 pub def binary_arguments(
@@ -1388,7 +1623,14 @@ pub def binary_arguments(
         return Err(f"Rust test graph has no selected production library {library}")
     if library in built and (not testing or source != declared.library):
         selected = selected + ["--extern", f"{declared.crate_name}={built[library].artifact}"]
-    return Ok(selected + linking(facet, request, built, search)?)
+    context = fingerprint(
+        [artifact_context(facet, declared, request.profile)?, declared.package, declared.version, name, str(testing)],
+    )?
+    return Ok(
+        selected + ["-C", rust_metadata(request.profile, context)] + linking(facet, request, built, search)? + remap_arguments(
+            facet.project,
+        ),
+    )
 
 
 def runpath_arguments(libraries: ToolchainLibraries) -> list[str]:
@@ -1409,32 +1651,40 @@ def runpath_arguments(libraries: ToolchainLibraries) -> list[str]:
 
 
 def binary_key(
-    name: str,
-    source: str,
+    directory: Path,
+    dependencies: Path,
     facet: LocalFacet,
     declared: RustFacet,
     request: RustBuild,
     arguments: list[str],
     environment: Dict[str, str],
 ) -> Result[Key, str]:
-    """Key a binary's sources, exact rustc, arguments, linked libraries and effective build environment."""
-    unit = identity(facet, request.profile)
-    ledger = unit_ledger(request.project, f"rust-{request.profile}-bin-{name}-{unit}")
-    mut crates = load_ledger(ledger, SETTLE_SECONDS, "")
-    compiler = fingerprint([request.rustc, artifact_identity(Path(request.rustc))?, run_text(request.rustc, ["-vV"])?])?
-    mut described = [f"binary {name} {declared.package} {declared.version} unstable={declared.unstable}"] + arguments
-    for variable in sorted([key for key in environment.keys()]):
-        described.append(f"{variable}={environment[variable]}")
-    key = rust_key(
+    """
+    Use the same observed-source identity as libraries, refusing location-dependent embedded runtime paths. Evidence
+    that is absent or stale names no identity, so the caller scans before anything is hashed.
+    """
+    for argument in arguments:
+        if argument.startswith("link-arg=-Wl,-rpath,/"):
+            return Ok(
+                Key(
+                    digest="",
+                    parts=[],
+                    provenance=[facet.project],
+                    refusal="unit identity refused: absolute runtime search path",
+                ),
+            )
+    compiler = native_compiler_fingerprint(request.rustc)?
+    facts = arguments + [f"domain={facet.domain.value()}", f"unstable={declared.unstable}"]
+    return library_key(
+        Path(facet.project),
+        directory,
+        dependencies,
+        facts,
+        environment,
+        [],
+        selected_toolchain(request)?,
         compiler,
-        described,
-        Path(facet.project).joinpath("loaf.toml"),
-        Path(source).parent(),
-        extern_artifacts(arguments),
-        crates,
-    )?
-    crates.save()?
-    return Ok(key)
+    )
 
 
 pub def binary_environment(
@@ -1447,18 +1697,18 @@ pub def binary_environment(
     """The package and pinned-driver identity environment shared by binary compilation and analysis."""
     mut environment = package_environment(project, declared, name)
     if declared.sysroot:
-        libraries = binary_libraries(rustc, project, retained)?
+        libraries = binary_libraries(rustc, retained)?
         for variable in sorted([key for key in libraries.environment.keys()]):
             value = libraries.environment[variable]
             environment[variable] = value
     return Ok(environment)
 
 
-def binary_libraries(rustc: str, project: str, retained: Option[ToolchainLibraries]) -> Result[ToolchainLibraries, str]:
+def binary_libraries(rustc: str, retained: Option[ToolchainLibraries]) -> Result[ToolchainLibraries, str]:
     """Reuse the binary's selected toolchain libraries during both argument and environment construction."""
     match retained:
         Some(selected) => return Ok(selected)
-        None => return toolchain_libraries(rustc, project)
+        None => return toolchain_libraries(rustc)
 
 
 model ToolchainLibraries:
@@ -1475,7 +1725,7 @@ model ToolchainLibraries:
     environment: Dict[str, str]
 
 
-def toolchain_libraries(rustc: str, project: str) -> Result[ToolchainLibraries, str]:
+def toolchain_libraries(rustc: str) -> Result[ToolchainLibraries, str]:
     """
     The pinned toolchain's one `rustc_driver` library (in `lib`) and its identity.
 
@@ -1483,11 +1733,12 @@ def toolchain_libraries(rustc: str, project: str) -> Result[ToolchainLibraries, 
     2. The toolchain's `lib` holds exactly one `rustc_driver`. The rustc-dev component keeps a byte-identical copy in
        `lib/rustlib/<host>/lib`, but only the copy in `lib` finds the libraries it loads itself, such as a Linux
        toolchain's shared LLVM: an ELF loader resolves a library's dependencies through that library's own runpath.
-    3. Its identity is the compiler's version output and the digest of the library's bytes.
+    3. Its identity is the compiler's version output and the digest of the library's bytes, which the home hashes once
+       per library generation (see `retained_readings`).
     """
     # 1. The sysroot and host triple are the pinned compiler's own, so the library found is the one it was built with.
-    sysroot = run_text(rustc, ["--print", "sysroot"])?.strip()
-    compiler = run_text(rustc, ["-vV"])?
+    sysroot = compiler_sysroot(rustc)?
+    compiler = compiler_version(rustc)?
     mut host = ""
     for line in compiler.split("\n"):
         if line.startswith("host: "):
@@ -1505,9 +1756,7 @@ def toolchain_libraries(rustc: str, project: str) -> Result[ToolchainLibraries, 
         return Err(f"{holds}; the rustc component gives exactly one")
     # 3. The identity is content, not location: the compiler's version output and the digest of the library's bytes.
     library = found[0]
-    mut observations = load_ledger(unit_ledger(project, "rustc-driver"), SETTLE_SECONDS, "")
-    digest = observations.digest(library)?
-    observations.save()?
+    digest = installed_digest(library)?
     environment: Dict[str, str] = {"INCAN_DRIVER_RUSTC_IDENTITY": compiler, "INCAN_DRIVER_LIBRARY": f"{relative}/{library.name()}", "INCAN_DRIVER_LIBRARY_DIGEST": digest}
     mut origin = "$ORIGIN"
     if host.endswith("apple-darwin"):

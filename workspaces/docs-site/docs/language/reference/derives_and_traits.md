@@ -57,6 +57,7 @@ model Wrapped:
 
 - `@derive(...)` names derives from the catalog. `json` needs `from std.serde import json`, and `Serialize` and `Deserialize` need their import from `std.serde.json`.
 - `@derive(...)` also names a trait imported by name that its module lists in `__derives__` (`from codec import Encode`, then `@derive(Encode)`), or a module that declares `__derives__` (`import codec`, then `@derive(codec)`, which names each trait in the module's `__derives__` list). A model or class adopts each such trait as a `with` clause adopts it: the trait's methods, default methods included, are called on the type (`item.tag()`), and the type satisfies a bound on the trait.
+- A module's `__derives__` entries may refer to imported traits, including renamed imports. The adopting type implements the original trait; the bundle does not create a new trait identity. Importing the bundle under another name or combining it with another bundle that names the same trait does not create a second adoption. A distinct user trait with the same name does not satisfy the original trait's bounds.
 - An `enum` or `newtype` adopts such a trait in the same way.
 - `@derive(...)` also names a derive imported from a Rust crate (`from rust::serde import Serialize`, then `@derive(Serialize)`); it applies to the type as the same name in `@rust.derive(...)` does.
 - A derive on a generic declaration holds for each instantiation whose type arguments implement it. A field, payload or underlying type that is one of the declaration's type parameters meets the derive's **Requires** entry.
@@ -245,6 +246,36 @@ def main() -> None:
     e = len[int]([1])             # refused: brackets on a builtin call (INCAN-T0001)
 ```
 
+### Bounds that name a type
+
+- A `with` bound may name a type instead of a trait: a builtin type in either spelling (`int` or `Int`), or a model, class, enum, newtype or type alias, declared or imported. Only that type satisfies the bound; an alias of a type satisfies a bound on its target. Any other type argument is refused (`INCAN-T0001`).
+- Overloads that differ only in such a bound are selected by the explicit type argument, directly or through an alias of the function.
+- A name that is a trait keeps its trait meaning, so a type never stands in for a trait of the same name.
+
+```incan
+model Col:
+    name: str
+
+model IntCol:
+    src: str
+
+model FloatCol:
+    src: str
+
+def cast[T with Int](expr: Col) -> IntCol:
+    return IntCol(src=expr.name)
+
+def cast[T with Float](expr: Col) -> FloatCol:
+    return FloatCol(src=expr.name)
+
+safe_cast = alias cast
+
+def main() -> None:
+    a = cast[Int](Col(name="a"))          # accepted: a is IntCol
+    b = safe_cast[float](Col(name="b"))   # accepted: b is FloatCol
+    c = cast[str](Col(name="c"))          # refused: no overload is bound to str (INCAN-T0001)
+```
+
 ## Traits (authoring)
 
 - A trait declares methods. A required method is a signature with no body (`def render(self) -> str`, or with `: ...`); a default method has a body.
@@ -428,6 +459,39 @@ model Source with ReadsInt, ReadsStr:
 
     def read(self, value: str) -> str:               # refused: unrelated traits share the name without `for` targets (INCAN-T0001)
         return value
+```
+
+### Rust traits on a class
+
+A `class` adopts a trait imported with `from rust::...` the same way: `class Hooks with Callbacks`.
+
+- The class and the trait are concrete: neither has type parameters, and the trait declares only methods, no associated types or constants. Otherwise the adoption is refused (`INCAN-T0001`).
+- Each class method named like a trait method implements it. It is an instance method with a body and without type parameters; another method of that name is refused (`INCAN-T0001`). A method with a `for` target naming another trait implements only that trait.
+- A trait method the class does not declare keeps the trait's default.
+- Rust checks the implementation when the program is built. A missing required method (`E0046`) or a method whose receiver or signature differs from the trait's (`E0053`) refuses the build.
+- A class value passes to a Rust parameter that takes a reference to a trait object (`&dyn Trait`, `&mut (dyn Trait + Send)`) by a borrow of the value. A mutable borrow needs a `mut` binding; another binding is refused (`INCAN-T0001`). A Rust value passes the same way when its type implements the trait.
+- Every bound of the trait object holds: implementing the principal trait does not make a class `Send` or `Sync`. A build where the value cannot convert to the object, for example a class holding an `Rc`, is refused.
+
+A native struct field whose type a program cannot hold stays opaque: reading or writing it, or constructing the struct, is refused when the program is built. The struct's other fields stay usable.
+
+The host API used below declares `trait Callbacks { fn config(&mut self, _config: &mut Config) {} }`, `struct Config { pub flags: Vec<String> }` and `fn run(callbacks: &mut (dyn Callbacks + Send))`.
+
+```incan
+from rust::host import Callbacks, Config, run
+
+class Hooks with Callbacks:
+    calls: int = 0
+    flag: str
+
+    def config(mut self, mut config: &mut Config) -> None:
+        self.calls += 1
+        config.flags.append(self.flag)
+
+def main() -> None:
+    mut hooks = Hooks(flag="first")
+    run(hooks)        # accepted: lends hooks as &mut (dyn Callbacks + Send)
+    shared = Hooks(flag="second")
+    run(shared)       # refused: needs a mutable borrow (INCAN-T0001)
 ```
 
 ### `@requires(...)` (adopter contract)

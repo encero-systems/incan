@@ -24,6 +24,7 @@ from rust_activation import (
 )
 from intake import FeatureDeclaration, feature_declaration, ManifestReader
 from toml_fields import optional_flag, optional_string, optional_strings, read_manifest, required_string
+from pub::incan_platform.trace import Operation
 from jec import begin, record
 
 
@@ -542,7 +543,7 @@ pub def local_facets(
     if root.domain == DependencyDomain.Host:
         domain = "host"
     key = (f"{root.project}|{domain}|{configuration.triple}|{",".join(sorted(root.features))}|" + f"{root.defaults}|{root.all_features}")
-    record("graph_resolution", key, clock)
+    record(Operation.GraphResolution, key, clock)
     return Ok(facets)
 
 

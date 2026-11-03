@@ -65,25 +65,25 @@ pub def trigger_recursive() -> str:
 
 
 @register()
-def concurrent_binding[T]() -> str:
-    """Return the closed schema after successful concurrent initialization."""
+def concurrent_binding[T](value: T) -> str:
+    """Return the closed schema after successful concurrent initialization of a signature using its binder."""
     return T.__class_name__()
 
 
 @register()
-def retry_binding[T]() -> str:
-    """Return the closed schema after the first initializer has failed and a later one retries."""
+def retry_binding[T](value: T) -> str:
+    """Retry a failed initializer once per closed instance even when its signature names the binder."""
     return T.__class_name__()
 
 
 pub def concurrent_success() -> str:
     """Request the same closed binding from each successful worker."""
-    return concurrent_binding[Nested]()
+    return concurrent_binding[Nested](Nested(value=0))
 
 
 pub def concurrent_retry() -> str:
     """Request the same closed binding from the failing and retrying workers."""
-    return retry_binding[Nested]()
+    return retry_binding[Nested](Nested(value=0))
 
 
 @register()

@@ -1,0 +1,513 @@
+"""Translate checked Body IR places, operands, and constants into plan values, and map retained spans to source locations."""
+
+from pub::incan_mir_plan import (
+    source_span as plan_span,
+    CalleeKind,
+    ExternalFunction,
+    Constant,
+    Operand,
+    OperandKind,
+    Place,
+    PlanType,
+    tuple_element_type,
+    Projection,
+    RvalueKind,
+    SourceSpan,
+    assign as plan_assign,
+    place as plan_place,
+)
+from newtype_constants import numeric_newtype_literal
+from layout_types import native_source_type
+from scalar_reads import scalar_storage_place
+from decimal_plan import decimal_literal, is_decimal_literal
+from frozen_plan import frozen_literal, frozen_collection_literal, frozen_observation_type
+from rust::std::string import String as RustString
+from rust::std::primitive import str as RustStr
+from rust::incan_semantics_core import IncanType as RustType, HirSourceSpan as RustSpan
+from rust::incan_semantics_core::body_ir import (
+    Constant as RustConstant,
+    Operand as RustOperand,
+    OwnershipFact,
+    Place as RustPlace,
+    PlaceElem,
+)
+from table_views import borrowed_at, borrowed_table
+from element_places import is_element_place
+from models import model_place
+from unions import union_projection
+from tuples import is_tuple_type, tuple_has_owners, owned_carrier
+from text_plan import clone_text, owned_literal
+from options import carrier_payload_value, clone_tuple_operand
+from numerics import numeric_constant, numeric_carrier
+from frame import place_type, Builder, temporary, track_rvalue_moves, terminate_call, read_place, literal
+from lists import is_list, is_exclusive_borrow
+from closures import callable_copy_type
+from partial_callables import partial_flags
+from statements import is_nominal_type, validate_callback_place
+from callable_calls import callable_object
+from model_construction import clone_nominal_operand
+from static_storage import read_static
+from list_values import element_read
+from matches import enum_payload_read
+from carrier_operands import boundary_operand
+
+
+pub def location(span: &RustSpan, source: &str, file: str) -> SourceSpan:
+    """Map the checked byte offset to its line and byte column through borrowed UTF-8 line views."""
+    mut start = 0
+    mut number = 1
+    offset = int(span.start)
+    separator = "\n"
+    for line in RustStr.split(RustString.as_str(source), RustString.as_str(separator)):
+        width = int(RustStr.len(line))
+        if offset <= start + width:
+            return plan_span(file=file, line=number, column=offset - start + 1)
+        start += width + 1
+        number += 1
+    return plan_span(file=file, line=number, column=1)
+
+
+pub def line_starts(source: &str) -> list[int]:
+    """Each line's starting byte offset, then the offset just past the last line, as `location` counts them."""
+    mut starts: list[int] = [0]
+    mut start = 0
+    separator = "\n"
+    for line in RustStr.split(RustString.as_str(source), RustString.as_str(separator)):
+        start += int(RustStr.len(line)) + 1
+        starts.append(start)
+    return starts
+
+
+pub def indexed_location(starts: &list[int], span: &RustSpan, file: str) -> SourceSpan:
+    """Map a byte offset as `location` does, by binary search over the frame's line starts."""
+    offset = int(span.start)
+    mut low = 0
+    mut high = len(starts) - 1
+    while low < high:
+        middle = (low + high + 1) // 2
+        if starts[middle] <= offset:
+            low = middle
+        else:
+            high = middle - 1
+    # An offset past the last line takes the line after it, at its first column.
+    if low == len(starts) - 1:
+        return plan_span(file=file, line=low + 1, column=1)
+    return plan_span(file=file, line=low + 1, column=offset - starts[low] + 1)
+
+
+pub def builder_location(builder: &Builder, span: &RustSpan) -> SourceSpan:
+    """Map a span in the frame's source through its line starts; a frame without them scans its source."""
+    if len(builder.line_starts) == 0:
+        return location(span, builder.source, builder.file)
+    return indexed_location(builder.line_starts, span, builder.file)
+
+
+pub def scalar_place(mut builder: Builder, value: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+    """Map a local or proven model field into the native frame, which reserves local zero for return."""
+    validate_callback_place(builder, value)?
+    match union_projection(builder, value, span)?:
+        Some(projected) => return Ok(projected)
+        None => pass
+    # The frame's slots start at its offset in the shared locals table; borrow the table rather than copy a suffix.
+    mut target = match model_place(
+        builder.constructors,
+        builder.nominals,
+        borrowed_table(builder.locals),
+        value,
+        span,
+        builder.enums,
+        builder.unions,
+        builder.intrinsics,
+        builder.local_offset,
+    ):
+        Ok(place) => place
+        Err(error) => return Err(f"{error} in {builder.name} at {span.file}:{span.line}")
+
+    target.local += builder.local_offset
+    return scalar_storage_place(builder.locals, builder.reference_values, target)
+
+
+pub def scalar_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
+    """Preserve each scalar read's checked ownership fact rather than inferring it."""
+    match value:
+        RustOperand.Place(read) => return place_read(builder, read.place, read.fact, span)
+        RustOperand.Constant(constant) =>
+            match constant:
+                RustConstant.RustItem(path, ty) =>
+                    carrier = native_source_type(
+                        builder.constructors,
+                        builder.nominals,
+                        builder.enums,
+                        builder.unions,
+                        ty,
+                        builder.intrinsics,
+                    )?
+                    return Ok(literal(Constant.RustItem(str(path), carrier), span))
+                RustConstant.TypeToken(represented) => return type_token_literal(builder, represented, span)
+                RustConstant.FrozenAggregate(ty, elements) =>
+                    layout = native_source_type(
+                        builder.constructors,
+                        builder.nominals,
+                        builder.enums,
+                        builder.unions,
+                        ty,
+                        builder.intrinsics,
+                    )?
+                    if is_tuple_type(layout):
+                        return retained_tuple_constant(builder, layout, elements, span)
+                    return frozen_collection_literal(builder, constant, span)
+                RustConstant.NumericNewtype(_value) => return numeric_newtype_literal(builder, constant, span)
+                RustConstant.Str(text) => return Ok(read_place(owned_literal(builder, str(text), span), true, span))
+                RustConstant.FrozenStr(_text) => return frozen_literal(builder, constant, span)
+                RustConstant.TypedNumeric(value) =>
+                    if is_decimal_literal(value):
+                        return decimal_literal(builder, value, span)
+                _ => return scalar_constant(constant, span)
+            return scalar_constant(constant, span)
+
+
+def type_token_literal(mut builder: Builder, represented: &RustType, span: SourceSpan) -> Result[Operand, str]:
+    """Construct the existing SDK marker with the checked primitive type, keeping its real native ADT and signature."""
+    argument = native_source_type(
+        builder.constructors,
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        represented,
+        builder.intrinsics,
+    )?
+    match argument:
+        (PlanType.Int | PlanType.Float | PlanType.Bool | PlanType.String) => pass
+        _ => return Err("unsupported Body IR nonprimitive TypeToken value")
+    marker = PlanType.TypeToken([argument])
+    path = "incan_std_core::reflection::TypeToken::new"
+    builder.externals.append(
+        ExternalFunction(path=path, type_arguments=[argument], parameters=[], return_type=marker, span=span),
+    )
+    output = temporary(builder, marker, span)
+    terminate_call(builder, CalleeKind.Instantiated(path, [argument]), [], output, span)
+    return Ok(read_place(output, false, span))
+
+
+def retained_tuple_constant(
+    mut builder: Builder,
+    layout: PlanType,
+    elements: &list[RustConstant],
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Materialize a retained literal tuple at its checked field carriers, transferring owned fields into one cleanup owner."""
+    match layout:
+        PlanType.Tuple(fields) =>
+            if len(fields) != len(elements):
+                return Err("invalid Body IR retained tuple constant arity")
+            mut values: list[Operand] = []
+            for index in range(len(fields)):
+                value = boundary_operand(
+                    builder,
+                    RustOperand.Constant(elements[index].clone()),
+                    tuple_element_type(fields[index]),
+                    span,
+                )?
+                values.append(value)
+            output = temporary(builder, layout, span)
+            operation = RvalueKind.Tuple(values)
+            track_rvalue_moves(builder, operation)
+            builder.emit(plan_assign(output, operation, span))
+            owned = tuple_has_owners(layout)
+            if owned:
+                builder.owned.append(output.local)
+            return Ok(read_place(output, owned, span))
+        _ => return Err("unsupported Body IR retained constant without tuple layout")
+
+
+pub def place_read(
+    mut builder: Builder,
+    value: &RustPlace,
+    fact: &OwnershipFact,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Turn a place read into a copy or move exactly as Body IR's ownership fact says."""
+    match value.global():
+        Some(global) => return read_static(builder, value, global, fact, span)
+        None => pass
+    match reference_value_read(builder, value, fact, span)?:
+        Some(reference) => return Ok(reference)
+        None => pass
+    # An element read materializes a copy, which would silently drop a write through a mutable borrow.
+    match fact:
+        OwnershipFact.MutBorrow =>
+            if is_element_place(builder, value)?:
+                return Err("unsupported Body IR mutable list element borrow")
+        _ => pass
+    if fact == OwnershipFact.Move and len(value.projection) == 0:
+        match value.local_id():
+            Some(local) =>
+                index = int(local.index()) + 1 + builder.local_offset
+                if is_exclusive_borrow(borrowed_at(builder.locals, index).ty):
+                    return Ok(read_place(plan_place(index, span), true, span))
+            None => pass
+    match element_read(builder, value, span)?:
+        Some(operand) => return Ok(operand)
+        None => pass
+    source = scalar_place(builder, value, span)?
+    return target_read(builder, source, fact, span)
+
+
+pub def reference_read_fact(fact: &OwnershipFact) -> bool:
+    """Admit checked value reads of a logical reference. Copy, clone, borrow, and last-use transfer never authorize moving its referent; unknown and mutable borrowing remain separate operations."""
+    match fact:
+        (OwnershipFact.Copy | OwnershipFact.Clone | OwnershipFact.Borrow | OwnershipFact.Move) => return true
+        _ => return false
+
+
+pub def reference_value_read(
+    mut builder: Builder,
+    value: &RustPlace,
+    fact: &OwnershipFact,
+    span: SourceSpan,
+) -> Result[Option[Operand], str]:
+    """
+    Read an explicitly reference-typed slot or structural tuple field as its reference, never its referent.
+    Shared references can copy; exclusive references transfer only under a checked Move. Borrowed storage for
+    source receivers is ineligible.
+    """
+    if len(value.projection) != 0:
+        for projection in value.projection:
+            match projection:
+                PlaceElem.Field(name=_name, canonical=_canonical, structural=structural) =>
+                    if not structural:
+                        return Ok(None)
+                _ => return Ok(None)
+        target = scalar_place(builder, value, span)?
+        match place_type(builder.locals, target):
+            (
+                PlanType.StrRef
+                | PlanType.ScalarRef(_)
+                | PlanType.ModelRef(_, _)
+                | PlanType.SliceRef(_)
+                | PlanType.NativeArrayRef(_, _)
+                | PlanType.StringRef
+                | PlanType.EnumRef(_, _)
+            ) =>
+                if not reference_read_fact(fact):
+                    return Err("unsupported Body IR projected reference without a checked read")
+                return Ok(Some(read_place(target, false, span)))
+            _ => pass
+        return Ok(None)
+    match value.local_id():
+        None => return Ok(None)
+        Some(local) =>
+            index = int(local.index()) + 1 + builder.local_offset
+            if index not in builder.reference_values:
+                return Ok(None)
+            if not reference_read_fact(fact):
+                return Err("unsupported Body IR reference value without a checked copy or transfer")
+            if is_exclusive_borrow(borrowed_at(builder.locals, index).ty) and fact != OwnershipFact.Move:
+                return Err("unsupported Body IR exclusive reference value without a checked transfer")
+            return Ok(Some(read_place(plan_place(index, span), fact == OwnershipFact.Move, span)))
+
+
+def is_direct_tuple_field(place: Place) -> bool:
+    """Limit field transfers to a direct tuple component whose remainder the frame can track."""
+    match place.projection:
+        Projection.Field(_slot, _ty) => return true
+        _ => return false
+
+
+pub def target_read(
+    mut builder: Builder,
+    target: Place,
+    fact: &OwnershipFact,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Read callable storage or apply checked ownership to ordinary fields and payloads through their actual carrier."""
+    # Only the binding remembers a partial's supplied flags, so a partial is called or moved into a binding, never
+    # read.
+    match partial_flags(builder, target.local):
+        Some(_flags) => return Err("unsupported Body IR partial read outside a call or a binding")
+        None => pass
+    if callable_copy_type(place_type(builder.locals, target)):
+        match fact:
+            OwnershipFact.Unknown => return Err("unsupported Body IR unknown callable ownership")
+            OwnershipFact.MutBorrow => return Err("unsupported Body IR mutable callable borrow")
+            _ => return Ok(read_place(target, false, span))
+    match place_type(builder.locals, target):
+        PlanType.TupleRef(_elements) =>
+            match fact:
+                OwnershipFact.Unknown => return Err("unsupported Body IR unknown shared tuple ownership")
+                OwnershipFact.MutBorrow => return Err("unsupported Body IR mutable shared tuple borrow")
+                _ => return Ok(read_place(target, false, span))
+        PlanType.Future(_output) =>
+            if fact != OwnershipFact.Move or target.projection != Projection.Whole:
+                return Err("unsupported Body IR future read without whole ownership transfer")
+            return Ok(read_place(target, true, span))
+        PlanType.ClosureRef(_signature) =>
+            match fact:
+                OwnershipFact.Unknown => return Err("unsupported Body IR unknown callable-object ownership")
+                OwnershipFact.MutBorrow => return Err("unsupported Body IR mutable callable-object borrow")
+                _ => return Ok(read_place(target, false, span))
+        PlanType.NativeClosure(_signature, _send, _sync) =>
+            if fact != OwnershipFact.Move or target.projection != Projection.Whole:
+                return Err("unsupported Body IR native callback read without owned transfer")
+            return Ok(read_place(target, true, span))
+        PlanType.Closure(signature) =>
+            # A narrowed payload stays owned by its carrier; reading its value snapshots only the selected environment.
+            if fact == OwnershipFact.Borrow:
+                match target.projection:
+                    Projection.VariantField(_variant, _slot, _ty) =>
+                        return target_read(builder, target, OwnershipFact.Clone, span)
+                    (
+                        Projection.Field(_, _)
+                        | Projection.Fields(_)
+                        | Projection.DerefField(_, _)
+                        | Projection.DerefFields(_)
+                    ) => return callable_object(builder, target, signature, span)
+                    _ => pass
+            match fact:
+                OwnershipFact.Move =>
+                    if target.projection != Projection.Whole:
+                        return Err("unsupported Body IR partial closure move")
+                    return Ok(read_place(target, true, span))
+                OwnershipFact.Clone =>
+                    receiver = callable_object(builder, target, signature, span)?
+                    result = temporary(builder, PlanType.Closure(signature), span)
+                    terminate_call(builder, CalleeKind.CloneClosure(signature), [receiver], result, span)
+                    builder.owned.append(result.local)
+                    return Ok(read_place(result, true, span))
+                _ =>
+                    site = f"{builder.file}:{span.line}:{span.column} in {builder.name}"
+                    return Err(
+                        f"unsupported Body IR closure read outside a call, argument, clone, or move at {site}; ownership {fact:?}; projection {target.projection:?}",
+                    )
+        _ => pass
+    return owned_target_read(builder, target, fact, span)
+
+
+def owned_target_read(
+    mut builder: Builder,
+    target: Place,
+    fact: &OwnershipFact,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Apply checked ownership to ordinary storage after callable and producer representations have been handled."""
+    match fact:
+        OwnershipFact.Copy => return Ok(Operand(kind=OperandKind.Copy(target), span=span))
+        OwnershipFact.Move =>
+            holder = borrowed_at(builder.locals, target.local)
+            transferred_tuple_field = is_tuple_type(holder.ty) and is_direct_tuple_field(target)
+            if (
+                target.projection != Projection.Whole
+                and not transferred_tuple_field
+                and (
+                    place_type(builder.locals, target) == PlanType.String
+                    or tuple_has_owners(place_type(builder.locals, target))
+                )
+            ):
+                return Err("unsupported Body IR partial model move")
+            # The whole tuple stays an owner, so moving an owned element out of it would drop that element twice.
+            if (
+                target.projection != Projection.Whole
+                and not transferred_tuple_field
+                and is_tuple_type(borrowed_at(builder.locals, target.local).ty)
+                and owned_carrier(place_type(builder.locals, target))
+            ):
+                return Err("unsupported Body IR partial tuple move")
+            # A value reached through a reference stays its owner's; moving it out would leave that owner empty.
+            if is_nominal_type(place_type(builder.locals, target)) and reads_through_reference(target):
+                site = f"{builder.file}:{span.line}:{span.column} in {builder.name}"
+                return Err(
+                    f"unsupported Body IR move out of a borrowed value at {site}; frame local {target.local}; projection {target.projection:?}",
+                )
+            return Ok(Operand(kind=OperandKind.Move(target), span=span))
+        OwnershipFact.Clone =>
+            if frozen_observation_type(place_type(builder.locals, target)):
+                return Ok(read_place(target, false, span))
+            # A checked clone of an open parameter becomes Rust's copy-valued Clone on concrete scalar instances.
+            ty = place_type(builder.locals, target)
+            # A range value's four scalar fields own nothing, so its clone is a copy, as legacy's is.
+            if numeric_carrier(ty) or ty in [PlanType.Bool, PlanType.Unit, PlanType.Decimal, PlanType.RangeValue]:
+                return Ok(Operand(kind=OperandKind.Copy(target), span=span))
+            if is_tuple_type(place_type(builder.locals, target)):
+                return clone_tuple_operand(builder, target, span)
+            if is_list(ty) and is_tuple_type(borrowed_at(builder.locals, target.local).ty):
+                return carrier_payload_value(builder, target, span)
+            if place_type(builder.locals, target) == PlanType.String:
+                cloned = clone_text(builder, target, span)?
+                return Ok(read_place(cloned, true, span))
+            return clone_nominal_operand(builder, target, span)
+        OwnershipFact.Borrow =>
+            if frozen_observation_type(place_type(builder.locals, target)):
+                return Ok(read_place(target, false, span))
+            if is_tuple_type(place_type(builder.locals, target)):
+                return clone_tuple_operand(builder, target, span)
+            # A list held by a tuple element is materialized by cloning it, leaving the owning tuple whole.
+            if (
+                is_list(place_type(builder.locals, target))
+                and is_tuple_type(borrowed_at(builder.locals, target.local).ty)
+            ):
+                return carrier_payload_value(builder, target, span)
+            # A checked projected read borrows its parent. Materialize only the selected enum or model through its
+            # real Clone implementation; copying or moving that field would invalidate the still-owned parent. A model
+            # read through a shared receiver is cloned the same way, as legacy clones `self` to return it.
+            match place_type(builder.locals, target):
+                PlanType.StringRef => return Ok(read_place(target, false, span))
+                PlanType.Enum(_owner, _name) =>
+                    match target.projection:
+                        Projection.Field(_slot, _ty) => return clone_nominal_operand(builder, target, span)
+                        Projection.VariantField(_variant, _slot, _ty) =>
+                            return clone_nominal_operand(builder, target, span)
+                        Projection.Fields(_fields) => return clone_nominal_operand(builder, target, span)
+                        Projection.DerefField(_slot, _ty) => return clone_nominal_operand(builder, target, span)
+                        Projection.DerefFields(_fields) => return clone_nominal_operand(builder, target, span)
+                        _ => pass
+                PlanType.Model(_owner, _name) =>
+                    match target.projection:
+                        Projection.Whole => pass
+                        Projection.VariantField(_variant, _slot, _ty) => pass
+                        _ => return clone_nominal_operand(builder, target, span)
+                PlanType.ModelRef(_owner, _name) => return clone_nominal_operand(builder, target, span)
+                _ => pass
+            match target.projection:
+                Projection.VariantField(_variant, _slot, _ty) => return enum_payload_read(builder, target, fact, span)
+                _ =>
+                    selected_type = place_type(builder.locals, target)
+                    # A checked borrow of a value of an open type parameter, a field of a generic model say, reads a
+                    # copy once the instance makes it a concrete scalar, which owns nothing the borrow would protect.
+                    if (
+                        numeric_carrier(selected_type)
+                        or selected_type in [PlanType.Bool, PlanType.Unit, PlanType.Decimal]
+                    ):
+                        return Ok(Operand(kind=OperandKind.Copy(target), span=span))
+                    site = f"{builder.file}:{span.line}:{span.column} in {builder.name}"
+                    detail = f"projection {target.projection:?}; selected type {selected_type:?}"
+                    return Err(f"unsupported Body IR ownership Borrow outside formatting at {site}; {detail}")
+        OwnershipFact.MutBorrow => return Err("unsupported Body IR ownership MutBorrow")
+        OwnershipFact.Unknown => return Err("unsupported Body IR ownership Unknown")
+
+
+def reads_through_reference(place: Place) -> bool:
+    """Report whether a place reaches its value through a reference: a receiver, a `mut` parameter or an in-place view."""
+    match place.projection:
+        Projection.Deref(_ty) => return true
+        Projection.DerefField(_slot, _ty) => return true
+        Projection.DerefFields(_fields) => return true
+        _ => return false
+
+
+pub def scalar_constant(constant: &RustConstant, span: SourceSpan) -> Result[Operand, str]:
+    """Turn a scalar literal into a plan constant; other literal kinds are refused by name."""
+    match constant.clone():
+        RustConstant.Int(number) => return Ok(literal(Constant.Int(number), span))
+        RustConstant.RustItem(_path, _ty) => return Err("Rust constant requires its checked carrier")
+        RustConstant.Float(text) => return Ok(literal(Constant.Float(float(str(text))), span))
+        RustConstant.Bool(flag) => return Ok(literal(Constant.Bool(flag), span))
+        RustConstant.Unit => return Ok(literal(Constant.Unit, span))
+        RustConstant.TypedNumeric(value) => return Ok(literal(numeric_constant(value)?, span))
+        RustConstant.Str(_value) => return Err("unsupported Body IR Str constant")
+        RustConstant.FrozenStr(_value) => return Err("Body IR FrozenStr constant requires its retained carrier")
+        RustConstant.Bytes(_value) => return Err("unsupported Body IR Bytes constant")
+        RustConstant.NumericNewtype(_value) => return Err("unsupported Body IR numeric newtype scalar constant")
+        RustConstant.None => return Err("unsupported Body IR None constant")
+        RustConstant.TypeToken(_represented) =>
+            return Err("type token constants require a standard library type marker constructor")
+        RustConstant.FrozenAggregate(_ty, _values) => return Err("unsupported Body IR frozen aggregate scalar constant")

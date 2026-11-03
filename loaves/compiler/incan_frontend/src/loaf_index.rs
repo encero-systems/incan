@@ -12,9 +12,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
-use incan_lang::interop::{RustAbiCache, RustItemMetadata};
+use incan_lang::interop::RustItemMetadata;
 use incan_lang::lang::standard_packages::{STANDARD_PACKAGE_NAMESPACE_POLICIES, StandardPackageNamespacePolicy};
 use incan_vocab::{KeywordActivation, KeywordRegistration, KeywordSpec};
+
+use crate::rust_abi_cache::RustAbiCache;
 
 mod decoded_manifest;
 mod lazy_entry;
@@ -175,7 +177,15 @@ impl LoafArtifact {
     /// Read the library unit's native closure. A relative path in it (a packed toolchain's Loaf) names its target from
     /// this Loaf's directory, so the closure returned holds only locatable paths.
     pub fn native_closure(&self) -> Result<LoafNativeClosure, LoafIndexError> {
-        let path = self.native_closure_path();
+        LoafNativeClosure::read(&self.dir, &self.name)
+    }
+}
+
+impl LoafNativeClosure {
+    /// Read the native closure of the Loaf `name` in `dir` without reading its manifest: linking needs only the
+    /// closure file, and a Loaf the program never imports must not be decoded to link it.
+    pub fn read(dir: &Path, name: &str) -> Result<Self, LoafIndexError> {
+        let path = dir.join(format!("{name}.native.json"));
         let bytes = std::fs::read(&path).map_err(|error| LoafIndexError::Unreadable {
             path: path.clone(),
             reason: error.to_string(),
@@ -185,7 +195,7 @@ impl LoafArtifact {
                 path,
                 reason: error.to_string(),
             })?;
-        closure.locate_in(&self.dir);
+        closure.locate_in(dir);
         Ok(closure)
     }
 }
@@ -315,6 +325,9 @@ pub struct LoafIndex {
     declared_rust_crates: BTreeSet<String>,
     /// Rust facts the compiler read from rustc's crate metadata for paths no cache holds, keyed by path.
     rust_facts: BTreeMap<String, RustItemMetadata>,
+    /// Paths the compiler asked rustc to describe that it described nothing at: no public item of the crate the unit
+    /// selects has the path.
+    absent_rust_paths: BTreeSet<String>,
     /// Items already resolved through the lookup order, decoded once and shared: the checker asks for the same
     /// items many times, and a trait's metadata carries every implementation it has.
     resolved_rust_items: Arc<Mutex<HashMap<String, Arc<RustItemMetadata>>>>,
@@ -347,6 +360,7 @@ impl LoafIndex {
             rust_abi_caches: Vec::new(),
             declared_rust_crates: BTreeSet::new(),
             rust_facts: BTreeMap::new(),
+            absent_rust_paths: BTreeSet::new(),
             resolved_rust_items: Arc::default(),
             rust_abi_failure: Arc::default(),
         })
@@ -432,10 +446,19 @@ impl LoafIndex {
         self.forget_resolved_rust_items();
     }
 
-    /// Add Rust facts read from rustc's crate metadata for paths no cache holds; they answer last.
-    pub fn add_rust_facts(&mut self, facts: BTreeMap<String, RustItemMetadata>) {
+    /// Add the Rust facts rustc read for `requested`, the paths no cache holds; they answer last. A requested path that
+    /// rustc described nothing at is absent from the selected crate's public API.
+    pub fn add_rust_facts(&mut self, requested: &BTreeSet<String>, facts: BTreeMap<String, RustItemMetadata>) {
+        self.absent_rust_paths
+            .extend(requested.iter().filter(|path| !facts.contains_key(*path)).cloned());
         self.rust_facts.extend(facts);
         self.forget_resolved_rust_items();
+    }
+
+    /// Whether rustc, asked to describe `canonical_path`, described nothing there. A path rustc was never asked about
+    /// is not absent: it has no facts either way.
+    pub fn rust_path_is_absent(&self, canonical_path: &str) -> bool {
+        self.absent_rust_paths.contains(canonical_path)
     }
 
     /// Drop resolved items after a source is added, so the lookup order decides again; this index gets its own

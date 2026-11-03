@@ -103,7 +103,7 @@ pub(super) fn module_completions(line_prefix: &str, loaves: &LoafIndex) -> Optio
         [root] if root == stdlib::STDLIB_ROOT => loaves
             .entries()
             .filter_map(|entry| match &entry.namespace {
-                LoafNamespace::Standard { policy } => Some(policy.namespace_roots),
+                LoafNamespace::Standard { policy } => Some(policy.namespace_roots.as_slice()),
                 LoafNamespace::Dependency { .. } => None,
             })
             .flatten()

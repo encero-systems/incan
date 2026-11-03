@@ -15,7 +15,7 @@ from rust::incan_semantics_core::body_ir import (
     Constant as RustConstant,
     ValueEnumBacking,
 )
-from pub::incan_mir_plan import EnumDeclaration, EnumVariant, PlanType, SourceSpan, semantic_type_matches
+from pub::incan_mir_plan import EnumDeclaration, EnumVariant, PlanType, SourceSpan
 from pub::incan_mir_plan import source_span as plan_span
 from models import model_type as plain_model_type
 from layout_types import native_source_type as retained_source_type
@@ -190,8 +190,10 @@ pub def native_source_type(
 ) -> Result[PlanType, str]:
     """Resolve retained standard carriers and source enums before delegating the existing scalar/model boundary."""
     mut index = 0
-    for declaration in intrinsics:
-        if semantic_type_matches(declaration, ty):
+    key = Some(ty.clone())
+    for declaration_position in range(len(intrinsics)):
+        declaration = borrowed_at(intrinsics, declaration_position)
+        if declaration.semantic_key == key:
             return Ok(PlanType.Enum(len(declarations) + index, declaration.name))
         index += 1
     match enum_type(declarations, ty):

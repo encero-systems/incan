@@ -204,6 +204,148 @@ impl CompileError {
         self.details
             .get_or_insert_with(|| Box::new(StructuredDiagnosticDetails::default()))
     }
+
+    /// Separate the position-free recipe from the source ranges of the revision that produced this diagnostic.
+    /// Related declarations keep their canonical identity in the recipe; only their declaration sites move to the
+    /// ranges, so a caller can bind each one to its own origin.
+    pub fn into_recipe(self) -> (DiagnosticRecipe, DiagnosticRanges) {
+        let mut ranges = DiagnosticRanges {
+            primary: self.span,
+            related: Vec::new(),
+            declarations: Vec::new(),
+        };
+        let details = self.details.map(|details| {
+            let details = *details;
+            ranges.related = details.related_spans.iter().map(|related| related.span).collect();
+            ranges.declarations = details
+                .related_declarations
+                .iter()
+                .map(|related| related.identity.declaration_span)
+                .collect();
+            Box::new(RecipeDetails {
+                notes: details.notes,
+                hints: details.hints,
+                related_labels: details.related_spans.into_iter().map(|related| related.label).collect(),
+                related_declarations: details
+                    .related_declarations
+                    .into_iter()
+                    .map(|mut related| {
+                        related.identity.declaration_span = Span::default();
+                        related
+                    })
+                    .collect(),
+                expected: details.expected,
+                actual: details.actual,
+                stable_code: details.stable_code,
+            })
+        });
+        let recipe = DiagnosticRecipe {
+            message: self.message,
+            kind: self.kind,
+            details,
+        };
+        (recipe, ranges)
+    }
+}
+
+/// Position-free content of one diagnostic: its category, catalog wording, supplements and stable code choice.
+///
+/// [`CompileError::into_recipe`] produces it, and [`DiagnosticRecipe::diagnostic`] binds it to the source ranges of
+/// the current revision again. The value holds no source coordinate of its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiagnosticRecipe {
+    message: String,
+    kind: ErrorKind,
+    details: Option<Box<RecipeDetails>>,
+}
+
+/// Supplementary prose and structured facts of a recipe; related locations keep only their labels.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RecipeDetails {
+    notes: Vec<String>,
+    hints: Vec<String>,
+    related_labels: Vec<String>,
+    related_declarations: Vec<RelatedDeclaration>,
+    expected: Option<String>,
+    actual: Option<String>,
+    stable_code: Option<&'static str>,
+}
+
+/// The source ranges of one diagnostic in one revision, in the order its producer attached them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiagnosticRanges {
+    /// Primary location.
+    pub primary: Span,
+    /// Secondary locations, one per related-span label.
+    pub related: Vec<Span>,
+    /// Declaration sites, one per related declaration, each in its own origin's coordinates.
+    pub declarations: Vec<Span>,
+}
+
+impl DiagnosticRecipe {
+    /// Severity and category, readable without binding the recipe to a revision.
+    pub fn kind(&self) -> ErrorKind {
+        self.kind
+    }
+
+    /// The canonical declarations this recipe relates to, without their declaration sites.
+    pub fn related_declarations(&self) -> &[RelatedDeclaration] {
+        self.details
+            .as_deref()
+            .map_or(&[], |details| details.related_declarations.as_slice())
+    }
+
+    /// Rebuild the complete diagnostic at the given ranges. Returns `None` when the ranges do not supply exactly one
+    /// location per related label and declaration, so a binding can never drop or invent a supplement.
+    pub fn diagnostic(&self, ranges: &DiagnosticRanges) -> Option<CompileError> {
+        let details = match self.details.as_deref() {
+            None => {
+                if !ranges.related.is_empty() || !ranges.declarations.is_empty() {
+                    return None;
+                }
+                None
+            }
+            Some(details) => {
+                if details.related_labels.len() != ranges.related.len()
+                    || details.related_declarations.len() != ranges.declarations.len()
+                {
+                    return None;
+                }
+                Some(Box::new(StructuredDiagnosticDetails {
+                    notes: details.notes.clone(),
+                    hints: details.hints.clone(),
+                    related_spans: details
+                        .related_labels
+                        .iter()
+                        .zip(&ranges.related)
+                        .map(|(label, span)| RelatedSpan {
+                            span: *span,
+                            label: label.clone(),
+                        })
+                        .collect(),
+                    related_declarations: details
+                        .related_declarations
+                        .iter()
+                        .zip(&ranges.declarations)
+                        .map(|(related, span)| {
+                            let mut related = related.clone();
+                            related.identity.declaration_span = *span;
+                            related
+                        })
+                        .collect(),
+                    expected: details.expected.clone(),
+                    actual: details.actual.clone(),
+                    stable_code: details.stable_code,
+                }))
+            }
+        };
+        Some(CompileError {
+            message: self.message.clone(),
+            span: ranges.primary,
+            kind: self.kind,
+            details,
+        })
+    }
 }
 
 /// Severity level for a [`CompileError`].
@@ -374,6 +516,25 @@ mod tests {
         assert_eq!(error.hints(), ["convert the operand"]);
         assert_eq!(error.actual(), Some("str"));
         assert_eq!(error.related_spans().len(), 1);
+
+        // The recipe holds every supplement without a coordinate, and binds to moved ranges exactly.
+        let (recipe, ranges) = error.clone().into_recipe();
+        assert_eq!(ranges.primary, Span::new(8, 11));
+        assert_eq!(ranges.related, [Span::new(0, 3)]);
+        assert_eq!(recipe.diagnostic(&ranges), Some(error.clone()));
+        let moved = DiagnosticRanges {
+            primary: Span::new(20, 23),
+            related: vec![Span::new(12, 15)],
+            declarations: Vec::new(),
+        };
+        let rebound = recipe.diagnostic(&moved).expect("one range per related label");
+        assert_eq!(rebound.into_recipe(), (recipe.clone(), moved));
+        let missing = DiagnosticRanges {
+            primary: Span::new(20, 23),
+            related: Vec::new(),
+            declarations: Vec::new(),
+        };
+        assert_eq!(recipe.diagnostic(&missing), None, "a binding never drops a supplement");
         assert!(
             std::mem::size_of::<CompileError>() <= 128,
             "CompileError must remain small enough for pervasive Result<_, CompileError> parser APIs: error={}, span={}",

@@ -46,9 +46,9 @@ impl TypeChecker {
             ));
         }
 
-        // A read is what lets Rust fix an open constructor's type arguments later; release any watched binding by
-        // this name before anything else decides how the read resolves (#1720).
-        self.mark_open_rust_generic_binding_read(name);
+        // The first read's use is what fixes an open constructor's type arguments; note it on any watched binding by
+        // this name before anything else decides how the read resolves (#1720, #2481).
+        self.mark_open_rust_generic_binding_read(name, span);
 
         let Some(sym_id) = self.symbols.lookup(name) else {
             if name == "log" {

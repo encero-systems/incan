@@ -4,7 +4,7 @@ use crate::{
     ast_build::{RUST_CONVERT_TRY_FROM_SYMBOL, ident},
     declarations,
     error::PlanError,
-    plan::{ModelDeclaration, Plan, PlanType},
+    plan::{Carrier, ModelDeclaration, Plan, PlanType},
 };
 use incan_lang::lang::surface::constructors::{self, ConstructorId};
 use incan_lang::lang::traits::{self, TraitId};
@@ -174,7 +174,7 @@ fn validate_string_root(
         .and_then(|index| plan.enums.get(index))
         .ok_or_else(invalid)?;
     if result.name != *result_name
-        || result.carrier != "Result"
+        || result.carrier != Carrier::Result
         || result.variants.len() != 2
         || result.variants[0].name != constructors::as_str(ConstructorId::Ok)
         || result.variants[0].fields != [PlanType::Model(owner, model.name.clone())]

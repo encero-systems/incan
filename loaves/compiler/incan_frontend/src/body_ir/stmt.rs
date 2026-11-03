@@ -21,11 +21,24 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let enclosing_aliases = self.static_aliases.clone();
         let enclosing_handles = self.static_binding_locals.clone();
 
-        // ---- Context: source-order statements ----
+        // ---- Context: source-order statements, on a path that ends here when the block returns ----
+        // Inside a loop the block is terminal only when nothing in it can break or continue out of that loop first.
+        let terminal = nested
+            && matches!(stmts.last().map(|stmt| &stmt.node), Some(ast::Statement::Return(_)))
+            && (self.loop_scopes.is_empty() || !may_leave_enclosing_loop(stmts));
+        if terminal {
+            self.enter_terminal_path(stmts, scope);
+        }
         for (index, stmt) in stmts.iter().enumerate() {
             let first_temporary = self.locals.len();
             self.lower_stmt_into(stmt, &stmts[index + 1..], scope, out);
-            self.insert_statement_temporary_drops(out, scope, first_temporary, hir_span(stmt.span));
+            self.insert_statement_temporary_drops(out, scope, first_temporary, None, hir_span(stmt.span));
+            if self.input_paths_checked && !super::conditional_inputs::reaches_join(std::slice::from_ref(stmt)) {
+                break;
+            }
+        }
+        if terminal {
+            self.terminal_paths.pop();
         }
 
         // ---- Context: a handle selected by runtime control flow ----
@@ -47,11 +60,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// End fresh compiler-owned expression storage after its source statement, in reverse construction order.
     /// Named bindings keep their lexical lifetime. Nested blocks handle their own locals, and moved temporaries
     /// carry no drop obligation; recording these ends prevents a second lexical-scope drop for the same storage.
-    fn insert_statement_temporary_drops(
+    /// `kept` stays live past this point: a scrutinee's value, which its arms still read.
+    pub(super) fn insert_statement_temporary_drops(
         &mut self,
         out: &mut Vec<bir::Statement>,
         scope: bir::ScopeId,
         first: usize,
+        kept: Option<bir::LocalId>,
         span: HirSourceSpan,
     ) {
         let candidates = self.locals[first..]
@@ -59,7 +74,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .rev()
             .filter(|local| local.scope == scope && local.origin == bir::LocalOrigin::Temporary)
             .filter(|local| !local.ty.abi_v0_facts().ownership.is_trivially_copy())
-            .filter(|local| !self.moved_out.contains(&local.id))
+            .filter(|local| !self.moved_out.contains(&local.id) && Some(local.id) != kept)
             .map(|local| local.id)
             .collect::<Vec<_>>();
         for local in candidates {
@@ -113,6 +128,16 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             ast::Statement::ChainedAssignment(chained_assignment) => {
                 self.lower_chained_assignment(chained_assignment, remaining, scope, span, out)
             }
+            ast::Statement::Return(Some(returned)) if self.returned_view.is_some() => {
+                let carried = self.returned_view.as_ref().and_then(|source| source.view.carried);
+                let lowered = match carried {
+                    Some(payload) => self.lower_carried_return(returned, payload, scope, span, out),
+                    None => self.lower_view_return(returned, scope, span, out),
+                };
+                if let Err(reason) = lowered {
+                    self.push_unsupported_stmt(reason, span, out);
+                }
+            }
             ast::Statement::Return(value) => {
                 let value = value
                     .as_ref()
@@ -123,9 +148,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 });
             }
             ast::Statement::If(if_stmt) => self.lower_if(if_stmt, scope, span, out),
-            ast::Statement::Loop(loop_stmt) => self.lower_loop_stmt(loop_stmt, scope, span, out),
-            ast::Statement::While(while_stmt) => self.lower_while(while_stmt, scope, span, out),
-            ast::Statement::For(for_stmt) => self.lower_for(for_stmt, scope, span, out),
+            ast::Statement::Loop(loop_stmt) => {
+                self.lower_input_loop(false, |builder| builder.lower_loop_stmt(loop_stmt, scope, span, out))
+            }
+            ast::Statement::While(while_stmt) => {
+                // A literal `true` condition never fails, so only a `break` leaves the loop.
+                let endless = matches!(&while_stmt.condition,
+                    ast::Condition::Expr(condition) if matches!(condition.node, ast::Expr::Literal(ast::Literal::Bool(true))));
+                self.lower_input_loop(!endless, |builder| builder.lower_while(while_stmt, scope, span, out))
+            }
+            ast::Statement::For(for_stmt) => {
+                self.lower_input_loop(true, |builder| builder.lower_for(for_stmt, scope, span, out))
+            }
             ast::Statement::Unsafe(region) => self.lower_unsafe_region(region, remaining, scope, span, out),
             ast::Statement::Expr(expr) => {
                 // `yield value` parses as an ordinary expression statement wrapping `ast::Expr::Yield(Some(_))`
@@ -135,10 +169,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     self.lower_yield(value, scope, span, out);
                 } else {
                     let value = self.lower_expr_to_operand(expr, scope, out);
-                    out.push(bir::Statement {
-                        kind: bir::StatementKind::Expr { value },
-                        span,
-                    });
+                    // A discarded view call, or a carried view `?` took out, already ran for its effects; its
+                    // substituted place is not read.
+                    if self.type_info.selected_call_view(expr.span).is_none() && !self.carried_view_try(expr) {
+                        out.push(bir::Statement {
+                            kind: bir::StatementKind::Expr { value },
+                            span,
+                        });
+                    }
                 }
             }
             ast::Statement::Assert(assert_stmt) => self.lower_assert(assert_stmt, remaining, scope, span, out),
@@ -161,7 +199,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// New loops inside the return expression still establish their own repeated-read scopes. Borrowed receivers and
     /// parameters retain their normal ownership rules, and Result constructors use the declared return channels.
     /// Reads in sibling return branches cannot keep an owned local alive on this terminal path.
-    fn lower_return_operand(
+    pub(super) fn lower_return_operand(
         &mut self,
         returned: &ast::Spanned<ast::Expr>,
         scope: bir::ScopeId,
@@ -226,6 +264,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Lower an assignment statement while preserving its checked lexical binding decision.
     ///
+    /// A discard evaluates its checked value as an expression statement and creates no named local or write target.
     /// A plain inferred assignment and the internal `Reassign` spelling reuse the nearest active local when one is
     /// bound, falling back to a declaration for an otherwise unbound name. `let` and `mut` always declare a fresh
     /// local: those are the two source declaration forms that deliberately shadow an enclosing binding.
@@ -244,10 +283,23 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         span: HirSourceSpan,
         out: &mut Vec<bir::Statement>,
     ) {
+        if let Some(result) = self.lower_local_input_binding(assignment, remaining, scope, span, out) {
+            if let Err(reason) = result {
+                self.push_unsupported_stmt(reason, span, out);
+            }
+            return;
+        }
         let mut ty = self.assignment_binding_type(assignment, span, out);
         let materializes_range = self.expr_has_materialized_range_layout(&assignment.value);
         self.settle_open_result_value(&assignment.value, &ty);
         let value = self.lower_assignment_value(assignment, &mut ty, scope, out);
+        if assignment.name == "_" {
+            out.push(bir::Statement {
+                kind: bir::StatementKind::Expr { value },
+                span,
+            });
+            return;
+        }
         let Some(place) = self.assignment_target_place(assignment, ty, remaining, scope, span, out) else {
             return;
         };
@@ -344,7 +396,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     }
 
     /// Publish the replacement and reestablish its drop obligation and checked binding metadata.
-    fn finish_assignment(
+    pub(super) fn finish_assignment(
         &mut self,
         assignment: &ast::AssignmentStmt,
         place: bir::Place,
@@ -435,7 +487,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Resolve a write through its retained identity before using the existing unqualified-local fallback. A new
     /// local is declared only at its checked binding span; an unrepresentable canonical target emits a refusal.
-    fn assignment_target_place(
+    pub(super) fn assignment_target_place(
         &mut self,
         assignment: &ast::AssignmentStmt,
         ty: IncanType,
@@ -452,7 +504,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let place = match assignment.binding {
             ast::BindingKind::Inferred | ast::BindingKind::Reassign => {
                 if let Some(identity) = target_identity {
-                    if let Some(&local) = self.identity_bindings.get(&identity) {
+                    if let Some(alias) = self.input_alias(&identity) {
+                        if !alias.writable {
+                            self.push_unsupported_stmt(
+                                "explicit local alias does not permit writes".to_owned(),
+                                span,
+                                out,
+                            );
+                            return None;
+                        }
+                        alias.place.clone()
+                    } else if let Some(&local) = self.identity_bindings.get(&identity) {
                         bir::Place::from_local(local)
                     } else if let Some(global) = self.global_place(identity.clone(), ty.clone()) {
                         bir::Place::from_global(global)
@@ -635,11 +697,19 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .map(|ty| self.checked_type(ty))
             .unwrap_or(IncanType::Unknown);
         let place = if let Some(identity) = target_identity {
-            self.identity_bindings
-                .get(&identity)
-                .copied()
-                .map(bir::Place::from_local)
-                .or_else(|| self.global_place(identity, lhs_ty.clone()).map(bir::Place::from_global))
+            if let Some(alias) = self.input_alias(&identity) {
+                if !alias.writable {
+                    self.push_unsupported_stmt("explicit local alias does not permit writes".to_owned(), span, out);
+                    return;
+                }
+                Some(alias.place.clone())
+            } else {
+                self.identity_bindings
+                    .get(&identity)
+                    .copied()
+                    .map(bir::Place::from_local)
+                    .or_else(|| self.global_place(identity, lhs_ty.clone()).map(bir::Place::from_global))
+            }
         } else {
             self.bindings
                 .get(&compound_assignment.name)
@@ -792,6 +862,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let value_ty = self.resolve_ty(tuple_unpack.value.span);
         if let Some(reason) = unsupported_tuple_destructure(&value_ty, tuple_unpack.names.len()) {
             self.push_unsupported_stmt(reason, span, out);
+            return;
+        }
+        if let Some((_, payload)) = self.carried_view_call(&tuple_unpack.value)
+            && tuple_type_elements(&value_ty).is_some()
+        {
+            if let Err(reason) = self.lower_carried_unpack(tuple_unpack, payload, remaining, scope, span, out) {
+                self.push_unsupported_stmt(reason, span, out);
+            }
             return;
         }
         let value_operand = self.lower_expr_to_operand(&tuple_unpack.value, scope, out);
@@ -1172,6 +1250,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let exited_loop = self.loop_scopes.pop();
         let operand = value.map(|expr| self.lower_boundary_value(expr, destination.as_ref(), scope, out));
         self.loop_scopes.extend(exited_loop);
+        self.retain_input_break();
         match (operand, target) {
             (Some(operand), Some(result_local)) => {
                 out.push(bir::Statement {
@@ -1258,11 +1337,42 @@ fn chained_integer_literal_types(
 /// Return whether two types are the same kind of container: both `Option`, `List`, `Set` or `Dict`, or tuples of one
 /// length, the only nodes a chained value's per-target evaluation retypes wholesale.
 fn same_container_kind(left: &IncanType, right: &IncanType) -> bool {
-    match (left, right) {
-        (IncanType::Generic { base: left, .. }, IncanType::Generic { base: right, .. }) => {
-            left == right && matches!(left.as_str(), "Option" | "List" | "Set" | "Dict")
+    if let (IncanType::Tuple(left), IncanType::Tuple(right)) = (left, right) {
+        return left.len() == right.len();
+    }
+    match (left.collection(), right.collection()) {
+        (Some((left, _)), Some((right, _))) => {
+            left == right
+                && matches!(
+                    left,
+                    CollectionTypeId::Option | CollectionTypeId::List | CollectionTypeId::Set | CollectionTypeId::Dict
+                )
         }
-        (IncanType::Tuple(left), IncanType::Tuple(right)) => left.len() == right.len(),
         _ => false,
     }
+}
+
+/// Whether a block can leave the loop that encloses it before its last statement: a `break` or `continue` that no loop
+/// nested in the block owns. A statement whose nested bodies this does not inspect counts as leaving, so a read is
+/// only transferred on a path that is proved to return.
+fn may_leave_enclosing_loop(stmts: &[ast::Spanned<ast::Statement>]) -> bool {
+    stmts.iter().any(|stmt| match &stmt.node {
+        ast::Statement::Break(_) | ast::Statement::Continue => true,
+        ast::Statement::If(branch) => {
+            may_leave_enclosing_loop(&branch.then_body)
+                || branch
+                    .elif_branches
+                    .iter()
+                    .any(|(_, body)| may_leave_enclosing_loop(body))
+                || branch.else_body.as_deref().is_some_and(may_leave_enclosing_loop)
+        }
+        // A nested loop owns its own `break` and `continue`.
+        ast::Statement::Loop(_) | ast::Statement::While(_) | ast::Statement::For(_) => false,
+        ast::Statement::Expr(expr) => matches!(expr.node, ast::Expr::Match(..)),
+        ast::Statement::Unsafe(_)
+        | ast::Statement::Surface(_)
+        | ast::Statement::VocabBlock(_)
+        | ast::Statement::VocabExpressionItem(_) => true,
+        _ => false,
+    })
 }

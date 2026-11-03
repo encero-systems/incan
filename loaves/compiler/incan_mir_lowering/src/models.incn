@@ -13,6 +13,7 @@ from rust::incan_semantics_core::body_ir import (
     EnumDeclaration as RustEnumDeclaration,
     nominal_carrier_key,
 )
+from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import (
     ListLeaf,
     PlanType,
@@ -208,8 +209,12 @@ pub def model_place(
     enums: &list[RustEnumDeclaration],
     unions: &list[RustType],
     intrinsics: &list[EnumDeclaration],
+    offset: int = 0,
 ) -> Result[Place, str]:
-    """Borrow the frame's tables while requiring each selected field's canonical layout; an unprojected local needs no declaration-table copy."""
+    """
+    Borrow the frame's tables while requiring each selected field's canonical layout; an unprojected local needs no
+    declaration-table copy. `offset` is the frame's first slot in `locals`; the returned place stays frame-relative.
+    """
     return model_prefix(
         constructors,
         declarations,
@@ -220,6 +225,7 @@ pub def model_place(
         enums,
         unions,
         intrinsics,
+        offset,
     )
 
 
@@ -233,15 +239,20 @@ pub def model_prefix(
     enums: &list[RustEnumDeclaration],
     unions: &list[RustType],
     intrinsics: &list[EnumDeclaration],
+    offset: int = 0,
 ) -> Result[Place, str]:
-    """Borrow retained tables to project a checked leading field path without copying or changing the frontend place."""
+    """
+    Borrow retained tables to project a checked leading field path without copying or changing the frontend place.
+    Slots are read at `offset` in the shared locals table; the returned place stays frame-relative.
+    """
     if count < 0 or count > len(value.projection):
         return Err("invalid Body IR model field prefix length")
     match value.local_id():
         None => return Err("unsupported Body IR global place")
         Some(local) =>
             index = int(local.index()) + 1
-            match receiver_owner(locals[index].ty):
+            slot_type = borrowed_at(locals, index + offset).ty
+            match receiver_owner(slot_type):
                 Some((owner, name)) =>
                     if count == 0:
                         return Ok(
@@ -261,7 +272,7 @@ pub def model_prefix(
                     )
                 None => pass
             # A `mut str` or enum parameter, an in-place binding or an in-place loop item reads through its reference.
-            match exclusive_referent(locals[index].ty):
+            match exclusive_referent(slot_type):
                 Some(referent) =>
                     if count == 0:
                         return Ok(Place(local=index, projection=Projection.Deref(referent), span=span))
@@ -278,7 +289,7 @@ pub def model_prefix(
                     return Ok(Place(local=index, projection=Projection.DerefFields(fields), span=span))
                 None => pass
             # An enum method's shared receiver reads the whole enum through its reference.
-            match locals[index].ty:
+            match slot_type:
                 PlanType.TupleRef(elements) =>
                     if count == 0:
                         return Ok(Place(local=index, projection=Projection.Whole, span=span))
@@ -303,7 +314,7 @@ pub def model_prefix(
             fields = field_path(
                 constructors,
                 declarations,
-                locals[index].ty,
+                slot_type,
                 value.projection,
                 count,
                 enums,
@@ -339,13 +350,52 @@ pub def field_path(
     mut ty = root
     mut fields: list[FieldProjection] = []
     for position in range(count):
-        field = field_projection(constructors, declarations, ty, projections[position], enums, unions, intrinsics)?
-        fields.append(field)
-        ty = field.ty
+        steps = field_steps(constructors, declarations, ty, projections[position], enums, unions, intrinsics)?
+        fields.extend(steps)
+        ty = steps[len(steps) - 1].ty
     return Ok(fields)
 
 
-pub def field_projection(
+pub def field_steps(
+    constructors: &ConstructorIndex,
+    declarations: &list[NominalDeclaration],
+    root: PlanType,
+    projection: &RustPlaceElem,
+    enums: &list[RustEnumDeclaration],
+    unions: &list[RustType],
+    intrinsics: &list[EnumDeclaration],
+) -> Result[list[FieldProjection], str]:
+    """
+    Select one source field or payload as stored, ending at the value the source names.
+
+    A boxed class field adds a dereference through its box, so reading, borrowing, assigning and moving all reach the
+    stored value; every single-step field projection goes through here.
+    """
+    return Ok(stored_steps(field_projection(constructors, declarations, root, projection, enums, unions, intrinsics)?))
+
+
+pub def stored_steps(field: FieldProjection) -> list[FieldProjection]:
+    """Continue a projected stored field to the value the source names, dereferencing a boxed class field's box."""
+    match field.ty:
+        PlanType.Boxed(referent) => return [field, FieldProjection(slot=-1, ty=referent[0], dereferences=1)]
+        _ => return [field]
+
+
+pub def field_step_type(
+    constructors: &ConstructorIndex,
+    declarations: &list[NominalDeclaration],
+    root: PlanType,
+    projection: &RustPlaceElem,
+    enums: &list[RustEnumDeclaration],
+    unions: &list[RustType],
+    intrinsics: &list[EnumDeclaration],
+) -> Result[PlanType, str]:
+    """The type of the value one source field step names, through a boxed class field's box."""
+    steps = field_steps(constructors, declarations, root, projection, enums, unions, intrinsics)?
+    return Ok(steps[len(steps) - 1].ty)
+
+
+def field_projection(
     constructors: &ConstructorIndex,
     declarations: &list[NominalDeclaration],
     root: PlanType,
@@ -369,10 +419,10 @@ pub def field_projection(
                 PlanType.Enum(owner, _name) =>
                     if owner < len(enums) or owner >= len(enums) + len(intrinsics):
                         return Err("invalid Body IR optional projection carrier")
-                    carrier = intrinsics[owner - len(enums)]
+                    carrier = borrowed_at(intrinsics, owner - len(enums))
                     ty = retained_type(constructors, declarations, enums, unions, payload, intrinsics)?
                     if (
-                        carrier.carrier != "Option"
+                        carrier.carrier != Carrier.Option
                         or len(carrier.variants) != 2
                         or len(carrier.variants[1].fields) != 1
                         or carrier.variants[1].fields[0] != ty
@@ -390,7 +440,8 @@ pub def field_projection(
         _ => pass
     match root:
         PlanType.Model(owner, _name) =>
-            declaration = declarations[owner]
+            # Borrow the layout: each field step of every place reaches here, so a copied declaration dominates.
+            declaration = borrowed_at(declarations, owner)
             slot = field_slot(projection, declaration)?
             ty = stored_field_type(constructors, declarations, enums, unions, declaration, slot, intrinsics)?
             return Ok(FieldProjection(slot=slot, ty=ty))

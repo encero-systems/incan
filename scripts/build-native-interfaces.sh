@@ -18,7 +18,8 @@ interfaces=$home_dir/source-interfaces
 mkdir -p "$interfaces"
 print '[]' > "$interfaces/loaves.json"
 
-for package in core async; do
+# Core reexports foundational contracts, so its checking interface requires primitives first.
+for package in primitives core async; do
     project=$repo/loaves/stdlib/$package
     name=$(sed -nE 's/^name = "([^"]+)"/\1/p' "$project/loaf.toml" | head -1)
     directory=$(mktemp -d "$interfaces/$package.XXXXXX")
@@ -27,11 +28,13 @@ for package in core async; do
     SELFBUILD_LIBRARY_OUTPUT= "$builder" "$repo" "$package" release > "$unit.prepared"
     jq --slurpfile interfaces "$interfaces/loaves.json" \
         '.kind = "library" | .loaves += $interfaces[0]' "$unit.prepared" > "$unit"
+    SELFBUILD_METADATA_ONLY=1 "$builder" "$repo" identify "$unit"
     if ! "$driver" --source-interface "$unit" "$sysroot" "$directory" > "$directory/build.log" 2>&1; then
         tail -10 "$directory/build.log" | cut -c1-600
         print -u2 "source interface $name did not check; see $directory/build.log"
         exit 1
     fi
+    SELFBUILD_METADATA_ONLY=1 "$builder" "$repo" publish "$unit" "$directory"
     jq --arg name "$name" --arg directory "$directory" \
         '. + [{key:$name, name:$name, dir:$directory, standard:true}]' \
         "$interfaces/loaves.json" > "$interfaces/loaves.json.next"

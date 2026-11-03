@@ -1,0 +1,23 @@
+# behavior: A requested trace that cannot be written warns once after program output and preserves its exit status.
+# cli-commands:
+#   run src/main.incn
+# environment:
+#   INCAN_ENGINE_TRACE=missing-parent/trace
+#   INCAN_JEC_TRACE=missing-parent/work
+# expect-stdout:
+#   program stdout
+# expect-stderr:
+#   program stderr
+#   incan: trace incomplete: output channel unavailable
+# expect-exit: 7
+
+from rust::std::io import Write, stderr
+from rust::std::process import exit
+
+
+def main() -> None:
+    """Write both streams before returning a nonzero program status."""
+    println("program stdout")
+    mut output = stderr()
+    _ = output.write_all(b"program stderr\x0a")
+    exit(7i32)

@@ -1,5 +1,6 @@
-"""Recover missing legacy producer edges from pinned rustc metadata, retaining each artifact reading."""
+"""Recover exact legacy producer edges from retained rustc artifact readings; registry_pages owns completed closures."""
 
+from pub::incan_platform.trace import Operation
 from rust::std::process import Command
 from std.fs import Path
 from std.json import JsonValue
@@ -8,22 +9,40 @@ from retained_readings import recall, retain
 from registry_units import RegistryUnit, sole_library
 from rust_target import decoded
 from toolchain import load_toolchain, rust_compiler
+from jec import begin, record
+
+# The selection under which a closure's completion is retained, followed by the pinned compiler that read it.
+pub const COMPLETION: str = "registry-completion/2"
 
 
 pub def complete_legacy(units: list[RegistryUnit]) -> Result[list[RegistryUnit], str]:
-    """
-    Complete older closure records without inventing edges from names or compatible feature sets.
-
-    1. Fully recorded closures require no compiler metadata queries.
-    2. Index native crate hashes from the selected pinned compiler's retained artifact readings.
-    3. Bind legacy edges to their exact compiled identities; sysroot edges stay outside this registry.
-    """
-    # 1. New producers already publish all required entry identities.
+    """Complete missing producer edges from exact native hashes; the caller owns typed-page retention and claims."""
+    if len([unit for unit in units if not has_native_metadata(unit)]) == 0:
+        return Ok(units)
     toolchain = load_toolchain()?
     if len([unit for unit in units if not unit.recorded]) == 0 and len(toolchain.externs) == 0:
         return Ok(units)
-    # 2. Legacy rustc metadata supplies the real crate identity, never a feature-based approximation.
-    rustc = rust_compiler(toolchain)
+    return completed_units(units, rust_compiler(toolchain), toolchain.sysroot)
+
+
+def has_native_metadata(unit: RegistryUnit) -> bool:
+    """A baked closure records the exact native identity or its producer's refusal; neither needs rediscovery."""
+    return unit.refusal != "" or (unit.recorded and unit.name != "" and unit.crate_hash != "" and unit.artifact != "")
+
+
+pub def completion_selection(rustc: str) -> Result[str, str]:
+    """The exact compiler generation that interprets a completed closure, separate from project locks."""
+    return Ok(f"{COMPLETION}:{rustc}:{observe(Path(rustc))?.stamp}")
+
+
+def completed_units(units: list[RegistryUnit], rustc: str, sysroot: str) -> Result[list[RegistryUnit], str]:
+    """
+    Complete each unit from the pinned compiler's retained artifact readings.
+
+    1. Index native crate hashes from the selected pinned compiler's retained artifact readings.
+    2. Bind legacy edges to their exact compiled identities; sysroot edges stay outside this registry.
+    """
+    # 1. Legacy rustc metadata supplies the real crate identity, never a feature-based approximation.
     mut hashes: Dict[str, str] = {}
     mut readings: Dict[str, str] = {}
     mut crate_names: Dict[str, str] = {}
@@ -43,7 +62,7 @@ pub def complete_legacy(units: list[RegistryUnit]) -> Result[list[RegistryUnit],
                 hashes[digest] = unit.entry
                 crate_names[unit.entry] = name
                 crate_hashes[unit.entry] = digest
-    # 3. Every registry dependency must have the exact hash its producer recorded.
+    # 2. Every registry dependency must have the exact hash its producer recorded.
     mut completed: list[RegistryUnit] = []
     for original in units:
         mut unit = original
@@ -57,7 +76,7 @@ pub def complete_legacy(units: list[RegistryUnit]) -> Result[list[RegistryUnit],
         if "proc_macro true" in readings[unit.entry]:
             unit.kind = "proc-macro"
         if not unit.recorded:
-            match dependencies(readings[unit.entry], hashes, unit.loaf, toolchain.sysroot):
+            match dependencies(readings[unit.entry], hashes, unit.loaf, sysroot):
                 Ok(found) =>
                     unit.dependencies = found
                     unit.recorded = true
@@ -112,7 +131,9 @@ def metadata(artifact: str, rustc: str) -> Result[str, str]:
     command.env("RUSTC_BOOTSTRAP", "1")
     command.arg("-Zls=root")
     command.arg(artifact)
+    clock = begin()
     output = command.output().map_err((error) => error.to_string())?
+    record(Operation.RegistryMetadata, artifact, clock)
     if not output.status.success():
         return Err(f"cannot read registry producer metadata {artifact}: {decoded(output.stderr)}")
     printed = decoded(output.stdout)

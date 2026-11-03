@@ -3,10 +3,10 @@
 use crate::error::PlanError;
 use crate::identity::DriverIdentity;
 use crate::native_crates::native_roots;
-use crate::plan::{CalleeKind, Plan, PlanType, TerminatorKind};
+use crate::plan::{CalleeKind, Carrier, Plan, PlanType, TerminatorKind};
 use crate::spans::Sources;
 use crate::{bodies, callees, declarations, types, union_debug, validation, value_enum_serde};
-use incan_driver::unit::UnitKind;
+use incan_driver::unit::{ToolchainAccess, UnitKind};
 use incan_lang::lang::derives::{self, DeriveId};
 use rustc_ast as ast;
 use rustc_data_structures::steal::Steal;
@@ -51,6 +51,20 @@ pub enum DriverError {
     Invocation(String),
 }
 
+/// Make the process-global compilation slots usable again after a contained panic: clear the poison the panic left
+/// on them and drop the plan and failure of the compilation it ended.
+pub(crate) fn recover() {
+    COMPILATION.clear_poison();
+    PLAN.clear_poison();
+    FAILURE.clear_poison();
+    if let Ok(mut plan) = PLAN.lock() {
+        *plan = None;
+    }
+    if let Ok(mut failure) = FAILURE.lock() {
+        *failure = None;
+    }
+}
+
 /// Read the active plan without retaining the slot lock while rustc resolves callees.
 fn active_plan() -> Result<Arc<Plan>, DriverError> {
     PLAN.lock()
@@ -84,22 +98,14 @@ fn native_alias_type<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> rustc_middle::
     if let Some(carrier) = plan
         .enums
         .iter()
-        .find(|value| !value.carrier.is_empty() && name.as_str() == value.name)
+        .find(|value| value.carrier != Carrier::Declared && name.as_str() == value.name)
     {
-        let path = if carrier.carrier == "Option" {
-            "std::option::Option"
-        } else {
-            "std::result::Result"
-        };
-        let native = match callees::library_item(tcx, path, rustc_hir::def::DefKind::Enum) {
+        let (segments, fields) = crate::declarations::standard_carrier(carrier);
+        let path = format!("std::{}", segments.join("::"));
+        let native = match callees::library_item(tcx, &path, rustc_hir::def::DefKind::Enum) {
             Ok(native) => native,
             Err(error) => refuse(tcx, error),
         };
-        let fields = carrier
-            .variants
-            .iter()
-            .flat_map(|variant| variant.fields.iter().cloned())
-            .collect::<Vec<_>>();
         let arguments = match callees::arguments(tcx, native, &fields) {
             Ok(arguments) => arguments,
             Err(error) => refuse(tcx, error),
@@ -194,9 +200,20 @@ fn planned_function<'plan>(
     let name = tcx.opt_item_name(def.to_def_id());
     plan.functions.iter().find(|function| {
         tcx.def_kind(def) == rustc_hir::def::DefKind::Fn
-            && tcx.parent(def.to_def_id()).is_crate_root()
+            && declared_at_root(tcx, def)
             && name.is_some_and(|name| name.as_str() == function.name)
     })
+}
+
+/// A planned callable is declared at the crate root or in one of the root's callable partition modules.
+fn declared_at_root(tcx: TyCtxt<'_>, def: LocalDefId) -> bool {
+    let parent = tcx.parent(def.to_def_id());
+    parent.is_crate_root()
+        || (tcx.def_kind(parent) == rustc_hir::def::DefKind::Mod
+            && tcx.parent(parent).is_crate_root()
+            && tcx
+                .opt_item_name(parent)
+                .is_some_and(|name| name.as_str().starts_with(declarations::PARTITION_MODULE_PREFIX)))
 }
 
 /// Override only source-named planned functions; all compiler-generated items retain rustc's provider.
@@ -270,6 +287,8 @@ fn mir_built<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> &'tcx Steal<Body<'tcx>
 
 /// Inject the prevalidated declarations after parsing an empty Incan crate root.
 struct Callbacks<'manifest> {
+    /// The unstable features the unit's description declares; this session enables them and no others.
+    features: Vec<String>,
     plan: Arc<Plan>,
     manifest: Option<&'manifest incan_frontend::library_manifest::LibraryManifest>,
     search: Vec<rustc_session::search_paths::SearchPath>,
@@ -277,12 +296,26 @@ struct Callbacks<'manifest> {
     development: bool,
     loaded: Vec<(PathBuf, String)>,
     timing: crate::native_timing::Timing,
+    /// A program has no consumers of its item paths, so its callables may live in per-file modules. A library's paths
+    /// are published, and a test harness selects each test by its module path.
+    partition: bool,
 }
 
 impl Callbacks<'_> {
+    /// Replace the session's plan with one refined against native metadata; MIR building reads the replacement.
+    fn replace_plan(&mut self, tcx: TyCtxt<'_>, plan: Plan) {
+        self.plan = Arc::new(plan);
+        match PLAN.lock() {
+            Ok(mut slot) => *slot = Some(Arc::clone(&self.plan)),
+            Err(_) => tcx.dcx().fatal(DriverError::State.to_string()),
+        }
+    }
+
     /// Declare checked callables before their program entries, retaining typed function-span failures across fatal
-    /// errors.
+    /// errors. A program groups its callables by source file, one module each, re-exported at the crate root:
+    /// rustc forms codegen units per module, so one root module would optimize the whole unit on a single thread.
     fn declare_callables(&self, compiler: &interface::Compiler, krate: &mut ast::Crate, sources: &Sources<'_>) {
+        let mut grouped: std::collections::BTreeMap<&str, Vec<Box<ast::Item>>> = std::collections::BTreeMap::new();
         for function in &self.plan.functions {
             let span = match sources.span(&function.span) {
                 Ok(span) => span,
@@ -294,7 +327,7 @@ impl Callbacks<'_> {
                     compiler.sess.dcx().fatal(message);
                 }
             };
-            let mut item = match declarations::function(function, span) {
+            let mut item = match declarations::function(&self.plan, function, span) {
                 Ok(item) => item,
                 Err(error) => compiler.sess.dcx().fatal(error.to_string()),
             };
@@ -312,7 +345,16 @@ impl Callbacks<'_> {
                     span,
                 ));
             }
-            krate.items.push(item);
+            if self.partition {
+                grouped.entry(function.span.file.as_str()).or_default().push(item);
+            } else {
+                krate.items.push(item);
+            }
+        }
+        for (index, items) in grouped.into_values().enumerate() {
+            krate
+                .items
+                .extend(declarations::partition_module(index, items, krate.spans.inner_span));
         }
         if !self.plan.programs.is_empty() {
             krate.items.push(
@@ -365,7 +407,7 @@ impl Callbacks<'_> {
 
 impl rustc_driver::Callbacks for Callbacks<'_> {
     /// Install the source-free root and the MIR query override. `INCAN_NATIVE_TIMING` opts into rustc's phase timings
-    /// on stderr without enabling unstable command-line options or changing compilation policy.
+    /// into the trace sink without enabling unstable command-line options or changing compilation policy.
     /// The source map owns one filename copied from the plan's shared file handle.
     fn config(&mut self, config: &mut interface::Config) {
         self.timing.mark("rustc_options");
@@ -376,6 +418,10 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
             .retain(|path| !search.iter().any(|held| held.kind == path.kind && held.dir == path.dir));
         search.append(&mut config.opts.search_paths);
         config.opts.search_paths = search;
+        if !self.features.is_empty() {
+            // Only a unit whose description declares unstable features may enable them, and only the declared ones.
+            config.opts.unstable_features = rustc_feature::UnstableFeatures::Allow;
+        }
         self.timing.configure(config);
         config.input = Input::Str {
             name: FileName::Custom(self.plan.span.file.as_str().to_owned()),
@@ -397,6 +443,18 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
     ) -> rustc_driver::Compilation {
         self.timing.mark("rustc_session");
         let sources = Sources::new(compiler.sess.source_map());
+
+        // ---- Declared unstable features ----
+        for feature in &self.features {
+            krate.attrs.push(ast::attr::mk_attr_nested_word(
+                &compiler.sess.psess.attr_id_generator,
+                ast::AttrStyle::Inner,
+                ast::Safety::Default,
+                rustc_span::sym::feature,
+                rustc_span::Symbol::intern(feature),
+                krate.spans.inner_span,
+            ));
+        }
 
         // ---- Source-backed native declarations ----
         if let Err(error) =
@@ -424,20 +482,14 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
             refuse(tcx, error);
         }
         match instantiate_generic_externals(tcx, &self.plan) {
-            Ok(Some(plan)) => {
-                self.plan = Arc::new(plan);
-                match PLAN.lock() {
-                    Ok(mut slot) => *slot = Some(Arc::clone(&self.plan)),
-                    Err(_) => tcx.dcx().fatal(DriverError::State.to_string()),
-                }
-            }
+            Ok(Some(plan)) => self.replace_plan(tcx, plan),
             Ok(None) => {}
             Err(error) => refuse(tcx, error),
         }
-        for model in self.plan.models.iter().filter(|model| !model.library_item.is_empty()) {
-            if let Err(error) = verify_library_layout(tcx, model) {
-                refuse(tcx, error);
-            }
+        match verify_library_layouts(tcx, &self.plan) {
+            Ok(Some(plan)) => self.replace_plan(tcx, plan),
+            Ok(None) => {}
+            Err(error) => refuse(tcx, error),
         }
         for value in self.plan.enums.iter().filter(|value| !value.library_item.is_empty()) {
             if let Err(error) = verify_library_enum(tcx, value) {
@@ -494,9 +546,9 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
                 .iter()
                 .map(|ty| tcx.erase_and_anonymize_regions(native_type_or_refuse(tcx, ty)))
                 .collect();
+            let output = tcx.erase_and_anonymize_regions(native_type_or_refuse(tcx, &external.return_type));
             if signature.inputs() != parameters
-                || signature.output()
-                    != tcx.erase_and_anonymize_regions(native_type_or_refuse(tcx, &external.return_type))
+                || signature.output() != output
                 || signature.c_variadic()
                 || signature.safety().is_unsafe()
             {
@@ -504,7 +556,9 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
                     tcx,
                     PlanError::Invalid {
                         function: external.path.clone(),
-                        reason: "external metadata differs from the admitted safe scalar signature".into(),
+                        reason: format!(
+                            "external metadata differs from the admitted safe scalar signature: native {signature:?}, admitted {parameters:?} -> {output:?}"
+                        ),
                     },
                 );
             }
@@ -549,6 +603,10 @@ fn add_source_backed_declarations(
         let span = sources.span(&value.span)?;
         krate.items.extend(enum_items(value, generator, span));
     }
+    for value in &plan.generic_enums {
+        let span = sources.span(&value.span)?;
+        krate.items.extend(crate::generic_enums::items(value, generator, span));
+    }
     for model in &plan.generic_models {
         let span = sources.span(&model.span)?;
         krate
@@ -577,6 +635,7 @@ fn native_bridge_items(plan: &Plan, span: rustc_span::Span) -> Result<Vec<Box<as
     items.extend(crate::fallible_bridges::items(plan, span)?);
     items.extend(crate::fallible_bridges::ordinary_items(plan, span)?);
     items.extend(crate::callable_bridges::items(plan, span)?);
+    items.extend(crate::native_trait_bridges::items(plan, span)?);
     Ok(items)
 }
 
@@ -619,10 +678,39 @@ fn has_opaque_return_abi(tcx: TyCtxt<'_>, output: rustc_middle::ty::Ty<'_>) -> b
     }
 }
 
+/// Check every retained native layout against metadata. A field whose planned type is not its native type becomes
+/// opaque in a refined plan, which is validated again: any read, write or construction relying on that field is then
+/// refused, while the layout's other fields stay usable. No refinement is needed when every planned type matches.
+fn verify_library_layouts(tcx: TyCtxt<'_>, plan: &Plan) -> Result<Option<Plan>, PlanError> {
+    let mut opaque = Vec::new();
+    for (owner, model) in plan.models.iter().enumerate() {
+        if !model.library_item.is_empty() {
+            opaque.extend(verify_library_layout(tcx, model)?.into_iter().map(|slot| (owner, slot)));
+        }
+    }
+    if opaque.is_empty() {
+        return Ok(None);
+    }
+    let mut refined = plan.clone();
+    for (owner, slot) in opaque {
+        let model = &mut refined.models[owner];
+        let index = i64::try_from(slot).map_err(|_| PlanError::Unsupported {
+            function: model.library_item.clone(),
+            reason: "native field slot overflow".into(),
+        })?;
+        model.fields[slot].ty = PlanType::Unit;
+        model.unavailable_native_fields.push(index);
+    }
+    // The unit's entry was checked before the session began; every declaration and body contract is checked again.
+    validation::validate(&refined, true)?;
+    Ok(Some(refined))
+}
+
 /// Check a retained native layout against its crate's metadata at the plan's explicit type arguments, including their
-/// bounds. Fields keep their names and instantiated types in order; a field marked public must be public in metadata.
-/// An opaque carrier grants no projection; a field-bearing layout requires a native struct after alias instantiation.
-fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration) -> Result<(), PlanError> {
+/// bounds. Fields keep their names in order, and a field marked public must be public in metadata. Return the slots
+/// whose planned type is not the field's instantiated native type, for the caller to make opaque. An opaque carrier
+/// grants no projection; a field-bearing layout requires a native struct after alias instantiation.
+fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration) -> Result<Vec<usize>, PlanError> {
     let invalid = |reason: &str| PlanError::Unsupported {
         function: model.library_item.clone(),
         reason: reason.into(),
@@ -631,7 +719,7 @@ fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration)
     if tcx.def_kind(def) == rustc_hir::def::DefKind::Trait {
         types::native_trait_object(tcx, def, &model.library_type_arguments)?;
         return if model.fields.is_empty() {
-            Ok(())
+            Ok(Vec::new())
         } else {
             Err(invalid("native trait object grants no field layout"))
         };
@@ -650,7 +738,7 @@ fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration)
         }
     }
     if model.fields.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let native = tcx.type_of(def).instantiate(tcx, arguments).skip_normalization();
     let rustc_middle::ty::Adt(adt, arguments) = native.kind() else {
@@ -665,22 +753,23 @@ fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration)
     {
         return Err(invalid("stdlib layout field count differs from metadata"));
     }
+    let mut mismatched = Vec::new();
     for (slot, (field, planned)) in declared.iter().zip(&model.fields).enumerate() {
         if model.field_public.get(slot) == Some(&true) && !field.vis.is_public() {
             return Err(invalid("public native field is private in metadata"));
         }
-        if field.name.as_str() != planned.name
-            || field.ty(tcx, arguments).skip_normalization() != crate::types::native_type(tcx, &planned.ty)?
-        {
+        if field.name.as_str() != planned.name {
             return Err(invalid(&format!(
-                "stdlib layout field `{}` at slot {slot} differs from metadata: native {}, planned {:?}",
-                planned.name,
-                field.ty(tcx, arguments).skip_normalization(),
-                planned.ty,
+                "stdlib layout field `{}` at slot {slot} differs from metadata: native {}",
+                planned.name, field.name,
             )));
         }
+        let opaque = i64::try_from(slot).is_ok_and(|slot| model.unavailable_native_fields.contains(&slot));
+        if !opaque && field.ty(tcx, arguments).skip_normalization() != crate::types::native_type(tcx, &planned.ty)? {
+            mismatched.push(slot);
+        }
     }
-    Ok(())
+    Ok(mismatched)
 }
 
 /// Check the concrete SDK enum's argument count, bounds, ordered variants and instantiated payload types against
@@ -746,7 +835,7 @@ fn enum_items(
 ) -> Vec<Box<ast::Item>> {
     let value_enum = !value.raw_kind.is_empty();
     let mut item = declarations::enum_declaration(value, span);
-    if value.carrier.is_empty() && value.library_item.is_empty() {
+    if value.carrier == Carrier::Declared && value.library_item.is_empty() {
         for derive in value
             .derives
             .iter()
@@ -816,7 +905,7 @@ fn instantiate_generic_externals(tcx: TyCtxt<'_>, plan: &Plan) -> Result<Option<
 ///
 /// The caller supplies the exact toolchain/library identity already verified before checking. External crates are
 /// explicit rlib paths; their metadata resolves canonical callees. No generated Rust source or ambient unstable grant
-/// is used.
+/// is used: the unstable features and toolchain libraries a unit uses are the ones its description declares (`access`).
 /// `INCAN_DIRECT_VALIDATION_REPORT` optionally records each function's first preflight refusal before normal
 /// validation. A library manifest lends its already checked public facade names for aliases of the canonical native
 /// items. Executables leave debug information in their object files instead of packing a macOS bundle during each edit.
@@ -832,6 +921,7 @@ pub fn compile(
     externs: &[(String, PathBuf)],
     dependency_search_paths: &[PathBuf],
     rustc_args: &[String],
+    access: &ToolchainAccess,
     shared_store: Option<&Path>,
     kind: UnitKind,
     overflow_checks: bool,
@@ -839,6 +929,7 @@ pub fn compile(
 ) -> Result<(), DriverError> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::native_compile", input = %output.display(), functions = plan.functions.len()).entered();
     let mut timing = crate::native_timing::Timing::requested();
+    let features = declared_features(access)?;
 
     // ---- Validated source plan ----
     if let Some(path) = std::env::var_os("INCAN_DIRECT_VALIDATION_REPORT") {
@@ -889,13 +980,21 @@ pub fn compile(
     if shared_store.is_some() {
         args.extend(["-Cprefer-dynamic".into(), "-Crpath".into()]);
         // Rustc already constructs the native Darwin invocation; bypass the C driver's extra process for edits.
-        if identity.target.ends_with("-apple-darwin") {
+        let darwin = identity.target.ends_with("-apple-darwin");
+        if darwin {
             args.push("-Clinker=/usr/bin/ld".into());
         }
+        // The executable is linked in the store and run from a copy elsewhere, so its libraries are also found
+        // through absolute search paths, which do not depend on where the copy lives.
+        args.extend(absolute_rpaths(&all, identity, darwin));
+    }
+    if access.links_sysroot() && kind != UnitKind::Library {
+        args.extend(sysroot_linkage(identity));
     }
     args.extend_from_slice(rustc_args);
     timing.mark("native_arguments");
     let mut callbacks = Callbacks {
+        features,
         plan,
         manifest,
         search,
@@ -903,8 +1002,11 @@ pub fn compile(
         development: shared_store.is_some(),
         loaded: Vec::new(),
         timing,
+        partition: kind == UnitKind::Program,
     };
+    let capture = crate::native_timing::Capture::begin();
     let result = rustc_driver::catch_fatal_errors(|| rustc_driver::run_compiler(&args, &mut callbacks));
+    drop(capture);
     callbacks.timing.mark("rustc_codegen_link_teardown");
     *PLAN.lock().map_err(|_| DriverError::State)? = None;
     if let Some(error) = FAILURE.lock().map_err(|_| DriverError::State)?.take() {
@@ -964,6 +1066,46 @@ fn compilation_arguments(
     args
 }
 
+/// The unstable features a unit's description declares, each a Rust identifier the crate root enables.
+fn declared_features(access: &ToolchainAccess) -> Result<Vec<String>, DriverError> {
+    let identifier = |name: &str| {
+        name.chars()
+            .next()
+            .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+            && name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    };
+    access
+        .unstable_features
+        .iter()
+        .map(|name| {
+            if identifier(name) {
+                Ok(name.clone())
+            } else {
+                Err(DriverError::Invocation(format!(
+                    "unit declares unstable feature `{name}`, which is not a Rust identifier"
+                )))
+            }
+        })
+        .collect()
+}
+
+/// An executable that links declared toolchain libraries loads them from the verified sysroot at run time, with the
+/// standard library they were built with. Rustc links every crate it has as a shared library dynamically, and the
+/// runtime search path names the sysroot's `lib` before its target libraries, so a toolchain library loaded from `lib`
+/// finds the libraries it loads itself.
+fn sysroot_linkage(identity: &DriverIdentity) -> Vec<String> {
+    let libraries = identity.sysroot.join("lib");
+    let target = identity.sysroot.join("lib/rustlib").join(&identity.target).join("lib");
+    let mut args = vec![
+        "-Cprefer-dynamic".to_owned(),
+        format!("-Lnative={}", libraries.display()),
+    ];
+    for directory in [&libraries, &target] {
+        args.push(format!("-Clink-arg=-Wl,-rpath,{}", directory.display()));
+    }
+    args
+}
+
 /// Check every foreign alias's arity and parameter kinds before any native type query can expand an alias.
 /// Bounds follow argument dependency order, so an invalid child cannot surface as a Rust alias diagnostic first.
 fn verify_library_argument_profiles(tcx: TyCtxt<'_>, plan: &Plan) -> Result<(), PlanError> {
@@ -1001,4 +1143,28 @@ fn verify_library_argument_profiles(tcx: TyCtxt<'_>, plan: &Plan) -> Result<(), 
         callees::verify_bounds(tcx, def, arguments)?;
     }
     Ok(())
+}
+
+/// Absolute run-time search paths for a shared-linkage executable: each shared library's directory and the
+/// toolchain's own library directory, so a copy of the executable loads them wherever it is placed.
+fn absolute_rpaths(linked: &[(String, PathBuf)], identity: &DriverIdentity, darwin: bool) -> Vec<String> {
+    let mut directories: Vec<PathBuf> = vec![identity.sysroot.join("lib/rustlib").join(&identity.target).join("lib")];
+    for (_, path) in linked {
+        let shared = matches!(path.extension().and_then(|e| e.to_str()), Some("dylib" | "so"));
+        if let (true, Some(parent)) = (shared, path.parent()) {
+            if !directories.iter().any(|known| known == parent) {
+                directories.push(parent.to_path_buf());
+            }
+        }
+    }
+    let mut args = Vec::new();
+    for directory in directories {
+        if darwin {
+            args.push("-Clink-arg=-rpath".into());
+            args.push(format!("-Clink-arg={}", directory.display()));
+        } else {
+            args.push(format!("-Clink-arg=-Wl,-rpath,{}", directory.display()));
+        }
+    }
+    args
 }

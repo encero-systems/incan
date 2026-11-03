@@ -16,7 +16,7 @@ from rust::incan_semantics_core::body_ir import (
 from pub::incan_mir_plan import Operand, PlanType, Place, Projection, RvalueKind, SourceSpan
 from pub::incan_mir_plan import assign as plan_assign, place as plan_place
 from frame import Builder, place_type, temporary, appended_field
-from models import field_projection
+from models import field_steps
 from lists import require_list_shape, list_element, is_list
 from collections import (
     is_collection,
@@ -32,14 +32,12 @@ from element_places import is_element_place, element_place_type, element_prefix_
 from layout_types import shared_receiver_type
 from classes import frame_type
 from tuples import is_tuple_type
-from lowering import (
-    list_borrow,
-    list_slice_view,
-    scalar_operand,
-    value_operand,
-    materialized_receiver,
-    instantiated_external_call,
-)
+from list_values import list_borrow, value_operand
+from operand_borrows import list_slice_view
+from checked_values import scalar_operand
+from list_methods import materialized_receiver
+from calls import instantiated_external_call
+from table_views import borrowed_at
 
 
 pub def shared_element_place(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Option[Place], str]:
@@ -209,7 +207,7 @@ pub def mutable_element_prefix(
 def projected_field(mut builder: Builder, place: Place, projection: &PlaceElem, span: SourceSpan) -> Result[Place, str]:
     """Project a checked model or constant tuple field through its retained element reference."""
     owner = dereferenced(builder, place)
-    field = field_projection(
+    steps = field_steps(
         builder.constructors,
         builder.nominals,
         place_type(builder.locals, owner),
@@ -218,7 +216,10 @@ def projected_field(mut builder: Builder, place: Place, projection: &PlaceElem, 
         builder.unions,
         builder.intrinsics,
     )?
-    return appended_field(owner, field, span)
+    mut projected = owner
+    for step in steps:
+        projected = appended_field(projected, step, span)?
+    return Ok(projected)
 
 
 pub def borrow_element_mut(
@@ -256,7 +257,7 @@ def element_start(mut builder: Builder, source: &RustPlace) -> Result[int, str]:
     match source.local_id():
         None => return Err("unsupported Body IR mutable borrow of a static element")
         Some(local) =>
-            root = builder.locals[int(local.index()) + 1 + builder.local_offset].ty
+            root = borrowed_at(builder.locals, int(local.index()) + 1 + builder.local_offset).ty
             if is_list(root) or is_collection(root):
                 return Ok(0)
     match structural_prefix(builder, source)?:
@@ -337,7 +338,7 @@ def dereferenced(mut builder: Builder, place: Place) -> Place:
     """Project through a whole nominal reference so its fields append to the referent rather than the reference."""
     if place.projection != Projection.Whole:
         return place
-    match builder.locals[place.local].ty:
+    match borrowed_at(builder.locals, place.local).ty:
         PlanType.ModelMutRef(owner, name) =>
             return Place(local=place.local, projection=Projection.Deref(PlanType.Model(owner, name)), span=place.span)
         PlanType.TupleMutRef(elements) =>

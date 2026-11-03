@@ -1,0 +1,39 @@
+"""Separate Rust compiler invocation facts from the locations used to deliver their inputs and outputs."""
+
+from std.fs import Path
+
+
+pub def invocation_facts(arguments: list[str], project: Path, directory: Path) -> list[str]:
+    """
+    Retain source roles, extern aliases, emission kinds and codegen flags without physical locations.
+
+    1. Drop search, sysroot and output locations whose selected facts are identified separately.
+    2. Keep extern aliases and emission modes independently of their artifact locations.
+    3. Retain every remaining effective compiler argument.
+    """
+    mut facts: list[str] = []
+    mut previous = ""
+    for argument in arguments:
+        # 1. Locations select files whose identities are already separate inputs.
+        if previous in ["--out-dir", "-o", "-L", "--sysroot"]:
+            previous = ""
+            continue
+        if argument in ["--out-dir", "-o", "-L", "--sysroot"]:
+            previous = argument
+            continue
+        # 2. An alias or emission mode reaches compilation, while its destination does not.
+        if previous == "--extern" and "=" in argument:
+            facts.append(argument.split("=")[0])
+        elif previous == "--emit":
+            facts.append(",".join([item.split("=")[0] for item in argument.split(",")]))
+        elif previous == "--remap-path-prefix" and argument.startswith(project.0 + "="):
+            facts.append("<project>=" + argument[len(project.0) + 1:])
+        elif previous == "-C" and argument.startswith("metadata=incan-unit"):
+            facts.append("metadata=<unit-identity>")
+        # 3. Source locations become roles; source content is independently digested.
+        elif argument.startswith(project.0 + "/") or argument.startswith(directory.0 + "/"):
+            facts.append("<source>")
+        else:
+            facts.append(argument)
+        previous = argument
+    return facts

@@ -1,0 +1,85 @@
+"""The installed compiler and native closure contract, shared by admission and command preparation."""
+
+from std.json import JsonValue
+from native_closure_input import NativeClosureInput
+
+
+pub model NativeCrate:
+    """One crate a unit may name: its crate name and its library."""
+
+    pub name: str
+    pub path: str
+
+    def to_json(self) -> JsonValue:
+        """The crate as the unit description spells it."""
+        return JsonValue.object({"name": JsonValue.string(self.name), "path": JsonValue.string(self.path)})
+
+
+pub model Toolchain:
+    """The toolchain's compiler and the native closure every unit links."""
+
+    pub driver: str
+    pub sysroot: str
+    pub rust_abi: list[str]
+    pub externs: list[NativeCrate]
+    pub search: list[str]
+    pub registry_units: str
+    # When set, a path prefix: the compiler writes its standard output to `<prefix>.out` and its standard error to
+    # `<prefix>.err` instead of the caller's streams, so a resident owner can report them without owning a terminal.
+    pub console: str = ""
+    # A resident owner's worker selection, held only while it watches the compiler inputs and its inherited
+    # environment stays unchanged. Ordinary toolchain loading leaves this empty and derives the selection afresh.
+    pub worker_generation: str = ""
+    # Published linking fields are read once within this selection, never retained across owner requests blindly.
+    pub native_closures: NativeClosureInput = NativeClosureInput()
+    pub registry_lock: str = ""
+    pub c_compiler: str = ""
+    # Explicit target facts for synthetic or cross-target toolchains; empty selects rustc's reported host.
+    pub target: str = ""
+    # A unit-record activation cannot retain the bulk compiler's decoded caches while idle (#2481, S3).
+    pub retire_worker: bool = false
+
+    def installed(self) -> InstalledCompiler:
+        """Project frozen compiler facts without retaining any request-local readers or console selection."""
+        return InstalledCompiler(
+            driver=self.driver,
+            sysroot=self.sysroot,
+            rust_abi=self.rust_abi,
+            externs=self.externs,
+            search=self.search,
+            registry_units=self.registry_units,
+            registry_lock=self.registry_lock,
+            c_compiler=self.c_compiler,
+            target=self.target,
+        )
+
+
+pub model InstalledCompiler:
+    """Frozen compiler description; mutable closure readers and worker or console state belong to each request."""
+
+    pub driver: str
+    pub sysroot: str
+    pub rust_abi: list[str]
+    pub externs: list[NativeCrate]
+    pub search: list[str]
+    pub registry_units: str
+    pub registry_lock: str
+    pub c_compiler: str
+    pub target: str
+
+    def select(self) -> Toolchain:
+        """Create fresh request-local state around this admitted compiler description."""
+        return Toolchain(
+            driver=self.driver,
+            sysroot=self.sysroot,
+            rust_abi=self.rust_abi,
+            externs=self.externs,
+            search=self.search,
+            registry_units=self.registry_units,
+            console="",
+            worker_generation="",
+            native_closures=NativeClosureInput(),
+            registry_lock=self.registry_lock,
+            c_compiler=self.c_compiler,
+            target=self.target,
+        )

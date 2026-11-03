@@ -1,6 +1,7 @@
 //! Retain source-owned primitive capability implementations from checked standard-provider declarations.
 
 use incan_lang::lang::trait_capabilities::{self, PrimitiveSourceAdapterInfo};
+use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_semantics_core::{IncanPrimitiveType, SemanticSourceTargetKind, SymbolOrigin};
 
 use super::{CanonicalSymbolId, IncanType, bir};
@@ -100,10 +101,7 @@ fn checked_decoder(
     let Some(identity) = &body.canonical else {
         return false;
     };
-    let IncanType::Generic { base, args } = &body.return_type else {
-        return false;
-    };
-    let [value, IncanType::Named(error)] = args.as_slice() else {
+    let Some([value, IncanType::Named(error)]) = body.return_type.collection_arguments(CollectionTypeId::Result) else {
         return false;
     };
     identity.origin == owner.canonical.origin
@@ -113,11 +111,11 @@ fn checked_decoder(
         && body.type_parameters.is_empty()
         && !body.is_async
         && matches!(body.params.as_slice(), [parameter] if parameter.ty == IncanType::Primitive(IncanPrimitiveType::Bytes))
-        && base == "Result"
         && value == receiver
         && body.named_type_identities.get(error).is_some_and(|identity| {
-            identity.declaration_name == "OrdinalMapError"
+            identity.declaration_name == specification.decode_error
                 && matches!(&identity.origin, SymbolOrigin::Package { library, module_path }
-                    if library == specification.package && module_path.iter().map(String::as_str).eq(["collections"]))
+                    if library == specification.package
+                        && module_path.iter().map(String::as_str).eq(specification.decode_error_module.iter().copied()))
         })
 }

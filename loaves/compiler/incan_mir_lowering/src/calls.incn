@@ -1,0 +1,361 @@
+"""Dispatch checked calls, and call Loaf and delegated native functions."""
+
+from pub::incan_mir_plan import CalleeKind, ExternalFunction, Operand, Place, PlanType, SourceSpan
+from explicit_arguments import parameter_accesses, validate_source_input_call
+from native_callables import native_callable_storage
+from layout_types import native_source_type
+from native_call_keys import native_result_mismatch
+from rust::incan_semantics_core import IncanType as RustType, SymbolOrigin, SemanticSourceTargetKind
+from rust::incan_semantics_core::body_ir import (
+    ArgumentBinding as RustArgumentBinding,
+    ArgumentElement as RustArgumentElement,
+    Body as RustBody,
+    CallableTarget,
+    Callee as RustCallee,
+    NamedCallableTarget as RustNamedCallableTarget,
+    Place as RustPlace,
+    Statement as RustStatement,
+    StatementKind as RustStatementKind,
+    LoafCallable as RustLoafCallable,
+)
+from foreign_calls import lower_foreign_call
+from c_bridges import lower_checked_bridge
+from table_views import borrowed_at
+from type_metadata import lower_type_metadata
+from unions import require_native_union_signature
+from frame import Builder
+from async_ import construct_boxed_future
+from defaults import default_arguments, library_default_arguments
+from type_parameters import substitute
+from primitive_traits import normalized_primitive_call
+from closures import return_representation
+from lowering import BodyIrModule
+from method_calls import lower_method_call
+from callable_calls import checked_type_arguments, lower_callable_result, lower_callable_value, lower_named_target
+from call_arguments import call_parameter_type, has_defaulted_slots, ordered_slot_operands
+from builtin_calls import lower_runtime_helper
+from list_methods import call_destination
+
+
+pub def lower_call(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    statement: &RustStatement,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Normalize checked primitive adapters before the existing dispatcher consumes the complete call record."""
+    match normalized_primitive_call(module, builder, statement, span)?:
+        Some(selected) => return lower_checked_call(module, builder, selected, span)
+        None => return lower_checked_call(module, builder, statement, span)
+
+
+def lower_checked_call(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    statement: &RustStatement,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Dispatch by the retained callee kind, preserving the call's operand and result facts."""
+    match statement.kind:
+        RustStatementKind.Call(destination=destination, callee=callee, args=arguments, may_panic=_may_panic) =>
+            match callee:
+                RustCallee.Function(callable) =>
+                    match callable:
+                        CallableTarget.Named(target) =>
+                            return lower_named_target(module, builder, target, arguments, destination, span)
+                        CallableTarget.Local(target) =>
+                            return lower_callable_value(builder, target, arguments, destination, span)
+                        _ => return Err("unsupported Body IR local callable value")
+                RustCallee.Method(target) =>
+                    return lower_method_call(module, builder, target, arguments, destination, span)
+                RustCallee.Helper(helper) => return lower_runtime_helper(builder, helper, arguments, destination, span)
+                RustCallee.ProviderOperation(_operation) => return Err("unsupported Body IR ProviderOperation")
+                RustCallee.TypeMetadata(target) =>
+                    if len(arguments) != 0:
+                        return Err("invalid Body IR type metadata value arguments")
+                    return lower_type_metadata(builder, target, destination, span)
+                RustCallee.CheckedForeign(target) =>
+                    return lower_foreign_call(builder, target, arguments, destination, span)
+                RustCallee.CheckedBridge(target) =>
+                    return lower_checked_bridge(builder, target, arguments, destination, span)
+        _ => return Err("expected Body IR Call")
+
+
+pub def lower_loaf_call(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &RustNamedCallableTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Call a linked Loaf function (DD-0007) or a checker-selected Rust instantiation (DD-0006).
+
+    The callable is selected by the checker's canonical identity, never by a spelling, and its declaration record
+    supplies the signature the driver checks against the Loaf's metadata.
+    """
+    match target.direct_call_id:
+        Some(_identity) => return Err("Body IR Loaf call has a local call identity")
+        None => pass
+    mut mismatch = "no retained callable with the selected identity"
+    for callable_position in range(len(module.loaf_callables)):
+        callable = borrowed_at(module.loaf_callables, callable_position)
+        match target.canonical:
+            None => return Err("unsupported Body IR unproven Loaf call target")
+            Some(identity) =>
+                if identity != callable.canonical:
+                    continue
+                match identity.origin:
+                    SymbolOrigin.RustCrate(_path) =>
+                        written = checked_type_arguments(builder, target.type_args)?
+                        # A template from another source declaration may use binders absent from this frame.
+                        match checked_type_arguments(builder, callable.native_type_arguments):
+                            Err(reason) =>
+                                mismatch = reason
+                                continue
+                            Ok(retained) =>
+                                if written != retained:
+                                    mismatch = f"native arguments differ: call {written}, declaration {retained}"
+                                    continue
+                        match native_result_mismatch(builder, callable, destination)?:
+                            Some(reason) =>
+                                mismatch = f"retained native signatures disagree with the checked result slot: {reason}"
+                                continue
+                            None => pass
+                    _ => pass
+        return lower_delegated_call(module, builder, callable, target, arguments, destination, span)
+    return Err(
+        f"unsupported Body IR imported or unresolved canonical call target {target.name} in {builder.name}: {mismatch}",
+    )
+
+
+def lower_delegated_call(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    delegation: &RustLoafCallable,
+    target: &RustNamedCallableTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Emit the external call for one matched delegation: a proven forwarder's Rust callee or the SDK crate item itself.
+
+    A generic crate item takes the call's checked type arguments for its declared type parameters, in order, and the
+    driver instantiates the item with them before checking its signature.
+    An associated SDK trait function closes Self from its checked type receiver before its method arguments.
+    A retained Rust signature also closes the enclosing source declaration's binders before native type admission.
+    """
+    mut names: list[str] = []
+    for name in delegation.type_parameters:
+        names.append(str(name))
+    checked_rust = native_delegation(delegation)
+    closed = library_function_arguments(builder, target, names)?
+    if len(closed) != len(names) or (not checked_rust and len(names) == 0 and len(target.type_args) != 0):
+        return Err("unsupported Body IR nonlocal function with type parameters")
+    # A checked native signature in a source body can name that body's binders. A compiled Loaf instead owns its
+    # declaration binders; neither signature infers a type from a runtime operand.
+    mut signature_names = names
+    mut signature_arguments = closed
+    if checked_rust:
+        signature_names = builder.type_parameters
+        signature_arguments = builder.type_arguments
+    mut parameters: list[PlanType] = []
+    for parameter in delegation.parameters:
+        instantiated: RustType = substitute(parameter, signature_names, signature_arguments)?
+        _ = require_native_union_signature(instantiated, builder.intrinsics, checked_rust)?
+        parameters.append(
+            native_source_type(
+                builder.constructors,
+                builder.nominals,
+                builder.enums,
+                builder.unions,
+                instantiated,
+                builder.intrinsics,
+            )?,
+        )
+    match delegation.declaration_frame():
+        Some(frame) =>
+            validate_source_input_call(builder, frame)?
+            parameters = []
+            for index in range(len(frame.params)):
+                parameters.append(call_parameter_type(builder, frame, frame.params[index])?)
+        None => pass
+    returned: RustType = substitute(delegation.return_type, signature_names, signature_arguments)?
+    _ = require_native_union_signature(returned, builder.intrinsics, checked_rust)?
+    mut result = native_source_type(
+        builder.constructors,
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        returned,
+        builder.intrinsics,
+    )?
+    match delegation.declaration_frame():
+        Some(frame) => result = return_representation(frame, result)?
+        None => pass
+    mut type_arguments: list[PlanType] = []
+    mut native_arguments = closed
+    if checked_rust:
+        native_arguments = checked_type_arguments(builder, delegation.native_type_arguments)?
+    for argument in native_arguments:
+        type_arguments.append(
+            native_source_type(
+                builder.constructors,
+                builder.nominals,
+                builder.enums,
+                builder.unions,
+                argument,
+                builder.intrinsics,
+            )?,
+        )
+    if checked_rust:
+        parameters, type_arguments = native_callable_storage(
+            builder,
+            delegation,
+            arguments,
+            target.binding,
+            parameters,
+            type_arguments,
+        )?
+    operands = library_call_operands(module, builder, delegation, target.binding, arguments, parameters, span, 0, true)?
+    output = call_destination(builder, destination, result, span)?
+    match delegation.rust_path():
+        None => return Err("the standard library call target has no checked native identity")
+        Some(published_path) =>
+            path = published_path
+            match result:
+                PlanType.Future(outputs) =>
+                    if len(outputs) != 1:
+                        return Err("the standard library future requires exactly one output type")
+                    mut callee = CalleeKind.External(path)
+                    if len(type_arguments) != 0:
+                        callee = CalleeKind.Instantiated(path, type_arguments)
+                    return construct_boxed_future(builder, callee, parameters, outputs[0], operands, output, span)
+                _ => pass
+            return instantiated_external_call(builder, path, type_arguments, parameters, result, operands, output, span)
+
+
+pub def native_delegation(delegation: &RustLoafCallable) -> bool:
+    """Distinguish metadata-selected Rust items from compiled source Loaf signatures before admitting local carriers."""
+    match delegation.canonical.origin:
+        SymbolOrigin.RustCrate(_path) => return true
+        _ => return false
+
+
+def library_function_arguments(
+    mut builder: Builder,
+    target: &RustNamedCallableTarget,
+    names: list[str],
+) -> Result[list[RustType], str]:
+    """Close SDK associated Self and nominal owner arguments through the enclosing checked frame's binders."""
+    if len(names) == 0:
+        return Ok([])
+    mut closed: list[RustType] = []
+    mut associated = false
+    match target.canonical:
+        Some(identity) => associated = identity.kind == SemanticSourceTargetKind.Method
+        None => pass
+    if names[0] == "Self" and associated:
+        match target.receiver_type:
+            Some(receiver) => closed = checked_type_arguments(builder, [receiver.clone()])?
+            None => return Err("the standard library associated operation has no checked Self type")
+        for argument in checked_type_arguments(builder, target.type_args)?:
+            closed.append(argument.clone())
+        return Ok(closed)
+    match target.receiver_type:
+        Some(RustType.Generic(base=_base, args=arguments)) =>
+            owner_arguments = checked_type_arguments(builder, arguments)?
+            if len(target.type_args) != 0:
+                # Older checked nominal calls also retain their owner arguments on the associated call. Exact
+                # agreement across both views and all declared binders preserves that proven representation.
+                retained = checked_type_arguments(builder, target.type_args)?
+                if len(owner_arguments) != len(names) or retained != owner_arguments:
+                    return Err("the standard library owner and method type arguments are unsupported")
+            return Ok(owner_arguments)
+        _ => return checked_type_arguments(builder, target.type_args)
+
+
+pub def library_call_operands(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    delegation: &RustLoafCallable,
+    binding: &RustArgumentBinding,
+    arguments: &list[RustArgumentElement],
+    types: list[PlanType],
+    span: SourceSpan,
+    offset: int,
+    positional: bool,
+) -> Result[list[Operand], str]:
+    """
+    Bind a compiled Loaf call's arguments, each passed owned as the crate item takes it.
+
+    An omitted argument evaluates its declaration-owned default in an isolated frame. An offset of one skips a
+    method receiver, the record's first parameter.
+    """
+    if has_defaulted_slots(binding):
+        return library_default_arguments(module, builder, delegation, binding, arguments[offset:], types, span, offset)
+    match delegation.declaration_frame():
+        Some(frame) =>
+            if frame.canonical != Some(delegation.canonical.clone()):
+                return Err("invalid Body IR argument declaration frame identity")
+            accesses = parameter_accesses(frame.params, offset)?
+            if len(accesses) != len(types):
+                return Err("invalid Body IR argument declaration frame length")
+            return ordered_slot_operands(builder, binding, arguments, types, span, offset, false, positional, accesses)
+        None => pass
+    return ordered_slot_operands(builder, binding, arguments, types, span, offset, true, positional)
+
+
+pub def instantiated_external_call(
+    mut builder: Builder,
+    path: str,
+    type_arguments: list[PlanType],
+    parameters: list[PlanType],
+    result: PlanType,
+    operands: list[Operand],
+    output: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Declare one selected external signature and preserve owned-result replacement and cleanup."""
+    builder.externals.append(
+        ExternalFunction(path=path, type_arguments=type_arguments, parameters=parameters, return_type=result, span=span),
+    )
+    mut callee = CalleeKind.Instantiated(path, type_arguments)
+    if len(type_arguments) == 0:
+        callee = CalleeKind.External(path)
+    return lower_callable_result(builder, callee, operands, output, result, span)
+
+
+pub def ordered_arguments(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    binding: &RustArgumentBinding,
+    elements: &list[RustArgumentElement],
+    body: &RustBody,
+    span: SourceSpan,
+) -> Result[list[Operand], str]:
+    """Use the body's parameter types when materializing arguments in source order."""
+    # Legacy evaluates permuted generator calls in declaration order, after Body IR has evaluated written order.
+    if body.is_generator():
+        match binding:
+            RustArgumentBinding.Resolved(arguments=bindings, defaulted_slots=_defaults) =>
+                for bound in bindings:
+                    if int(bound.slot) != int(bound.written_position):
+                        return Err("unsupported Body IR reordered generator ArgumentBinding")
+            _ => pass
+    mut types: list[PlanType] = []
+    for parameter in body.params:
+        types.append(call_parameter_type(builder, body, parameter)?)
+    if has_defaulted_slots(binding):
+        return default_arguments(module, builder, binding, elements, body, types, span, 0, false)
+    return ordered_slot_operands(
+        builder,
+        binding,
+        elements,
+        types,
+        span,
+        0,
+        accesses=parameter_accesses(body.params, 0)?,
+    )

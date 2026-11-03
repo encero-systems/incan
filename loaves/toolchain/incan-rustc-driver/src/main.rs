@@ -31,6 +31,7 @@ mod command_format;
 mod comparison_bridges;
 mod coroutines;
 mod declarations;
+mod dependency_report;
 mod derived_display;
 mod error;
 mod fallible_bridges;
@@ -40,6 +41,7 @@ mod formatting;
 mod frontend;
 mod frozen_values;
 mod futures;
+mod generic_enums;
 mod generic_layouts;
 mod generic_loans;
 mod identity;
@@ -50,6 +52,7 @@ mod native_loans;
 mod native_search;
 mod native_shared;
 mod native_timing;
+mod native_trait_bridges;
 mod panic_hooks;
 mod plan;
 mod program_entries;
@@ -82,18 +85,28 @@ use incan_driver::unit::UnitDescription;
 const CHECK_CERTIFICATE: &str = "incan.compiler-check/1\n";
 
 const USAGE: &str = "usage: incan-rustc-driver --unit UNIT CRATE OUTPUT SYSROOT [--certify PATH] [OPTIONS] | \
-                     --source-interface UNIT SYSROOT DIRECTORY | \
-                     --check UNIT SYSROOT [--format text|json] [--certify PATH] [OPTIONS] | --fmt UNIT PATH [--check] | --source-files PATH | --rust-imports UNIT | --codegraph UNIT SYSROOT OUTPUT [INTERFACE] | --read-codegraph GRAPH ROOT GROUP [FIELDS_JSON] | --rust-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-compile-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR] | --resident SOCKET GENERATION READY IDLE_SECONDS | --identity SYSROOT\n\
+                     --source-interface UNIT SYSROOT DIRECTORY | --dependencies UNIT SYSROOT [OPTIONS] | \
+                     --check UNIT SYSROOT [--format text|json] [--certify PATH] [OPTIONS] | --explain CODE | --fmt UNIT PATH [--check] | --source-files PATH | --rust-imports UNIT | --codegraph UNIT SYSROOT OUTPUT [INTERFACE] | --read-codegraph GRAPH ROOT GROUP [FIELDS_JSON] | --rust-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-compile-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR] | --resident SOCKET GENERATION READY | --identity SYSROOT\n\
                      OPTIONS: --rustc-arg ARG, --library, --shared-native DIR (native artifacts and ABI caches come from UNIT)";
 
 /// Compile an Incan unit (`--unit`, or serially from a `--resident` worker) or check one (`--check`), each from the
-/// unit description Oven wrote, publish a checking-only source interface (`--source-interface`), or write the ABI cache
-/// of Rust crates (`--rust-abi`), format source with the unit's vocabulary (`--fmt`), discover authored files
-/// (`--source-files`), or export and read checked graphs (`--codegraph`, `--read-codegraph`, `--rust-codegraph` and
+/// unit description Oven wrote, publish a checking-only source interface (`--source-interface`), report a unit's
+/// settled dependency closure (`--dependencies`), or write the ABI cache of Rust crates (`--rust-abi`), format source
+/// with the unit's vocabulary (`--fmt`), discover authored files (`--source-files`), explain a stable diagnostic
+/// (`--explain`), or export and read checked graphs (`--codegraph`, `--read-codegraph`, `--rust-codegraph` and
 /// `--rust-compile-codegraph`).
 ///
 /// The shared opt-in invocation sink is initialized before dispatch; disabled tracing uses the ordinary logging filter.
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// A command that fails prints its error as [`report`] does and exits with that status.
+fn main() -> std::process::ExitCode {
+    match command() {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => std::process::ExitCode::from(report(error.as_ref())),
+    }
+}
+
+/// Dispatch the command the first argument names.
+fn command() -> Result<(), Box<dyn std::error::Error>> {
     incan_driver::invocation_trace::initialize()?;
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
@@ -101,17 +114,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("--resident") => worker::serve(&args[1..]),
         Some("--unit") => frontend::compile(&args[1..]),
         Some("--source-interface") => frontend::source_interface(&args[1..]),
+        Some("--dependencies") => frontend::dependency_report(&args[1..]),
         Some("--check") => exit_with(check(&args[1..])?),
+        Some("--explain") => exit_with(command_diagnostics::explain(&args[1..])?),
         Some("--fmt") => exit_with(format(&args[1..])?),
-        Some("--source-files") => {
-            let [path] = &args[1..] else {
-                return Err(USAGE.into());
-            };
-            let path = std::path::absolute(path)?;
-            let files = command_format::source_files(&path).map_err(|error| error.message)?;
-            println!("{}", serde_json::to_string(&files)?);
-            Ok(())
-        }
+        Some("--source-files") => exit_with(source_files(&args[1..])?),
         Some("--codegraph") => codegraph::incan(&args[1..]),
         Some("--read-codegraph") => codegraph::read(&args[1..]),
         Some("--rust-codegraph") => rust_codegraph::export(&args[1..]),
@@ -147,12 +154,36 @@ fn status_of<T>(result: incan_driver::error::CliResult<T>) -> i32 {
     match result {
         Ok(_) => 0,
         Err(error) => {
-            if !error.message.is_empty() {
-                eprintln!("{}", error.message);
-            }
+            print_failure(&error.message);
             error.exit_code.0
         }
     }
+}
+
+/// Print an error a command returned and give the status it exits with. A refusal reads exactly as `--check` prints
+/// it, never as a quoted, escaped debug string; the short-lived command and the resident worker share this.
+pub(crate) fn report(error: &dyn std::error::Error) -> u8 {
+    print_failure(&error.to_string());
+    1
+}
+
+/// Print a failure's message to stderr as it reads, with a final newline; an empty message prints nothing.
+fn print_failure(message: &str) {
+    if !message.is_empty() {
+        eprintln!("{message}");
+    }
+}
+
+/// Print the authored Incan sources under one path as a JSON list, the files a formatting run selects, and return
+/// status zero. A short-lived process and the resident worker share this exact path.
+pub(crate) fn source_files(arguments: &[String]) -> Result<i32, Box<dyn std::error::Error>> {
+    let [path] = arguments else {
+        return Err(USAGE.into());
+    };
+    let path = std::path::absolute(path)?;
+    let files = command_format::source_files(&path).map_err(|error| error.message)?;
+    println!("{}", serde_json::to_string(&files)?);
+    Ok(0)
 }
 
 /// Format a source through the compiler's command function using the unit vocabulary supplied by Oven, and return
@@ -199,7 +230,7 @@ fn rust_abi(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         search: &search,
         scope: rust_facts::RustFactsScope::Crates(crates),
     })?;
-    std::fs::write(output, incan_lang::interop::encode_rust_abi_cache(&facts)?)?;
+    std::fs::write(output, incan_frontend::rust_abi_cache::encode_rust_abi_cache(&facts)?)?;
     Ok(())
 }
 

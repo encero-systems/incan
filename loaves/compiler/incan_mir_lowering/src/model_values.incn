@@ -12,6 +12,7 @@ from rust::incan_semantics_core::body_ir import (
     Place as RustPlace,
 )
 from rust::incan_semantics_core import IncanType as RustType, SymbolOrigin, SemanticSourceTargetKind
+from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import PlanType, Place, Operand, RvalueKind, ExternalFunction, CalleeKind, SourceSpan
 from pub::incan_mir_plan import assign as plan_assign
 from frame import Builder, temporary, read_place, terminate_call, place_type, external_call
@@ -19,9 +20,14 @@ from type_parameters import substitute
 from layout_types import native_source_type
 from options import carrier_layout
 from text_ownership import drop_borrowed_text_temporaries
-from lowering import scalar_place, text_argument, lower_callable_result, native_format_text, materialized_receiver
+from checked_values import scalar_place
+from sequence_builtins import text_argument
+from callable_calls import lower_callable_result
+from formatting import native_format_text
+from list_methods import materialized_receiver
 from decls import library_item
 from element_places import is_element_place, element_place_type
+from table_views import borrowed_at
 
 
 pub def nominal_place(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Option[Place], str]:
@@ -251,7 +257,8 @@ pub def refuse_overridden_json_default(
     """
     match receiver:
         PlanType.Model(owner, _name) =>
-            for body in module.bodies:
+            for body_position in range(len(module.bodies)):
+                body = borrowed_at(module.bodies, body_position)
                 if declares_own_method(builder.nominals[owner], body, method):
                     return Err(f"unsupported Body IR JSON protocol default over an adopter's own {method}")
         _ => pass
@@ -347,7 +354,7 @@ def static_receiver_type(mut builder: Builder, target: &NamedCallableTarget) -> 
 def require_parsed_result(mut builder: Builder, result: PlanType, payload: PlanType) -> Result[None, str]:
     """Require the destination to be the `Result[Model, str]` carrier legacy's `from_json` returns."""
     _owner, declaration = carrier_layout(builder, result)?
-    if declaration.carrier != "Result":
+    if declaration.carrier != Carrier.Result:
         return Err("unsupported Body IR from_json destination carrier")
     if declaration.variants[0].fields != [payload] or declaration.variants[1].fields != [PlanType.String]:
         return Err("unsupported Body IR from_json destination carrier")

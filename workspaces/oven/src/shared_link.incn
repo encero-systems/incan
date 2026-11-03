@@ -7,20 +7,31 @@ from json_fields import required_items, required_text
 from unit import UnitDescription
 from unit_freshness import Key, artifact_identity, fingerprint
 
-
 const SCHEMA: str = "incan.native-shared/1"
 
 
 pub def development_link(unit: UnitDescription, requested: bool) -> bool:
-    """Only debug run and test requests select shared linkage; libraries and build requests retain static linkage."""
-    return requested and unit.profile == "debug" and unit.kind != "library"
+    """
+    Requested debug executables use shared linkage; libraries and release programs retain static linkage. A unit that
+    links the toolchain's own libraries uses the standard library they were built with, so it shares no carriers.
+    """
+    sysroot = len(unit.toolchain_access.sysroot_dependencies) > 0
+    return requested and unit.profile == "debug" and unit.kind != "library" and not sysroot
 
 
 pub def linkage_key(key: Key, shared: bool) -> Result[Key, str]:
     """Keep source and artifact evidence while separating shared development outputs from ordinary build outputs."""
-    if not shared:
+    if not shared or key.refusal != "":
         return Ok(key)
-    return Ok(Key(digest=fingerprint([SCHEMA, key.digest])?, parts=key.parts + [f"linkage {SCHEMA}"]))
+    return Ok(
+        Key(
+            digest="sha256:" + fingerprint([SCHEMA, key.digest])?,
+            parts=key.parts + [f"linkage {SCHEMA}"],
+            provenance=key.provenance,
+            descriptor=key.descriptor,
+            compiler=key.compiler,
+        ),
+    )
 
 
 pub def shared_arguments(unit: UnitDescription, requested: bool) -> Result[list[str], str]:
@@ -36,15 +47,9 @@ pub def library_witness(binary: Path) -> Path:
     return Path(f"{binary.0}.native-shared.json")
 
 
-pub def shared_current(binary: Path) -> bool:
-    """
-    Admit a stored executable only while all of its dynamic library generations still match.
-
-    1. Require a complete, schema-checked loader witness.
-    2. Compare every library's followed filesystem identity without reading its bytes.
-    """
-    # 1. A missing or malformed witness requires compilation; it never authorizes execution.
-    match loaded_libraries(library_witness(binary)):
+pub def witness_current(witness: Path) -> bool:
+    """Admit a loader witness only while every dynamic library it records still has its recorded generation."""
+    match loaded_libraries(witness):
         Err(_) => return false
         Ok(libraries) =>
             if len(libraries) == 0:

@@ -1,0 +1,142 @@
+# behavior: a value bound by `if let` (a class, a model, a list, text, an enum payload) is dropped once, when its block ends: a probe it holds drops exactly once before the statement after the block, and a loop of such bindings keeps the heap flat (#2481)
+# expect-stdout:
+#   bound first
+#   dropped first
+#   live probes 0
+#   bound second
+#   dropped second
+#   live probes 0
+#   class: heap flat
+#   model: heap flat
+#   list: heap flat
+#   text: heap flat
+#   variant: heap flat
+
+"""Bind owned values from fresh results through `if let` and observe their drops and the live heap."""
+
+from rust::drop_probe import Probe, live_heap_bytes, live_probes
+
+const ROUNDS: int = 1000
+const LONG: str = "a value long enough to own heap storage"
+
+
+class Holder:
+    pub probe: Probe
+
+
+class Bundle:
+    pub names: list[str]
+
+
+model Card:
+    title: str
+    tags: list[str]
+
+
+enum Event:
+    Held(Holder)
+    Listed(Bundle)
+
+
+def held(name: str) -> Option[Holder]:
+    return Some(Holder(probe=Probe.new(name)))
+
+
+def held_event(name: str) -> Event:
+    return Event.Held(Holder(probe=Probe.new(name)))
+
+
+def bundle() -> Option[Bundle]:
+    return Some(Bundle(names=[LONG, LONG]))
+
+
+def card() -> Option[Card]:
+    return Some(Card(title=LONG, tags=[LONG]))
+
+
+def names() -> Option[list[str]]:
+    return Some([LONG, LONG])
+
+
+def title() -> Option[str]:
+    return Some(LONG + "!")
+
+
+def listed_event() -> Event:
+    return Event.Listed(Bundle(names=[LONG]))
+
+
+def class_value() -> int:
+    if let Some(bound) = bundle():
+        return len(bound.names)
+    return 0
+
+
+def model_value() -> int:
+    if let Some(bound) = card():
+        return len(bound.tags)
+    return 0
+
+
+def list_value() -> int:
+    if let Some(bound) = names():
+        return len(bound)
+    return 0
+
+
+def text_value() -> int:
+    if let Some(bound) = title():
+        return len(bound)
+    return 0
+
+
+def variant_value() -> int:
+    if let Event.Listed(bound) = listed_event():
+        return len(bound.names)
+    return 0
+
+
+def report(label: str, grown: int) -> None:
+    """
+    Print whether a shape's rounds left the heap where they found it, from `grown` bytes measured before printing.
+
+    A value left behind by every round grows the heap by at least ROUNDS allocations; less than a byte a round is the
+    allocator's own bookkeeping.
+    """
+    if grown < ROUNDS:
+        println(f"{label}: heap flat")
+    else:
+        println(f"{label}: heap grew by {grown} bytes over {ROUNDS} rounds")
+
+
+def rounds(shape: int) -> int:
+    """Run one shape ROUNDS times."""
+    mut total = 0
+    for _ in range(ROUNDS):
+        if shape == 0:
+            total += class_value()
+        elif shape == 1:
+            total += model_value()
+        elif shape == 2:
+            total += list_value()
+        elif shape == 3:
+            total += text_value()
+        else:
+            total += variant_value()
+    return total
+
+
+def main() -> None:
+    if let Some(bound) = held("first"):
+        println(f"bound {bound.probe.name()}")
+    println(f"live probes {live_probes()}")
+    if let Event.Held(bound) = held_event("second"):
+        println(f"bound {bound.probe.name()}")
+    println(f"live probes {live_probes()}")
+    mut total = class_value() + model_value() + list_value() + text_value() + variant_value()
+    labels = ["class", "model", "list", "text", "variant"]
+    for shape in range(5):
+        before = live_heap_bytes()
+        total += rounds(shape)
+        grown = live_heap_bytes() - before
+        report(labels[shape], grown)

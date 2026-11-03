@@ -4,9 +4,11 @@ from rust::incan_semantics_core import (
     IncanType as RustType,
     IncanPrimitiveType as Primitive,
     IncanCallableParamKind,
+    IncanInputAccess,
     SemanticSourceTargetKind,
 )
 from rust::incan_semantics_core::body_ir import BodyIrModule, Body
+from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import (
     PlanType,
     EnumDeclaration,
@@ -26,7 +28,7 @@ from pub::incan_mir_plan import (
 )
 from pub::incan_mir_plan import place as plan_place, block as plan_block
 from classes import function_name, frame_type, is_program_entry
-from layout_types import native_source_type
+from layout_types import native_source_type, shared_receiver_type, mutable_receiver_type
 from native_type_identity import ConstructorIndex
 from unions import collect_unions
 from frame import (
@@ -39,6 +41,7 @@ from frame import (
     cleanup_exit,
 )
 from models import place_type
+from table_views import borrowed_table, borrowed_at
 
 
 pub def is_future(ty: PlanType) -> bool:
@@ -65,8 +68,8 @@ pub def future_type(
                 Some(
                     native_source_type(
                         constructors,
-                        list(module.nominal_declarations),
-                        list(module.enum_declarations),
+                        borrowed_table(module.nominal_declarations),
+                        borrowed_table(module.enum_declarations),
                         collect_unions(module),
                         ty,
                         intrinsics,
@@ -92,13 +95,20 @@ def capture_types(
     body: &Body,
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[list[PlanType], str]:
-    """Retain owned captures, including declaration-owned rest packs, and at most one nominal loan."""
+    """
+    Retain owned captures, including declaration-owned rest packs, and at most one nominal loan. An explicit borrowed
+    input is captured as its loan, which the future holds until it completes.
+    """
     mut fields: list[PlanType] = []
     mut loans = 0
-    mut nominals = module.nominal_declarations
-    mut enums = module.enum_declarations
+    nominals = borrowed_table(module.nominal_declarations)
+    enums = borrowed_table(module.enum_declarations)
     for parameter in body.params:
-        ty = frame_type(constructors, nominals, enums, body.locals[int(parameter.local.index())], intrinsics)?
+        mut ty = frame_type(constructors, nominals, enums, body.locals[int(parameter.local.index())], intrinsics)?
+        match parameter.input_access:
+            IncanInputAccess.Shared => ty = shared_receiver_type(ty)?
+            IncanInputAccess.Exclusive => ty = mutable_receiver_type(ty)?
+            _ => pass
         validate_collection_capture(parameter.kind, ty)?
         match ty:
             PlanType.ModelRef(_owner, _name) => loans += 1
@@ -132,7 +142,8 @@ pub def validate_futures(
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[None, str]:
     """Validate source coroutine identities and captures before native storage is selected by rustc."""
-    for body in module.bodies:
+    for body_position in range(len(module.bodies)):
+        body = borrowed_at(module.bodies, body_position)
         if not body.is_async:
             continue
         match body.canonical:
@@ -205,8 +216,8 @@ pub def construct_future(
     fields = capture_types(builder.program.constructors.as_ref(), module, body, builder.intrinsics)?
     output = native_source_type(
         builder.constructors,
-        list(module.nominal_declarations),
-        list(module.enum_declarations),
+        borrowed_table(module.nominal_declarations),
+        borrowed_table(module.enum_declarations),
         collect_unions(module),
         body.return_type,
         builder.intrinsics,
@@ -316,7 +327,7 @@ pub def async_entry(
                 if index < 0 or index >= len(intrinsics):
                     return Err("unsupported Body IR async main outside a standard Result")
                 declaration = intrinsics[index]
-                if declaration.carrier != "Result" or len(declaration.variants) != 2:
+                if declaration.carrier != Carrier.Result or len(declaration.variants) != 2:
                     return Err("unsupported Body IR async main outside a standard Result")
                 errors = declaration.variants[1].fields
                 if len(errors) != 1:

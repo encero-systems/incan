@@ -1,0 +1,9 @@
+# behavior: a returned view cannot borrow from an owned parameter the call consumes (#2500).
+# expect-diagnostic: INCAN-T0124
+
+class Address:
+    pub city: str
+
+
+def view(address: Owned[Address]) -> Borrowed[Address] from address:
+    return address

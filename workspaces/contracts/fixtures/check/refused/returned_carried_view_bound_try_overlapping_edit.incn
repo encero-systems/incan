@@ -1,0 +1,16 @@
+# behavior: a view that `?` takes out of a local bound to a carried call keeps its source borrowed; editing the source while the view is still used is refused (#2500).
+# expect-diagnostic: INCAN-T0126
+
+class Counter:
+    pub value: int
+
+    def bump(mut self) -> Result[Reference[Self], str] from self:
+        self.value += 1
+        return Ok(self)
+
+
+def overlap(mut counter: BorrowedMut[Counter]) -> Result[int, str]:
+    result = counter.bump()
+    view = result?
+    counter.value = 10
+    return Ok(view.value)

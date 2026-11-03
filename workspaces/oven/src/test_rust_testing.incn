@@ -1,44 +1,65 @@
 """Rust facets use their test dependencies and report both passing and failing unit tests."""
 
 from std.fs import Path
+from std.environ import get_or
 from std.testing import fail
-from files import make_directory, write
+from codegen import compiled_arguments, rust_incremental_arguments, rust_iteration_enabled
+from files import make_directory, read, write
+from graph_dependencies import prepare_graph
+from graph_rust import inspect_rust
+from features import FeatureRequest
 from rust_testing import build_rust_tests
 from loaf_local_graph import LocalFacet
 from rust_activation import DependencyDomain
-from rust_units import RustBuild, identity, ordered, read_registry_units, rust_output
+from rust_units import build_rust, RustBuild, facet_slot, ordered, read_registry_units, rust_output
 from scratch import scratch_directory
 from testing import run_rust_harness, test_sources
-from toolchain import load_toolchain, rust_compiler
+from toolchain import Toolchain, load_toolchain, rust_compiler
+from unit_rust import compile_incan_library
+from rust::std::process import Command
 
 
 pub def test_rust_facet_reports_passing_and_failing_tests() -> Result[None, str]:
     """
     Exercise the real Rust test producer and reporter, including a test-only local dependency.
 
-    1. Create a Rust library with a passing test and a failing test using a test-only helper.
-    2. Compile and run both tests, requiring a failing command outcome.
-    3. Repair the failing assertion and require the same harness path to rebuild and pass.
+    1. Create a Rust library with a passing test and a failing test using a test-only helper, and a module of its own.
+    2. Compile and run both tests, requiring a failing command outcome; rediscover an unavailable old witness.
+    3. Repair the failing assertion, remove and add a module with its file, and require the same harness path to rebuild
+       and pass.
     4. Compile procedural macro unit and integration harnesses in their producer's host domain.
+    5. Require optimized qualification and iteration to preserve the same edit/revert behavior.
+    6. Reuse and execute the test harnesses repeatedly from another checkout.
     """
     temporary = scratch_directory()?
     root = temporary.path()
+    verify_incremental_policy(root)?
     project = root.joinpath("project")
     helper = root.joinpath("helper")
+    alternate = root.joinpath("alternate")
     make_directory(project.joinpath("src"))?
     make_directory(helper.joinpath("src"))?
+    make_directory(alternate.joinpath("src"))?
     make_directory(project.joinpath("tests"))?
     # 1. The test helper is absent from production dependencies.
     manifest = "[project]\nname='facet_tests'\nversion='1.0.0'\n[rust]\ntype='lib'\nedition='2024'\n"
     binaries = "[[rust.bin]]\nname='facet_tests'\npath='src/main.rs'\n"
     test_dependencies = "[envs.test.dependencies]\nhelper={loaf='helper',path='../helper'}\n"
-    write(project.joinpath("loaf.toml"), manifest + binaries + test_dependencies)?
+    aliases = "helper_alt={loaf='alternate',path='../alternate'}\n"
+    write(project.joinpath("loaf.toml"), manifest + binaries + test_dependencies + aliases)?
     write(helper.joinpath("loaf.toml"), "[project]\nname='helper'\nversion='1.0.0'\n[rust]\ntype='lib'\n")?
+    alternate_manifest = "[project]\nname='alternate'\nversion='1.0.0'\n[rust]\nname='helper'\ntype='lib'\n"
+    write(alternate.joinpath("loaf.toml"), alternate_manifest)?
     helper_source = "/// Return the support facet's fixture value.\npub fn value() -> u32 { 7 }\n"
     write(helper.joinpath("src/lib.rs"), helper_source)?
+    write(alternate.joinpath("src/lib.rs"), helper_source.replace("{ 7 }", "{ 9 }"))?
     write(helper.joinpath("src/lib.incn"), incan_fixture("pub def facade_only() -> int:", "return 99"))?
     source = project.joinpath("src/lib.rs")
-    write(source, rust_tests(8))?
+    removed = project.joinpath("src/removed.rs")
+    write(removed, "/// The module's fixture value.\npub const VALUE: u32 = 7;\n")?
+    module = "/// A module the repair removes.\npub mod removed;\n"
+    in_module = "#[test]\nfn in_module() { assert_eq!(removed::VALUE, 7); }\n"
+    write(source, module + in_module + rust_tests(8))?
     binary = "fn main() {}\n#[test]\nfn in_binary() { assert_eq!(facet_tests::value(), 7); }\n"
     write(project.joinpath("src/main.rs"), binary)?
     integration = "#[test]\nfn imported() { assert_eq!(facet_tests::value(), 7); }\n"
@@ -60,12 +81,26 @@ pub def test_rust_facet_reports_passing_and_failing_tests() -> Result[None, str]
     assert run_rust_harness(Path(programs[0]), project)? == 1
     for program in programs[1:]:
         assert run_rust_harness(Path(program), project)? == 0
-    # 3. Source edits invalidate the ordinary executable proof.
+    # An older target view's unlocatable dependency witness is rediscovered, never mistaken for current inputs.
+    write(Path(programs[0] + ".d"), "old: /unavailable/checkout/src/lib.rs\n")?
+    assert build_rust_tests(request)? == programs
+    # 3. Source edits invalidate the ordinary executable proof; the evidence that named a removed module is rescanned.
     write(source, rust_tests(7))?
+    removed.unlink().map_err((error) => error.message())?
     rebuilt = build_rust_tests(request)?
     assert rebuilt == programs
     for program in rebuilt:
         assert run_rust_harness(Path(program), project)? == 0
+    # Adding a module refreshes dep-info before the producer is keyed, just as removing one does.
+    write(removed, "/// The added module's fixture value.\npub const VALUE: u32 = 7;\n")?
+    write(source, module + in_module + rust_tests(7))?
+    assert build_rust_tests(request)? == programs
+    for program in programs:
+        assert run_rust_harness(Path(program), project)? == 0
+    write(source, rust_tests(7))?
+    removed.unlink().map_err((error) => error.message())?
+    assert build_rust_tests(request)? == programs
+    verify_incremental_revert(request, helper, helper_source, project)?
     # 4. A procedural macro retains its crate kind and sysroot proc_macro binding.
     macro = root.joinpath("macro")
     make_directory(macro.joinpath("src"))?
@@ -89,27 +124,165 @@ pub def test_rust_facet_reports_passing_and_failing_tests() -> Result[None, str]
     verify_macro_domains(macro, helper, macro_request)?
     for program in macro_programs:
         assert run_rust_harness(Path(program), macro)? == 0
+    # 5. Optimized qualification and opt-in iteration obey the same edit/revert contract.
+    mut optimized = request
+    optimized.profile = "release"
+    for program in build_rust_tests(optimized)?:
+        assert run_rust_harness(Path(program), project)? == 0
+    verify_incremental_revert(optimized, helper, helper_source, project)?
+    # 6. The bakery's dependency evidence remains valid in a second checkout.
+    verify_relocated_harnesses(optimized, project, root.joinpath("relocated"))?
+    verify_native_graph_publication(helper, toolchain)?
+    verify_mixed_provider(optimized, root.joinpath("mixed-consumer"))?
+    return Ok(None)
+
+
+def verify_native_graph_publication(helper: Path, toolchain: Toolchain) -> Result[None, str]:
+    """A cached native preparation returns a complete graph publication, restoring a lost filename binding."""
+    provider = helper.resolve().map_err((error) => error.message())?
+    root = provider.parent().joinpath("graph_consumer")
+    make_directory(root.joinpath("src"))?
+    manifest = "[project]\nname='graph_consumer'\nversion='0.1.0'\n[dependencies]\nhelper={path='../helper'}\n"
+    write(root.joinpath("loaf.toml"), manifest)?
+    write(root.joinpath("src/main.incn"), "def main() -> None:\n    pass\n")?
+    facet = local_facet(provider.0, DependencyDomain.Target, "helper")
+    prepared = prepare_graph(root, "debug", FeatureRequest(), {}, toolchain, [], true)?
+    unit = prepared.built[facet.key()]
+    graph = Path(unit.directory).joinpath("helper.incngraph")
+    original = graph.read_bytes().map_err((error) => error.message())?
+    _ = inspect_rust(root, "debug", FeatureRequest(), {}, toolchain, true)?
+    # Losing a filename is not losing a fact, and a cached preparation must not return a partial publication.
+    Path(unit.artifact).unlink().map_err((error) => error.message())?
+    restored = inspect_rust(root, "debug", FeatureRequest(), {}, toolchain, true)?
+    assert len(restored) > 0
+    assert Path(unit.artifact).is_file(), "cached native preparation returned an incomplete library publication"
+    assert graph.read_bytes().map_err((error) => error.message())? == original
+    return Ok(None)
+
+
+def verify_mixed_provider(request: RustBuild, root: Path) -> Result[None, str]:
+    """A Rust root consumes an Incan provider whose mixed dependency keeps its facade and native facet distinct."""
+    bridge = root.joinpath("bridge")
+    mixed = bridge.joinpath("deps/mixed")
+    for project in [root, bridge, mixed]:
+        make_directory(project.joinpath("src"))?
+    make_directory(mixed.joinpath("rust/src"))?
+    write(
+        root.joinpath("loaf.toml"),
+        "[project]\nname='mixed_consumer'\nversion='1.0.0'\n[rust]\nedition='2024'\n[[rust.bin]]\nname='mixed_consumer'\npath='src/main.rs'\n[dependencies]\nbridge={path='bridge'}\n",
+    )?
+    write(root.joinpath("src/main.rs"), "fn main() { println!(\"{}\", bridge::value()); }\n")?
+    write(
+        bridge.joinpath("loaf.toml"),
+        "[project]\nname='bridge'\nversion='1.0.0'\n[dependencies]\nmixed={path='deps/mixed'}\n",
+    )?
+    write(
+        bridge.joinpath("src/lib.incn"),
+        "from pub::mixed import amount\n\npub def value() -> int:\n    return amount()\n",
+    )?
+    write(
+        mixed.joinpath("loaf.toml"),
+        "[project]\nname='mixed'\nversion='1.0.0'\n[rust]\nname='mixed_native'\nedition='2024'\n[rust.source]\nroot='rust'\n",
+    )?
+    write(
+        mixed.joinpath("src/lib.incn"),
+        "from rust::mixed_native import native_value\n\npub def amount() -> int:\n    return native_value()\n",
+    )?
+    write(
+        mixed.joinpath("rust/src/lib.rs"),
+        "/// The value exposed through the Incan facade.\npub fn native_value() -> i64 { 7 }\n",
+    )?
+    mut selected = request
+    selected.project = root.0
+    selected.rust_facet_dependencies = true
+    selected.incan_compiler = Some(compile_incan_library)
+    programs = build_rust(selected)?
+    assert len(programs) == 1
+    output = Command.new(programs[0]).output().map_err((error) => str(error))?
+    assert output.status.success() and output.stdout == b"7\x0a" and output.stderr == b""
+    assert build_rust(selected)? == programs
+    return Ok(None)
+
+
+def verify_relocated_harnesses(request: RustBuild, project: Path, relocated: Path) -> Result[None, str]:
+    """Baked test harnesses run repeatedly from another checkout with its own source and dependency evidence."""
+    make_directory(relocated)?
+    write(relocated.joinpath("loaf.toml"), read(project.joinpath("loaf.toml"))?)?
+    for directory in ["src", "tests"]:
+        make_directory(relocated.joinpath(directory))?
+        for source in project.joinpath(directory).iterdir().map_err((error) => error.message())?:
+            destination = relocated.joinpath(directory).joinpath(source.name())
+            write(destination, read(source)?)?
+    mut selected = request
+    selected.project = relocated.0
+    first = build_rust_tests(selected)?
+    second = build_rust_tests(selected)?
+    assert first == second
+    for program in second:
+        assert run_rust_harness(Path(program), relocated)? == 0
+    return Ok(None)
+
+
+def verify_incremental_policy(root: Path) -> Result[None, str]:
+    """Rust iteration uses local scratch, while generated units and qualification retain their ordinary flags."""
+    assert rust_iteration_enabled("debug", "")
+    assert not rust_iteration_enabled("release", "")
+    assert rust_iteration_enabled("release", "1")
+    assert not rust_iteration_enabled("debug", "0")
+    assert not rust_iteration_enabled("release", "true")
+    assert not rust_iteration_enabled("unknown", "1")
+    scratch = root.joinpath("target/incremental/library")
+    ordinary = ["-C", "metadata=incan-unit"]
+    iteration = ["-C", "metadata=incan-iteration-library"]
+    assert rust_incremental_arguments(scratch, ordinary) == []
+    assert rust_incremental_arguments(scratch, iteration) == ["-C", f"incremental={scratch.0}"]
+    for profile in ["debug", "release"]:
+        generated = compiled_arguments(profile, "sha256:fixture", root.0)
+        assert rust_incremental_arguments(scratch, generated) == []
+        for argument in generated:
+            assert "incremental=" not in argument
+    return Ok(None)
+
+
+def verify_incremental_revert(request: RustBuild, helper: Path, original: str, project: Path) -> Result[None, str]:
+    """A dependency body edit changes executable behavior; reverting restores it through the same scratch cache."""
+    if rust_iteration_enabled(request.profile, get_or("INCAN_RUST_INCREMENTAL", "")):
+        root = helper.resolve().map_err((error) => error.message())?
+        facet = local_facet(root.0, DependencyDomain.Target, "helper")
+        slot = facet_slot(facet, request.profile)
+        output = rust_output(project, request.profile)
+        directory = output.joinpath(f"helper-{slot}")
+        # A bakery hit needs no local rustc scratch; its retained producer proof still excludes scratch flags.
+        assert "incremental=" not in read(directory.joinpath("library.portable-inputs"))?
+    source = helper.joinpath("src/lib.rs")
+    write(source, original.replace("{ 7 }", "{ 9 }"))?
+    changed = build_rust_tests(request)?
+    assert run_rust_harness(Path(changed[0]), project)? == 1
+    write(source, original)?
+    restored = build_rust_tests(request)?
+    assert restored == changed
+    for program in restored:
+        assert run_rust_harness(Path(program), project)? == 0
     return Ok(None)
 
 
 def verify_macro_domains(macro: Path, helper: Path, request: RustBuild) -> Result[None, str]:
     """
-    Require one host macro producer and a target-domain test dependency, named by their Loaves, not their checkout.
+    Require distinct host/target producer slots and refuse two local Loaves declaring the same name and version.
 
-    1. Each producer directory carries the identity of its Loaf's name, version and domain.
-    2. The same Loaf in another checkout has the same identity; two Loaves declaring one name and version refuse.
+    1. Each producer directory is selected by its project, domain, features and profile.
+    2. Two Loaves declaring one name and version refuse before compilation.
     """
     # 1. Both fixtures declare version 1.0.0.
     roles = [(macro, DependencyDomain.Host, "macro_fixture"), (helper, DependencyDomain.Target, "helper")]
     for project, domain, name in roles:
         root = project.resolve().map_err((error) => error.message())?
         facet = local_facet(root.0, domain, name)
-        directory = rust_output(macro, request.profile).joinpath(f"{name}-{identity(facet, request.profile)}")
+        directory = rust_output(macro, request.profile).joinpath(f"{name}-{facet_slot(facet, request.profile)}")
         assert directory.is_dir(), f"{name} must retain its {domain.value()} producer identity"
-    # 2. A relocated checkout keeps the identity; a different Loaf with the same declaration is refused.
+    # 2. A different Loaf with the same declaration is refused independently of its target slot.
     here = local_facet(helper.0, DependencyDomain.Target, "helper")
     elsewhere = local_facet("/another/checkout/helper", DependencyDomain.Target, "helper")
-    assert identity(here, request.profile) == identity(elsewhere, request.profile)
     match ordered([here, elsewhere]):
         Ok(_) => fail("two local Loaves declaring one name and version were compiled as one unit")
         Err(reason) =>
@@ -140,7 +313,7 @@ def incan_fixture(header: str, body: str) -> str:
 
 def rust_tests(expected: int) -> str:
     """The same two observable tests with one changeable expected helper value."""
-    passing = "#[test]\nfn a_passing() { assert_eq!(helper::value(), 7); }\n"
+    passing = "#[test]\nfn a_passing() { assert_eq!((helper::value(), helper_alt::value()), (7, 9)); }\n"
     checked = "#[test]\nfn z_checked() { assert_eq!(helper::value(), " + str(expected) + "); }\n"
     source = "/// Return the library fixture value.\npub fn value() -> u32 { 7 }\n"
     return source + passing + checked

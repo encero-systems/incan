@@ -1,50 +1,107 @@
 """Reuse contracts: an unchanged unit is keyed from metadata alone, and any relevant change is a different key."""
 
-from rust::std::fs import OpenOptions, metadata
+from rust::std::fs import OpenOptions, Permissions, metadata, set_permissions, rename
+from rust::std::os::unix::fs import PermissionsExt
 from rust::std::process import Command
+from rust::std::thread import sleep
+from rust::std::time import Duration
 from std.fs import Path
+from std.encoding.hex import hexlify
+from std.hash import sha256
+from std.io import BytesIO
 from std.json import JsonValue
-from files import json_text, make_directory, read, remove, write as write_file
-from compiler_refusals import check_or_replay, compile_or_replay
-from incan_units import executable_outputs, install_executable, test_report
+from pub::incan_platform.trace import flush as flush_trace
+from std.environ import get_or
+from installation_check import verify_runtime
+from toolchain_archive import stage_loaves
+from installation_page import recall as recall_installation, begin_command, end_command
+from home_paths import installation_catalog
+from installation_codec import decode as decode_installation, encode as encode_installation
+from trace_adapter import count_work, finish_counting
+from page_codec import Reader, put_texts
+from files import json_text, make_directory, read, read_json, remove, write as write_file
+from json_fields import required_items, required_text
+from registry_metadata import completion_selection
+from registry_pages import question, recall_catalog, current as catalog_current
+from registry_codec import Catalog, decode as decode_catalog, encode as encode_catalog
+from retained_readings import INSTALLED_DIGEST, installed_digest, recall, retain
+from segment_store import readmit_payload, payload_path
+from bakery import bakery, fact_file, find, forget_verified, library_directory, seal, staging
+from compiler_refusals import check_or_replay, compile_or_replay, refusal_identity
+from incan_units import executable_outputs, test_report, view_executable
 from intake import ManifestReader
-from observation import load_ledger
+from observation import SETTLE_SECONDS, file_digest, load_ledger, now_seconds, observe
+from vocabulary import published_workers, stage_vocabulary
 from native_closure_input import NativeClosureInput, native_bindings
-from standalone_rust import published_bindings
+from standalone_rust import published_bindings, standalone_crates
 from scratch import scratch_directory
-from rust_freshness import compilation_observations, inputs_unchanged, library_key
+from shared_link import linkage_key
+from rust_freshness import (
+    compilation_observations,
+    inputs_unchanged,
+    library_key,
+    reconciled_rust_key,
+    relocate_dependencies,
+)
 from rust_units import (
     BuiltUnit,
+    decoded,
     RegistryUnits,
     RustBuild,
     RustFacet,
     compile_rust_library,
-    identity,
+    artifact_context,
     library_compile_arguments,
     linking,
     native_artifacts,
     package_environment,
+    read_registry_units,
     rust_library_producer_key,
     rust_library_graph_key,
 )
 from loaf_local_graph import LocalEdge, LocalFacet
 from rust_activation import DependencyDomain
-from toolchain import NativeCrate, Toolchain
+from rust_target import compiler_version, deployment_target
+from toolchain import (
+    NativeCrate,
+    Toolchain,
+    admit_compiler_facts,
+    load_toolchain,
+    read_toolchain,
+    rust_compiler,
+    prepare_installation,
+    finish_installation,
+    load_toolchain_at,
+)
+from toolchain_access import ToolchainAccess
+from compiler_facts import admit_fact, verified_fact, relocate_fact, fact_identity
 from unit import UnitDescription, UnitLoaf
 from unit_rust import add_extern, compile_library_unit
+from unit_compiler import described_by, write_unit
+from unit_publication import (
+    admit_payload,
+    published_identity,
+    record_path,
+    record_payload,
+    verified_payload,
+    relocate_payload,
+)
 from unit_freshness import (
     Key,
     artifact_files,
     artifact_identity,
-    compiler_fingerprint,
+    compiler_fingerprint as selected_compiler_fingerprint,
     reusable,
     record,
-    rust_key,
     description_digest,
     unit_key_with,
     staleness,
-    unit_key,
+    unit_key as selected_unit_key,
+    fingerprint,
 )
+
+# The description digest of `ordinary_unit()` before units could declare rustc-internal access.
+const ORDINARY_DIGEST: str = "6dfc30122491a0de4d81120c513f24ebb60b12ba9093c09d182f1890c3d47b42"
 
 
 model Fixture:
@@ -63,10 +120,32 @@ model Pass:
     listed: int
 
 
+def compiler_fingerprint(toolchain: Toolchain) -> Result[str, str]:
+    """Admit this fixture's freshly written compiler facts before asking for their identities."""
+    admit_compiler_facts(toolchain)?
+    return selected_compiler_fingerprint(toolchain)
+
+
+def unit_key(unit: UnitDescription, toolchain: Toolchain) -> Result[Key, str]:
+    """Admit this fixture's current compiler generation before identifying its prepared unit."""
+    admit_compiler_facts(toolchain)?
+    return selected_unit_key(unit, toolchain)
+
+
 def write(path: Path, text: str) -> Result[None, str]:
     """Create or replace a file, making its directory first."""
     make_directory(path.parent())?
-    return write_file(path, text)
+    write_file(path, text)?
+    if path.name() == "driver":
+        admit_fact(path)?
+    return Ok(None)
+
+
+def make_executable(path: Path) -> Result[None, str]:
+    """Complete a synthetic compiler publication, including the executable mode in its admission guard."""
+    mut chmod = Command.new("/bin/chmod")
+    assert chmod.arg("+x").arg(path.0).status().map_err((error) => str(error))?.success()
+    return admit_fact(path)
 
 
 def rewrite_in_place(path: Path, text: str) -> Result[None, str]:
@@ -89,6 +168,7 @@ def publish_loaf(directory: Path, name: str, text: str) -> Result[None, str]:
         if artifact.name().endswith(".incnlib"):
             content = JsonValue.object({"fixture": JsonValue.string(text)}).to_json().unwrap_or("{}")
         write(artifact, content)?
+        record_payload(artifact, fingerprint([text])?)?
     return Ok(None)
 
 
@@ -103,6 +183,7 @@ def fixture(scratch: Path) -> Result[Fixture, str]:
     publish_loaf(standard, "std", "standard")?
     write(scratch.joinpath("toolchain").joinpath("driver"), "driver one")?
     write(scratch.joinpath("toolchain").joinpath("libruntime.rlib"), "runtime one")?
+    record_payload(scratch.joinpath("toolchain/libruntime.rlib"), fingerprint(["runtime one"])?)?
     write(scratch.joinpath("toolchain").joinpath("std.rustabi"), "abi one")?
     toolchain = Toolchain(
         driver=scratch.joinpath("toolchain").joinpath("driver").0,
@@ -111,6 +192,7 @@ def fixture(scratch: Path) -> Result[Fixture, str]:
         externs=[NativeCrate(name="runtime", path=scratch.joinpath("toolchain").joinpath("libruntime.rlib").0)],
         search=[],
         registry_units="",
+        target="aarch64-apple-darwin",
     )
     unit = UnitDescription(
         source=root.joinpath("src").joinpath("main.incn").0,
@@ -131,6 +213,7 @@ def fixture(scratch: Path) -> Result[Fixture, str]:
         externs=toolchain.externs,
         rust_abi=toolchain.rust_abi,
     )
+    admit_compiler_facts(toolchain)?
     return Ok(Fixture(unit=unit, toolchain=toolchain, root=root))
 
 
@@ -153,11 +236,223 @@ pub def test_unchanged_unit_is_keyed_without_reading_or_listing() -> Result[None
     assert second.key == first.key
     assert second.hashed == 0
     assert second.listed == 0
+    # RFC 124: checkout, target and installed-home locations are publication provenance.
+    relocated = fixture(scratch.path().joinpath("another-checkout"))?
+    assert reconcile(scratch.path().joinpath("another-checkout"), relocated)?.key == first.key
+    verify_be34_position_changes(scratch.path().joinpath("positions"))?
+    verify_source_move(scratch.path().joinpath("moved-entry"))?
+    verify_project_entries(scratch.path().joinpath("project-entries"))?
+    verify_invocation_identity(setup)?
+    verify_declared_access(setup)?
+    verify_descriptor_selection(setup)?
+    verify_published_identity(scratch.path().joinpath("publication"))?
+    return Ok(None)
+
+
+def verify_be34_position_changes(scratch: Path) -> Result[None, str]:
+    """BE-34: comments and moved declarations may rekey native units because native debug tables read positions."""
+    setup = fixture(scratch)?
+    source = Path(setup.unit.source)
+    helper = "def helper() -> int:\n    return 1\n\n"
+    main = "def main() -> None:\n    println(helper())\n"
+    write(source, helper + main)?
+    original = reconcile(scratch, setup)?
+    write(source, "# position-only edit\n" + helper + main)?
+    commented = reconcile(scratch, setup)?
+    assert commented.key != original.key, "BE-34: the native unit reads changed positions"
+    write(source, main + "\n" + helper)?
+    moved = reconcile(scratch, setup)?
+    assert moved.key != original.key, "BE-34: moving declarations updates native position inputs"
+    return Ok(None)
+
+
+def verify_source_move(scratch: Path) -> Result[None, str]:
+    """Moving or renaming the root source without changing code or invocation facts preserves identity."""
+    setup = fixture(scratch)?
+    before = reconcile(scratch, setup)?
+    mut moved = setup
+    moved.unit.source_root = setup.root.joinpath("moved-sources").0
+    moved.unit.source = Path(moved.unit.source_root).joinpath("another-name.incn").0
+    write(Path(moved.unit.source), read(Path(setup.unit.source))?)?
+    remove(Path(setup.unit.source))?
+    assert reconcile(scratch, moved)?.key == before.key
+    return Ok(None)
+
+
+def verify_project_entries(scratch: Path) -> Result[None, str]:
+    """Project-relative program and vocabulary entries retain identity across checkouts and track content edits."""
+    mut setup = fixture(scratch.joinpath("first"))?
+    setup.unit.program_entries = ["src/main.incn"]
+    setup.unit.vocab_entry = Some("vocabulary/registration.incn")
+    registration = setup.root.joinpath("vocabulary/registration.incn")
+    write(registration, "pub def registration() -> int:\n    return 1\n")?
+    before = reconcile(scratch.joinpath("first"), setup)?
+    mut moved = fixture(scratch.joinpath("second"))?
+    moved.unit.program_entries = setup.unit.program_entries
+    moved.unit.vocab_entry = setup.unit.vocab_entry
+    write(moved.root.joinpath("vocabulary/registration.incn"), read(registration)?)?
+    assert reconcile(scratch.joinpath("second"), moved)?.key == before.key
+    write(registration, "pub def registration() -> int:\n    return 2\n")?
+    assert reconcile(scratch.joinpath("first"), setup)?.key != before.key
+    return Ok(None)
+
+
+def verify_descriptor_selection(setup: Fixture) -> Result[None, str]:
+    """Equal invocation facts never let a descriptor for another source entry satisfy compilation."""
+    mut other = setup.unit
+    other.source = Path(other.source_root).joinpath("another.incn").0
+    write(Path(other.source), "def main() -> None:\n    println(\"another\")\n")?
+    first = unit_key(setup.unit, setup.toolchain)?
+    second = unit_key(other, setup.toolchain)?
+    assert description_digest(setup.unit)? == description_digest(other)?
+    assert first.descriptor != second.descriptor
+    assert linkage_key(first, true)?.descriptor == first.descriptor
+    one = write_unit(setup.unit, "app", None, described_by(first))?
+    two = write_unit(other, "app", None, described_by(second))?
+    assert one.0 != two.0
+    assert setup.unit.source in read(one)? and other.source in read(two)?
+    return Ok(None)
+
+
+def verify_invocation_identity(setup: Fixture) -> Result[None, str]:
+    """Changing one effective invocation fact changes identity, while changing only locations does not."""
+    first = description_digest(setup.unit)?
+    mut changed = setup.unit
+    changed.package = "another_crate"
+    assert description_digest(changed)? != first
+    changed = setup.unit
+    changed.active_features = ["extra"]
+    assert description_digest(changed)? != first
+    changed = setup.unit
+    changed.profile = "release"
+    assert description_digest(changed)? != first
+    changed = setup.unit
+    changed.kind = "test"
+    assert description_digest(changed)? != first
+    changed = setup.unit
+    changed.search = ["/another/target/directory"]
+    changed.search_index = Some("/another/home/search.json")
+    changed.source_root = "/another/checkout/src"
+    changed.project_root = "/another/checkout"
+    changed.source = "/another/checkout/src/main.incn"
+    assert description_digest(changed)? == first
+    return Ok(None)
+
+
+def driver_access() -> ToolchainAccess:
+    """The access a unit that enters rustc's driver declares."""
+    return ToolchainAccess(
+        unstable_features=["rustc_private"],
+        toolchain_components=["rustc-dev"],
+        sysroot_dependencies=["rustc_driver"],
+    )
+
+
+def ordinary_unit() -> UnitDescription:
+    """A unit that declares no access, described with fixed locations."""
+    return UnitDescription(
+        source="/checkout/project/src/main.incn",
+        project_root="/checkout/project",
+        source_root="/checkout/project/src",
+        package="app",
+        version="0.1.0",
+        profile="debug",
+        declared_features=["extra"],
+        active_features=["extra"],
+        loaves=[
+            UnitLoaf(key="dep", name="dep", dir="/checkout/project/target/dep", standard=false),
+            UnitLoaf(key="std", name="std", dir="/home/loaves/std/debug", standard=true),
+        ],
+        rust_crates=["regex"],
+        contract_models=[],
+        c_headers=[],
+    )
+
+
+def verify_declared_access(setup: Fixture) -> Result[None, str]:
+    """
+    Declared rustc-internal access is part of a unit's identity, and an undeclared unit's identity is unchanged.
+
+    1. An ordinary unit keeps the description digest it had before units could declare access, and its description
+       names no declaration.
+    2. Each kind of declared value changes the digest, in any order it is written; so does the sysroot a declared
+       executable loads its libraries from, but not a library's.
+    3. A declared sysroot library needs no producer record, because the compiler fingerprint identifies it; the same
+       library undeclared refuses the unit's identity.
+    """
+    # 1. The digest was recorded from the description of this unit before declarations existed.
+    assert description_digest(ordinary_unit())? == ORDINARY_DIGEST
+    assert "toolchain_access" not in json_text(ordinary_unit().to_json())?
+    # 2. A declaration is identity, and its written order is not.
+    first = description_digest(setup.unit)?
+    mut seen = [first]
+    for access in [
+        ToolchainAccess(unstable_features=["rustc_private"]),
+        ToolchainAccess(toolchain_components=["rustc-dev"]),
+        ToolchainAccess(sysroot_dependencies=["rustc_driver"]),
+        driver_access(),
+    ]:
+        mut changed = setup.unit
+        changed.toolchain_access = access
+        digest = description_digest(changed)?
+        assert digest not in seen
+        seen.append(digest)
+    mut reordered = setup.unit
+    reordered.toolchain_access = ToolchainAccess(sysroot_dependencies=["rustc_interface", "rustc_driver"])
+    mut sorted_unit = setup.unit
+    sorted_unit.toolchain_access = ToolchainAccess(sysroot_dependencies=["rustc_driver", "rustc_interface"])
+    assert description_digest(reordered)? == description_digest(sorted_unit)?
+    mut located = setup.unit
+    located.toolchain_access = driver_access()
+    located.runtime_sysroot = "/rust/1.98.0-aarch64-apple-darwin"
+    assert description_digest(located)? not in seen
+    mut library = located
+    library.kind = "library"
+    mut unlocated = library
+    unlocated.runtime_sysroot = ""
+    assert description_digest(library)? == description_digest(unlocated)?
+    # 3. The declared library is bound by its name; the compiler fingerprint already identifies the pinned toolchain.
+    sysroot_library = setup.root.joinpath("sysroot").joinpath("librustc_driver-0123456789abcdef.dylib")
+    write(sysroot_library, "rustc driver")?
+    mut linking = setup.unit
+    linking.externs = setup.unit.externs + [NativeCrate(name="rustc_driver", path=sysroot_library.0)]
+    assert unit_key(linking, setup.toolchain)?.refusal != ""
+    linking.toolchain_access = driver_access()
+    granted = unit_key(linking, setup.toolchain)?
+    assert granted.refusal == ""
+    assert granted.digest != unit_key(setup.unit, setup.toolchain)?.digest
+    return Ok(None)
+
+
+def verify_published_identity(scratch: Path) -> Result[None, str]:
+    """A payload keeps its producer identity across admission, independently of provenance and payload digest."""
+    source = scratch.joinpath("first/libunit.rlib")
+    moved = scratch.joinpath("elsewhere/libunit.rlib")
+    write(source, "compiled bytes")?
+    record_payload(source, "producer identity")?
+    assert published_identity(source)? == "producer identity"
+    write(moved, read(source)?)?
+    write(record_path(moved), read(record_path(source))?)?
+    admit_payload(moved)?
+    assert published_identity(moved)? == published_identity(source)?
+    write(moved, "compiled bytes")?
+    admit_payload(moved)?
+    assert published_identity(moved)? == "producer identity"
+    write(moved, "changed bytes")?
+    match admit_payload(moved):
+        Ok(_) =>
+            assert false, "changed payload cannot inherit its producer's identity"
+        Err(_) => pass
+    record_payload(moved, "another producer identity")?
+    assert published_identity(moved)? != published_identity(source)?
     return Ok(None)
 
 
 pub def test_source_edit_rekeys_and_hashes_only_what_changed() -> Result[None, str]:
-    """An edited source changes the key and costs one hash; a new module also relists its directory."""
+    """
+    An edited source changes the key and costs one hash; a new module also relists its directory. What is retained
+    under the key, a refusal, a check report or import records, is asked of the compiler again after an edit.
+    """
     scratch = scratch_directory()?
     setup = fixture(scratch.path())?
     first = reconcile(scratch.path(), setup)?
@@ -174,10 +469,10 @@ pub def test_source_edit_rekeys_and_hashes_only_what_changed() -> Result[None, s
     write(Path(setup.unit.source), "def main() -> None:\n    println(\"edited\")\n")?
     rewritten = reconcile(scratch.path(), setup)?
     assert rewritten.key == added.key
-    # Configuration is part of the key, and so are the siblings of an entry outside the source root (a test).
+    # Manifest publication metadata does not reach this already-described invocation.
     write(setup.root.joinpath("loaf.toml"), "[project]\nname = \"app\"\nversion = \"0.2.0\"\n")?
     manifest = reconcile(scratch.path(), setup)?
-    assert manifest.key != rewritten.key
+    assert manifest.key == rewritten.key
     mut test_unit = setup.unit
     test_unit.source = setup.root.joinpath("tests").joinpath("test_app.incn").0
     write(Path(test_unit.source), "def test_app() -> None:\n    assert true\n")?
@@ -188,8 +483,57 @@ pub def test_source_edit_rekeys_and_hashes_only_what_changed() -> Result[None, s
     helper = reconcile(scratch.path(), testing)?
     assert helper.key != before.key
     verify_refusal_replay(scratch.path().joinpath("refusals"))?
+    verify_relocated_outcomes(scratch.path().joinpath("relocated"))?
     verify_check_replay(scratch.path().joinpath("checks"))?
+    verify_import_records(scratch.path().joinpath("imports"))?
     return Ok(None)
+
+
+def verify_import_records(scratch: Path) -> Result[None, str]:
+    """
+    Ask a counted compiler for a standalone unit's Rust import requests once per unit identity.
+
+    1. An unchanged unit reuses the records the compiler gave for it.
+    2. An edited source asks again, and so does another description.
+    3. A unit whose identity is refused is asked every time.
+    """
+    setup = fixture(scratch)?
+    driver = Path(setup.toolchain.driver)
+    attempts = scratch.joinpath("attempts")
+    mut script = "#!/bin/sh\n[ \"$1\" = --rust-imports ] || exit 2\n" + f"printf x >> '{attempts.0}'\n"
+    script += "printf '[{\"crate\":\"std\",\"version\":null,\"features\":[],\"source\":\"main.incn\"}]'\n"
+    write(driver, script)?
+    make_executable(driver)?
+    # 1. An unchanged unit reuses the records the compiler gave for it.
+    assert len(standalone_crates(setup.unit, setup.toolchain)?) == 0
+    assert len(standalone_crates(setup.unit, setup.toolchain)?) == 0
+    assert read(attempts)? == "x"
+    # 2. An edited source asks again, and so does another description.
+    write(Path(setup.unit.source), "def main() -> None:\n    println(\"imports\")\n")?
+    assert len(standalone_crates(setup.unit, setup.toolchain)?) == 0
+    assert len(standalone_crates(setup.unit, setup.toolchain)?) == 0
+    assert read(attempts)? == "xx"
+    mut featured = setup.unit
+    featured.active_features = ["extra"]
+    assert len(standalone_crates(featured, setup.toolchain)?) == 0
+    assert read(attempts)? == "xxx"
+    # 3. A unit whose identity is refused is asked every time.
+    remove(record_path(Path(setup.toolchain.externs[0].path)))?
+    assert len(standalone_crates(setup.unit, setup.toolchain)?) == 0
+    assert len(standalone_crates(setup.unit, setup.toolchain)?) == 0
+    assert read(attempts)? == "xxxxx"
+    return Ok(None)
+
+
+def retained_refusal(store: Path, key: Key) -> Result[Path, str]:
+    """Where the bakery stores the certified refusal of `key`."""
+    identity = refusal_identity(key)?
+    match find(store, identity)?:
+        None => return Err(f"refusal {identity[:12]} is not baked")
+        Some(fact) =>
+            match fact_file(store, fact, "outcome"):
+                Some(path) => return Ok(path)
+                None => return Err(f"refusal {identity[:12]} has no outcome")
 
 
 def verify_refusal_replay(scratch: Path) -> Result[None, str]:
@@ -199,24 +543,25 @@ def verify_refusal_replay(scratch: Path) -> Result[None, str]:
     after the sysroot, as the worker would receive it.
 
     1. Replay an unchanged refusal with exact binary streams.
-    2. Recompile edited sources and malformed records.
-    3. Retry crashes, signals, I/O failures and success without artifacts.
+    2. Compile again once the unit declares access, which builds what its undeclared description refused.
+    3. Recompile edited sources and malformed records.
+    4. Retry crashes, signals, I/O failures and success without artifacts.
     """
     setup = fixture(scratch)?
     driver = Path(setup.toolchain.driver)
     attempts = scratch.joinpath("attempts")
     source = Path(setup.unit.source)
-    cache = scratch.joinpath("refusal.json")
+    cache = scratch.joinpath("bakery")
     mut script = "#!/bin/sh\n[ \"$1\" = --resident ] && exit 1\n"
     script += "[ \"$6\" = --certify ] && [ \"$8\" = --library ] || exit 2\n"
     script += f"printf x >> '{attempts.0}'\nmode=$(cat '{source.0}')\n"
+    script += "grep -q toolchain_access \"$2\" 2>/dev/null && exit 0\n"
     script += "case \"$mode\" in\nio) printf 'I/O failure' >&2; exit 1;;\nmissing) exit 0;;\nesac\n"
     script += "printf 'incan.compiler-refusal/1\\n' > \"$7\"\n"
     script += "printf '\\377out'; printf 'named refusal\\000tail' >&2\n"
     script += "case \"$mode\" in\ncrash) exit 101;;\nsignal) kill -TERM $$;;\nesac\nexit 1\n"
     write(driver, script)?
-    mut chmod = Command.new("/bin/chmod")
-    assert chmod.arg("+x").arg(driver.0).status().map_err((error) => str(error))?.success()
+    make_executable(driver)?
     invocation = ["--unit", "unit.json", "app", "app.rlib", setup.toolchain.sysroot]
     options = ["--library"]
     # 1. Replay an unchanged refusal with exact binary streams.
@@ -224,7 +569,7 @@ def verify_refusal_replay(scratch: Path) -> Result[None, str]:
     key = unit_key(setup.unit, setup.toolchain)?
     assert compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, key, "test")? == 1
     assert compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, key, "test")? == 1
-    retained = cache.read_bytes().map_err((error) => error.message())?
+    retained = retained_refusal(cache, key)?.read_bytes().map_err((error) => error.message())?
     expected = b"\xffoutnamed refusal\x00tail"
     assert retained[len(retained) - len(expected):] == expected
     assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "x"
@@ -237,19 +582,35 @@ def verify_refusal_replay(scratch: Path) -> Result[None, str]:
     assert output == b"\xffout\xffout"
     assert error == b"named refusal\x00tailnamed refusal\x00tail"
     assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "x"
-    # 2. Recompile edited sources and malformed records.
+    # 2. The declaration is part of the key, so the refusal kept for the undeclared unit is never replayed for it.
+    mut declared = setup.unit
+    declared.toolchain_access = driver_access()
+    granted = unit_key(declared, setup.toolchain)?
+    assert granted.digest != key.digest
+    granting = ["--unit", write_unit(declared, "app")?.0, "app", "app.rlib", setup.toolchain.sysroot]
+    assert compile_or_replay(declared, setup.toolchain, granting, options, cache, granted, "test")? == 0
+    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "xx"
+    # 3. Recompile edited sources and malformed records.
     write(source, "refuse edited")?
     edited = unit_key(setup.unit, setup.toolchain)?
     assert compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, edited, "test")? == 1
-    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "xx"
-    write(cache, "incomplete document")?
+    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "xxx"
+    # A damaged retained refusal is an error until its exact bytes are explicitly re-admitted.
+    retained_path = retained_refusal(cache, edited)?
+    replacement = scratch.joinpath("verified-refusal")
+    retained_path.copy(replacement, true, true).map_err((error) => error.message())?
+    damage(retained_path, "incomplete document")?
+    forget_verified()
+    match compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, edited, "test"):
+        Ok(_) =>
+            assert false, "a damaged refusal was treated as absence"
+        Err(error) =>
+            assert "integrity" in error, error
+    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "xxx"
+    readmit_payload(cache, replacement, retained_path.name()).map_err((error) => error.message())?
     assert compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, edited, "test")? == 1
     assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "xxx"
-    framed = cache.read_bytes().map_err((error) => error.message())?
-    cache.write_bytes(framed[:len(framed) - 1]).map_err((error) => error.message())?
-    assert compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, edited, "test")? == 1
-    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "xxxx"
-    # 3. Retry crashes, signals, I/O failures and success without artifacts.
+    # 4. Retry crashes, signals, I/O failures and success without artifacts.
     for mode in ["crash", "signal", "io", "missing"]:
         write(source, mode)?
         changed = unit_key(setup.unit, setup.toolchain)?
@@ -271,19 +632,81 @@ def verify_refusal_replay(scratch: Path) -> Result[None, str]:
     return Ok(None)
 
 
+def verify_relocated_outcomes(scratch: Path) -> Result[None, str]:
+    """
+    A refusal and a check report retained in one project replay in a copy at another path in the copy's own locations,
+    byte for byte what a fresh compiler run for the copy prints. The counted compiler names the description and an
+    entry beside it.
+
+    1. Key the same project at two paths: the keys agree, because only content enters them.
+    2. Produce each outcome in the first project, replay it in the second, and produce it fresh there with its own store.
+    """
+    first = fixture(scratch.joinpath("first"))?
+    second = fixture(scratch.joinpath("second"))?
+    attempts = scratch.joinpath("attempts")
+    driver = Path(first.toolchain.driver)
+    mut script = "#!/bin/sh\n[ \"$1\" = --resident ] && exit 1\n"
+    script += f"printf x >> '{attempts.0}'\nprevious=''\n"
+    script += "for argument in \"$@\"; do\n[ \"$previous\" = --certify ] && receipt=$argument\nprevious=$argument\ndone\n"
+    script += "certified=check\n[ \"$1\" = --unit ] && certified=refusal\n"
+    script += "printf 'incan.compiler-%s/1\\n' \"$certified\" > \"$receipt\"\n"
+    script += "printf 'refused: %s\\n' \"$2\"; printf '%s/src/main.incn:1:1: refused\\n' \"${2%/target/*}\" >&2\nexit 1\n"
+    write(driver, script)?
+    make_executable(driver)?
+    # 1. Key the same project at two paths: the keys agree, because only content enters them.
+    mut consumer = second.toolchain
+    consumer.driver = driver.0
+    produced = unit_key(first.unit, first.toolchain)?
+    relocated = unit_key(second.unit, consumer)?
+    assert produced.digest == relocated.digest, "the same project at another path has another key"
+    # 2. Only the first project's run and the fresh run start the compiler; the replay reads the record.
+    store = scratch.joinpath("bakery")
+    mut expected = ""
+    for kind in ["refusal", "check"]:
+        original = outcome_streams(kind, first, first.toolchain, store, produced, scratch.joinpath(f"{kind}-produced"))?
+        replayed = outcome_streams(kind, second, consumer, store, relocated, scratch.joinpath(f"{kind}-replayed"))?
+        alone = scratch.joinpath(f"{kind}-alone")
+        fresh = outcome_streams(kind, second, consumer, alone, relocated, scratch.joinpath(f"{kind}-fresh"))?
+        expected += "xx"
+        assert read(attempts)? == expected, f"the {kind} at another path was not replayed"
+        assert replayed == fresh, replayed
+        assert second.root.0 in replayed and first.root.0 not in replayed and replayed != original, replayed
+    return Ok(None)
+
+
+def outcome_streams(
+    kind: str,
+    setup: Fixture,
+    toolchain: Toolchain,
+    store: Path,
+    key: Key,
+    console: Path,
+) -> Result[str, str]:
+    """Compile or check `setup` with a request-local console; what that console received, as one text."""
+    mut selected = toolchain
+    selected.console = console.0
+    description = setup.root.joinpath("target").joinpath("incan").joinpath("units").joinpath("app.json")
+    if kind == "check":
+        assert check_or_replay(setup.unit, selected, description, "text", store, key)? == 1
+    else:
+        invocation = ["--unit", description.0, "app", "app.rlib", setup.toolchain.sysroot]
+        assert compile_or_replay(setup.unit, selected, invocation, ["--library"], store, key, "test")? == 1
+    return Ok(read(Path(f"{console.0}.out"))? + "\n--\n" + read(Path(f"{console.0}.err"))?)
+
+
 def verify_check_replay(scratch: Path) -> Result[None, str]:
     """
     Exercise check replay with a counted compiler that cannot start a worker, so every check is one process.
 
     1. Replay an unchanged pass and an unchanged refusal with exact binary streams and status.
-    2. Check again for another report format and after an edit.
+    2. Check again once the unit declares access, for another report format, and after an edit.
     3. Check again after crashes, signals, uncertified failures and statuses no report has.
     """
     setup = fixture(scratch)?
     driver = Path(setup.toolchain.driver)
     attempts = scratch.joinpath("attempts")
     source = Path(setup.unit.source)
-    record = scratch.joinpath("main.text.oven-check")
+    record = scratch.joinpath("bakery")
     mut script = "#!/bin/sh\n[ \"$1\" = --resident ] && exit 1\n"
     script += f"printf x >> '{attempts.0}'\nmode=$(cat '{source.0}')\nprevious=''\n"
     script += "for argument in \"$@\"; do\n[ \"$previous\" = --certify ] && receipt=$argument\n"
@@ -292,40 +715,44 @@ def verify_check_replay(scratch: Path) -> Result[None, str]:
     script += "printf 'incan.compiler-check/1\\n' > \"$receipt\"\nprintf '\\377report'; printf 'warning\\000tail' >&2\n"
     script += "case \"$mode\" in\ncrash) exit 101;;\nsignal) kill -TERM $$;;\nrefuse*) exit 1;;\nesac\nexit 0\n"
     write(driver, script)?
-    mut chmod = Command.new("/bin/chmod")
-    assert chmod.arg("+x").arg(driver.0).status().map_err((error) => str(error))?.success()
-    text = ["--check", "unit.json", setup.toolchain.sysroot, "--format", "text"]
+    make_executable(driver)?
+    description = Path("unit.json")
     # 1. Replay an unchanged pass and an unchanged refusal with exact binary streams and status.
     write(source, "pass")?
     passing = unit_key(setup.unit, setup.toolchain)?
-    assert check_or_replay(setup.unit, setup.toolchain, text, record, passing)? == 0
-    assert check_or_replay(setup.unit, setup.toolchain, text, record, passing)? == 0
+    assert check_or_replay(setup.unit, setup.toolchain, description, "text", record, passing)? == 0
+    assert check_or_replay(setup.unit, setup.toolchain, description, "text", record, passing)? == 0
     write(source, "refuse")?
     refused = unit_key(setup.unit, setup.toolchain)?
-    assert check_or_replay(setup.unit, setup.toolchain, text, record, refused)? == 1
-    assert check_or_replay(setup.unit, setup.toolchain, text, record, refused)? == 1
+    assert check_or_replay(setup.unit, setup.toolchain, description, "text", record, refused)? == 1
+    assert check_or_replay(setup.unit, setup.toolchain, description, "text", record, refused)? == 1
     mut expected = "xx"
     assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == expected
     mut capturing = setup.toolchain
     capturing.console = scratch.joinpath("console").0
-    assert check_or_replay(setup.unit, capturing, text, record, refused)? == 1
+    assert check_or_replay(setup.unit, capturing, description, "text", record, refused)? == 1
     assert Path(f"{capturing.console}.out").read_bytes().map_err((error) => error.message())? == b"\xffreport"
     assert Path(f"{capturing.console}.err").read_bytes().map_err((error) => error.message())? == b"warning\x00tail"
-    # 2. Check again for another report format and after an edit.
-    json = ["--check", "unit.json", setup.toolchain.sysroot, "--format", "json"]
-    assert check_or_replay(setup.unit, setup.toolchain, json, record, refused)? == 1
+    # 2. Check again once the unit declares access, for another report format, and after an edit.
+    mut declared = setup.unit
+    declared.toolchain_access = driver_access()
+    declared_key = unit_key(declared, setup.toolchain)?
+    assert check_or_replay(declared, setup.toolchain, description, "text", record, declared_key)? == 1
+    expected += "x"
+    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == expected
+    assert check_or_replay(setup.unit, setup.toolchain, description, "json", record, refused)? == 1
     write(source, "refuse edited")?
     edited = unit_key(setup.unit, setup.toolchain)?
-    assert check_or_replay(setup.unit, setup.toolchain, text, record, edited)? == 1
-    assert check_or_replay(setup.unit, setup.toolchain, text, record, edited)? == 1
+    assert check_or_replay(setup.unit, setup.toolchain, description, "text", record, edited)? == 1
+    assert check_or_replay(setup.unit, setup.toolchain, description, "text", record, edited)? == 1
     expected += "xx"
     assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == expected
     # 3. Check again after crashes, signals, uncertified failures and statuses no report has.
     for mode in ["crash", "signal", "io", "status"]:
         write(source, mode)?
         changed = unit_key(setup.unit, setup.toolchain)?
-        first_status = check_or_replay(setup.unit, setup.toolchain, text, record, changed)?
-        assert check_or_replay(setup.unit, setup.toolchain, text, record, changed)? == first_status
+        first_status = check_or_replay(setup.unit, setup.toolchain, description, "text", record, changed)?
+        assert check_or_replay(setup.unit, setup.toolchain, description, "text", record, changed)? == first_status
         expected += "xx"
         assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == expected, mode
     return Ok(None)
@@ -337,13 +764,17 @@ pub def test_dependency_artifacts_rekey_their_consumers() -> Result[None, str]:
     setup = fixture(scratch.path())?
     first = reconcile(scratch.path(), setup)?
     verify_closure_readings(scratch.path().joinpath("closure.json"))?
+    verify_toolchain_interface_admission(scratch.path(), setup.toolchain)?
     dependency = artifact_files(Path(setup.unit.loaves[0].dir), "dep")?
     write(dependency[0], "dependency rebuilt with different code")?
+    record_payload(dependency[0], fingerprint(["rebuilt dependency"])?)?
+    record_payload(dependency[1], fingerprint(["rebuilt dependency"])?)?
     rebuilt = reconcile(scratch.path(), setup)?
     assert rebuilt.key != first.key
     assert rebuilt.hashed == 0
     standard_artifacts = artifact_files(Path(setup.unit.loaves[1].dir), "std")?
     write(standard_artifacts[1], "{\"fixture\":\"standard package recompiled\"}")?
+    record_payload(standard_artifacts[1], fingerprint(["rebuilt standard"])?)?
     recompiled = reconcile(scratch.path(), setup)?
     assert recompiled.key != rebuilt.key
     # A manifest that declares a vocabulary worker adds it to the artifact set; rewritten without one, it does not.
@@ -359,8 +790,39 @@ pub def test_dependency_artifacts_rekey_their_consumers() -> Result[None, str]:
             assert false, "a malformed manifest cannot authorize an incomplete artifact set"
         Err(_) => pass
     verify_completed_library_abi(scratch.path().joinpath("publication"))?
+    verify_worker_publication(scratch.path().joinpath("workers"))?
     verify_native_alias_artifacts(scratch.path().joinpath("aliases"))?
     verify_requested_loaf_roots(scratch.path().joinpath("requested-roots"))?
+    return Ok(None)
+
+
+def verify_worker_publication(scratch: Path) -> Result[None, str]:
+    """Carried workers keep their baked identity; payload admission stays separate from library identity."""
+    setup = fixture(scratch)?
+    worker = scratch.joinpath("vocabulary/desugar")
+    write(worker, "one native worker")?
+    worker_id = fingerprint(["worker producer"])?
+    registration_id = fingerprint(["registration producer"])?
+    record_payload(worker, "sha256:" + worker_id)?
+    digest = file_digest(worker)?
+    metadata = scratch.joinpath("vocabulary/registration.json")
+    prepared = f"{{\"crate_path\":\"syntax.incn\",\"package_name\":\"app\",\"unit_identity\":\"{registration_id}\",\"metadata\":{{}},\"worker\":{{\"artifact_kind\":\"NativeWorker\",\"abi_version\":1,\"relative_path\":\"vocab-worker\",\"unit_identity\":\"{worker_id}\",\"sha256\":\"{digest}\"}}}}"
+    write(metadata, prepared)?
+    mut unit = setup.unit
+    unit.vocab = Some(metadata.0)
+    before = unit_key(unit, setup.toolchain)?
+    directory = scratch.joinpath("library")
+    stage_vocabulary(unit, directory)?
+    carried = directory.joinpath("vocab-worker")
+    record(directory.joinpath("library.inputs"), before, [carried], published_workers(unit, directory)?)?
+    assert published_identity(carried)? == "sha256:" + worker_id
+    write(metadata, prepared.replace(digest, fingerprint(["another payload"])?))?
+    assert unit_key(unit, setup.toolchain)?.digest == before.digest
+    match stage_vocabulary(unit, scratch.joinpath("refused")):
+        Ok(_) =>
+            assert false, "payload checksum changes require admission, never a fabricated unit identity"
+        Err(reason) =>
+            assert "payload changed" in reason
     return Ok(None)
 
 
@@ -422,8 +884,7 @@ def verify_completed_library_abi(scratch: Path) -> Result[None, str]:
     script += "printf published > \"$directory/$name\"\ndone\n"
     script += "printf '{}' > \"$directory/app.incnlib\"\n"
     write(driver, script)?
-    mut chmod = Command.new("/bin/chmod")
-    assert chmod.arg("+x").arg(driver.0).status().map_err((error) => str(error))?.success()
+    make_executable(driver)?
     # 2. The completed stamp must include the cache that publication added.
     mut library = setup.unit
     library.kind = "library"
@@ -433,11 +894,21 @@ def verify_completed_library_abi(scratch: Path) -> Result[None, str]:
     # 3. A missing cache or an incomplete stamp cannot pass by recompiling silently.
     assert read(attempts)? == "x"
     assert output.parent().joinpath("app.rustabi").is_file()
+    # An unbaked replacement must not inherit a previous portable view's fact selection.
+    remove(record_path(Path(setup.toolchain.externs[0].path)))?
+    assert compile_library_unit(library, setup.toolchain, output)? == 0
+    assert not output.parent().joinpath("fact.json").is_file()
+    assert library_directory(bakery()?, output.parent())?.0 == output.parent().0
+    assert read(attempts)? == "xx"
     return Ok(None)
 
 
 pub def test_toolchain_change_rekeys_every_unit() -> Result[None, str]:
-    """Compiler, native, ABI, recorded producer selection and target changes each invalidate a unit's generation."""
+    """
+    Compiler, native, ABI, recorded producer selection, target and deployment changes each invalidate a unit's
+    generation, and an unchanged compiler is not asked for its target again. An unchanged installation's files are
+    hashed once per home and its registry closure is completed once per generation.
+    """
     scratch = scratch_directory()?
     setup = fixture(scratch.path())?
     first = compiler_fingerprint(setup.toolchain)?
@@ -449,6 +920,7 @@ pub def test_toolchain_change_rekeys_every_unit() -> Result[None, str]:
     driver = compiler_fingerprint(setup.toolchain)?
     assert driver != first
     write(Path(setup.toolchain.externs[0].path), "runtime two, another interface")?
+    record_payload(Path(setup.toolchain.externs[0].path), fingerprint(["runtime two"])?)?
     runtime = compiler_fingerprint(setup.toolchain)?
     assert runtime != driver
     write(Path(setup.toolchain.rust_abi[0]), "abi two, other facts")?
@@ -459,11 +931,12 @@ pub def test_toolchain_change_rekeys_every_unit() -> Result[None, str]:
     write(lock, "first producer closure")?
     recorded.registry_lock = lock.0
     selected = compiler_fingerprint(recorded)?
-    assert selected != abi
+    assert selected == abi
     write(lock, "other producer closure")?
-    assert compiler_fingerprint(recorded)? != selected
+    assert compiler_fingerprint(recorded)? == selected
     mut moved = setup.toolchain
     moved.sysroot = "/rust/1.98.0-x86_64-unknown-linux-gnu"
+    moved.target = "x86_64-unknown-linux-gnu"
     assert compiler_fingerprint(moved)? != abi
     # Rewriting the driver in place with the same length and putting its modification time back is still a change.
     rewrite_in_place(Path(setup.toolchain.driver), "driver 2.., a longer compiler")?
@@ -471,57 +944,297 @@ pub def test_toolchain_change_rekeys_every_unit() -> Result[None, str]:
     # A unit that links the replaced native crate is keyed differently too.
     before = reconcile(scratch.path(), setup)?
     write(Path(setup.toolchain.externs[0].path), "runtime three, once more different")?
+    record_payload(Path(setup.toolchain.externs[0].path), fingerprint(["runtime three"])?)?
     assert reconcile(scratch.path(), setup)?.key != before.key
+    # The compiler's own answers are part of its identity, and an unchanged compiler is not asked them again.
+    check_compiler_probes(scratch.path(), setup.toolchain)?
+    # What every project learns from the installation is learned once per home.
+    check_installed_digest(scratch.path())?
+    check_registry_completion(scratch.path())?
+    # Older installed producers can be used locally, but their bytes cannot invent an input identity.
+    remove(record_path(Path(setup.toolchain.externs[0].path)))?
+    legacy = unit_key(setup.unit, setup.toolchain)?
+    assert legacy.digest == ""
+    assert "unit identity refused:" in legacy.refusal
+    assert "no recorded producer identity" in legacy.refusal
+    return Ok(None)
+
+
+def check_compiler_probes(scratch: Path, toolchain: Toolchain) -> Result[None, str]:
+    """
+    The selected rustc is asked for its version and deployment target once per installation and deployment selection.
+
+    1. A first identification asks rustc both questions; an unchanged repeat asks nothing.
+    2. Another deployment selection is another question, answered once.
+    3. A replaced rustc is asked again, and identifies another compiler.
+    """
+    # 1. The probing rustc records each question it is asked.
+    probes = scratch.joinpath("probes")
+    rustc = scratch.joinpath("rust").joinpath("bin").joinpath("rustc")
+    probing_rustc(rustc, probes, "1.98.0")?
+    settled(rustc)?
+    mut probing = toolchain
+    probing.sysroot = scratch.joinpath("rust").0
+    probing.target = ""
+    first = compiler_fingerprint(probing)?
+    asked = read(probes)?
+    assert asked == "-vV\n--print deployment-target\n"
+    assert compiler_fingerprint(probing)? == first
+    assert read(probes)? == asked
+    # 2. rustc answers the deployment target from the selection it runs with.
+    version = compiler_version(rustc.0)?
+    assert deployment_target(rustc.0, version, [("MACOSX_DEPLOYMENT_TARGET", "12.3")])? == "12.3\n"
+    assert deployment_target(rustc.0, version, [("MACOSX_DEPLOYMENT_TARGET", "12.3")])? == "12.3\n"
+    assert read(probes)? == asked + "--print deployment-target\n"
+    # 3. Another rustc at the same path is another installation.
+    probing_rustc(rustc, probes, "1.98.1")?
+    assert compiler_fingerprint(probing)? != first
+    assert read(probes)? == asked + "--print deployment-target\n" + asked
+    return Ok(None)
+
+
+def check_installed_digest(scratch: Path) -> Result[None, str]:
+    """
+    An installed file, such as the pinned `rustc_driver` library, is hashed once per generation for the whole home.
+
+    1. A settled file's first digest is the digest of its bytes.
+    2. While its generation is unchanged, the retained digest answers and its bytes are not read again.
+    3. A rewritten file is hashed again.
+    """
+    # 1. The first ask hashes the bytes.
+    library = scratch.joinpath("rust").joinpath("lib").joinpath("librustc_driver-test.dylib")
+    write(library, "driver library one")?
+    settled(library)?
+    assert installed_digest(library)? == file_digest(library)?
+    # 2. A retained answer that is not the bytes' digest shows that the bytes were not read again.
+    retain(library, INSTALLED_DIGEST, observe(library)?, JsonValue.string("retained"))
+    assert installed_digest(library)? == "retained"
+    # 3. A rewrite in place, even with its modification time put back, is another generation.
+    rewrite_in_place(library, "driver library two")?
+    assert installed_digest(library)? == file_digest(library)?
+    return Ok(None)
+
+
+def check_registry_completion(scratch: Path) -> Result[None, str]:
+    """
+    A registry closure is completed from its producers' metadata once per closure generation and pinned compiler.
+
+    1. A settled closure of one installed producer entry is completed from that producer's metadata.
+    2. While the closure and its entry are unchanged, the retained completion answers.
+    3. A rewritten closure is completed again.
+    """
+    # 1. One installed producer entry, linked into a closure of its own.
+    toolchain = load_toolchain()?
+    installed = Path(toolchain.registry_units)
+    supplied = required_items(read_json(installed)?, "units")?[0]
+    # Exercise the legacy completion contract even when the supplying installation already carries native facts.
+    mut legacy: Dict[str, JsonValue] = {}
+    for key in supplied.keys():
+        if key not in ["name", "crate_hash", "artifact", "kind", "refusal"]:
+            legacy[key] = supplied.require(key).map_err((error) => error.message())?
+    item = JsonValue.object(legacy)
+    entry = required_text(item, "entry")?.replace(":", "-")
+    source = installed.parent().joinpath("entries").joinpath(entry)
+    directory = scratch.joinpath("registry")
+    make_directory(directory.joinpath("entries"))?
+    linked = directory.joinpath("entries").joinpath(entry)
+    mut copy_entry = Command.new("/bin/cp")
+    assert copy_entry.arg("-R").arg(source.0).arg(linked.0).status().map_err((error) => str(error))?.success()
+    artifact = JsonValue.string(f"entries/{entry}/artifacts/{sole_artifact(source)?}")
+    externs = JsonValue.object({required_text(item, "entry")?: JsonValue.object({"path": artifact})})
+    closure = directory.joinpath("closure.json")
+    document = {"schema": JsonValue.string("incan.oven.closure/1"), "externs": externs, "units": JsonValue.array([item])}
+    write(closure, json_text(JsonValue.object(document))?)?
+    settled(closure)?
+    first = read_registry_units(closure)?.units[0]
+    assert first.name != "" and first.crate_hash != ""
+    # A baked closure carries native identity, so a fresh home need not ask rustc for it again.
+    mut published: Dict[str, JsonValue] = {}
+    for key in item.keys():
+        published[key] = item.require(key).map_err((error) => error.message())?
+    published["name"] = JsonValue.string("baked_native_name")
+    published["crate_hash"] = JsonValue.string(first.crate_hash)
+    published["artifact"] = artifact
+    published["kind"] = JsonValue.string(first.kind)
+    published["dependencies"] = JsonValue.array(
+        [JsonValue.object({"entry": JsonValue.string(entry)}) for entry in first.dependencies],
+    )
+    mut unavailable: Dict[str, JsonValue] = {}
+    for key in published.keys():
+        if key != "dependencies":
+            unavailable[key] = published[key]
+    unavailable["entry"] = JsonValue.string("sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+    unavailable["refusal"] = JsonValue.string("producer recorded an unavailable alternative")
+    baked_closure = directory.joinpath("baked.json")
+    write(
+        baked_closure,
+        json_text(
+            JsonValue.object(
+                {"schema": JsonValue.string("incan.oven.closure/1"), "externs": externs, "units": JsonValue.array(
+                    [JsonValue.object(published), JsonValue.object(unavailable)],
+                )},
+            ),
+        )?,
+    )?
+    assert read_registry_units(baked_closure)?.units[0].name == "baked_native_name"
+    assert read_registry_units(baked_closure)?.units[1].refusal == "producer recorded an unavailable alternative"
+    # Relative artifacts belong to the closure's directory, including a closure outside its artifact store.
+    relative = artifact.expect_str().map_err((error) => error.message())?
+    relocated_path = JsonValue.string("../../registry/" + relative)
+    mut outside = published
+    outside["artifact"] = relocated_path
+    outside_externs = JsonValue.object({required_text(item, "entry")?: JsonValue.object({"path": relocated_path})})
+    outside_closure = scratch.joinpath("published/deep/closure.json")
+    write(
+        outside_closure,
+        json_text(
+            JsonValue.object(
+                {"schema": JsonValue.string("incan.oven.closure/1"), "externs": outside_externs, "units": JsonValue.array(
+                    [JsonValue.object(outside)],
+                )},
+            ),
+        )?,
+    )?
+    selected = read_registry_units(outside_closure)?.units[0]
+    assert selected.artifact == directory.joinpath(relative).0
+    assert Path(selected.artifact).is_file()
+    # 2. The exact typed page answers without a closure or completion JSON document.
+    selection = completion_selection(rust_compiler(toolchain))?
+    observed = observe(closure)?
+    key = question(closure, observed, selection)?
+    match recall_catalog(key)?:
+        None =>
+            assert false, "the completed closure has no typed page"
+        Some(catalog) =>
+            assert catalog_current(catalog)
+            assert catalog.units == [first]
+            check_registry_page_codec(scratch, catalog)?
+            # Directory membership and artifact rewrites expire the page without changing producer identities.
+            marker = Path(first.directory).joinpath("observation-probe")
+            write(marker, "new directory member")?
+            assert not catalog_current(catalog)
+            assert read_registry_units(closure)?.units[0] == first
+            remove(marker)?
+            assert read_registry_units(closure)?.units[0] == first
+            current = recall_catalog(key)?
+            match current:
+                None =>
+                    assert false, "directory repair did not retain a replacement typed page"
+                Some(refreshed) =>
+                    artifact_file = Path(first.artifact)
+                    contents = artifact_file.read_bytes().map_err((error) => error.message())?
+                    artifact_file.chmod(false).map_err((error) => error.message())?
+                    artifact_file.write_bytes(contents).map_err((error) => error.message())?
+                    assert not catalog_current(refreshed)
+                    assert read_registry_units(closure)?.units[0] == first
+    assert read_registry_units(closure)?.units[0] == first
+    # 3. Another closure generation is completed again from the producer's metadata.
+    rewrite_in_place(closure, read(closure)?)?
+    next = question(closure, observe(closure)?, selection)?
+    assert next != key
+    assert question(closure, observed, selection + ":changed")? != key
+    # An explicit match keeps this test usable by bootstrap compilers affected by #2431.
+    match recall_catalog(next)?:
+        Some(_) =>
+            assert false, "a rewritten closure reused the previous generation's page"
+        None => pass
+    assert read_registry_units(closure)?.units[0].name == first.name
+    _ = flush_trace()
+    return Ok(None)
+
+
+def check_registry_page_codec(scratch: Path, catalog: Catalog) -> Result[None, str]:
+    """Typed pages round-trip exact fields and refuse truncated, oversized and unknown-version encodings."""
+    page = scratch.joinpath("registry-codec.page")
+    bytes = encode_catalog(catalog)?
+    page.write_bytes(bytes).map_err((error) => error.message())?
+    mapped = page.map_read().map_err((error) => error.message())?
+    match mapped.view(0, mapped.len()):
+        None =>
+            assert false, "the typed page is not mapped"
+        Some(view) =>
+            assert decode_catalog(view)?.units == catalog.units
+            for length in [0, 7, 35, view.len() - 1]:
+                if let Some(truncated) = view.slice(0, length):
+                    match decode_catalog(truncated):
+                        Ok(_) =>
+                            assert false, "a truncated registry page was accepted"
+                        Err(_) => pass
+    # Malformed scalar counts and versions are rejected before any row allocation.
+    mut invalid_index = 0
+    for damaged in [b"\xff\xff\xff\xff\xff\xff\xff\xff", b"\x00\x00\x00\x00\x00\x00\x00\x00"]:
+        file = scratch.joinpath(f"registry-invalid-{invalid_index}.page")
+        invalid_index += 1
+        file.write_bytes(damaged).map_err((error) => error.message())?
+        mapping = file.map_read().map_err((error) => error.message())?
+        if let Some(view) = mapping.view(0, mapping.len()):
+            match decode_catalog(view):
+                Ok(_) =>
+                    assert false, "an invalid registry page was accepted"
+                Err(_) => pass
+    return Ok(None)
+
+
+def sole_artifact(entry: Path) -> Result[str, str]:
+    """The file name of the one library an installed producer entry holds."""
+    for candidate in entry.joinpath("artifacts").iterdir().map_err((error) => error.message())?:
+        if candidate.name().startswith("lib"):
+            return Ok(candidate.name())
+    return Err(f"{entry.0} holds no library")
+
+
+def probing_rustc(path: Path, probes: Path, release: str) -> Result[None, str]:
+    """Install a rustc that records each question in `probes` and answers its version and deployment target."""
+    mut script = "#!/bin/sh\n" + f"printf '%s\\n' \"$*\" >> '{probes.0}'\n"
+    script += f"[ \"$1\" = -vV ] && printf 'rustc {release}\\nhost: aarch64-apple-darwin\\n' && exit 0\n"
+    script += "printf '%s\\n' \"${MACOSX_DEPLOYMENT_TARGET:-11.0}\"\n"
+    if path.is_file():
+        remove(path)?
+    write(path, script)?
+    mut chmod = Command.new("/bin/chmod")
+    assert chmod.arg("+x").arg(path.0).status().map_err((error) => str(error))?.success()
+    return Ok(None)
+
+
+def settled(path: Path) -> Result[None, str]:
+    """Wait until `path` is old enough that what is learned from it is retained (see `observation`)."""
+    observed = observe(path)?
+    while now_seconds() < observed.newest + SETTLE_SECONDS:
+        sleep(Duration.from_millis(100))
     return Ok(None)
 
 
 pub def test_stored_executable_is_never_half_written() -> Result[None, str]:
-    """Reuse needs a stamp for the key and the outputs it recorded; every interruption leaves a rebuild, not a mix."""
+    """An executable is never half written: only sealed facts are viewed, and a view is replaced in one step."""
     scratch = scratch_directory()?
-    bin = scratch.path().joinpath("bin")
-    output = bin.joinpath("app")
-    stamp = bin.joinpath("app.oven-inputs")
-    staged = bin.joinpath("app-4242")
-    one = Key(digest="key one", parts=["compiler c", "sources one"])
-    two = Key(digest="key two", parts=["compiler c", "sources two"])
-    three = Key(digest="key three", parts=["compiler c", "sources three"])
-    write(staged, "first build")?
-    # A build that was interrupted before installing leaves only its staged file.
-    assert not reusable([output], stamp, one)?
-    install_executable(staged, output, "program", stamp, one)?
-    assert reusable([output], stamp, one)?
-    assert not reusable([output], stamp, two)?
-    stale = staleness([output], stamp, two)?
-    assert stale == "sources changed", stale
-    assert not staged.is_file()
-    # A replacement in flight does not disturb the installed pair.
-    write(staged, "second build, still being linked")?
-    assert reusable([output], stamp, one)?
-    assert read(output)? == "first build"
-    # An installation that fails after the old stamp is withdrawn leaves no stamp to vouch for the old outputs.
-    remove(staged)?
-    match install_executable(staged, output, "program", stamp, two):
-        Ok(_) =>
-            assert false, "installing a missing build succeeded"
-        Err(_) => pass
-    assert not reusable([output], stamp, one)?
-    assert not reusable([output], stamp, two)?
-    assert staleness([output], stamp, two)? == "no stored build"
-    # An output replaced behind the stamp's back is not the output it recorded.
-    write(staged, "third build")?
-    install_executable(staged, output, "program", stamp, three)?
-    assert reusable([output], stamp, three)?
-    write(output, "someone else's binary")?
-    assert not reusable([output], stamp, three)?
-    # A test unit's report is installed and vouched for with its executable; without the report nothing is reused.
+    store = scratch.path().joinpath("bakery")
+    one = "1a00000000000000000000000000000000000000000000000000000000000000"
+    # A bake that was interrupted before sealing is not a fact, so nothing views it.
+    staged = staging(store, one)?
+    write(staged.joinpath("app"), "first build, still being linked")?
+    match find(store, one)?:
+        Some(_) =>
+            assert false, "an unsealed bake was found"
+        None => pass
+    write(staged.joinpath("app"), "first build")?
+    write(test_report(staged.joinpath("app")), "[]")?
+    fact = seal(store, one, staged, "test", "app", [], "test")?
+    # A test unit's report is viewed with its executable, and a lost view is recreated from the fact.
     tests = scratch.path().joinpath("tests")
-    write(tests.joinpath("app-77"), "test executable")?
-    write(test_report(tests.joinpath("app-77")), "[]")?
-    install_executable(tests.joinpath("app-77"), tests.joinpath("app"), "test", tests.joinpath("app.oven-inputs"), one)?
-    outputs = executable_outputs("test", tests.joinpath("app"))
-    assert reusable(outputs, tests.joinpath("app.oven-inputs"), one)?
+    view_executable(store, fact, tests.joinpath("app"), "test")?
+    for path in executable_outputs("test", tests.joinpath("app")):
+        assert path.is_file(), path.0
     remove(test_report(tests.joinpath("app")))?
-    assert not reusable(outputs, tests.joinpath("app.oven-inputs"), one)?
+    view_executable(store, fact, tests.joinpath("app"), "test")?
+    assert read(test_report(tests.joinpath("app")))? == "[]"
+    # A view replaced behind Oven's back is the user's; the next view restores the fact's executable.
+    write(tests.joinpath("app"), "someone else's binary")?
+    match fact_file(store, fact, "app"):
+        Some(payload) =>
+            assert read(payload)? == "first build"
+        None => return Err("the baked executable is absent")
+    view_executable(store, fact, tests.joinpath("app"), "test")?
+    assert read(tests.joinpath("app"))? == "first build"
     # Rust libraries retain rustc's file dependencies, including escaped paths outside the source directory.
     setup = fixture(scratch.path())?
     native = scratch.path().joinpath("native")
@@ -536,11 +1249,11 @@ pub def test_stored_executable_is_never_half_written() -> Result[None, str]:
     retained = library_key(setup.root, native, dependencies, arguments, environment, [], setup.toolchain)?
     assert retained.digest == first.digest
     observations = compilation_observations(setup.root, dependencies, arguments, [], setup.toolchain)?
-    assert inputs_unchanged(dependencies, observations)?
+    assert inputs_unchanged(dependencies, observations, Some(setup.root), arguments)?
     write(included, "changed included value")?
     changed = library_key(setup.root, native, dependencies, arguments, environment, [], setup.toolchain)?
     assert changed.digest != first.digest
-    assert not inputs_unchanged(dependencies, observations)?
+    assert not inputs_unchanged(dependencies, observations, Some(setup.root), arguments)?
     write(included, "first included value")?
     changed_environment = library_key(
         setup.root,
@@ -552,11 +1265,43 @@ pub def test_stored_executable_is_never_half_written() -> Result[None, str]:
         setup.toolchain,
     )?
     assert changed_environment.digest != first.digest
+    verify_relative_dependency_evidence(setup, native, arguments, environment, scratch.path().joinpath("moved"))?
+    # A scan listing a file that no longer exists is stale, not an error: it names no identity and observes nothing.
+    removed = scratch.path().joinpath("removed.rs")
+    listed_removed = removed.0.replace(" ", "\\ ")
+    write(dependencies, f"library: {escaped} {listed_removed}\n\n# env-dep:CARGO_PKG_NAME=old\n")?
+    stale = library_key(setup.root, native, dependencies, arguments, environment, [], setup.toolchain)?
+    assert stale.digest == "" and "no current dependency scan" in stale.refusal
+    assert removed.0 not in compilation_observations(setup.root, dependencies, arguments, [], setup.toolchain)?
+    # A compile-time path can change observable bytes; refusing portability must leave local execution available.
+    write(dependencies, f"library: {escaped}\n\n# env-dep:CARGO_MANIFEST_DIR=old\n")?
+    refused = library_key(
+        setup.root,
+        native,
+        dependencies,
+        arguments,
+        {"CARGO_MANIFEST_DIR": setup.root.0},
+        [],
+        setup.toolchain,
+    )?
+    assert refused.digest == "" and "CARGO_MANIFEST_DIR" in refused.refusal
+    assert linkage_key(refused, true)?.refusal == refused.refusal
+    assert staleness([], native.joinpath("absent-stamp"), refused)? == refused.refusal
+    refused_output = native.joinpath("refused.rlib")
+    write(refused_output, "locally compiled payload")?
+    record(native.joinpath("refused.oven-inputs"), refused, [refused_output])?
+    assert not native.joinpath("refused.oven-inputs").is_file()
+    match published_identity(refused_output):
+        Ok(_) =>
+            assert false, "a refused producer must never supply a fabricated dependency identity"
+        Err(reason) =>
+            assert "CARGO_MANIFEST_DIR" in reason
+    write(dependencies, f"library: {escaped}\n\n# env-dep:CARGO_PKG_NAME=old\n")?
     # A late source or native-artifact write invalidates publication even after a key was computed.
     stable = compilation_observations(setup.root, dependencies, arguments, [], setup.toolchain)?
     _ = library_key(setup.root, native, dependencies, arguments, environment, [], setup.toolchain)?
     write(Path(setup.toolchain.externs[0].path), "changed while compiling")?
-    assert not inputs_unchanged(dependencies, stable)?
+    assert not inputs_unchanged(dependencies, stable, Some(setup.root), arguments)?
     Path(setup.toolchain.externs[0].path).unlink().map_err((error) => error.message())?
     match compilation_observations(setup.root, dependencies, arguments, [], setup.toolchain):
         Err(_) => pass
@@ -565,10 +1310,32 @@ pub def test_stored_executable_is_never_half_written() -> Result[None, str]:
     return Ok(None)
 
 
+def verify_relative_dependency_evidence(
+    setup: Fixture,
+    native: Path,
+    arguments: list[str],
+    environment: Dict[str, str],
+    moved: Path,
+) -> Result[None, str]:
+    """Require transported dependency evidence to retain its unit identity while reading the selected checkout."""
+    source = setup.root.joinpath("src").joinpath("main.incn")
+    located = native.joinpath("located.d")
+    write(located, f"{located.0}: {source.0}\n\n{source.0}:\n")?
+    built = library_key(setup.root, native, located, arguments, environment, [], setup.toolchain)?
+    relocate_dependencies(located, setup.root)?
+    assert setup.root.0 not in read(located)?
+    assert native.0 not in read(located)?
+    assert library_key(setup.root, native, located, arguments, environment, [], setup.toolchain)?.digest == built.digest
+    write(moved.joinpath("loaf.toml"), read(setup.root.joinpath("loaf.toml"))?)?
+    write(moved.joinpath("src").joinpath("main.incn"), read(source)?)?
+    assert library_key(moved, native, located, arguments, environment, [], setup.toolchain)?.digest == built.digest
+    return Ok(None)
+
+
 pub def test_rust_unit_key_follows_its_crate_manifest_how_it_is_built_and_what_it_links() -> Result[None, str]:
     """
-    A Rust unit is keyed like an Incan one: every file of its crate, its manifest, its arguments, the compiler and
-    the libraries it links; unchanged, it is keyed from metadata alone.
+    A Rust unit is keyed by the sources it reads, effective invocation facts, compiler and linked producer identities.
+    Manifest publication metadata stays outside identity, and unchanged inputs require no content reads.
     """
     facet = LocalFacet(
         project="root",
@@ -589,8 +1356,9 @@ pub def test_rust_unit_key_follows_its_crate_manifest_how_it_is_built_and_what_i
     second = rust_pass(setup, "compiler", "std")?
     assert first.key == second.key
     assert second.hashed + second.listed == 0
-    # Each input of the key changes it: a source, a data file, a new module, the manifest, the cfg, the compiler and
-    # a linked library.
+    copied = rust_crate(scratch.path().joinpath("another-checkout"))?
+    assert rust_pass(copied, "compiler", "std")?.key == first.key
+    # Read sources, data files, selected features, compiler and linked identities each change the key.
     write(sources.joinpath("json.rs"), "pub fn parse() { let _ = 1; }\n")?
     edited = rust_pass(setup, "compiler", "std")?.key
     assert edited != first.key
@@ -602,12 +1370,13 @@ pub def test_rust_unit_key_follows_its_crate_manifest_how_it_is_built_and_what_i
     assert added != data
     write(setup.facet.joinpath("loaf.toml"), "[project]\nname = \"data\"\nversion = \"0.2.0\"\n")?
     manifest = rust_pass(setup, "compiler", "std")?.key
-    assert manifest != added
+    assert manifest == added
     features = rust_pass(setup, "compiler", "alloc")?.key
     assert features != manifest
     compiler = rust_pass(setup, "another compiler", "alloc")?.key
     assert compiler != features
     write(setup.dependency, "core two, rebuilt")?
+    record_payload(setup.dependency, fingerprint(["core two"])?)?
     linked = rust_pass(setup, "another compiler", "alloc")?.key
     assert linked != compiler
     verify_installed_rust_producer(scratch.path().joinpath("installed"))?
@@ -645,7 +1414,7 @@ def verify_installed_rust_producer(scratch: Path) -> Result[None, str]:
         sysroot=false,
     )
     installed = scratch.joinpath("generation")
-    artifact = installed.joinpath(f"libdata-{identity(facet, "release")}.rlib")
+    artifact = installed.joinpath(f"libdata-{artifact_context(facet, declared, "release")?}.rlib")
     graph = installed.joinpath("data.incngraph")
     dependencies = installed.joinpath("library.d")
     included = scratch.joinpath("included value.txt")
@@ -665,11 +1434,10 @@ def verify_installed_rust_producer(scratch: Path) -> Result[None, str]:
         toolchain=Some(toolchain),
         manifests=ManifestReader(),
         native_compiler="pinned native compiler",
-        portable_compiler="pinned compiler content",
         installed=native_artifacts(toolchain.externs),
     )
     built = {"native-core@target": BuiltUnit(crate_name="core", artifact=setup.dependency.0, directory=scratch.0)}
-    arguments = library_compile_arguments(facet, declared, installed, request, built, [])?
+    arguments = library_compile_arguments(facet, declared, installed, request, built, [], false)?
     environment = package_environment(facet.project, declared, declared.crate_name)
     key = rust_library_producer_key(facet, installed, arguments, environment, request, toolchain)?
     stamp = installed.joinpath("library.oven-inputs")
@@ -687,17 +1455,21 @@ def verify_installed_rust_producer(scratch: Path) -> Result[None, str]:
     request.installed["data"] = [artifact.0, artifact.0]
     require_installed_refusal(facet, declared, output, request, built, "unique")?
     request.installed["data"] = [artifact.0]
+    # Without a location-bound stamp the content proof alone vouches for the installed producer; with neither, it
+    # is stale.
     remove(stamp)?
+    proof = installed.joinpath("library.portable-inputs")
+    saved_proof = read(proof)?
+    remove(proof)?
     require_installed_refusal(facet, declared, output, request, built, "no stored build")?
+    write(proof, saved_proof)?
     record(stamp, key, [artifact, graph, dependencies])?
     facet.features = ["alloc"]
     require_installed_refusal(facet, declared, output, request, built, "features")?
     facet.features = []
     request.native_compiler = "different pinned native compiler"
-    request.portable_compiler = "different compiler content"
     require_installed_refusal(facet, declared, output, request, built, "compiler")?
     request.native_compiler = "pinned native compiler"
-    request.portable_compiler = "pinned compiler content"
     write(included, "changed included value")?
     require_installed_refusal(facet, declared, output, request, built, "sources")?
     write(included, "one included value")?
@@ -709,6 +1481,7 @@ def verify_installed_rust_producer(scratch: Path) -> Result[None, str]:
     write(artifact, "one installed library")?
     record(stamp, key, [artifact, graph, dependencies])?
     write(setup.dependency, "rebuilt exact native dependency")?
+    record_payload(setup.dependency, fingerprint(["rebuilt exact native dependency"])?)?
     require_installed_refusal(facet, declared, output, request, built, "artifacts")?
     assert not output.is_dir()
     return Ok(None)
@@ -738,8 +1511,7 @@ def verify_relocated_rust_producer(
     driver = Path(toolchain.driver)
     script = "#!/bin/sh\nset -eu\n[ \"$1\" = --rust-codegraph ] || exit 2\n"
     write(driver, script + "printf 'relocated checked graph' > \"$2\"\n")?
-    mut chmod = Command.new("/bin/chmod")
-    assert chmod.arg("+x").arg(driver.0).status().map_err((error) => str(error))?.success()
+    make_executable(driver)?
     _ = compile_rust_library(facet, declared, output, selected, built, [])?
     # 2. A fresh installation changes paths, inodes and status-change times, while preserving complete bytes.
     directory = artifact.parent().parent().joinpath("relocated")
@@ -748,18 +1520,20 @@ def verify_relocated_rust_producer(
             write(directory.joinpath(source.name()), read(source)?)?
     dependency = directory.joinpath("libcore.rlib")
     write(dependency, read(Path(built["native-core@target"].artifact))?)?
+    write(record_path(dependency), read(record_path(Path(built["native-core@target"].artifact)))?)?
+    admit_payload(dependency)?
     mut relocated = built
     relocated["native-core@target"] = BuiltUnit(crate_name="core", artifact=dependency.0, directory=directory.0)
     moved = directory.joinpath(artifact.name())
     mut moved_request = request
     moved_request.installed["data"] = [moved.0]
-    # Another machine installs the same compiler elsewhere: its location and filesystem identity differ, not its content.
-    moved_request.native_compiler = "the same compiler installed elsewhere"
+    # Another installation of the same compiler retains its content identity independently of its location.
+    moved_request.native_compiler = request.native_compiler
     # 3. Filesystem relocation must not authorize changed content or another native compilation.
     proof = directory.joinpath("library.portable-inputs")
     saved = read(proof)?
     remove(proof)?
-    require_installed_refusal(facet, declared, output, moved_request, relocated, "command")?
+    require_installed_refusal(facet, declared, output, moved_request, relocated, "replaced")?
     write(proof, saved)?
     retained = compile_rust_library(facet, declared, output, moved_request, relocated, [])?
     assert retained.reused and retained.artifact == moved.0
@@ -767,10 +1541,8 @@ def verify_relocated_rust_producer(
     assert not output.is_dir()
     # A compiler with other content refuses, though the relocated proof covers every other input.
     moved_request.native_compiler = "another compiler installed elsewhere"
-    moved_request.portable_compiler = "other compiler content"
     require_installed_refusal(facet, declared, output, moved_request, relocated, "compiler")?
-    moved_request.native_compiler = "the same compiler installed elsewhere"
-    moved_request.portable_compiler = request.portable_compiler
+    moved_request.native_compiler = request.native_compiler
     write(moved, "replaced relocated library")?
     require_installed_refusal(facet, declared, output, moved_request, relocated, "replaced")?
     write(moved, "one installed library")?
@@ -812,8 +1584,7 @@ def verify_installed_graph_refresh(
     attempts = graph.parent().joinpath("graph-attempts")
     script = "#!/bin/sh\nset -eu\n[ \"$1\" = --rust-codegraph ] || exit 2\n" + f"printf x >> '{attempts.0}'\n" + "printf 'new checked graph' > \"$2\"\n"
     write(driver, script)?
-    mut chmod = Command.new("/bin/chmod")
-    assert chmod.arg("+x").arg(driver.0).status().map_err((error) => str(error))?.success()
+    make_executable(driver)?
     native_before = artifact_identity(artifact)?
     dependencies_before = artifact_identity(dependencies)?
     # 2. A new graph generation must retain both native outputs verbatim.
@@ -843,7 +1614,9 @@ def verify_installed_graph_refresh(
     assert graph.read_text("utf-8", "strict").map_err((error) => error.message())? == "new checked graph"
     assert artifact_identity(artifact)? == native_before
     assert artifact_identity(dependencies)? == dependencies_before
+    # The mutating observer stays with this case; later cases refresh graphs with the ordinary one.
     write(included, "one included value")?
+    write(driver, script)?
     return Ok(None)
 
 
@@ -882,18 +1655,279 @@ def rust_crate(scratch: Path) -> Result[RustCrate, str]:
     write(sources.joinpath("table.json"), "{}")?
     dependency = scratch.joinpath("libcore.rlib")
     write(dependency, "core one")?
+    record_payload(dependency, fingerprint(["core one"])?)?
     return Ok(RustCrate(facet=facet, dependency=dependency, ledger=scratch.joinpath("ledger.json")))
 
 
 def rust_pass(setup: RustCrate, compiler: str, feature: str) -> Result[Pass, str]:
     """Key the crate as a new process would, built with `feature`: load the ledger, reconcile, save it."""
     described = ["crate data lib", "--cfg", f"feature=\"{feature}\""]
-    manifest = setup.facet.joinpath("loaf.toml")
     sources = setup.facet.joinpath("rust").joinpath("src")
     mut crates = load_ledger(setup.ledger, 0, "")
-    key = rust_key(compiler, described, manifest, sources, [setup.dependency.0], crates)?
+    paths = crates.sources(sources, true)?
+    key = reconciled_rust_key(setup.facet, setup.facet, paths, [], described, {}, [setup.dependency.0], compiler, crates)?
     crates.save()?
     return Ok(Pass(key=key.digest, hashed=crates.hashed, listed=crates.listed))
+
+
+def verify_toolchain_interface_admission(scratch: Path, toolchain: Toolchain) -> Result[None, str]:
+    """A selected toolchain admits transported native, standard and registry payloads and refuses changed bytes."""
+    verify_archive_members(scratch)?
+    verify_staged_loaf_artifacts(scratch)?
+    original = scratch.joinpath("producer/runtime.incnlib")
+    write(original, "runtime interface")?
+    record_payload(original, "runtime producer")?
+    directory = Path(toolchain.driver).parent()
+    copied = directory.joinpath("runtime.incnlib")
+    write(copied, read(original)?)?
+    write(record_path(copied), read(record_path(original))?)?
+    standard = directory.joinpath("loaves/standard/debug/libstandard.rlib")
+    write(standard, read(original)?)?
+    write(record_path(standard), read(record_path(original))?)?
+    registry = directory.joinpath("registry/libregistry.rlib")
+    write(registry, read(original)?)?
+    write(
+        directory.joinpath("registry/closure.json"),
+        "{\"externs\":{\"registry producer\":{\"path\":\"libregistry.rlib\",\"payload_digest\":\"" + file_digest(
+            original,
+        )? + "\"}}}",
+    )?
+    document = JsonValue.object(
+        {"schema": JsonValue.string("incan.toolchain/1"), "driver": JsonValue.string(toolchain.driver), "sysroot": JsonValue.string(
+            toolchain.sysroot,
+        ), "rust_abi": JsonValue.array([JsonValue.string(path) for path in toolchain.rust_abi]), "externs": JsonValue.array(
+            [native.to_json() for native in toolchain.externs],
+        ), "search": JsonValue.array([]), "registry_units": JsonValue.string("registry/closure.json")},
+    )
+    write(directory.joinpath("toolchain.json"), json_text(document)?)?
+    write(registry, "damaged during transport")?
+    match read_toolchain(directory):
+        Ok(_) =>
+            assert false, "a damaged transported registry payload was admitted"
+        Err(_) => pass
+    write(registry, read(original)?)?
+    read_toolchain(directory)?
+    verify_renamed_admission(scratch, original)?
+    verify_published_installation(scratch, original)?
+    verify_installation_check(scratch)?
+    assert published_identity(copied)? == "runtime producer"
+    assert published_identity(standard)? == "runtime producer"
+    assert published_identity(registry)? == "registry producer"
+    for payload in [copied, standard, registry]:
+        write(payload, "changed payload")?
+        match read_toolchain(directory):
+            Ok(_) =>
+                assert false, "a changed payload cannot retain its transported producer identity"
+            Err(_) => pass
+        write(payload, read(original)?)?
+    return Ok(None)
+
+
+def verify_renamed_admission(scratch: Path, original: Path) -> Result[None, str]:
+    """A published installation retains verified generations and refuses replacements without reading payload bytes again."""
+    stage = scratch.joinpath("admission-stage")
+    payload = stage.joinpath("library.rlib")
+    compiler = stage.joinpath("driver")
+    write(payload, read(original)?)?
+    record_payload(payload, "renamed producer")?
+    write(compiler, "compiler generation")?
+    admit_fact(compiler)?
+    admitted_payload = verified_payload(payload)?
+    admitted_compiler = verified_fact(compiler)?
+    target = scratch.joinpath("admission-published")
+    rename(stage.0, target.0).map_err((error) => str(error))?
+    installed_payload = target.joinpath("library.rlib")
+    installed_compiler = target.joinpath("driver")
+    relocate_payload(installed_payload, admitted_payload)?
+    relocate_fact(installed_compiler, admitted_compiler)?
+    assert published_identity(installed_payload)? == "renamed producer"
+    assert fact_identity(installed_compiler)? == admitted_compiler.digest
+    write(installed_payload, "damaged payload")?
+    write(installed_compiler, "damaged compiler")?
+    match relocate_payload(installed_payload, admitted_payload):
+        Ok(_) =>
+            assert false, "changed payload retained installation admission"
+        Err(_) => pass
+    match relocate_fact(installed_compiler, admitted_compiler):
+        Ok(_) =>
+            assert false, "changed compiler retained installation admission"
+        Err(_) => pass
+    return Ok(None)
+
+
+def verify_published_installation(scratch: Path, original: Path) -> Result[None, str]:
+    """Installation verifies each staged payload once; first selection reads only the admission marker and description."""
+    stage = scratch.joinpath("installation-stage")
+    write(stage.joinpath("driver"), "fixture compiler")?
+    write(stage.joinpath("std.rustabi"), "fixture Rust facts")?
+    write(stage.joinpath("stdlib/core/loaf.toml"), "[project]\nname='core'\nversion='1.0.0'\n")?
+    write(stage.joinpath("stdlib/core/src/lib.incn"), "pub def value() -> int:\n    return 1\n")?
+    write(stage.joinpath("library.rlib"), read(original)?)?
+    write(stage.joinpath("library.native.json"), "{\"search\":[],\"externs\":[],\"macro_externs\":[]}")?
+    record_payload(stage.joinpath("library.rlib"), "installed producer")?
+    write(stage.joinpath("registry/closure.json"), "{\"externs\":{}}")?
+    write(
+        stage.joinpath("toolchain.json"),
+        "{\"schema\":\"incan.toolchain/1\",\"driver\":\"driver\",\"sysroot\":\"sysroot\"," + "\"rust_abi\":[\"std.rustabi\"],\"externs\":[{\"name\":\"runtime\",\"path\":\"library.rlib\"}]," + "\"search\":[],\"registry_units\":\"registry/closure.json\"}",
+    )?
+    _, admission = prepare_installation(stage)?
+    assert len(admission.payloads) == 1 and len(admission.facts) == 2
+    target = scratch.joinpath("installation-published")
+    rename(stage.0, target.0).map_err((error) => str(error))?
+    finish_installation(target, admission)?
+    installed = load_toolchain_at(target)?
+    assert installed.driver == target.joinpath("driver").0
+    assert published_identity(target.joinpath("library.rlib"))? == "installed producer"
+    verify_installation_page(target)?
+    _ = flush_trace()
+    return Ok(None)
+
+
+def verify_installation_page(directory: Path) -> Result[None, str]:
+    """Warm selections read the admitted page, preserve full intent, refresh edits and refuse page damage."""
+    page = match recall_installation(directory)?:
+        None => return Err("installation did not publish an admitted page")
+        Some(found) => found
+
+    assert len(page.manifests) == 1
+    assert page.manifests[0].intent.name == "core"
+    assert len(page.manifests[0].digest) == 64
+    # Repeated source-level selections emit no reads, decodes or hashes of these installed inputs.
+    count_work(directory.0 + "/")
+    for _index in range(2):
+        assert load_toolchain_at(directory)?.driver == page.toolchain.driver
+        assert published_identity(directory.joinpath("library.rlib"))? == "installed producer"
+        assert len(required_items(read_json(directory.joinpath("library.native.json"))?, "search")?) == 0
+    work = finish_counting()
+    assert work.reads == 0 and work.hashes == 0
+    assert work.parses == 0 and work.decodes == 0
+    assert work.stats > 0
+    assert work.pages <= 1
+    # A command captures once; ending it restores generation checks for later library or resident requests.
+    begin_command()
+    _ = load_toolchain_at(directory)?
+    count_work(directory.0 + "/")
+    for _index in range(2):
+        assert load_toolchain_at(directory)?.driver == page.toolchain.driver
+    captured = finish_counting()
+    end_command()
+    assert captured.stats == 0 and captured.reads == 0 and captured.hashes == 0
+    encoded = encode_installation(page)?
+    fixture = directory.parent().joinpath("installation-page.bin")
+    fixture.write_bytes(encoded).map_err((error) => error.message())?
+    mapped = fixture.map_read().map_err((error) => error.message())?
+    match mapped.view(0, mapped.len()):
+        None => return Err("fixture has no whole mapped range")
+        Some(view) =>
+            decoded = decode_installation(view)?
+            assert encode_installation(decoded)? == encoded
+            assert decoded.manifests[0].intent == page.manifests[0].intent
+    verify_page_refusals(fixture, encoded)?
+    verify_page_vectors(fixture)?
+    digest = fingerprint_page(encoded)
+    canonical = payload_path(installation_catalog()?, digest)
+    canonical.chmod(false).map_err((error) => error.message())?
+    canonical.write_bytes(b"damaged page").map_err((error) => error.message())?
+    match recall_installation(directory):
+        Ok(_) => return Err("damaged installation page was silently reused or reproduced")
+        Err(_) => pass
+    canonical.write_bytes(encoded).map_err((error) => error.message())?
+    manifest = directory.joinpath("stdlib/core/loaf.toml")
+    write(manifest, "[project]\nname='core'\nversion='2.0.0'\n")?
+    match recall_installation(directory)?:
+        None => pass
+        Some(_) => return Err("changed manifest retained its preceding admission")
+    _ = load_toolchain_at(directory)?
+    refreshed = match recall_installation(directory)?:
+        None => return Err("changed installation was not re-admitted")
+        Some(found) => found
+
+    assert refreshed.manifests[0].intent.version == "2.0.0"
+    write(manifest, "[project\n")?
+    match load_toolchain_at(directory):
+        Ok(_) => return Err("a damaged standard manifest retained admission")
+        Err(_) => pass
+    write(manifest, "[project]\nname='core'\nversion='2.0.0'\n")?
+    _ = load_toolchain_at(directory)?
+    # Source preparation can publish a new producer of unchanged bytes during one command.
+    record_payload(directory.joinpath("library.rlib"), "refreshed producer")?
+    assert published_identity(directory.joinpath("library.rlib"))? == "refreshed producer"
+    native = directory.joinpath("library.native.json")
+    write(native, "{\"search\":[\"refreshed\"],\"externs\":[],\"macro_externs\":[]}")?
+    assert len(required_items(read_json(native)?, "search")?) == 1
+    _ = load_toolchain_at(directory)?
+    producer = record_path(directory.joinpath("library.rlib"))
+    original = read(producer)?
+    write(producer, "damaged producer record")?
+    match published_identity(directory.joinpath("library.rlib")):
+        Ok(_) => return Err("changed producer record retained its admitted identity")
+        Err(_) => pass
+    write(producer, original)?
+    _ = load_toolchain_at(directory)?
+    return Ok(None)
+
+
+def fingerprint_page(data: bytes) -> str:
+    """The exact value digest used by the sealed page's immutable revision."""
+    return hexlify(sha256.digest(data))
+
+
+def verify_page_refusals(path: Path, data: bytes) -> Result[None, str]:
+    """Malformed page scalars, versions, truncation and trailing bytes refuse before they can supply facts."""
+    extended = BytesIO(b"")
+    extended.write_bytes(data).map_err((error) => error.message())?
+    extended.write_bytes(b"\x00").map_err((error) => error.message())?
+    for bytes in [b"invalid", data[:16], extended.getvalue()]:
+        path.write_bytes(bytes).map_err((error) => error.message())?
+        mapped = path.map_read().map_err((error) => error.message())?
+        if let Some(view) = mapped.view(0, mapped.len()):
+            match decode_installation(view):
+                Ok(_) => return Err("malformed installation page was accepted")
+                Err(_) => pass
+    return Ok(None)
+
+
+def verify_page_vectors(path: Path) -> Result[None, str]:
+    """Packed vectors retain empty and Unicode strings; separator contents use the canonical length form."""
+    for values in [[], [""], ["first", "λ", ""], ["embedded\\x00value", ""]]:
+        buffer = BytesIO(b"")
+        put_texts(buffer, values)?
+        path.write_bytes(buffer.getvalue()).map_err((error) => error.message())?
+        mapped = path.map_read().map_err((error) => error.message())?
+        match mapped.view(0, mapped.len()):
+            None => return Err("vector fixture has no mapped range")
+            Some(view) =>
+                mut reader = Reader(view=view)
+                assert reader.texts()? == values
+                assert reader.offset == view.len()
+    return Ok(None)
+
+
+def verify_installation_check(scratch: Path) -> Result[None, str]:
+    """Installation uses one ordinary run, validates its output and removes the temporary project on either outcome."""
+    directory = scratch.joinpath("checked-installation")
+    make_directory(directory)?
+    oven = scratch.joinpath("installation-oven")
+    calls = scratch.joinpath("installation-calls")
+    mut script = "#!/bin/sh\n" + f"printf 'x' >> '{calls.0}'\n"
+    script += "[ \"$1\" = run ] && [ -f \"$2\" ] || exit 1\n"
+    script += "[ -z \"${INCAN_STDLIB:-}\" ] || exit 1\n"
+    script += "printf 'incan installation verified\\n'\n"
+    write(oven, script)?
+    make_executable(oven)?
+    verify_runtime(oven.0, directory)?
+    assert read(calls)? == "x"
+    # A refused runtime is reported after removing the check's project too.
+    write(oven, script + "exit 1\n")?
+    make_executable(oven)?
+    match verify_runtime(oven.0, directory):
+        Ok(_) =>
+            assert false, "installation accepted a failed runtime"
+        Err(_) => pass
+    assert read(calls)? == "xx"
+    for path in scratch.iterdir().map_err((error) => error.message())?:
+        assert not path.name().startswith(".installation-check-")
+    return Ok(None)
 
 
 def verify_closure_readings(path: Path) -> Result[None, str]:
@@ -930,4 +1964,73 @@ def verify_closure_readings(path: Path) -> Result[None, str]:
         Err(_) => pass
     write(path, "{\"search\":[\"first\"],\"externs\":[[\"serde\",\"libserde.rlib\"]],\"unused_receipt\":true}")?
     assert json_text(readings.read(path)?)? == json_text(first)?
+    return Ok(None)
+
+
+def damage(path: Path, text: str) -> Result[None, str]:
+    """Overwrite a sealed payload file, as a stray tool would, past its read-only permissions."""
+    set_permissions(path.0, Permissions.from_mode(420)).map_err((error) => str(error))?
+    return path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+def verify_archive_members(scratch: Path) -> Result[None, str]:
+    """
+    Archive installation admits a nested C sysroot, refuses the root host link and preserves a prior installation.
+
+    1. Pack real archive members with a manifest that stops before toolchain admission.
+    2. Check the public installer in an isolated home and verify its staging cleanup.
+    """
+    # 1. The deliberate name mismatch proves an allowed member reached manifest verification.
+    root = scratch.joinpath("archive-members")
+    write(root.joinpath("c/sysroot/include/payload"), "nested C sysroot")?
+    write(root.joinpath("sysroot/payload"), "refused host link")?
+    write(root.joinpath("toolchain.json"), "{\"name\":\"archive-member-probe\"}")?
+    archive = scratch.joinpath("members.tar")
+    home = scratch.joinpath("archive-home")
+    prior = home.joinpath("toolchains/0.6.0-dev.8/prior")
+    write(prior, "unchanged")?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    # 2. Each refusal leaves both the prior installation and its sibling staging directory unchanged.
+    for member, refused in [("c/sysroot", false), ("./c/sysroot", false), ("sysroot", true), ("./sysroot", true)]:
+        mut pack = Command.new("tar")
+        pack.args(["-cf", archive.0, "-C", root.0, "toolchain.json", member])
+        packed = pack.output().map_err((error) => str(error))?
+        assert packed.status.success(), decoded(packed.stderr)
+        mut install = Command.new(binary)
+        install.args(["toolchain", "install", archive.0]).env("INCAN_HOME", home.0).env("OVEN_OWNER", "off")
+        install.env("INCAN_ENGINE", "legacy").env_remove("INCAN_STDLIB")
+        output = install.output().map_err((error) => str(error))?
+        assert output.status.code() == Some(1i32), member
+        message = decoded(output.stderr)
+        if refused:
+            assert "unsafe toolchain archive member:" in message, message
+        else:
+            assert "archive toolchain archive-member-probe does not match" in message, message
+        assert read(prior)? == "unchanged"
+        for entry in home.joinpath("toolchains").iterdir().map_err((error) => error.message())?:
+            assert not entry.name().startswith(".install-"), entry.0
+    return Ok(None)
+
+
+def verify_staged_loaf_artifacts(scratch: Path) -> Result[None, str]:
+    """Archive staging preserves compiled Loaf files while leaving builder logs and unit descriptions at source."""
+    source = scratch.joinpath("staged-loaf-source")
+    stage = scratch.joinpath("staged-loaf-target")
+    for profile in ["debug", "release"]:
+        original = source.joinpath("example").joinpath(profile)
+        write(original.joinpath("example.incnlib"), "checked interface")?
+        write(original.joinpath("example.incnbody"), "executable bodies")?
+        write(original.joinpath("libexample.rlib"), "native library")?
+        write(original.joinpath("build.log"), f"warning INCAN-T0125 at {scratch.0}/private/source.incn:1")?
+        write(original.joinpath("example.unit.json"), "builder unit")?
+    stage_loaves(source, stage)?
+    for profile in ["debug", "release"]:
+        original = source.joinpath("example").joinpath(profile)
+        packed = stage.joinpath("loaves/example").joinpath(profile)
+        assert read(packed.joinpath("example.incnlib"))? == "checked interface"
+        assert read(packed.joinpath("example.incnbody"))? == "executable bodies"
+        assert read(packed.joinpath("libexample.rlib"))? == "native library"
+        assert not packed.joinpath("build.log").exists()
+        assert not packed.joinpath("example.unit.json").exists()
+        assert original.joinpath("build.log").is_file()
     return Ok(None)

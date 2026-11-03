@@ -8,8 +8,10 @@ from rust::incan_semantics_core import (
     SemanticSourceTargetKind,
 )
 from rust::incan_semantics_core::body_ir import NominalDeclaration, EnumDeclaration as RustEnumDeclaration
-from rust::incan_lang::lang::types::collections import from_str as collection_type, CollectionTypeId
-from pub::incan_mir_plan import PlanType, ListLeaf, EnumDeclaration, TupleElement, semantic_type_matches
+from rust::incan_lang::lang::types::collections import from_str as collection_type, as_str as collection_name, CollectionTypeId
+from pub::incan_mir_plan import Carrier
+from pub::incan_mir_plan import PlanType, ListLeaf, EnumDeclaration, TupleElement, tuple_element_type
+from numerics import sized_numeric
 from models import model_type, hashed_element
 from tuples import tuple_element
 from enums import enum_type
@@ -90,11 +92,14 @@ pub def native_source_type(
     intrinsics: &list[EnumDeclaration],
 ) -> Result[PlanType, str]:
     """Use retained carrier identity before recursively resolving collection elements; never reopen source syntax."""
-    mut index = 0
-    for declaration in intrinsics:
-        if semantic_type_matches(declaration, ty):
-            return Ok(PlanType.Enum(len(enums) + index, declaration.name))
-        index += 1
+    # This runs for every resolved type. Only Option, Result and Union carriers are intrinsic, and the checked type is
+    # wrapped once so that each borrowed carrier compares its key in place instead of copying it.
+    if intrinsic_carrier(ty):
+        key = Some(ty.clone())
+        for index in range(len(intrinsics)):
+            declaration = borrowed_at(intrinsics, index)
+            if declaration.semantic_key == key:
+                return Ok(PlanType.Enum(len(enums) + index, declaration.name))
     match enum_type(enums, ty):
         Some(result) => return Ok(result)
         None => pass
@@ -135,7 +140,15 @@ pub def native_source_type(
             mut signature: list[PlanType] = []
             for parameter in parameters:
                 input = native_source_type(constructors, nominals, enums, unions, parameter.ty, intrinsics)?
-                signature.append(semantic_input(input, parameter.kind, parameter.is_mut, parameter.native_owned)?)
+                signature.append(
+                    semantic_input(
+                        input,
+                        parameter.kind,
+                        parameter.is_mut,
+                        parameter.native_owned,
+                        parameter.input_access,
+                    )?,
+                )
             signature.append(native_source_type(constructors, nominals, enums, unions, result, intrinsics)?)
             return Ok(PlanType.FunctionPointer(signature))
         RustType.Generic(base=base, args=arguments) =>
@@ -227,14 +240,70 @@ pub def stored_field_type(
     slot: int,
     intrinsics: &list[EnumDeclaration],
 ) -> Result[PlanType, str]:
-    """Use the Body IR field's owning callable fact at every construction and projection of its closed owner."""
+    """
+    Use the Body IR field's owning callable fact at every construction and projection of its closed owner.
+
+    A class field whose layout reaches its own class by value, as `next: Option[Node]` does, is stored boxed; the
+    checker has already refused a class that holds itself with no `Option` in between.
+    """
     ty = native_source_type(constructors, nominals, enums, unions, declaration.field_types[slot], intrinsics)?
     owned: bool = declaration.owns_callable_field(slot)
     if owned:
         match ty:
             PlanType.FunctionPointer(signature) => return Ok(PlanType.Closure(signature))
             _ => return Err("invalid Body IR owned callable field without a function signature")
+    if declaration.canonical.kind == SemanticSourceTargetKind.Class:
+        if layout_reaches(constructors, nominals, enums, unions, intrinsics, declaration, ty, []):
+            return Ok(PlanType.Boxed([ty]))
     return Ok(ty)
+
+
+def layout_reaches(
+    constructors: &ConstructorIndex,
+    nominals: &list[NominalDeclaration],
+    enums: &list[RustEnumDeclaration],
+    unions: &list[RustType],
+    intrinsics: &list[EnumDeclaration],
+    owner: &NominalDeclaration,
+    ty: PlanType,
+    mut path: list[int],
+) -> bool:
+    """
+    Whether a stored value holds `owner` inline: through nominal fields, standard enum payloads and tuple elements.
+
+    Collections, references and boxes hold their values elsewhere and end the walk; `path` holds the nominals already
+    entered on the way here.
+    """
+    match ty:
+        PlanType.Model(index, _name) =>
+            reached = nominals[index]
+            if reached.canonical == owner.canonical:
+                return true
+            if index in path:
+                return false
+            path.append(index)
+            for field in reached.field_types:
+                match native_source_type(constructors, nominals, enums, unions, field, intrinsics):
+                    Ok(stored) =>
+                        if layout_reaches(constructors, nominals, enums, unions, intrinsics, owner, stored, path):
+                            return true
+                    Err(_reason) => pass
+            return false
+        PlanType.Enum(index, _name) =>
+            if index < len(enums) or index >= len(enums) + len(intrinsics):
+                return false
+            for variant in intrinsics[index - len(enums)].variants:
+                for payload in variant.fields:
+                    if layout_reaches(constructors, nominals, enums, unions, intrinsics, owner, payload, path):
+                        return true
+            return false
+        PlanType.Tuple(elements) =>
+            for element in elements:
+                stored = tuple_element_type(element)
+                if layout_reaches(constructors, nominals, enums, unions, intrinsics, owner, stored, path):
+                    return true
+            return false
+        _ => return false
 
 
 def is_native_str(ty: &RustType) -> bool:
@@ -266,6 +335,7 @@ pub def shared_receiver_type(ty: PlanType) -> Result[PlanType, str]:
         PlanType.StrArray(count) => return Ok(PlanType.StrArrayRef(count))
         PlanType.NativeSlice(elements) => return Ok(PlanType.SliceRef(elements))
         PlanType.FunctionPointer(_signature) => return Ok(PlanType.ScalarRef([ty]))
+        PlanType.NativeTraitObject(_path, _send, _sync) => return Ok(PlanType.ScalarRef([ty]))
         PlanType.Model(index, name) => return Ok(PlanType.ModelRef(index, name))
         PlanType.Enum(index, name) => return Ok(PlanType.EnumRef(index, name))
         PlanType.ValidationError => return Ok(PlanType.ValidationErrorRef)
@@ -391,17 +461,42 @@ def hashed_leaf(
         None => pass
     match ty:
         RustType.Generic(base=base, args=arguments) =>
-            if base == "Option" or base == "Result":
+            if standard_carrier(str(base)):
                 for argument in arguments:
                     hashed_leaf(constructors, nominals, enums, argument, intrinsics)?
                 mut index = 0
-                for carrier in intrinsics:
-                    if carrier.carrier == str(base) and semantic_type_matches(carrier, ty):
+                key = Some(ty.clone())
+                for carrier_position in range(len(intrinsics)):
+                    carrier = borrowed_at(intrinsics, carrier_position)
+                    if carrier.carrier != Carrier.Declared and carrier.semantic_key == key:
                         return Ok(ListLeaf.Enum(len(enums) + index, carrier.name))
                     index += 1
                 return Err(f"unsupported Body IR unretained carrier hashed key {ty}")
         _ => pass
     return hashed_element(nominals, ty)
+
+
+def intrinsic_carrier(ty: &RustType) -> bool:
+    """Whether a checked type can name a retained intrinsic carrier: only Option, Result and Union are retained."""
+    match ty:
+        RustType.Generic(base=base, args=_arguments) => return standard_carrier(str(base)) or ty.is_union()
+        _ => return false
+
+
+pub def standard_carrier(base: str) -> bool:
+    """Whether a checked generic base names the standard Option or Result, read through the collection vocabulary."""
+    match collection_type(base):
+        Some(CollectionTypeId.Option) => return true
+        Some(CollectionTypeId.Result) => return true
+        _ => return false
+
+
+pub def carrier_name(carrier: Carrier) -> Option[str]:
+    """A standard carrier's canonical name, read through the collection vocabulary; a declared enum has none."""
+    match carrier:
+        Carrier.Option => return Some(str(collection_name(CollectionTypeId.Option)))
+        Carrier.Result => return Some(str(collection_name(CollectionTypeId.Result)))
+        Carrier.Declared => return None
 
 
 def layout_tuple_type(
@@ -464,6 +559,11 @@ pub def collection_leaf(ty: PlanType) -> Result[ListLeaf, str]:
 
     An owned list, set or dictionary held by another collection is a collection leaf.
     """
+    match sized_numeric(ty):
+        Some(kind) =>
+            if ty not in [PlanType.U8, PlanType.USize]:
+                return Ok(ListLeaf.Numeric(kind))
+        None => pass
     match ty:
         PlanType.Int => return Ok(ListLeaf.Int)
         PlanType.Float => return Ok(ListLeaf.Float)

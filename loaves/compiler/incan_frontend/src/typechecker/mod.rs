@@ -42,20 +42,30 @@
 //! - [`symbols`](super::symbols) – symbol table and scope management
 //! - [`diagnostics`](super::diagnostics) – error types and pretty printing
 
+pub(crate) mod body_check;
 mod body_ir_classes;
 mod capturing_callables;
 mod check_decl;
+mod check_work;
+pub(crate) use body_check::BodyIrBaselineInputs;
+#[cfg(test)]
+pub(crate) use body_check::CheckedBodyInputError;
+pub use check_work::CheckWork;
+pub(crate) mod canonical_nodes;
 mod check_expr;
 mod check_stmt;
 mod collect;
 mod collection_annotations;
 mod const_eval;
+mod declaration_views;
 mod decorated_method_receivers;
 mod derive_contract;
 mod derive_requirements;
+mod diagnostic_values;
 mod for_item_taking;
 mod hash_key_inference;
 mod helpers;
+mod iteration_borrows;
 mod json_member_requirements;
 mod lifetime_contracts;
 mod mut_arguments;
@@ -64,9 +74,15 @@ mod native_newtype_facts;
 mod native_storage;
 mod nominal_identities;
 mod nominal_type_param_bounds;
+mod open_native_owners;
+mod ownership_contracts;
+pub(crate) use ownership_contracts::carried_view_binding;
+pub(crate) use ownership_contracts::projection::{CheckedInputBody, CheckedInputInvocation, CheckedInputSource};
 mod reachability;
 mod receiver_change;
 mod reserved_names;
+mod source_signatures;
+pub use declaration_views::{CheckEnvironmentView, CheckedBindingView, DeclarationView, VisibilityPoint};
 mod trait_bound_relations;
 mod type_info;
 pub(crate) use type_info::{ClassLayoutInfo, RustCheckedCall};
@@ -423,26 +439,35 @@ pub struct CAbiRawCallResult {
     pub slots_by_parameter: HashMap<String, String>,
 }
 
-/// A Rust associated call whose owner type arguments the call itself left open (#1720).
+/// A native call whose result carries type arguments the call itself left open (#1720, #2481).
 ///
 /// `HashMap.new()` on `rust::std::collections::HashMap` names neither `K` nor `V`, and nothing at the call fixes
-/// them: no explicit `[str, int]`, no expected type, no argument that mentions them. Rust would still fill them
-/// from a later reader of the value; the checker keeps this record only long enough to learn whether one exists.
+/// them: no explicit `[str, int]`, no expected type, no argument that mentions them. A local bound to the value can
+/// still have them fixed by its first use (#2481); the checker keeps this record until it knows whether such a use
+/// exists.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenRustGenericCall {
     /// The receiver as the source spells it (`HashMap`), for the diagnostic.
     pub owner: String,
-    /// The associated function called (`new`).
+    /// The associated function or method called (`new`, `sum`).
     pub method: String,
-    /// The owner's type parameters the call left open, in declaration order (`K`, `V`).
+    /// The owner or method parameters the call left open, in declaration order (`K`, `V`, or `S`).
     pub type_params: Vec<String>,
+    /// Whether these are the associated constructor's owner parameters; method-result parameters use T0122.
+    pub owner_parameters: bool,
+    /// The call's native result with those parameters open, once callee retention has computed it. A local bound to
+    /// the call holds it as its native carrier until a use fixes the parameters.
+    pub native: Option<ResolvedType>,
+    /// The native result's nominal item (`std::collections::HashMap`), which selects the local's native methods.
+    pub native_item: Option<String>,
 }
 
-/// A local bound to an [`OpenRustGenericCall`] that no later statement has read yet (#1720).
+/// A local bound to an [`OpenRustGenericCall`], watched until its first use fixes the call's open parameters (#1720).
 ///
-/// Dropped on the first read of the name; whatever is left when the declaring block ends is refused, because a
-/// binding nothing reads gives Rust nothing to infer the arguments from and the build would stop on the call.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The first read whose checking needs the parameters must determine them, and the binding takes that type at once.
+/// Independent reads leave it watched. A type-dependent read that fixes nothing refuses the call at the statement's
+/// end; no fixing use refuses it at the declaring block's end (#2481).
+#[derive(Debug, Clone, PartialEq)]
 pub struct OpenRustGenericBinding {
     /// The local's name.
     pub name: String,
@@ -452,6 +477,30 @@ pub struct OpenRustGenericBinding {
     pub span: Span,
     /// The call whose open parameters the binding carries.
     pub call: OpenRustGenericCall,
+    /// The declaring assignment, checked again against the type the first use fixes.
+    pub assignment: crate::ast::AssignmentStmt,
+    /// The declaring statement's span, which keys the binding's checked type.
+    pub statement: Span,
+    /// The binding's canonical identity: only a read of this binding can fix it.
+    pub identity: Option<CanonicalSymbolId>,
+    /// The statement block of the first read whose checking needs the open parameters.
+    pub read_in: Option<usize>,
+    /// Reads in the current fixing statement that still require the open parameters.
+    pub active_reads: Vec<Span>,
+    /// Earlier operations whose own checking needs no open parameter, rechecked once the initializer is fixed.
+    pub passive_uses: Vec<OpenRustPassiveUse>,
+}
+
+/// An operation whose checking needs no open owner argument, retained until its native layout can be fixed.
+#[derive(Debug, Clone, PartialEq)]
+pub enum OpenRustPassiveUse {
+    /// Recheck an ordinary native method expression with its original source argument shape.
+    Expression(crate::ast::Spanned<crate::ast::Expr>),
+    /// Keep builtin length's native call shape, whose receiver is an ordinary argument rather than a method slot.
+    Length {
+        receiver: crate::ast::Spanned<crate::ast::Expr>,
+        span: Span,
+    },
 }
 
 impl Drop for TypeCompatibilityDepthGuard<'_> {
@@ -506,6 +555,30 @@ struct CheckingNominalScope {
 
 /// Collect and check a program while retaining accepted semantic facts for Body IR and analysis consumers.
 pub struct TypeChecker {
+    /// Test-only cold baseline bypasses local table extraction while retaining the original semantic operations.
+    #[cfg(test)]
+    legacy_body_checking: bool,
+    /// Verification-only declaration activations; a statement producer may not run inside any of them.
+    #[cfg(test)]
+    active_declaration_checks: Vec<Span>,
+    /// Per-body complete compatibility snapshots for cold-baseline comparisons, absent from production.
+    #[cfg(test)]
+    body_local_observations: Vec<(Span, String)>,
+    /// Verification-only enclosing writers needed to reconstruct complete snapshots inside nominal declarations.
+    #[cfg(test)]
+    body_enclosing_observations: Vec<body_check::BodyLocal>,
+    /// Actual stage entries for the current activation, reset before collecting one program.
+    check_work: CheckWork,
+    /// Invocation-owned local outputs waiting for explicit finalization; never an engine cache.
+    body_checks: Vec<body_check::BodyCheckInput>,
+    /// Completed invocation-owned body values exposed to the record adapter.
+    checked_bodies: Vec<std::sync::Arc<body_check::CheckedBodyView>>,
+    /// Locally settled open-value diagnostics rendered at the legacy final stage.
+    body_open_diagnostics: Vec<CompileError>,
+    /// Completed declaration/default/initializer outputs, separate from callable statement outputs.
+    checked_declarations: Vec<std::sync::Arc<body_check::CheckedBodyView>>,
+    /// Nested producer diagnostic intervals used only while capturing independently owned outputs.
+    diagnostic_owner_ranges: Vec<(std::ops::Range<usize>, std::ops::Range<usize>)>,
     /// Symbol table populated during the first pass.
     pub symbols: SymbolTable,
     /// Accumulated compile errors (non-fatal).
@@ -528,7 +601,7 @@ pub struct TypeChecker {
     pub consumed_iterator_bindings: HashMap<String, Span>,
     /// `dict.get(key)` calls whose value type cannot be copied, with that type's name; refused at the end of checking
     /// unless the lookup turned out to be only read (see `check_expr/dict_lookups.rs`).
-    pending_uncopyable_dict_lookups: Vec<(Span, String)>,
+    pending_uncopyable_dict_lookups: Vec<(usize, Span, String)>,
     /// Locals bound directly to a module static (`live = counts`), which read the static's storage like the static
     /// itself does, with the name of the static each one aliases.
     static_alias_bindings: HashMap<SymbolId, String>,
@@ -572,11 +645,14 @@ pub struct TypeChecker {
     /// Raw C result bindings whose enum outcome may establish branch-local output validity.
     pub c_abi_raw_call_results: Vec<CAbiRawCallResult>,
     /// Rust associated calls in the current statement whose owner type arguments were left open, keyed by call
-    /// span, waiting for the statement to say whether a local receives the value (#1720). Cleared when the
-    /// statement ends: a value nested somewhere else may still be fixed by its context.
+    /// span, waiting for the statement to say whether a local receives the value (#1720). When the statement ends,
+    /// one left nested somewhere else is refused unless its callee was retained.
     open_rust_generic_calls: HashMap<crate::ast::Span, OpenRustGenericCall>,
-    /// Locals bound to open Rust associated calls that nothing has read yet (#1720).
+    /// Locals bound to open Rust associated calls that no use has fixed yet (#1720, #2481).
     open_rust_generic_bindings: Vec<OpenRustGenericBinding>,
+    /// Equally ranked trait callees of a native method call, by call span, kept for that call's refusal when no later
+    /// selection step chooses a callee (#2481).
+    tied_rust_trait_callees: HashMap<crate::ast::Span, Vec<String>>,
     /// Statement-block identities used to scope pending generic-call bindings.
     statement_blocks: StatementBlockState,
     /// Slot identities currently readable in the active control-flow path.
@@ -607,6 +683,8 @@ pub struct TypeChecker {
     pub(in crate::typechecker) generic_partial_target: Option<check_expr::GenericPartialTarget>,
     /// Stack of active loop contexts, innermost last.
     pub loop_stack: Vec<LoopContext>,
+    /// Direct list places whose storage active statement loops still borrow.
+    iteration_borrows: Vec<iteration_borrows::IterationBorrow>,
     /// Active trait @requires context for default method bodies.
     pub current_trait_requires: Option<HashMap<String, ResolvedType>>,
     /// Active trait computed-property contract for default member bodies.
@@ -694,6 +772,8 @@ pub struct TypeChecker {
     pub const_eval_cache: HashMap<String, const_eval::ConstEvalResult>,
     /// Reusable typechecker output for downstream stages.
     pub type_info: TypeCheckInfo,
+    /// Current source-order boundary for borrowed declaration/environment readers.
+    visibility_point: VisibilityPoint,
     /// Public exports for imported dependency modules, keyed by module name.
     pub dependency_exports: HashMap<String, Vec<ExportedSymbol>>,
     /// Exact source-module member symbols collected from dependencies, keyed by canonical module name.
@@ -767,6 +847,8 @@ pub struct TypeChecker {
     pub dependency_direct_member_partial_projections: HashMap<String, HashMap<String, PartialProjectionInfo>>,
     /// RFC 024 derivable-module metadata from imported source modules, keyed by module path.
     pub dependency_derivable_modules: HashMap<String, Vec<String>>,
+    /// Checked declaring identities of source-module derive entries, including imported trait aliases.
+    pub dependency_derivable_trait_identities: HashMap<String, CanonicalSymbolId>,
     /// RFC 024/user-module trait metadata from imported source modules, keyed by module-qualified trait name.
     pub dependency_module_traits: HashMap<String, TraitInfo>,
     /// RFC 024 trait-level Rust derive metadata from imported source modules, keyed by module-qualified trait name.
@@ -946,6 +1028,20 @@ impl TypeChecker {
     /// Native queries, statement-block tracking and hash-key inference each initialize their own empty state.
     pub fn new() -> Self {
         Self {
+            #[cfg(test)]
+            legacy_body_checking: false,
+            #[cfg(test)]
+            active_declaration_checks: Vec::new(),
+            #[cfg(test)]
+            body_local_observations: Vec::new(),
+            #[cfg(test)]
+            body_enclosing_observations: Vec::new(),
+            check_work: CheckWork::default(),
+            body_checks: Vec::new(),
+            checked_bodies: Vec::new(),
+            checked_declarations: Vec::new(),
+            diagnostic_owner_ranges: Vec::new(),
+            body_open_diagnostics: Vec::new(),
             symbols: SymbolTable::new(),
             errors: Vec::new(),
             warnings: Vec::new(),
@@ -973,6 +1069,7 @@ impl TypeChecker {
             unbound_c_abi_raw_call_results: HashMap::new(),
             open_rust_generic_calls: HashMap::new(),
             open_rust_generic_bindings: Vec::new(),
+            tied_rust_trait_callees: HashMap::new(),
             statement_blocks: StatementBlockState::default(),
             c_abi_raw_call_results: Vec::new(),
             available_c_abi_output_slots: HashSet::new(),
@@ -988,6 +1085,7 @@ impl TypeChecker {
             generic_partial_target_span: None,
             generic_partial_target: None,
             loop_stack: Vec::new(),
+            iteration_borrows: Vec::new(),
             current_trait_requires: None,
             current_trait_properties: None,
             current_trait_name: None,
@@ -1018,6 +1116,7 @@ impl TypeChecker {
             const_eval_state: HashMap::new(),
             const_eval_cache: HashMap::new(),
             type_info: TypeCheckInfo::default(),
+            visibility_point: VisibilityPoint::default(),
             dependency_exports: HashMap::new(),
             dependency_member_symbols: HashMap::new(),
             dependency_member_type_aliases: HashMap::new(),
@@ -1036,6 +1135,7 @@ impl TypeChecker {
             nominal_declarations: union_member_identity::NominalDeclarationContext::default(),
             dependency_direct_member_partial_projections: HashMap::new(),
             dependency_derivable_modules: HashMap::new(),
+            dependency_derivable_trait_identities: HashMap::new(),
             dependency_module_traits: HashMap::new(),
             dependency_trait_rust_derive_paths: HashMap::new(),
             local_rust_derive_paths: HashMap::new(),
@@ -2713,8 +2813,12 @@ impl TypeChecker {
         &self.type_info
     }
 
-    /// Hand the accumulated type information to a later stage once checking is over, without copying it.
-    pub fn into_type_info(self) -> TypeCheckInfo {
+    /// Hand the accumulated type information to a later stage once checking is over. The opt-in Body IR baseline also
+    /// retains indexed immutable owner references; checking and settlement are never repeated.
+    pub fn into_type_info(mut self) -> TypeCheckInfo {
+        if std::env::var_os("INCAN_BODY_IR_FREE_BASELINE").is_some() {
+            self.type_info.body_ir_baseline_inputs = Some(self.body_ir_baseline_inputs());
+        }
         self.type_info
     }
 
@@ -2949,24 +3053,17 @@ impl TypeChecker {
 
     /// Export the RFC 120 identities and active source bindings into lowering-facing artifacts.
     ///
-    /// Runs once at the end of checking, when every declaration has been defined. The legacy identity-only map keeps
-    /// local declaration facts available to existing consumers. The checked-binding map additionally preserves
-    /// imports and aliases with their target identities and all bindings introduced by a single declaration, so HIR
-    /// never has to reconstruct source resolution from spellings.
-    fn export_declaration_identities(&mut self) {
+    /// Runs once after declaration collection. Body-local symbols are exported separately after their owner is checked.
+    /// The legacy identity-only map keeps local declaration facts available to existing consumers. The
+    /// checked-binding map additionally preserves imports and aliases with their target identities and all bindings
+    /// introduced by a single declaration, so HIR never has to reconstruct source resolution from spellings.
+    fn export_module_declaration_bindings(&mut self) {
         for (span, identity) in self.symbols.local_declaration_identities() {
             self.type_info
                 .declarations
                 .declaration_identities
                 .insert(span, identity.clone());
         }
-        for (span, identity) in self.symbols.nested_declaration_identities() {
-            self.type_info
-                .declarations
-                .nested_declaration_identities
-                .insert(span, identity.clone());
-        }
-
         self.type_info.declarations.hir_bindings_by_span.clear();
         let bindings = self
             .symbols
@@ -2988,6 +3085,16 @@ impl TypeChecker {
                 .entry(span)
                 .or_default()
                 .push(binding);
+        }
+    }
+
+    /// Retain body-owned lexical identities after body checking without republishing the module header.
+    fn export_nested_declaration_identities(&mut self) {
+        for (span, identity) in self.symbols.nested_declaration_identities() {
+            self.type_info
+                .declarations
+                .nested_declaration_identities
+                .insert(span, identity.clone());
         }
     }
 
@@ -3092,8 +3199,7 @@ impl TypeChecker {
     ///   - `symbols.lookup(name)` → `Option<SymbolId>`
     ///   - `symbols.get(id)` → `Option<&Symbol>`
     pub fn lookup_symbol(&self, name: &str) -> Option<&Symbol> {
-        let id = self.symbols.lookup(name)?;
-        self.symbols.get(id)
+        self.check_environment().lookup(name).map(|binding| binding.symbol)
     }
 
     /// Return the generic-parameter name for a type-like placeholder visible in the current scope.
@@ -3315,9 +3421,10 @@ impl TypeChecker {
             .and_then(|(module_path, name)| self.package_trait_declaration(module_path, name));
         for t in adopted {
             if self.trait_name_matches(&t.name, trait_name)
-                || t.source_name
-                    .as_deref()
-                    .is_some_and(|source_name| self.trait_name_matches(source_name, trait_name))
+                || (t.module_path.is_none()
+                    && t.source_name
+                        .as_deref()
+                        .is_some_and(|source_name| self.trait_name_matches(source_name, trait_name)))
                 || adoption_names_bound_identity(t, bound_identity.as_ref())
                 || package_trait
                     .as_ref()
@@ -6012,8 +6119,56 @@ impl TypeChecker {
 
     /// Resolve a type annotation and emit diagnostics for reserved or invalid type spellings.
     fn resolve_type_checked(&mut self, ty: &Spanned<Type>) -> ResolvedType {
+        self.resolve_type_checked_for_input(ty, false)
+    }
+
+    /// A supported source-function parameter or local declaration may defer its outer ownership diagnostic until its
+    /// body is checked. Every other annotation role, nested mode, malformed wrapper and returned dependency stays
+    /// refused.
+    fn resolve_type_checked_for_input(&mut self, ty: &Spanned<Type>, defer_input: bool) -> ResolvedType {
+        self.resolve_type_checked_deferring(
+            ty,
+            |mode| defer_input && mode != incan_lang::lang::types::ownership::OwnershipMode::Reference,
+            false,
+        )
+    }
+
+    /// Resolve an annotation whose outer ownership mode, when `defer` selects it, is checked by its declaration's
+    /// contract instead of being refused here. With `carried`, the mode of one `Result` or `Option` payload, or of one
+    /// tuple element, is deferred the same way, for a view carried in the result. Other nested modes are always
+    /// refused.
+    fn resolve_type_checked_deferring(
+        &mut self,
+        ty: &Spanned<Type>,
+        defer: impl Fn(incan_lang::lang::types::ownership::OwnershipMode) -> bool,
+        carried: bool,
+    ) -> ResolvedType {
         self.resolve_qualified_type_annotations(ty);
         if self.validate_source_type_names {
+            if let Type::Generic(name, arguments) = &ty.node
+                && arguments.len() == 1
+                && self.explicit_ownership_mode(name).is_some_and(&defer)
+            {
+                self.refuse_unimplemented_ownership_annotation(&arguments[0]);
+            } else if carried
+                && let Some(arguments) = carried_view_components(&ty.node)
+                && let Some(index) = arguments.iter().position(|argument| {
+                    matches!(&argument.node, Type::Generic(name, payload)
+                        if payload.len() == 1 && self.explicit_ownership_mode(name).is_some_and(&defer))
+                })
+            {
+                // One component carries the view; every other component stays an ordinary type.
+                for (position, argument) in arguments.iter().enumerate() {
+                    match &argument.node {
+                        Type::Generic(_, payload) if position == index => {
+                            self.refuse_unimplemented_ownership_annotation(&payload[0]);
+                        }
+                        _ => self.refuse_unimplemented_ownership_annotation(argument),
+                    }
+                }
+            } else {
+                self.refuse_unimplemented_ownership_annotation(ty);
+            }
             self.validate_source_type_annotation_names(&ty.node, ty.span);
             self.record_type_reference_identities(ty);
         }
@@ -7037,6 +7192,12 @@ impl TypeChecker {
         result
     }
 
+    /// Return the actual entries performed by the most recent program activation. The observation does not retain
+    /// checker facts and never decides cache reuse, checking scope or publication readiness.
+    pub fn check_work(&self) -> CheckWork {
+        self.check_work
+    }
+
     /// Check one program while retaining semantic-only type metadata collected from its dependency imports.
     fn check_program_with_dependency_semantics(&mut self, program: &Program) -> Result<(), Vec<CompileError>> {
         self.dependency_semantics_pending = false;
@@ -7055,15 +7216,31 @@ impl TypeChecker {
     ) -> Result<(), Vec<CompileError>> {
         self.reset_program_check(program, preserve_dependency_semantics);
         self.collect_program_check_declarations(program);
+        self.record_program_header_facts();
+        self.record_source_declaration_identities(program);
+        self.visibility_point = VisibilityPoint::Collected;
         self.prepare_program_body_facts();
         self.check_program_declaration_bodies(program);
         self.record_program_lowering_facts(program);
-        self.finish_program_check(program)
+        let result = self.finish_program_check(program);
+        self.visibility_point = VisibilityPoint::Finished;
+        result
     }
 
     /// Clear per-program observations before collecting declarations. Dependency semantic inventories survive only
     /// for an explicitly prepared imported program; symbol registration and alias validation keep their prior order.
     fn reset_program_check(&mut self, program: &Program, preserve_dependency_semantics: bool) {
+        #[cfg(test)]
+        self.body_local_observations.clear();
+        #[cfg(test)]
+        self.body_enclosing_observations.clear();
+        self.check_work = CheckWork::default();
+        self.body_checks.clear();
+        self.checked_bodies.clear();
+        self.checked_declarations.clear();
+        self.diagnostic_owner_ranges.clear();
+        self.body_open_diagnostics.clear();
+        self.visibility_point = VisibilityPoint::Collecting;
         self.checking_nominal_scope.get_mut().take();
         self.validate_source_type_names = false;
         self.unknown_source_type_names_emitted.clear();
@@ -7155,6 +7332,15 @@ impl TypeChecker {
         // Every signature is collected, so the function-typed parameters and returns that hold capturing closures
         // can be decided before any call or body is checked (#1561).
         self.plan_closure_holding_callables(program);
+        self.collect_function_ownership_headers(program);
+    }
+
+    /// Publish declaration-owned identity, import and alias bindings once collection has settled them. Body checking
+    /// may add lexical identities, but it does not own or republish the module's header binding inventory.
+    fn record_program_header_facts(&mut self) {
+        self.export_module_declaration_bindings();
+        self.export_checked_import_bindings();
+        self.export_type_alias_targets();
     }
 
     /// Retain private declaration-time native and nominal facts for body checking, reusing only matching mutation
@@ -7184,20 +7370,28 @@ impl TypeChecker {
         self.validate_source_type_names = true;
         for decl in &program.declarations {
             if matches!(decl.node, Declaration::Const(_)) {
-                self.check_declaration(decl);
+                self.check_environment_declaration(decl);
             }
         }
         for decl in &program.declarations {
             if !matches!(decl.node, Declaration::Const(_)) {
-                self.check_declaration(decl);
+                self.check_environment_declaration(decl);
             }
         }
-        self.resolve_mut_arguments();
-        self.refuse_copying_dict_lookups_of_uncopyable_values();
+        #[cfg(test)]
+        if self.legacy_body_checking {
+            self.legacy_resolve_mut_arguments();
+            self.refuse_copying_dict_lookups_of_uncopyable_values();
+        } else {
+            self.settle_body_checks(program);
+        }
+        #[cfg(not(test))]
+        self.settle_body_checks(program);
     }
 
-    /// Record checked layout, trait and import facts for later stages without publishing a nominal snapshot yet.
-    /// Native module validation precedes exporting inferred bounds and declaration identities.
+    /// Retain layout and trait facts after body checking without publishing a nominal snapshot yet. Native module
+    /// validation precedes inferred-bound and nested-identity export; module header bindings have already been
+    /// published.
     fn record_program_lowering_facts(&mut self, program: &Program) {
         self.type_info
             .c_abi
@@ -7217,10 +7411,7 @@ impl TypeChecker {
         // The module is checked; its inferred hashed type parameters now join its exported signatures (#1758).
         self.export_inferred_hash_key_bounds();
 
-        // ---- RFC 120: export the minted declaration identities for later stages ----
-        self.export_declaration_identities();
-        self.export_checked_import_bindings();
-        self.export_type_alias_targets();
+        self.export_nested_declaration_identities();
         self.record_binding_collision_diagnostics();
     }
 
@@ -7243,6 +7434,7 @@ impl TypeChecker {
             }
         }
         self.settle_open_value_destinations();
+        self.errors.append(&mut self.body_open_diagnostics);
         if let Err(error) = self.loaves.validate_demands() {
             self.errors
                 .push(CompileError::type_error(error.to_string(), Span::default()));
@@ -7903,6 +8095,9 @@ impl TypeChecker {
     /// owning Loaf's checked declaration, whose identity is what lets lowering recover the compiled signature,
     /// defaults included.
     ///
+    /// Nominal types, constants and other admitted public members use this same route; limiting it to callables and
+    /// traits leaves a nominal re-export as an identity-less placeholder at the next facade hop.
+    ///
     /// A facade that writes `from std.serde.json import Serialize` re-exports that trait exactly as it re-exports a
     /// function, so a consumer importing the spelling from the facade must bind the stdlib trait rather than a module
     /// placeholder: the placeholder let adoption and method calls through unproven, and lowering then had only the
@@ -7922,11 +8117,7 @@ impl TypeChecker {
         let module_path = canonicalize_source_module_segments(&module.segments);
         let (library, rest) = self.loaf_module(&module_path)?;
         let (kind, _) = self.lookup_pub_library_module_symbol_member(&library, &rest, item_name)?;
-        matches!(
-            kind,
-            SymbolKind::Function(_) | SymbolKind::FunctionOverloads(_) | SymbolKind::Trait(_)
-        )
-        .then_some(kind)
+        Some(kind)
     }
 
     /// The Loaf owning a bound module path and the public module path inside its manifest: `pub.<key>.<path>` for a
@@ -8722,6 +8913,44 @@ impl TypeChecker {
                 self.dependency_trait_rust_derive_paths.insert(qualified, paths.clone());
             }
         }
+        self.retain_derivable_trait_bindings(&module_paths, &traits);
+    }
+
+    /// Retain each module derive entry while its lexical imports still identify the selected trait declaration.
+    /// Imported names are metadata references, not declarations owned by the bundle. Keeping their checked identities,
+    /// contracts and native derive paths here prevents a later consumer's equal-spelled binding from answering them.
+    fn retain_derivable_trait_bindings(&mut self, module_paths: &[String], trait_names: &[String]) {
+        for name in trait_names {
+            let Some(symbol_id) = self.symbols.lookup(name) else {
+                continue;
+            };
+            let Some(identity) = self.symbols.identity_of(symbol_id).cloned() else {
+                continue;
+            };
+            let Some(SymbolKind::Trait(info)) = self.symbols.get(symbol_id).map(|symbol| &symbol.kind) else {
+                continue;
+            };
+            let info = info.clone();
+            let Some((owner, source_name)) = self.canonical_trait_source_target(&identity) else {
+                continue;
+            };
+            let owner_key = format!("{}.{}", owner.join("."), source_name);
+            let paths = self
+                .dependency_trait_rust_derive_paths
+                .get(&owner_key)
+                .cloned()
+                .or_else(|| self.loaf_trait_rust_derive_paths(&owner, &source_name))
+                .unwrap_or_default();
+            for module_path in module_paths {
+                let key = format!("{module_path}.{name}");
+                self.dependency_derivable_trait_identities
+                    .insert(key.clone(), identity.clone());
+                self.dependency_module_traits.insert(key.clone(), info.clone());
+                if !paths.is_empty() {
+                    self.dependency_trait_rust_derive_paths.insert(key, paths.clone());
+                }
+            }
+        }
     }
 
     /// Extract RFC 024 `__derives__` trait names from an imported dependency AST.
@@ -8956,6 +9185,7 @@ impl TypeChecker {
         self.body_ir_dependency_pub_reexports.clear();
         self.dependency_direct_member_partial_projections.clear();
         self.dependency_derivable_modules.clear();
+        self.dependency_derivable_trait_identities.clear();
         self.dependency_module_traits.clear();
         self.dependency_trait_rust_derive_paths.clear();
         self.record_nominal_declaring_modules(program, dependencies);
@@ -9004,6 +9234,7 @@ impl TypeChecker {
         self.body_ir_dependency_pub_reexports.clear();
         self.dependency_direct_member_partial_projections.clear();
         self.dependency_derivable_modules.clear();
+        self.dependency_derivable_trait_identities.clear();
         self.dependency_module_traits.clear();
         self.dependency_trait_rust_derive_paths.clear();
         self.record_nominal_declaring_modules(program, dependencies);
@@ -9863,6 +10094,35 @@ fn preset_private_root(expr: &Spanned<Expr>, public_decls: &HashMap<String, bool
             .get(name)
             .is_some_and(|is_public| !*is_public)
             .then(|| name.clone()),
+        _ => None,
+    }
+}
+
+/// The components of a result annotation that can carry a returned view: a `Result` or `Option` annotation's
+/// payloads, or a tuple annotation's elements.
+fn carried_view_components(ty: &Type) -> Option<&[Spanned<Type>]> {
+    match ty {
+        Type::Generic(carrier, arguments)
+            if matches!(
+                incan_lang::lang::types::collections::from_str(carrier),
+                Some(CollectionTypeId::Result | CollectionTypeId::Option)
+            ) =>
+        {
+            Some(arguments)
+        }
+        _ => written_tuple_elements(ty),
+    }
+}
+
+/// The elements of a tuple annotation, written `(A, B)` or `tuple[A, B]`.
+pub(in crate::typechecker) fn written_tuple_elements(ty: &Type) -> Option<&[Spanned<Type>]> {
+    match ty {
+        Type::Tuple(elements) => Some(elements),
+        Type::Generic(name, elements)
+            if incan_lang::lang::types::collections::from_str(name) == Some(CollectionTypeId::Tuple) =>
+        {
+            Some(elements)
+        }
         _ => None,
     }
 }

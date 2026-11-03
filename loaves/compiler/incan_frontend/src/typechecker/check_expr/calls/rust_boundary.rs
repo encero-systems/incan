@@ -389,7 +389,13 @@ impl TypeChecker {
         }
         match &expression.node {
             Expr::Paren(inner) => self.rust_argument_native_type(inner),
-            Expr::Range { inclusive: false, .. } => Some(self.native_rust_signature_type("std::ops::Range<i64>", "")),
+            Expr::Range { inclusive: false, .. } => self
+                .type_info
+                .calls
+                .body_ir_constructor_types
+                .get(&expression.span)
+                .cloned()
+                .or_else(|| Some(self.native_rust_signature_type("std::ops::Range<i64>", ""))),
             _ => self.rust_native_value_type(expression),
         }
     }
@@ -597,6 +603,10 @@ impl TypeChecker {
             );
             let target = self.rust_inference_type(&target, parameters);
             let native_actual = self.rust_argument_native_type(Self::call_arg_expr(argument));
+            let native_actual = native_actual.map(|native| {
+                self.rust_range_bound_destination(sig, &parameter.type_display, Self::call_arg_expr(argument), &native)
+                    .unwrap_or(native)
+            });
             let actual = self.rust_inference_type(native_actual.as_ref().unwrap_or(actual), parameters);
             let (target, actual) = match (&target, &actual) {
                 (ResolvedType::Ref(_) | ResolvedType::RefMut(_), ResolvedType::Ref(_) | ResolvedType::RefMut(_)) => {
@@ -1226,8 +1236,11 @@ impl TypeChecker {
     }
 
     /// Return whether complete Rust metadata proves that an argument type implements a trait-object boundary.
+    ///
+    /// Each bound of the object is its own obligation: implementing the principal trait never grants `Send` or `Sync`.
+    /// A bound with type arguments, a higher-ranked binder or a modifier is not proven here.
     fn rust_type_implements_trait_object(&self, arg_ty: &ResolvedType, trait_object_display: &str) -> bool {
-        let Some(trait_path) = trait_object_display.trim().strip_prefix("dyn ").map(str::trim) else {
+        let Ok(syn::Type::TraitObject(object)) = syn::parse_str::<syn::Type>(trait_object_display) else {
             return false;
         };
         let Some((actual_path, _, _, _)) = self.rust_identity_for_type(arg_ty) else {
@@ -1236,8 +1249,25 @@ impl TypeChecker {
         let Some(metadata) = self.rust_item_metadata_for_complete_type(actual_path.as_str()) else {
             return false;
         };
-        let trait_definition = self.rust_definition_for_path(trait_path);
-        Self::rust_type_metadata_implements_trait(&metadata, trait_path, trait_definition.as_deref())
+        !object.bounds.is_empty()
+            && object.bounds.iter().all(|bound| {
+                let syn::TypeParamBound::Trait(bound) = bound else {
+                    return matches!(bound, syn::TypeParamBound::Lifetime(_));
+                };
+                if bound.lifetimes.is_some()
+                    || !matches!(bound.modifier, syn::TraitBoundModifier::None)
+                    || bound
+                        .path
+                        .segments
+                        .iter()
+                        .any(|segment| !matches!(segment.arguments, syn::PathArguments::None))
+                {
+                    return false;
+                }
+                let path = bound.path.to_token_stream().to_string().replace(' ', "");
+                let definition = self.rust_definition_for_path(&path);
+                Self::rust_type_metadata_implements_trait(&metadata, &path, definition.as_deref())
+            })
     }
 
     /// Reject an immutable source binding when a planned Rust boundary borrow is exclusive, and record the exclusive
@@ -1264,6 +1294,19 @@ impl TypeChecker {
             return false;
         }
         true
+    }
+
+    /// Require write access to the receiver of a Rust method that takes `&mut self`.
+    ///
+    /// A receiver that already is an exclusive reference, such as the payload `Option.as_mut()` binds, lends its
+    /// referent again: the method changes the referent, never the binding, so the binding needs no `mut`. Any other
+    /// receiver is borrowed exclusively, which a binding declared without `mut` does not allow.
+    pub(in crate::typechecker) fn validate_exclusive_rust_receiver(&mut self, receiver: &Spanned<Expr>, span: Span) {
+        if matches!(self.type_info.expr_type(receiver.span), Some(ResolvedType::RefMut(_))) {
+            return;
+        }
+        self.refuse_write_through_read_only_binding(receiver, span);
+        self.validate_rust_borrow_mutability(RustArgCoercionKind::Borrow { mutable: true }, receiver);
     }
 
     /// Validate one expression used at a Rust value boundary and record the exact coercion lowering must preserve.
@@ -1807,7 +1850,8 @@ impl TypeChecker {
 
     /// Validate a Rust method call, letting the type its result is expected to have bind method binders the
     /// arguments leave open (`parse::<F>()` reads `F` from `Result<i64, _>`). Literal aggregates are checked against
-    /// the specialized parameter before their concrete storage is retained for Body IR.
+    /// the specialized parameter before their concrete storage is retained for Body IR. Unsafe methods and associated
+    /// constructors receive the same RFC 005 refusal as free functions, before any executable identity is retained.
     pub(in crate::typechecker) fn validate_rust_method_call_with_expected(
         &mut self,
         callable_display: &str,
@@ -1818,6 +1862,11 @@ impl TypeChecker {
         span: Span,
         expected_return_ty: Option<&ResolvedType>,
     ) -> ResolvedType {
+        if sig.is_unsafe {
+            let path = callable_display.strip_prefix("rust::").unwrap_or(callable_display);
+            self.errors.push(errors::rust_unsafe_call_not_supported(path, span));
+            return ResolvedType::Unknown;
+        }
         let owner_path = Self::rust_method_owner_path(callable_display);
         let contextual_types =
             self.contextualize_rust_bound_closures(sig, owner_path, args, arg_types, expected_return_ty);
@@ -1834,6 +1883,7 @@ impl TypeChecker {
         }
         let callable_returns =
             self.infer_rust_signature_bindings(sig, owner_path, &sig.type_params, args, arg_types, expected_return_ty);
+        self.validate_rust_scalar_predicates(sig, &callable_returns, span);
         self.record_inferred_rust_arguments(callable_display, &sig.type_params, &callable_returns, span);
         let declared_sig = sig;
         let declared_params = if Self::rust_signature_has_receiver(sig) {
@@ -1967,6 +2017,7 @@ impl TypeChecker {
 
         let callable_returns =
             self.infer_rust_signature_bindings(sig, path, &sig.type_params, args, &arg_types, expected_return_ty);
+        self.validate_rust_scalar_predicates(sig, &callable_returns, span);
         self.record_inferred_rust_arguments(path, &sig.type_params, &callable_returns, span);
         let effective_sig = self.specialize_inferred_rust_signature(sig, path, &callable_returns);
         self.record_rust_call_site_params(span, &effective_sig.params, path);
@@ -2130,6 +2181,7 @@ mod validate_rust_function_call_tests {
     fn canonical_rust_collection_namespaces_keep_structural_boundary_identity() {
         let mut loaves = crate::loaf_index::LoafIndex::default();
         loaves.add_rust_facts(
+            &Default::default(),
             [("std::primitive::str", "str"), ("native::Text", "str")]
                 .into_iter()
                 .map(|(path, target)| {
@@ -2198,6 +2250,7 @@ mod validate_rust_function_call_tests {
         for imports in [&[first][..], &[second][..], &[first, second][..]] {
             let mut loaves = crate::loaf_index::LoafIndex::default();
             loaves.add_rust_facts(
+                &Default::default(),
                 definitions
                     .iter()
                     .map(|(path, definition, visibility)| {

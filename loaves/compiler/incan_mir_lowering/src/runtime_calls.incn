@@ -1,7 +1,9 @@
 """Bind runtime operations to authenticated compiled frames or ordinary governed body instances."""
 
+from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import (
     semantic_type_matches,
+    SourceSpan,
     PlanType,
     Function,
     ExternalFunction,
@@ -17,6 +19,7 @@ from rust::incan_semantics_core import (
     IncanPrimitiveType as Primitive,
     IncanCallableParam as RustCallableParam,
     IncanCallableParamKind as RustCallableParamKind,
+    IncanInputAccess,
     NumericTypeId,
     RuntimeBuiltinType,
     SemanticSourceTargetKind,
@@ -28,9 +31,11 @@ from rust::incan_semantics_core import (
 from rust::incan_semantics_core::body_ir import BodyIrModule, Body, LoafCallable
 from classes import function_name
 from type_parameters import Instance, instantiate, request_instance
-from lowering import frame_parameter_type, merge_externals
+from function_frames import frame_parameter_type
+from frame_instances import merge_externals
 from runtime_frames import runtime_frame_adapter
-from layout_types import native_source_type
+from runtime_requirements import RuntimeRequirement, RuntimeRetention
+from layout_types import carrier_name, native_source_type
 from native_type_identity import ConstructorIndex
 from program_context import ProgramContext, retain_nominal_tables
 from unions import collect_unions
@@ -52,16 +57,22 @@ pub model RuntimeRedirect:
 
 
 pub model RuntimeRedirects:
-    """Index settled runtime signatures without repeatedly walking already-built function plans."""
+    """
+    Index settled runtime signatures without repeatedly walking already-built function plans. `native` holds each
+    path whose signature without type arguments settled as native linkage, so a later queue request never examines it
+    again.
+    """
 
     pub entries: BTreeMap[str, list[int]]
     pub bindings: list[RuntimeRedirect]
+    pub native: BTreeMap[str, bool]
 
 
 pub def runtime_redirects() -> RuntimeRedirects:
     """Start one signature inventory for the complete checked instance queue."""
     entries: BTreeMap[str, list[int]] = BTreeMap.new()
-    return RuntimeRedirects(entries=entries, bindings=[])
+    native: BTreeMap[str, bool] = BTreeMap.new()
+    return RuntimeRedirects(entries=entries, bindings=[], native=native)
 
 
 pub def retain_runtime_instances(
@@ -76,7 +87,7 @@ pub def retain_runtime_instances(
     mut nominal_instances: list[NominalInstance],
     mut unions: list[RustType],
     mut redirects: RuntimeRedirects,
-) -> Result[None, str]:
+) -> Result[RuntimeRetention, str]:
     """
     Retain runtime selections: 1. Retain coroutines. 2. Close frames and register implementations. 3. Retain native calls.
 
@@ -85,11 +96,25 @@ pub def retain_runtime_instances(
     The queue owns its shared union inventory; only newly retained nominal declarations invalidate that inventory.
     The explicit foreign mutable loan keeps frame retention from snapshotting every checked body per request.
     """
+    requirements = missing_runtime_requirements(module, externals, functions, redirects)?
+    if len(requirements) != 0:
+        return Ok(RuntimeRetention.NeedsRuntime(requirements))
     # 1. Retain coroutine instances before ordinary call frames.
     retain_runtime_future_instances(program.constructors.as_ref(), module, functions, instances, intrinsics, unions)?
-    mut retained: list[ExternalFunction] = []
-    # 2. Close each selected body, adapt its inputs and retain its canonical instance and final redirection.
-    for external in externals:
+    # 2. Close each newly selected body, adapt its inputs and retain its canonical instance and final redirection.
+    # Each exact signature settles once: a redirected one leaves the list, a native one stays and is not reexamined.
+    mut keep: list[bool] = []
+    mut dropped = false
+    mut linked: list[ExternalFunction] = []
+    for position in range(len(externals)):
+        if settled_native(redirects, borrowed_at(externals, position)):
+            keep.append(true)
+            continue
+        external = borrowed_at(externals, position).clone()
+        if runtime_redirect(redirects, runtime_selection(external)) != None:
+            keep.append(false)
+            dropped = true
+            continue
         match runtime_body(module, external.path)?:
             None =>
                 if external.path.startswith("incan_native_runtime::") and len(external.type_arguments) != 0:
@@ -98,14 +123,17 @@ pub def retain_runtime_instances(
                     program.constructors.as_ref(),
                     module,
                     functions,
-                    retained,
+                    linked,
                     external,
                     intrinsics,
                     unions,
                     redirects,
                 )?:
+                    keep.append(false)
+                    dropped = true
                     continue
-                merge_externals(retained, [external])?
+                settle_native(redirects, external)
+                keep.append(true)
             Some(body) =>
                 if len(body.type_parameters) != len(external.type_arguments):
                     return Err(f"invalid governed runtime type argument arity for {external.path}")
@@ -154,10 +182,96 @@ pub def retain_runtime_instances(
                 # Register the checked call selection; the completed queue rewrites each block once.
                 retain_runtime_redirect(redirects, external, CalleeKind.Planned(called), symbol)?
                 request_instance(instances, body, arguments, owned, false)
-    # 3. Replacing the list preserves only the external ABI calls that still need native linkage.
-    while len(externals) != 0:
-        _ = externals.pop()
-    externals.extend(retained)
+                keep.append(false)
+                dropped = true
+    # 3. Keep only the external ABI calls that still need native linkage, then the compiled callees frames link.
+    if dropped:
+        mut retained: list[ExternalFunction] = []
+        for position in range(len(externals)):
+            if keep[position]:
+                retained.append(borrowed_at(externals, position).clone())
+        while len(externals) != 0:
+            _ = externals.pop()
+        externals.extend(retained)
+    merge_externals(externals, linked)?
+    return Ok(RuntimeRetention.Complete)
+
+
+def runtime_selection(external: &ExternalFunction) -> CalleeKind:
+    """The callee kind a call with this exact external signature names, as its redirect binding selects it."""
+    if len(external.type_arguments) == 0:
+        return CalleeKind.External(external.path)
+    return CalleeKind.Instantiated(external.path, external.type_arguments)
+
+
+def settled_native(redirects: &RuntimeRedirects, external: &ExternalFunction) -> bool:
+    """
+    Whether this exact signature already settled as native linkage; runtime lookups are fixed for the queue. A
+    signature with type arguments is reexamined, which for a native path costs two prefix checks.
+    """
+    if len(external.type_arguments) != 0:
+        return false
+    match redirects.native.get(external.path):
+        None => return false
+        Some(_settled) => return true
+
+
+def settle_native(mut redirects: RuntimeRedirects, external: ExternalFunction) -> None:
+    """Record a signature that needs native linkage, so later queue requests keep it without examining it."""
+    if len(external.type_arguments) == 0:
+        redirects.native.insert(external.path, true)
+
+
+def missing_runtime_requirements(
+    module: &BodyIrModule,
+    externals: &list[ExternalFunction],
+    functions: &list[Function],
+    redirects: &RuntimeRedirects,
+) -> Result[list[RuntimeRequirement], str]:
+    """
+    Demand only selected external calls and deferred coroutine callees, before mutating their frame inventories.
+    A signature settled as native linkage already met its demand.
+    """
+    mut requests: list[RuntimeRequirement] = []
+    for position in range(len(externals)):
+        external = borrowed_at(externals, position)
+        if settled_native(redirects, external):
+            continue
+        retain_runtime_requirement(module, external.path, external.span, requests)?
+    for position in range(len(functions)):
+        function = borrowed_at(functions, position)
+        match function.future_callee:
+            Some(callee) =>
+                match callee.kind:
+                    CalleeKind.Instantiated(path, _arguments) =>
+                        retain_runtime_requirement(module, path, callee.span, requests)?
+                    _ => pass
+            None => pass
+    return Ok(requests)
+
+
+def retain_runtime_requirement(
+    module: &BodyIrModule,
+    path: str,
+    span: SourceSpan,
+    mut requests: list[RuntimeRequirement],
+) -> Result[None, str]:
+    """Bind a demand through the checked public facade; a missing facade never acquires an invented identity."""
+    match runtime_canonical(module, path)?:
+        None => return Ok(None)
+        Some(identity) =>
+            for position in range(len(module.bodies)):
+                body = borrowed_at(module.bodies, position)
+                if body.canonical == Some(identity.clone()):
+                    return Ok(None)
+            for position in range(len(module.loaf_callables)):
+                declaration = borrowed_at(module.loaf_callables, position)
+                if declaration.canonical == identity:
+                    return Ok(None)
+            for request in requests:
+                if request.canonical == identity:
+                    return Ok(None)
+            requests.append(RuntimeRequirement(canonical=identity.clone(), path=path, span=span))
     return Ok(None)
 
 
@@ -457,8 +571,8 @@ def retain_runtime_redirect(
     return Ok(None)
 
 
-pub def redirect_runtime_calls(mut functions: list[Function], redirects: RuntimeRedirects) -> Result[None, str]:
-    """Rewrite each completed block once, preserving call operands and edges and refusing primitive reentry."""
+pub def redirect_runtime_calls(mut functions: list[Function], redirects: &RuntimeRedirects) -> Result[None, str]:
+    """Borrow the settled redirect inventory while rewriting blocks, preserving operands and edges and refusing reentry."""
     for function_index in range(len(functions)):
         for block_index in range(runtime_block_count(functions, function_index)):
             rewritten = redirected_runtime_terminator(functions, function_index, block_index, redirects)?
@@ -478,9 +592,9 @@ def redirected_runtime_terminator(
     functions: &list[Function],
     function_index: int,
     block_index: int,
-    redirects: RuntimeRedirects,
+    redirects: &RuntimeRedirects,
 ) -> Result[Option[TerminatorKind], str]:
-    """Select an owned replacement before mutation, retaining the call's operands, source span and successor edges."""
+    """Borrow the shared inventory to select an owned replacement before mutation, retaining operands, span and edges."""
     function = borrowed_at(functions, function_index)
     block = borrowed_at(function.blocks, block_index)
     match block.terminator.kind:
@@ -498,8 +612,8 @@ def redirected_runtime_terminator(
         _ => return Ok(None)
 
 
-def runtime_redirect(redirects: RuntimeRedirects, selected: CalleeKind) -> Option[int]:
-    """Use the authenticated path only as an index; exact native type arguments still select the binding."""
+def runtime_redirect(redirects: &RuntimeRedirects, selected: CalleeKind) -> Option[int]:
+    """Borrow the inventory and use its path index; exact native type arguments still select the binding."""
     mut path = ""
     match selected:
         CalleeKind.External(name) => path = name
@@ -628,6 +742,7 @@ def runtime_callable_argument(
     for index in range(len(signature) - 1):
         parameter = RustCallableParam(
             native_owned=is_owned_collection(signature[index]),
+            input_access=IncanInputAccess.Inferred,
             name=None,
             ty=runtime_argument(module, signature[index], intrinsics, unions)?,
             kind=RustCallableParamKind.Normal,
@@ -657,7 +772,7 @@ def runtime_enum_argument(
         return Err("invalid governed runtime intrinsic enum owner")
     declaration = borrowed_at(intrinsics, slot)
     mut arguments: list[RustType] = []
-    if declaration.carrier != "Option" and declaration.carrier != "Result":
+    if declaration.carrier != Carrier.Option and declaration.carrier != Carrier.Result:
         for position in range(len(unions)):
             union = borrowed_at(unions, position)
             if semantic_type_matches(declaration, union):
@@ -667,10 +782,12 @@ def runtime_enum_argument(
         for field in variant.fields:
             arguments.append(runtime_argument(module, field, intrinsics, unions)?)
     if (
-        declaration.carrier == "Option"
+        declaration.carrier == Carrier.Option
         and len(arguments) != 1
-        or declaration.carrier == "Result"
+        or declaration.carrier == Carrier.Result
         and len(arguments) != 2
     ):
         return Err("invalid governed runtime intrinsic payload arity")
-    return Ok(generic(declaration.carrier, arguments))
+    match carrier_name(declaration.carrier):
+        Some(name) => return Ok(generic(name, arguments))
+        None => return Err("invalid governed runtime intrinsic carrier")

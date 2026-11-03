@@ -15,9 +15,10 @@ from pub::incan_mir_plan import (
     CalleeKind,
 )
 from pub::incan_mir_plan import assign as plan_assign, tuple_element_type
-from frame import Builder, temporary, terminate_call, read_place, drop_owned
+from frame import Builder, temporary, terminate_call, read_place, drop_owned, exhaust_loop
 from builtins import list_call
 from tuples import tuple_element
+from table_views import borrowed_at
 
 
 pub def zip_shape(ty: PlanType) -> Option[tuple[TupleElement, TupleElement]]:
@@ -31,12 +32,12 @@ pub def zip_shape(ty: PlanType) -> Option[tuple[TupleElement, TupleElement]]:
 
 pub def zip_reference(mut builder: Builder, source: Place, mutable: bool, span: SourceSpan) -> Result[Operand, str]:
     """Borrow a snapshot or reborrow its exclusive loop handle without duplicating reference ownership."""
-    match zip_shape(builder.locals[source.local].ty):
+    match zip_shape(borrowed_at(builder.locals, source.local).ty):
         None => return Err("unsupported Body IR zip reference receiver")
         Some((left, right)) =>
             mut root = source
-            if builder.locals[source.local].ty != PlanType.ZipIterator(left, right):
-                if mutable and builder.locals[source.local].ty == PlanType.ZipIteratorRef(left, right):
+            if borrowed_at(builder.locals, source.local).ty != PlanType.ZipIterator(left, right):
+                if mutable and borrowed_at(builder.locals, source.local).ty == PlanType.ZipIteratorRef(left, right):
                     return Err("unsupported Body IR mutable zip through shared reference")
                 root.projection = Projection.Deref(PlanType.ZipIterator(left, right))
             mut ty = PlanType.ZipIteratorRef(left, right)
@@ -72,7 +73,7 @@ pub def zip_call(
 
 pub def clone_zip(mut builder: Builder, source: Place, span: SourceSpan) -> Result[Operand, str]:
     """Snapshot both lists and their cursors for a checked value-preserving read."""
-    match zip_shape(builder.locals[source.local].ty):
+    match zip_shape(borrowed_at(builder.locals, source.local).ty):
         None => return Err("unsupported Body IR zip clone receiver")
         Some((left, right)) =>
             reference = zip_reference(builder, source, false, span)?
@@ -109,11 +110,11 @@ pub def zip_next(mut builder: Builder, receiver: Place, output: Place, span: Sou
     """Poll one pair and branch to the loop exit on exhaustion, disposing of the temporary buffer on both edges."""
     if len(builder.loops) == 0:
         return Err("unsupported Body IR zip polling outside loop")
-    match zip_shape(builder.locals[receiver.local].ty):
+    match zip_shape(borrowed_at(builder.locals, receiver.local).ty):
         None => return Err("unsupported Body IR zip poll receiver")
         Some((left, right)) =>
             element = PlanType.Tuple([left, right])
-            if builder.locals[output.local].ty != element:
+            if borrowed_at(builder.locals, output.local).ty != element:
                 return Err("unsupported Body IR zip IterNext destination")
             storage_type = PlanType.List(ListLeaf.Tuple([left, right]), 1)
             storage = temporary(builder, storage_type, span)
@@ -139,7 +140,7 @@ pub def zip_next(mut builder: Builder, receiver: Place, output: Place, span: Sou
             builder.finish(TerminatorKind.SwitchBool(read_place(available, false, span), exhausted, selected), span)
             builder.current = exhausted
             drop_owned(builder, storage.local, span)
-            builder.finish(TerminatorKind.Goto(builder.loops[-1][1]), span)
+            exhaust_loop(builder, span)
             builder.current = selected
             builder.owned = owners
             drop_owned(builder, output.local, span)

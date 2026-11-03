@@ -3,6 +3,20 @@
 from std.fs import Path
 from std.json import JsonValue
 from std.toml import TomlValue
+from bakery import (
+    bakery,
+    claim,
+    find,
+    forget_view,
+    view_directory,
+    lookup,
+    reached,
+    register_root,
+    seal,
+    staging,
+    unit_identity,
+    unit_name,
+)
 from features import FeatureRequest
 from json_fields import array, strings
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets, unique
@@ -22,6 +36,7 @@ from rust_units import (
     target_configuration,
 )
 from search_index import search_index
+from sysroot_access import declared_libraries, runtime_sysroot
 from toolchain import NativeCrate, Toolchain, load_toolchain, located, rust_compiler
 from standalone_rust import bind_published, standalone_crates
 from registry_metadata import bound_entries
@@ -30,8 +45,10 @@ from observation import trace
 from intake import ManifestReader
 from native_closure_input import NativeClosureInput
 from unit_compiler import compile_prepared_unit
-from unit_freshness import artifact_files, record, staleness, unit_key
-from vocabulary import prepare_vocabulary, stage_vocabulary
+from unit_freshness import Key, artifact_files, unit_key
+from unit_publication import record_payload
+from compiler_facts import admit_fact
+from vocabulary import prepare_vocabulary, published_workers, stage_vocabulary
 
 
 pub def describe_native(source: Path, profile: str, request: FeatureRequest) -> Result[UnitDescription, str]:
@@ -108,37 +125,91 @@ pub def compile_library_unit(
     compiler: str = "",
 ) -> Result[i32, str]:
     """
-    Reuse or replace a prepared library and record all published artifacts.
+    Obtain a prepared library from the home bakery; its artifact directory becomes a disposable view of the fact.
     The caller supplies its selected toolchain and exact output path after dependency preparation is complete.
 
-    1. Key the library against its stored artifact stamp.
-    2. Reuse a current library, or withdraw its stale stamp and stage its vocabulary worker before compilation.
-    3. Require every published artifact, including a worker its manifest names, before recording the build.
+    Compiler consumers bind its artifacts through the bakery's store-owned filename layout (`library_directory`),
+    so a native closure never depends on a project's mutable view.
+
+    1. Key the library; a sealed fact of its identity is viewed and no compiler starts.
+    2. Otherwise claim the identity, and view a fact another command sealed meanwhile.
+    3. Stage its vocabulary worker and compile it into a staging directory of the fact.
+    4. Require every published artifact, including a worker its manifest names, before sealing the fact.
     """
     # 1. Both source and native inputs contribute to the ordinary library key.
     directory = output.parent()
-    artifacts = artifact_files(directory, library.package)?
     key = unit_key(library, toolchain, compiler)?
-    stamp = directory.joinpath(".oven-inputs.sha256")
-    why = staleness(artifacts, stamp, key)?
-    # 2. A stamp vouches only for a complete current build.
-    if why == "":
-        trace(f"unit {library.package} library: reused")
+    if key.refusal != "":
+        return compile_unbaked(library, toolchain, output, key)
+    store = bakery()?
+    identity = unit_identity(key)
+    register_root(store, library.project_root, f"library\t{library.package}", [identity])?
+    label = f"unit {library.package} library"
+    if let Some(fact) = find(store, identity)?:
+        view_directory(store, fact, directory)?
+        trace(f"{label}: reused")
         return Ok(0)
-    if stamp.is_file():
-        stamp.unlink().map_err((error) => f"{stamp.0}: {error.message()}")?
+    # 2. A concurrent bake of the same identity is waited for, not repeated.
+    held = claim(store, identity)?
+    if let Some(fact) = find(store, identity)?:
+        view_directory(store, fact, directory)?
+        trace(f"{label}: reused (built meanwhile by another command)")
+        return Ok(0)
+    # 3. A failed compilation publishes nothing.
+    staged = staging(store, identity)?
+    stage_vocabulary(library, staged)?
+    compiled = compile_prepared_unit(
+        library,
+        toolchain,
+        staged.joinpath(output.name()),
+        Some(key),
+        library_reason(store, library),
+    )?
+    if compiled != 0:
+        _ = staged.remove_tree()
+        return Ok(compiled)
+    # 4. Publication can add an indexed Rust ABI cache, and the new manifest decides whether a vocabulary worker
+    #    belongs to the completed set; a partial set is never sealed.
+    for artifact in artifact_files(staged, library.package)?:
+        if not artifact.is_file():
+            _ = staged.remove_tree()
+            return Err(f"compiler did not publish {directory.joinpath(artifact.name()).0}")
+    # 5. Each owned payload carries its producer identity into the fact; a borrowed worker keeps its own.
+    borrowed = [worker.0 for worker in published_workers(library, staged)?]
+    for artifact in artifact_files(staged, library.package)?:
+        if artifact.0 not in borrowed:
+            record_payload(artifact, key.digest, key.provenance)?
+    reaches = reached(store, [loaf.dir for loaf in library.loaves])?
+    fact = seal(store, identity, staged, "library", unit_name(library), reaches, f"incan library {library.profile}")?
+    view_directory(store, fact, directory)?
+    return Ok(0)
+
+
+def compile_unbaked(library: UnitDescription, toolchain: Toolchain, output: Path, key: Key) -> Result[i32, str]:
+    """Compile a library whose inputs cannot be named portably in place; nothing is baked or reused."""
+    directory = output.parent()
+    forget_view(directory)?
     stage_vocabulary(library, directory)?
-    compiled = compile_prepared_unit(library, toolchain, output, Some(key), why)?
+    compiled = compile_prepared_unit(library, toolchain, output, Some(key), key.refusal)?
     if compiled != 0:
         return Ok(compiled)
-    # 3. Partial publication never receives a stamp. Publication can add an indexed Rust ABI cache, and the new
-    #    manifest decides whether a vocabulary worker belongs to the completed set.
-    completed = artifact_files(directory, library.package)?
-    for artifact in completed:
+    borrowed = [worker.0 for worker in published_workers(library, directory)?]
+    for artifact in artifact_files(directory, library.package)?:
         if not artifact.is_file():
             return Err(f"compiler did not publish {artifact.0}")
-    record(stamp, key, completed)?
+        if artifact.0 not in borrowed:
+            record_payload(artifact, "", key.provenance, key.refusal)?
     return Ok(0)
+
+
+def library_reason(store: Path, library: UnitDescription) -> str:
+    """Why a library is baked: nothing was baked under its name yet, or what was is for other inputs."""
+    match lookup(store, unit_name(library)):
+        Ok(found) =>
+            if found is not None:
+                return "inputs changed"
+        Err(_) => pass
+    return "no stored build"
 
 
 pub def prepare_native(described: UnitDescription, toolchain: Toolchain) -> Result[UnitDescription, str]:
@@ -154,9 +225,7 @@ pub def prepare_native(described: UnitDescription, toolchain: Toolchain) -> Resu
         unit = resolve_dependencies(unit, toolchain)?
     else:
         for native in standalone_crates(unit, toolchain)?:
-            unit = add_extern(unit, native)?
-            if native.name not in unit.rust_crates:
-                unit.rust_crates.append(native.name)
+            unit = add_rust_root(unit, native)?
     # 2. No source graph is selected again while the prepared unit is linked.
     return prepare_linked(unit, toolchain)
 
@@ -165,23 +234,26 @@ pub def prepare_linked(
     described: UnitDescription,
     toolchain: Toolchain,
     checking_interfaces: list[str] = [],
+    registry: Option[RegistryUnits] = None,
 ) -> Result[UnitDescription, str]:
     """
     Bind exact native inputs and register a producer vocabulary after shared dependency preparation is complete.
+    A supplied registry is reused only for the generation's search index, without changing the unit's selected roots.
 
     The description names the toolchain generation's search index and lists only the directories beyond it: its Loaves'
     and those their native closures add. A closure published before the index existed also lists the toolchain's own
     directories, which are left out here.
 
-    1. Name the search index and bind the toolchain's ABI caches, crates and available Loaves.
+    1. Name the search index and bind the toolchain's ABI caches, crates, declared libraries and available Loaves.
     2. Link each Loaf, collecting the directories beyond the toolchain's that its closure searches.
     3. Keep each such directory once and register a producer vocabulary.
     """
     # 1. Every unit of the toolchain generation names the same index.
     mut unit = described
-    unit.search_index = Some(search_index(toolchain)?)
+    unit.search_index = Some(search_index(toolchain, registry)?)
     unit.rust_abi = toolchain.rust_abi
     unit = with_toolchain_crates(unit, toolchain)
+    unit = with_declared_libraries(unit, toolchain)?
     unit.loaves = [loaf for loaf in unit.loaves if standard_available(loaf)]
     # 2. Only what lies beyond the toolchain's own directories is collected, so the list stays the size of the unit's.
     indexed = members(toolchain.search)
@@ -199,6 +271,8 @@ pub def prepare_linked(
                 directories.append(directory)
     # 3. The directories are sorted and distinct, as the compiler merges them with the index.
     unit.search = unique(directories)
+    for cache in unit.rust_abi:
+        admit_fact(Path(cache))?
     return prepare_vocabulary(unit, toolchain)
 
 
@@ -237,6 +311,22 @@ def with_toolchain_crates(described: UnitDescription, toolchain: Toolchain) -> U
                     UnitLoaf(key=native.name, name=native.name, dir=directory.0, standard=false, toolchain_provided=true),
                 )
     return unit
+
+
+def with_declared_libraries(described: UnitDescription, toolchain: Toolchain) -> Result[UnitDescription, str]:
+    """
+    The unit with the toolchain libraries its Loaf declares (`[build] sysroot-dependencies`) bound under their crate
+    names, which its `rust::` imports may then name. A unit that links them also records the resolved sysroot its
+    executables load them from.
+    """
+    mut unit = described
+    for library in declared_libraries(unit.toolchain_access, toolchain)?:
+        unit = add_extern(unit, library)?
+        if library.name not in unit.rust_crates:
+            unit.rust_crates = sorted(unit.rust_crates + [library.name])
+    if len(unit.toolchain_access.sysroot_dependencies) > 0:
+        unit.runtime_sysroot = runtime_sysroot(toolchain)?
+    return Ok(unit)
 
 
 def link_loaf(
@@ -313,7 +403,7 @@ def resolve_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[
     own_key = f"{unit.project_root}@target"
     if own_key in built:
         own = built[own_key]
-        result = add_extern(result, NativeCrate(name=own.crate_name, path=own.artifact))?
+        result = add_rust_root(result, NativeCrate(name=own.crate_name, path=own.artifact))?
     for facet in facets:
         if facet.project == unit.project_root and facet.domain == DependencyDomain.Target:
             result = bind_edges(result, facet, built, registry)?
@@ -371,6 +461,20 @@ def bind_edges(
     mut result = unit
     for binding in facet_bindings(facet, built, registry)?:
         result = add_extern(result, binding)?
+    return Ok(result)
+
+
+pub def add_rust_root(unit: UnitDescription, native: NativeCrate) -> Result[UnitDescription, str]:
+    """
+    Bind a selected Rust import root to both its artifact and its compiler metadata authority.
+
+    A package's own native facet is an authored import root just like a declared Rust dependency. Merely linking its
+    artifact leaves its imported types and associated functions absent from the compiler's metadata extraction.
+    Ambient runtime support must continue to use `add_extern`, which deliberately does not grant import authority.
+    """
+    mut result = add_extern(unit, native)?
+    if native.name not in result.rust_crates:
+        result.rust_crates.append(native.name)
     return Ok(result)
 
 

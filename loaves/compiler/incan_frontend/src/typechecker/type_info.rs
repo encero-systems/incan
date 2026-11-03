@@ -51,6 +51,9 @@ use super::{ConstValue, const_eval};
 /// ```
 #[derive(Debug, Default, Clone)]
 pub struct TypeCheckInfo {
+    /// Optional migration-baseline owners, captured only by an explicitly requested baseline activation. They are not
+    /// serialized, are not retained by idle workers, and never authorize a production record read.
+    pub(crate) body_ir_baseline_inputs: Option<super::BodyIrBaselineInputs>,
     /// Trait hierarchy metadata consumed by trait impl and default-method lowering.
     pub traits: TraitArtifacts,
     /// Derive expansion metadata imported from dependency modules and manifests.
@@ -844,6 +847,8 @@ pub(crate) struct BodyIrOpenCall {
     pub parameters: Vec<String>,
     pub result: ResolvedType,
     pub bindings: HashMap<String, ResolvedType>,
+    /// This complete lexical group has passed explicit destination settlement.
+    pub settled: bool,
     pub invalidated: bool,
 }
 
@@ -1110,9 +1115,15 @@ pub struct RustIterationHooks {
 /// Declaration-level binding rewrites and visibility facts consumed by lowering.
 #[derive(Debug, Default, Clone)]
 pub struct DeclarationArtifacts {
+    /// Explicit callable contracts keyed by the checked declaring identity, including refused executable declarations.
+    pub ownership_contracts: BTreeMap<CanonicalSymbolId, crate::ownership_metadata::CheckedOwnershipContract>,
+    /// Checked source-signature identities published before body checks or native representation selection.
+    pub source_identities: BTreeMap<CanonicalSymbolId, incan_semantics_core::stable_identity::StableDeclarationId>,
     /// Body IR-only canonical trait adoptions, retaining marker protocols and ordered checked arguments.
     /// Legacy conformance, derive selection, and method tables never consume this snapshot.
     pub body_ir_trait_adoptions: HashMap<String, Vec<BodyIrCheckedTraitAdoption>>,
+    /// Rust trait method slots a class fills with its own methods. The native compiler checks each implementation.
+    pub native_trait_implementations: Vec<incan_semantics_core::body_ir::TraitImplementation>,
     /// Body IR-only checked local inheritance and ordered ancestor field identities; legacy class layouts stay intact.
     pub body_ir_class_inheritance: HashMap<String, BodyIrClassInheritance>,
     /// Body IR-only source trait slots adopted by checked derive bundles, keyed by the adopting declaration.
@@ -1239,18 +1250,13 @@ pub struct DeclarationArtifacts {
     pub capabilities: BTreeMap<CanonicalSymbolId, CapabilityDeclarationInfo>,
     /// Module-local function declarations keyed by declaration span, preserving same-name overloads.
     pub function_bindings_by_span: HashMap<crate::ast::Span, FunctionBindingInfo>,
-    /// Concrete class/model/trait method declarations keyed by declaration span (#1121).
+    /// Checked method signatures keyed by revision-local declaration span (#1121).
     ///
-    /// Method names are not unique the way top-level function names are: two owners can declare a method with the
-    /// same name, and one owner can declare same-name overloads. Declaration span is therefore the only key that
-    /// stays collision-safe without inventing a separate declaration-identity scheme, mirroring
-    /// `function_bindings_by_span`. Body IR lowering (`loaves/compiler/incan_frontend/src/body_ir.rs`) consumes this
-    /// instead of re-resolving raw AST parameter annotations, so aliased and generic method parameter types match
-    /// the checked callable signature exactly rather than a local re-parse. Populated for every method checked
-    /// through `TypeChecker::check_method_with_self_ty` (trait defaults included, keyed by the trait method's own
-    /// span), so static methods (no receiver) are covered the same as instance methods. Newtype and enum methods
-    /// are checked through the same function and so also populate this table, even though Body IR does not lower
-    /// their bodies (#1102's own deliberate scope) — the fact simply goes unread for those owners.
+    /// This distinguishes same-name methods on different owners and same-owner overloads, mirroring
+    /// `function_bindings_by_span`. Method declaration preparation records the resolved parameters and return type
+    /// for concrete, trait-default and abstract declarations that reach signature validation. Model, class, newtype
+    /// and enum methods use the same boundary. Body IR consumes these checked facts rather than re-resolving raw
+    /// annotations; the record adapter supplies persistent identity separately from this source-revision handle.
     pub method_bindings_by_span: HashMap<crate::ast::Span, FunctionBindingInfo>,
     /// Body IR-only getter signatures and receiver provenance, keyed by the exact property declaration span.
     /// Legacy property metadata and callable binding tables remain unchanged.
@@ -1271,8 +1277,6 @@ pub struct DeclarationArtifacts {
     /// `Path.__truediv__` or `OrdinalMap.nbytes` even when the alias was declared in stdlib or a dependency module
     /// rather than the current source file.
     pub type_method_rebindings: HashMap<String, HashMap<String, String>>,
-    /// RFC 036: Module-visible function names whose declaration was rebound through a user-defined decorator chain.
-    pub decorated_function_bindings: HashMap<String, DecoratedFunctionBindingInfo>,
     /// RFC 036: Decorated function bindings keyed by declaration span, preserving same-name overloads.
     pub decorated_function_bindings_by_span: HashMap<crate::ast::Span, DecoratedFunctionBindingInfo>,
     /// Checked decorator applications whose sole parameter and result are the same generic type variable.
@@ -1673,7 +1677,8 @@ pub enum PartialProjectionTargetKind {
 pub struct BodyIrReexportCallInfo {
     /// The manifest's minted declaring identity, never the facade or consumer spelling.
     pub canonical: CanonicalSymbolId,
-    /// Exact fixed scalar parameters whose written arguments validated without coercion or inference.
+    /// Parameters of the selected published declaration; call-site substitutions remain in the ordinary checked call
+    /// facts.
     pub parameters: Vec<CallableParam>,
 }
 
@@ -1881,6 +1886,21 @@ pub struct IsInstanceTargetInfo {
 /// Custom protocol decisions that lower into explicit runtime calls.
 #[derive(Debug, Default, Clone)]
 pub struct ProtocolArtifacts {
+    /// Exact selected input contracts of successful calls, including calls from otherwise ordinary bodies.
+    pub(in crate::typechecker) explicit_input_calls: BTreeMap<Span, super::ownership_contracts::InputCall>,
+    /// The contract each native call's selected Rust signature gives it, keyed by that call's callee identity. Derived
+    /// from the checked native calls whenever the body's input calls are built or restored, never recorded.
+    pub(in crate::typechecker) native_input_contracts:
+        BTreeMap<CanonicalSymbolId, crate::ownership_metadata::CheckedOwnershipContract>,
+    /// Canonically bound local mode requests, captured before lexical shadowing. Native lowering may consume them
+    /// only together with the owning body's complete flow proof.
+    pub(in crate::typechecker) explicit_local_modes: BTreeMap<CanonicalSymbolId, super::ownership_contracts::LocalMode>,
+    /// Explicit input flow is body-owned. The native executable gate remains closed until the complete projection
+    /// and storage contract agree; record profiles without this payload must refuse rather than discard it.
+    pub(in crate::typechecker) explicit_input_flow: BTreeMap<CanonicalSymbolId, super::ownership_contracts::InputFlow>,
+    /// Body-owned decisions from the checker's Copy relation, independent of the flow graph. Exact checked types
+    /// select their retained decision; missing evidence never falls back to an ABI or source-name heuristic.
+    pub(in crate::typechecker) explicit_input_copy: BTreeMap<CanonicalSymbolId, HashMap<ResolvedType, bool>>,
     /// Receiver value identities retained only for Body IR before synthetic truthiness dispatch reuses their spans.
     /// The legacy reference at that span still selects `__bool__`; this separate record never changes that table.
     pub(crate) body_ir_truthiness_receivers: HashMap<crate::ast::Span, CanonicalSymbolId>,
@@ -1913,6 +1933,12 @@ pub struct ProtocolArtifacts {
     /// The change has to reach the parameter, so lowering matches such a scrutinee in place, through a mutable
     /// reference, and binds each pattern name to the part of the parameter it names rather than to a copy.
     pub in_place_match_scrutinees: HashSet<crate::ast::Span>,
+    /// Scrutinee spans of the `match`, `if let` and `while let` forms whose value holds no loan: its checked type
+    /// names no reference and no Rust type with lifetime parameters, at any depth.
+    ///
+    /// Such a value cannot borrow from the temporaries its evaluation made, so lowering ends them before the arms run
+    /// and an arm may move the owner they borrowed.
+    pub loan_free_scrutinees: HashSet<crate::ast::Span>,
 }
 
 /// A typechecker-resolved user-defined operator call consumed by IR lowering.
@@ -1992,6 +2018,7 @@ pub enum ResolvedMethodDispatch {
 /// `__iter__` and `__next__` hooks at its iterable's span, leaves the facts of the call written there as they were.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct CallSiteFacts {
+    explicit_input_call: Option<super::ownership_contracts::InputCall>,
     checked_rust_call: Option<RustCheckedCall>,
     checked_rust_function_value: Option<RustCheckedCall>,
     body_ir_reexport_call: Option<BodyIrReexportCallInfo>,
@@ -2282,7 +2309,7 @@ pub struct DecoratedFunctionBindingInfo {
     pub ty: ResolvedType,
     /// Original callable type before decorators are applied.
     pub original_ty: ResolvedType,
-    /// Source-declared type parameters preserved for explicit call-site generic arguments.
+    /// Source-declared type parameters preserved for explicit and inferred call-site generic arguments.
     pub type_params: Vec<String>,
     /// Explicit source-declared bounds per type parameter.
     pub type_param_bounds: HashMap<String, Vec<String>>,
@@ -3163,6 +3190,7 @@ impl TypeCheckInfo {
     pub(crate) fn take_call_site_facts(&mut self, span: Span) -> CallSiteFacts {
         let key = span;
         CallSiteFacts {
+            explicit_input_call: self.protocols.explicit_input_calls.remove(&key),
             checked_rust_call: self.rust.checked_calls.remove(&key),
             checked_rust_function_value: self.rust.checked_function_values.remove(&key),
             body_ir_reexport_call: self.calls.body_ir_reexport_calls.remove(&key),
@@ -3189,6 +3217,7 @@ impl TypeCheckInfo {
     /// Clear only direct-route hook facts between two synthetic resolutions, leaving legacy's probe state unchanged.
     pub(crate) fn clear_body_ir_call_site_facts(&mut self, span: Span) {
         let key = span;
+        self.protocols.explicit_input_calls.remove(&key);
         self.rust.checked_calls.remove(&key);
         self.rust.checked_function_values.remove(&key);
         self.calls.body_ir_reexport_calls.remove(&key);
@@ -3220,6 +3249,10 @@ impl TypeCheckInfo {
             }
         }
         let key = span;
+        self.protocols.explicit_input_calls.remove(&key);
+        if let Some(call) = facts.explicit_input_call {
+            self.protocols.explicit_input_calls.insert(key, call);
+        }
         put(&mut self.rust.checked_calls, key, facts.checked_rust_call);
         put(
             &mut self.rust.checked_function_values,
@@ -3375,6 +3408,17 @@ impl TypeCheckInfo {
     pub fn match_scrutinee_is_changed_in_place(&self, span: Span) -> bool {
         self.protocols.in_place_match_scrutinees.contains(&span)
     }
+
+    /// Record that the value of the `match`, `if let` or `while let` scrutinee at `span` holds no loan.
+    pub fn record_loan_free_scrutinee(&mut self, span: Span) {
+        self.protocols.loan_free_scrutinees.insert(span);
+    }
+
+    /// Return whether the scrutinee at `span` holds no loan, so the temporaries its evaluation made can end before
+    /// the arms run.
+    pub fn scrutinee_holds_no_loan(&self, span: Span) -> bool {
+        self.protocols.loan_free_scrutinees.contains(&span)
+    }
 }
 
 /// Return whether a callable parameter type carries borrow shape that lowering cannot recover from the callee alone.
@@ -3493,7 +3537,7 @@ pub fn semantic_type_from_resolved(ty: &ResolvedType) -> IncanType {
 }
 
 /// Convert typechecker callable parameter metadata into semantic callable parameter metadata.
-fn semantic_callable_param_from_resolved(param: &CallableParam) -> IncanCallableParam {
+pub(super) fn semantic_callable_param_from_resolved(param: &CallableParam) -> IncanCallableParam {
     IncanCallableParam {
         name: param.name.clone(),
         ty: semantic_type_from_resolved(&param.ty),
@@ -3505,6 +3549,7 @@ fn semantic_callable_param_from_resolved(param: &CallableParam) -> IncanCallable
         has_default: param.has_default,
         is_partial_preset: param.is_partial_preset,
         is_mut: param.is_mut,
+        input_access: incan_semantics_core::IncanInputAccess::Inferred,
         native_owned: false,
     }
 }

@@ -65,6 +65,8 @@ mod tests {
     /// Dependency interface restoration, same-spelled declarations and alias imports retain fresh-computation maps.
     #[test]
     fn nominal_cache_matches_fresh_across_modules() -> Result<(), String> {
+        assert_source_signature_edits()?;
+        assert_body_digest_edits()?;
         let left = program("pub model Left:\n    pub value: int\n\npub type Alias = Left\n")?;
         let right = program("from left import Alias\n\npub model Right:\n    pub value: Alias\n")?;
         let main =
@@ -170,6 +172,104 @@ mod tests {
         assert_generation(&checker);
         checker.public_library_type_identities.clear();
         assert_generation(&checker);
+        Ok(())
+    }
+    /// Checked nominal body meaning ignores positions, while real type and literal edits remain observable.
+    fn assert_body_digest_edits() -> Result<(), String> {
+        let models = "model Item:\n    value: int\nmodel Other:\n    value: int\n";
+        let function = "def read(item: Item) -> int:\n    return item.value\n";
+        let digest = |source: &str| -> Result<_, String> {
+            let program = program(source)?;
+            let mut checker = TypeChecker::new();
+            checker
+                .check_program(&program)
+                .map_err(|errors| format!("{errors:?}"))?;
+            let operations = Default::default();
+            let context = crate::body_ir::BodyIrContext {
+                modules: &[],
+                provider_operations: &operations,
+                registry_package: None,
+                library_package: None,
+            };
+            let mut module = crate::body_ir::build_body_ir_module(&program, &[], &checker.type_info, &context);
+            let body = module
+                .bodies
+                .iter_mut()
+                .find(|body| body.name == "read")
+                .ok_or("missing read body")?;
+            let native = body.named_type_identities.clone();
+            let meaning =
+                incan_semantics_core::semantic_digest::body_semantic_digest(body).map_err(|e| e.to_string())?;
+            assert_eq!(
+                native, body.named_type_identities,
+                "digest must preserve executable carriers"
+            );
+            Ok((meaning, native))
+        };
+        let original = digest(&format!("{models}{function}"))?;
+        for edited in [
+            format!("# positions only\n{models}{function}"),
+            format!("{function}{models}"),
+        ] {
+            let edited = digest(&edited)?;
+            assert_eq!(original.0, edited.0);
+            assert_ne!(
+                original.1, edited.1,
+                "native carriers still bind current source positions"
+            );
+        }
+        assert_ne!(
+            original.0,
+            digest(&format!("{models}{}", function.replace("item: Item", "item: Other")))?.0
+        );
+        let with_literal = format!("{models}def read(item: Item) -> str:\n    return \"carrier@0..4\"\n");
+        assert_ne!(
+            digest(&with_literal)?.0,
+            digest(&with_literal.replace("carrier@0..4", "carrier@10..14"))?.0
+        );
+        Ok(())
+    }
+
+    /// Header publication alone must separate nominal owners and overloads while ignoring comments and movement.
+    fn assert_source_signature_edits() -> Result<(), String> {
+        let source = "model Item:\n    value: int\n    def read(self) -> int:\n        return self.value\nmodel Other:\n    value: int\n    def read(self) -> int:\n        return self.value\ndef read(item: Item) -> int:\n    return item.value\ndef identity[T](value: T) -> T:\n    return value\ndef choose(value: int) -> int:\n    return value\ndef choose(value: str) -> str:\n    return value\n";
+        let identities = |source: &str| -> Result<_, String> {
+            let program = program(source)?;
+            let mut checker = TypeChecker::new();
+            checker.reset_program_check(&program, false);
+            checker.collect_program_check_declarations(&program);
+            checker.record_program_header_facts();
+            checker.record_source_declaration_identities(&program);
+            assert_eq!(checker.check_work().function_bodies, 0);
+            assert_eq!(checker.check_work().method_bodies, 0);
+            Ok(checker
+                .type_info
+                .declarations
+                .source_identities
+                .values()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>())
+        };
+        let original = identities(source)?;
+        assert_eq!(
+            original.len(),
+            6,
+            "two owner-qualified methods, two functions and two overloads"
+        );
+        assert_eq!(original, identities(&format!("# position-only edit\n\n{source}"))?);
+        let split = source.find("def read(item:").ok_or("missing function boundary")?;
+        assert_eq!(
+            original,
+            identities(&format!("{}{}", &source[split..], &source[..split]))?
+        );
+        assert_eq!(
+            original,
+            identities(&source.replace("identity[T](value: T) -> T", "identity[U](value: U) -> U"))?
+        );
+        assert_ne!(
+            original,
+            identities(&source.replace("read(item: Item)", "read(item: Other)"))?
+        );
         Ok(())
     }
 }

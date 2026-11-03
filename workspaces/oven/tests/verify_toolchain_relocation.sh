@@ -1,5 +1,6 @@
 #!/bin/sh
 # Usage: INCAN_HOME=SOURCE_HOME verify_toolchain_relocation.sh OVEN SYSROOT STDLIB NEW_SCRATCH_DIRECTORY
+# STDLIB is the standard-library directory of the source checkout the toolchain was built from.
 # Retain the archive, fresh home, copied sysroot and logs as inspectable relocation evidence.
 set -eu
 oven=$1
@@ -8,19 +9,29 @@ stdlib=$3
 scratch=$4
 mkdir "$scratch"
 scratch=$(cd "$scratch" && pwd)
+builder_home=$(cd "$INCAN_HOME" && pwd -P)
+builder_source=$(cd "$stdlib/../.." && pwd -P)
 cp -R "$sysroot" "$scratch/sysroot"
-mkdir "$scratch/stdlib"
-for package in "$stdlib"/*; do
-    root=$(cd "$package" && pwd -P)
-    ln -s "$root" "$scratch/stdlib/$(basename "$package")"
-done
 archive=$scratch/toolchain.tar.zst
-"$oven" toolchain pack "$archive" > "$scratch/pack.log"
-export INCAN_HOME=$scratch/home INCAN_STDLIB=$scratch/stdlib INCAN_SYSROOT=$scratch/sysroot
+INCAN_STDLIB=$stdlib "$oven" toolchain pack "$archive" > "$scratch/pack.log"
+# The installation finds its standard sources itself; nothing names the checkout they came from.
+unset INCAN_STDLIB
+export INCAN_HOME=$scratch/home INCAN_SYSROOT=$scratch/sysroot
 /usr/bin/time -p "$oven" toolchain install "$archive" > "$scratch/install.log" 2> "$scratch/install.time"
 installed=$INCAN_HOME/toolchains/0.6.0-dev.8
 test "$(readlink "$installed/sysroot")" = "$scratch/sysroot"
 test "$(find "$installed" -type l | wc -l | tr -d ' ')" = 1
+
+# No builder leftover travels, and no text record of the installation names the builder's home or source checkout.
+# Compiled libraries are binary: the paths rustc embeds there are not read and stay outside this audit.
+if find "$installed" -name '*.previous.*' | rg -q .; then
+    echo 'the installation keeps builder leftovers' >&2
+    exit 1
+fi
+if rg --hidden --no-ignore -l -F -e "$builder_home/" -e "$builder_source/" "$installed" > "$scratch/builder-paths.txt"; then
+    echo "installed records name the builder: $scratch/builder-paths.txt" >&2
+    exit 1
+fi
 
 # Every artifact-bearing document must resolve wholly inside the new installation.
 audit_paths() {

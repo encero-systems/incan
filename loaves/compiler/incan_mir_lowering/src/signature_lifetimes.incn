@@ -52,9 +52,10 @@ def element_generic_loans(
         type_generic_loans(elements[index], names, arguments, slot, path + [index], loans)
 
 
-pub def signature_lifetimes(body: &Body, arguments: list[RustType]) -> list[list[str]]:
+pub def signature_lifetimes(body: &Body, arguments: list[RustType]) -> Result[list[list[str]], str]:
     """
-    Retain generic loans: 1. Visit original parameters. 2. Visit the result. 3. Omit unneeded annotations.
+    Retain generic loans: 1. Visit original parameters. 2. Visit the result. 3. Tie a returned view to its source.
+    4. Omit unneeded annotations.
 
     Each reference introduced by one type argument has a distinct binder, reused at every occurrence of that
     argument. Source-written references remain elided; they never acquire a substituted argument's binder.
@@ -65,10 +66,45 @@ pub def signature_lifetimes(body: &Body, arguments: list[RustType]) -> list[list
         signature.append(type_lifetimes(parameter.ty, body.type_parameters, arguments, ""))
     # 2. Visit the original result under the same binder identities.
     signature.append(type_lifetimes(body.return_type, body.type_parameters, arguments, ""))
-    # 3. Omit annotations when specialization introduces no generic loans, including transformed generators.
+    # 3. A returned view's reference shares its source parameter's outer borrow, and nothing else. A direct view's
+    # reference is the result itself; a carried view's is the first reference of its carrying payload.
+    match body.returned_view:
+        Some(view) =>
+            slot = int(view.slot)
+            signature[slot] = ["view"] + signature[slot]
+            result = signature[len(signature) - 1]
+            match view.carried:
+                Some(payload) =>
+                    position = payload_reference(body.return_type, int(payload), body.type_parameters, arguments)
+                    if position >= len(result):
+                        return Err("carried returned view has no payload reference")
+                    signature[len(signature) - 1] = result[:position] + ["view"] + result[position + 1:]
+                None => signature[len(signature) - 1] = ["view"] + result
+            return Ok(signature)
+        None => pass
+    # 4. Omit annotations when specialization introduces no generic loans, including transformed generators.
     if has_generic_loans(signature):
-        return signature
-    return []
+        return Ok(signature)
+    return Ok([])
+
+
+def payload_reference(result: &RustType, payload: int, names: list[str], arguments: list[RustType]) -> int:
+    """
+    The position of a carried view's reference among its result's references: after every earlier payload's, or
+    every earlier tuple element's.
+    """
+    match result:
+        RustType.Generic(base=_base, args=elements) => return references_before(elements, payload, names, arguments)
+        RustType.Tuple(elements) => return references_before(elements, payload, names, arguments)
+        _ => return 0
+
+
+def references_before(elements: &list[RustType], payload: int, names: list[str], arguments: list[RustType]) -> int:
+    """Count the references of the components before the one carrying a view."""
+    mut position = 0
+    for index in range(payload):
+        position += len(type_lifetimes(elements[index], names, arguments, ""))
+    return position
 
 
 def has_generic_loans(signature: list[list[str]]) -> bool:

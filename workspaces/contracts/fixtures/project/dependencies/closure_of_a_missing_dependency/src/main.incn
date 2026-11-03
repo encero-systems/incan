@@ -1,0 +1,12 @@
+# behavior: a closure that needs a dependency whose directory does not exist is refused, naming the dependency
+# cli-commands:
+#   inspect dependencies src/main.incn
+# expect-stderr-contains:
+#   ghost
+# expect-exit: 1
+
+from pub::ghost import ghost_value
+
+
+def main() -> None:
+    println(ghost_value())

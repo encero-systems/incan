@@ -4,7 +4,10 @@ from rust::incan_semantics_core::body_ir import ArgumentElement, Place as RustPl
 from pub::incan_mir_plan import PlanType, SourceSpan
 from frame import Builder, place_type, external_call
 from options import result_layout
-from lowering import argument_type, scalar_place, instantiated_external_call, fixed_arguments
+from sequence_builtins import argument_type
+from checked_values import scalar_place
+from calls import instantiated_external_call
+from call_arguments import fixed_arguments
 
 
 pub def lower_newtype_sum_add(

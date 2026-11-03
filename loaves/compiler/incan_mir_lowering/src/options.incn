@@ -1,6 +1,8 @@
 """Concrete standard Option and Result layouts shared with native enum operations."""
 
 from rust::incan_semantics_core import IncanType as RustType, SymbolOrigin, SemanticSourceTargetKind, generic
+from rust::incan_lang::lang::types::collections import from_str as collection_type, CollectionTypeId
+from rust::incan_lang::lang::surface::constructors import from_str as builtin_constructor, ConstructorId
 from rust::incan_semantics_core::body_ir import (
     BodyIrModule,
     Body,
@@ -19,8 +21,8 @@ from rust::incan_semantics_core::body_ir import (
 )
 from lists import taking_iterator_locals
 from table_views import borrowed_at
+from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import (
-    semantic_type_matches,
     BinaryOp,
     CalleeKind,
     ExternalFunction,
@@ -62,7 +64,8 @@ from unions import lower_union_declaration
 from type_parameters import substitute
 from nominal_frames import closed_arguments, closed_type, declaration_storage
 from program_context import body_at
-from native_type_identity import ConstructorIndex
+from native_type_identity import ConstructorIndex, native_owner
+from formatting import display_plan_value
 
 
 pub def variant_condition(mut builder: Builder, source: Place, slot: int, span: SourceSpan) -> Operand:
@@ -79,7 +82,7 @@ pub def result_layout(mut builder: Builder, ty: PlanType) -> Result[tuple[int, E
             if owner < len(builder.enums):
                 return Err("unsupported Body IR TryPropagate outside Result")
             declaration = builder.intrinsics[owner - len(builder.enums)]
-            if declaration.carrier != "Result":
+            if declaration.carrier != Carrier.Result:
                 return Err("unsupported Body IR TryPropagate outside Result")
             return Ok((owner, declaration))
         _ => return Err("unsupported Body IR TryPropagate outside Result")
@@ -91,12 +94,17 @@ pub def propagate_result(
     destination: Place,
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Move the selected payload once; error returns drop every other initialized owner before returning."""
+    """
+    Move the selected payload once; error returns drop every other initialized owner before returning. A `const` str
+    error becomes the owned text the enclosing `Result[T, str]` carries, as at any other owned text boundary; any other
+    differing error type is refused.
+    """
     _owner, input = result_layout(builder, frame_place_type(builder.locals, source))?
-    output_type = builder.locals[0].ty
+    output_type = borrowed_at(builder.locals, 0).ty
     output_owner, output = result_layout(builder, output_type)?
-    if input.variants[1].fields != output.variants[1].fields:
-        return Err("unsupported Body IR TryPropagate error conversion")
+    owns_text = input.variants[1].fields == [PlanType.FrozenStr] and output.variants[1].fields == [PlanType.String]
+    if input.variants[1].fields != output.variants[1].fields and not owns_text:
+        return Err("unsupported Body IR TryPropagate error conversion without retained conversion target")
     failure = builder.new_block(span)
     success = builder.new_block(span)
     condition = variant_condition(builder, source, 0, span)
@@ -106,9 +114,11 @@ pub def propagate_result(
     owners = builder.owned
     builder.current = failure
     error = Place(local=source.local, projection=Projection.VariantField(1, 0, input.variants[1].fields[0]), span=span)
-    builder.emit(
-        plan_assign(plan_place(0, span), RvalueKind.Enum(output_owner, 1, [read_place(error, true, span)]), span),
-    )
+    mut propagated = read_place(error, true, span)
+    if owns_text:
+        text = display_plan_value(builder, read_place(error, false, span), span, false)?
+        propagated = read_place(text, true, span)
+    builder.emit(plan_assign(plan_place(0, span), RvalueKind.Enum(output_owner, 1, [propagated]), span))
     drop_all_owned(builder, span)
     builder.finish(TerminatorKind.Return, span)
     builder.current = success
@@ -130,32 +140,23 @@ pub def intrinsic_pattern(declaration: EnumDeclaration, pattern: &RustPattern) -
     match pattern:
         RustPattern.Wildcard => return Ok(-1)
         RustPattern.Literal(value) =>
-            if declaration.carrier == "Option" and value.clone() == RustConstant.None:
+            if declaration.carrier == Carrier.Option and value.clone() == RustConstant.None:
                 return Ok(0)
-        RustPattern.Enum(canonical=identity, name=_name, variant=variant, fields=fields) =>
+        RustPattern.Enum(canonical=identity, name=_name, variant=_variant, fields=fields) =>
             match identity:
                 Some(canonical) =>
-                    if (
-                        declaration.carrier == "Option"
-                        and canonical.origin == SymbolOrigin.Builtin
-                        and canonical.declaration_name == "Some"
-                        and str(variant) == "Some"
-                        and len(fields) == 1
-                    ):
-                        validate_payload_patterns(fields)?
-                        return Ok(1)
-                    # A bare `None` constructor, as an `assert value is None` pattern spells it.
-                    if (
-                        declaration.carrier == "Option"
-                        and canonical.origin == SymbolOrigin.Builtin
-                        and canonical.declaration_name == "None"
-                        and str(variant) == "None"
-                        and len(fields) == 0
-                    ):
-                        return Ok(0)
+                    # The checked identity names the builtin constructor; its written spelling decides nothing.
+                    if declaration.carrier == Carrier.Option and canonical.origin == SymbolOrigin.Builtin:
+                        constructor = builtin_constructor(canonical.declaration_name)
+                        if constructor == Some(ConstructorId.Some) and len(fields) == 1:
+                            validate_payload_patterns(fields)?
+                            return Ok(1)
+                        # A bare `None` constructor, as an `assert value is None` pattern spells it.
+                        if constructor == Some(ConstructorId.None) and len(fields) == 0:
+                            return Ok(0)
                 None => pass
         RustPattern.Result(variant=variant, fields=fields) =>
-            if declaration.carrier != "Result" or len(fields) != 1:
+            if declaration.carrier != Carrier.Result or len(fields) != 1:
                 return Err("invalid Body IR Result pattern")
             validate_payload_patterns(fields)?
             if variant.clone() == ResultVariantKind.Ok:
@@ -189,7 +190,13 @@ pub def intrinsic_declarations(
     for nominal_position in range(len(module.nominal_declarations)):
         declaration = borrowed_at(module.nominal_declarations, nominal_position)
         for ty in declaration.field_types:
-            retain_carrier(constructors, module, declarations, ty, file)?
+            # A Rust layout keeps a field without a carrier opaque; that field grants no read, write or construction.
+            if native_owner(declaration):
+                match retain_carrier(constructors, module, declarations, ty, file):
+                    Ok(_retained) => pass
+                    Err(_reason) => pass
+            else:
+                retain_carrier(constructors, module, declarations, ty, file)?
     for enum_position in range(len(module.enum_declarations)):
         declaration = borrowed_at(module.enum_declarations, enum_position)
         for variant in declaration.variants:
@@ -220,7 +227,7 @@ pub def retain_body_carriers(
         Ok(_value) => pass
         Err(reason) => return Err(f"{reason} in {body.name} return carrier")
     for index in range(len(body.locals)):
-        match retain_carrier(constructors, module, declarations, body.locals[index].ty, file):
+        match retain_carrier(constructors, module, declarations, borrowed_at(body.locals, index).ty, file):
             Ok(_value) => pass
             Err(reason) => return Err(f"{reason} in {body.name} local {index} carrier")
     match retain_iteration_poll_carriers(
@@ -247,7 +254,8 @@ def retain_iteration_poll_carriers(
     file: str,
 ) -> Result[None, str]:
     """Retain Iterator::next's Option output from a checked consuming loop's concrete item type before frame lowering."""
-    for statement in block.stmts:
+    for position in range(len(block.stmts)):
+        statement = borrowed_at(block.stmts, position)
         retain_iteration_poll_statement(constructors, module, declarations, body, statement.kind, taking, file)?
     return Ok(None)
 
@@ -285,7 +293,7 @@ def retain_iteration_poll_statement(
                             if index in taking:
                                 match destination.local_id():
                                     Some(item) =>
-                                        ty = body.locals[int(item.index())].ty
+                                        ty = borrowed_at(body.locals, int(item.index())).ty
                                         output = generic("Option", [ty])
                                         retain_carrier(constructors, module, declarations, output, file)?
                                     None => return Err("unsupported Body IR consuming iteration global item")
@@ -457,16 +465,21 @@ pub def retain_carrier(
         RustType.Generic(base=base, args=arguments) =>
             for argument in arguments:
                 retain_carrier(constructors, module, declarations, argument, file)?
-            if base != "Option" and base != "Result" and base != "Union":
+            kind: Option[CollectionTypeId] = collection_type(str(base))
+            is_option = kind == Some(CollectionTypeId.Option)
+            is_result = kind == Some(CollectionTypeId.Result)
+            if not is_option and not is_result and not ty.is_union():
                 return Ok(None)
-            for retained in declarations:
-                if semantic_type_matches(retained, ty):
+            # Wrap the checked type once and compare each borrowed carrier's key in place, copying neither.
+            key = Some(ty.clone())
+            for retained_position in range(len(declarations)):
+                if borrowed_at(declarations, retained_position).semantic_key == key:
                     return Ok(None)
-            if base == "Union":
+            if ty.is_union():
                 declaration = lower_union_declaration(constructors, module, ty, file, declarations)?
                 declarations.append(declaration)
                 return Ok(None)
-            if (base == "Option" and len(arguments) != 1) or (base == "Result" and len(arguments) != 2):
+            if (is_option and len(arguments) != 1) or (is_result and len(arguments) != 2):
                 return Err(f"unsupported Body IR type {ty}")
             mut fields: list[PlanType] = []
             unions: list[RustType] = []
@@ -482,8 +495,10 @@ pub def retain_carrier(
                     Ok(field) => fields.append(field)
                     Err(reason) => return Err(f"{reason} in {base} payload {index} of {ty}")
             mut variants = [EnumVariant(name="None", fields=[]), EnumVariant(name="Some", fields=[fields[0]])]
-            if base == "Result":
+            mut carrier = Carrier.Option
+            if is_result:
                 variants = [EnumVariant(name="Ok", fields=[fields[0]]), EnumVariant(name="Err", fields=[fields[1]])]
+                carrier = Carrier.Result
             declarations.append(
                 EnumDeclaration(
                     name=f"__IncanCarrier{len(declarations)}",
@@ -491,7 +506,7 @@ pub def retain_carrier(
                     variants=variants,
                     derives=["Clone"],
                     span=plan_span(file=file, line=1, column=1),
-                    carrier=str(base),
+                    carrier=carrier,
                     semantic_key=Some(ty.clone()),
                     source_type=str(ty),
                     comparison_methods=[],
@@ -554,7 +569,7 @@ pub def none_operand(mut builder: Builder, ty: PlanType, span: SourceSpan) -> Re
     if ty == PlanType.Unit:
         return Ok(Operand(kind=OperandKind.Literal(Constant.Unit), span=span))
     owner, declaration = carrier_layout(builder, ty)?
-    if declaration.carrier != "Option":
+    if declaration.carrier != Carrier.Option:
         return Err("unsupported Body IR None outside Option")
     output = temporary(builder, ty, span)
     assign_carrier(builder, output, owner, 0, [], span)
@@ -663,10 +678,10 @@ pub def lower_carrier_method_plan(
     """Lower retained carrier predicates and eager defaults using the shared discriminant and payload machinery."""
     _owner, declaration = carrier_layout(builder, frame_place_type(builder.locals, source))?
     mut present = 0
-    if declaration.carrier == "Option":
+    if declaration.carrier == Carrier.Option:
         present = 1
-    predicate = (declaration.carrier == "Option" and (name == "is_some" or name == "is_none")) or (
-        declaration.carrier == "Result"
+    predicate = (declaration.carrier == Carrier.Option and (name == "is_some" or name == "is_none")) or (
+        declaration.carrier == Carrier.Result
         and (name == "is_ok" or name == "is_err")
     )
     if predicate:
@@ -709,7 +724,7 @@ def lower_carrier_unwrap(
     # `None` fails with the standard message; `Err` passes a clone of its payload so the message renders it as Debug.
     builder.current = missing
     unit = temporary(builder, PlanType.Unit, span)
-    if declaration.carrier == "Option":
+    if declaration.carrier == Carrier.Option:
         unwrap_failure(builder, "unwrap_none", [], [], unit, span)
     else:
         error_type = declaration.variants[1 - present].fields[0]
