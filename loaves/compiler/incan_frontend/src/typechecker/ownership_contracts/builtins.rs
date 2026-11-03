@@ -6,9 +6,11 @@ use incan_lang::lang::surface::list_methods::{self, ListMethodId};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_semantics_core::SymbolOrigin;
 
-use crate::ast::{CallArg, Expr, Pattern, PatternArg, Span, Spanned};
+use crate::ast::{CallArg, Expr, Pattern, PatternArg, Span, Spanned, SurfaceExpr, SurfaceExprPayload};
 use crate::symbols::ResolvedType;
 use crate::typechecker::TypeCheckInfo;
+use incan_lang::lang::keywords::KeywordId;
+use incan_semantics_core::SurfaceFeatureKey;
 
 /// The builtin `Ok`, `Err` or `Some` constructor a callee names. A same-spelled source callable is never a builtin
 /// carrier. This is the one definition the source flow and both admission walkers share.
@@ -98,5 +100,13 @@ pub(super) fn list_method_writes(
         | ListMethodId::ReserveExact
         | ListMethodId::Remove => Some(true),
         ListMethodId::Contains | ListMethodId::Count | ListMethodId::Index | ListMethodId::Clone => Some(false),
+    }
+}
+
+/// The expression an `await` suspends on, when a surface expression is `await expression`.
+pub(super) fn awaited(surface: &SurfaceExpr) -> Option<&Spanned<Expr>> {
+    match (&surface.key, &surface.payload) {
+        (SurfaceFeatureKey::SoftKeyword(KeywordId::Await), SurfaceExprPayload::PrefixUnary(awaited)) => Some(awaited),
+        _ => None,
     }
 }

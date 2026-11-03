@@ -149,6 +149,25 @@ impl Builder<'_> {
 
     /// Apply one canonical call, evaluating its receiver before written arguments. The receiver's declared access
     /// remains live through invocation; no method-body analysis is needed to strengthen or weaken that contract.
+    /// A call to an async callable makes a future that holds the call's loans until it completes; only an `await` on
+    /// the call itself ends them where the call is made.
+    fn require_awaited(&self, span: Span) -> Result<(), Unavailable> {
+        if self
+            .checker
+            .type_info
+            .calls
+            .body_ir_async_call_targets
+            .contains_key(&span)
+            && !self.awaited.contains(&span)
+        {
+            return Err(Unavailable {
+                span,
+                reason: "a call to an async callable needs `await` where it is made".into(),
+            });
+        }
+        Ok(())
+    }
+
     pub(super) fn apply_call(
         &mut self,
         receiver: Option<&Spanned<Expr>>,
@@ -156,6 +175,7 @@ impl Builder<'_> {
         span: Span,
         mut incoming: Vec<usize>,
     ) -> Result<Vec<usize>, Unavailable> {
+        self.require_awaited(span)?;
         // ---- Selected declaration and supported dependency shape ----
         let call = self
             .checker

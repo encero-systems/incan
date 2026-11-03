@@ -110,6 +110,9 @@ struct Builder<'a> {
     closures: BTreeMap<CanonicalSymbolId, Option<Path>>,
     /// Closure locals whose borrow is of a value that is not Copy, which the closure holds by reference.
     reference_closures: BTreeSet<CanonicalSymbolId>,
+    /// Calls an `await` suspends on directly. A call to an async callable anywhere else would leave a future holding
+    /// its loans, which is not modeled.
+    awaited: BTreeSet<Span>,
     constrained: BTreeSet<Root>,
     borrowed_inputs: BTreeSet<Root>,
     loops: Vec<LoopEdges>,
@@ -188,14 +191,19 @@ fn build_graph(
         span,
         reason: reason.into(),
     })?;
-    if is_async
-        || contract.is_some_and(|contract| {
-            contract.modes.iter().any(|mode| {
-                mode.component.parameter.is_some()
-                    && (!mode.component.children.is_empty() || mode.mode == OwnershipMode::Reference)
-            })
+    // An async body is checked like a synchronous one; its future returns no view, which would outlive a suspension.
+    if is_async && view.is_some() {
+        return Err(Unavailable {
+            span,
+            reason: "a returned view of an async body".into(),
+        });
+    }
+    if contract.is_some_and(|contract| {
+        contract.modes.iter().any(|mode| {
+            mode.component.parameter.is_some()
+                && (!mode.component.children.is_empty() || mode.mode == OwnershipMode::Reference)
         })
-    {
+    }) {
         return Err(Unavailable {
             span,
             reason: "escaping or nested ownership contract".into(),
@@ -249,6 +257,7 @@ fn build_graph(
         taken_carriers: BTreeSet::new(),
         closures: BTreeMap::new(),
         reference_closures: BTreeSet::new(),
+        awaited: BTreeSet::new(),
         loops: Vec::new(),
         view: None,
         view_carried: None,
@@ -589,6 +598,23 @@ impl Builder<'_> {
                     left_dependency.into_iter().chain(right_dependency).collect(),
                     outgoing,
                 )
+            }
+            // `await` on a call suspends this body until the call's future completes, and the call's loans end there as
+            // a synchronous call's do. Awaiting a stored future needs task facts of its own.
+            Expr::Surface(surface) if super::builtins::awaited(surface).is_some() => {
+                let awaited = super::builtins::awaited(surface).ok_or(Unavailable {
+                    span: expression.span,
+                    reason: "await has no awaited expression".into(),
+                })?;
+                let call = super::builtins::view_call(awaited);
+                if !matches!(call.node, Expr::Call(..) | Expr::MethodCall(..)) {
+                    return Err(Unavailable {
+                        span: awaited.span,
+                        reason: "await on a stored future needs checked task facts".into(),
+                    });
+                }
+                self.awaited.insert(call.span);
+                self.expression(awaited, incoming, consume)
             }
             Expr::Closure(..) => Err(Unavailable {
                 span: expression.span,

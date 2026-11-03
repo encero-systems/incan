@@ -17,7 +17,7 @@ Explicit ownership inside a tuple, outcome, field or callable annotation is also
 
 ## Direct-input profile
 
-Synchronous free functions and concrete methods can use direct `Borrowed[T]`, `BorrowedMut[T]` and `Owned[T]` parameters within the following restrictions. They require fixed parameters without defaults, generic binders or decorators, and direct access in straight-line statements, `if`/`elif`/`else` branches, `for`, `while` and `loop` loops with `continue` and value-free `break`, statement `match` and `?`. It preserves existing storage for shared and exclusive inputs, including scalar values, and transfers an owned non-Copy root without adding a repair clone. A method's receiver is checked as a borrowed input: `self` grants shared access and `mut self` exclusive, writable access. A call to such a method borrows its receiver from existing storage for the invocation.
+Free functions and concrete methods, synchronous or [async](#async-bodies), can use direct `Borrowed[T]`, `BorrowedMut[T]` and `Owned[T]` parameters within the following restrictions. They require fixed parameters without defaults, generic binders or decorators, and direct access in straight-line statements, `if`/`elif`/`else` branches, `for`, `while` and `loop` loops with `continue` and value-free `break`, statement `match` and `?`. It preserves existing storage for shared and exclusive inputs, including scalar values, and transfers an owned non-Copy root without adding a repair clone. A method's receiver is checked as a borrowed input: `self` grants shared access and `mut self` exclusive, writable access. A call to such a method borrows its receiver from existing storage for the invocation.
 
 ```incan
 # accepted by source checking
@@ -269,6 +269,36 @@ The following are refused with `INCAN-T0123`, each naming its reason:
 - A closure that captures an owned value that is not Copy, a view a call returned, or an exclusive input or local.
 - A closure that captures more than one shared input.
 - Passing a closure that holds a reference to another callable.
+
+## Async bodies
+
+An async function or method checks its explicit inputs as a synchronous one does. A call to an async callable is awaited where it is made, as in `await measure(buffer)`: the call borrows its inputs until the await completes, and the caller's source is usable again afterwards. A borrow the body holds stays live across each suspension, so awaiting a call that changes the borrowed place before the borrow's last use is refused with `INCAN-T0126`.
+
+```incan
+# accepted by source checking
+import std.async
+
+
+class Buffer:
+    pub items: list[int]
+
+
+async def measure(buffer: Borrowed[Buffer]) -> int:
+    return len(buffer.items)
+
+
+async def grow(mut buffer: BorrowedMut[Buffer], item: int) -> int:
+    buffer.items.append(item)
+    return len(buffer.items)
+
+
+async def total(mut buffer: BorrowedMut[Buffer]) -> int:
+    first = await measure(buffer)
+    grown = await grow(buffer, 4)
+    return first + grown
+```
+
+An async body that returns a view, and spawning a task from an input-checked body, are refused with `INCAN-T0123`.
 
 ## Source conflict diagnostics
 

@@ -330,6 +330,12 @@ impl SourceAccesses<'_, '_> {
                     }
                 }
             }
+            // `await` suspends on its call, which is evaluated as written.
+            Expr::Surface(surface) if super::super::builtins::awaited(surface).is_some() => {
+                if let Some(awaited) = super::super::builtins::awaited(surface) {
+                    self.expression(awaited, consume)?;
+                }
+            }
             _ => return Err("source access coverage requires the supported expression profile"),
         }
         Ok(())
