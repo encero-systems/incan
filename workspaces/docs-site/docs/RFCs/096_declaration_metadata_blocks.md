@@ -220,7 +220,9 @@ A model field may be followed by a declaration metadata block:
 ```text
 field_decl = visibility? IDENT field_meta? alias_sugar? ":" type_expr default? decl_metadata_block? ;
 decl_metadata_block = "{" metadata_entry* "}" ;
-metadata_entry = metadata_key metadata_assign metadata_value ;
+metadata_entry = metadata_key metadata_assign metadata_value
+               | metadata_key structured_metadata_block ;
+structured_metadata_block = "{" metadata_entry* "}" ;
 metadata_assign = "=" ;
 ```
 
@@ -267,6 +269,8 @@ Alias sugar remains the preferred spelling for wire names. A braced metadata blo
 ### Metadata values
 
 Metadata block values must use the safe metadata value set defined by RFC 085 and RFC 086. Values must be compile-time metadata values, not runtime expressions. A metadata block must not evaluate user code.
+
+A key followed directly by a nested block, such as `deprecated { since = "0.7" }`, gives that key a structured value. Only an unqualified key whose contract defines named entries may take one; RFC 150's `deprecated` is the first. Each nested entry must be one of the key's defined entries and must follow the same safe-value, duplicate-key, and no-execution rules as the enclosing block. The structured value fills the same checked descriptor as the key's compact spellings, so consumers see one descriptor however it was written. A namespaced key must not take a nested block.
 
 Metadata blocks reuse RFC 085 and RFC 086 key identity, safe-value checks, and explicit adapter/tooling activation rules. Unknown namespaced metadata remains inert under baseline compilation and is preserved for an explicit consumer; changing brackets to braces must not enable a namespace or grant it language semantics. An invoked adapter retains its own key and compatibility validation. Unqualified keys remain governed by the standard/compiler-owned key contracts.
 
@@ -457,3 +461,4 @@ The constrained primitive block form should normalize into the same constrained 
 - Constrained primitive options use the drafted `int { ... }` form without an extra `where` keyword. The block belongs to the newtype underlying, while a following colon opens an actual newtype body. Default-expression braces and field metadata braces remain distinct; parser/formatter acceptance must exercise the collisions rather than claim proof from a sketch.
 - Default formatting preserves authored metadata and alias spelling. An explicit fix or project-level opt-in may normalize layout during ordinary formatting; exact-spelling modes retain their guarantee. No implicit whole-project migration is selected.
 - Metadata blocks reuse RFC 085/086 checked keys, safe values, provenance and explicit adapter activation. Inert namespaced data does not become executable or compiler-semantic through braced spelling.
+- A compiler-known key whose contract defines named entries may take a nested block, starting with RFC 150's `deprecated { ... }`. It is another spelling of that key's one descriptor, not a second metadata authority.

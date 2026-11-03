@@ -235,7 +235,7 @@ Standard descriptive keys are checked and preserved by the compiler but do not c
 - `description: str`
 - `title: str`
 - `examples: list[T]` where each example is a safe metadata value assignable to the field type, or a string example when type-checked examples are not available;
-- `deprecated: bool | str`
+- `deprecated: bool | str`, or the structured `deprecated { ... }` value of RFC 150, all filling one deprecation descriptor
 - `classification: str`
 - `tags: list[str]`
 - `primary_key: bool`

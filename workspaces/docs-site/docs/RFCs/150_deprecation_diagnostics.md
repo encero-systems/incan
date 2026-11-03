@@ -8,6 +8,7 @@
     - RFC 036 (declaration decorators)
     - RFC 082 (checked API documentation)
     - RFC 085 (field metadata)
+    - RFC 096 (declaration metadata blocks; the nested `deprecated { ... }` value)
     - RFC 120 (canonical source identity)
 - **Issue:** [#1288](https://github.com/encero-systems/incan/issues/1288)
 - **RFC PR:** —
@@ -16,7 +17,7 @@
 
 ## Summary
 
-Propose compiler-visible deprecation metadata for declarations and fields: optional since and planned retirement text, checked replacement identity, migration message and typed diagnostic severity. Editor guidance, compiler use diagnostics, bounded runtime warnings and generated documentation consume the same checked facts. Replacements remain guidance rather than an automatic rewrite, and version text does not remove code automatically. The exact richer field spelling remains open.
+Propose compiler-visible deprecation metadata for declarations and fields: optional since and planned retirement text, checked replacement identity, migration message and typed diagnostic severity. Editor guidance, compiler use diagnostics, bounded runtime warnings and generated documentation consume the same checked facts. Replacements remain guidance rather than an automatic rewrite, and version text does not remove code automatically. A field carries the same facts in a nested `deprecated { ... }` metadata block, and the compact `deprecated=true` and `deprecated="message"` spellings fill the same descriptor.
 
 ## Motivation
 
@@ -56,7 +57,29 @@ A different module calling `unchecked_limit(-1)` receives a warning at that call
 
 Compiler use diagnostics inside the defining module remain quiet so the library can migrate its own implementation incrementally. This does not exempt an executed deprecated operation from the selected first-execution runtime warning. This exemption does not follow a re-export into a new module. An alias of the deprecated declaration still refers to its original identity unless a separately defined compatibility wrapper creates a new declaration.
 
-Fields must reuse RFC 085 deprecated bool/text metadata as the compact deprecation spelling. Authored field accesses and explicit constructor bindings consume the same checked descriptor as documentation. The descriptor must also carry optional since, retire_in and checked replacement facts; its exact richer field spelling remains open. Metadata traversal and serializer wire keys must not be treated as a new authored field reference for every record.
+A field is deprecated through its metadata. The compact RFC 085 spellings stay for the common case, and a nested block in the field's RFC 096 metadata block carries the full facts, with the decorator's names:
+
+```incan
+from std.diagnostics import DeprecationSeverity
+
+model Customer:
+    full_name: str
+    nickname [deprecated="Use full_name"]: str = ""
+    name: str = "" {
+        deprecated {
+            message = "Use full_name"
+            since = "0.7"
+            retire_in = "0.9"
+            replacement = full_name
+            severity = DeprecationSeverity.Warning
+        }
+    }
+
+def greet(customer: Customer) -> str:
+    return customer.name
+```
+
+`customer.name` in `greet` receives a warning that names `Customer.name`, the version it was deprecated in, its planned retirement, the message and `Customer.full_name` as the checked replacement. `nickname` produces the same kind of warning with only its message. `[deprecated=true]` deprecates a field with no message. All three spellings fill one checked descriptor, and authored field accesses, explicit constructor bindings and documentation consume it. Metadata traversal and serializer wire keys must not be treated as a new authored field reference for every record.
 
 ## Reference-level explanation
 
@@ -70,6 +93,7 @@ Fields must reuse RFC 085 deprecated bool/text metadata as the compact deprecati
 - Diagnostics and generated documentation must consume the same checked facts.
 - An automatic replacement must not be offered solely because a message contains another symbol's spelling. A checked replacement reference must identify the target in diagnostics alongside the supplied migration message. It must not be treated as proof of equal arguments, effects or result types, and must not authorize a tool to invent error recovery.
 - Field warnings must distinguish authored field access from unrelated runtime mapping keys and wire names.
+- A field's `deprecated` metadata must accept `true`, a message string, or a nested `deprecated { ... }` block under RFC 096. The nested block may contain only `message`, `since`, `retire_in`, `replacement` and `severity`, each at most once, with the same types and rules as the decorator's arguments. `replacement` must be a checked reference to a field of the same declaration or to another declaration. `deprecated=true` and `deprecated="text"` must be equivalent to a nested block with no entries and with `message = "text"`, respectively. A field must not combine spellings: `deprecated` remains one metadata key under RFC 096's duplicate-key rule.
 
 ## Design details
 
@@ -89,23 +113,17 @@ Warnings can become noisy across heavily used compatibility APIs. Defining-modul
 
 ## Layers affected
 
-- **Declaration / field metadata:** stable deprecation facts.
+- **Parser / Formatter:** the nested `deprecated { ... }` field metadata value.
+- **Declaration / field metadata:** stable deprecation facts, one descriptor for every spelling.
 - **Name resolution / diagnostics:** external use checks and deduplication.
 - **LSP / documentation:** visible guidance and checked replacement affordances if adopted.
 
 ## Design Decisions
 
 - Optional since, retire_in, message and checked replacement metadata share one descriptor. Version guidance is advisory; neither a retirement version nor a replacement identity automatically changes or removes code.
-- Existing field deprecated bool/text metadata drives authored source-use guidance and documentation. The descriptor carries richer facts without a second metadata authority; exact richer field spelling remains for review below.
+- Existing field deprecated bool/text metadata drives authored source-use guidance and documentation. The descriptor carries richer facts without a second metadata authority.
+- A field's full deprecation facts use a nested `deprecated { ... }` block with the decorator's names. `deprecated=true` and `deprecated="message"` remain as compact spellings of the same descriptor, so one key accepts three value shapes and every consumer reads the same facts.
 - Editor import/reference guidance, compiler consuming-use warnings and one runtime warning per executed canonical identity per process are distinct. Imports alone, dead code and compile-time-only metadata do not execute deprecated code. Diagnostics must preserve secrecy.
 - std.diagnostics.DeprecationSeverity.Warning is the default; Error rejects the use at compilation. Project policy may strengthen warnings without weakening an author-declared Error.
 - Aliases and re-exports retain canonical policy and an inspectable authored route. Generated references deduplicate at their responsible source operation; a real wrapper has its own declaration policy.
-
 - A checked replacement and migration message must be shown together; neither authorizes an automatic rewrite when call contracts differ.
-
-## Unresolved questions
-
-- What exact richer field metadata spelling carries since, retire_in and checked replacement alongside the existing deprecated bool/text compact form? The shared descriptor and authored-use behavior are settled.
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
