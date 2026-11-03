@@ -21,6 +21,12 @@ use incan_semantics_core::CanonicalSymbolId;
 use incan_semantics_core::stable_identity::StableDeclarationId;
 use types::{next, parameter_fields, read_parameters, read_type, type_fields};
 
+mod fixtures;
+mod projections;
+
+pub(crate) use fixtures::*;
+pub(crate) use projections::*;
+
 /// The native boundary carries only field primitives. The Incan schema owns their versioned encoding.
 pub(crate) type Fields = Vec<Vec<String>>;
 
@@ -104,49 +110,6 @@ impl Positions {
             path: path.to_owned(),
         })
     }
-}
-
-/// Project one declaration or settled body into portable field primitives; every unsupported nonempty native field
-/// refuses the profile. The caller owns the result and can destroy every original native value after this returns.
-pub(crate) fn project(
-    checker: &TypeChecker,
-    program: &Program,
-    owner: Span,
-    declaration: bool,
-) -> Result<Fields, NodeBindingError> {
-    let positions = Positions::new(checker, program, owner, declaration)?;
-    let view = if declaration {
-        checker.checked_declaration(owner)
-    } else {
-        checker.checked_body(owner)
-    }
-    .ok_or(NodeBindingError::MissingOwner)?;
-    validate(view)?;
-    let mut fields = local_fields(&positions, &view.local)?;
-    ownership::project(checker, owner, &positions, &mut fields)?;
-    if declaration {
-        project_signature(checker, program, owner, &positions, &mut fields)?;
-    }
-    project_diagnostics(checker, program, &positions, view, &mut fields)?;
-    project_final_types(checker, view, &positions, &mut fields)?;
-    fields.push(vec![
-        "status".into(),
-        String::new(),
-        "refused".into(),
-        view.is_refused().to_string(),
-    ]);
-    fields.sort();
-    fields.insert(
-        0,
-        vec![
-            "header".into(),
-            positions.nodes.owner().render_compact(),
-            positions.nodes.root().to_owned(),
-            if declaration { "declaration" } else { "final" }.into(),
-            "incan.checker-free-functions/9".into(),
-        ],
-    );
-    Ok(fields)
 }
 
 /// Rebuild a selected owner solely from canonical fields and current position/identity bindings. The independently
@@ -467,93 +430,6 @@ fn project_expressions(positions: &Positions, local: &BodyLocal, fields: &mut Fi
     Ok(())
 }
 
-/// References keep their stable target and a structural source role; parameter writes stay declaration-owned.
-fn project_references(positions: &Positions, local: &BodyLocal, fields: &mut Fields) -> Result<(), NodeBindingError> {
-    for (span, canonical) in &local.references.resolved_identities {
-        fields.push(vec![
-            "reference".into(),
-            positions.nodes.anchor(*span)?.path,
-            "read".into(),
-            positions.identity(canonical)?,
-        ]);
-    }
-    for ((span, name), canonical) in &local.references.resolved_write_identities {
-        fields.push(vec![
-            "write".into(),
-            positions.nodes.anchor(*span)?.path,
-            name.clone(),
-            positions.identity(canonical)?,
-        ]);
-    }
-    for ((span, name), ty) in &local.references.resolved_write_types {
-        let mut row = vec!["parameter".into(), positions.nodes.anchor(*span)?.path, name.clone()];
-        type_fields(ty, &mut row)?;
-        fields.push(row);
-    }
-    Ok(())
-}
-
-/// Calls retain the selected builtin and checked parameter/type arguments, not a re-resolved source name.
-fn project_calls(positions: &Positions, local: &BodyLocal, fields: &mut Fields) -> Result<(), NodeBindingError> {
-    for (span, builtin) in &local.calls.resolved_builtin_calls {
-        fields.push(vec![
-            "builtin".into(),
-            positions.nodes.anchor(*span)?.path,
-            "call".into(),
-            incan_lang::lang::builtins::as_str(*builtin).into(),
-        ]);
-    }
-    for (selector, values) in [
-        ("call", &local.calls.call_site_callable_params),
-        ("body-call", &local.calls.body_ir_call_parameter_types),
-    ] {
-        for (span, parameters) in values {
-            let mut row = vec!["signature".into(), positions.nodes.anchor(*span)?.path, selector.into()];
-            parameter_fields(parameters, &mut row)?;
-            fields.push(row);
-        }
-    }
-    for (selector, values) in [
-        ("monomorphs", &local.calls.call_site_monomorph_type_args),
-        ("type-arguments", &local.calls.body_ir_call_type_arguments),
-    ] {
-        for (span, arguments) in values {
-            let mut row = vec![
-                "signature".into(),
-                positions.nodes.anchor(*span)?.path,
-                selector.into(),
-                arguments.len().to_string(),
-            ];
-            for ty in arguments {
-                type_fields(ty, &mut row)?;
-            }
-            fields.push(row);
-        }
-    }
-    if !local.calls.body_ir_call_result_types.is_empty() || !local.calls.body_ir_native_argument_types.is_empty() {
-        return Err(NodeBindingError::Unsupported("native call refinements"));
-    }
-    Ok(())
-}
-
-/// Every unrepresented family is explicitly refused before a canonical value can escape.
-fn validate(view: &CheckedBodyView) -> Result<(), NodeBindingError> {
-    if !view.effect_reads.is_empty()
-        || !view.mutation.is_empty()
-        || !view.dictionary.is_empty()
-        || !view.open.is_empty()
-        || !view.local.iterator_sum_items.is_empty()
-        || !view.local.dictionary.is_empty()
-        || !view.local.diagnostic_slots.is_empty()
-        || !view.local.warning_slots.is_empty()
-        || view.local.order.mutation != 0
-        || view.local.order.dictionary != 0
-    {
-        return Err(NodeBindingError::Unsupported("deferred effect or diagnostic ordering"));
-    }
-    Ok(())
-}
-
 /// Recreate every supported local map directly from the selected field's typed primitives.
 fn restore_local(positions: &Positions, local: &mut BodyLocal, row: &[String]) -> Result<(), NodeBindingError> {
     if matches!(
@@ -687,81 +563,6 @@ fn restore_local(positions: &Positions, local: &mut BodyLocal, row: &[String]) -
     Ok(())
 }
 
-/// Extract the exact authored declaration range from its current activation handle.
-fn span_of(canonical: &CanonicalSymbolId) -> Span {
-    Span {
-        start: canonical.declaration_span.start,
-        end: canonical.declaration_span.end,
-        expansion: canonical.declaration_span.expansion,
-    }
-}
-
-/// Test-sink entry: check a fixture, select one owner, return only its canonical primitives and drop the checker.
-/// This intentionally measures no production reuse; a future record producer calls `project` at its own boundary.
-pub(crate) fn fixture_projection(source: &str, name: &str, declaration: bool) -> Result<Fields, NodeBindingError> {
-    let (program, checker, owner) = fixture(source, name)?;
-    project(&checker, &program, owner, declaration)
-}
-
-/// Test baseline: independently check the current revision, retain its coordinate bindings, reconstruct the supplied
-/// fields and compare every native field. The cold checker supplies expected values only, never reconstructed ones.
-pub(crate) fn verify_fixture(source: &str, name: &str, fields: Fields) -> Result<Vec<String>, NodeBindingError> {
-    let (program, checker, owner) = fixture(source, name)?;
-    let declaration = fields
-        .first()
-        .is_some_and(|header| header.get(3).is_some_and(|role| role == "declaration"));
-    let expected = if declaration {
-        checker.checked_declaration(owner)
-    } else {
-        checker.checked_body(owner)
-    }
-    .cloned()
-    .ok_or(NodeBindingError::MissingOwner)?;
-    let positions = Positions::new(&checker, &program, owner, declaration)?;
-    let expected_binding = checker.declaration_view().function(owner).cloned();
-    let expected_types = final_type_values(&checker, &expected);
-    let expected_ownership = expected_binding
-        .as_ref()
-        .and_then(|binding| binding.identity.as_ref())
-        .and_then(|identity| checker.type_info.declarations.ownership_contracts.get(identity))
-        .cloned();
-    drop(checker);
-    let NativeOwner::Settled(restored) = restore(&positions, &program, owner, &fields)? else {
-        return Err(NodeBindingError::MissingNode);
-    };
-    compare_native(&expected, &restored.view)?;
-    if restored.ownership != expected_ownership {
-        return Err(NodeBindingError::BaselineDifference("ownership contract".into()));
-    }
-    if let (Some(contract), Some(binding)) = (&restored.ownership, &expected_binding) {
-        contract
-            .validate(binding.params.len(), false)
-            .map_err(|message| NodeBindingError::InvalidField(message.into()))?;
-    }
-    if declaration && restored.binding != expected_binding {
-        return Err(NodeBindingError::BaselineDifference("declaration signature".into()));
-    }
-    if declaration && restored.defaults != default_writers(&program, owner)? {
-        return Err(NodeBindingError::BaselineDifference("selected default writers".into()));
-    }
-    if expected_types != restored.final_types {
-        return Err(NodeBindingError::BaselineDifference(
-            "finalized own type projections".into(),
-        ));
-    }
-    let mut current = DiagnosticPositions::new(&program, positions.nodes.owner().origin.clone());
-    restored
-        .view
-        .diagnostics
-        .iter()
-        .chain(&restored.view.warnings)
-        .map(|diagnostic| {
-            let error = current.render(diagnostic).map_err(|_| NodeBindingError::MissingNode)?;
-            Ok(crate::diagnostics::format_error("case.incn", source, &error))
-        })
-        .collect()
-}
-
 /// The complete native value is an independent baseline only; every sorted map, sequence and scalar remains visible.
 fn compare_native(expected: &impl std::fmt::Debug, restored: &impl std::fmt::Debug) -> Result<(), NodeBindingError> {
     let before = super::baseline_compare::canonical_debug(&format!("{expected:?}"));
@@ -774,39 +575,6 @@ fn compare_native(expected: &impl std::fmt::Debug, restored: &impl std::fmt::Deb
     Ok(())
 }
 
-/// Default writer membership comes from exact source default nodes; it never supplies a checked type or value.
-fn default_writers(program: &Program, owner: Span) -> Result<BTreeMap<Span, (Span, String)>, NodeBindingError> {
-    let declaration = program
-        .declarations
-        .iter()
-        .find(|declaration| declaration.span == owner)
-        .ok_or(NodeBindingError::MissingOwner)?;
-    let crate::ast::Declaration::Function(function) = &declaration.node else {
-        return Err(NodeBindingError::Unsupported("default owner"));
-    };
-    Ok(function
-        .params
-        .iter()
-        .filter_map(|parameter| {
-            parameter
-                .node
-                .default
-                .as_ref()
-                .map(|default| (default.span, (owner, parameter.node.name.clone())))
-        })
-        .collect())
-}
-
-/// Independent full checking belongs only to the fixture baseline. Canonical production conversion never invokes it.
-fn fixture(source: &str, name: &str) -> Result<(Program, TypeChecker, Span), NodeBindingError> {
-    let tokens = crate::lexer::lex(source).map_err(|_| NodeBindingError::Unsupported("fixture syntax"))?;
-    let program = crate::parser::parse(&tokens).map_err(|_| NodeBindingError::Unsupported("fixture syntax"))?;
-    let owner = program.declarations.iter().find(|declaration| matches!(&declaration.node, crate::ast::Declaration::Function(function) if function.name == name)).map(|declaration| declaration.span).ok_or(NodeBindingError::MissingOwner)?;
-    let mut checker = TypeChecker::new();
-    let _ = checker.check_program(&program);
-    Ok((program, checker, owner))
-}
-
 /// Reconstructed semantic native values and default-writer references, separate from the current position bindings.
 struct RestoredOwner {
     view: CheckedBodyView,
@@ -816,102 +584,10 @@ struct RestoredOwner {
     ownership: Option<crate::ownership_metadata::CheckedOwnershipContract>,
 }
 
-/// Declaration-owned source signatures and exact default-writer references are independent from statement outputs.
-fn project_signature(
-    checker: &TypeChecker,
-    program: &Program,
-    owner: Span,
-    positions: &Positions,
-    fields: &mut Fields,
-) -> Result<(), NodeBindingError> {
-    let binding = checker
-        .declaration_view()
-        .function(owner)
-        .ok_or(NodeBindingError::MissingOwner)?;
-    let mut row = vec![
-        "signature".into(),
-        positions.nodes.anchor(owner)?.path,
-        "declaration".into(),
-        binding.is_async.to_string(),
-    ];
-    parameter_fields(&binding.params, &mut row)?;
-    type_fields(&binding.return_type, &mut row)?;
-    fields.push(row);
-    let declaration = program
-        .declarations
-        .iter()
-        .find(|declaration| declaration.span == owner)
-        .ok_or(NodeBindingError::MissingOwner)?;
-    if let crate::ast::Declaration::Function(function) = &declaration.node {
-        for parameter in &function.params {
-            if let Some(default) = &parameter.node.default {
-                let selected = checker
-                    .checked_declaration(owner)
-                    .ok_or(NodeBindingError::MissingOwner)?;
-                if !selected.expressions().expr_types.contains_key(&default.span) {
-                    return Err(NodeBindingError::Unsupported("default writer"));
-                }
-                fields.push(vec![
-                    "default".into(),
-                    positions.nodes.anchor(default.span)?.path,
-                    parameter.node.name.clone(),
-                    positions.nodes.owner().render_compact(),
-                ]);
-            }
-        }
-    }
-    Ok(())
-}
-
 /// Pending local values are never presented as settled checked bodies, even in the test sink.
 enum NativeOwner {
     Local(BodyLocal),
     Settled(RestoredOwner),
-}
-
-/// Capture the actual pre-settlement statement output, not a relabeled final body. Unsupported pending capabilities
-/// refuse explicitly until the codec represents their decisions and references.
-pub(crate) fn fixture_local_projection(source: &str, name: &str) -> Result<Fields, NodeBindingError> {
-    let (program, checker, owner) = local_fixture(source, name)?;
-    let local = checker
-        .body_checks
-        .iter()
-        .map(|input| input.local())
-        .find(|local| local.owner == owner && local.kind == LocalOwnerKind::Body)
-        .ok_or(NodeBindingError::MissingOwner)?;
-    let positions = Positions::new(&checker, &program, owner, false)?;
-    let mut fields = local_fields(&positions, local)?;
-    fields.push(vec!["status".into(), String::new(), "pending".into(), "true".into()]);
-    fields.sort();
-    fields.insert(
-        0,
-        vec![
-            "header".into(),
-            positions.nodes.owner().render_compact(),
-            positions.nodes.root().to_owned(),
-            "local".into(),
-            "incan.checker-free-functions/9".into(),
-        ],
-    );
-    Ok(fields)
-}
-
-/// Rebuild a pending local owner and compare every native field to an independent pre-settlement cold baseline.
-pub(crate) fn verify_local_fixture(source: &str, name: &str, fields: Fields) -> Result<(), NodeBindingError> {
-    let (program, checker, owner) = local_fixture(source, name)?;
-    let positions = Positions::new(&checker, &program, owner, false)?;
-    let expected = checker
-        .body_checks
-        .iter()
-        .map(|input| input.local())
-        .find(|local| local.owner == owner && local.kind == LocalOwnerKind::Body)
-        .cloned()
-        .ok_or(NodeBindingError::MissingOwner)?;
-    drop(checker);
-    let NativeOwner::Local(local) = restore(&positions, &program, owner, &fields)? else {
-        return Err(NodeBindingError::MissingNode);
-    };
-    compare_native(&expected, &local)
 }
 
 /// Run only existing declaration and statement operations, stopping before settlement. This is a fixture baseline,
@@ -933,131 +609,10 @@ fn local_fixture(source: &str, name: &str) -> Result<(Program, TypeChecker, Span
     Ok((program, checker, owner))
 }
 
-/// The initial local profile proves every unsupported collection empty and refuses traversal-indexed decisions.
-fn validate_local(local: &BodyLocal) -> Result<(), NodeBindingError> {
-    let BodyLocal {
-        owner: _,
-        kind: _,
-        order: _,
-        nested: _,
-        expressions: _,
-        references: _,
-        calls: _,
-        protocols: _,
-        rust: _,
-        traits: _,
-        c_abi: _,
-        mutation: _,
-        dictionary: _,
-        iterator_sum_items: _,
-        diagnostic_slots: _,
-        warning_slots: _,
-    } = local;
-    unsupported::expression_artifacts(&local.expressions)?;
-    unsupported::reference_artifacts(&local.references)?;
-    unsupported::call_artifacts(&local.calls)?;
-    unsupported::protocol_artifacts(&local.protocols)?;
-    unsupported::rust_interop_artifacts(&local.rust)?;
-    unsupported::trait_artifacts(&local.traits)?;
-    unsupported::cabi_interop_artifacts(&local.c_abi)?;
-    if !local.iterator_sum_items.is_empty()
-        || !local.dictionary.is_empty()
-        || !local.diagnostic_slots.is_empty()
-        || !local.warning_slots.is_empty()
-        || local.order.mutation != 0
-        || local.order.dictionary != 0
-    {
-        return Err(NodeBindingError::Unsupported("pending local decisions"));
-    }
-    Ok(())
-}
-
-/// One conversion path owns all local field primitives, independently of whether settlement has completed.
-fn local_fields(positions: &Positions, local: &BodyLocal) -> Result<Fields, NodeBindingError> {
-    validate_local(local)?;
-    let mut fields = Vec::new();
-    project_expressions(positions, local, &mut fields)?;
-    project_references(positions, local, &mut fields)?;
-    project_calls(positions, local, &mut fields)?;
-    inputs::project(positions, local, &mut fields)?;
-    for canonical in local.nested.values() {
-        fields.push(vec![
-            "binding".into(),
-            positions.nodes.anchor(span_of(canonical))?.path,
-            "declaration".into(),
-            positions.identity(canonical)?,
-        ]);
-    }
-    mutation::project(positions, &local.mutation, &mut fields)?;
-    Ok(fields)
-}
-
 /// Selected final module refinements for one body's own expression/reference domains. These are distinct from the
 /// pending local facts and never include a sibling's payload.
 #[derive(Debug, Default, PartialEq)]
 struct FinalTypes {
     expressions: BTreeMap<Span, crate::symbols::ResolvedType>,
     bindings: BTreeMap<CanonicalSymbolId, crate::symbols::ResolvedType>,
-}
-
-/// Select the same final expression/binding projections as G3's native publication adapter, without its broad copy.
-fn final_type_values(checker: &TypeChecker, view: &CheckedBodyView) -> FinalTypes {
-    let expressions = view
-        .expressions()
-        .expr_types
-        .keys()
-        .filter_map(|span| {
-            checker
-                .type_info
-                .expressions
-                .body_ir_expr_types
-                .get(span)
-                .map(|ty| (*span, ty.clone()))
-        })
-        .collect();
-    let bindings = view
-        .references()
-        .resolved_write_identities
-        .values()
-        .chain(view.references().resolved_identities.values())
-        .filter_map(|canonical| {
-            checker
-                .type_info
-                .expressions
-                .body_ir_binding_types
-                .get(canonical)
-                .map(|ty| (canonical.clone(), ty.clone()))
-        })
-        .collect();
-    FinalTypes { expressions, bindings }
-}
-
-/// Publish the selected finalized empty-list/value types and an explicitly witnessed empty native-call capability.
-/// A nonempty native-call field already fails the exhaustive local inventory until its typed codec is supported.
-fn project_final_types(
-    checker: &TypeChecker,
-    view: &CheckedBodyView,
-    positions: &Positions,
-    fields: &mut Fields,
-) -> Result<(), NodeBindingError> {
-    let values = final_type_values(checker, view);
-    if values.expressions.is_empty() && values.bindings.is_empty() {
-        fields.push(vec!["final-type".into(), String::new(), "empty".into(), "true".into()]);
-    }
-    for (span, ty) in &values.expressions {
-        let mut row = vec![
-            "final-type".into(),
-            positions.nodes.anchor(*span)?.path,
-            "expression".into(),
-        ];
-        type_fields(ty, &mut row)?;
-        fields.push(row);
-    }
-    for (canonical, ty) in &values.bindings {
-        let mut row = vec!["final-type".into(), positions.identity(canonical)?, "binding".into()];
-        type_fields(ty, &mut row)?;
-        fields.push(row);
-    }
-    fields.push(vec!["native-call".into(), String::new(), "empty".into(), "true".into()]);
-    Ok(())
 }
