@@ -271,7 +271,9 @@ build_source_closure
 # the driver, and installs it with its Rust ABI cache into the build home. Relinking retains one installed native
 # support generation, with every selected producer validated against the current source graph.
 # A seed archive is never relabeled as its output.
-native driver-build relink-driver.sh --release
+step driver-build env DEV8_LANE="$lane" SELFBUILD_HOME="$INCAN_HOME" SELFBUILD_OVEN="$builder" \
+    SELFBUILD_STDLIB="$INCAN_STDLIB" INCAN_RELINK_LOG="$out/driver-build-oven.log" \
+    "$builder" run "$source/scripts/relink_driver.incn" -- --release
 # The seed's driver compiled the closure the lowering links. The shipped runtime and standard packages are compiled
 # again by the candidate, so they carry this tree's lowering rather than the seed's.
 build_runtime_closure candidate-

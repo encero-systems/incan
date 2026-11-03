@@ -25,6 +25,7 @@ from toolchain import (
 )
 from rust_units import decoded, read_registry_units
 from registry_units import RegistryUnit
+from registry_shipping import packed_checkout, ships, ships_search, shipped_entries
 from observation import file_digest
 from unit_publication import publication, published_identity, record_path, record_payload
 from cli_help import render, unknown_option
@@ -109,8 +110,8 @@ def pack_staged(toolchain: Toolchain, directory: Path, stage: Path, output: Path
     4. Write the portable toolchain description.
     5. Archive the stage.
     """
-    # 1. The registry closure travels with the units it names, each artifact directory once.
-    stage_registry(toolchain, stage)?
+    # 1. The registry closure travels with the units the checkout's Loaves reach, each artifact directory once.
+    shipped = stage_registry(toolchain, stage)?
     # 2. The driver and the Rust fact caches are linked in under names relative to the toolchain.
     driver = "bin/" + Path(toolchain.driver).name()
     link_file(Path(toolchain.driver), stage.joinpath(driver))?
@@ -119,7 +120,7 @@ def pack_staged(toolchain: Toolchain, directory: Path, stage: Path, output: Path
     # 3. The runtime and support crates, the directories their dependencies live in and the standard Loaves come along,
     # with the standard sources, so the installation never names the checkout it was built from.
     externs = stage_externs(toolchain.externs, stage)?
-    search = stage_search(toolchain.search, stage, "")?
+    search = stage_search([path for path in toolchain.search if ships_search(path, shipped)], stage, "")?
     stage_loaves(directory.joinpath("loaves"), stage)?
     stage_standard_sources(stage)?
     # 4. The description names only paths inside the toolchain, so the archive installs wherever it is unpacked.
@@ -127,7 +128,7 @@ def pack_staged(toolchain: Toolchain, directory: Path, stage: Path, output: Path
     for key, relative in c_tools:
         description = replaced(description, key, JsonValue.string(relative))?
     if toolchain.registry_lock != "":
-        link_file(Path(toolchain.registry_lock), stage.joinpath("registry/selected.json"))?
+        write_json(stage.joinpath("registry/selected.json"), shipped_lock(Path(toolchain.registry_lock), shipped)?)?
         description = replaced(description, "registry_lock", JsonValue.string("registry/selected.json"))?
     write_json(stage.joinpath("toolchain.json"), description)?
     # 5. The stage becomes one archive that holds the files the links point at, not the links.
@@ -226,24 +227,34 @@ def tar_arguments(output: Path, pending: Path, stage: Path) -> Result[list[str],
     return Ok(arguments)
 
 
-def stage_registry(toolchain: Toolchain, stage: Path) -> Result[None, str]:
+def stage_registry(toolchain: Toolchain, stage: Path) -> Result[set[str], str]:
     """
-    Retain the closure's unit identities and copy each existing named registry artifact directory once.
+    Retain the identities of the closure units the checkout's Loaves reach and copy each one's artifact directory once.
 
-    1. Stage the artifact directory of every registry unit that has one.
-    2. Rewrite each extern's path, and each unit's and dependency's artifact, to its staged place.
+    1. Stage the artifact directory of every shipped registry unit that has one.
+    2. Rewrite each extern's path, and each shipped unit's and dependency's artifact, to its staged place.
+    3. Return the shipped entries, which select the search directories and the registry lock that travel along.
     """
     source = Path(toolchain.registry_units)
-    # 1. A unit's artifacts are shipped from the directory the store holds them in, if that directory exists.
+    # 1. A unit's artifacts are shipped from the directory the store holds them in, if that directory exists; a unit
+    # that no declared crate reaches stays behind.
     registry = read_registry_units(source)?
+    mut shipped: set[str] = set()
     for unit in registry.units:
-        if Path(unit.directory).is_dir():
+        shipped.add(unit.entry)
+    if let Some(checkout) = packed_checkout()?:
+        shipped = shipped_entries(registry.units, checkout)?
+    for unit in registry.units:
+        if ships(unit, shipped) and Path(unit.directory).is_dir():
             stage_directory(Path(unit.directory), stage)?
-    # 2. The closure document names each extern relative to the toolchain, not to the machine that packed it.
+    # 2. The closure document names each extern relative to the toolchain, not to the machine that packed it. Its
+    # externs are keyed by registry entry, so an entry that stays behind takes its extern along.
     document = read_json(source)?
     mut externs: Dict[str, JsonValue] = {}
     table = document.require("externs").map_err((error) => error.message())?
     for name in table.keys():
+        if name.startswith("sha256:") and name not in shipped:
+            continue
         value = table.require(name).map_err((error) => error.message())?
         artifact = required_text(value, "path")?
         path = Path(located(source.parent(), artifact))
@@ -257,10 +268,22 @@ def stage_registry(toolchain: Toolchain, stage: Path) -> Result[None, str]:
         completed = registry.units[index]
         if required_text(records[index], "entry")? != completed.entry:
             return Err("registry closure changed while packing")
-        units.append(portable_unit(source, baked_registry_unit(records[index], completed)?, stage)?)
+        if ships(completed, shipped):
+            units.append(portable_unit(source, baked_registry_unit(records[index], completed)?, stage)?)
     portable = replaced(document, "externs", JsonValue.object(externs))?
     write_json(stage.joinpath("registry/closure.json"), replaced(portable, "units", JsonValue.array(units))?)?
-    return Ok(None)
+    # 3. The shipped entries also decide which search directories and lock selections travel with the closure.
+    return Ok(shipped)
+
+
+def shipped_lock(lock: Path, shipped: set[str]) -> Result[JsonValue, str]:
+    """The registry lock restricted to the selections of shipped units."""
+    document = read_json(lock)?
+    mut selections: list[JsonValue] = []
+    for selection in required_items(document, "units")?:
+        if required_text(selection, "entry")? in shipped:
+            selections.append(selection)
+    return replaced(document, "units", JsonValue.array(selections))
 
 
 def baked_registry_unit(document: JsonValue, unit: RegistryUnit) -> Result[JsonValue, str]:

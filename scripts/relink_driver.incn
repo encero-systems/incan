@@ -1,0 +1,303 @@
+"""
+Rebuild a lane's driver and Incan lowering with its installed toolchain, then install the driver in place of the one
+it replaces.
+
+Run `incan run scripts/relink_driver.incn -- [--lowering] [--release]` with `DEV8_LANE` set; `scripts/README.md`
+describes the settings.
+"""
+
+from rust::std::env import args
+from rust::std::process import Command, exit
+from rust::std::string import String as RustString
+from rust::std::time import Instant
+from std.encoding.hex import hexlify
+from std.environ import get_or
+from std.fs import Path
+from std.hash import file_digest
+from std.json import JsonValue
+from check_support import write_stderr
+
+const TOOLCHAIN: str = "toolchains/0.6.0-dev.8"
+const DRIVER_LOAF: str = "loaves/toolchain/incan-rustc-driver"
+
+
+model Relink:
+    """One relink's selected lane, toolchain and build settings."""
+
+    repo: Path
+    bootstrap: Path
+    toolchain_home: Path
+    builder: str
+    stdlib: str
+    profile: str
+    refresh: bool
+
+
+def main() -> None:
+    """Relink, reporting a refused option with status 2 and any other failure with status 1."""
+    match options():
+        Ok(relink) =>
+            match run(relink):
+                Ok(_) => exit(0)
+                Err(message) =>
+                    write_stderr(f"{message}\n")
+                    exit(1)
+        Err(message) =>
+            write_stderr(f"{message}\n")
+            exit(2)
+
+
+def options() -> Result[Relink, str]:
+    """Read `--lowering` and `--release` and the lane's environment."""
+    mut profile = "debug"
+    mut refresh = false
+    arguments = [argument for argument in args()]
+    for argument in arguments[1:]:
+        if argument == "--lowering":
+            refresh = true
+        elif argument == "--release":
+            profile = "release"
+        else:
+            return Err(f"unknown option: {argument}")
+    lane_text = get_or("DEV8_LANE", "")
+    if lane_text == "":
+        return Err("set DEV8_LANE to the bootstrap lane directory")
+    lane = Path(lane_text)
+    repo = lane.joinpath("incan")
+    return Ok(
+        Relink(
+            repo=repo,
+            bootstrap=lane.joinpath("bootstrap"),
+            toolchain_home=Path(get_or("SELFBUILD_HOME", lane.joinpath("dev8-home").0)),
+            builder=get_or("SELFBUILD_OVEN", lane.joinpath("oven-bin/incan").0),
+            stdlib=get_or("SELFBUILD_STDLIB", repo.joinpath("loaves/stdlib").0),
+            profile=profile,
+            refresh=refresh,
+        ),
+    )
+
+
+def run(relink: Relink) -> Result[None, str]:
+    """Build the driver against a compiler home bound to the installation, then install it unless asked not to."""
+    started = Instant.now()
+    toolchain = relink.toolchain_home.joinpath(TOOLCHAIN)
+    if relink.refresh:
+        # Withdraw only the generated library stamp; Oven recompiles the lowering through the installed driver.
+        stamp = relink.repo.joinpath(
+            f"{DRIVER_LOAF}/target/incan/loaves/incan_mir_lowering/{relink.profile}/.oven-inputs.sha256",
+        )
+        if stamp.is_file():
+            stamp.unlink().map_err((error) => error.message())?
+    sysroot = absolute(manifest_text(read_manifest(toolchain)?, "sysroot")?, toolchain.0)
+    compiler_home = relink.toolchain_home.joinpath("compiler-build")
+    prepare_compiler_home(relink.toolchain_home, compiler_home)?
+    prepared = started.elapsed().as_secs_f64()
+    log = Path(get_or("INCAN_RELINK_LOG", relink.bootstrap.joinpath(f"driver-build-{relink.profile}.log").0))
+    build_driver(relink, sysroot, compiler_home, log)?
+    compiled = started.elapsed().as_secs_f64()
+    built = relink.repo.joinpath(f"{DRIVER_LOAF}/target/incan/rust/{relink.profile}/bin/incan-rustc-driver")
+    if not built.is_file():
+        return Err(f"missing {relink.profile} driver: {built.0}")
+    println(f"{relink.profile} driver built: {built.0}")
+    if get_or("INCAN_DRIVER_INSTALL", "1") == "0":
+        return Ok(None)
+    driver = install_driver(toolchain, built, sysroot)?
+    println(f"{relink.profile} driver installed: {driver.0}")
+    if get_or("INCAN_RELINK_TRACE", "0") == "1":
+        println(f"relink timing setup: {prepared}")
+        println(f"relink timing compilation: {compiled - prepared}")
+        println(f"relink timing install: {started.elapsed().as_secs_f64() - compiled}")
+        println(f"relink timing total: {started.elapsed().as_secs_f64()}")
+    return Ok(None)
+
+
+def prepare_compiler_home(installed_home: Path, compiler_home: Path) -> Result[None, str]:
+    """
+    Bind a compiler home to the installation's exact native support generation.
+
+    Installed producers are validated against current source by Oven. Removing a shared root would rebake a second code
+    generation variant while the runtime and standard Loaves still require the installed producer's exact bytes.
+    """
+    compiler_home.mkdir(true, true).map_err((error) => error.message())?
+    installed = installed_home.resolve().map_err((error) => error.message())?
+    compiler = compiler_home.resolve().map_err((error) => error.message())?
+    if installed.0 == compiler.0:
+        return Err("compiler home must be distinct from the installation")
+    selected = installed.joinpath(TOOLCHAIN)
+    destination = compiler.joinpath(TOOLCHAIN)
+    if not selected.joinpath("toolchain.json").is_file():
+        return Err(f"missing installed manifest: {selected.0}/toolchain.json")
+    destination.mkdir(true, true).map_err((error) => error.message())?
+    # Loaf facts name native artifacts under `native/` and the registry closure names units under `registry/`, both
+    # relative to the toolchain directory, so the compiler home selects the installed trees rather than a copy.
+    for tree in ["loaves", "native", "registry"]:
+        share_tree(selected, destination, tree)?
+    text = absolute_manifest(read_manifest(selected)?, selected.0)?
+    target = destination.joinpath("toolchain.json")
+    if target.is_file() and read_text(target)? == text:
+        return Ok(None)
+    return replace_text(target, text)
+
+
+def share_tree(selected: Path, destination: Path, tree: str) -> Result[None, str]:
+    """Link one installed tree into the compiler home, refusing a home that already selects another."""
+    source = selected.joinpath(tree)
+    if not source.exists():
+        return Ok(None)
+    link = destination.joinpath(tree)
+    if link.is_symlink() or link.exists():
+        current = link.resolve().map_err((error) => error.message())?
+        wanted = source.resolve().map_err((error) => error.message())?
+        if not link.is_symlink() or current.0 != wanted.0:
+            return Err(f"compiler home already selects another {tree} tree: {link.0}")
+        return Ok(None)
+    return link.symlink_to(source).map_err((error) => error.message())
+
+
+def absolute_manifest(manifest: JsonValue, base: str) -> Result[str, str]:
+    """The installed manifest with every artifact path absolute, so a compiler home reads the installed files."""
+    mut fields = manifest.expect_object().map_err((error) => error.message())?
+    for key in ["driver", "sysroot"]:
+        fields[key] = JsonValue.string(absolute(manifest_text(manifest, key)?, base))
+    for key in ["rust_abi", "search"]:
+        paths = manifest_list(manifest, key)?
+        fields[key] = JsonValue.array([JsonValue.string(absolute(path, base)) for path in paths])
+    mut externs: list[JsonValue] = []
+    for entry in manifest_entries(manifest, "externs")?:
+        mut extern = entry.expect_object().map_err((error) => error.message())?
+        extern["path"] = JsonValue.string(absolute(manifest_text(entry, "path")?, base))
+        externs.append(JsonValue.object(extern))
+    fields["externs"] = JsonValue.array(externs)
+    for key in ["registry_units", "registry_lock"]:
+        match manifest.get(key):
+            Some(value) =>
+                text = value.as_str().unwrap_or("")
+                if text != "":
+                    fields[key] = JsonValue.string(absolute(text, base))
+            None => pass
+    return JsonValue.object(fields).to_pretty_json().map_err((error) => error.message())
+
+
+def build_driver(relink: Relink, sysroot: str, compiler_home: Path, log: Path) -> Result[None, str]:
+    """Build the driver with Oven against the compiler home, keeping the full build output in `log`."""
+    log.parent().mkdir(true, true).map_err((error) => error.message())?
+    mut command = Command.new(relink.builder)
+    command.current_dir(relink.repo.0).arg("build").arg(str(DRIVER_LOAF)).arg("--profile").arg(relink.profile)
+    command.env("OVEN_TRACE", "-").env("RUSTC", f"{sysroot}/bin/rustc")
+    command.env("INCAN_STDLIB", relink.stdlib).env("INCAN_HOME", compiler_home.0)
+    output = command.output().map_err((error) => f"cannot run {relink.builder}: {error.to_string()}")?
+    stdout = RustString.from_utf8_lossy(output.stdout).into_owned()
+    stderr = RustString.from_utf8_lossy(output.stderr).into_owned()
+    replace_text(log, stdout + stderr)?
+    if output.status.success():
+        return Ok(None)
+    lines = (stdout + stderr).split("\n")
+    mut first = 0
+    if len(lines) > 40:
+        first = len(lines) - 40
+    write_stderr("\n".join(lines[first:]) + "\n")
+    return Err(f"driver build failed; log: {log.0}")
+
+
+def install_driver(toolchain: Path, built: Path, sysroot: str) -> Result[Path, str]:
+    """
+    Install the driver under its content digest with its standard Rust ABI cache, point the manifest at both, and
+    remove the driver and cache that the manifest named before when an earlier relink installed them.
+    """
+    toolchain.joinpath("bin").mkdir(true, true).map_err((error) => error.message())?
+    toolchain.joinpath("rust-abi").mkdir(true, true).map_err((error) => error.message())?
+    digest = hexlify(file_digest(built, "sha256").map_err((error) => error.message())?)
+    driver = toolchain.joinpath(f"bin/incan-rustc-driver-{digest[:12]}")
+    if not driver.is_file():
+        _ = built.copy(driver, true, true).map_err((error) => error.message())?
+    abi = toolchain.joinpath(f"rust-abi/std-{driver.name()}.rustabi")
+    if not abi.is_file():
+        standard_abi(driver, sysroot, abi)?
+    manifest = read_manifest(toolchain)?
+    mut replaced = [manifest_text(manifest, "driver")?]
+    for cache in manifest_list(manifest, "rust_abi")?:
+        replaced.append(cache)
+    mut fields = manifest.expect_object().map_err((error) => error.message())?
+    fields["driver"] = JsonValue.string(driver.0)
+    fields["rust_abi"] = JsonValue.array([JsonValue.string(abi.0)])
+    replace_text(
+        toolchain.joinpath("toolchain.json"),
+        JsonValue.object(fields).to_pretty_json().map_err((error) => error.message())?,
+    )?
+    for previous in replaced:
+        remove_earlier_output(toolchain, Path(absolute(previous, toolchain.0)), [driver.0, abi.0])?
+    return Ok(driver)
+
+
+def standard_abi(driver: Path, sysroot: str, abi: Path) -> Result[None, str]:
+    """Extract the standard library's Rust ABI cache with the installed driver."""
+    mut command = Command.new(driver.0)
+    command.arg("--rust-abi").arg(sysroot).arg(abi.0).arg("std").arg("core").arg("alloc").env_remove("RUSTC_BOOTSTRAP")
+    output = command.output().map_err((error) => f"cannot run {driver.0}: {error.to_string()}")?
+    if output.status.success():
+        return Ok(None)
+    return Err(f"standard Rust ABI extraction failed: {RustString.from_utf8_lossy(output.stderr).into_owned()}")
+
+
+def remove_earlier_output(toolchain: Path, previous: Path, current: list[str]) -> Result[None, str]:
+    """
+    Remove a replaced relink driver or standard ABI cache that the manifest no longer names; anything else the
+    manifest named, such as a path outside this toolchain, stays.
+    """
+    if previous.0 in current or not previous.is_file():
+        return Ok(None)
+    directory = previous.parent().0
+    name = previous.name()
+    driver = directory == toolchain.joinpath("bin").0 and name.startswith("incan-rustc-driver-")
+    cache = directory == toolchain.joinpath("rust-abi").0 and name.startswith("std-incan-rustc-driver-")
+    if driver or (cache and name.endswith(".rustabi")):
+        return previous.unlink().map_err((error) => error.message())
+    return Ok(None)
+
+
+def read_manifest(toolchain: Path) -> Result[JsonValue, str]:
+    """Parse a toolchain's `toolchain.json`."""
+    return JsonValue.parse(read_text(toolchain.joinpath("toolchain.json"))?).map_err((error) => error.message())
+
+
+def manifest_text(manifest: JsonValue, key: str) -> Result[str, str]:
+    """A required string field of a manifest or manifest entry."""
+    return manifest
+        .require(key)
+        .and_then((value) => value.expect_str())
+        .map_err((error) => f"toolchain.json {key}: {error.message()}")
+
+
+def manifest_list(manifest: JsonValue, key: str) -> Result[list[str], str]:
+    """An optional list of strings; an absent field is empty."""
+    mut values: list[str] = []
+    for entry in manifest_entries(manifest, key)?:
+        values.append(entry.expect_str().map_err((error) => f"toolchain.json {key}: {error.message()}")?)
+    return Ok(values)
+
+
+def manifest_entries(manifest: JsonValue, key: str) -> Result[list[JsonValue], str]:
+    """An optional list field; an absent field is empty."""
+    match manifest.get(key):
+        Some(value) => return value.expect_array().map_err((error) => f"toolchain.json {key}: {error.message()}")
+        None => return Ok([])
+
+
+def absolute(path: str, base: str) -> str:
+    """A manifest path made absolute against the toolchain directory that names it."""
+    if path.startswith("/"):
+        return path
+    return f"{base}/{path}"
+
+
+def read_text(path: Path) -> Result[str, str]:
+    """Read a UTF-8 file."""
+    return path.read_text("utf-8", "strict").map_err((error) => f"{path.0}: {error.message()}")
+
+
+def replace_text(target: Path, text: str) -> Result[None, str]:
+    """Write `text` beside `target` and move it into place, so a reader never sees a partial file."""
+    staged = target.parent().joinpath(f".{target.name()}.next")
+    staged.write_text(text, "utf-8", "strict", None).map_err((error) => f"{staged.0}: {error.message()}")?
+    _ = staged.replace(target).map_err((error) => f"{target.0}: {error.message()}")?
+    return Ok(None)
