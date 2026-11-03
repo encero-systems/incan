@@ -15,6 +15,7 @@ from pub::incan_mir_plan import (
     Unwind,
     assign as plan_assign,
 )
+from explicit_arguments import reference_contract
 from layout_types import stored_field_type, native_source_type
 from rust::incan_semantics_core::body_ir import (
     AggregateKind as RustAggregateKind,
@@ -37,6 +38,7 @@ from defaults import model_default_arguments
 from lowering import BodyIrModule
 from checked_values import scalar_operand, scalar_place
 from operators import operand_type
+from statements import borrowed_payload, carrier_payload
 from call_arguments import tuple_pointer_element
 from builtin_calls import clone_enum_reference, clone_model_reference, coerce_numeric_operand
 from formatting import display_operand, lower_format
@@ -133,6 +135,14 @@ pub def checked_aggregate(
                 element = elements[slot]
                 match element.as_one():
                     Some(value) =>
+                        # A tuple carrying a view holds the view's loan in its reference element.
+                        if slot < len(element_types) and builder.carries_view and borrowed_payload(value):
+                            field = tuple_element_type(element_types[slot])
+                            match reference_contract(field):
+                                Ok(_contract) =>
+                                    operands.append(carrier_payload(builder, value, field, span)?)
+                                    continue
+                                Err(_reason) => pass
                         # A list or carrier element takes the destination element's exact carrier, `None` included.
                         if (
                             slot < len(element_types)

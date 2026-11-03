@@ -22,7 +22,7 @@ The [record-scope cases](./tests/test_record_scope.incn) and [canonical controls
 
 ## Ownership record profile
 
-`incan.checker-free-functions/8` and `incan.checker-fields/8` distinguish declaration ownership annotations from body-owned access facts. These versions describe checker records; they are independent of the executable Body IR representation version.
+`incan.checker-free-functions/9` and `incan.checker-fields/9` distinguish declaration ownership annotations from body-owned access facts. These versions describe checker records; they are independent of the executable Body IR representation version.
 
 | Field family | Retained information |
 | --- | --- |
@@ -30,7 +30,7 @@ The [record-scope cases](./tests/test_record_scope.incn) and [canonical controls
 | `input-copy` | The callable owner's exact checked Copy decisions by resolved value type, independent of graph event tags or ABI adaptation heuristics. |
 | `input-call` | The exact callable owner and callee, explicit-versus-ordinary declaration classification, instantiated parameter contracts and receiver mode. |
 | `input-local` | A canonical local declaration, its callable owner, selected access mode, checked type, write permission and annotation anchor. |
-| `input-flow` | Complete storage permissions, place projections, loans and parent relationships, local loan destinations, owned destinations with exact initializer/source-event relationships, operation completion and ordered operand dependencies, invocation argument bindings, graph nodes and control-flow edges. |
+| `input-flow` | Complete storage permissions, place projections, loans and parent relationships, local loan destinations, owned destinations with exact initializer/source-event relationships, operation completion and ordered operand dependencies, invocation argument bindings, closures bound to locals with their captures, loan and capture reads, graph nodes and control-flow edges. |
 | `binding-type` | The checked type of a canonical body binding, or a canonical parameter requirement retaining Some(type) versus an explicit None conflict. |
 | `mutation` | Completed changed-parameter inventories and reassigned local declarations. Empty changed-owner inventories remain distinct from absent ones. |
 

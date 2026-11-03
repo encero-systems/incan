@@ -421,13 +421,19 @@ impl TypeChecker {
                     source.span,
                 )
             })?;
-        // A carried view is one payload of a `Result` result or the payload of an `Option` result; no other type
-        // carries one.
+        // A carried view is one payload of a `Result` result, the payload of an `Option` result or one element of a
+        // tuple result; no other type carries one.
         if let Some(payload) = view.carried
-            && !(signature.result_type.is_result() || (signature.result_type.is_option() && payload == 0))
+            && !(signature.result_type.is_result()
+                || (signature.result_type.is_option() && payload == 0)
+                || signature
+                    .result_type
+                    .tuple_elements()
+                    .is_some_and(|elements| payload < elements.len()))
         {
             return Err(Self::ownership_source_error(
-                "A view inside a result must be a payload of a Result or the payload of an Option",
+                "A view inside a result must be a payload of a Result, the payload of an Option or an element of a \
+                 tuple",
                 signature.result.span,
             ));
         }

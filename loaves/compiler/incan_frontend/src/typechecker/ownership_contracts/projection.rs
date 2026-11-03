@@ -28,6 +28,15 @@ impl CheckedInputBody<'_> {
         &self.owner
     }
 
+    /// Whether the invocation argument written at `span` passes a closure local to a parameter its callee only calls.
+    pub(crate) fn is_closure_argument(&self, span: incan_semantics_core::HirSourceSpan) -> bool {
+        self.graph
+            .invocations
+            .values()
+            .flat_map(|invocation| &invocation.arguments)
+            .any(|argument| argument.span == span && closure_argument(self.graph, argument))
+    }
+
     /// Select the source checker's exact Copy decision for a checked expression in this body. Native storage may
     /// reject a carrier it cannot preserve, but cannot replace this semantic fact with its own ABI heuristic.
     pub(crate) fn value_is_copy(&self, span: incan_semantics_core::HirSourceSpan) -> Result<bool, &'static str> {
@@ -185,6 +194,14 @@ impl TypeCheckInfo {
 
         // ---- Loan destinations and their source annotations ----
         for (local, loan) in &graph.local_loans {
+            // A closure's captured borrow; the graph validation already tied it to the closure's captures.
+            if graph
+                .closures
+                .values()
+                .any(|closure| &closure.local == local && closure.loan == Some(*loan))
+            {
+                continue;
+            }
             let Some(mode) = self.protocols.explicit_local_modes.get(local) else {
                 self.validate_view_local(graph, local, *loan)?;
                 continue;
@@ -287,8 +304,16 @@ impl TypeCheckInfo {
             }
             let contract = self.selected_input_contract(call)?;
             if call.kind == InputCallKind::Ordinary {
-                for parameter in &call.parameters {
-                    if parameter.is_mut || !self.checked_input_copy_value(owner, &parameter.ty)? {
+                for (slot, parameter) in call.parameters.iter().enumerate() {
+                    // A closure local passed to a function-typed parameter: checking admits a capturing closure only
+                    // where its callee calls it and keeps it no longer.
+                    let closure = matches!(parameter.ty, crate::symbols::ResolvedType::Function(..))
+                        && invocation
+                            .arguments
+                            .iter()
+                            .find(|argument| argument.slot == slot)
+                            .is_some_and(|argument| closure_argument(graph, argument));
+                    if parameter.is_mut || !(closure || self.checked_input_copy_value(owner, &parameter.ty)?) {
                         return Err("ordinary invocation needs checked immutable Copy inputs");
                     }
                 }
@@ -344,4 +369,23 @@ impl TypeCheckInfo {
         }
         Ok(())
     }
+}
+
+/// Whether an invocation argument passes a closure local: its source read is of the closure local itself.
+pub(super) fn closure_argument(graph: &flow::Graph, argument: &flow::InvocationArgument) -> bool {
+    let Some(flow::Event::Access {
+        place, through: None, ..
+    }) = argument
+        .evaluation
+        .source_node
+        .and_then(|index| graph.nodes.get(index))
+        .map(|node| &node.event)
+    else {
+        return false;
+    };
+    place.projection.is_empty()
+        && graph
+            .closures
+            .values()
+            .any(|closure| matches!(&place.root, flow::Root::Binding(local) if *local == closure.local))
 }

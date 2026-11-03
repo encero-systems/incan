@@ -1683,15 +1683,19 @@ impl Body {
             {
                 return Some("returned view must borrow an existing parameter slot with shared or exclusive access");
             }
-            // A `Result` carries a view in either payload; an `Option` only in its one payload.
+            // A `Result` carries a view in either payload, an `Option` only in its one payload, a tuple in any element.
             if let Some(payload) = view.carried
-                && !match self.return_type.collection() {
-                    Some((CollectionTypeId::Result, [_, _])) => payload < 2,
-                    Some((CollectionTypeId::Option, [_])) => payload == 0,
+                && !match (&self.return_type, self.return_type.collection()) {
+                    (crate::IncanType::Tuple(elements), _) => payload < elements.len(),
+                    (_, Some((CollectionTypeId::Tuple, elements))) => payload < elements.len(),
+                    (_, Some((CollectionTypeId::Result, [_, _]))) => payload < 2,
+                    (_, Some((CollectionTypeId::Option, [_]))) => payload == 0,
                     _ => false,
                 }
             {
-                return Some("carried returned view requires a payload of a Result or Option result");
+                return Some(
+                    "carried returned view requires a payload of a Result or Option result or a tuple element",
+                );
             }
         }
         if profile.version == 1 && !profile.owned_initializers.is_empty() {

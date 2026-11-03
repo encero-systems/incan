@@ -4,6 +4,7 @@ from rust::incan_semantics_core import (
     IncanType as RustType,
     IncanPrimitiveType as Primitive,
     IncanCallableParamKind,
+    IncanInputAccess,
     SemanticSourceTargetKind,
 )
 from rust::incan_semantics_core::body_ir import BodyIrModule, Body
@@ -26,7 +27,7 @@ from pub::incan_mir_plan import (
 )
 from pub::incan_mir_plan import place as plan_place, block as plan_block
 from classes import function_name, frame_type, is_program_entry
-from layout_types import native_source_type
+from layout_types import native_source_type, shared_receiver_type, mutable_receiver_type
 from native_type_identity import ConstructorIndex
 from unions import collect_unions
 from frame import (
@@ -93,13 +94,20 @@ def capture_types(
     body: &Body,
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[list[PlanType], str]:
-    """Retain owned captures, including declaration-owned rest packs, and at most one nominal loan."""
+    """
+    Retain owned captures, including declaration-owned rest packs, and at most one nominal loan. An explicit borrowed
+    input is captured as its loan, which the future holds until it completes.
+    """
     mut fields: list[PlanType] = []
     mut loans = 0
     nominals = borrowed_table(module.nominal_declarations)
     enums = borrowed_table(module.enum_declarations)
     for parameter in body.params:
-        ty = frame_type(constructors, nominals, enums, body.locals[int(parameter.local.index())], intrinsics)?
+        mut ty = frame_type(constructors, nominals, enums, body.locals[int(parameter.local.index())], intrinsics)?
+        match parameter.input_access:
+            IncanInputAccess.Shared => ty = shared_receiver_type(ty)?
+            IncanInputAccess.Exclusive => ty = mutable_receiver_type(ty)?
+            _ => pass
         validate_collection_capture(parameter.kind, ty)?
         match ty:
             PlanType.ModelRef(_owner, _name) => loans += 1

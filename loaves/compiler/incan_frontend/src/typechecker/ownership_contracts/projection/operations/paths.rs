@@ -72,6 +72,7 @@ impl SourcePaths<'_> {
                     outgoing
                 }
                 Statement::Assignment(_)
+                | Statement::TupleUnpack(_)
                 | Statement::CompoundAssignment(_)
                 | Statement::FieldAssignment(_)
                 | Statement::Expr(_) => self.region(statement.span, incoming),

@@ -4,8 +4,8 @@
 use super::types::next;
 use super::{NodeBindingError, Positions, Span};
 use crate::typechecker::ownership_contracts::flow::{
-    Access, Event, Graph, InputEvaluation, Invocation, InvocationArgument, Loan, LoanId, LoanKind, Node,
-    OperandDependency, OperationInputs, OwnedInitialization, Permission, Place, Projection, Root,
+    Access, ClosureCaptures, Event, Graph, InputEvaluation, Invocation, InvocationArgument, Loan, LoanId, LoanKind,
+    Node, OperandDependency, OperationInputs, OwnedInitialization, Permission, Place, Projection, Root,
 };
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, IncanInputAccess};
 use std::collections::BTreeMap;
@@ -107,6 +107,25 @@ pub(super) fn ordered_key(previous: &mut String, before: &[String], remaining: u
     }
     *previous = key;
     Ok(())
+}
+
+/// Each closure bound to a local, keyed by its expression: the local, its captures, its loan and its capture reads.
+fn closures(positions: &Positions, graph: &Graph, fields: &mut Vec<String>) -> Result<(), NodeBindingError> {
+    let mut closures = Vec::new();
+    for (span, closure) in &graph.closures {
+        let mut row = vec![anchor(positions, *span)?];
+        let key = canonical_key(&row);
+        row.push(positions.identity(&closure.local)?);
+        row.push(closure.captures.len().to_string());
+        for capture in &closure.captures {
+            row.push(positions.identity(capture)?);
+        }
+        loan_option(closure.loan, &mut row);
+        row.push(closure.reads.len().to_string());
+        row.extend(closure.reads.iter().map(usize::to_string));
+        closures.push((key, row));
+    }
+    ordered_fields(closures, fields)
 }
 
 /// Convert the complete graph to bounded record primitives; liveness is recomputed from these exact facts on restore.
@@ -224,6 +243,7 @@ pub(super) fn project(positions: &Positions, graph: &Graph, fields: &mut Vec<Str
         invocations.push((key, row));
     }
     ordered_fields(invocations, fields)?;
+    closures(positions, graph, fields)?;
     fields.push(graph.nodes.len().to_string());
     for node in &graph.nodes {
         match &node.event {
@@ -371,6 +391,7 @@ impl Reader<'_> {
             owned_locals: self.ordered_map(Self::identity, Self::owned_initialization)?,
             operations: self.ordered_map(Self::semantic_span, Self::operation)?,
             invocations: self.ordered_map(Self::semantic_span, Self::invocation)?,
+            closures: self.ordered_map(Self::semantic_span, Self::closure)?,
             nodes: self.list(Self::node)?,
         })
     }
@@ -484,6 +505,15 @@ impl Reader<'_> {
             evaluation: self.input_evaluation()?,
         })
     }
+    /// A closure bound to a local: the local, its captures, its loan and the nodes that read its captures.
+    fn closure(&mut self) -> Result<ClosureCaptures, NodeBindingError> {
+        Ok(ClosureCaptures {
+            local: self.identity()?,
+            captures: self.list(Self::identity)?,
+            loan: self.loan_option()?,
+            reads: self.list(Self::number)?,
+        })
+    }
     /// An argument's access mode as the callee declares it.
     fn input_access(&mut self) -> Result<IncanInputAccess, NodeBindingError> {
         match self.token()? {
@@ -521,6 +551,7 @@ impl Reader<'_> {
             _ => Err(NodeBindingError::MissingNode),
         }
     }
+
     /// Require complete consumption, preventing hidden trailing facts from being ignored.
     pub fn finish(&mut self) -> Result<(), NodeBindingError> {
         if self.values.next().is_some() {

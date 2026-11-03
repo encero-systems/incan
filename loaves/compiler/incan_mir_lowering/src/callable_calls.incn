@@ -376,6 +376,7 @@ pub def call_callable_place(
             return call_closure_once(builder, callable, signature, operands, output, span)
         PlanType.Closure(_held) => return call_closure(builder, callable, signature, operands, output, span)
         PlanType.ClosureRef(_held) => return call_closure(builder, callable, signature, operands, output, span)
+        PlanType.BorrowingClosure(_held) => return call_closure(builder, callable, signature, operands, output, span)
         _ => pass
     value = place_read(builder, held.place, held.fact, span)?
     return lower_callable_result(builder, CalleeKind.Value(value), operands, output, result, span)
@@ -419,9 +420,13 @@ pub def call_closure(
     track_rvalue_moves(builder, RvalueKind.Tuple(operands))
     builder.emit(plan_assign(packed, RvalueKind.Tuple(operands), span))
     receiver = callable_object(builder, callable, signature, span)?
+    mut callee = CalleeKind.CallClosure(signature)
+    match place_type(builder.locals, callable):
+        PlanType.BorrowingClosure(_held) => callee = CalleeKind.CallBorrowingClosure(signature)
+        _ => pass
     return lower_callable_result(
         builder,
-        CalleeKind.CallClosure(signature),
+        callee,
         [receiver, read_place(packed, true, span)],
         output,
         signature[-1],
@@ -440,6 +445,10 @@ pub def callable_object(
         PlanType.ClosureRef(_held) => return Ok(read_place(callable, false, span))
         PlanType.Closure(_held) =>
             view = temporary(builder, PlanType.ClosureRef(signature), span)
+            builder.emit(plan_assign(view, RvalueKind.ClosureObject(callable), span))
+            return Ok(read_place(view, false, span))
+        PlanType.BorrowingClosure(_held) =>
+            view = temporary(builder, PlanType.BorrowingClosureRef(signature), span)
             builder.emit(plan_assign(view, RvalueKind.ClosureObject(callable), span))
             return Ok(read_place(view, false, span))
         _ => return Err("unsupported Body IR callable without an object representation")

@@ -1,0 +1,66 @@
+# behavior: a closure in an explicit body can capture a shared borrow of a value that is not Copy, from a borrowed input or a `Borrowed[T]` local, and call it, including in a loop; the closure holds a reference to the borrowed place, which stays borrowed while the closure can be called (#2500).
+# expect-stdout:
+#   8
+#   15
+#   22
+#   8
+#   abc
+#   5
+
+"""Closures that hold references to borrowed values in explicit bodies."""
+
+
+class Counter:
+    pub value: int
+    pub name: str
+
+
+class Tally:
+    pub value: int
+
+
+def total(counter: Borrowed[Counter]) -> int:
+    read: () -> int = () => counter.value
+    return read() + read()
+
+
+def label_width(name: Borrowed[str], pad: int) -> int:
+    width: (int) -> int = (extra) => len(name) + pad + extra
+    return width(1) + width(2)
+
+
+def name_score(mut counter: BorrowedMut[Counter], rounds: int) -> int:
+    name: Borrowed[str] = counter.name
+    score: (int) -> int = (step) => len(name) * step
+    mut total = 0
+    mut round = 1
+    while round <= rounds:
+        total += score(round)
+        round += 1
+    counter.value += total
+    return counter.value
+
+
+def items_length(items: Borrowed[list[int]]) -> int:
+    count: () -> int = () => len(items)
+    return count() + count()
+
+
+def tally(start: Borrowed[Tally]) -> int:
+    mut owned = Tally(value=start.value + 1)
+    view: Borrowed[Tally] = owned
+    read: () -> int = () => view.value
+    return read()
+
+
+def main() -> None:
+    mut counter = Counter(value=4, name="abc")
+    println(total(counter))
+    name = "seven"
+    println(label_width(name, 1))
+    println(name_score(counter, 3))
+    items = [1, 2, 3, 4]
+    println(items_length(items))
+    println(counter.name)
+    start = Tally(value=4)
+    println(tally(start))

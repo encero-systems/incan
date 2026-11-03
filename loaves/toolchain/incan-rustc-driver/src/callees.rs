@@ -45,7 +45,7 @@ pub fn resolve(tcx: TyCtxt<'_>, callee: &Callee) -> Result<DefId, PlanError> {
         CalleeKind::Value(_) => Err(PlanError::UnknownCallee(
             "local callable has no declaration callee".into(),
         )),
-        CalleeKind::CallClosure(_) => fn_call(tcx),
+        CalleeKind::CallClosure(_) | CalleeKind::CallBorrowingClosure(_) => fn_call(tcx),
         CalleeKind::CloneClosure(signature) => crate::cloneable_closures::clone_method(tcx, signature),
         CalleeKind::CallClosureOnce(_) => fn_once_call(tcx),
         CalleeKind::ClosureBody(..) | CalleeKind::ClosureBodyOnce(..) => Err(PlanError::UnknownCallee(

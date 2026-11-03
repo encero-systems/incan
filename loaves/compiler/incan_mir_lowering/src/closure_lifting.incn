@@ -16,6 +16,7 @@ from pub::incan_mir_plan import (
     assign as plan_assign,
     place as plan_place,
 )
+from explicit_arguments import explicit_place_argument
 from rust::incan_semantics_core::body_ir import (
     NativeClosureStorage,
     Block as RustBlock,
@@ -28,6 +29,7 @@ from rust::incan_semantics_core::body_ir import (
     Statement as RustStatement,
     StatementKind as RustStatementKind,
 )
+from layout_types import shared_receiver_type
 from rust::incan_semantics_core import IncanInputAccess
 from tuple_iterators import clone_zip
 from generators import generator_shape, generator_element
@@ -58,6 +60,7 @@ from closures import (
     closure_arguments,
     closure_capture_type,
     closure_constructor,
+    reference_capture,
 )
 from partial_callables import (
     default_flags,
@@ -89,6 +92,9 @@ pub def assign_callable(
     source = operand_type(builder, value)?
     match place_type(builder.locals, target):
         PlanType.Closure(signature) =>
+            # A closure holding a borrowed capture keeps its borrowing object in the binding.
+            if source == PlanType.BorrowingClosure(signature):
+                return move_closure(builder, target, value, signature, false, span, true)
             owned = owned_callable_value(builder, value, signature, span)?
             return move_closure(builder, target, owned, signature, false, span)
         _ => pass
@@ -112,6 +118,7 @@ pub def move_closure(
     signature: list[PlanType],
     consumes_environment: bool,
     span: SourceSpan,
+    borrowing: bool = false,
 ) -> Result[None, str]:
     """Transfer an owned closure into a callable binding, which takes the closure's own boxed type."""
     if target.projection != Projection.Whole:
@@ -143,7 +150,7 @@ pub def move_closure(
     record_scalar_closure(builder, target.local, scalar_environment)
     track_rvalue_moves(builder, RvalueKind.Use(value))
     drop_owned(builder, target.local, span)
-    hold_closure(builder, target.local, signature, flags, consumes_environment)?
+    hold_closure(builder, target.local, signature, flags, consumes_environment, borrowing)?
     builder.emit(plan_assign(target, RvalueKind.Use(value), span))
     builder.owned.append(target.local)
     return Ok(None)
@@ -175,6 +182,7 @@ def hold_closure(
     signature: list[PlanType],
     flags: list[bool],
     consumes_environment: bool,
+    borrowing: bool = false,
 ) -> Result[None, str]:
     """
     Type a binding as the owned closure it now holds and record the closure's supplied flags, if it has any.
@@ -195,6 +203,8 @@ def hold_closure(
     mut object_type = PlanType.Closure(signature)
     if consumes_environment:
         object_type = PlanType.ClosureOnce(signature)
+    if borrowing:
+        object_type = PlanType.BorrowingClosure(signature)
     builder.locals[local].ty = object_type
     if local not in builder.materialized_closures:
         builder.materialized_closures.append(local)
@@ -244,7 +254,7 @@ pub def lower_closure(
     mut operands: list[Operand] = []
     mut capture_types: list[PlanType] = []
     for capture in captures:
-        operand = value_operand(builder, capture, span)?
+        operand = capture_operand(builder, capture, span)?
         ty = operand_type(builder, operand)?
         match ty:
             PlanType.ZipIterator(_left, _right) =>
@@ -283,10 +293,23 @@ pub def lower_closure(
     if target.local in builder.function_pointer_locals:
         return Err("unsupported Body IR capturing closure stored as a function pointer")
     _ = closure_arguments(signature)?
+    # An environment holding a shared reference lives no longer than its borrow, which checking keeps alive. Its object
+    # takes the lifetime of that one reference.
+    mut references = 0
+    for capture in capture_types:
+        if reference_capture(capture):
+            references += 1
+    if references > 1:
+        return Err("unsupported Body IR closure holding more than one borrowed capture")
+    borrowing = references == 1
+    if borrowing and true in flags:
+        return Err("unsupported Body IR closure holding a borrowed capture with default parameters")
     mut native_send = false
     mut native_sync = false
     match native_storage:
         Some(storage) =>
+            if borrowing:
+                return Err("unsupported Body IR native callback holding a borrowed capture")
             if not storage.move_capture:
                 return Err("invalid Body IR native callback without owned capture storage")
             native_send = storage.send
@@ -301,10 +324,11 @@ pub def lower_closure(
         span,
         native_send,
         native_sync,
+        borrowing,
     )
     synthesize(builder, constructor)
     drop_owned(builder, target.local, span)
-    hold_closure(builder, target.local, signature, flags, consumes_environment)?
+    hold_closure(builder, target.local, signature, flags, consumes_environment, borrowing)?
     if native_send or native_sync:
         builder.locals[target.local].ty = PlanType.NativeClosure(signature, native_send, native_sync)
     terminate_call(builder, CalleeKind.Planned(f"{name}_new"), operands, target, span)
@@ -315,6 +339,23 @@ pub def lower_closure(
     record_scalar_closure(builder, target.local, scalar_environment)
     builder.owned.append(target.local)
     return Ok(None)
+
+
+def capture_operand(mut builder: Builder, capture: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
+    """
+    A capture the closure borrows is a fresh shared loan of its exact place, unless that place already holds a shared
+    reference, which is copied; any other capture is read as a value.
+    """
+    match capture:
+        RustOperand.Place(read) =>
+            if read.fact == OwnershipFact.Borrow:
+                source = scalar_place(builder, read.place, span)?
+                referent = place_type(builder.locals, source)
+                if not reference_capture(referent):
+                    expected = shared_receiver_type(referent)?
+                    return explicit_place_argument(builder, source, read.fact, expected, IncanInputAccess.Shared, span)
+        _ => pass
+    return value_operand(builder, capture, span)
 
 
 def lift_closure(
@@ -357,7 +398,10 @@ def lift_closure(
     for index in range(len(captures)):
         captured_local = capture_locals[index]
         destination = int(captured_local.index()) + 1 + count
-        captured = lifted.locals[destination].ty
+        mut captured = lifted.locals[destination].ty
+        # A shared reference capture is stored as that reference; the body reads its borrowed value through it.
+        if reference_capture(arguments[index]):
+            captured = arguments[index]
         bind_closure_input(lifted, destination, index + 1, arguments[index], captured, span)?
     mut position = len(captures)
     for parameter in parameters:

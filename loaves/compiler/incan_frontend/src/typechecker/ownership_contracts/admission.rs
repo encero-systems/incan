@@ -9,20 +9,17 @@ use crate::ast_walk::any_expr_in_body;
 use crate::typechecker::{CheckedInputBody, TypeCheckInfo};
 use incan_semantics_core::{CanonicalSymbolId, IncanInputAccess};
 
-/// Direct synchronous fixed-arity source functions are the first executable frame boundary. Decorated, generic,
-/// deferred and escaping signatures retain their existing stage refusals until their native boundary is proven.
+/// Direct fixed-arity source functions, synchronous or async, are the first executable frame boundary. Decorated,
+/// generic, deferred and escaping signatures retain their existing stage refusals until their native boundary is
+/// proven.
 pub(in crate::typechecker) fn direct_function_boundary(function: &FunctionDecl) -> bool {
-    !function.is_async()
-        && function.type_params.is_empty()
-        && function.decorators.is_empty()
-        && fixed_parameters(&function.params)
+    function.type_params.is_empty() && function.decorators.is_empty() && fixed_parameters(&function.params)
 }
 
 /// Concrete methods share the function frame boundary; the receiver is a borrowed slot of its own, checked with
 /// the method's receiver mode.
 pub(in crate::typechecker) fn direct_method_boundary(method: &MethodDecl) -> bool {
     method.body.is_some()
-        && !method.is_async()
         && method.type_params.is_empty()
         && method.decorators.is_empty()
         && fixed_parameters(&method.params)
@@ -63,6 +60,7 @@ fn input_statements_supported(body: &[Spanned<Statement>], conditionals: bool) -
         | Statement::CompoundAssignment(_)
         | Statement::Expr(_)
         | Statement::Return(_)
+        | Statement::TupleUnpack(_)
         | Statement::Assert(_) => true,
         Statement::If(branch) if conditionals => {
             matches!(branch.condition, Condition::Expr(_))
@@ -356,7 +354,12 @@ impl CheckedInputBody<'_> {
                 {
                     return Err("checked Copy semantics require a compatible native input carrier");
                 }
-                if argument.access == IncanInputAccess::Inferred && !copy && argument.source.is_some() {
+                // A closure local passed to a parameter its callee only calls lends its callable object for the call.
+                if argument.access == IncanInputAccess::Inferred
+                    && !copy
+                    && argument.source.is_some()
+                    && !super::projection::closure_argument(self.graph, argument)
+                {
                     return Err("ordinary non-Copy input requires its inferred access proof");
                 }
                 if argument.access == IncanInputAccess::Owned

@@ -137,7 +137,7 @@ pub enum PlanType:
     ZipIterator retains two independent owned list snapshots; its reference variants retain shared read or exclusive poll authority.
     RangeValue retains a source range value's start, end, step, and inclusivity scalar fields in Body IR's declared range field order; its field projections use that order.
     FunctionPointer retains its inputs followed by exactly one return entry; the vector is never empty, including for a zero-argument function. FunctionItem keeps that same signature and the proven source declaration's name; it remains distinct from a pointer until an explicit reification.
-    Closure owns a boxed callable object with that signature layout, holding its captures by value; ClosureRef is the shared view a closure-holding parameter receives. CallableArguments is the body-internal argument tuple; it preserves each input's exact type, including caller-owned collection references, independently of source tuple layouts.
+    Closure owns a boxed callable object with that signature layout, holding its captures by value; ClosureRef is the shared view a closure-holding parameter receives. BorrowingClosure owns a boxed callable object whose borrowed capture is a shared reference, and BorrowingClosureRef is the shared view its calls take. CallableArguments is the body-internal argument tuple; it preserves each input's exact type, including caller-owned collection references, independently of source tuple layouts.
     """
 
     Int
@@ -237,6 +237,10 @@ pub enum PlanType:
     # An owned FnOnce object whose invocation transfers its environment instead of borrowing it.
     ClosureOnce(list[PlanType])
     ClosureRef(list[PlanType])
+    # An owned callable object holding a shared reference to its borrowed capture, alive no longer than that borrow; it is
+    # neither cloned nor passed on, and is called through its shared view.
+    BorrowingClosure(list[PlanType])
+    BorrowingClosureRef(list[PlanType])
     CallableArguments(list[PlanType])
     # Exactly one output carrier; the owned pinned future executes only when polled.
     Future(list[PlanType])
@@ -606,6 +610,8 @@ pub enum CalleeKind:
     CallClosure(list[PlanType])
     # Invoke the owned callable object by moving it with one packed argument tuple.
     CallClosureOnce(list[PlanType])
+    # Invoke the shared view of a callable object that holds a borrowed capture, with one packed argument tuple.
+    CallBorrowingClosure(list[PlanType])
     # Read a clone of computed static storage slot `n`, running its initializer first if nothing has yet.
     StaticLoad(int)
     # Replace the value of computed static storage slot `n`.

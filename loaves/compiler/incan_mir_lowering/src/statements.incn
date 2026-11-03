@@ -104,6 +104,7 @@ pub def is_owned_callable(ty: PlanType) -> bool:
     """Identify an environment owner, which transfers and drops separately from copied callable references."""
     match ty:
         PlanType.Closure(_signature) => return true
+        PlanType.BorrowingClosure(_signature) => return true
         _ => return false
 
 
@@ -466,7 +467,7 @@ pub def carrier_payload(
     return boundary_operand(builder, payload, field, span)
 
 
-def borrowed_payload(payload: &RustOperand) -> bool:
+pub def borrowed_payload(payload: &RustOperand) -> bool:
     """Whether Body IR reads the payload's place under a shared or exclusive borrow."""
     match payload:
         RustOperand.Place(read) => return read.fact == OwnershipFact.Borrow or read.fact == OwnershipFact.MutBorrow

@@ -247,12 +247,12 @@ impl TypeChecker {
                 }
                 _ => continue,
             };
-            for (name, ty) in &captures {
-                if !self.capture_has_native_auto_trait(ty, marker, 0) {
+            for capture in &captures {
+                if !self.capture_has_native_auto_trait(&capture.ty, marker, 0) {
                     self.errors
                         .push(crate::diagnostics::errors::rust_callback_capture_missing_auto_trait(
-                            name,
-                            &ty.to_string(),
+                            &capture.name,
+                            &capture.ty.to_string(),
                             marker,
                             expression.span,
                         ));

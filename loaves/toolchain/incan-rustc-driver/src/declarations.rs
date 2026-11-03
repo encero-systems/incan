@@ -274,6 +274,10 @@ fn admitted_value_ty_kind(kind: &PlanType, span: Span) -> ast::TyKind {
         }
         PlanType::NativeTraitObject(path, send, sync) => native_object_ast(path, *send, *sync, span),
         PlanType::ClosureRef(signature) => reference_ast(callable_object_ast(signature, span, false), false),
+        PlanType::BorrowingClosure(signature) => boxed_object_ast(borrowing_callable_object_ast(signature, span), span),
+        PlanType::BorrowingClosureRef(signature) => {
+            reference_ast(borrowing_callable_object_ast(signature, span), false)
+        }
         PlanType::CheckedInt => ast::TyKind::Tup(thin_vec![ty(&PlanType::Int, span), ty(&PlanType::Bool, span)]),
         other => primitive_or_nominal_ty(other, span),
     }
@@ -606,6 +610,19 @@ fn native_callable_object_ast(
         span,
         tokens: None,
     })
+}
+
+/// The Fn object of an environment holding a borrowed reference, outliving that borrow's elided lifetime: a
+/// constructor has exactly one reference input, the capture it boxes.
+fn borrowing_callable_object_ast(signature: &[PlanType], span: Span) -> Box<ast::Ty> {
+    let mut object = native_callable_object_ast(signature, span, false, false, false);
+    if let ast::TyKind::TraitObject(bounds, _) = &mut object.kind {
+        bounds.push(ast::GenericBound::Outlives(ast::Lifetime {
+            id: ast::DUMMY_NODE_ID,
+            ident: rustc_span::Ident::new(rustc_span::kw::UnderscoreLifetime, span),
+        }));
+    }
+    object
 }
 
 /// Construct a function-pointer signature structurally; preflight has proved a final return entry exists.
