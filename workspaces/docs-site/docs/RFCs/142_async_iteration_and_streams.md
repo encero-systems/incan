@@ -1,6 +1,6 @@
 # RFC 142: Async composition, iteration, and streams
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-10-11
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -19,7 +19,7 @@
     - RFC 131 (first-class typed errors)
     - RFC 153 (async closures and async callable types)
     - RFC 164 (explicit ownership and borrowing)
-- **Issue:** —
+- **Issue:** [#2585](https://github.com/encero-systems/incan/issues/2585)
 - **RFC PR:** —
 - **Written against:** v0.6
 - **Shipped in:** —
