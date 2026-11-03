@@ -69,12 +69,21 @@ abi=$toolchain/rust-abi/std-${driver:t}.rustabi
 [[ -f $abi ]] || env -u RUSTC_BOOTSTRAP "$driver" --rust-abi "$sysroot" "$abi" std core alloc
 cached=$EPOCHREALTIME
 
+replaced=($(jq -r '.driver, (.rust_abi // [])[]' "$toolchain/toolchain.json"))
 manifest=$(mktemp "$toolchain/toolchain.json.XXXXXX")
 trap '[[ -n ${manifest:-} ]] && rm -f "$manifest"' EXIT
 jq --arg driver "$driver" --arg abi "$abi" '.driver = $driver | .rust_abi = [$abi]' \
     "$toolchain/toolchain.json" > "$manifest"
 mv "$manifest" "$toolchain/toolchain.json"
 manifest=
+# A replaced relink driver and its standard ABI cache are this script's earlier output, which the manifest no longer
+# names; each relink would otherwise leave both behind.
+for previous in $replaced; do
+    [[ $previous == $driver || $previous == $abi ]] && continue
+    if [[ $previous == $toolchain/bin/incan-rustc-driver-* || $previous == $toolchain/rust-abi/std-incan-rustc-driver-*.rustabi ]]; then
+        rm -f "$previous"
+    fi
+done
 print -r -- "$profile driver installed: $driver"
 if [[ ${INCAN_RELINK_TRACE:-0} == 1 ]]; then
     print -rl -- "relink timing emission: $((emitted-started))" \
