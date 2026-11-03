@@ -1,0 +1,140 @@
+"""
+The compiled registry units a packed toolchain ships: those reachable from a crate that a Loaf of the checkout it was
+built from declares. Units an earlier home carried forward, which no Loaf names any more, stay behind.
+"""
+
+from std.fs import Path
+from std.toml import TomlKind, TomlValue
+from home import standard_packages
+from registry_units import RegistryUnit
+from toml_fields import read_manifest
+
+
+pub def shipped_entries(units: list[RegistryUnit], checkout: Path) -> Result[set[str], str]:
+    """
+    The entries of `units` that a toolchain packed from `checkout` ships.
+
+    1. Collect every crate the checkout's Loaves declare.
+    2. Start from each unit of a declared crate.
+    3. Add every unit those link, transitively.
+    """
+    # 1. Declarations are read from the manifests, never from the registry the home carried forward.
+    declared = declared_crates(checkout)?
+    # 2. A unit is a root when its crate is declared, whatever version or features it was built with.
+    mut linked: Dict[str, list[str]] = {}
+    mut pending: list[str] = []
+    for unit in units:
+        if unit.entry == "":
+            continue
+        linked[unit.entry] = unit.dependencies
+        if crate_name(unit.loaf) in declared:
+            pending.append(unit.entry)
+    # 3. A root ships with everything it links.
+    mut shipped: set[str] = set()
+    while len(pending) > 0:
+        entry = pending.pop()
+        if entry in shipped:
+            continue
+        shipped.add(entry)
+        if entry in linked:
+            for dependency in linked[entry]:
+                pending.append(dependency)
+    return Ok(shipped)
+
+
+pub def ships(unit: RegistryUnit, shipped: set[str]) -> bool:
+    """Whether a packed toolchain ships `unit`; a unit without a recorded entry is always kept."""
+    return unit.entry == "" or unit.entry in shipped
+
+
+pub def ships_search(directory: str, shipped: set[str]) -> bool:
+    """Whether a search directory ships: a registry entry's directory only when its entry does."""
+    parts = directory.split("entries/sha256-")
+    if len(parts) < 2:
+        return true
+    digest = parts[1].split("/")[0]
+    return f"sha256:{digest}" in shipped
+
+
+pub def packed_checkout() -> Result[Option[Path], str]:
+    """
+    The checkout the standard packages were built from: the nearest directory above one of them with `.git`. An
+    installed toolchain's standard packages lie in no checkout, so repacking it has no declarations to prune by.
+    """
+    packages = standard_packages()?
+    if len(packages) == 0:
+        return Ok(None)
+    mut directory = Path(packages[0].root)
+    loop:
+        if directory.joinpath(".git").exists():
+            return Ok(Some(directory))
+        parent = directory.parent()
+        if parent.0 == directory.0:
+            return Ok(None)
+        directory = parent
+
+
+def declared_crates(checkout: Path) -> Result[set[str], str]:
+    """Every crate a Loaf under `checkout` declares, by its package name with `-` as `_`."""
+    mut declared: set[str] = set()
+    mut pending = [checkout]
+    while len(pending) > 0:
+        directory = pending.pop()
+        for entry in directory.iterdir().map_err((error) => error.message())?:
+            name = entry.name()
+            if name.startswith(".") or name == "target":
+                continue
+            if entry.is_dir():
+                pending.append(entry)
+            elif name == "loaf.toml":
+                for package in manifest_crates(directory)?:
+                    declared.add(package)
+    return Ok(declared)
+
+
+def manifest_crates(project: Path) -> Result[list[str], str]:
+    """The crates one manifest's dependency tables declare, including each environment's."""
+    manifest = read_manifest(project)?
+    root = manifest.as_table().map_err((error) => error.message())?
+    mut crates: list[str] = []
+    for group in ["dependencies", "rust-dependencies"]:
+        if group in root:
+            crates = crates + table_crates(root[group])?
+    if "envs" in root:
+        for environment in root["envs"].as_table().map_err((error) => error.message())?.values():
+            settings = environment.as_table().map_err((error) => error.message())?
+            if "dependencies" in settings:
+                crates = crates + table_crates(settings["dependencies"])?
+    return Ok(crates)
+
+
+def table_crates(group: TomlValue) -> Result[list[str], str]:
+    """The crate each entry of one dependency table names; a path dependency names none."""
+    mut crates: list[str] = []
+    entries = group.as_table().map_err((error) => error.message())?
+    for alias in entries.keys():
+        if entries[alias].kind() != TomlKind.Table:
+            crates.append(normalized(alias))
+            continue
+        fields = entries[alias].as_table().map_err((error) => error.message())?
+        if "path" in fields:
+            continue
+        if "loaf" in fields:
+            crates.append(crate_name(fields["loaf"].as_str().map_err((error) => error.message())?))
+        elif "package" in fields:
+            crates.append(normalized(fields["package"].as_str().map_err((error) => error.message())?))
+        else:
+            crates.append(normalized(alias))
+    return Ok(crates)
+
+
+def crate_name(loaf: str) -> str:
+    """The package a `crates-io/<package>` Loaf names, with `-` as `_`."""
+    if loaf.startswith("crates-io/"):
+        return normalized(loaf[10:])
+    return normalized(loaf)
+
+
+def normalized(name: str) -> str:
+    """A crate name with `-` as `_`, the spelling registry units and declarations share."""
+    return name.replace("-", "_")
