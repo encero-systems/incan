@@ -18,7 +18,7 @@
 
 ## Summary
 
-This RFC defines a deterministic template rendering, generated-file ownership, and provenance model for Oven project tooling. Templates are static input files referenced by lifecycle tooling, starter profiles, capability packs, or package-provided setup data. Rendering is intentionally constrained: v1 templates may substitute declared parameters, but they must not execute arbitrary code, run shell commands, fetch remote data, or infer behavior from filename conventions alone. When rendered files are written into a project, Oven may record provenance so users and tools can later check, diff, status, reset, or update generated boilerplate without treating the original template as hidden build state.
+This RFC defines a deterministic template rendering, generated-file ownership, and provenance model for Oven project tooling. Templates are static input files referenced by lifecycle tooling, starter profiles, capability packs, or package-provided setup data. Rendering is intentionally constrained: templates may substitute declared parameters, but they must not execute arbitrary code, run shell commands, fetch remote data, or infer behavior from filename conventions alone. When rendered files are written into a project, Oven may record provenance so users and tools can later check, diff, status, reset, or update generated boilerplate without treating the original template as hidden build state.
 
 ## Core model
 
@@ -27,10 +27,10 @@ Read this RFC as ten foundations:
 1. **Template files are tooling inputs, not Incan source syntax.** A file such as `main.incn.template` is a conventional provider-side artifact. The rendered `main.incn` is the Incan source file users edit, compile, and commit.
 2. **Descriptors are authoritative.** A template file's source path, target path, target language, parameter declarations, and provenance behavior are declared by a descriptor consumed by lifecycle tooling. The `.template` suffix is a convention, not the semantic contract.
 3. **Rendering is deterministic.** Given the same template bytes, declared parameters, parameter values, renderer version, and project metadata, the renderer must produce the same output.
-4. **Rendering is intentionally small.** V1 supports declared placeholder substitution, a small set of pure derived-value transforms, and explicit literal regions. It does not support loops, conditionals, imports, functions, filters, arbitrary expression evaluation, network access, or shell execution.
+4. **Rendering is intentionally small.** Rendering supports declared placeholder substitution, a small set of pure derived-value transforms, and explicit literal regions. It does not support loops, conditionals, imports, functions, filters, arbitrary expression evaluation, network access, or shell execution.
 5. **Parameters are declared and typed.** A template descriptor declares every accepted parameter and its kind. The renderer must reject undeclared placeholders and invalid values before writing files.
 6. **Rendered Incan must be validated.** If the target language is `incan`, the toolchain must parse the rendered output and should format it before writing when a formatter is available.
-7. **Provenance is explicit tooling state.** A project records which template produced a file, which package or descriptor supplied it, and which parameter values were used as authored intent in `loaf.toml`, and the hashes Oven observed as tool-owned state in `oven.templates.toml`. Neither is resolver state in `oven.lock`.
+7. **Provenance is explicit tooling state.** A project records which template produced a file, which package or descriptor supplied it, and which parameter values were used as authored intent in `loaf.toml`, and the hashes Oven observed as tool-owned state in `oven.provenance.toml`. Neither is resolver state in `oven.lock`.
 8. **Updates are explicit, receiver-owned, conflict-aware, and security-sensitive.** Template provenance enables `check`, `diff`, and `update` workflows, but it must not cause automatic rewrites during build, test, import, editor startup, or package resolution. Updating generated source is a project code change in the receiving repository and must be reviewed as one.
 9. **Generated files have ownership policy.** A rendered file carries RFC 075's per-file ownership policy: bootstrap-only, managed by explicit updates, or advisory. The policy is explicit per file rather than inferred from path conventions, and template commands honor it rather than defining a second one.
 10. **Template inputs are reviewable.** Tooling must be able to show or write the parameter values that would drive a render so teams can review, automate, and reproduce template application.
@@ -47,7 +47,7 @@ This RFC keeps the boundary narrow. It does not create a general template progra
 
 - Define a project-tooling template model that can be used by lifecycle commands, starter profiles, capability packs, and package-provided setup data.
 - Make descriptor metadata authoritative so behavior does not depend only on `.template` filename conventions.
-- Define a constrained v1 placeholder syntax and parameter model.
+- Define a constrained placeholder syntax and parameter model.
 - Require deterministic rendering and safe path handling.
 - Require rendered Incan output to parse before it is written.
 - Define provenance records that support check, status, diff, update, and reset workflows.
@@ -60,7 +60,7 @@ This RFC keeps the boundary narrow. It does not create a general template progra
 - Define a safe reset escape hatch for corrupted or heavily conflicted generated files.
 - Keep generated projects ordinary: rendered files are normal files, and templates do not participate in compilation unless the user explicitly keeps them as project data.
 - Allow templates to be resolved from source-agnostic catalogs such as built-in descriptors, local paths, git sources, public package registries, or private catalogs while keeping rendering and mutation local to the lifecycle CLI.
-- Leave room for `incan.pub` packages to distribute public templates without making public registry support mandatory for v1.
+- Let `incan.pub` packages distribute public templates, rendered locally under the same rules as built-in ones.
 - Provide a tooling surface that IDEs, docs tooling, and agents can inspect without reimplementing template semantics.
 
 ## Non-Goals
@@ -203,11 +203,11 @@ config_type = "DataConfig"
 backend_type = "DataFusion"
 ```
 
-In `oven.templates.toml`, a file Oven writes and the project commits next to `oven.lock`, it records the evidence it observed:
+In `oven.provenance.toml`, a file Oven writes and the project commits next to `oven.lock`, it records the evidence it observed:
 
 ```toml
-["src/data/session.incn"]
-renderer = "incan-template-v1"
+[templates."src/data/session.incn"]
+renderer = "incan-template"
 language = "incan"
 ownership = "managed"
 template_hash = "sha256:4b5a..."
@@ -357,7 +357,7 @@ The `.template` suffix is recommended for provider-side template files because i
 
 Template source kind affects discovery, provenance, trust, and upgrade metadata. It must not change rendering semantics. A template loaded from a private catalog, public registry, git reference, local path, package, or built-in source is rendered with the same placeholder validation, path safety, parse validation, overwrite rules, and provenance requirements.
 
-V1 implementations must support built-in templates. They may also support explicit local descriptor paths. Later implementations may add git sources, package-owned templates, public catalog sources, and private catalog sources without changing the descriptor semantics.
+Implementations must support built-in templates, explicit local descriptor paths, templates owned by Loaf packages from `incan.pub`, git sources, and public and private catalog sources, all under the same descriptor semantics.
 
 Source metadata should answer these questions:
 
@@ -374,7 +374,7 @@ Diagnostics and machine-readable output must include the selected source kind an
 
 ### Placeholder syntax
 
-V1 placeholders use double braces around one parameter name:
+Placeholders use double braces around one parameter name:
 
 ```text
 {{ parameter_name }}
@@ -401,7 +401,7 @@ A declared parameter that no placeholder or derivation uses must produce a warni
 
 ### Parameter kinds
 
-V1 defines these parameter kinds:
+The parameter kinds are:
 
 - `identifier`: an Incan identifier segment
 - `module_path`: one or more identifier segments separated by `.`
@@ -417,7 +417,7 @@ Every kind must be validated before any file is rendered or written. A kind desc
 
 Descriptors should avoid `literal` unless the rendered target language validation can catch invalid output. For `language = "incan"`, use of `literal` is allowed only when the final rendered source parses successfully. For executable, configuration, CI, or agent-facing targets, `literal` parameters should be treated as security-sensitive in dry-run output because they bypass escaping.
 
-Future RFCs may add more kinds. Unknown parameter kinds must be rejected unless the renderer has explicitly opted into an extension namespace.
+Unknown parameter kinds must be rejected unless they belong to an extension namespace the renderer explicitly supports.
 
 ### Parameter declarations
 
@@ -438,7 +438,7 @@ If `choices` is present, the renderer must reject values outside the declared se
 
 If `sensitive = true`, the renderer must not store the raw parameter value in provenance, logs, diagnostics, machine-readable plans, or generated comments. If drift detection requires a value fingerprint, the renderer should store a salted or keyed hash, not an unsalted hash of the raw value. Diagnostics should identify the parameter by name rather than printing the value.
 
-A derived value must be declared as `derived = { from = "<parameter>", transform = "<name>" }`, naming one declared parameter or project metadata field and one built-in transform. V1 defines these pure transforms:
+A derived value must be declared as `derived = { from = "<parameter>", transform = "<name>" }`, naming one declared parameter or project metadata field and one built-in transform. The built-in pure transforms are:
 
 - `snake_case`, `pascal_case`, `kebab_case` and `upper_snake_case`, which split words at non-alphanumeric characters and lower-to-upper transitions;
 - `identifier`, which produces a valid Incan identifier by replacing invalid characters with `_` and prefixing `_` when the result would start with a digit;
@@ -531,7 +531,7 @@ Provenance mode does not encode ownership. Even for a managed file, update tooli
 Provenance has two homes:
 
 - **Intent in `loaf.toml`:** the `[oven.templates."<target>"]` table records the source, package and version, origin, and non-sensitive parameter values. It is authored project state that users review and may edit, such as changing a value before an update.
-- **Evidence in `oven.templates.toml`:** a file at the project root that only Oven writes and the project commits. It records, per target, the renderer, language, ownership, hashes, and receipts of what was observed. Its content must remain inspectable through `oven template status --format json`.
+- **Evidence in `oven.provenance.toml`:** a file at the project root that only Oven writes and the project commits. Its `[templates]` table records, per target, the renderer, language, ownership, hashes, and receipts of what was observed; RFC 075 keeps mix evidence in the same file. Its content must remain inspectable through `oven template status --format json`.
 
 `oven.lock` must not hold either; it remains resolver state and must not become a history of edits.
 
@@ -574,7 +574,7 @@ This RFC adds the following lifecycle tooling concepts:
 - `oven template reset [target]`
 - `oven template validate <descriptor>`
 
-The exact command spelling may be adjusted if the lifecycle CLI uses a different namespace, but the toolchain must support these operations before tracked provenance can be considered complete. All of them, including `reset`, are part of v1.
+The exact command spelling may be adjusted if the lifecycle CLI uses a different namespace, but the toolchain must support these operations before tracked provenance can be considered complete.
 
 `check` reports whether tracked files are missing, current, edited, conflicted, stale, lacking tracking evidence, or blocked by missing source metadata.
 
@@ -607,7 +607,7 @@ Template authors need to know whether a descriptor renders into a realistic proj
 - deterministic rendering, by rendering each template twice from the same values and comparing the bytes;
 - fixture renders: each declared fixture value set must render and pass target-language validation.
 
-With `--strict`, unused parameters without `allow_unused` are errors. The result must be reported in the versioned machine-readable form. Publishing a template package to `incan.pub` must require a passing strict result under RFC 125, and promotion to a higher trust tier may require stronger policy evidence. A later implementation may add a full target-project harness that initializes a project, applies updates, runs local checks, and records archive diffs between template versions; descriptor and provenance design must not prevent it.
+With `--strict`, unused parameters without `allow_unused` are errors. The result must be reported in the versioned machine-readable form. Publishing a template package to `incan.pub` must require a passing strict result under RFC 125, and promotion to a higher trust tier may require stronger policy evidence. `validate` may also run a target-project harness that initializes a fixture project, applies the template, applies updates between template versions, runs local checks, and records the rendered diffs.
 
 ### Security and trust
 
@@ -615,7 +615,7 @@ Template rendering must not execute arbitrary code. It must not run shell comman
 
 Templates distributed through packages inherit the package trust story. If package templates are distributed through `incan.pub`, registry integrity, checksums, signed state changes, and publisher identity rules belong to RFC 125. Rendering remains local and must still validate paths and output.
 
-Procedural extension points are especially risky for upgradeable templates. If a template suite needs environment-derived defaults, optional slices, or target cleanup, those concerns should be represented as typed parameters, descriptor conditions, and mutation-plan rules rather than hidden Python, shell, or plugin hooks. A later RFC may define sandboxed hooks, but v1 should assume hooks make provenance and updates less reliable.
+Procedural extension points are especially risky for upgradeable templates. If a template suite needs environment-derived defaults, optional slices, or target cleanup, those concerns should be represented as typed parameters, descriptor conditions, and mutation-plan rules rather than hidden Python, shell, or plugin hooks. Hooks, sandboxed or not, are not part of this design, because they make provenance and updates less reliable.
 
 The update path is part of the supply chain because templates may render executable source files, scripts, CI configuration, env definitions, or agent-facing guidance. A malicious upstream template update can therefore inject behavior into a project even when the renderer itself is deterministic and non-executable.
 
@@ -722,7 +722,7 @@ Rejected as a default because it forbids one parameter schema shared across seve
 
 ### Store provenance only in `loaf.toml`, or only in tool state
 
-Rejected because the manifest would mix user intent with per-file hashes, while tool state alone would hide the choices a team needs to review. Intent goes in `loaf.toml` and evidence in `oven.templates.toml`.
+Rejected because the manifest would mix user intent with per-file hashes, while tool state alone would hide the choices a team needs to review. Intent goes in `loaf.toml` and evidence in `oven.provenance.toml`.
 
 ### Replace or refuse edited files on update
 
@@ -732,9 +732,9 @@ Rejected because replacing loses user work and refusing every edited file is cum
 
 Rejected because filename conventions are too weak for tooling. A file extension cannot safely declare parameter kinds, target paths, target language validation, provenance behavior, or update policy.
 
-### Adopt a full template language in v1
+### Adopt a full template language
 
-Rejected for scope. Loops, conditionals, includes, filters, and expression evaluation may become useful later, but they should be added only after the minimal rendering and provenance model proves insufficient.
+Rejected because loops, conditionals, includes, filters, and expression evaluation turn rendering into programming, which makes templates harder to audit, diff, and update safely. Declared parameters, derived values, literal regions, and RFC 075's file selection cover the scaffolding this design targets.
 
 ### Do not record provenance
 
@@ -757,14 +757,14 @@ Rejected because generated project boilerplate should be reviewable, editable, a
 - Selecting optional files before rendering is less flexible than arbitrary post-generation hooks.
 - Line-based three-way merges can report conflicts that a human would resolve trivially.
 - Template check, status, values-file, render, diff, update, reset and validate add lifecycle CLI surface area that must be maintained.
-- A committed `oven.templates.toml` adds one more tool-owned file next to `loaf.toml` and `oven.lock`.
+- A committed `oven.provenance.toml` adds one more tool-owned file next to `loaf.toml` and `oven.lock`.
 - File ownership policies create another concept users must understand when reviewing generated artifacts.
 
 ## Layers affected
 
 - **Parser:** rendered Incan templates must parse before they are written when `language = "incan"`.
 - **Formatter:** rendered Incan templates should be formatted before write and before `rendered_hash` is recorded when a formatter is available.
-- **Manifest schema / configuration validation:** `loaf.toml` gains the typed `[oven.templates]` intent table, and Oven writes the tool-owned `oven.templates.toml` evidence file. `oven.lock` remains resolver state and must not become a general mutation-history store. Domain parameter kinds reuse the manifest's own validation rules.
+- **Manifest schema / configuration validation:** `loaf.toml` gains the typed `[oven.templates]` intent table, and Oven writes the tool-owned `oven.provenance.toml` evidence file. `oven.lock` remains resolver state and must not become a general mutation-history store. Domain parameter kinds reuse the manifest's own validation rules.
 - **CLI / tooling:** lifecycle tooling must implement deterministic template rendering, literal regions, derived-value transforms, path validation, parameter validation, ownership handling, provenance recording, three-way merge proposals, and check/status/values-file/render/diff/update/reset/validate operations with versioned machine-readable output.
 - **Registry:** `incan.pub` publication requires a passing strict `oven template validate` result.
 - **LSP / IDE tooling:** editor-facing tools should consume machine-readable template provenance and lifecycle diagnostics rather than reimplementing template rendering.
@@ -773,7 +773,7 @@ Rejected because generated project boilerplate should be reviewable, editable, a
 
 ## Design Decisions
 
-- Authored intent (source, version, origin and non-sensitive values) lives in `loaf.toml` under `[oven.templates]`; hashes and receipts live in the Oven-written, committed `oven.templates.toml`. `oven.lock` holds neither. A missing evidence file makes files count as edited, and the merge base is recovered by re-rendering the recorded version and values.
+- Authored intent (source, version, origin and non-sensitive values) lives in `loaf.toml` under `[oven.templates]`; hashes and receipts live in the Oven-written, committed `oven.provenance.toml`. `oven.lock` holds neither. A missing evidence file makes files count as edited, and the merge base is recovered by re-rendering the recorded version and values.
 - Parameter kinds add `package_name`, `dependency_requirement`, `env_name` and `script_id`, which reuse the `loaf.toml` validation for those fields. Every value is validated for the grammar of its position before anything is written; escaping a generic string never stands in for a kind.
 - Derived values use a small pure transform set: casing, `identifier`, `module_path`, `package_name` and `path`. No callbacks, commands or expressions.
 - RFC 075 selects optional file groups; this RFC renders the selected file set it is handed.
@@ -783,7 +783,7 @@ Rejected because generated project boilerplate should be reviewable, editable, a
 - Updates propose a three-way merge from the recorded rendering. Overlapping changes are conflicts that are shown and never written, unless `--write-conflicts` writes conflict markers. Edits are never overwritten automatically.
 - `diff` and every other template command have a versioned `--format json` form carrying the same facts as the human output.
 - `status` works offline from local provenance and reports what it could not refresh as unknown or cached.
-- `reset` is in v1 as an explicit, dry-runnable plan listing the exact edits it replaces, under confirmation policy; it never happens implicitly.
+- `reset` is an explicit, dry-runnable plan listing the exact edits it replaces, under confirmation policy; it never happens implicitly.
 - `oven template validate` checks schema, path safety, deterministic rendering and fixture renders. A passing strict result is required to publish to `incan.pub`; promotion may require more evidence.
 - `.incn.template` is the recommended suffix for Incan source templates. Descriptors stay authoritative and other names are allowed.
 - Later-phase placeholders are preserved only inside explicit `{% literal %}` … `{% endliteral %}` regions. Unknown placeholders elsewhere are diagnostics, and semantic tooling may explain changes but never decides rendering, resolves conflicts or authorizes overwrites.
