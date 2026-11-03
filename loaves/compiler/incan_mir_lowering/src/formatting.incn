@@ -1,6 +1,7 @@
 """Lower formatted strings and the display and debug operands they format."""
 
 from pub::incan_mir_plan import (
+    Carrier,
     CalleeKind,
     Constant,
     Operand,
@@ -212,7 +213,10 @@ def display_value_operand(
                 PlanType.ValidationError => return display_validation_error(builder, place, span)
                 PlanType.ValidationErrorRef => return display_validation_error(builder, place, span)
                 PlanType.Enum(owner, name) =>
-                    if owner >= len(builder.enums) and builder.intrinsics[owner - len(builder.enums)].carrier != "":
+                    if (
+                        owner >= len(builder.enums)
+                        and builder.intrinsics[owner - len(builder.enums)].carrier != Carrier.Declared
+                    ):
                         result = format_carrier(builder, place, span)?
                         if read.fact == OwnershipFact.Move:
                             drop_owned(builder, place.local, span)
@@ -368,7 +372,7 @@ def debug_enum_operand(mut builder: Builder, place: Place, owner: int, span: Sou
         return debug_plan_operand(builder, copied, span)
     if owner >= len(builder.enums) and owner < len(builder.enums) + len(builder.intrinsics):
         declaration = builder.intrinsics[owner - len(builder.enums)]
-        if declaration.carrier == "Option" or declaration.carrier == "Result":
+        if declaration.carrier == Carrier.Option or declaration.carrier == Carrier.Result:
             return borrowed_enum_debug(builder, place, owner, declaration.name, span)
     return Err("unsupported Body IR nonmodel FormatStyle.Debug")
 

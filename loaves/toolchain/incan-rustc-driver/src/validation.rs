@@ -7,9 +7,9 @@ use std::collections::BTreeSet;
 
 use crate::error::PlanError;
 use crate::plan::{
-    BinaryOp, Callee, CalleeKind, Constant, Function, GenericLayoutType, ListLeaf, Operand, OperandKind, Place, Plan,
-    PlanType, Projection, RvalueKind, SizedNumeric, SourceSpan, StatementKind, TerminatorKind, UnaryOp, Unwind,
-    list_leaf_type, range_field_types, tuple_element_type,
+    BinaryOp, Callee, CalleeKind, Carrier, Constant, Function, GenericLayoutType, ListLeaf, Operand, OperandKind,
+    Place, Plan, PlanType, Projection, RvalueKind, SizedNumeric, SourceSpan, StatementKind, TerminatorKind, UnaryOp,
+    Unwind, list_leaf_type, range_field_types, tuple_element_type,
 };
 
 /// Copyable comparison mirror of the Incan-owned sized carrier enum.
@@ -486,7 +486,7 @@ fn entry_result(plan: &Plan, ty: &PlanType) -> bool {
         return false;
     };
     let unit_success = success.fields.is_empty() || success.fields.as_slice() == [PlanType::Unit];
-    declaration.carrier == "Result"
+    declaration.carrier == Carrier::Result
         && unit_success
         && match failure.fields.as_slice() {
             [PlanType::String] => true,
@@ -2619,7 +2619,7 @@ fn hashable_enum(plan: &Plan, index: i64) -> bool {
     if !declaration.library_item.is_empty() {
         return false;
     }
-    if declaration.carrier.is_empty() {
+    if declaration.carrier == Carrier::Declared {
         return [DeriveId::Eq, DeriveId::Hash].iter().all(|required| {
             declaration
                 .derives
@@ -2627,7 +2627,7 @@ fn hashable_enum(plan: &Plan, index: i64) -> bool {
                 .any(|derive| derives::from_str(derive) == Some(*required))
         });
     }
-    matches!(declaration.carrier.as_str(), "Option" | "Result")
+    declaration.carrier != Carrier::Declared
         && declaration
             .variants
             .iter()
@@ -3408,24 +3408,24 @@ fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
             function: declaration.name.clone(),
             reason: "invalid or unsupported enum declaration".into(),
         };
-        if !declaration.carrier.is_empty() {
+        if declaration.carrier != Carrier::Declared {
             let variants = &declaration.variants;
-            let valid = match declaration.carrier.as_str() {
-                "Option" => {
+            let valid = match declaration.carrier {
+                Carrier::Option => {
                     variants.len() == 2
                         && variants[0].name == constructors::as_str(ConstructorId::None)
                         && variants[0].fields.is_empty()
                         && variants[1].name == constructors::as_str(ConstructorId::Some)
                         && variants[1].fields.len() == 1
                 }
-                "Result" => {
+                Carrier::Result => {
                     variants.len() == 2
                         && variants[0].name == constructors::as_str(ConstructorId::Ok)
                         && variants[0].fields.len() == 1
                         && variants[1].name == constructors::as_str(ConstructorId::Err)
                         && variants[1].fields.len() == 1
                 }
-                _ => false,
+                Carrier::Declared => false,
             };
             if !valid || declaration.semantic_key.is_none() || !declaration.name.starts_with("__IncanCarrier") {
                 return Err(error());
@@ -3439,7 +3439,7 @@ fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
             || !valid_library_item(&declaration.library_item)
             || (declaration.library_item.is_empty() && !declaration.library_type_arguments.is_empty())
             || (!declaration.library_item.is_empty()
-                && (!declaration.carrier.is_empty()
+                && (declaration.carrier != Carrier::Declared
                     || declaration
                         .derives
                         .iter()
@@ -3457,7 +3457,7 @@ fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
                     | DeriveId::Hash,
                 ) => false,
                 _ if matches!(name.as_str(), "serde::Serialize" | "serde::Deserialize") => {
-                    !declaration.carrier.is_empty() || declaration.member_debug
+                    declaration.carrier != Carrier::Declared || declaration.member_debug
                 }
                 _ => !(name.contains("::") && valid_library_item(name)),
             })
@@ -3477,7 +3477,7 @@ fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
             }
             for field in &variant.fields {
                 validate_model_type(plan, field)?;
-                let native = !declaration.carrier.is_empty() || !declaration.library_item.is_empty();
+                let native = declaration.carrier != Carrier::Declared || !declaration.library_item.is_empty();
                 let field_type = scalar(field);
                 if !(source_signature_type(&field_type) || (native && native_payload_type(&field_type))) {
                     return Err(PlanError::Invalid {
@@ -3508,7 +3508,7 @@ fn native_payload_type(ty: &Scalar) -> bool {
 /// Admit a member-delegating `Debug` only on a union layout: an ordinary enum that derives no `Debug` of its own and
 /// whose every variant holds exactly the one member the generated impl formats.
 fn member_debug_layout(declaration: &crate::plan::EnumDeclaration) -> bool {
-    declaration.carrier.is_empty()
+    declaration.carrier == Carrier::Declared
         && declaration.name.starts_with("__IncanUnion")
         && !declaration
             .derives
@@ -3547,7 +3547,7 @@ fn raw_value_layout(declaration: &crate::plan::EnumDeclaration) -> bool {
         _ => false,
     };
     kind_valid
-        && declaration.carrier.is_empty()
+        && declaration.carrier == Carrier::Declared
         && !declaration.member_debug
         && declaration.raw_values.len() == declaration.variants.len()
         && declaration.variants.iter().all(|variant| variant.fields.is_empty())
@@ -3710,7 +3710,7 @@ pub(crate) fn carried_output<'plan>(
         return None;
     };
     let carrier = enum_declaration(plan, *index)?;
-    if carrier.carrier.is_empty() {
+    if carrier.carrier == Carrier::Declared {
         return None;
     }
     crate::declarations::standard_carrier(carrier)
@@ -3752,7 +3752,7 @@ fn borrowed_alias_in_source_type(plan: &Plan, ty: &PlanType, seen: &mut BTreeSet
                 .iter()
                 .flat_map(|variant| &variant.fields)
                 .any(|field| {
-                    ((!declaration.carrier.is_empty() || !declaration.library_item.is_empty())
+                    ((declaration.carrier != Carrier::Declared || !declaration.library_item.is_empty())
                         && library_argument_is_borrowed(field))
                         || borrowed_alias_in_source_type(plan, field, seen)
                 })

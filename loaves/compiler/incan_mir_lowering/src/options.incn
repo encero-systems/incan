@@ -2,6 +2,7 @@
 
 from rust::incan_semantics_core import IncanType as RustType, SymbolOrigin, SemanticSourceTargetKind, generic
 from rust::incan_lang::lang::types::collections import from_str as collection_type, CollectionTypeId
+from rust::incan_lang::lang::surface::constructors import from_str as builtin_constructor, ConstructorId
 from rust::incan_semantics_core::body_ir import (
     BodyIrModule,
     Body,
@@ -20,6 +21,7 @@ from rust::incan_semantics_core::body_ir import (
 )
 from lists import taking_iterator_locals
 from table_views import borrowed_at
+from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import (
     BinaryOp,
     CalleeKind,
@@ -80,7 +82,7 @@ pub def result_layout(mut builder: Builder, ty: PlanType) -> Result[tuple[int, E
             if owner < len(builder.enums):
                 return Err("unsupported Body IR TryPropagate outside Result")
             declaration = builder.intrinsics[owner - len(builder.enums)]
-            if declaration.carrier != "Result":
+            if declaration.carrier != Carrier.Result:
                 return Err("unsupported Body IR TryPropagate outside Result")
             return Ok((owner, declaration))
         _ => return Err("unsupported Body IR TryPropagate outside Result")
@@ -138,32 +140,23 @@ pub def intrinsic_pattern(declaration: EnumDeclaration, pattern: &RustPattern) -
     match pattern:
         RustPattern.Wildcard => return Ok(-1)
         RustPattern.Literal(value) =>
-            if declaration.carrier == "Option" and value.clone() == RustConstant.None:
+            if declaration.carrier == Carrier.Option and value.clone() == RustConstant.None:
                 return Ok(0)
-        RustPattern.Enum(canonical=identity, name=_name, variant=variant, fields=fields) =>
+        RustPattern.Enum(canonical=identity, name=_name, variant=_variant, fields=fields) =>
             match identity:
                 Some(canonical) =>
-                    if (
-                        declaration.carrier == "Option"
-                        and canonical.origin == SymbolOrigin.Builtin
-                        and canonical.declaration_name == "Some"
-                        and str(variant) == "Some"
-                        and len(fields) == 1
-                    ):
-                        validate_payload_patterns(fields)?
-                        return Ok(1)
-                    # A bare `None` constructor, as an `assert value is None` pattern spells it.
-                    if (
-                        declaration.carrier == "Option"
-                        and canonical.origin == SymbolOrigin.Builtin
-                        and canonical.declaration_name == "None"
-                        and str(variant) == "None"
-                        and len(fields) == 0
-                    ):
-                        return Ok(0)
+                    # The checked identity names the builtin constructor; its written spelling decides nothing.
+                    if declaration.carrier == Carrier.Option and canonical.origin == SymbolOrigin.Builtin:
+                        constructor = builtin_constructor(canonical.declaration_name)
+                        if constructor == Some(ConstructorId.Some) and len(fields) == 1:
+                            validate_payload_patterns(fields)?
+                            return Ok(1)
+                        # A bare `None` constructor, as an `assert value is None` pattern spells it.
+                        if constructor == Some(ConstructorId.None) and len(fields) == 0:
+                            return Ok(0)
                 None => pass
         RustPattern.Result(variant=variant, fields=fields) =>
-            if declaration.carrier != "Result" or len(fields) != 1:
+            if declaration.carrier != Carrier.Result or len(fields) != 1:
                 return Err("invalid Body IR Result pattern")
             validate_payload_patterns(fields)?
             if variant.clone() == ResultVariantKind.Ok:
@@ -475,14 +468,14 @@ pub def retain_carrier(
             kind: Option[CollectionTypeId] = collection_type(str(base))
             is_option = kind == Some(CollectionTypeId.Option)
             is_result = kind == Some(CollectionTypeId.Result)
-            if not is_option and not is_result and base != "Union":
+            if not is_option and not is_result and not ty.is_union():
                 return Ok(None)
             # Wrap the checked type once and compare each borrowed carrier's key in place, copying neither.
             key = Some(ty.clone())
             for retained_position in range(len(declarations)):
                 if borrowed_at(declarations, retained_position).semantic_key == key:
                     return Ok(None)
-            if base == "Union":
+            if ty.is_union():
                 declaration = lower_union_declaration(constructors, module, ty, file, declarations)?
                 declarations.append(declaration)
                 return Ok(None)
@@ -502,8 +495,10 @@ pub def retain_carrier(
                     Ok(field) => fields.append(field)
                     Err(reason) => return Err(f"{reason} in {base} payload {index} of {ty}")
             mut variants = [EnumVariant(name="None", fields=[]), EnumVariant(name="Some", fields=[fields[0]])]
+            mut carrier = Carrier.Option
             if is_result:
                 variants = [EnumVariant(name="Ok", fields=[fields[0]]), EnumVariant(name="Err", fields=[fields[1]])]
+                carrier = Carrier.Result
             declarations.append(
                 EnumDeclaration(
                     name=f"__IncanCarrier{len(declarations)}",
@@ -511,7 +506,7 @@ pub def retain_carrier(
                     variants=variants,
                     derives=["Clone"],
                     span=plan_span(file=file, line=1, column=1),
-                    carrier=str(base),
+                    carrier=carrier,
                     semantic_key=Some(ty.clone()),
                     source_type=str(ty),
                     comparison_methods=[],
@@ -574,7 +569,7 @@ pub def none_operand(mut builder: Builder, ty: PlanType, span: SourceSpan) -> Re
     if ty == PlanType.Unit:
         return Ok(Operand(kind=OperandKind.Literal(Constant.Unit), span=span))
     owner, declaration = carrier_layout(builder, ty)?
-    if declaration.carrier != "Option":
+    if declaration.carrier != Carrier.Option:
         return Err("unsupported Body IR None outside Option")
     output = temporary(builder, ty, span)
     assign_carrier(builder, output, owner, 0, [], span)
@@ -683,10 +678,10 @@ pub def lower_carrier_method_plan(
     """Lower retained carrier predicates and eager defaults using the shared discriminant and payload machinery."""
     _owner, declaration = carrier_layout(builder, frame_place_type(builder.locals, source))?
     mut present = 0
-    if declaration.carrier == "Option":
+    if declaration.carrier == Carrier.Option:
         present = 1
-    predicate = (declaration.carrier == "Option" and (name == "is_some" or name == "is_none")) or (
-        declaration.carrier == "Result"
+    predicate = (declaration.carrier == Carrier.Option and (name == "is_some" or name == "is_none")) or (
+        declaration.carrier == Carrier.Result
         and (name == "is_ok" or name == "is_err")
     )
     if predicate:
@@ -729,7 +724,7 @@ def lower_carrier_unwrap(
     # `None` fails with the standard message; `Err` passes a clone of its payload so the message renders it as Debug.
     builder.current = missing
     unit = temporary(builder, PlanType.Unit, span)
-    if declaration.carrier == "Option":
+    if declaration.carrier == Carrier.Option:
         unwrap_failure(builder, "unwrap_none", [], [], unit, span)
     else:
         error_type = declaration.variants[1 - present].fields[0]

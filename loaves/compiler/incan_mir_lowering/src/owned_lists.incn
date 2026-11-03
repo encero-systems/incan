@@ -1,5 +1,6 @@
 """Consume checker-selected list items through the standard concrete Vec iterator, without Clone or eager polling."""
 
+from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import (
     PlanType,
     Place,
@@ -74,7 +75,7 @@ def iterator_poll_type(mut builder: Builder, element: PlanType) -> Result[PlanTy
     """Use the retained standard Option layout for Iterator::next's checked item type."""
     for index in range(len(builder.intrinsics)):
         carrier = builder.intrinsics[index]
-        if carrier.carrier == "Option" and len(carrier.variants) == 2 and carrier.variants[1].fields == [element]:
+        if carrier.carrier == Carrier.Option and len(carrier.variants) == 2 and carrier.variants[1].fields == [element]:
             return Ok(PlanType.Enum(len(builder.enums) + index, carrier.name))
     return Err("unsupported Body IR consuming iteration without retained Option output")
 

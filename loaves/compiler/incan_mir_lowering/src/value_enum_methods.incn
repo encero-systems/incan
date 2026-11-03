@@ -1,6 +1,7 @@
 """Lower value-enum members: ordinal encodings, raw values, construction from values, and enum messages."""
 
 from pub::incan_mir_plan import (
+    Carrier,
     BinaryOp,
     Constant,
     Operand,
@@ -282,7 +283,11 @@ pub def lower_value_enum_from_value(
     output = call_destination(builder, destination, PlanType.Unit, span)?
     carrier, declaration = carrier_layout(builder, place_type(builder.locals, output))?
     element = PlanType.Enum(layout, str(builder.enums[layout].name))
-    if declaration.carrier != "Option" or declaration.variants[1].fields != [element] or output.local in builder.owned:
+    if (
+        declaration.carrier != Carrier.Option
+        or declaration.variants[1].fields != [element]
+        or output.local in builder.owned
+    ):
         return Err("unsupported Body IR value enum from_value destination")
     join = builder.new_block(span)
     owners = builder.owned

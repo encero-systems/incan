@@ -1,5 +1,6 @@
 """Bind runtime operations to authenticated compiled frames or ordinary governed body instances."""
 
+from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import (
     semantic_type_matches,
     SourceSpan,
@@ -34,7 +35,7 @@ from function_frames import frame_parameter_type
 from frame_instances import merge_externals
 from runtime_frames import runtime_frame_adapter
 from runtime_requirements import RuntimeRequirement, RuntimeRetention
-from layout_types import native_source_type
+from layout_types import carrier_name, native_source_type
 from native_type_identity import ConstructorIndex
 from program_context import ProgramContext, retain_nominal_tables
 from unions import collect_unions
@@ -771,7 +772,7 @@ def runtime_enum_argument(
         return Err("invalid governed runtime intrinsic enum owner")
     declaration = borrowed_at(intrinsics, slot)
     mut arguments: list[RustType] = []
-    if declaration.carrier != "Option" and declaration.carrier != "Result":
+    if declaration.carrier != Carrier.Option and declaration.carrier != Carrier.Result:
         for position in range(len(unions)):
             union = borrowed_at(unions, position)
             if semantic_type_matches(declaration, union):
@@ -781,10 +782,12 @@ def runtime_enum_argument(
         for field in variant.fields:
             arguments.append(runtime_argument(module, field, intrinsics, unions)?)
     if (
-        declaration.carrier == "Option"
+        declaration.carrier == Carrier.Option
         and len(arguments) != 1
-        or declaration.carrier == "Result"
+        or declaration.carrier == Carrier.Result
         and len(arguments) != 2
     ):
         return Err("invalid governed runtime intrinsic payload arity")
-    return Ok(generic(declaration.carrier, arguments))
+    match carrier_name(declaration.carrier):
+        Some(name) => return Ok(generic(name, arguments))
+        None => return Err("invalid governed runtime intrinsic carrier")

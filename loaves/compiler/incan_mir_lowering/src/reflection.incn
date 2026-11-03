@@ -8,6 +8,7 @@ from rust::incan_semantics_core::body_ir import (
     ArgumentElement,
     Place as RustPlace,
 )
+from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import (
     PlanType,
     Place,
@@ -278,7 +279,7 @@ def validate_reflection_fields(
             continue
         _index, layout = carrier_layout(builder, ty)?
         if (
-            layout.carrier != "Option"
+            layout.carrier != Carrier.Option
             or len(layout.variants[1].fields) != 1
             or not scalar_reflection_type(layout.variants[1].fields[0])
         ):
@@ -302,7 +303,7 @@ def string_field(mut builder: Builder, field: Place, span: SourceSpan) -> Result
     match ty:
         PlanType.Enum(_owner, _name) =>
             _index, layout = carrier_layout(builder, ty)?
-            if layout.carrier != "Option" or len(layout.variants[1].fields) != 1:
+            if layout.carrier != Carrier.Option or len(layout.variants[1].fields) != 1:
                 return Err("unsupported Body IR generic field reflection optional carrier")
             output = temporary(builder, PlanType.String, span)
             selected = builder.new_block(span)
@@ -402,7 +403,7 @@ def reflect_value(
 ) -> Result[None, str]:
     """Compare names and aliases once, clone only a matched field, and construct checked Some or None results."""
     index, layout = carrier_layout(builder, place_type(builder.locals, output))?
-    if layout.carrier != "Option" or len(layout.variants[1].fields) != 1:
+    if layout.carrier != Carrier.Option or len(layout.variants[1].fields) != 1:
         return Err("unsupported Body IR reflection lookup result")
     key = text_argument(builder, arguments, 1, span)?
     join = builder.new_block(span)

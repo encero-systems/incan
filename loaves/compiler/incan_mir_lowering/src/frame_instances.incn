@@ -1,6 +1,6 @@
 """Lower closed instances of generic frames and decorator frames, and merge their external signatures."""
 
-from pub::incan_mir_plan import ExternalFunction, Function, GenericLoan, EnumDeclaration, StaticCell, PlanType
+from pub::incan_mir_plan import Carrier, ExternalFunction, Function, GenericLoan, EnumDeclaration, StaticCell, PlanType
 from layout_types import native_source_type
 from signature_lifetimes import signature_lifetimes, generic_loans
 from rust::incan_semantics_core import IncanType as RustType
@@ -408,7 +408,7 @@ pub def entry_result(module: &BodyIrModule, ty: PlanType, mut intrinsics: list[E
             if index < 0 or index >= len(intrinsics):
                 return false
             declaration = intrinsics[index]
-            if declaration.carrier != "Result" or len(declaration.variants) != 2:
+            if declaration.carrier != Carrier.Result or len(declaration.variants) != 2:
                 return false
             success = declaration.variants[0].fields
             failure = declaration.variants[1].fields

@@ -1,6 +1,7 @@
 """Lower checked operators: arithmetic and bit operations, and equality and ordering comparisons."""
 
 from pub::incan_mir_plan import (
+    Carrier,
     BinaryOp,
     CalleeKind,
     ExternalFunction,
@@ -144,7 +145,7 @@ def external_enum_equality_kind(mut builder: Builder, owner: int) -> Result[Opti
         if index >= len(builder.intrinsics):
             return Err("invalid Body IR intrinsic enum comparison owner")
         carrier = builder.intrinsics[index].carrier
-        if carrier == "Option" or carrier == "Result":
+        if carrier != Carrier.Declared:
             return Ok(Some(true))
         return Ok(None)
     declaration = builder.enums[owner]
@@ -271,7 +272,7 @@ def optional_none_comparison(
     if place_type(builder.locals, source) == PlanType.Unit:
         return Ok(Some(RvalueKind.Use(literal(Constant.Bool(operator == BinOp.Eq or operator == BinOp.Is), span))))
     _owner, declaration = carrier_layout(builder, place_type(builder.locals, source))?
-    if declaration.carrier != "Option":
+    if declaration.carrier != Carrier.Option:
         return Err("invalid Body IR None comparison carrier")
     tag = enum_comparison_tag(builder, source, span)
     mut comparison = BinaryOp.Equal

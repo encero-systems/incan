@@ -12,6 +12,7 @@ from rust::incan_semantics_core::body_ir import (
     Place as RustPlace,
 )
 from rust::incan_semantics_core import IncanType as RustType, SymbolOrigin, SemanticSourceTargetKind
+from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import PlanType, Place, Operand, RvalueKind, ExternalFunction, CalleeKind, SourceSpan
 from pub::incan_mir_plan import assign as plan_assign
 from frame import Builder, temporary, read_place, terminate_call, place_type, external_call
@@ -353,7 +354,7 @@ def static_receiver_type(mut builder: Builder, target: &NamedCallableTarget) -> 
 def require_parsed_result(mut builder: Builder, result: PlanType, payload: PlanType) -> Result[None, str]:
     """Require the destination to be the `Result[Model, str]` carrier legacy's `from_json` returns."""
     _owner, declaration = carrier_layout(builder, result)?
-    if declaration.carrier != "Result":
+    if declaration.carrier != Carrier.Result:
         return Err("unsupported Body IR from_json destination carrier")
     if declaration.variants[0].fields != [payload] or declaration.variants[1].fields != [PlanType.String]:
         return Err("unsupported Body IR from_json destination carrier")

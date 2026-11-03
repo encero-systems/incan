@@ -1,6 +1,7 @@
 """Convert operands at carrier boundaries, test union members, and bind enum payloads."""
 
 from pub::incan_mir_plan import (
+    Carrier,
     semantic_type_matches,
     Constant,
     ListLeaf,
@@ -154,7 +155,10 @@ pub def boundary_plan_operand(
     if operand_type(builder, operand)? == PlanType.FrozenStr:
         match target:
             PlanType.Enum(owner, _name) =>
-                if owner >= len(builder.enums) and builder.intrinsics[owner - len(builder.enums)].carrier == "":
+                if (
+                    owner >= len(builder.enums)
+                    and builder.intrinsics[owner - len(builder.enums)].carrier == Carrier.Declared
+                ):
                     mut convert = false
                     for union in builder.unions:
                         if not semantic_type_matches(builder.intrinsics[owner - len(builder.enums)], union):
@@ -221,10 +225,10 @@ def converted_carrier_operand(
         return Ok(None)
     before = builder.intrinsics[source_owner - len(builder.enums)]
     after = builder.intrinsics[target_owner - len(builder.enums)]
-    if before.carrier not in ["Option", "Result"] or before.carrier != after.carrier:
+    if before.carrier == Carrier.Declared or before.carrier != after.carrier:
         return Ok(None)
     # An existing optional payload lifts as a whole, including None inside Some(None).
-    if after.carrier == "Option" and after.variants[1].fields == [source_type]:
+    if after.carrier == Carrier.Option and after.variants[1].fields == [source_type]:
         return Ok(None)
     mut source = plan_place(-1, span)
     match value.kind:
@@ -279,7 +283,7 @@ def option_payload_operand(
             if owner < len(builder.enums):
                 return Ok(value)
             declaration = builder.intrinsics[owner - len(builder.enums)]
-            if declaration.carrier != "Option":
+            if declaration.carrier != Carrier.Option:
                 return Ok(value)
             payload = declaration.variants[1].fields[0]
         _ => return Ok(value)
@@ -350,7 +354,7 @@ def isinstance_source_type(
     """Use retained place storage for carrier views, preserving full union indexes after a checker-proven narrowing."""
     match checked:
         RustType.Generic(base=base, args=_arguments) =>
-            if base == "Union" or collection_type(str(base)) == Some(CollectionTypeId.Option):
+            if checked.is_union() or collection_type(str(base)) == Some(CollectionTypeId.Option):
                 source = isinstance_place(builder, value, span)?
                 return Ok(place_type(builder.locals, source))
         _ => pass
@@ -472,7 +476,7 @@ def moved_native_enum_payload(
                 return enum_payload_read(builder, payload, fact, span)
     else:
         carrier = builder.intrinsics[owner - len(builder.enums)].carrier
-        if carrier != "Option" and carrier != "Result":
+        if carrier == Carrier.Declared:
             return enum_payload_read(builder, payload, fact, span)
     if len(fields) != 1 or source.projection != Projection.Whole:
         return Err("unsupported Body IR native enum payload move outside a whole owned single-field carrier")

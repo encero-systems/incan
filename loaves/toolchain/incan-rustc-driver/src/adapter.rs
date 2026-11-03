@@ -3,7 +3,7 @@
 use crate::error::PlanError;
 use crate::identity::DriverIdentity;
 use crate::native_crates::native_roots;
-use crate::plan::{CalleeKind, Plan, PlanType, TerminatorKind};
+use crate::plan::{CalleeKind, Carrier, Plan, PlanType, TerminatorKind};
 use crate::spans::Sources;
 use crate::{bodies, callees, declarations, types, union_debug, validation, value_enum_serde};
 use incan_driver::unit::{ToolchainAccess, UnitKind};
@@ -98,7 +98,7 @@ fn native_alias_type<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> rustc_middle::
     if let Some(carrier) = plan
         .enums
         .iter()
-        .find(|value| !value.carrier.is_empty() && name.as_str() == value.name)
+        .find(|value| value.carrier != Carrier::Declared && name.as_str() == value.name)
     {
         let (segments, fields) = crate::declarations::standard_carrier(carrier);
         let path = format!("std::{}", segments.join("::"));
@@ -835,7 +835,7 @@ fn enum_items(
 ) -> Vec<Box<ast::Item>> {
     let value_enum = !value.raw_kind.is_empty();
     let mut item = declarations::enum_declaration(value, span);
-    if value.carrier.is_empty() && value.library_item.is_empty() {
+    if value.carrier == Carrier::Declared && value.library_item.is_empty() {
         for derive in value
             .derives
             .iter()

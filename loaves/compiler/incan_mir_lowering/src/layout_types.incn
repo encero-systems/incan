@@ -8,7 +8,8 @@ from rust::incan_semantics_core import (
     SemanticSourceTargetKind,
 )
 from rust::incan_semantics_core::body_ir import NominalDeclaration, EnumDeclaration as RustEnumDeclaration
-from rust::incan_lang::lang::types::collections import from_str as collection_type, CollectionTypeId
+from rust::incan_lang::lang::types::collections import from_str as collection_type, as_str as collection_name, CollectionTypeId
+from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import PlanType, ListLeaf, EnumDeclaration, TupleElement, tuple_element_type
 from numerics import sized_numeric
 from models import model_type, hashed_element
@@ -467,7 +468,7 @@ def hashed_leaf(
                 key = Some(ty.clone())
                 for carrier_position in range(len(intrinsics)):
                     carrier = borrowed_at(intrinsics, carrier_position)
-                    if carrier.carrier == str(base) and carrier.semantic_key == key:
+                    if carrier.carrier != Carrier.Declared and carrier.semantic_key == key:
                         return Ok(ListLeaf.Enum(len(enums) + index, carrier.name))
                     index += 1
                 return Err(f"unsupported Body IR unretained carrier hashed key {ty}")
@@ -478,7 +479,7 @@ def hashed_leaf(
 def intrinsic_carrier(ty: &RustType) -> bool:
     """Whether a checked type can name a retained intrinsic carrier: only Option, Result and Union are retained."""
     match ty:
-        RustType.Generic(base=base, args=_arguments) => return standard_carrier(str(base)) or base == "Union"
+        RustType.Generic(base=base, args=_arguments) => return standard_carrier(str(base)) or ty.is_union()
         _ => return false
 
 
@@ -488,6 +489,14 @@ pub def standard_carrier(base: str) -> bool:
         Some(CollectionTypeId.Option) => return true
         Some(CollectionTypeId.Result) => return true
         _ => return false
+
+
+pub def carrier_name(carrier: Carrier) -> Option[str]:
+    """A standard carrier's canonical name, read through the collection vocabulary; a declared enum has none."""
+    match carrier:
+        Carrier.Option => return Some(str(collection_name(CollectionTypeId.Option)))
+        Carrier.Result => return Some(str(collection_name(CollectionTypeId.Result)))
+        Carrier.Declared => return None
 
 
 def layout_tuple_type(

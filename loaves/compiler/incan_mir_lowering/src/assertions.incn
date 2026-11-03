@@ -8,6 +8,7 @@ from rust::incan_semantics_core::body_ir import (
 )
 from rust::incan_lang::lang::errors import as_str as runtime_error_name
 from rust::incan_lang::errors import ErrorKind
+from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import PlanType, SourceSpan, TerminatorKind, Constant, Operand
 from pub::incan_mir_plan import assign as plan_assign
 from pub::incan_mir_plan import place as plan_place
@@ -179,9 +180,9 @@ def lower_pattern_assertion(
     return bind_enum_payload(builder, source, slot, pattern, span)
 
 
-def pattern_failure(carrier: str, slot: int) -> str:
+def pattern_failure(carrier: Carrier, slot: int) -> str:
     """Name the runtime failure for a carrier pattern; Option's slot one is Some and Result's slot zero is Ok."""
-    if carrier == "Option":
+    if carrier == Carrier.Option:
         if slot == 1:
             return "missing_some"
         return "unexpected_some"

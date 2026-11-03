@@ -6,6 +6,7 @@ from rust::incan_semantics_core::body_ir import (
     NominalPatternTarget,
     OwnershipFact,
 )
+from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import (
     PlanType,
     Place,
@@ -110,7 +111,7 @@ pub def carrier_pattern_slot(mut builder: Builder, owner: int, pattern: &RustPat
     if owner < len(builder.enums):
         return pattern_variant(builder.enums[owner], pattern)
     declaration = builder.intrinsics[owner - len(builder.enums)]
-    if declaration.carrier == "":
+    if declaration.carrier == Carrier.Declared:
         return union_pattern_slot(
             builder.constructors,
             builder.nominals,

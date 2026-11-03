@@ -298,6 +298,11 @@ impl IncanType {
         }
     }
 
+    /// Whether this is an anonymous union (`int | str`), for callers that need only the answer.
+    pub fn is_union(&self) -> bool {
+        self.union_members().is_some()
+    }
+
     /// Whether a static literal may be stored in this primitive carrier, alone or as a collection element. Body IR's
     /// static initializers and their validation both read this rule.
     pub fn static_literal_carrier(&self) -> bool {

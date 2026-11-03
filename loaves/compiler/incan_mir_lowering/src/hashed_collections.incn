@@ -1,6 +1,7 @@
 """Read, assign, and call methods on sets and dictionaries."""
 
 from pub::incan_mir_plan import (
+    Carrier,
     Constant,
     Operand,
     Place,
@@ -394,7 +395,7 @@ def optional_dictionary_get(
     types = collection_arguments(ty)
     result = borrowed_at(builder.locals, output.local).ty
     _owner, declaration = carrier_layout(builder, result)?
-    if declaration.carrier != "Option" or declaration.variants[1].fields != [types[1]]:
+    if declaration.carrier != Carrier.Option or declaration.variants[1].fields != [types[1]]:
         return Err("unsupported Body IR optional dictionary get carrier")
     key = argument_value(builder, arguments, 1, span)?
     reference = borrow_collection(builder, receiver, false, span)?

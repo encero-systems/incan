@@ -1,6 +1,7 @@
 """Lower builtin members on text, integers, floats, and generators."""
 
 from pub::incan_mir_plan import (
+    Carrier,
     BinaryOp,
     ListLeaf,
     Operand,
@@ -289,7 +290,7 @@ def lower_text_codec_method(
                 result = place_type(builder.locals, output)
             None => return Err("unsupported Body IR discarded codec result without a checked carrier")
         _owner, declaration = carrier_layout(builder, result)?
-        if declaration.carrier != "Result" or declaration.variants[0].fields != [PlanType.String]:
+        if declaration.carrier != Carrier.Result or declaration.variants[0].fields != [PlanType.String]:
             return Err("unsupported Body IR decode result carrier")
         if len(declaration.variants[1].fields) != 1:
             return Err("unsupported Body IR decode error carrier")

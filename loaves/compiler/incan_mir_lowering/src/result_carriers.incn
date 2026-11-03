@@ -1,6 +1,7 @@
 """Lower `?` propagation, result and option construction, carrier methods, and retained references."""
 
 from pub::incan_mir_plan import (
+    Carrier,
     Operand,
     OperandKind,
     Place,
@@ -10,7 +11,7 @@ from pub::incan_mir_plan import (
     assign as plan_assign,
     place as plan_place,
 )
-from layout_types import shared_receiver_type
+from layout_types import shared_receiver_type, carrier_name
 from frozen_plan import frozen_literal
 from rust::incan_semantics_core::body_ir import (
     ArgumentElement as RustArgumentElement,
@@ -85,7 +86,7 @@ pub def lower_result_construction(
     if owner < len(builder.enums):
         return Err("invalid Body IR Result destination")
     declaration = builder.intrinsics[owner - len(builder.enums)]
-    if declaration.carrier != "Result" or not variant.has_complete_canonical_types():
+    if declaration.carrier != Carrier.Result or not variant.has_complete_canonical_types():
         return Err("invalid Body IR Result payload identity")
     mut slot = 0
     if variant.kind == ResultVariantKind.Err:
@@ -105,7 +106,7 @@ pub def lower_option_construction(
     owner = enum_owner(place_type(builder.locals, target))?
     if (
         owner < len(builder.enums)
-        or builder.intrinsics[owner - len(builder.enums)].carrier != "Option"
+        or builder.intrinsics[owner - len(builder.enums)].carrier != Carrier.Option
         or len(elements) != 1
     ):
         return Err("invalid Body IR Some destination or payload")
@@ -145,7 +146,7 @@ pub def lower_carrier_method(
     """Materialize intrinsic call arguments, then delegate the carrier's branch and ownership operations."""
     source = carrier_receiver(builder, arguments, span)?
     _owner, declaration = carrier_layout(builder, place_type(builder.locals, source))?
-    if method.intrinsic_carrier != Some(declaration.carrier):
+    if method.intrinsic_carrier != carrier_name(declaration.carrier):
         return Err("invalid Body IR intrinsic carrier method identity")
     name = str(method.name)
     mut ty = PlanType.Bool
@@ -156,7 +157,7 @@ pub def lower_carrier_method(
             arity = 2
         # The present payload lives in Option's `Some` slot one and Result's `Ok` slot zero.
         mut slot = 0
-        if declaration.carrier == "Option":
+        if declaration.carrier == Carrier.Option:
             slot = 1
         ty = declaration.variants[slot].fields[0]
     if len(arguments) != arity:

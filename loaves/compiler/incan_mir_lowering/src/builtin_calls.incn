@@ -1,6 +1,7 @@
 """Lower runtime helpers and builtin functions: files, extrema, ranges, zips, enumeration, JSON, printing, and conversions."""
 
 from pub::incan_mir_plan import (
+    Carrier,
     CalleeKind,
     ExternalFunction,
     Constant,
@@ -291,7 +292,7 @@ def lower_file_builtin(
         Some(place) => output = scalar_place(builder, place, span)?
     result = place_type(builder.locals, output)
     _owner, declaration = carrier_layout(builder, result)?
-    if declaration.carrier != "Result" or len(declaration.variants) != 2:
+    if declaration.carrier != Carrier.Result or len(declaration.variants) != 2:
         return Err("unsupported Body IR file builtin result carrier")
     if declaration.variants[0].fields != [success_type] or declaration.variants[1].fields != [PlanType.String]:
         return Err("unsupported Body IR file builtin result payloads")

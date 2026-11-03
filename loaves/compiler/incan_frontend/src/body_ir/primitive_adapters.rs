@@ -113,8 +113,9 @@ fn checked_decoder(
         && matches!(body.params.as_slice(), [parameter] if parameter.ty == IncanType::Primitive(IncanPrimitiveType::Bytes))
         && value == receiver
         && body.named_type_identities.get(error).is_some_and(|identity| {
-            identity.declaration_name == "OrdinalMapError"
+            identity.declaration_name == specification.decode_error
                 && matches!(&identity.origin, SymbolOrigin::Package { library, module_path }
-                    if library == specification.package && module_path.iter().map(String::as_str).eq(["collections"]))
+                    if library == specification.package
+                        && module_path.iter().map(String::as_str).eq(specification.decode_error_module.iter().copied()))
         })
 }
