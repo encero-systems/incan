@@ -1,6 +1,6 @@
 # RFC 146: Typed JSON decoding and complete validation
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-10-15
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -19,7 +19,7 @@
     - RFC 131 (error declarations, umbrellas, hierarchy, and diagnostics)
     - RFC 094 (context managers and scoped cleanup)
     - RFC 142 (iteration consumers and failure policies)
-- **Issue:** —
+- **Issue:** [#2588](https://github.com/encero-systems/incan/issues/2588)
 - **RFC PR:** —
 - **Written against:** v0.6
 - **Shipped in:** —
