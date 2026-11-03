@@ -101,6 +101,8 @@ pub(super) fn call_artifacts(value: &CallArtifacts) -> Result<(), NodeBindingErr
 pub(super) fn protocol_artifacts(value: &ProtocolArtifacts) -> Result<(), NodeBindingError> {
     let ProtocolArtifacts {
         explicit_input_calls: _,
+        // Derived from the checked native calls on restore, so it is never recorded.
+        native_input_contracts: _,
         explicit_local_modes: _,
         explicit_input_flow: _,
         explicit_input_copy: _,

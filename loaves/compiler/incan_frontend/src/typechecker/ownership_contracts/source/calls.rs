@@ -201,6 +201,13 @@ impl Builder<'_> {
                 reason: "call facts belong to a different callable".into(),
             });
         }
+        // A native associated function written on its type, as in `HashMap.new()`, names the type, not a receiver
+        // value.
+        let receiver = if self.checker.type_info.native_associated_call(span) {
+            None
+        } else {
+            receiver
+        };
         if call.receiver.is_some() != receiver.is_some() {
             return Err(Unavailable {
                 span,
@@ -232,7 +239,16 @@ impl Builder<'_> {
             span,
             reason: "missing call result type".into(),
         })?;
-        if view.is_none() && !plain_result(result) {
+        // A native call that lends nothing returns a value that cannot keep a borrow of the caller's storage.
+        let lends_nothing = call.kind == super::super::InputCallKind::Native
+            && call.receiver.is_none()
+            && contract.is_some_and(|contract| {
+                contract
+                    .modes
+                    .iter()
+                    .all(|mode| !matches!(mode.mode, OwnershipMode::Borrowed | OwnershipMode::BorrowedMut))
+            });
+        if view.is_none() && !plain_result(result) && !lends_nothing {
             return Err(Unavailable {
                 span,
                 reason: "call result needs retained dependency facts".into(),
@@ -317,7 +333,7 @@ impl Builder<'_> {
             let source = self.optional_place(expression)?.map(|path| path.place);
             let start_node = self.graph.nodes.len();
             incoming = self.event(incoming, Event::Nothing, expression.span);
-            let explicit = call.kind == super::super::InputCallKind::Explicit;
+            let explicit = call.kind != super::super::InputCallKind::Ordinary;
             let (outgoing, loan) =
                 self.call_argument(expression, &call.parameters[slot], mode, explicit, span, incoming)?;
             incoming = outgoing;

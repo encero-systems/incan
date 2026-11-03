@@ -468,6 +468,7 @@ fn append_calls(target: &mut CallArtifacts, local: CallArtifacts) {
 fn append_protocols(target: &mut ProtocolArtifacts, local: ProtocolArtifacts) {
     let ProtocolArtifacts {
         explicit_input_calls,
+        native_input_contracts,
         explicit_local_modes,
         explicit_input_flow,
         explicit_input_copy,
@@ -480,6 +481,7 @@ fn append_protocols(target: &mut ProtocolArtifacts, local: ProtocolArtifacts) {
         loan_free_scrutinees,
     } = local;
     target.explicit_input_calls.extend(explicit_input_calls);
+    target.native_input_contracts.extend(native_input_contracts);
     target.explicit_local_modes.extend(explicit_local_modes);
     target.explicit_input_flow.extend(explicit_input_flow);
     target.explicit_input_copy.extend(explicit_input_copy);

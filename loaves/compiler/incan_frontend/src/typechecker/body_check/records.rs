@@ -199,6 +199,15 @@ fn restore(
             }
         })?;
     }
+    // Native input calls are not recorded; rebuild them from the restored native calls, as the body proof built them.
+    if let Some(identity) = rebound.local.protocols.explicit_input_flow.keys().next().cloned() {
+        super::super::ownership_contracts::native::retain_native_input_calls(
+            &mut rebound.local.protocols,
+            &rebound.local.rust,
+            &identity,
+            None,
+        );
+    }
     rebound.finish(&header[3])
 }
 

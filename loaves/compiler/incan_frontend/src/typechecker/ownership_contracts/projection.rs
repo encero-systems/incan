@@ -67,6 +67,13 @@ impl TypeCheckInfo {
     ) -> Result<Option<&crate::ownership_metadata::CheckedOwnershipContract>, &'static str> {
         let contract = self.declarations.ownership_contracts.get(&call.callee);
         match call.kind {
+            // A native call's contract is the one its selected Rust signature gives it.
+            InputCallKind::Native => self
+                .protocols
+                .native_input_contracts
+                .get(&call.callee)
+                .map(Some)
+                .ok_or("native invocation has no contract from its signature"),
             InputCallKind::Explicit => {
                 let contract = contract.ok_or("invocation has no canonical ownership contract")?;
                 // A returned view is an explicit obligation even when every input slot is ordinary.

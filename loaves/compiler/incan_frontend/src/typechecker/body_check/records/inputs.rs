@@ -45,6 +45,8 @@ pub(super) fn project(positions: &Positions, local: &BodyLocal, fields: &mut Fie
             match call.kind {
                 InputCallKind::Explicit => "explicit",
                 InputCallKind::Ordinary => "ordinary",
+                // A native call is rebuilt from its checked native call on restore; its callee is no declaration.
+                InputCallKind::Native => continue,
             }
             .into(),
         );

@@ -11,6 +11,7 @@ mod builtins;
 mod checked;
 mod copy;
 pub(super) mod flow;
+pub(super) mod native;
 pub(super) mod projection;
 mod report;
 mod source;
@@ -68,6 +69,8 @@ pub(super) enum InputCallKind {
     Explicit,
     /// A synchronous plain declaration retains its existing inferred ABI.
     Ordinary,
+    /// A native item, whose selected Rust signature gives each slot its access.
+    Native,
 }
 
 impl TypeChecker {
@@ -110,6 +113,18 @@ impl TypeChecker {
             return;
         }
         self.retain_input_copy_values(&identity, span);
+        // The declaration span covers only its header; the body is the extent of its statements.
+        let body = match (callable.body().first(), callable.body().last()) {
+            (Some(first), Some(last)) => Some(Span {
+                start: first.span.start,
+                end: last.span.end,
+                ..first.span
+            }),
+            _ => None,
+        };
+        if body.is_some() {
+            native::retain_native_input_calls(&mut self.type_info.protocols, &self.type_info.rust, &identity, body);
+        }
         let (graph, view_errors) = source::build_reporting_views(self, callable, span, &identity);
         let view_refused = !view_errors.is_empty();
         self.errors.extend(view_errors);
