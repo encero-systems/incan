@@ -221,21 +221,27 @@ The context expression must typecheck to `ContextManager[T]` or another type acc
 
 ### Protocol
 
-The candidate infallible protocol is:
+The protocol is one trait whose exit outcome is chosen by each implementation, using RFC 098's `infer` members:
 
 ```incan
-pub trait ContextManager[T]:
+pub trait ContextManager[T, infer ExitOutcome]:
     def __enter__(self) -> T
-    def __exit__(self, exit: ScopeExit) -> None
+    def __exit__(self, exit: ScopeExit) -> Self.ExitOutcome
 ```
 
-`__enter__` starts the scoped lifetime and returns the value exposed to the block. `__exit__` ends the scoped lifetime and receives the exit outcome. A successful cleanup preserves the original control flow. A manager must not suppress the body's failure, but a declared typed finalization failure may prevent otherwise successful completion. The candidate signature above describes infallible cleanup only. A manager declaring fallible cleanup instead gives its exit method the following result shape, where E is its declared error type satisfying RFC 131's common Error contract:
+`__enter__` starts the scoped lifetime and returns the value exposed to the block. `__exit__` ends the scoped lifetime and receives the exit outcome. A successful cleanup preserves the original control flow. A manager must not suppress the body's failure, but a declared typed finalization failure may prevent otherwise successful completion.
+
+An adopting type supplies its exit outcome explicitly, and the checker must accept only `None` or `Result[None, E]`, where E satisfies RFC 131's common Error contract:
 
 ```incan
-def __exit__(self, exit: ScopeExit) -> Result[None, E]
+class CapturedOutput with ContextManager[CapturedOutput, None]:
+    ...
+
+class Transaction with ContextManager[Connection, Result[None, DbError]]:
+    ...
 ```
 
-`Ok(None)` means cleanup succeeded; `Err(error)` reports its typed failure. This selects the fallible exit method's return shape. The complete generic protocol declaration and propagation contract remain open. Independent local Result matching belongs to RFC 147.
+`None` declares infallible cleanup. For `Result[None, E]`, `Ok(None)` means cleanup succeeded and `Err(error)` reports its typed failure. Fallibility is therefore part of the checked public contract, known statically wherever the manager is used. Independent local Result matching belongs to RFC 147.
 
 A manager may also declare typed fallible entry:
 
@@ -275,13 +281,15 @@ If `__enter__` fails, `__exit__` is not called because no scoped lifetime was su
 
 If `__enter__` succeeds, `__exit__` must be called exactly once after the suite exits. This requirement applies to normal fallthrough, `return`, `break`, `continue`, `?` propagation, and panic/assert exits.
 
-Managers may declare typed fallible finalization using a Result error channel. If the body otherwise succeeds but finalization fails, the scope must report that failure rather than continue or return as though the complete operation succeeded. Fallibility must be visible in the checked manager contract, and the compiler must require valid handling or propagation. This does not require infallible managers to invent an error channel. The infallible `__exit__ -> None` form has no recoverable error channel; the fallible form returns `Result[None, E]`. The complete protocol declaration, including how E is bound, and the exact caller-facing handling surface remain open.
+Managers may declare typed fallible finalization using a Result error channel. If the body otherwise succeeds but finalization fails, the scope must report that failure rather than continue or return as though the complete operation succeeded. Fallibility must be visible in the checked manager contract, and the compiler must require valid handling or propagation. This does not require infallible managers to invent an error channel. The infallible `__exit__ -> None` form has no recoverable error channel; the fallible form returns `Result[None, E]`, with E bound by the manager's adopted exit outcome.
+
+A fallible exit failure must propagate into the enclosing function's Result, as `?` would. The checker must refuse a `with` over a fallible manager in a function whose declared result cannot carry that failure. A failed cleanup overrides a pending success, `return`, `break` or `continue`: the scope exits with the failure instead, so a loop does not continue and a function does not return its pending value as though the work had been saved. Every failure that already existed is retained alongside it.
 
 For example, a transaction-like manager may commit when its suite completes successfully. Inserts can succeed while the database subsequently rejects the commit. The caller must receive that finalization failure; successful execution of the insert statements is not proof that the transaction was saved. This scenario illustrates the context-manager contract and does not define a stdlib transaction API or select a universal commit-on-exit policy.
 
 Every failure produced by the body or attempted finalization must be retained. If the body and cleanup both fail, neither error may replace, erase, or reduce the other to message text. Nested scopes must retain additional cleanup failures while preserving the required cleanup attempts for other successfully entered managers. Each retained typed error keeps its original identity, payload, diagnostic origin, upstream relationships, and any captured stack trace under RFC 131. Diagnostic presentation or propagation precedence must not determine which failures survive. Independent body and cleanup failures are aggregate members; retaining them together must not invent a caused_by relationship between them.
 
-When only one work or finalization path fails, the original typed failure must propagate through a compatible enclosing error contract. When multiple paths fail, std.scope.ScopeFailure.Multiple must retain an immutable tuple of the original typed failures and per-member scope and phase provenance. The aggregate belongs to resource scopes, not to every Error. Reports must present work failure first, followed by attempted cleanup failures in actual inside-out order. An enclosing manager must still attempt cleanup and retain any additional failure. Independent members must not acquire a caused_by relationship merely because they are reported together. The complete generic protocol and caller propagation mechanics remain open; retention and reporting order are settled.
+When only one work or finalization path fails, the original typed failure must propagate through a compatible enclosing error contract. When multiple paths fail, std.scope.ScopeFailure.Multiple must retain an immutable tuple of the original typed failures and per-member scope and phase provenance. The aggregate belongs to resource scopes, not to every Error. Reports must present work failure first, followed by attempted cleanup failures in actual inside-out order. An enclosing manager must still attempt cleanup and retain any additional failure. Independent members must not acquire a caused_by relationship merely because they are reported together. A single failure or the aggregate propagates under the exit-outcome rule above.
 
 A panic in cleanup retains its ordinary runtime significance. Panic precedence and its carrier remain unresolved, but must preserve available failure diagnostics where the runtime can execute cleanup and reporting. Retaining diagnostics does not make a panic recoverable through Result. Fallible cleanup must not be described as error suppression or as proof that cleanup always succeeds.
 
@@ -297,7 +305,7 @@ An adaptation promising resource release at exit must establish that retained ha
 
 ### Control flow
 
-The manager must not catch or suppress the body's failure or catch panics. When cleanup succeeds, the body's control-flow decision remains authoritative: a `return` still returns, a `break` still breaks, a `continue` still continues, `?` propagation still propagates, and panic/assert exits still exit according to the existing language rules. Declared fallible finalization must not report successful completion when it fails. The exact integration with pending returns, loop control, existing failures, and panic remains to be specified below; successful cleanup must not arbitrarily change those exits. RFC 147 owns any independently selected local Result-handling boundary and must not bypass required cleanup.
+The manager must not catch or suppress the body's failure or catch panics. When cleanup succeeds, the body's control-flow decision remains authoritative: a `return` still returns, a `break` still breaks, a `continue` still continues, `?` propagation still propagates, and panic/assert exits still exit according to the existing language rules. Declared fallible finalization must not report successful completion when it fails: a failed cleanup overrides a pending success, `return`, `break` or `continue` as failure, while retaining every existing failure. Successful cleanup must not change those exits. Interaction with panic is specified below. RFC 147 owns any independently selected local Result-handling boundary and must not bypass required cleanup.
 
 `__exit__` receives `ScopeExit` only so it can perform correct cleanup and record metadata. For example, a transaction manager may roll back on `Error`, a telemetry manager may set span status on `Error` or `Panic`, and an output-capture manager may restore stdout/stderr regardless of outcome.
 
@@ -309,13 +317,13 @@ A vocabulary block may provide additional compile-time information to the contex
 
 Vocabulary blocks must remain explicitly activated through the project's vocabulary mechanism. A context-manager protocol implementation alone must not cause new statement syntax to appear in unrelated modules.
 
+Diagnostics for a vocabulary block must use the authored block, its header or the responsible body expression as the primary span. The vocabulary or provider identity and the entry/exit lowering chain must be retained as structured secondary evidence, inspectable by tools. When both the work and cleanup fail, both must be shown. Diagnostics must not present the generated `with` as though the user had written it, and must not change secrecy rules.
+
 ### Async interaction
 
-The RFC must choose a conservative async rule. A synchronous context manager whose scoped state is task-local, thread-local, guard-based, or otherwise sensitive to suspension should not be held across `await` by accident.
+A synchronous context manager's suite may contain `await` only when the retained manager, the entered value and any state they borrow satisfy the ordinary checked suspension proof, the same proof that governs any value held across `await`. When the proof fails, the compiler must diagnose the resource and the `await`; it must not silently clone or move state to make suspension legal. There is no unchecked await-safe marker.
 
-At minimum, the compiler must either reject `await` inside a `with` suite unless the manager type is marked await-safe, or require a distinct async context-manager protocol for suites that may suspend. The same rule must apply to vocabulary blocks that lower through context managers.
-
-This RFC leaves the exact spelling of await-safe context managers unresolved, but the contract must be decided before the RFC advances beyond Draft.
+Awaited acquisition happens before entry, as in `with await shared_counter.lock() as guard:`. An exit that itself needs to suspend requires a distinct, explicit async protocol; a synchronous `__exit__` must never hide an await. The same rules apply to vocabulary blocks that lower through context managers.
 
 ## Design details
 
@@ -399,14 +407,16 @@ Vocabulary blocks that lower through context managers can use the same internal 
 
 - Permit declared typed fallible finalization. If the body succeeds but finishing the resource fails, the caller must receive a failure rather than false success. The fallible `__exit__` returns `Result[None, E]`: Ok(None) completes cleanup, while Err retains its typed failure. Keep fallibility visible and checked without making every manager fallible. Complete protocol declarations and propagation through pending returns and loop control remain open; simultaneous body/finalization failures must all be retained. Local Result matching is explored independently in RFC 147.
 
+- One protocol, `ContextManager[T, infer ExitOutcome]`, with the exit outcome supplied explicitly at adoption. The checker accepts only `None` or `Result[None, E]` with E satisfying Error. A fallible exit propagates into a compatible enclosing Result; a failed cleanup overrides a pending success, return, break or continue as failure while retaining every existing failure; a function whose declared result cannot carry the failure is refused. `with` syntax is unchanged.
+- `await` inside a synchronous manager's suite is allowed only when the manager, entered value and borrowed state satisfy the ordinary checked suspension proof; otherwise the resource and the `await` are diagnosed, without silent cloning. Awaited acquisition happens before entry. An exit that suspends needs a distinct explicit async protocol.
+- Diagnostics use the authored vocabulary block, header or responsible body expression as the primary span, with the vocabulary identity and entry/exit lowering chain as structured secondary evidence. Work and cleanup failures are both shown, and the generated `with` is not presented as handwritten.
 - Cleanup must observe failure for both question-mark error propagation and an explicit return whose evaluated Result is Err. Diagnostic metadata may additionally preserve the exit mechanism, but the return spelling must not hide failure or change cleanup into error suppression. ScopeExit uses the six reason-only cases Success, Return, Break, Continue, Error and Panic; detailed failure evidence remains separate.
 
 ## Unresolved questions
 
-- What complete static propagation mechanics and panic carrier compose with the selected ScopeFailure.Multiple aggregate? Original typed failures, immutable membership with scope/phase provenance, work-first then actual inside-out cleanup presentation, and distinct panic significance are settled. The generic protocol and receiver questions below remain open.
-- What complete protocol declaration binds the error types for the selected `__enter__ -> Result[T, E]` and `__exit__ -> Result[None, E]` forms, and how do finalization failures propagate through an enclosing Result and interact with pending returns and loop control? Typed finalization failure, its Result return shape, checked fallibility, and rejection of false success are settled. Infallible cleanup retains its None-returning form.
+- Panic interaction: when the body or a cleanup panics while other failures exist, what is the panic's precedence and how are the retained failures carried? Original typed failures, aggregate membership, presentation order and distinct panic significance are settled.
+- Fallible entry: how does `ContextManager` bind the entry error type for the `__enter__ -> Result[T, E]` form, alongside the settled `infer ExitOutcome`?
 - What receiver, borrowed-view, and ownership-transfer rules connect the retained manager to its entered value, especially for existing reference-counted handles and guards? The protocol must prevent invalid escape and make promised resource release enforceable.
-- What is the exact async-safety rule: reject `await` in synchronous context-manager suites, require an await-safe marker, or introduce a separate async context-manager protocol?
-- How should tooling display vocabulary blocks that lower through context managers without pretending the user wrote a `with` statement?
+- What is the explicit async protocol for an exit that must suspend, and how is it spelled at the use site?
 
 <!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
