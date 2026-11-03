@@ -11,6 +11,7 @@
     - RFC 042 (traits are always abstract)
     - RFC 068 (protocol hooks for core language syntax; `__call__` and the fixed-arity callable traits)
     - RFC 115 (fallible iteration and combinators; stored generic callbacks)
+    - RFC 141 (type matching; `std.reflection` `TypeInfo` and `ParameterListInfo`)
     - #1790 (a `mut` parameter marker in function types)
 - **Issue:** [#1752](https://github.com/encero-systems/incan/issues/1752)
 - **RFC PR:** —
@@ -241,7 +242,28 @@ For a method declared as `def format(self, text: str, *, limit: int = 80) -> str
 
 A bound method declared with `mut self` retains its mutable receiver requirement and borrow lifetime. Removing a bound receiver from the parameter list does not remove those constraints. Receiver roles come from declaration and binding semantics, not simply from a parameter being named `self` or `cls`.
 
-`formatter.format.__signature__` exposes compiler-derived, read-only signature metadata. Conceptually it describes `text` and `limit`, their types and parameter kinds, whether each is required, the return type, and the separately recorded bound receiver contract. A callable object's `__signature__` describes calling that object, rather than its constructor. Metadata cannot be assigned to in order to change a signature or bypass receiver checks. The concrete metadata types and runtime availability policy remain to be specified below.
+`formatter.format.__signature__()` returns compiler-derived, read-only signature metadata, in the same way `__fields__()` describes a model's fields. It describes `text` and `limit`, their types and parameter kinds, whether each is required, the return type, and the separately recorded bound receiver contract. A callable object's `__signature__()` describes calling that object, rather than its constructor. Metadata cannot be assigned to in order to change a signature or bypass receiver checks.
+
+```incan
+from std.reflection import SignatureInfo
+
+class Formatter:
+    def format(self, text: str, *, limit: int = 80) -> str:
+        return text[:limit]
+
+def show(handler: Callable[(text: str) -> str]) -> None:
+    println(len(handler.__signature__().parameters))    # 1: the contract this parameter promises
+
+def main() -> None:
+    signature: SignatureInfo = Formatter().format.__signature__()
+    for parameter in signature.parameters:
+        println(f"{parameter.name}: {parameter.type_name} required={parameter.required}")
+    # text: str required=true
+    # limit: int required=false
+    show(Formatter().format)
+```
+
+The description is the contract of the value's checked type where it is asked for. `Formatter().format` names the method, so it reports both parameters. Inside `show`, the same method is seen through `Callable[(text: str) -> str]`, which promises only `text`, so that is what it reports. A parameter that a narrower callable type hides cannot be called through it either. A library that needs a function's complete declaration, such as a decorator, sees it where the function is declared.
 
 ### Holding a callable in a model
 
@@ -380,7 +402,20 @@ A library's checked metadata must preserve the complete signature, receiver requ
 
 Functions, methods, closures, and callable objects must expose a compiler-derived, read-only signature description. This description must use the shared signature model and distinguish caller-facing parameters from receiver binding. It must represent parameter order, available keyword names, kinds, types, required versus optional status, variadic element types, return type, and applicable receiver access and consumption requirements. Generic signatures must retain their type parameters and reflect substitutions when specialized.
 
-The metadata must not be an independently editable source of truth. Reading it must not invoke the callable, evaluate defaults, consume the receiver, or acquire permission to mutate it. Metadata need not expose actual default values: omission support is the contract, and default evaluation remains owned by the declaration. The exact runtime data types and availability policy are unresolved; this RFC does not yet promise a runtime object attached to every compiled function.
+The metadata must not be an independently editable source of truth. Reading it must not invoke the callable, evaluate defaults, consume the receiver, or acquire permission to mutate it. Metadata need not expose actual default values: omission support is the contract, and default evaluation remains owned by the declaration.
+
+The description must be read with `value.__signature__()`, which returns a `std.reflection.SignatureInfo`. `SignatureInfo` must provide:
+
+- `parameters`, a `ParameterListInfo` (RFC 141) whose entries give each caller-facing parameter's name where one is promised, kind, type as a `TypeInfo` with its display name, required or optional status, and `mut` marker;
+- `returns`, the return type as a `TypeInfo`;
+- `receiver`, an `Option[ReceiverInfo]` that records what supplies the bound receiver and whether invocation reads, mutates, or consumes it;
+- the signature's type parameters, with substitutions applied when the signature is specialized.
+
+These types must be read-only values, and `std.reflection` must not add them to the automatic prelude.
+
+`__signature__()` must describe the contract of the receiver's checked type at the point of the call. For a named function, method, or callable object that is its declared signature. For a value whose type is `Callable[S]` or a type parameter bounded by it, it is `S`, or the substituted signature once the parameter is specialized. It must be available for every callable form without an opt-in, and it must not require a runtime table attached to each compiled function: a program that never calls it pays nothing for it.
+
+The checker, checked library metadata, diagnostics, the language server's hover and signature help, and `__signature__()` must present one checked signature record. None of them may re-derive parameter names, kinds, types, or omission support from source syntax, so an imported, generic, or adopted callable is described the same way in every surface.
 
 ## Design details
 
@@ -445,7 +480,7 @@ Published library artifacts whose metadata names the old traits must be rebuilt 
 
 ## Implementation architecture
 
-This section is non-normative. The shared signature model is the source of truth for declarations, function types, callable checking, diagnostics, and `__signature__`. Binding a method derives its caller-facing view while retaining receiver ownership and access requirements. Separate implementations of keyword binding or signature compatibility for `Callable` would risk divergent language behavior.
+This section is non-normative. The shared signature model is the source of truth for declarations, function types, callable checking, diagnostics, language-server hover and signature help, and `__signature__()`. Reflection fits the route `__fields__()` already takes: a compiler-known reflection operation lowered from checked facts, with no per-function runtime table. Binding a method derives its caller-facing view while retaining receiver ownership and access requirements. Separate implementations of keyword binding or signature compatibility for `Callable` would risk divergent language behavior.
 
 The backend must preserve the original source type of an adopting object. Converting an adopter to a closure and substituting that closure as the source generic type is rejected: it loses fields, additional trait bounds, and explicit types such as `Holder[Counter]`. Implementation-only adapters are permitted when they preserve all source-visible behavior, identity, state, and ownership. Nested values in lists or options do not justify a source-level refusal or type substitution.
 
@@ -464,7 +499,7 @@ Per-package traits cannot stand in for one canonical capability, and a fixed fam
 
 ## Inspectability and tooling surface
 
-- **Artifact or metadata:** checked library metadata preserves signatures, receiver requirements, and original nominal identities; `__signature__` presents the same information under the availability policy still to be specified.
+- **Artifact or metadata:** checked library metadata preserves signatures, receiver requirements, and original nominal identities; `__signature__()` presents the same checked record that hover and signature help show.
 - **Inspection command:** `incan check` reports contract violations before backend compilation; `incan explain` describes callable diagnostics; hover shows the original type and callable signature.
 - **Diagnostics:** malformed signature arguments, incompatible parameter names or kinds, missing defaults, adoption mismatch, missing mutable access, and illegal repeated consuming calls must identify the relevant source operation.
 - **Provenance:** mismatch messages name the required contract and supplied declaration. Binding a receiver must not hide its access requirements or manufacture a closure type in source-facing output.
@@ -482,7 +517,7 @@ This RFC is done when:
 - named and keyword-only calls, omitted defaults, positional-only parameters, and variadics have matching behavior through direct calls, function types, methods, closures, and `Callable` bounds, with negative fixtures for incompatible contracts;
 - bound instance and class methods exclude the bound receiver from caller-facing parameters while preserving receiver restrictions; static and supported unbound methods expose the appropriate parameter list;
 - explicit nominal generic arguments, combined trait bounds, supertraits, and callable objects nested in options or lists retain their types and capabilities across packages;
-- signature metadata reflects parameter kinds, omission support, return types, generic substitutions, and receiver binding without invoking the callable or evaluating defaults, and attempts to overwrite it are refused under the finalized metadata API;
+- `__signature__()` reflects parameter kinds, omission support, return types, generic substitutions, and receiver binding without invoking the callable or evaluating defaults; a value seen through a narrower `Callable` type reports that type's contract; assigning to it is refused; and hover and signature help show the same facts for a local, an imported, and a generic callable;
 - the reference pages for callable objects, traits, and collection protocols, the Rust interop how-to, the CLI reference, and the release notes describe `Callable[(A, B) -> R]` and the removal;
 - legacy `Callable[A, R]` and bare-arrow callable-value annotations are refused with the exact wrapped replacement; parameters, returns, fields, containers, aliases, nested callable results, and async annotations are covered, while ordinary function declarations and RFC 141 signature-component operations remain valid;
 - the same annotated API accepts a compatible named function, closure, callable model, and callable class without losing concrete identity or bypassing receiver and invocation restrictions.
@@ -499,14 +534,8 @@ This RFC is done when:
 - **The markers keep their spelling and guarantees.** They share signature types but retain read-only, mutable, and consuming invocation distinctions. There is no parameter limit; nominal owners use `Callable[...]`.
 - **Identity and receivers.** Callable objects remain their original types. `mut self` is supported and requires mutable access; bound receivers remain part of the access contract.
 - **Shared signatures and metadata.** Named, optional, keyword-only, and variadic parameters use declaration rules. `__signature__` is compiler-derived and read-only.
+- **`__signature__()` is a method over one checked record.** It is spelled like `__fields__()` and returns `std.reflection.SignatureInfo`, built from RFC 141's `TypeInfo` and `ParameterListInfo`. It describes the contract of the value's checked type where it is asked for, is always available, and costs nothing when unused. The checker, library metadata, the language server, and reflection all read the same record.
 - **Legacy shorthand is retired.** Signatures use arrows inside `Callable[...]`, which consistently names the callable trait and callable-signature annotation. RFC 035 is explicitly superseded for its shorthand; diagnostics show the wrapped replacement and explain the accepted callable forms.
 - **Inherited features.** `Callable` expresses whatever function types express, including the `mut` parameter marker of #1790 once it lands, with no rule of its own.
 - **Compiler-known.** `std.traits.callable` declares and documents `Callable`; the checker supplies its requirement.
 - **One identity.** A callable value satisfies the same bound in every package; a backend that breaks this is not acceptable.
-
-## Unresolved questions
-
-- **What concrete API and availability policy does `__signature__` expose?** The shared model, read-only behavior, and receiver treatment are settled. The metadata types, how programs query them, and whether runtime metadata is always available or explicitly retained still need a concrete contract before this RFC advances. This is distinct from compiler and checked-library metadata, which must always retain the information needed for checking.
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
