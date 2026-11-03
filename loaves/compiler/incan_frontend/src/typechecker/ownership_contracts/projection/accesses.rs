@@ -22,6 +22,7 @@ impl CheckedInputBody<'_> {
             claimed: BTreeSet::new(),
             last: None,
             known: BTreeSet::new(),
+            dependents: BTreeMap::new(),
             constrained: BTreeSet::new(),
         };
         for (index, node) in self.graph.nodes.iter().enumerate() {
@@ -100,6 +101,8 @@ struct SourceAccesses<'a, 'facts> {
     last: Option<usize>,
     known: BTreeSet<flow::Root>,
     constrained: BTreeSet<flow::Root>,
+    /// Bindings holding a borrowed native result, with the receiver place and result loan each read uses.
+    dependents: BTreeMap<incan_semantics_core::CanonicalSymbolId, (flow::Place, flow::LoanId)>,
 }
 
 impl SourceAccesses<'_, '_> {
@@ -214,6 +217,17 @@ impl SourceAccesses<'_, '_> {
     fn expression(&mut self, expression: &Spanned<Expr>, consume: bool) -> Result<(), &'static str> {
         match &expression.node {
             Expr::Ident(_) | Expr::SelfExpr | Expr::Field(_, _) => {
+                // A read of a binding holding a borrowed native result first uses the loan it holds.
+                if let Some((source, loan)) = self
+                    .proof
+                    .facts
+                    .resolved_identity(expression.span)
+                    .filter(|_| matches!(expression.node, Expr::Ident(_)))
+                    .and_then(|identity| self.dependents.get(identity))
+                    .cloned()
+                {
+                    self.access(expression.span, &source, Some(loan), flow::Access::Read)?;
+                }
                 let (place, through) = self.place(expression)?.ok_or("source access has no stored place")?;
                 let access = if consume
                     && (through.is_some() || self.constrained.contains(&place.root))
@@ -383,6 +397,40 @@ impl SourceAccesses<'_, '_> {
         Ok(())
     }
 
+    /// The receiver place and result loan of a native call whose result borrows its receiver: the shared loan at the
+    /// call's span on the receiver's place, under the receiver loan's own parent.
+    fn native_result_loan(&self, call: &Spanned<Expr>) -> Result<(flow::Place, flow::LoanId), &'static str> {
+        let call = unparenthesized(call);
+        let receiver = self
+            .proof
+            .graph
+            .invocations
+            .get(&call.span)
+            .and_then(|invocation| invocation.receiver)
+            .and_then(|loan| self.proof.graph.loans.get(loan.0))
+            .ok_or("borrowed native result has no receiver loan")?;
+        let loan = self
+            .proof
+            .graph
+            .loans
+            .iter()
+            .position(|loan| {
+                loan.span == call.span
+                    && loan.kind == flow::LoanKind::Shared
+                    && !loan.writable
+                    && loan.source == receiver.source
+                    && loan.parent == receiver.parent
+            })
+            .ok_or("borrowed native result has no result loan")?;
+        Ok((receiver.source.clone(), flow::LoanId(loan)))
+    }
+
+    /// Whether an expression is, through parentheses, a native call whose result borrows its receiver.
+    fn native_borrowing_call(&self, expression: &Spanned<Expr>) -> bool {
+        let call = unparenthesized(expression);
+        matches!(call.node, Expr::MethodCall(..)) && self.proof.facts.native_borrowed_result(call.span)
+    }
+
     /// Validate a declaration or whole binding replacement only after its actual initializer has been evaluated.
     fn assignment(&mut self, assignment: &AssignmentStmt) -> Result<(), &'static str> {
         let root = self
@@ -394,6 +442,17 @@ impl SourceAccesses<'_, '_> {
         let mode = (root.declaration_span == assignment.name_span)
             .then(|| self.proof.facts.protocols.explicit_local_modes.get(&root))
             .flatten();
+        // A new local initialized by a native result borrowing its receiver holds the result's loan.
+        if mode.is_none()
+            && root.declaration_span == assignment.name_span
+            && self.native_borrowing_call(&assignment.value)
+        {
+            self.expression(&assignment.value, false)?;
+            let held = self.native_result_loan(&assignment.value)?;
+            self.known.insert(flow::Root::Binding(root.clone()));
+            self.dependents.insert(root, held);
+            return Ok(());
+        }
         // A closure binding reads or borrows its captures where it is built; those events are its retained record's.
         if let Expr::Closure(params, body) = &assignment.value.node {
             let closure = self
@@ -497,8 +556,27 @@ impl SourceAccesses<'_, '_> {
                     ..
                 }) => {
                     self.expression(scrutinee, false)?;
+                    // A native result borrowing its receiver binds its payload as a holder of the result's loan.
+                    let held = if self.native_borrowing_call(scrutinee) {
+                        Some(self.native_result_loan(scrutinee)?)
+                    } else {
+                        None
+                    };
                     let mut reaches = false;
                     for arm in arms {
+                        if let Some(held) = &held
+                            && let Some((name, span)) =
+                                super::super::builtins::carried_view_binding(&arm.node.pattern, 0)
+                        {
+                            let identity = self
+                                .proof
+                                .facts
+                                .resolved_write_identity(span, name)
+                                .ok_or("borrowed native result binding lacks a canonical identity")?
+                                .clone();
+                            self.known.insert(flow::Root::Binding(identity.clone()));
+                            self.dependents.insert(identity, held.clone());
+                        }
                         reaches |= match &arm.node.body {
                             MatchBody::Expr(value) => {
                                 self.expression(value, false)?;
@@ -693,5 +771,13 @@ impl SourceAccesses<'_, '_> {
         }
         self.block(&loop_.body)?;
         Ok(())
+    }
+}
+
+/// An expression without its redundant parentheses.
+fn unparenthesized(expression: &Spanned<Expr>) -> &Spanned<Expr> {
+    match &expression.node {
+        Expr::Paren(inner) => unparenthesized(inner),
+        _ => expression,
     }
 }

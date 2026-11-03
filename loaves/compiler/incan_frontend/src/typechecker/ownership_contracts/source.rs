@@ -19,6 +19,7 @@ use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 
 mod calls;
 mod closures;
+mod dependents;
 mod matches;
 mod operations;
 mod values;
@@ -113,6 +114,11 @@ struct Builder<'a> {
     /// Calls an `await` suspends on directly. A call to an async callable anywhere else would leave a future holding
     /// its loans, which is not modeled.
     awaited: BTreeSet<Span>,
+    /// Locals and match arm bindings holding a borrowed native result, with the loan on the receiver each holds. Every
+    /// read of one uses that loan.
+    dependents: BTreeMap<CanonicalSymbolId, Path>,
+    /// Set while a borrowed native result is evaluated where a new local or match arm can hold it.
+    holding_native_result: bool,
     constrained: BTreeSet<Root>,
     borrowed_inputs: BTreeSet<Root>,
     loops: Vec<LoopEdges>,
@@ -258,6 +264,8 @@ fn build_graph(
         closures: BTreeMap::new(),
         reference_closures: BTreeSet::new(),
         awaited: BTreeSet::new(),
+        dependents: BTreeMap::new(),
+        holding_native_result: false,
         loops: Vec::new(),
         view: None,
         view_carried: None,
@@ -487,7 +495,8 @@ impl Builder<'_> {
     /// Index computations run before access, exactly once; projection lookup itself is not another read of the owner.
     fn evaluate_place(&mut self, expression: &Spanned<Expr>, incoming: Vec<usize>) -> Result<Vec<usize>, Unavailable> {
         match &expression.node {
-            Expr::Ident(_) | Expr::SelfExpr => Ok(incoming),
+            Expr::Ident(_) => Ok(self.dependent_use(expression, incoming)),
+            Expr::SelfExpr => Ok(incoming),
             Expr::Paren(base) | Expr::Field(base, _) => self.evaluate_place(base, incoming),
             Expr::Index(base, index) => {
                 let incoming = self.evaluate_place(base, incoming)?;
@@ -555,6 +564,13 @@ impl Builder<'_> {
                 Err(Unavailable {
                     span: expression.span,
                     reason: "a returned view needs a local binding, a receiver or a returned view position".into(),
+                })
+            }
+            // A native result borrowing its receiver needs a new local or a match arm to hold the result's loan.
+            Expr::MethodCall(..) if !self.holding_native_result && self.native_borrowing_call(expression) => {
+                Err(Unavailable {
+                    span: expression.span,
+                    reason: "a borrowed native result needs a new local or a match to hold it".into(),
                 })
             }
             // A carried view stays in its carrier until `?` or a match takes it out; the carrier holds a loan.
@@ -776,6 +792,16 @@ impl Builder<'_> {
             && matches!(assignment.value.node, Expr::Closure(..))
         {
             return self.bind_closure(root, &assignment.value, incoming);
+        }
+        // A new local initialized by a native result borrowing its receiver holds the result's loan.
+        if mode.is_none()
+            && root.declaration_span == assignment.name_span
+            && root.kind == SemanticSourceTargetKind::Local
+            && self.native_borrowing_call(&assignment.value)
+        {
+            let (incoming, path) = self.evaluate_native_borrowing_call(&assignment.value, incoming)?;
+            self.bind_dependent(root, assignment.name_span, path)?;
+            return Ok(incoming);
         }
         // A new local initialized by a returned view aliases its substituted place under the call's result loan.
         if mode.is_none()

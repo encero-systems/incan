@@ -1871,7 +1871,14 @@ impl TypeChecker {
         let contextual_types =
             self.contextualize_rust_bound_closures(sig, owner_path, args, arg_types, expected_return_ty);
         let arg_types = contextual_types.as_slice();
-        if let Some(contract) = sig.receiver_contract {
+        // Metadata may omit the contract; in an input-checked body, Rust's own elision rule then gives it from the
+        // signature. Ordinary bodies keep only the published contract their read counting already relies on.
+        let receiver_contract = sig.receiver_contract.or_else(|| {
+            self.input_checked_body()
+                .then(|| elided_receiver_contract(sig))
+                .flatten()
+        });
+        if let Some(contract) = receiver_contract {
             self.type_info.rust.receiver_contracts.insert(span, contract);
         }
         if sig.is_async {
@@ -1966,6 +1973,13 @@ impl TypeChecker {
 
         let ret = self.resolved_rust_call_type_from_sig(sig, owner_path, span);
         self.record_rust_return_coercion_from_display(sig.return_type.as_str(), &ret, span);
+        // A result reference tied to a shared receiver is `Borrowed[T]` to the user, exactly as an Incan view of the
+        // receiver (RFC 164): the call's value is the referent's, and the receiver stays borrowed while it is used.
+        if self.input_checked_body()
+            && receiver_contract.is_some_and(|contract| contract.shared && contract.returns_receiver_borrow)
+        {
+            return borrowed_referents(ret);
+        }
         ret
     }
 
@@ -3602,4 +3616,62 @@ mod validate_rust_function_call_tests {
             "expected rust arg coercion metadata for rust method boundary"
         );
     }
+}
+
+/// A native result with each shared reference, at the top or as a `Result` or `Option` payload, replaced by its
+/// referent: the value type a shared borrow of that referent reads as.
+fn borrowed_referents(ty: ResolvedType) -> ResolvedType {
+    let referent = |ty: ResolvedType| match ty {
+        ResolvedType::Ref(inner) => *inner,
+        other => other,
+    };
+    match ty {
+        ResolvedType::Ref(inner) => *inner,
+        ResolvedType::Generic(name, arguments) if ty_is_carrier(&name) => {
+            ResolvedType::Generic(name, arguments.into_iter().map(referent).collect())
+        }
+        other => other,
+    }
+}
+
+/// Whether a generic name is the builtin `Result` or `Option` carrier.
+fn ty_is_carrier(name: &str) -> bool {
+    matches!(
+        incan_lang::lang::types::collections::from_str(name),
+        Some(
+            incan_lang::lang::types::collections::CollectionTypeId::Result
+                | incan_lang::lang::types::collections::CollectionTypeId::Option
+        )
+    )
+}
+
+/// The receiver contract a method's signature gives by Rust's lifetime elision rule: a shared `&self` receiver whose
+/// output references are all shared and carry either an elided lifetime or the receiver's own, so they borrow the
+/// receiver.
+fn elided_receiver_contract(sig: &RustFunctionSig) -> Option<incan_lang::interop::RustReceiverContract> {
+    let receiver = sig.params.first()?.type_display.trim();
+    let receiver_lifetime = match receiver.strip_prefix('&')?.trim_start() {
+        "self" => None,
+        named => {
+            let (lifetime, rest) = named.split_once(char::is_whitespace)?;
+            if !lifetime.starts_with('\'') || rest.trim() != "self" {
+                return None;
+            }
+            Some(lifetime)
+        }
+    };
+    let output = sig.return_type.as_str();
+    let lifetimes: Vec<&str> = output
+        .split(|character: char| !(character == '\'' || character == '_' || character.is_alphanumeric()))
+        .filter(|token| token.starts_with('\''))
+        .collect();
+    let receiver_borrow = output.contains('&')
+        && !output.contains("&mut")
+        && lifetimes
+            .iter()
+            .all(|lifetime| *lifetime == "'_" || Some(*lifetime) == receiver_lifetime);
+    Some(incan_lang::interop::RustReceiverContract {
+        shared: true,
+        returns_receiver_borrow: receiver_borrow,
+    })
 }

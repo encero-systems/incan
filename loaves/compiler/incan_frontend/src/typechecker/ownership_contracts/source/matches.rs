@@ -126,6 +126,8 @@ impl Builder<'_> {
         arms: &[Spanned<MatchArm>],
         incoming: Vec<usize>,
     ) -> Result<Vec<usize>, Unavailable> {
+        // A native result borrowing its receiver binds its payload as a holder of the result's loan.
+        let mut dependent = None;
         let (evaluated, view) = if let Some(relation) = self.call_relation(scrutinee)?
             && let Some(payload) = relation.carried
         {
@@ -136,6 +138,10 @@ impl Builder<'_> {
             (evaluated, Some((path, payload)))
         } else if self.is_taken_carrier(scrutinee) {
             return Err(super::taken_carrier(scrutinee.span));
+        } else if self.native_borrowing_call(scrutinee) {
+            let (evaluated, path) = self.evaluate_native_borrowing_call(scrutinee, incoming)?;
+            dependent = Some(path);
+            (evaluated, None)
         } else if fresh_scrutinee(scrutinee) {
             (self.expression(scrutinee, incoming, false)?, None)
         } else {
@@ -159,9 +165,25 @@ impl Builder<'_> {
             let binding = view.as_ref().and_then(|(path, payload)| {
                 super::super::builtins::carried_view_binding(&arm.node.pattern, *payload).map(|binding| (path, binding))
             });
-            match binding {
-                Some((path, (name, span))) => self.view_arm_binding(name, span, path)?,
-                None => self.arm_binding(&arm.node.pattern)?,
+            let held = dependent.as_ref().and_then(|path| {
+                super::super::builtins::carried_view_binding(&arm.node.pattern, 0)
+                    .map(|binding| (path.clone(), binding))
+            });
+            match (binding, held) {
+                (Some((path, (name, span))), _) => self.view_arm_binding(name, span, path)?,
+                (None, Some((path, (name, span)))) => {
+                    let identity = self
+                        .checker
+                        .type_info
+                        .resolved_write_identity(span, name)
+                        .cloned()
+                        .ok_or(Unavailable {
+                            span,
+                            reason: "missing checked match binding".into(),
+                        })?;
+                    self.bind_dependent(identity, span, path)?;
+                }
+                (None, None) => self.arm_binding(&arm.node.pattern)?,
             }
             let continuing = match &arm.node.body {
                 MatchBody::Expr(value) => self.expression(value, evaluated.clone(), false)?,

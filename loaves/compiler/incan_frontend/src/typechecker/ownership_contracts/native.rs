@@ -107,3 +107,28 @@ impl crate::typechecker::TypeCheckInfo {
             .is_some_and(|call| call.kind == InputCallKind::Native && call.receiver.is_none())
     }
 }
+
+impl crate::typechecker::TypeCheckInfo {
+    /// Whether the native call at `span` keeps a shared borrow of its receiver in its result: it borrows its receiver
+    /// shared, and every reference in its output uses only the receiver's lifetime.
+    pub(in crate::typechecker) fn native_borrowed_result(&self, span: Span) -> bool {
+        self.protocols
+            .explicit_input_calls
+            .get(&span)
+            .is_some_and(|call| call.kind == InputCallKind::Native && call.receiver == Some(Receiver::Immutable))
+            && self
+                .rust
+                .receiver_contracts
+                .get(&span)
+                .is_some_and(|contract| contract.shared && contract.returns_receiver_borrow)
+    }
+}
+
+impl crate::typechecker::TypeChecker {
+    /// Whether the body being checked declares its own explicit ownership contract. Its native result references read
+    /// as `Borrowed[T]`; other bodies keep their written `&T` spellings until those move to the RFC spellings.
+    pub(in crate::typechecker) fn input_checked_body(&self) -> bool {
+        self.current_body_identity()
+            .is_some_and(|identity| self.type_info.declarations.ownership_contracts.contains_key(identity))
+    }
+}
