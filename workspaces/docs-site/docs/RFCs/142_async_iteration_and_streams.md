@@ -25,7 +25,7 @@
 
 Add Python-familiar `async for` loops, lazy async mapping, and async consumers for individual values and batches. Sources await advancement; consumers await application callbacks without implicitly spawning tasks. A fallible source uses `async for item in source?:`, extending RFC 115's explicit error propagation. Separately, streams of `Result` items support independent `ErrorPolicy` choices for item failures and callback failures: stop, report and continue, or ignore and continue. Terminal outcomes preserve progress and pending successful values when processing stops. Native async protocols use RFC 098's proposed `infer` headers. The syntax and APIs in this document are proposals, not implemented functionality.
 
-The broader composition scope includes `join` and its error-policy direction, plus an explicit Draft inventory of task ownership, cooperative cancellation, bounded concurrency, notifications, timers, and test-clock gaps. Plain joining and sequential consumption have concrete contracts here; the remaining candidate surfaces require further test drives and must not be mistaken for settled APIs.
+The broader composition scope includes `join` and its error-policy direction, plus an explicit Draft inventory of task ownership, cooperative cancellation, bounded concurrency, notifications, timers, and test-clock gaps. Plain and policy-aware joining, task groups, cancellation tokens and sequential consumption have concrete contracts here; the remaining candidate surfaces require further test drives and must not be mistaken for settled APIs.
 
 ## Core model
 
@@ -72,7 +72,7 @@ The same source should support incremental processing without an application fir
 - Implicit prefetching, spawning tasks, processing items concurrently, or making blocking operations asynchronous.
 - Claiming that every source is lazy, bounded in memory, or safe to retry after cancellation.
 - Defining async generator functions, async comprehensions, or the complete synchronous adapter family for async sources.
-- Finalizing task-group, cancellation-token, concurrent mapping, notification, timer, and test-clock APIs before their remaining contracts are explored.
+- Finalizing concurrent mapping, notification, timer, and test-clock APIs before their remaining contracts are explored.
 - Promising transactional batch delivery, automatic retries, checkpoints, or exactly-once external effects.
 - Adding exception-based exhaustion or changing typed errors into exceptions.
 - Automatically awaiting a resource's shutdown when a loop ends.
@@ -103,15 +103,37 @@ async def show_pair() -> None:
 
 Both operations can make progress while either awaits. The result is a tuple in argument order with the distinct types `int` and `str`; the operations need not return a common element type. No task is implicitly spawned, and concurrency is not a promise of parallel execution. If branches return `Result`, plain join waits for both and returns both results unchanged.
 
-An error-aware form reuses ErrorPolicy rather than making `failfast` a separate joining function. FailFast returns immediately on the first observed branch failure while preserving completed successes; CollectAll awaits and exposes all branch outcomes; Ignore awaits the remaining branches and discards application error payloads. The outcome retains one independently typed position per operation in argument order, distinguishing completed success, retained failure, ignored failure, and unfinished work. Policy selection, including a runtime enum value, must not change this form's static outcome type. Exact call options, generic declarations, and reporting remain open.
+An error-aware form reuses ErrorPolicy rather than making `failfast` a separate joining function. FailFast returns immediately on the first observed branch failure while preserving completed successes; CollectAll awaits and exposes all branch outcomes; Ignore awaits the remaining branches and discards application error payloads. The outcome retains one independently typed position per operation in argument order, distinguishing completed success, retained failure, ignored failure, and unfinished work. Policy selection, including a runtime enum value, must not change this form's static outcome type.
 
-For example, suppose three operations would normally return `(42, "Alice", true)`. If the second fails while the third is still running, a FailFast outcome retains the following information:
+The policy form is the same `join` with an `errors=` option. Each position becomes a `JoinSlot[T, E]` for that operation's own success and error types:
 
-```text
-(Succeeded(42), Failed(original_error), Unfinished)
+```incan
+error FetchError:
+    Unavailable
+
+async def count() -> Result[int, FetchError]:
+    return Ok(42)
+
+async def label() -> Result[str, FetchError]:
+    await sleep(0.01)
+    return Err(FetchError.Unavailable)
+
+async def inspect(policy: ErrorPolicy) -> None:
+    count_slot, label_slot = await join(count(), label(), errors=policy)
+    match label_slot:
+        JoinSlot.Succeeded(value) => println(value)
+        JoinSlot.Failed(original) => println(original.message())
+        JoinSlot.Ignored => println("failure deliberately ignored")
+        JoinSlot.Unfinished => println("no completed result was obtained")
 ```
 
-These labels illustrate states, not settled enum or constructor names. The successful first value remains available and the third position is not misreported as a failure. Under Ignore, a failed position is explicitly marked ignored without retaining its error payload; it is not removed or allowed to shift the remaining positions. An unfinished position means join did not obtain a completed result; it does not prove that underlying work has stopped, is resumable, or performed no effects. On FailFast, join drops directly owned pending operations. A previously spawned task retains the existing handle-detach contract and continues independently unless explicit task ownership supplies a cancellation policy. Task-group ownership is the proposed surface for that separate requirement.
+`count_slot` is a `JoinSlot[int, FetchError]` and `label_slot` a `JoinSlot[str, FetchError]`, whichever policy the caller passes at runtime. Suppose three operations would normally return `(42, "Alice", true)`. If the second fails while the third is still running, a FailFast outcome is:
+
+```text
+(JoinSlot.Succeeded(42), JoinSlot.Failed(original_error), JoinSlot.Unfinished)
+```
+
+The successful first value remains available and the third position is not misreported as a failure. Under Ignore, a failed position is explicitly marked ignored without retaining its error payload; it is not removed or allowed to shift the remaining positions. An unfinished position means join did not obtain a completed result; it does not prove that underlying work has stopped, is resumable, or performed no effects. On FailFast, join drops directly owned pending operations. A previously spawned task retains the existing handle-detach contract and continues independently unless explicit task ownership supplies a cancellation policy. Task-group ownership is the proposed surface for that separate requirement.
 
 ### Own spawned work with a task group
 
@@ -121,7 +143,50 @@ Task outcomes are delivered in observed completion order, with each outcome iden
 
 Requesting cancellation is separate from observing termination. The proposed `await group.shutdown()` operation requests cancellation and waits for the remaining owned tasks to terminate. Ordinary dropping cannot await that work. Immediate FailFast reporting therefore remains compatible with a later explicit awaited shutdown. This is task termination, not a promise of transaction rollback, reversible effects, or arbitrary asynchronous application cleanup.
 
+```incan
+enum Upload:
+    Photos
+    Documents
+
+error UploadError:
+    Rejected
+
+async def upload(fail: bool) -> Result[int, UploadError]:
+    await sleep(0.01)
+    if fail:
+        return Err(UploadError.Rejected)
+    return Ok(1)
+
+async def run() -> None:
+    mut group = TaskGroup[Upload, int, UploadError]()
+    group.spawn(Upload.Photos, upload(false))
+    group.spawn(Upload.Documents, upload(true))
+    first = await group.next()          # the first finished upload, with its id
+    println(first)
+    report = await group.shutdown()     # request cancellation, then await termination
+    println(report)                     # termination evidence and undelivered failures
+```
+
+`group.detach(Upload.Photos)` would instead return an independent handle for that task and remove it from the group, so dropping the group no longer stops it. Each outcome is delivered once: a failure already returned by `next()` is not repeated in the shutdown report. If awaiting `shutdown()` is itself interrupted, the report is never produced and no termination claim is made; dropping the group still requests cancellation.
+
 A Python-style asynchronous scope may later make awaited exit convenient. That scope design belongs with RFC 094; this ownership decision does not claim that async context-manager syntax or cleanup guarantees are already available.
+
+### Spawned tasks keep the validation policy they started with
+
+Ordinary calls already run under the active RFC 122 validation policy. An explicitly spawned task captures the policy active at the moment it is spawned and keeps it, even after the parent leaves that scope:
+
+```incan
+async def child() -> None:
+    await sleep(0.02)                 # the parent leaves its scope first
+    println(current_policy())         # FailFast: the policy captured at spawn
+
+async def parent() -> None:
+    with validation_policy(ErrorPolicy.FailFast):
+        handle = spawn(child())
+    println(await handle)             # the parent's own policy was restored at exit
+```
+
+The child cannot change the parent's policy, and scopes it opens inside itself restore the child's own previous policy. With no active override at spawn, the child uses the documented default. `current_policy` is a proposed `std.validation` inspection helper shown only to display the policy.
 
 ### Link stop requests from parents to children
 
@@ -137,6 +202,23 @@ Application
 Requesting cancellation of the backup job signals both uploads. Requesting cancellation of only the photos upload leaves the backup job and documents upload running. Requesting cancellation of the application signals the backup job and both uploads. Requests flow from parent to linked descendants, without automatically traveling upward or across to siblings.
 
 These are explicit cancellation relationships, not relationships inferred merely because one function called another or spawned a task. A separate failure policy may decide that a failed upload should stop the backup job. A cooperative stop request still does not establish that a worker has terminated or reverse its completed effects.
+
+The links are made with a `CancellationToken`. A worker receives a child token and checks it at its own stopping points:
+
+```incan
+async def worker(stop: CancellationToken) -> None:
+    loop:
+        match await stop.run(sleep(1.0)):
+            Run.Cancelled => return
+            Run.Completed(_) => println("one scheduled check")
+
+async def main() -> None:
+    stop = CancellationToken()
+    stop.cancel()
+    await worker(stop.child_token())    # already cancelled: exits without a check
+```
+
+`stop.run(operation)` awaits the operation once and returns `Run.Completed(value)`, or `Run.Cancelled` as soon as a stop is requested, dropping the operation. It is not a repeating timer: the worker loops explicitly. Constructing a token starts no task, and a child's own `cancel()` reaches only that child and its descendants.
 
 ### Read a sequence that may need to wait
 
@@ -374,7 +456,9 @@ Joining must own its local branch operations until they finish or the compositio
 
 The policy-aware form must retain one independently typed outcome position for each input operation in argument order. It must preserve completed success values on early failure and distinguish success, retained application failure, explicitly ignored application failure, and unfinished work. Ignore must discard the application error payload without removing or shifting its position. Policy values, including runtime-selected values, must share the same static outcome type within this form; this does not change plain join's tuple of unchanged outputs.
 
-FailFast must return immediately on the first observed branch failure, rather than waiting to drain unfinished branches or selecting failure by lowest argument index. Task cancellation and panic must remain distinct from ordinary application failure. On FailFast, join must drop its directly owned pending branches under their existing cancellation contracts and return without awaiting their shutdown. A previously spawned task must retain its existing handle-detach behavior; dropping the wait or handle must not be represented as cancellation of that independently running task. Cancellation of such tasks requires an explicit owner, such as the proposed task group, and its separate contract. An unfinished position must mean that join did not obtain a completed result, not that underlying work is proven stopped. Neither an unfinished position nor retained success may promise reversal of external effects, resumability, or safe replay. Exact generic result declarations, call options, and reporting remain Draft API work.
+FailFast must return immediately on the first observed branch failure, rather than waiting to drain unfinished branches or selecting failure by lowest argument index. Task cancellation and panic must remain distinct from ordinary application failure. On FailFast, join must drop its directly owned pending branches under their existing cancellation contracts and return without awaiting their shutdown. A previously spawned task must retain its existing handle-detach behavior; dropping the wait or handle must not be represented as cancellation of that independently running task. Cancellation of such tasks requires an explicit owner, such as the proposed task group, and its separate contract. An unfinished position must mean that join did not obtain a completed result, not that underlying work is proven stopped. Neither an unfinished position nor retained success may promise reversal of external effects, resumability, or safe replay.
+
+The policy-aware form must be spelled as `join` with an `errors=` option taking an `ErrorPolicy` value, which may be selected at runtime. Every argument of that form must return `Result[T, E]`, and its position must have type `JoinSlot[T, E]` with exactly the cases `Succeeded(value)`, `Failed(original)`, `Ignored` and `Unfinished`. `Failed` must retain the original typed error unchanged. Plain `join` with no `errors=` option must keep its tuple of unchanged outputs. A panic in a branch is not an application failure: it must propagate as a panic of the join, never become a `Failed` slot. Cancelling the task that awaits the join drops the whole composition and produces no outcome.
 
 ### Task-group ownership and shutdown
 
@@ -382,7 +466,9 @@ A task group must own its members until their completion or explicit detachment.
 
 Task-group consumption must deliver available task outcomes in observed completion order rather than withhold an outcome behind an earlier unfinished submission. Every delivered outcome must retain its associated task identity, including failure outcomes, so attribution does not depend on position. The contract must not promise a deterministic tie order among concurrently ready tasks or infer precise wall-clock completion order beyond observed evidence. Submission-order reconstruction is an explicit consumer concern. This must not change fixed join's argument-order tuple contract.
 
-The proposed async `shutdown()` operation must request cancellation of remaining members and wait for their termination. Normal completion of that operation must establish that no remaining owned task is running. A cancelled or interrupted shutdown must not claim that this milestone was reached; ownership and drop behavior must remain applicable. Exact shutdown outcome and failure-reporting declarations remain open and must not silently suppress failures by copying a backend convenience method's behavior.
+The proposed async `shutdown()` operation must request cancellation of remaining members and wait for their termination. Normal completion of that operation must establish that no remaining owned task is running. A cancelled or interrupted shutdown must not claim that this milestone was reached; ownership and drop behavior must remain applicable.
+
+`TaskGroup[Id, T, E]` must expose `spawn(id, operation)`, an async `next()`, `detach(id)` and an async `shutdown()`. `next()` must return the next available identified outcome, or `None` once no owned member remains. Each outcome must carry its task's id and exactly one of: the success value, the original typed failure, a panic report, or cancellation. A member's panic must be delivered as its own identified outcome, never as a typed failure or a panic of the consumer. A member's failure must not by itself cancel other members; stopping related work is the consumer's explicit choice, such as calling `shutdown()`. `detach(id)` must remove that member from the group and return an independent handle with the standalone JoinHandle contract. `shutdown()` must return a structured report of termination and of every outcome not yet delivered, including failures and panics. An outcome already delivered by `next()` must not be repeated, and no failure may be silently suppressed.
 
 This contract must not change standalone JoinHandle behavior, turn cancellation requests into proof of termination, promise that running blocking work is interruptible, or imply borrowed scoped-task lifetimes. General asynchronous scope exit and application resource-cleanup guarantees remain RFC 094 concerns. Immediate FailFast reporting must not acquire an implicit awaited-shutdown delay through this ownership rule.
 
@@ -390,7 +476,13 @@ This contract must not change standalone JoinHandle behavior, turn cancellation 
 
 Explicitly linked cancellation parents and children must support downward propagation: requesting cancellation of a parent must signal its linked descendants. Requesting cancellation of a child must not by itself signal its parent or siblings. Task spawning, function calls, or sharing an execution runtime must not implicitly establish those links.
 
-An application failure and an explicit cancellation request must remain distinct. ErrorPolicy may decide whether a failure stops related work; the cancellation hierarchy must not infer such a failure policy from its topology. Cooperative cancellation must remain a request rather than proof of termination, an implicit task-abort operation, or rollback of completed effects. Exact token names, creation and observation methods, and integration with task groups, race, and deadlines remain open.
+An application failure and an explicit cancellation request must remain distinct. ErrorPolicy may decide whether a failure stops related work; the cancellation hierarchy must not infer such a failure policy from its topology. Cooperative cancellation must remain a request rather than proof of termination, an implicit task-abort operation, or rollback of completed effects.
+
+The public vocabulary must be `CancellationToken`, constructed with no arguments, with `child_token()`, `cancel()`, `is_cancelled()`, an async `cancelled()` that completes once a stop is requested, and an async `run(operation)` returning `Run[T]` with the cases `Completed(value)` and `Cancelled`. `child_token()` must return a token linked below its parent. `run` must await the operation once and drop it when a stop is requested; it must not repeat the operation or create a ticker. On an already cancelled token, `run` must return `Cancelled` without starting the operation. A token must not start, own or abort a task. Deadline expiry and application failure must remain separate from `Run.Cancelled`: a `run` around a timed operation reports the timeout through that operation's own result. A task group does not create token links; a worker receives a token explicitly.
+
+### Validation policy at spawn
+
+An explicitly spawned task must capture the RFC 122 validation policy active at the spawn call, or the documented default when no scope is active, and retain it for its lifetime. The parent restoring or changing its own policy afterward must not affect the child. A scope opened inside the child must restore the child's previous policy on exit and must not change the parent's. Inheriting a validation policy must not transfer any other authority or capability. Ordinary calls, awaited operations and `join` branches run in the caller's execution context and use its active policy, as RFC 122 specifies.
 
 ### Syntax and activation
 
@@ -530,7 +622,7 @@ Adapter and consumer diagnostics must also distinguish a synchronous mapping cal
 
 The existing public `std.async` surface already includes spawning, blocking-task offload, task handles, yielding, sleep and relative timeouts, race, bounded and unbounded channels, one-shot channels, mutexes, read/write locks, semaphores, and barriers. `timeout_join` already distinguishes deadline expiry from cancellation by returning a live handle. These are foundations to compose, not functionality this RFC claims to introduce.
 
-The remaining areas below belong to this Draft's broader async exploration. Plain join, the sequential stream surface, selected policy-aware join rules, and task-group ownership and shutdown boundaries are specified above. Other entries record candidate capabilities and remaining decisions rather than finalized declarations or an implementation commitment.
+The remaining areas below belong to this Draft's broader async exploration. Plain and policy-aware join, the sequential stream surface, task groups, cancellation tokens and spawn-time validation policy are specified above. Other entries record candidate capabilities and remaining decisions rather than finalized declarations or an implementation commitment.
 
 #### Joins and task groups
 
@@ -538,13 +630,13 @@ The prior art for plain joining is Tokio's [join](https://docs.rs/tokio/latest/t
 
 A dynamic group of spawned tasks is a separate capability from a fixed heterogeneous join. Tokio's [JoinSet](https://docs.rs/tokio/latest/tokio/task/struct.JoinSet.html) provides same-output-type task collection in completion order. It aborts tasks on drop; its explicit shutdown operation aborts and then awaits their termination. These distinctions matter for an Incan task-group API: ownership, completion order, failure policy, and whether exiting waits for cleanup must be explicit. A task group must not be advertised as providing borrowed scoped-task lifetimes merely because it owns task handles.
 
-Existing Incan JoinHandles detach on drop. The proposed task group instead owns its members, requests cancellation on drop, and requires explicit detachment for independent continuation. Its awaited shutdown requests cancellation and confirms termination. This follows the distinction between Tokio JoinSet destruction and awaited shutdown while retaining Incan's own failure-reporting contract. Abort requests differ from completed shutdown; running blocking tasks cannot generally be interrupted. Task-group outcomes are delivered in observed completion order with task identity retained. Precise detach and shutdown result surfaces, child-failure policy, panic reporting, and interruption during shutdown still need concrete test drives. A Python-style awaited task scope remains an RFC 094 integration question.
+Existing Incan JoinHandles detach on drop. The proposed task group instead owns its members, requests cancellation on drop, and requires explicit detachment for independent continuation. Its awaited shutdown requests cancellation and confirms termination. This follows the distinction between Tokio JoinSet destruction and awaited shutdown while retaining Incan's own failure-reporting contract. Abort requests differ from completed shutdown; running blocking tasks cannot generally be interrupted. Task-group outcomes are delivered in observed completion order with task identity retained. Like Tokio's `JoinError`, a member panic is reported as that member's outcome rather than tearing down the consumer. A Python-style awaited task scope remains an RFC 094 integration question.
 
 #### Cooperative cancellation
 
-Task abortion and graceful shutdown serve different purposes. A shared cancellation request lets a worker stop accepting input, finish or abandon its current unit under an application contract, and await its own cleanup. The prior art is [tokio-util CancellationToken](https://docs.rs/tokio-util/latest/tokio_util/sync/struct.CancellationToken.html), which supports waiting for a cancellation request and deriving child tokens.
+Task abortion and graceful shutdown serve different purposes. A shared cancellation request lets a worker stop accepting input, finish or abandon its current unit under an application contract, and await its own cleanup. The prior art is [tokio-util CancellationToken](https://docs.rs/tokio-util/latest/tokio_util/sync/struct.CancellationToken.html). Its `new`, `child_token`, `cancel`, `is_cancelled`, `cancelled` and `run_until_cancelled` correspond one to one with the vocabulary above; `run_until_cancelled` returns `Option`, where Incan's `Run` names the two cases. Go's `context.WithCancel` and .NET's linked `CancellationTokenSource` use the same downward-only parent/child propagation. Python's asyncio instead injects cancellation into a task, which is closer to task abort than to a cooperative request.
 
-Cancellation requests propagate downward through explicitly linked parent/child relationships, without automatically traveling upward or across to siblings. Incan still needs to choose the public token vocabulary, observation and lifecycle methods, interaction with race and deadlines, and the exact typed representation distinguishing cancellation from application failure. Requesting cancellation must not imply that a worker has finished. ErrorPolicy.Ignore must not suppress shutdown requests.
+Cancellation requests propagate downward through explicitly linked parent/child relationships, without automatically traveling upward or across to siblings. Requesting cancellation must not imply that a worker has finished. ErrorPolicy.Ignore must not suppress shutdown requests.
 
 #### Bounded concurrent processing
 
@@ -628,7 +720,7 @@ The consumer surface adds policy options, reporters, progress, and recovery valu
 - **Typechecker / Symbol resolution:** async protocol selection, inferred item and error members, async method and callback validation, result-item consumer overloads, reporter requirements, and error compatibility.
 - **Ownership / async checking:** suspended iterator and callback receiver access, prevention of overlapping advancement, retained callback input, control-flow exits, and existing execution capability requirements.
 - **IR Lowering / Emission:** sequential async advancement and callback invocation with ordinary exhaustion, typed propagation, and policy-aware terminal outcomes, preserving existing await and cleanup semantics.
-- **Stdlib / Runtime:** plain join, async protocol declarations, lazy mapping, per-item and batch consumers, ErrorPolicy, reporting, progress, collection, and recoverable terminal outcomes. Task groups, cooperative cancellation, bounded concurrency, notification primitives, and time controls are additional candidate surfaces whose contracts remain open.
+- **Stdlib / Runtime:** plain join, async protocol declarations, lazy mapping, per-item and batch consumers, ErrorPolicy, reporting, progress, collection, recoverable terminal outcomes, `JoinSlot`, `TaskGroup` and `CancellationToken`. Bounded concurrency, notification primitives, and time controls are additional candidate surfaces whose contracts remain open.
 - **Formatter:** stable formatting for async loop headers and proposed protocol declarations.
 - **Library manifests / LSP / Tooling:** async advancement and callback contracts, selected source protocols, inferred types, consumer policies, propagation boundaries, and diagnostics.
 
@@ -639,14 +731,14 @@ The consumer surface adds policy options, reporters, progress, and recovery valu
 - Task groups own their members, request cancellation of remaining async tasks on drop, and require explicit detachment for independent continuation. The proposed awaited shutdown requests cancellation and waits for termination; ordinary drop does not wait. Existing standalone JoinHandle semantics remain unchanged, immediate FailFast reporting remains immediate, and Python-style awaited scope exit is deferred to RFC 094.
 - Policy-aware join preserves one independently typed result position per input operation in argument order, including completed successes after an early failure. Positions distinguish success, retained failure, ignored failure, and unfinished work. Ignore discards its error payload without removing the position. Runtime policy selection retains the same static outcome type within this form.
 - FailFast drops directly owned pending join operations without awaiting shutdown. Previously spawned tasks retain the existing handle-detach contract unless an explicit task owner supplies cancellation. Unfinished identifies absence of an obtained result rather than proving the underlying work has stopped. Task-group ownership remains a distinct surface.
-- FailFast returns immediately upon the first observed branch failure without draining unfinished branches. Unfinished work is distinct from failure and does not imply a resumable operation or absence of external effects. Exact public outcome names and generic declarations remain open below.
+- FailFast returns immediately upon the first observed branch failure without draining unfinished branches. Unfinished work is distinct from failure and does not imply a resumable operation or absence of external effects.
+- An explicitly spawned task captures the active validation policy, or the default, at spawn and keeps it. The parent's later changes do not reach it, its own scopes restore its own policy, and no other authority is inherited with the policy.
+- Policy-aware join is `join(..., errors=policy)`, with one `JoinSlot[T, E]` per argument: `Succeeded(value)`, `Failed(original)`, `Ignored` or `Unfinished`. Plain join keeps unchanged outputs. A branch panic propagates as a panic of the join, never as a failed slot.
+- `TaskGroup[Id, T, E]` exposes `spawn(id, operation)`, `next()`, `detach(id)` and `shutdown()`. Outcomes are identified and delivered once; a member panic is its own outcome; a member failure does not cancel siblings by itself. `shutdown()` reports termination and every undelivered outcome; an interrupted shutdown claims nothing and drop cancellation still applies.
+- Cooperative cancellation uses `CancellationToken` with `child_token()`, `cancel()`, `is_cancelled()`, async `cancelled()` and async `run(operation)` returning `Run.Completed(value)` or `Run.Cancelled`, following tokio-util's CancellationToken. Deadlines and application failures stay separate outcomes, and tokens never own or abort tasks.
 
 ## Unresolved questions
 
-- How do explicitly spawned tasks inherit or select RFC 122's validation_policy execution context, coordinated with RFC 094's scope lifetime and suspension safety? Ordinary helper calls inherit the active scope; spawning must not be treated as an implicitly settled equivalent.
-- What are the exact policy-aware join call options, generic outcome declarations, and reporting contracts? Preserved typed positions, explicit success/failure/ignored/unfinished states, immediate FailFast, and a policy-independent static outcome type are settled.
-- What exact detach and shutdown result surfaces, child-failure policy, and panic reporting should task groups expose, including interruption while awaiting shutdown? Identified outcomes in observed completion order, member ownership, cancel-on-drop without awaiting, explicit detach, and an awaited termination milestone are settled.
-- What cancellation-token vocabulary, lifecycle and observation methods, and typed outcomes should integrate with race, task groups, and deadlines? Explicit downward parent/child propagation without automatic upward or sibling cancellation is settled.
 - Which explicit bounded-concurrency API should accompany sequential consumers, and how should it preserve order and completed work after failure?
 - Which watch, broadcast, and notification contracts should be exposed publicly, including lag, closure, and coalescing behavior?
 - What monotonic deadline, interval, missed-tick, and test-clock contracts should fit Incan's supported runtimes?
