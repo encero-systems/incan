@@ -9,7 +9,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use incan_lang::interop::{RUST_ABI_CACHE_VERSION, RustAbiCache};
+use incan_frontend::rust_abi_cache::{RUST_ABI_CACHE_VERSION, RustAbiCache};
 use rustix::fs::{FlockOperation, flock};
 use serde::Deserialize;
 #[cfg(unix)]
@@ -202,7 +202,7 @@ fn indexed_extraction(index: &Path, identity: &str) -> Option<PathBuf> {
 
 /// Write a complete extraction as `<identity>.rustabi`, renaming it into place so Oven never reads a partial file.
 fn stage_extraction(staging: &Path, identity: &str, facts: &RustFacts) -> CliResult<()> {
-    let bytes = incan_lang::interop::encode_rust_abi_cache(facts).map_err(failure)?;
+    let bytes = incan_frontend::rust_abi_cache::encode_rust_abi_cache(facts).map_err(failure)?;
     fs::create_dir_all(staging).map_err(failure)?;
     let mut temporary = tempfile::NamedTempFile::new_in(staging).map_err(failure)?;
     temporary.write_all(&bytes).map_err(failure)?;
@@ -461,7 +461,7 @@ fn extract_cache(
             String::from_utf8_lossy(&output.stderr).trim()
         )));
     }
-    incan_lang::interop::RustAbiCache::open(temporary.path()).map_err(failure)?;
+    RustAbiCache::open(temporary.path()).map_err(failure)?;
     temporary.flush().map_err(failure)?;
     publish_cache(store, temporary, cache)
 }

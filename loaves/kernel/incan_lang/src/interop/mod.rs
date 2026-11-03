@@ -1,14 +1,12 @@
 //! Rust interop vocabulary shared across compiler stages (RFC 005 / RFC 041).
 //!
 //! The compiler reads Rust facts from rustc's crate metadata (`incan-rustc-driver`); this module holds only portable
-//! data shapes and the ABI cache they are stored in.
+//! data shapes; the compiler frontend owns the ABI cache they are stored in (`incan_frontend::rust_abi_cache`).
 
-pub mod abi_cache;
 pub mod capabilities;
 pub mod coercions;
 pub mod metadata;
 
-pub use abi_cache::{RUST_ABI_CACHE_VERSION, RustAbiCache, encode_rust_abi_cache};
 pub use capabilities::{
     RUST_CALLABLE_CAPABILITY_BOUNDS, RUST_CAPABILITY_BOUNDS, RUST_FUTURE_CAPABILITY_BOUNDS,
     is_rust_callable_capability_bound, is_rust_capability_bound, is_rust_future_capability_bound, rust_auto_trait,

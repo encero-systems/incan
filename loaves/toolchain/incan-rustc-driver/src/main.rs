@@ -230,7 +230,7 @@ fn rust_abi(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         search: &search,
         scope: rust_facts::RustFactsScope::Crates(crates),
     })?;
-    std::fs::write(output, incan_lang::interop::encode_rust_abi_cache(&facts)?)?;
+    std::fs::write(output, incan_frontend::rust_abi_cache::encode_rust_abi_cache(&facts)?)?;
     Ok(())
 }
 
