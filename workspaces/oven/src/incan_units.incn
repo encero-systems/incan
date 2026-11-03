@@ -187,7 +187,7 @@ pub def obtain_executable(
         None => store = bakery()?
     identity = unit_identity(selected)
     label = f"unit {crate_name(unit)} {unit.kind}"
-    register_root(store, unit.project_root, identity)?
+    register_root(store, unit.project_root, f"unit\t{crate_name(unit)}\t{unit.kind}", [identity])?
     # 1. A sealed executable of the identity starts no compiler.
     if let Some(fact) = current_executable(store, identity, output.name(), shared)?:
         made = viewed(store, fact, output, unit.kind, shared)?

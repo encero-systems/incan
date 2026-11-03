@@ -44,12 +44,12 @@ pub def view_prior_evidence(store: Path, name: str, directory: Path, evidence: P
                     return Ok(None)
 
 
-pub def baked_rust(store: Path, identity: str, directory: Path, project: str) -> Result[bool, str]:
-    """View the baked unit of `identity` into `directory`; false when it is not baked."""
+pub def baked_rust(store: Path, identity: str, directory: Path, project: str, name: str) -> Result[bool, str]:
+    """View the baked unit of `identity` into `directory` as `name`'s current result; false when it is not baked."""
     match find(store, identity)?:
         None => return Ok(false)
         Some(fact) =>
-            register_root(store, project, identity)?
+            register_root(store, project, name, [identity])?
             view_directory(store, fact, directory)?
             return Ok(true)
 
@@ -81,7 +81,7 @@ pub def seal_rust(
         clone_into(proof, staged)?
     reaches = reached(store, [Path(artifact).parent().0 for artifact in linked])?
     fact = seal(store, identity, staged, "rust", name, reaches, "rust unit")?
-    register_root(store, project, identity)?
+    register_root(store, project, name, [identity])?
     view_directory(store, fact, directory)?
     return Ok(fact)
 

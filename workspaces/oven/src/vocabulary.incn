@@ -101,7 +101,7 @@ def bake_registration(store: Path, identity: str, directory: Path, unit: UnitDes
     for artifact in registration_artifacts(directory.joinpath("registration.json"), directory):
         artifact.copy(staged.joinpath(artifact.name()), true, true).map_err((error) => error.message())?
     fact = seal(store, identity, staged, "vocabulary", f"vocabulary\t{unit.package}", [], "vocabulary registration")?
-    register_root(store, unit.project_root, identity)?
+    register_root(store, unit.project_root, f"vocabulary\t{unit.package}", [identity])?
     for file in fact.files:
         view(store, fact, file.path, directory.joinpath(file.path))?
     return Ok(None)

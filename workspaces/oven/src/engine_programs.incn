@@ -338,7 +338,7 @@ def indexed_program(store: Path, epoch: BuildEpoch, selector: Option[str]) -> Re
                     unit = decoded_program(encoded)?
                     if unit.binary in ["", ".", ".."] or Path(unit.binary).name() != unit.binary:
                         return Err("standalone native index contains an invalid executable name")
-                    register_root(store, Path(epoch.roots[0]).parent().0, unit.identity)?
+                    register_root(store, Path(epoch.roots[0]).parent().0, f"program\t{unit.binary}", [unit.identity])?
                     binary = executable_view(Path(epoch.roots[0]).parent(), epoch.selection.profile, "bin", unit.binary)
                     return Ok(Some(NativeUnit(identity=unit.identity, payload=unit.payload, binary=binary.0)))
 

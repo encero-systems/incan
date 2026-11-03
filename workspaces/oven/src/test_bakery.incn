@@ -1,6 +1,6 @@
 """Bakery contracts: one bake per identity across projects and processes, views that cost nothing to lose, collection."""
 
-from rust::std::fs import Permissions, set_permissions
+from rust::std::fs import Permissions, remove_dir_all, set_permissions
 from rust::std::os::unix::fs import PermissionsExt
 from rust::std::process import Command
 from std.fs import Path
@@ -248,7 +248,9 @@ pub def test_collection_preserves_published_units_for_cold_and_warm_readers() ->
     orphan = digest_of("f6")
     assert bake(store, library, "library")?
     assert bake(store, orphan, "orphan")?
-    register_root(store, scratch.path().joinpath("project").0, library)?
+    project = scratch.path().joinpath("project")
+    make_directory(project)?
+    register_root(store, project.0, "library\tfixture", [library])?
     abandoned = scratch.path().joinpath("abandoned")
     write(abandoned, "uncommitted payload")?
     digest = abandoned_digest(store, abandoned)?
@@ -272,6 +274,52 @@ pub def test_collection_preserves_published_units_for_cold_and_warm_readers() ->
     active = prove_active_staging_survives(store)?
     reclaimed = collect(store, -1)?
     assert reclaimed.staging_cleared > 0 and not active.exists(), "abandoned staging was retained"
+    return Ok(None)
+
+
+pub def test_superseded_and_orphaned_registrations_expire() -> Result[None, str]:
+    """
+    Collection expires a record only a superseded or orphaned registration used, with its payload and name entry. A
+    record a live registration reaches, directly or through another record, stays, however long ago it was
+    registered, and so does a record no registration ever named.
+    """
+    scratch = scratch_directory()?
+    store = scratch.path().joinpath("bakery")
+    shared = digest_of("a1")
+    old = digest_of("b2")
+    recent = digest_of("c3")
+    unrooted = digest_of("e5")
+    gone = digest_of("f6")
+    assert bake(store, shared, "shared")?
+    assert bake(store, old, "old", [shared], "app-old")?
+    assert bake(store, recent, "recent", [shared], "app")?
+    assert bake(store, unrooted, "unrooted")?
+    assert bake(store, gone, "gone", [], "tool")?
+    project = scratch.path().joinpath("project")
+    removed = scratch.path().joinpath("removed")
+    make_directory(project)?
+    make_directory(removed)?
+    register_root(store, project.0, "program\tapp", [old])?
+    register_root(store, removed.0, "program\ttool", [gone])?
+    old_payload = stored_payload(store, old, "payload")?
+    # A live registration keeps what it names; `--keep-days` expires nothing by age.
+    kept = collect(store, 0)?
+    assert kept.removed == 0 and kept.roots_dropped == 0 and found(find(store, old)?), "a live registration expired"
+    # A newer result of the same registration supersedes the earlier one; removing a project orphans its own.
+    register_root(store, project.0, "program\tapp", [recent])?
+    remove_dir_all(removed.0).map_err((error) => str(error))?
+    collected = collect(store, -1)?
+    assert collected.removed == 2 and collected.roots_dropped == 1, "expiry removed the wrong records or projects"
+    assert not found(find(store, old)?), "a record only a superseded registration used was kept"
+    assert not found(find(store, gone)?), "a record only an orphaned project used was kept"
+    assert not old_payload.exists(), "an expired record's payload was kept"
+    assert not named(lookup(store, "app-old")?) and not named(lookup(store, "tool")?), "an expired name was kept"
+    assert found(find(store, recent)?) and named(lookup(store, "app")?), "the current result expired"
+    assert found(find(store, shared)?), "a record the current result reaches through another record expired"
+    assert found(find(store, unrooted)?), "a record no registration named expired"
+    assert payload_text(store, shared, "payload")? == "shared"
+    again = collect(store, -1)?
+    assert again.removed == 0 and again.roots_dropped == 0, "a second collection expired more"
     return Ok(None)
 
 

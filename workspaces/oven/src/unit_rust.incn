@@ -143,7 +143,7 @@ pub def compile_library_unit(
         return compile_unbaked(library, toolchain, output, key)
     store = bakery()?
     identity = unit_identity(key)
-    register_root(store, library.project_root, identity)?
+    register_root(store, library.project_root, f"library\t{library.package}", [identity])?
     label = f"unit {library.package} library"
     if let Some(fact) = find(store, identity)?:
         view_directory(store, fact, directory)?
