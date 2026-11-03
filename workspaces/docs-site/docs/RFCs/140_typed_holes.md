@@ -1,6 +1,6 @@
 # RFC 140: Typed holes
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-10-11
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -14,7 +14,7 @@
     - RFC 134 (pattern bindings with exiting fallbacks)
     - RFC 138 (chained pattern conditions)
     - RFC 139 (sequence patterns)
-- **Issue:** —
+- **Issue:** [#2577](https://github.com/encero-systems/incan/issues/2577)
 - **RFC PR:** —
 - **Written against:** v0.6
 - **Shipped in:** —
