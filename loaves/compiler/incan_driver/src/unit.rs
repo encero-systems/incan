@@ -108,6 +108,15 @@ pub struct UnitDescription {
     pub search_index: Option<PathBuf>,
     /// Rust ABI caches supplied by the toolchain for this unit.
     pub rust_abi: Vec<PathBuf>,
+    /// The directory of Oven's bakery-owned Rust ABI extractions for this description, beside it as
+    /// `<name>.rust-facts` for `<name>.unit.json`. Its `index` names the extractions the unit used last time, one
+    /// `identity<TAB>path` line each, the path a read-only bakery payload; a run writes each extraction the index
+    /// lacks to `staging/<identity>.rustabi` and appends every identity it read or wrote to `staging/used`, and
+    /// Oven bakes these before the description's next run. Read from the description's location, never from its
+    /// contents, so a compiler that predates it reads the same description; without the directory no check-time
+    /// extraction is cached.
+    #[serde(skip)]
+    pub rust_facts: Option<PathBuf>,
     /// The rustc-internal access the unit's Loaf declares; a description names it only when there is some, and the
     /// compiler grants nothing else.
     #[serde(default, skip_serializing_if = "ToolchainAccess::is_empty")]
@@ -215,6 +224,7 @@ impl UnitDescription {
             )));
         }
         unit.merge_search_index()?;
+        unit.rust_facts = rust_facts_directory(origin);
         crate::loaf_publication::vocab::prepared_registration(&unit)?;
         Ok(unit)
     }
@@ -238,6 +248,13 @@ impl UnitDescription {
         self.search = merged;
         Ok(())
     }
+}
+
+/// The Rust ABI extraction directory Oven keeps beside a `<name>.unit.json` description, when it exists.
+fn rust_facts_directory(origin: &Path) -> Option<PathBuf> {
+    let name = origin.file_name()?.to_str()?.strip_suffix(".unit.json")?;
+    let directory = origin.with_file_name(format!("{name}.rust-facts"));
+    directory.is_dir().then_some(directory)
 }
 
 /// Read a search index, refusing one whose bytes are not those its name, their SHA-256, promises.

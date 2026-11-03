@@ -63,7 +63,7 @@ pub def check_unit(unit: UnitDescription, toolchain: Toolchain, format: str) -> 
     ready = prepare_native(unit, toolchain)?
     key = unit_key(ready, toolchain)?
     # 2. An unchanged description is kept as it is.
-    path = write_unit(ready, crate_name(ready), None, described_by(key))?
+    path = write_unit(ready, crate_name(ready), None, described_by(key), true)?
     # 3. The record's identity covers the key and the report format, so text and JSON reports are kept apart.
     return check_or_replay(ready, toolchain, path, format, bakery()?, key)
 

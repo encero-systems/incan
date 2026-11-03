@@ -109,12 +109,14 @@ pub fn cached_rust_facts(unit: &UnitDescription) -> CliResult<RustFactsSetup> {
     Ok(setup)
 }
 
-/// Retain a bounded check-time extraction in the ABI layout, separately from complete-crate caches.
+/// Read or record a bounded check-time extraction through the bakery, separately from complete-crate caches.
 ///
-/// The exact request and native generation identify the result, including absent paths. These files never enter a
-/// unit's shipped cache list and grant no crate-wide coverage. Extraction failures publish nothing; the identity
-/// lock and atomic publication prevent concurrent readers from observing incomplete payloads. A standalone unit or
-/// an unavailable cache retains ordinary extraction; cache storage is never a prerequisite for checking.
+/// The exact request and native generation identify the result, including absent paths. Oven's index names the
+/// read-only bakery payload of each extraction the unit used last time; one the index lacks is extracted and written
+/// to the staging directory, and every identity the run reads or writes is appended to its `used` list, from which
+/// Oven bakes the staged files and registers their roots before the description's next run. These extractions never
+/// enter a unit's shipped cache list and grant no crate-wide coverage. A unit Oven does not prepare, or a cache that
+/// cannot be read or written, keeps ordinary extraction: cache storage is never a prerequisite for checking.
 pub fn cached_path_facts(
     unit: &UnitDescription,
     paths: &BTreeSet<String>,
@@ -123,8 +125,12 @@ pub fn cached_path_facts(
     let started = std::time::Instant::now();
 
     // ---- Optional cache availability ----
-    let (directory, store, cache, _lock) = match path_cache_location(unit, paths) {
-        Ok(location) => location,
+    let Some(directory) = &unit.rust_facts else {
+        return extract().map_err(CliError::failure);
+    };
+    let (index, staging) = (&directory.join("index"), &directory.join("staging"));
+    let identity = match path_identity(unit, paths) {
+        Ok(identity) => identity,
         Err(error) => {
             if incan_frontend::trace_flags::trace_rust_facts() {
                 eprintln!("rust facts cache unavailable: {}", error.message);
@@ -132,24 +138,31 @@ pub fn cached_path_facts(
             return extract().map_err(CliError::failure);
         }
     };
-    // ---- Retained facts or genuine extraction ----
-    let cached = fs::read(&cache).ok().and_then(|bytes| {
-        RustAbiCache::decode_owned(bytes)
-            .and_then(RustAbiCache::into_items)
-            .ok()
-    });
+    // ---- Indexed bakery payload or genuine extraction ----
+    let cached = indexed_extraction(index, &identity)
+        .and_then(|payload| fs::read(payload).ok())
+        .and_then(|bytes| {
+            RustAbiCache::decode_owned(bytes)
+                .and_then(RustAbiCache::into_items)
+                .ok()
+        });
     let reused = cached.is_some();
     let facts = if let Some(facts) = cached {
         facts
     } else {
         let facts = extract().map_err(CliError::failure)?;
-        if let Err(error) = persist_path_facts(&directory, &store, &cache, &facts)
+        if let Err(error) = stage_extraction(staging, &identity, &facts)
             && incan_frontend::trace_flags::trace_rust_facts()
         {
-            eprintln!("rust facts cache not retained: {}", error.message);
+            eprintln!("rust facts cache not staged: {}", error.message);
         }
         facts
     };
+    if let Err(error) = record_used(staging, &identity)
+        && incan_frontend::trace_flags::trace_rust_facts()
+    {
+        eprintln!("rust facts use not recorded: {}", error.message);
+    }
     // ---- Optional retrieval trace ----
     if incan_frontend::trace_flags::trace_rust_facts() {
         eprintln!(
@@ -163,12 +176,8 @@ pub fn cached_path_facts(
     Ok(facts)
 }
 
-/// Locate and lock a bounded cache without extracting facts, so setup failures can retain ordinary checking.
-/// Returns the cache's directory, the toolchain's content store, the cache path and its held lock.
-fn path_cache_location(
-    unit: &UnitDescription,
-    paths: &BTreeSet<String>,
-) -> CliResult<(PathBuf, PathBuf, PathBuf, File)> {
+/// The request identity of a bounded extraction: the native generation, the extracting executable and the paths.
+fn path_identity(unit: &UnitDescription, paths: &BTreeSet<String>) -> CliResult<String> {
     let (directory, toolchain) = installed_toolchain(unit)?;
     let externs = unit.externs.iter().map(|native| (&native.name, &native.path)).collect();
     let mut identity = generation_identity(unit, &toolchain, &externs, &directory)?;
@@ -179,27 +188,40 @@ fn path_cache_location(
         &directory.join("rust-abi").join("observations"),
     )?;
     identity.update(serde_json::to_vec(paths).map_err(failure)?);
-    let store = directory.join("rust-abi").join(CONTENT_STORE);
-    let directory = directory.join("rust-abi").join("units").join("paths");
-    fs::create_dir_all(&directory).map_err(failure)?;
-    let cache = directory.join(format!("{}.rustabi", hex::encode(identity.finalize())));
-    let lock = File::options()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(cache.with_extension("lock"))
-        .map_err(failure)?;
-    flock(&lock, FlockOperation::LockExclusive).map_err(failure)?;
-    Ok((directory, store, cache, lock))
+    Ok(hex::encode(identity.finalize()))
 }
 
-/// Publish only a complete successful extraction, preserving a previous cache if serialization or writing fails.
-fn persist_path_facts(directory: &Path, store: &Path, cache: &Path, facts: &RustFacts) -> CliResult<()> {
+/// The bakery payload Oven's index names for `identity`, when the index has one.
+fn indexed_extraction(index: &Path, identity: &str) -> Option<PathBuf> {
+    let text = fs::read_to_string(index).ok()?;
+    text.lines().find_map(|line| {
+        let (named, payload) = line.split_once('\t')?;
+        (named == identity).then(|| PathBuf::from(payload))
+    })
+}
+
+/// Write a complete extraction as `<identity>.rustabi`, renaming it into place so Oven never reads a partial file.
+fn stage_extraction(staging: &Path, identity: &str, facts: &RustFacts) -> CliResult<()> {
     let bytes = incan_lang::interop::encode_rust_abi_cache(facts).map_err(failure)?;
-    let mut temporary = tempfile::NamedTempFile::new_in(directory).map_err(failure)?;
+    fs::create_dir_all(staging).map_err(failure)?;
+    let mut temporary = tempfile::NamedTempFile::new_in(staging).map_err(failure)?;
     temporary.write_all(&bytes).map_err(failure)?;
     temporary.flush().map_err(failure)?;
-    publish_cache(store, temporary, cache)
+    temporary
+        .persist(staging.join(format!("{identity}.rustabi")))
+        .map_err(failure)?;
+    Ok(())
+}
+
+/// Append `identity` to the run's `used` list; one short append per extraction request.
+fn record_used(staging: &Path, identity: &str) -> CliResult<()> {
+    fs::create_dir_all(staging).map_err(failure)?;
+    let mut used = File::options()
+        .create(true)
+        .append(true)
+        .open(staging.join("used"))
+        .map_err(failure)?;
+    used.write_all(format!("{identity}\n").as_bytes()).map_err(failure)
 }
 
 /// Publish a complete cache under its request name through the toolchain's content store.
