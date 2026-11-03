@@ -259,7 +259,7 @@ async def print_users(client: Client) -> None:
         println(user.name)
 ```
 
-This illustrative `Client.users()` API returns an async source of `User` values. The example initially assumes an infallible source so the loop's basic behavior is visible. `Client`, `User`, and the method are application-defined examples, not new stdlib APIs.
+This illustrative `Client.users()` API returns an async source of `User` values. The example assumes an infallible source so the loop's basic behavior is visible. `Client`, `User`, and the method are application-defined examples, not new stdlib APIs.
 
 The loop requests a user, waits if necessary, prints the name, then requests another user. It does not print multiple users concurrently. Other async work may progress while an asynchronous operation is pending; a blocking implementation still blocks.
 
@@ -453,7 +453,7 @@ async def process_with_policy(
     println(outcome)
 ```
 
-The same consumer and terminal outcome work for a runtime policy. Reporters are required when a policy can select CollectAll. They observe the error under FailFast and CollectAll; Ignore skips them. The batch reporter receives the attempted batch as well as its callback error. Reporting callbacks in this first surface return `None`; they may be synchronous or async, with the async form awaited before continuing.
+The same consumer and terminal outcome work for a runtime policy. Reporters are required when a policy can select CollectAll. They observe the error under FailFast and CollectAll; Ignore skips them. The batch reporter receives the attempted batch as well as its callback error. Reporting callbacks return `None`; they may be synchronous or async, with the async form awaited before continuing.
 
 ### Preserve a pending batch when stopping
 
@@ -608,7 +608,7 @@ The source expression must be evaluated once on entry. The loop must not implici
 
 Ordinary `for` must retain its current protocol resolution. It must not automatically consume an async source. Conversely, `async for` must not silently wrap a synchronous iterator; a library may provide an explicit adapter.
 
-`async for` has no `else` clause, because ordinary `for` has none. A later loop-`else` proposal must give both forms the same meaning, running only after normal exhaustion.
+`async for` has no `else` clause, because ordinary `for` has none. Any loop `else` must give both forms the same meaning, running only after normal exhaustion.
 
 ### Protocol declarations
 
@@ -699,7 +699,7 @@ An omitted policy must default to FailFast. Policy options that have no correspo
 
 FailFast must stop on the first failure observed by sequential consumption. If a corresponding reporter was supplied, it must run before the stopped outcome is returned. CollectAll must report every failure at that boundary and continue after reporting completes. Ignore must continue without invoking a reporter or retaining the error payload; it may count the failure without formatting or logging it. Neither continuation policy must retry the failed callback or reinsert its input automatically.
 
-CollectAll must require a corresponding reporter. A runtime policy that can select CollectAll must also require one unless static checking proves that case impossible. A supplied reporter must be checked even when the selected policy is Ignore. Item reporters must receive `E`; callback reporters must receive the attempted input and `F`. Reporters must return `None`, either synchronously or asynchronously. Async reporting must complete before another item is requested or callback is invoked. Fallible reporting and recovery from reporter failure remain outside this first surface; a `Result`-returning reporter must not have its error silently ignored.
+CollectAll must require a corresponding reporter. A runtime policy that can select CollectAll must also require one unless static checking proves that case impossible. A supplied reporter must be checked even when the selected policy is Ignore. Item reporters must receive `E`; callback reporters must receive the attempted input and `F`. Reporters must return `None`, either synchronously or asynchronously. Async reporting must complete before another item is requested or callback is invoked. Fallible reporters are not part of this design: a `Result`-returning reporter must be refused, so its error is never silently ignored.
 
 Item policies must not govern source advancement failures. Any outer source failure must stop the consumer, preserve pending values, and return a typed source failure. Generic consumers must not repoll after that failure. A source may implement recovery internally according to its documented cursor and cancellation contracts, consistent with RFC 115. Explicit result items are how a source exposes independent, recoverable records to a policy-aware consumer.
 
@@ -894,7 +894,7 @@ RFC 006's synchronous `yield` rules remain unchanged. Async generator functions 
 
 A parser can fail on one message while the next message remains available. Representing that failure as a `Result` item lets the consumer choose how to proceed. A failure of the reader itself is a different channel, represented by `AsyncFallibleIterator`. This keeps the recovery boundary concrete without changing RFC 115 or teaching generic adapters to guess whether another poll is safe.
 
-Policies belong to consumption in this first surface. `map` keeps its ordinary transformation meaning, so the same lazy result-item pipeline can be consumed under different policies without hiding an error-handling decision inside the parser. This does not imply that a consumed single-pass source can be reused. Independent policies at multiple intermediate transformations would require a separate stage-composition contract.
+Policies belong to consumption. `map` keeps its ordinary transformation meaning, so the same lazy result-item pipeline can be consumed under different policies without hiding an error-handling decision inside the parser. This does not imply that a consumed single-pass source can be reused. Independent policies at multiple intermediate transformations would require a separate stage-composition contract.
 
 ### Lazy processing and explicit materialization
 
@@ -914,7 +914,7 @@ This proposal is additive. Existing synchronous iteration, generator types, fall
 - **Yield `Result` items for every fallible source:** useful when individual records are themselves successes or failures, but different from a failure to advance the source. RFC 115 already keeps those cases distinct.
 - **Automatically spawn and buffer a producer:** changes scheduling, resource lifetime, capacity, ordering, and cancellation. Those policies belong to an explicitly concurrent source or adapter.
 - **Automatically await shutdown on loop exit:** would create a new asynchronous cleanup contract, including cancellation and failure rules, as an implicit consequence of iteration.
-- **Give `map` an error policy:** changes its meaning when the callback returns a `Result` and hides the distinction between result values and failed advancement. The initial surface keeps mapping ordinary and makes handling explicit at consumption.
+- **Give `map` an error policy:** changes its meaning when the callback returns a `Result` and hides the distinction between result values and failed advancement. This design keeps mapping ordinary and makes handling explicit at consumption.
 - **Return a different container for each policy:** can be useful for a specialized eager API, but complicates runtime policy selection and loses the incremental processing model. The async consumers use one outcome type per operation.
 - **Always stop on failed delivery:** prevents legitimate best-effort processing. The callback policy must allow continued processing, with no promise of rollback or retry safety.
 - **Automatically commit a partial batch on failure:** makes a stopping decision trigger an additional external effect. Stopping preserves pending values and leaves further delivery to the caller.
@@ -934,7 +934,7 @@ There are now synchronous and asynchronous iteration protocols, each with an exp
 
 Async iteration can look lazy even when a source buffers eagerly or runs an independent producer. Documentation must distinguish the loop's sequential demand from the source's internal behavior. Early exit stops further loop requests but does not guarantee asynchronous shutdown or reversal of external effects.
 
-The proposal depends on the revised associated-type and callable designs. Source authors initially write explicit stateful implementations; async generators and the remaining adapter family are follow-up work. Compiler and editor support must account for suspension, mutable iterator access, typed propagation, and cleanup without inventing stronger cancellation guarantees than the source provides.
+The proposal depends on the revised associated-type and callable designs. Source authors write explicit stateful implementations, because async generators and further adapters are not part of this design. Compiler and editor support must account for suspension, mutable iterator access, typed propagation, and cleanup without inventing stronger cancellation guarantees than the source provides.
 
 The consumer surface adds policy options, reporters, progress, and recovery values. A callback that takes ownership of its input cannot have that input returned on failure unless it returns the input itself. Reporting every error can dominate processing cost; Ignore deliberately avoids reporting.
 
@@ -972,5 +972,5 @@ The library grows by several primitives at once. After `for_each_concurrent` rep
 - Consumers keep each input while the callback borrows it, so items need not be `Clone`. An `Owned[T]` callback takes its input, which is then reported as `Attempted.Consumed`.
 - `map` accepts a synchronous or an async callback; the async one is awaited once per item, and an ordinary closure never becomes async from its surroundings.
 - There is no `AsyncFallibleIterable`, matching RFC 115; a reusable fallible source returns a fresh iterator from a method.
-- `async for` has no `else`, because ordinary loops have none; a later loop-`else` proposal covers both with one meaning.
+- `async for` has no `else`, because ordinary loops have none; any loop `else` must cover both with one meaning.
 - `TaskGroup` adopts `AsyncContextManager`. A normal exit waits for its members and returns undelivered failures and panics as `TaskGroupFailure`; an error or panic exit requests cancellation and awaits termination, with RFC 094 keeping both failures. Explicit `shutdown()` remains, and `async for` never awaits a source's shutdown.
