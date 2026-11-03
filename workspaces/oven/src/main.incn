@@ -40,7 +40,7 @@ from toolchain_archive import toolchain_command, parse_arguments as archive_opti
 from cli_help import HELP_HINT, unknown_option
 from command_help import UNIT_VALUE_OPTIONS, command_help, usage
 from pub::incan_platform.trace import WorkObserver
-from segment_store import observe_work
+from segment_files import observe_work
 from trace_adapter import finish as finish_trace
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
