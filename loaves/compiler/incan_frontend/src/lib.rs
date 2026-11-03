@@ -38,6 +38,7 @@ pub mod parsed_module;
 pub mod partial_projection;
 pub mod registry_metadata;
 pub mod resolved_type_subst;
+pub mod rust_abi_cache;
 pub mod rust_type_display;
 pub mod semantics_registry;
 pub mod serde_usage;

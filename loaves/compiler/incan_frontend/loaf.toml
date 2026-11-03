@@ -7,6 +7,7 @@ incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/inc
 incan_semantics_stdlib = { loaf = "incan_semantics_stdlib", path = "../incan_semantics_stdlib" }
 incan_syntax = { loaf = "incan_syntax", path = "../../kernel/incan_syntax" }
 incan_vocab = { loaf = "incan_vocab", path = "../../kernel/incan_vocab", version = "0.6.0-dev.8" }
+snap = { loaf = "crates-io/snap", version = "1.1" }
 quote = { loaf = "crates-io/quote", version = "1.0" }
 semver = { loaf = "crates-io/semver", version = "1.0.27" }
 serde = { features = ["derive"], loaf = "crates-io/serde", version = "1.0" }

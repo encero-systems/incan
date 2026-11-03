@@ -12,9 +12,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
-use incan_lang::interop::{RustAbiCache, RustItemMetadata};
+use incan_lang::interop::RustItemMetadata;
 use incan_lang::lang::standard_packages::{STANDARD_PACKAGE_NAMESPACE_POLICIES, StandardPackageNamespacePolicy};
 use incan_vocab::{KeywordActivation, KeywordRegistration, KeywordSpec};
+
+use crate::rust_abi_cache::RustAbiCache;
 
 mod decoded_manifest;
 mod lazy_entry;

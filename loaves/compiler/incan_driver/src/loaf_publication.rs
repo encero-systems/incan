@@ -375,7 +375,7 @@ fn write_rust_abi_cache(dir: &Path, manifest: &mut LibraryManifest) -> CliResult
         .into_iter()
         .map(|item| (item.canonical_path.clone(), item))
         .collect::<BTreeMap<_, _>>();
-    let bytes = incan_lang::interop::encode_rust_abi_cache(&indexed).map_err(CliError::failure)?;
+    let bytes = incan_frontend::rust_abi_cache::encode_rust_abi_cache(&indexed).map_err(CliError::failure)?;
     let path = dir.join(format!("{}.rustabi", manifest.name));
     fs::write(&path, &bytes).map_err(|error| CliError::failure(format!("cannot write {}: {error}", path.display())))?;
     abi.cache_digest = Some(format!("sha256:{:x}", Sha256::digest(&bytes)));
