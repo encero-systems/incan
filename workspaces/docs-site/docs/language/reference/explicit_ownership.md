@@ -270,6 +270,22 @@ The following are refused with `INCAN-T0123`, each naming its reason:
 - A closure that captures more than one shared input.
 - Passing a closure that holds a reference to another callable.
 
+## Native calls
+
+An input-checked body can call a native method or associated function. The selected Rust signature gives each input its access: a `&self` receiver or `&T` input is borrowed shared from existing storage, a `&mut self` receiver or `&mut T` input exclusively, and a value input is owned, so a non-Copy argument passed by value moves. An exclusive receiver's edits reach the caller, and calling a `&mut self` method while a shared borrow of the same value is still used is refused with `INCAN-T0126`. An associated function written on its type, as in `HashMap.new()`, takes no receiver.
+
+```incan
+# accepted by source checking
+from rust::std::collections import HashMap
+
+
+def add(mut counts: BorrowedMut[HashMap[str, int]], key: str) -> bool:
+    counts.insert(key, 1)  # moves key into the map
+    return counts.contains_key("b")
+```
+
+A native method whose result borrows its receiver, such as `HashMap.get`, and a method that takes its receiver by value are refused with `INCAN-T0123`.
+
 ## Async bodies
 
 An async function or method checks its explicit inputs as a synchronous one does. A call to an async callable is awaited where it is made, as in `await measure(buffer)`: the call borrows its inputs until the await completes, and the caller's source is usable again afterwards. A borrow the body holds stays live across each suspension, so awaiting a call that changes the borrowed place before the borrow's last use is refused with `INCAN-T0126`.

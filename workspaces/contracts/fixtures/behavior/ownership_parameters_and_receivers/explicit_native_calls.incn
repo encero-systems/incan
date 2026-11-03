@@ -1,0 +1,28 @@
+# behavior: an explicit body can call native methods and associated functions; the selected Rust signature borrows a `&self` receiver shared and a `&mut self` receiver exclusively from existing storage, takes value inputs as owned, and an exclusive receiver's edits reach the caller (#2500).
+# expect-stdout:
+#   true
+#   true
+#   false
+#   true
+
+"""Native calls in explicit bodies."""
+
+from rust::std::collections import HashMap
+
+
+def has_key(counts: Borrowed[HashMap[str, int]], key: str) -> bool:
+    return counts.contains_key(key)
+
+
+def add(mut counts: BorrowedMut[HashMap[str, int]], key: str) -> bool:
+    counts.insert(key, 1)
+    return counts.contains_key("b")
+
+
+def main() -> None:
+    mut counts: HashMap[str, int] = HashMap.new()
+    counts.insert("a", 1)
+    println(has_key(counts, "a"))
+    println(add(counts, "b"))
+    println(has_key(counts, "c"))
+    println(counts.contains_key("b"))

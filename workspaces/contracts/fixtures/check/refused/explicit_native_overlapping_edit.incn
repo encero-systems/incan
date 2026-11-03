@@ -1,0 +1,10 @@
+# behavior: a native method with a `&mut self` receiver borrows its receiver exclusively, so calling it while a shared borrow of the same value is still used is refused (#2500).
+# expect-diagnostic: INCAN-T0126
+
+from rust::std::collections import HashMap
+
+
+def overlap(mut counts: BorrowedMut[HashMap[str, int]], key: str) -> bool:
+    view: Borrowed[HashMap[str, int]] = counts
+    counts.insert(key, 1)
+    return view.contains_key("b")

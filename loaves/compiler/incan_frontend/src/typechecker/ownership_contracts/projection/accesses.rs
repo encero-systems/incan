@@ -273,6 +273,16 @@ impl SourceAccesses<'_, '_> {
                 };
                 self.access(expression.span, &place, through, access)?;
             }
+            // A native associated function written on its type has no receiver; its arguments are evaluated as written.
+            Expr::MethodCall(_, _, _, arguments) if self.proof.facts.native_associated_call(expression.span) => {
+                let invocation = self
+                    .proof
+                    .graph
+                    .invocations
+                    .get(&expression.span)
+                    .ok_or("source access native call has no checked invocation")?;
+                self.invocation_arguments(invocation, arguments)?;
+            }
             Expr::MethodCall(receiver, _, _, arguments) => {
                 // A checked receiver is borrowed in place: evaluating it reads its address, not its value.
                 let invocation = self

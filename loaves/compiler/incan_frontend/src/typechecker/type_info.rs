@@ -1888,6 +1888,10 @@ pub struct IsInstanceTargetInfo {
 pub struct ProtocolArtifacts {
     /// Exact selected input contracts of successful calls, including calls from otherwise ordinary bodies.
     pub(in crate::typechecker) explicit_input_calls: BTreeMap<Span, super::ownership_contracts::InputCall>,
+    /// The contract each native call's selected Rust signature gives it, keyed by that call's callee identity. Derived
+    /// from the checked native calls whenever the body's input calls are built or restored, never recorded.
+    pub(in crate::typechecker) native_input_contracts:
+        BTreeMap<CanonicalSymbolId, crate::ownership_metadata::CheckedOwnershipContract>,
     /// Canonically bound local mode requests, captured before lexical shadowing. Native lowering may consume them
     /// only together with the owning body's complete flow proof.
     pub(in crate::typechecker) explicit_local_modes: BTreeMap<CanonicalSymbolId, super::ownership_contracts::LocalMode>,
