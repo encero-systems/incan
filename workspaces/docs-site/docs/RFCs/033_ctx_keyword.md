@@ -1,6 +1,6 @@
 # RFC 033: `ctx` — typed configuration context
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-03-06
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
