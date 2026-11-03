@@ -22,7 +22,7 @@
 
 ## Summary
 
-Recursive Incan code gets the stack it needs. The compiler knows which calls can recurse, checks the remaining stack at those calls, and continues on a fresh heap-allocated stack segment when the current one runs low, so recursion depth is limited by memory rather than by a fixed thread stack. When a task exceeds its stack budget, it panics cleanly with the recursion cycle and depth, runs its cleanup, and never segfaults. Every standard parser of external data has the same typed depth limit, lifted only on explicit request, so hostile nesting produces an ordinary error instead of unbounded memory use. No annotation is needed.
+Recursive Incan code gets the stack it needs. The compiler knows which calls can recurse, checks the remaining stack at those calls, and continues on a fresh heap-allocated stack segment when the current one runs low, so recursion depth is limited by memory rather than by a fixed thread stack. When a task exceeds its stack budget, it panics cleanly with the recursion cycle and depth, runs its cleanup, and never segfaults. Every standard parser of external data has the same typed depth limit, lifted only on explicit request, so hostile nesting produces an ordinary error instead of unbounded memory use. No annotation is needed for any of this; a library that wants its own limit declares it with `@max_recursion_depth`.
 
 ## Core model
 
@@ -30,6 +30,7 @@ Recursive Incan code gets the stack it needs. The compiler knows which calls can
 2. **The stack grows on demand:** at every call that can recurse, the compiler checks the remaining stack and, when it is low, continues on a new heap segment that is released on return.
 3. **Each task has a stack budget:** exhausting it is a panic with a report of the recursion cycle, never a crash of the whole process.
 4. **Untrusted input has typed limits:** every standard parser of external data, from JSON and XML to regular expressions and IncQL queries, has a `max_depth` limit, 128 by default, reports exceeding it as a typed error, and lifts it only on explicit request.
+5. **Libraries declare their own limits:** `@max_recursion_depth` gives any recursive function a depth limit that returns a typed error or panics, the same mechanism the standard parsers use.
 
 ## Motivation
 
@@ -47,6 +48,7 @@ Tail-call-only schemes, such as Scala's `@tailrec` or Rust's unstable `become`, 
 - Make running out of stack a clean, diagnosable panic instead of a process crash.
 - Keep the cost to code that does not recurse at zero, and the cost to recursive calls to one comparison in the common case.
 - Give every standard parser of untrusted input the same typed depth limit, lifted only on explicit request.
+- Let library authors declare a depth limit on their own recursive functions, returning their own typed error.
 
 ## Non-Goals
 
@@ -139,6 +141,38 @@ stack-budget = "4 GiB"
 handle = spawn(import_archive(text), stack_budget="4 GiB")   # this task only
 ```
 
+### Test drive: a library sets its own depth limit
+
+A library author whose parser recurses declares the limit on the recursive function itself:
+
+```incan
+error ConfigError:
+    TooDeep(line: int, max_depth: int) = f"Sections nested deeper than {max_depth} at line {line}."
+
+pub def parse(text: str, max_depth: Option[int] = 64) -> Result[Config, ConfigError]:
+    return parse_section(Lexer(text), max_depth)
+
+@max_recursion_depth(max_depth, error=(limit) => ConfigError.TooDeep(line=lexer.line, max_depth=limit))
+def parse_section(lexer: Lexer, max_depth: Option[int]) -> Result[Section, ConfigError]:
+    section = Section(name=lexer.header()?)
+    while lexer.opens_child():
+        section.add(parse_section(lexer, max_depth)?)     # level 65 returns Err(ConfigError.TooDeep(...))
+    return Ok(section)
+```
+
+The call that would be the 65th level does not run its body; it returns the `error=` value, so the library's caller gets an ordinary typed error with the line where nesting went too deep. The limit is read once, when the recursion is entered from outside, so `parse(text, max_depth=None)` lifts it for that call and every level below. When several functions recurse through each other, such as `parse_value`, `parse_array`, and `parse_object`, they form one cycle and share one depth, so decorating one of them is enough.
+
+Without `error=`, reaching the limit is a panic with the same cycle report as the stack budget. That suits an internal algorithm where depth beyond the limit can only mean a bug:
+
+```incan
+@max_recursion_depth(10_000)
+def resolve_imports(module: Module, graph: ModuleGraph) -> None:
+    for child in graph.imports(module):
+        resolve_imports(child, graph)
+```
+
+The standard parsers meet the `max_depth` convention the same way.
+
 ## Reference-level explanation
 
 ### Which calls are checked
@@ -173,6 +207,16 @@ Every standard parser or decoder that builds nested structure from external data
 
 The convention covers at least `std.json` (RFC 146), `std.toml`, XML (RFC 158), YAML configuration sources (RFC 033), Crumb decoding (RFC 165), `std.re` pattern parsing (RFC 100), where the default is 250 levels of group nesting as in Rust's `regex` crate, `std.web` request bodies such as forms and multipart payloads, and IncQL query text. A parser of source code the program's own author wrote, such as the Incan compiler parsing a project, is not external data in this sense: it relies on stack growth and the budget instead of a depth limit. The same parser fed text from outside, such as an IncQL query from a network client, applies the limit.
 
+### Declared recursion limits
+
+`@max_recursion_depth(limit, error=...)` must be a built-in decorator applicable to any function or method. Its depth must count the activations, on the current task, of the decorated function together with every function in the same strongly connected component of the call graph, so mutual recursion shares one depth.
+
+`limit` must be an expression of type `int` or `Option[int]` that may refer to the function's parameters. It must be evaluated when the recursion is entered from outside its cycle, and that value must govern every nested activation until the outermost one returns. A positive `int` sets the limit; `None` must remove it, and only an explicit `None` may do so.
+
+When a call would exceed the limit, its body must not run. With `error=`, it must instead return `Err` of the value the `error=` closure builds from the limit; the closure may refer to the arguments of the refused call, and the compiler must check that the function returns `Result[T, E]` and that the closure produces an `E`. Without `error=`, it must panic with a report of the limit, the repeating cycle, and the entry point, following the same rules as `StackBudgetExceeded`. A declared limit must never be overridden by stack growth: the call is refused even when stack remains.
+
+The standard parsers covered by the depth convention must implement their typed `max_depth` limits either through this decorator or, for parsers that keep their nesting on a heap work stack, through an equivalent check with the same observable behavior.
+
 ### Diagnostics and tooling
 
 Investigation tooling under RFC 126 must show segment switches as ordinary call frames, so a stack trace lists source calls rather than segment boundaries. Profiles should report the number of segments a task allocated.
@@ -202,6 +246,7 @@ Exhausting a 1 GiB stack budget means a runaway recursion or a missing input lim
 - **Grow every function's stack:** reintroduces the hot-split cost for code that never recurses.
 - **Report stack exhaustion as a `Result`:** adds an unhandleable error to every recursive signature.
 - **Leave it to the platform:** keeps the crash.
+- **Thread a depth counter through every recursive call by hand:** works, but every library repeats it and a forgotten increment silently removes the limit; `@max_recursion_depth` declares it once.
 
 ## Drawbacks
 
@@ -212,6 +257,7 @@ Exhausting a 1 GiB stack budget means a runaway recursion or a missing input lim
 
 ## Layers affected
 
+- **Typechecker:** `@max_recursion_depth` limit and `error=` closure checking against the function's `Result` type.
 - **Call-graph analysis:** whole-program recursion detection, including indirect calls, with call-graph facts published per unit.
 - **Lowering / native runtime:** stack checks at recursive call sites, segment switching, segment reuse, per-task budgets, and the `StackBudgetExceeded` panic report.
 - **Async runtime and task spawning:** per-task budgets and the poll path.
@@ -222,6 +268,7 @@ Exhausting a 1 GiB stack budget means a runaway recursion or a missing input lim
 ## Design Decisions
 
 - Recursion needs no annotation; `@stack_safe` and guaranteed cross-function tail calls are not part of this design.
+- `@max_recursion_depth(limit, error=...)` is a built-in decorator that limits the shared depth of a function's recursion cycle. The limit, which may come from a parameter and is lifted only by an explicit `None`, is read when the cycle is entered from outside. A refused call returns the `error=` value as a typed `Err`, or panics with the cycle report without `error=`, and stack growth never overrides it. Standard parsers implement their `max_depth` limits with it or an equivalent check.
 - Every call that can recurse, determined from the whole-program call graph and including indirect calls, checks the remaining stack against a red zone of at least 100 KiB and continues on a heap segment of at least 1 MiB when it is low, with segment reuse to avoid hot splits.
 - Each task has a stack budget, 1 GiB by default, set per program and per spawned task. Exceeding it is a `StackBudgetExceeded` panic that reports the repeating cycle, depth, and entry point, follows RFC 094 cleanup and RFC 142 task-panic isolation, and never segfaults.
 - Every standard parser of external data accepts `max_depth: Option[int]`, 128 by default (250 for regular-expression group nesting), lifted only by an explicit `None`, and reports a `TooDeep` case in its own error family with a structured location. Dynamic parsers keep nesting on a heap work stack and never recurse. Source code a program's own author wrote relies on stack growth instead.
