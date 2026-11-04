@@ -292,7 +292,7 @@ A receipt is a structured runtime fact emitted by a capability-aware operation. 
 - event id or sequence id;
 - capability identity;
 - operation kind;
-- status, such as observed, allowed, denied, failed, redacted, or skipped;
+- status, such as observed, allowed, denied, failed, redacted, skipped, or unknown;
 - source location or semantic identity when available;
 - package/module/function identity when available;
 - parent span or context id when available;
@@ -303,6 +303,8 @@ A receipt is a structured runtime fact emitted by a capability-aware operation. 
 - an authority-decision binding;
 - an execution-evidence binding; and
 - a boundary attestation and redaction commitment when applicable.
+
+A status of `unknown` means the operation may have executed and confirmation is unavailable, such as a request that timed out. Such a receipt must carry an operation identity, so that a later receipt or query can reconcile the outcome. A retry must reuse that identity or reconcile first; a timeout must not be read as evidence that repeating an effect is safe.
 
 A receipt should include operation-specific attributes such as environment variable key, filesystem path policy, HTTP method, URL policy, process command policy, model id policy, artifact id, action id, or policy id. Sensitive values must be redacted by default.
 
