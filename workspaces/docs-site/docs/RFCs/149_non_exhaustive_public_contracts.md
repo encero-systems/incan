@@ -1,6 +1,6 @@
 # RFC 149: Non-exhaustive public contracts
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-10-17
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
