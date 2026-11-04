@@ -9,7 +9,7 @@ from std.fs import Path
 from pub::incan_platform.ipc import Connection, Listener, listen, session_id, stale
 from decimal_text import digits_only
 from engine_channel import Channel, Envelope, SendOutcome
-from engine_endpoint import endpoint, owner_uid, transport
+from engine_endpoint import HANDSHAKE_SECONDS, endpoint, owner_uid, transport
 from engine_messages import (
     Accepted,
     Cancelled,
@@ -121,8 +121,8 @@ def event_loop(mut listener: Listener, mut state: ServiceState, idle: int) -> Re
 def greet(connected: Connection, state: ServiceState) -> Result[Client, Refusal]:
     """Authenticate OS credentials and Hello before assigning a fresh nonzero session id."""
     mut channel = Channel(transport=connected)
-    channel.transport.wait_at_most(2)
-    channel.transport.write_at_most(2)
+    channel.transport.wait_at_most(HANDSHAKE_SECONDS)
+    channel.transport.write_at_most(HANDSHAKE_SECONDS)
     first = channel.receive()?
     if first.header.session != zero_id() or first.header.request != zero_id():
         return Err(Refusal(kind=RefusalKind.Identity, detail="initial Hello must have zero identities"))
