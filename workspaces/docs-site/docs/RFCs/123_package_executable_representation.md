@@ -164,24 +164,6 @@ Consumers will want the decoded form to outlive one invocation, and the natural 
 - **Emission**: producing the representation for a library's public surface as part of the same build that produces its manifest.
 - **Tooling**: publishing and locating the representation beside a package's other products, and surfacing version and coverage in inspection output.
 
-## Implementation Plan
-
-### Phase 1: Public executable publication
-
-Produce the representation from the compilation that finalizes the manifest. Select declarations through its canonical public graph, record explicit uncovered reasons, and retain the complete public execution closure, including defaults, deferred computations and required type context. Reuse the checked relationship queries that feed RFC 106 codegraph; keep executable payload validation specific to publication. Exclude private declarations and compiler-session identities. A public declaration that cannot satisfy those constraints remains uncovered.
-
-### Phase 2: Versioned selective consumption
-
-Separate the stable version prefix and coverage index from individually addressable declaration payloads. Resolve dependency aliases and facades through the selected package graph, retaining the declaring identity and version. Load only required bodies and type context, and reject malformed, incompatible or incomplete requirements before execution.
-
-### Phase 3: Execution and refusal parity
-
-Connect resolved package fragments to the existing non-linking execution graph. Prove producer-to-consumer execution after removing dependency source, and compare observable behavior with the Rust-linking route. Exercise aliases, transitive facades, defaults, recursion and distinct packages with identical source paths. Test missing, uncovered and incompatible content before output or a successful receipt can be published.
-
-### Phase 4: Distribution and acceptance
-
-Keep each selected semantic sidecar coherent with its manifest through publication, copying, sealed materialization and reuse. Integrate the semantic slot with the signed source-Loaf boundary owned by RFC 125 when that boundary is available; local sidecar tests do not establish signed archive acceptance. Publish user-facing coverage and refusal documentation, and retain direct execution, selective-loading and relevant repository-gate evidence before completing this RFC.
-
 ## Progress Checklist
 
 ### Design and publication

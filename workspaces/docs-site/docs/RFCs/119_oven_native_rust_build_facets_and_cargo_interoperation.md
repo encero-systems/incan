@@ -342,37 +342,6 @@ Rejected. It would revive implicit Cargo semantics, surprise build-script/proc-m
 - **IDE:** the derived Rust project projection and Oven provenance sidecar identify the selected plan and receipt from which they were created, whether a receipt-compatible pre-warmed closure was reused, and whether the projection is fresh; neither is edited as authority.
 - **Not implicit:** no Cargo project discovery, Cargo lock reuse, build-script execution, proc-macro execution, link/tool execution, linker search path, registry registration, or crates.io publication occurs merely because a file or dependency exists.
 
-## Implementation Plan
-
-### Phase 1: Rust facet and crate-provider graph
-
-- Settle the Rust-facet TOML grammar and conventional-default rules.
-- Resolve crates.io and registered crate providers into the typed Oven graph with source/trust/feature/target identities.
-- Produce a direct-`rustc` proof for a library and binary with locked/offline/relocation receipts.
-
-### Phase 2: Roles, linkage, and target artifacts
-
-- Add explicit test, example, benchmark, doctest, caller-projection, carrier, linked-library, linker, and sysroot roles.
-- Prove host and cross-target planning with target-bound `*.loaf` assets and carrier-aware receipts.
-
-### Phase 3: Declared build-time units and procedural macros
-
-- Implement the inert-`build.rs` warning, the `cfg`, `out`, `link`, and `tool` manifest fields and their flow into the direct-`rustc` invocation, and the harvest-based adoption that writes them from an existing Cargo build.
-- Add Cargo-equivalent direct-`rustc` procedural-macro support, source-mapped diagnostics, and observe/governed host-process conformance proofs.
-- Extend the conformance corpus with generated-input, linked-library, and cross-target cases.
-
-### Phase 4: IDE and Cargo interoperation
-
-- Materialize the derived Rust-analyzer project projection and Oven provenance sidecar from explicit inspection selections, reusing receipt-compatible pre-warmed Loaf closures across equivalent worktrees and slices.
-- Prove target switching, generated-input analysis, Oven-only diagnostics actions, and explicit editor macro policy without rebuilding an unchanged dependency/provider closure.
-- Implement explicit Cargo compatibility receipts and policy-gated adoption proposals.
-- Prove that normal Loaf execution never falls back to Cargo.
-
-### Phase 5: Release gate
-
-- Publish the supported native-Rust conformance envelope and run it as a release gate.
-- Keep unsupported behavior diagnostic and route only explicit compatibility invocations through Cargo.
-
 ## Progress Checklist
 
 This checklist tracks the full RFC. The ecosystem work in #1561 delivers the inert-script, declared-input, adoption, and conformance work; it does not by itself complete the remaining Rust roles, IDE, or caller surfaces.
