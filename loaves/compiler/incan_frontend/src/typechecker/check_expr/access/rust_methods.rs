@@ -118,6 +118,7 @@ impl TypeChecker {
             crate::typechecker::type_info::RustCheckedCall {
                 storage: None,
                 source_type_parameters: self.native_call_type_parameters(),
+                signature_loans: Self::native_signature_loan_identities(&method.signature),
                 receiver_adjustments: Vec::new(),
                 path: format!("{callee_owner}::{}", method.name),
                 type_arguments,

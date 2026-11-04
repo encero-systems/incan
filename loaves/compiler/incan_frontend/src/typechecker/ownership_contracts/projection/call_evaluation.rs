@@ -54,6 +54,7 @@ pub(super) fn validate_invocation_events(
                 None,
                 access,
             )?;
+            loans.extend(&invocation.receiver_dependencies);
             end = Some(evaluation.end_node);
         }
         (None, None) => {}

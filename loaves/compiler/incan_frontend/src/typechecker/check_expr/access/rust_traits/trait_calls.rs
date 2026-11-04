@@ -120,6 +120,7 @@ impl TypeChecker {
             let retained = crate::typechecker::RustCheckedCall {
                 storage: None,
                 source_type_parameters: self.native_call_type_parameters(),
+                signature_loans: Self::native_signature_loan_identities(&candidate.signature),
                 receiver_adjustments: Vec::new(),
                 path: candidate.path,
                 type_arguments: candidate.arguments,
@@ -227,6 +228,7 @@ impl TypeChecker {
             crate::typechecker::type_info::RustCheckedCall {
                 storage: None,
                 source_type_parameters: self.native_call_type_parameters(),
+                signature_loans: Self::native_signature_loan_identities(&signature),
                 receiver_adjustments: Vec::new(),
                 path,
                 type_arguments: arguments,
@@ -355,7 +357,7 @@ impl TypeChecker {
         if self.errors.len() == errors_before {
             self.retain_selected_rust_trait_call(&call, selected)?;
         }
-        Some(result)
+        Some(self.native_borrowed_source_result(call.span, result))
     }
 
     /// Retain an explicit native trait call on a concrete receiver or a parameter with an innermost native bound.
@@ -524,6 +526,7 @@ impl TypeChecker {
         Some(crate::typechecker::type_info::RustCheckedCall {
             storage: None,
             source_type_parameters: self.native_call_type_parameters(),
+            signature_loans: Self::native_signature_loan_identities(&selected.signature),
             receiver_adjustments: Vec::new(),
             path: selected.path,
             type_arguments: selected.arguments,
@@ -629,6 +632,6 @@ impl TypeChecker {
             },
         )?;
         self.type_info.rust.checked_calls.get_mut(&call.span)?.has_receiver = false;
-        Some(result)
+        Some(self.native_borrowed_source_result(call.span, result))
     }
 }

@@ -53,6 +53,7 @@ impl TypeChecker {
                     RustCheckedCall {
                         storage: None,
                         source_type_parameters: self.native_call_type_parameters(),
+                        signature_loans: Vec::new(),
                         receiver_adjustments: steps,
                         path: "incan_std_core::collections::list_slice".into(),
                         type_arguments: vec![byte],
@@ -244,6 +245,7 @@ impl TypeChecker {
         Some(RustCheckedCall {
             storage: None,
             source_type_parameters: self.native_call_type_parameters(),
+            signature_loans: Vec::new(),
             receiver_adjustments: Vec::new(),
             path: format!("{}::clone", implementation.path),
             type_arguments: vec![owner.clone()],
@@ -542,6 +544,7 @@ impl TypeChecker {
         Some(RustCheckedCall {
             storage: None,
             source_type_parameters: self.native_call_type_parameters(),
+            signature_loans: Vec::new(),
             receiver_adjustments: Vec::new(),
             path: format!("{}::{method}", implementation.path),
             type_arguments: vec![owner.clone()],

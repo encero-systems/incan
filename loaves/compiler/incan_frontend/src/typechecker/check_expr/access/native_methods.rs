@@ -417,6 +417,7 @@ impl TypeChecker {
             .get(&call.span)
             .map(|checked| self.rust_source_result_type(&checked.return_type, &result))
             .unwrap_or(result);
+        let result = self.native_borrowed_source_result(call.span, result);
         if receiver_is_type
             && signature.return_type.trim() == "Self"
             && let Some(rusttype) = self.rusttype_associated_receiver(&call)

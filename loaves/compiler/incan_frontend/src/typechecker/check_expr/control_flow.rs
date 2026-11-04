@@ -78,6 +78,7 @@ impl TypeChecker {
                 crate::typechecker::RustCheckedCall {
                     storage: None,
                     source_type_parameters: self.native_call_type_parameters(),
+                    signature_loans: Vec::new(),
                     receiver_adjustments: Vec::new(),
                     path: "std::future::IntoFuture::into_future".into(),
                     type_arguments: vec![ty.clone()],

@@ -631,15 +631,15 @@ def invocation_evaluation_grammar(record: CheckedRecord) -> Result[None, str]:
 
 
 def invocation_receiver_grammar(record: CheckedRecord) -> Result[None, str]:
-    """Receiver and argument loans retain independent evaluation intervals and ordered terminal uses."""
+    """Schema 2 retains receiver dependencies; schema 1 above keeps its original invocation grammar."""
     source = ["binding", "source", "0"]
     receiver = ["binding", "receiver", "0"]
-    mut values = ["1", "checked", "owner", "0", "2"]
+    mut values = ["2", "checked", "owner", "0", "2"]
     # Canonical map framing sorts the six-byte source key before the eight-byte receiver key.
     values += ["binding", "source", "false", "false", "false", "binding", "receiver", "false", "false", "false"]
     values += ["2"] + receiver + ["shared", "false", "none", "receiver"]
     values += source + ["shared", "false", "none", "argument", "0", "0", "0", "0", "0", "1"]
-    values += ["call", "callee", "some", "0", "false", "none", "1", "argument", "0", "0", "shared", "some", "1", "some"] + source
+    values += ["call", "callee", "some", "0", "false", "none", "1", "0", "1", "argument", "0", "0", "shared", "some", "1", "some"] + source
     values += ["4", "6", "some", "5", "some", "1", "3", "some", "2", "7", "2", "8", "9", "0", "10"]
     values += ["nothing", "1", "1", "owner", "nothing", "1", "2", "receiver", "borrow", "0", "1", "3", "receiver"]
     values += ["nothing", "1", "4", "receiver", "nothing", "1", "5", "argument", "borrow", "1", "1", "6", "argument"]

@@ -402,7 +402,7 @@ impl TypeChecker {
         if returns_self && let Some(rusttype) = self.rusttype_associated_receiver(&call) {
             return Some(rusttype);
         }
-        Some(result)
+        Some(self.native_borrowed_source_result(call.span, result))
     }
 
     /// Watch a uniquely selected method's own open result parameters using the associated-call first-use rule.
@@ -749,6 +749,7 @@ impl TypeChecker {
             crate::typechecker::type_info::RustCheckedCall {
                 storage: None,
                 source_type_parameters: self.native_call_type_parameters(),
+                signature_loans: Self::native_signature_loan_identities(&selected.signature),
                 receiver_adjustments: Vec::new(),
                 path: selected.path,
                 type_arguments: selected.arguments,

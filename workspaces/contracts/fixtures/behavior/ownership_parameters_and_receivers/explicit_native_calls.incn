@@ -1,4 +1,4 @@
-# behavior: an explicit body can call native methods and associated functions; the selected Rust signature borrows reference receivers, takes value inputs and receivers as owned, copies a Copy value receiver, and an exclusive receiver's edits reach the caller (#2500).
+# behavior: an explicit body can call native methods and associated functions, including HashMap.get's carried view, Read.by_ref's direct view, Read.take's native owner and RefCell.borrow_mut's guard; the selected Rust signature retains each result loan and an exclusive receiver's edits reach the caller (#2500).
 # expect-stdout:
 #   true
 #   true
@@ -6,10 +6,14 @@
 #   true
 #   true
 #   true
+#   1
+#   0
 
 """Native calls in explicit bodies."""
 
 from rust::std::collections import HashMap
+from rust::std::cell import RefCell
+from rust::std::io import Cursor, Read
 from rust::std::time import Duration
 
 
@@ -27,6 +31,29 @@ def adds_two_seconds(value: Borrowed[Duration]) -> bool:
     return combined == Duration.from_secs(5)
 
 
+def lookup(counts: Borrowed[HashMap[str, int]], key: str) -> int:
+    match counts.get(key):
+        Some(value) => return value
+        None => return 0
+
+
+def read_at_most(mut input: BorrowedMut[Cursor[bytes]], size: u64) -> bytes:
+    mut out = b""
+    mut reader = Read.by_ref(input)
+    mut limited = reader.take(size)
+    match limited.read_to_end(out):
+        Ok(_) => return out
+        Err(_) => return b""
+
+
+def read_guarded(cell: Borrowed[RefCell[Cursor[bytes]]]) -> bytes:
+    mut out = b""
+    mut input = cell.borrow_mut()
+    match input.read_to_end(out):
+        Ok(_) => return out
+        Err(_) => return b""
+
+
 def main() -> None:
     mut counts: HashMap[str, int] = HashMap.new()
     counts.insert("a", 1)
@@ -37,3 +64,5 @@ def main() -> None:
     duration = Duration.from_secs(3)
     println(adds_two_seconds(duration))
     println(adds_two_seconds(duration))
+    println(lookup(counts, "a"))
+    println(lookup(counts, "missing"))

@@ -8,10 +8,19 @@ use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolNa
 
 use super::{InputCall, InputCallKind};
 use crate::ast::{Receiver, Span};
-use crate::ownership_metadata::{AccessMode, CheckedOwnershipContract, TypeComponent};
+use crate::ownership_metadata::{AccessMode, CheckedOwnershipContract, SourceSlot, TypeComponent};
 use crate::symbols::ResolvedType;
 use crate::typechecker::RustCheckedCall;
 use crate::typechecker::type_info::{ProtocolArtifacts, RustInteropArtifacts};
+
+/// The admitted owners retained by one native result and the carrier payload that exposes its borrowed value. An
+/// empty source set is a rustc-proven static result; `None` from selection means the result holds no native loan.
+#[derive(Debug, Clone)]
+pub(super) struct NativeResultDependencies {
+    pub(super) call: String,
+    pub(super) sources: Vec<SourceSlot>,
+    pub(super) carried: Option<usize>,
+}
 
 /// Retain each native call inside the body at `body`, or every native call when the facts are one body's own, as an
 /// input call of `owner`, unless the call already has one.
@@ -122,4 +131,100 @@ impl crate::typechecker::TypeCheckInfo {
             .get(&span)
             .is_some_and(|call| call.kind == InputCallKind::Native && call.receiver.is_none())
     }
+}
+
+impl crate::typechecker::TypeChecker {
+    /// Whether a checked native result has complete signature facts and cannot retain a native loan. This lets an
+    /// aggregate such as `Result[usize, Error]` finish a call without borrowing merely because its receiver was lent.
+    pub(super) fn native_result_is_independent(&self, span: Span) -> bool {
+        self.type_info.rust.checked_calls.get(&span).is_some_and(|call| {
+            call.signature_loans.len() == call.parameters.len() + 1
+                && !self.type_holds_native_signature_loan(&call.return_type)
+        })
+    }
+
+    /// Select every caller-owned input whose Rust loan identity occurs in this native call's result. Missing facts
+    /// retain the established refusal, while an exact empty result set represents a static lifetime.
+    pub(super) fn native_result_dependencies(&self, span: Span) -> Result<Option<NativeResultDependencies>, String> {
+        let Some(call) = self.type_info.rust.checked_calls.get(&span) else {
+            return Ok(None);
+        };
+        if !self.type_holds_native_signature_loan(&call.return_type) {
+            return Ok(None);
+        }
+        let expected = call.parameters.len() + 1;
+        if call.signature_loans.len() != expected {
+            return Err(format!(
+                "native call `{}` has no retained result loan contract",
+                call.path
+            ));
+        }
+        let result = call
+            .signature_loans
+            .last()
+            .ok_or_else(|| format!("native call `{}` has no retained result loan contract", call.path))?;
+        if result.is_empty() {
+            return Ok(Some(NativeResultDependencies {
+                call: call.path.clone(),
+                sources: Vec::new(),
+                carried: native_result_payload(self, &call.return_type)?,
+            }));
+        }
+        let first_argument = usize::from(call.has_receiver);
+        let mut sources = Vec::new();
+        for (index, loans) in call.signature_loans[..call.parameters.len()].iter().enumerate() {
+            if !loans.iter().any(|loan| result.contains(loan)) {
+                continue;
+            }
+            let source = if call.has_receiver && index == 0 {
+                SourceSlot::Receiver
+            } else {
+                SourceSlot::Parameter(index - first_argument)
+            };
+            if !sources.contains(&source) {
+                sources.push(source);
+            }
+        }
+        if sources.is_empty() {
+            return Err(format!(
+                "native call `{}` returns a borrowed value without an admitted Incan owner",
+                call.path
+            ));
+        }
+        Ok(Some(NativeResultDependencies {
+            call: call.path.clone(),
+            sources,
+            carried: native_result_payload(self, &call.return_type)?,
+        }))
+    }
+}
+
+/// Identify the one builtin carrier payload holding a native loan. Direct references and lifetime-bearing native
+/// owners use no payload; competing borrowed payloads require a richer variant-specific contract and stay refused.
+fn native_result_payload(
+    checker: &crate::typechecker::TypeChecker,
+    result: &ResolvedType,
+) -> Result<Option<usize>, String> {
+    let ResolvedType::Generic(_, arguments) = result else {
+        return Ok(None);
+    };
+    if result.is_option() {
+        return Ok(arguments
+            .first()
+            .is_some_and(|value| checker.type_holds_native_signature_loan(value))
+            .then_some(0));
+    }
+    if result.is_result() {
+        let borrowed = arguments
+            .iter()
+            .enumerate()
+            .filter_map(|(index, value)| checker.type_holds_native_signature_loan(value).then_some(index))
+            .collect::<Vec<_>>();
+        return match borrowed.as_slice() {
+            [] => Ok(None),
+            [payload] => Ok(Some(*payload)),
+            _ => Err("native Result carries loans in more than one payload".into()),
+        };
+    }
+    Ok(None)
 }

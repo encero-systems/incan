@@ -240,6 +240,15 @@ impl Builder<'_> {
             span,
             reason: "missing call result type".into(),
         })?;
+        let native_dependencies = if call.kind == super::super::InputCallKind::Native {
+            self.checker
+                .native_result_dependencies(span)
+                .map_err(|reason| Unavailable { span, reason })?
+        } else {
+            None
+        };
+        let native_independent_result =
+            call.kind == super::super::InputCallKind::Native && self.checker.native_result_is_independent(span);
         // A native call that lends nothing returns a value that cannot keep a borrow of the caller's storage.
         let lends_nothing = call.kind == super::super::InputCallKind::Native
             && (call.receiver.is_none() || self.checker.type_info.native_value_receiver(span))
@@ -249,7 +258,12 @@ impl Builder<'_> {
                     .iter()
                     .all(|mode| !matches!(mode.mode, OwnershipMode::Borrowed | OwnershipMode::BorrowedMut))
             });
-        if view.is_none() && !plain_result(result) && !lends_nothing {
+        if view.is_none()
+            && native_dependencies.is_none()
+            && !native_independent_result
+            && !plain_result(result)
+            && !lends_nothing
+        {
             return Err(Unavailable {
                 span,
                 reason: "call result needs retained dependency facts".into(),
@@ -277,6 +291,7 @@ impl Builder<'_> {
             receiver: None,
             receiver_owned: false,
             receiver_source: None,
+            receiver_dependencies: Vec::new(),
             arguments: Vec::with_capacity(paired.len()),
             receiver_evaluation: None,
             completion_node: 0,
@@ -290,12 +305,28 @@ impl Builder<'_> {
                 if let Some(source) = &source {
                     self.constrained.insert(source.root.clone());
                 }
-                incoming = self.expression(receiver, incoming, true)?;
+                let dependencies = if let Some(relation) = self.native_result_relation(receiver)? {
+                    let (evaluated, dependencies) = self.evaluate_native_result(receiver, &relation, incoming)?;
+                    incoming = evaluated;
+                    dependencies
+                } else {
+                    let dependencies = source
+                        .as_ref()
+                        .and_then(|source| match &source.root {
+                            Root::Binding(identity) => self.graph.dependent_locals.get(identity).cloned(),
+                            Root::Temporary { .. } => None,
+                        })
+                        .unwrap_or_default();
+                    incoming = self.expression(receiver, incoming, true)?;
+                    dependencies
+                };
                 let source_node = source.as_ref().map(|_| self.graph.nodes.len() - 1);
                 let end_node = self.graph.nodes.len();
                 incoming = self.event(incoming, Event::Nothing, receiver.span);
                 invocation.receiver_owned = true;
                 invocation.receiver_source = source;
+                invocation.receiver_dependencies = dependencies.clone();
+                loans.extend(dependencies);
                 invocation.receiver_evaluation = Some(InputEvaluation {
                     start_node,
                     end_node,
@@ -481,6 +512,25 @@ impl Builder<'_> {
             let (outgoing, source) = self.evaluate_view_source(expression, view, incoming)?;
             return Ok((source, outgoing));
         }
+        if let Some(relation) = self.native_result_relation(expression)?
+            && relation.sources.len() == 1
+        {
+            let (outgoing, loans) = self.evaluate_native_result(expression, &relation, incoming)?;
+            let loan = loans
+                .first()
+                .and_then(|loan| self.graph.loans.get(loan.0))
+                .ok_or(Unavailable {
+                    span: expression.span,
+                    reason: "native chained borrow has no retained source loan".into(),
+                })?;
+            return Ok((
+                Path {
+                    place: loan.source.clone(),
+                    through: loans.first().copied(),
+                },
+                outgoing,
+            ));
+        }
         if let Some(source) = self.optional_place(expression)? {
             return Ok((source, self.evaluate_place(expression, incoming)?));
         }
@@ -495,7 +545,12 @@ impl Builder<'_> {
             .type_info
             .constructor_field_binding(expression.span)
             .is_some();
-        if !plain_result(ty) && !matches!(expression.node, Expr::List(_)) && !fresh_constructor {
+        let independent_native_result = self.checker.native_result_is_independent(expression.span);
+        if !plain_result(ty)
+            && !matches!(expression.node, Expr::List(_))
+            && !fresh_constructor
+            && !independent_native_result
+        {
             return Err(Unavailable {
                 span: expression.span,
                 reason: "temporary argument needs retained dependency facts".into(),
@@ -679,6 +734,113 @@ impl Builder<'_> {
             fields: source.fields.clone(),
             carried: None,
         }))
+    }
+
+    /// The exact retained owners of a native call result, including a builtin carrier payload when one holds the
+    /// borrowed value. Static results return an empty source set and need no caller-owned loan.
+    pub(super) fn native_result_relation(
+        &self,
+        expression: &Spanned<Expr>,
+    ) -> Result<Option<super::super::native::NativeResultDependencies>, Unavailable> {
+        let expression = super::super::builtins::view_call(expression);
+        if !matches!(expression.node, Expr::Call(..) | Expr::MethodCall(..)) {
+            return Ok(None);
+        }
+        let is_native = self
+            .checker
+            .type_info
+            .protocols
+            .explicit_input_calls
+            .get(&expression.span)
+            .is_some_and(|call| call.kind == super::super::InputCallKind::Native);
+        if !is_native {
+            return Ok(None);
+        }
+        self.checker
+            .native_result_dependencies(expression.span)
+            .map_err(|reason| Unavailable {
+                span: expression.span,
+                reason,
+            })
+    }
+
+    /// Evaluate a native call once, then retain one result loan for every rustc-proven caller-owned input. The
+    /// invocation's temporary loans end with the call; each result loan starts from the same admitted source place.
+    pub(super) fn evaluate_native_result(
+        &mut self,
+        expression: &Spanned<Expr>,
+        relation: &super::super::native::NativeResultDependencies,
+        incoming: Vec<usize>,
+    ) -> Result<(Vec<usize>, Vec<super::LoanId>), Unavailable> {
+        let expression = super::super::builtins::view_call(expression);
+        let span = expression.span;
+        let incoming = match &expression.node {
+            Expr::MethodCall(receiver, _, _, arguments) => {
+                self.apply_call(Some(receiver), arguments, span, incoming)?
+            }
+            Expr::Call(callee, _, arguments) if matches!(callee.node, Expr::Ident(_)) => {
+                self.apply_call(None, arguments, span, incoming)?
+            }
+            _ => {
+                return Err(Unavailable {
+                    span,
+                    reason: "native borrowed result needs a checked call".into(),
+                });
+            }
+        };
+        let invocation = self.graph.invocations.get(&span).cloned().ok_or(Unavailable {
+            span,
+            reason: "native borrowed result has no checked invocation".into(),
+        })?;
+        let mut incoming = incoming;
+        let mut retained = Vec::with_capacity(relation.sources.len());
+        for source in &relation.sources {
+            let invocation_loans = match source {
+                SourceSlot::Receiver => invocation
+                    .receiver
+                    .into_iter()
+                    .chain(invocation.receiver_dependencies.iter().copied())
+                    .collect::<Vec<_>>(),
+                SourceSlot::Parameter(slot) => invocation
+                    .arguments
+                    .iter()
+                    .find(|argument| argument.slot == *slot)
+                    .and_then(|argument| argument.loan)
+                    .into_iter()
+                    .collect(),
+            };
+            if invocation_loans.is_empty() {
+                return Err(Unavailable {
+                    span,
+                    reason: "native borrowed result source is not an admitted borrowed input".into(),
+                });
+            }
+            for invocation_loan in invocation_loans {
+                let base = self.graph.loans.get(invocation_loan.0).cloned().ok_or(Unavailable {
+                    span,
+                    reason: "native borrowed result source is not an admitted borrowed input".into(),
+                })?;
+                if !matches!(base.source.root, Root::Binding(_)) {
+                    return Err(Unavailable {
+                        span,
+                        reason: format!("native call `{}` returns a borrow of temporary storage", relation.call),
+                    });
+                }
+                let exclusive = base.kind == super::LoanKind::Exclusive;
+                let loan = self.call_loan(
+                    Path {
+                        place: base.source,
+                        through: base.parent,
+                    },
+                    exclusive,
+                    base.writable,
+                    span,
+                );
+                incoming = self.event(incoming, Event::Borrow(loan), span);
+                retained.push(loan);
+            }
+        }
+        Ok((incoming, retained))
     }
 
     /// Evaluate a call that returns a view, then borrow the substituted place: the invocation's receiver or
