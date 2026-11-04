@@ -41,7 +41,7 @@ The same pressure appears in constrained primitive syntax. RFC 017 and RFC 091 u
 
 ## Goals
 
-- Add declaration-local braced metadata blocks for model fields.
+- Add declaration-local braced metadata blocks for model fields and enum variants.
 - Preserve existing inline field metadata syntax from RFC 021 and RFC 085.
 - Normalize bracket metadata and braced metadata into the same checked field metadata descriptor.
 - Keep field declarations readable when aliases, defaults, complex types, and multiple metadata entries appear together.
@@ -266,6 +266,26 @@ The compiler must report duplicate declaration-local metadata keys at the later 
 
 Alias sugar remains the preferred spelling for wire names. A braced metadata block must continue to accept `alias = "wire"` as an equivalent checked spelling, including ordinary authored source. It is not a temporary migration-only form. The declaration-local duplicate-key rule applies across this spelling, `as "wire"`, and `[alias="wire"]`: supplying alias more than once must be rejected even when the repeated values are equal. Preferred style must not change wire semantics.
 
+### Enum variant blocks
+
+A braced metadata block must also attach to an enum variant, after its complete declaration, and must normalize to the same variant metadata as RFC 085's brackets:
+
+```incan
+enum ToolCommand:
+    Serve(ServeArgs) {
+        description = "Run the development server, reloading when source files change"
+    }
+    Build [description="Build project artifacts"](BuildArgs)
+
+enum Environment(str):
+    Production = "production" {
+        description = "The live system"
+        classification = "restricted"
+    }
+```
+
+The duplicate-key, comment and formatting rules for field blocks apply unchanged. Brackets and a block may appear on one variant only when their keys are disjoint.
+
 ### Metadata values
 
 Metadata block values must use the safe metadata value set defined by RFC 085 and RFC 086. Values must be compile-time metadata values, not runtime expressions. A metadata block must not evaluate user code.
@@ -457,7 +477,7 @@ The constrained primitive block form should normalize into the same constrained 
 ## Design Decisions
 
 - Braced `alias = "WireName"` remains a supported equivalent spelling, not a temporary migration form. Alias sugar stays the preferred readable style. Declaration-local duplicate keys, including repeated equal aliases across spellings, are errors rather than ordered overrides.
-- The primary surface is model-owned field metadata, plus the separately selected constrained primitive option blocks in newtype underlyings. RFC 086 retains schema/projection ownership. No automatic expansion to enum cases, function parameters, computed properties, ordinary aliases, or trait requirements is introduced; any added declaration target needs its own applicability contract.
+- The primary surface is model-owned field metadata, plus the separately selected constrained primitive option blocks in newtype underlyings. RFC 086 retains schema/projection ownership. Enum variants take the same blocks as fields. No automatic expansion to function parameters, computed properties, ordinary aliases, or trait requirements is introduced; any added declaration target needs its own applicability contract.
 - Constrained primitive options use the drafted `int { ... }` form without an extra `where` keyword. The block belongs to the newtype underlying, while a following colon opens an actual newtype body. Default-expression braces and field metadata braces remain distinct; parser/formatter acceptance must exercise the collisions rather than claim proof from a sketch.
 - Default formatting preserves authored metadata and alias spelling. An explicit fix or project-level opt-in may normalize layout during ordinary formatting; exact-spelling modes retain their guarantee. No implicit whole-project migration is selected.
 - Metadata blocks reuse RFC 085/086 checked keys, safe values, provenance and explicit adapter activation. Inert namespaced data does not become executable or compiler-semantic through braced spelling.
