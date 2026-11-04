@@ -182,10 +182,8 @@ impl TypeCheckInfo {
         proof.validate_local_storage()?;
         if !input_statements_supported(callable.body(), conditionals)
             || any_expr_in_body(callable.body(), |expression| {
-                matches!(
-                    expression,
-                    Expr::Index(..) | Expr::Binary(_, BinaryOp::And | BinaryOp::Or, _)
-                ) || (!conditionals && matches!(expression, Expr::Try(_) | Expr::Match(..)))
+                matches!(expression, Expr::Binary(_, BinaryOp::And | BinaryOp::Or, _))
+                    || (!conditionals && matches!(expression, Expr::Try(_) | Expr::Match(..)))
             })
         {
             return Err("explicit inputs require direct straight-line source access in this implementation stage");

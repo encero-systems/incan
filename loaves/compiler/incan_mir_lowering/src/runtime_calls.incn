@@ -701,7 +701,12 @@ def runtime_argument(
             if len(elements) != 1:
                 return Err("invalid governed runtime scalar reference arity")
             return Ok(RustType.Ref(runtime_argument(module, elements[0], intrinsics, unions)?))
+        PlanType.ScalarMutRef(elements) =>
+            if len(elements) != 1:
+                return Err("invalid governed runtime mutable scalar reference arity")
+            return Ok(RustType.RefMut(runtime_argument(module, elements[0], intrinsics, unions)?))
         PlanType.StringRef => return Ok(RustType.Ref(RustType.Primitive(Primitive.Str)))
+        PlanType.StringMutRef => return Ok(RustType.RefMut(RustType.Primitive(Primitive.Str)))
         PlanType.StrRef => return Ok(RustType.Ref(RustType.RustInteropPath("str")))
         PlanType.FrozenCollection(name, elements) =>
             mut arguments: list[RustType] = []
@@ -723,9 +728,13 @@ def runtime_argument(
             return Ok(RustType.Named(str(declaration.name)))
         PlanType.ModelRef(owner, name) =>
             return Ok(RustType.Ref(runtime_argument(module, PlanType.Model(owner, name), intrinsics, unions)?))
+        PlanType.ModelMutRef(owner, name) =>
+            return Ok(RustType.RefMut(runtime_argument(module, PlanType.Model(owner, name), intrinsics, unions)?))
         PlanType.Enum(owner, name) => return runtime_enum_argument(module, owner, name, intrinsics, unions)
         PlanType.EnumRef(owner, name) =>
             return Ok(RustType.Ref(runtime_enum_argument(module, owner, name, intrinsics, unions)?))
+        PlanType.EnumMutRef(owner, name) =>
+            return Ok(RustType.RefMut(runtime_enum_argument(module, owner, name, intrinsics, unions)?))
         PlanType.Tuple(elements) =>
             mut fields: list[RustType] = []
             for element in elements:

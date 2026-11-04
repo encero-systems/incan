@@ -12,6 +12,9 @@ pub(crate) enum CheckedInputSource {
     Place {
         root: CanonicalSymbolId,
         fields: Vec<CanonicalSymbolId>,
+        /// Zero-based projection positions that select an element. The checked expression span owns evaluation;
+        /// Body IR authenticates that each position remains an index instead of a field.
+        elements: Vec<usize>,
     },
     /// A stored aggregate owns its carrier while retaining a checked loan to one borrowed component.
     CarriedLocal,
@@ -177,17 +180,17 @@ pub(super) fn project_source(source: &flow::Place) -> Result<CheckedInputSource,
     match &source.root {
         flow::Root::Binding(root) => {
             let mut fields = Vec::with_capacity(source.projection.len());
-            for projection in &source.projection {
+            let mut elements = Vec::new();
+            for (position, projection) in source.projection.iter().enumerate() {
                 match projection {
                     flow::Projection::Field(field) => fields.push(field.clone()),
-                    flow::Projection::Element(_) => {
-                        return Err("explicit indexed input requires evaluated index storage proof");
-                    }
+                    flow::Projection::Element(_) => elements.push(position),
                 }
             }
             Ok(CheckedInputSource::Place {
                 root: root.clone(),
                 fields,
+                elements,
             })
         }
         flow::Root::Temporary { .. } if source.projection.is_empty() => Ok(CheckedInputSource::Temporary),

@@ -201,9 +201,8 @@ pub(super) fn writable_tuple_place(function: &Function, destination: &Place) -> 
     Ok(())
 }
 
-/// Recover a field path's owned shape from a shared or exclusive nominal or tuple reference; non-dereferenced roots
-/// keep their retained shape. Shared enum and tuple receivers permit reads; mutable reborrows remain guarded by
-/// `borrow_result`.
+/// Recover a field path's owned shape from a shared or exclusive reference; non-dereferenced roots keep their
+/// retained shape. Shared enum and tuple receivers permit reads; mutable reborrows remain guarded by `borrow_result`.
 pub(super) fn field_owner(function: &Function, ty: Scalar, dereference: bool) -> Result<Scalar, PlanError> {
     if !dereference {
         return Ok(ty);
@@ -213,10 +212,11 @@ pub(super) fn field_owner(function: &Function, ty: Scalar, dereference: bool) ->
         Scalar::EnumRef(owner) | Scalar::EnumMutRef(owner) => Ok(Scalar::Enum(owner)),
         Scalar::TupleRef(elements) | Scalar::TupleMutRef(elements) => Ok(Scalar::Tuple(elements)),
         Scalar::ScalarRef(elements) | Scalar::ScalarMutRef(elements) if elements.len() == 1 => Ok(elements[0].clone()),
+        Scalar::StringRef | Scalar::StringMutRef => Ok(Scalar::String),
         Scalar::Boxed(elements) if elements.len() == 1 => Ok(elements[0].clone()),
         _ => Err(invalid(
             function,
-            "field dereference requires a nominal receiver reference",
+            "field dereference requires a supported receiver reference",
         )),
     }
 }

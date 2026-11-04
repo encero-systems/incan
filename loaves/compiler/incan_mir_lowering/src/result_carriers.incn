@@ -37,7 +37,7 @@ from options import (
     none_operand,
     lower_carrier_method_plan,
 )
-from frame import place_type, Builder, temporary, track_rvalue_moves, read_place
+from frame import place_type, Builder, temporary, track_rvalue_moves, read_place, dereferenced_place
 from lists import is_exclusive_borrow
 from checked_values import scalar_place, target_read
 from operators import operand_type
@@ -47,6 +47,7 @@ from formatting import display_plan_operand
 from list_values import indexed_read, value_operand
 from list_methods import argument_place, call_destination
 from carrier_operands import boundary_operand
+from explicit_arguments import reference_contract
 
 
 pub def lower_try_propagation(
@@ -220,7 +221,7 @@ pub def retained_reference_value(
     expected: PlanType,
     span: SourceSpan,
 ) -> Result[Option[Operand], str]:
-    """Transfer an exact exclusive reference, copy a shared reference, or borrow a checked local or structural field."""
+    """Transfer or reborrow an exact exclusive reference, copy a shared reference, or borrow a checked local or structural field."""
     exclusive = is_exclusive_borrow(expected)
     if not exclusive:
         match expected:
@@ -234,15 +235,26 @@ pub def retained_reference_value(
             _ => return Ok(None)
     match value:
         RustOperand.Place(read) =>
-            if exclusive and len(read.place.projection) != 0:
-                return Ok(None)
             match retained_reference_place(builder, read.place, span)?:
                 None => return Ok(None)
                 Some(place) =>
                     if exclusive:
-                        if read.fact != OwnershipFact.Move or place_type(builder.locals, place) != expected:
+                        actual = place_type(builder.locals, place)
+                        if read.fact == OwnershipFact.Move and actual == expected:
+                            return Ok(Some(read_place(place, true, span)))
+                        if read.fact != OwnershipFact.MutBorrow:
                             return Ok(None)
-                        return Ok(Some(read_place(place, true, span)))
+                        referent, writable = reference_contract(expected)?
+                        if not writable:
+                            return Err("unsupported Body IR stored exclusive view without writable reference storage")
+                        mut borrowed = place
+                        if actual == expected:
+                            borrowed = dereferenced_place(place, referent, span)?
+                        elif actual != referent:
+                            return Ok(None)
+                        reference = temporary(builder, expected, span)
+                        builder.emit(plan_assign(reference, RvalueKind.MutBorrow(borrowed), span))
+                        return Ok(Some(read_place(reference, true, span)))
                     if read.fact == OwnershipFact.Unknown or read.fact == OwnershipFact.MutBorrow:
                         return Err("unsupported Body IR shared-reference value ownership")
                     if place_type(builder.locals, place) != expected:

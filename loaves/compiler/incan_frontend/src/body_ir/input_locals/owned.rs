@@ -26,7 +26,9 @@ impl BodyBuilder<'_, '_> {
         let ty = self.checked_type(initializer.value_type);
         let source = initializer.source;
         let source_identity = match &source {
-            Some(CheckedInputSource::Place { root, fields }) if fields.is_empty() => Some(root.clone()),
+            Some(CheckedInputSource::Place { root, fields, elements }) if fields.is_empty() && elements.is_empty() => {
+                Some(root.clone())
+            }
             _ => None,
         };
         if self.resolve_ty(assignment.value.span) != ty {
@@ -36,9 +38,9 @@ impl BodyBuilder<'_, '_> {
             return Err("owned destination already has storage or a loan".into());
         }
         let value = match source {
-            Some(CheckedInputSource::Place { root, fields }) => {
+            Some(CheckedInputSource::Place { root, fields, elements }) => {
                 let place = self.lower_expr_to_place(&assignment.value, scope, out);
-                self.authenticate_input_place(&place, &root, &fields)?;
+                self.authenticate_input_place(&place, &root, &fields, &elements)?;
                 self.explicit_place_operand(place, &ty, IncanInputAccess::Owned, &assignment.value)?
             }
             None => {

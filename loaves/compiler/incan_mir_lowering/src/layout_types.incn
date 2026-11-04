@@ -321,9 +321,11 @@ pub def shared_receiver_type(ty: PlanType) -> Result[PlanType, str]:
         (
             PlanType.StrRef
             | PlanType.StringRef
+            | PlanType.StringMutRef
             | PlanType.ModelRef(_, _)
             | PlanType.ModelMutRef(_, _)
             | PlanType.EnumRef(_, _)
+            | PlanType.EnumMutRef(_, _)
             | PlanType.TupleRef(_)
             | PlanType.TupleMutRef(_)
             | PlanType.ScalarRef(_)
@@ -578,12 +580,18 @@ pub def collection_leaf(ty: PlanType) -> Result[ListLeaf, str]:
         PlanType.Tuple(elements) => return Ok(ListLeaf.Tuple(elements))
         PlanType.Model(owner, name) => return Ok(ListLeaf.Model(owner, name))
         PlanType.Enum(owner, name) => return Ok(ListLeaf.Enum(owner, name))
-        PlanType.EnumRef(_owner, _name) => return Ok(ListLeaf.Reference([ty]))
-        PlanType.ModelRef(_owner, _name) => return Ok(ListLeaf.Reference([ty]))
-        PlanType.StringRef => return Ok(ListLeaf.Reference([ty]))
-        PlanType.StrRef => return Ok(ListLeaf.Reference([ty]))
-        PlanType.ScalarRef(_elements) => return Ok(ListLeaf.Reference([ty]))
-        PlanType.SliceRef(_elements) => return Ok(ListLeaf.Reference([ty]))
+        (PlanType.StringRef | PlanType.StringMutRef | PlanType.StrRef) => return Ok(ListLeaf.Reference([ty]))
+        (
+            PlanType.ScalarRef(_)
+            | PlanType.ScalarMutRef(_)
+            | PlanType.SliceRef(_)
+        ) => return Ok(ListLeaf.Reference([ty]))
+        (
+            PlanType.EnumRef(_, _)
+            | PlanType.EnumMutRef(_, _)
+            | PlanType.ModelRef(_, _)
+            | PlanType.ModelMutRef(_, _)
+        ) => return Ok(ListLeaf.Reference([ty]))
         PlanType.FunctionPointer(signature) => return Ok(ListLeaf.FunctionPointer(signature))
         PlanType.List(leaf, depth) => return Ok(ListLeaf.List([leaf], depth))
         PlanType.Dict(key, value) => return Ok(ListLeaf.Dict([key, value]))
