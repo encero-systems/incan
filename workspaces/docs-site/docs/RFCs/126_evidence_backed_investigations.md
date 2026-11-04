@@ -1,6 +1,6 @@
 # RFC 126: Evidence-backed investigations
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-09-17
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
