@@ -9,7 +9,7 @@ impl Builder<'_> {
         &mut self,
         assignment: &AssignmentStmt,
         span: Span,
-        incoming: Vec<usize>,
+        mut incoming: Vec<usize>,
     ) -> Result<Vec<usize>, Unavailable> {
         let root = self
             .checker
@@ -23,65 +23,15 @@ impl Builder<'_> {
         let mode = (root.declaration_span == assignment.name_span)
             .then(|| self.checker.type_info.protocols.explicit_local_modes.get(&root))
             .flatten();
-        // A new local initialized by a closure holds the closure's captured borrow, if it has one.
         if mode.is_none()
             && root.declaration_span == assignment.name_span
             && root.kind == SemanticSourceTargetKind::Local
-            && matches!(assignment.value.node, Expr::Closure(..))
         {
-            return self.bind_closure(root, &assignment.value, incoming);
-        }
-        // A new local initialized by a returned view aliases its substituted place under the call's result loan.
-        if mode.is_none()
-            && root.declaration_span == assignment.name_span
-            && root.kind == SemanticSourceTargetKind::Local
-            && let Some(view) = self.view_source(&assignment.value)?
-        {
-            let (incoming, path) = self.evaluate_view_source(&assignment.value, view, incoming)?;
-            let loan = path.through.ok_or(Unavailable {
-                span: assignment.value.span,
-                reason: "returned view has no result loan".into(),
-            })?;
-            if self.graph.local_loans.insert(root.clone(), loan).is_some() {
-                return Err(Unavailable {
-                    span: assignment.name_span,
-                    reason: "local declaration has more than one ownership destination".into(),
-                });
+            let (next, bound) = self.bind_unannotated_local(assignment, &root, incoming)?;
+            incoming = next;
+            if bound {
+                return Ok(incoming);
             }
-            self.aliases.insert(root, path);
-            return Ok(incoming);
-        }
-        // A new local bound to a call that carries a view holds the call's result loan as the view's alias until a
-        // match consumes it.
-        if mode.is_none()
-            && root.declaration_span == assignment.name_span
-            && root.kind == SemanticSourceTargetKind::Local
-            && let Some(relation) = self.call_relation(&assignment.value)?
-            && let Some(payload) = relation.carried
-        {
-            // A tuple's elements are taken apart only by unpacking; nothing takes the view out of a bound tuple.
-            if self.tuple_carrier(&assignment.value) {
-                return Err(Unavailable {
-                    span: assignment.value.span,
-                    reason: "a tuple carrying a view needs unpacking into new names".into(),
-                });
-            }
-            let (incoming, path) = self.evaluate_view_call(&assignment.value, relation, incoming)?;
-            let loan = path.through.ok_or(Unavailable {
-                span: assignment.value.span,
-                reason: "carried view has no result loan".into(),
-            })?;
-            if self.graph.local_loans.insert(root.clone(), loan).is_some() {
-                return Err(Unavailable {
-                    span: assignment.name_span,
-                    reason: "local declaration has more than one ownership destination".into(),
-                });
-            }
-            self.aliases.insert(root.clone(), path);
-            let loop_depth = self.loops.len();
-            self.carriers
-                .insert(root, matches::BoundCarrier { payload, loop_depth });
-            return Ok(incoming);
         }
         let source = self.optional_place(&assignment.value)?;
         if let Some(mode) = mode {
@@ -142,28 +92,7 @@ impl Builder<'_> {
         }
         let incoming = self.expression(&assignment.value, incoming, true)?;
         if mode.is_some_and(|mode| mode.mode == OwnershipMode::Owned) {
-            let access_node = if source.is_some() {
-                let [node] = incoming.as_slice() else {
-                    return Err(Unavailable {
-                        span: assignment.value.span,
-                        reason: "owned initializer needs one final stored access".into(),
-                    });
-                };
-                Some(*node)
-            } else {
-                None
-            };
-            let retained = OwnedInitialization {
-                initializer: assignment.value.span,
-                source: source.as_ref().map(|source| source.place.clone()),
-                access_node,
-            };
-            if self.graph.owned_locals.insert(root.clone(), retained).is_some() {
-                return Err(Unavailable {
-                    span: assignment.name_span,
-                    reason: "owned local has more than one initializer".into(),
-                });
-            }
+            self.retain_owned_initializer(assignment, &root, source.as_ref(), &incoming)?;
         }
         if let Some(path) = self.aliases.get(&root).cloned() {
             return Ok(self.event(
@@ -195,6 +124,104 @@ impl Builder<'_> {
             },
             assignment.name_span,
         ))
+    }
+
+    /// Bind a closure capture, direct returned view or carried view to a fresh unannotated local. The boolean
+    /// distinguishes a completed binding from an ordinary assignment while returning the source-flow frontier
+    /// without cloning it.
+    fn bind_unannotated_local(
+        &mut self,
+        assignment: &AssignmentStmt,
+        root: &CanonicalSymbolId,
+        incoming: Vec<usize>,
+    ) -> Result<(Vec<usize>, bool), Unavailable> {
+        // A new local initialized by a closure holds the closure's captured borrow, if it has one.
+        if matches!(assignment.value.node, Expr::Closure(..)) {
+            let incoming = self.bind_closure(root.clone(), &assignment.value, incoming)?;
+            return Ok((incoming, true));
+        }
+        // A new local initialized by a returned view aliases its substituted place under the call's result loan.
+        if let Some(view) = self.view_source(&assignment.value)? {
+            let (incoming, path) = self.evaluate_view_source(&assignment.value, view, incoming)?;
+            let loan = path.through.ok_or(Unavailable {
+                span: assignment.value.span,
+                reason: "returned view has no result loan".into(),
+            })?;
+            self.retain_local_loan(assignment, root, loan, path)?;
+            return Ok((incoming, true));
+        }
+        // A Result or Option local keeps the source alias until `?` or a match consumes it; a tuple local keeps the
+        // whole carrier through its last use without making its borrowed element directly nameable.
+        let Some(relation) = self.call_relation(&assignment.value)? else {
+            return Ok((incoming, false));
+        };
+        let Some(payload) = relation.carried else {
+            return Ok((incoming, false));
+        };
+        let tuple = self.tuple_carrier(&assignment.value);
+        let (incoming, path) = self.evaluate_view_call(&assignment.value, relation, incoming)?;
+        let loan = path.through.ok_or(Unavailable {
+            span: assignment.value.span,
+            reason: "carried view has no result loan".into(),
+        })?;
+        self.retain_local_loan(assignment, root, loan, path)?;
+        if !tuple {
+            let loop_depth = self.loops.len();
+            self.carriers
+                .insert(root.clone(), matches::BoundCarrier { payload, loop_depth });
+        }
+        Ok((incoming, true))
+    }
+
+    /// Retain one result loan and its substituted source alias for a fresh unannotated local.
+    fn retain_local_loan(
+        &mut self,
+        assignment: &AssignmentStmt,
+        root: &CanonicalSymbolId,
+        loan: LoanId,
+        path: Path,
+    ) -> Result<(), Unavailable> {
+        if self.graph.local_loans.insert(root.clone(), loan).is_some() {
+            return Err(Unavailable {
+                span: assignment.name_span,
+                reason: "local declaration has more than one ownership destination".into(),
+            });
+        }
+        self.aliases.insert(root.clone(), path);
+        Ok(())
+    }
+
+    /// Retain the exact final source access for an explicit Owned initializer, or no access for a fresh value.
+    fn retain_owned_initializer(
+        &mut self,
+        assignment: &AssignmentStmt,
+        root: &CanonicalSymbolId,
+        source: Option<&Path>,
+        incoming: &[usize],
+    ) -> Result<(), Unavailable> {
+        let access_node = if source.is_some() {
+            let [node] = incoming else {
+                return Err(Unavailable {
+                    span: assignment.value.span,
+                    reason: "owned initializer needs one final stored access".into(),
+                });
+            };
+            Some(*node)
+        } else {
+            None
+        };
+        let retained = OwnedInitialization {
+            initializer: assignment.value.span,
+            source: source.map(|source| source.place.clone()),
+            access_node,
+        };
+        if self.graph.owned_locals.insert(root.clone(), retained).is_some() {
+            return Err(Unavailable {
+                span: assignment.name_span,
+                reason: "owned local has more than one initializer".into(),
+            });
+        }
+        Ok(())
     }
 
     /// Evaluate a stored field destination before its replacement value. Only canonical stored fields participate;

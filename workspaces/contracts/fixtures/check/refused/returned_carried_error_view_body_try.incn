@@ -1,4 +1,4 @@
-# behavior: a body whose `Result` error carries a view cannot use `?`, because its error exit would return another error instead of the source place (#2500).
+# behavior: a body whose `Result` error carries a view cannot use `?` on a call whose error is an owned value instead of a view of the body's declared source (#2500).
 # expect-diagnostic: INCAN-T0123
 
 class Counter:

@@ -692,8 +692,8 @@ impl Builder<'_> {
     }
 }
 
-/// A selected callee's returned view: its access, the source slot, the declared stored-field path, and the `Result` or
-/// `Option` payload carrying the view, if any.
+/// A selected callee's returned view: its access, the source slot, the declared stored-field path, and the carrier
+/// payload or tuple element holding the view, if any.
 pub(super) struct ViewRelation {
     exclusive: bool,
     slot: SourceSlot,

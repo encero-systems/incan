@@ -1,4 +1,4 @@
-# behavior: after unpacking a call whose tuple carries a view, editing the source while the view is still used is refused (#2500).
+# behavior: after binding a whole tuple that carries a view, editing the source while the tuple is still used is refused (#2500).
 # expect-diagnostic: INCAN-T0126
 
 class Address:
@@ -10,6 +10,8 @@ class Address:
 
 
 def overlap(mut address: BorrowedMut[Address]) -> int:
-    city, visits = address.edit_city()
+    pair = address.edit_city()
     address.city = "Rotterdam"
-    return len(city) + visits
+    if pair == pair:
+        return 1
+    return 0
