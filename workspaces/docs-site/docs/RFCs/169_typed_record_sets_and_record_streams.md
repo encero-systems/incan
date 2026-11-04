@@ -10,6 +10,7 @@
     - RFC 131 (typed errors)
     - RFC 142 (async composition, iteration, and streams)
     - RFC 146 (typed JSON decoding and JSONL readers)
+    - RFC 158 (incremental XML records over split and compressed inputs)
     - RFC 164 (explicit ownership and borrowing)
     - RFC 165 (typed embedded storage and Crumb)
     - RFC 166 (indexed graphs and snapshot-bound access)
@@ -340,7 +341,7 @@ A `ResumePosition` must bind to source identity, schema and selection, ordering 
 | --- | --- | --- | --- | --- |
 | `std.db` table change stream | a saved `ResumePosition` | after the saved position | none at or before it | `HistoryGap` |
 | `std.db` application event family | a saved `ResumePosition` | after the saved position | none at or before it | `HistoryGap` |
-| RFC 146 JSONL readers over a seekable reader | a saved `JsonlPosition` | after the saved position | none at or before it | `JsonlResumeError.SourceChanged` when the input before it changed |
+| RFC 146 JSONL and RFC 158 XML readers | a saved `JsonlPosition` or `XmlPosition` | after the saved position | none at or before it | `SourceChanged` when the input before it changed |
 | Sets and streams built with `from_iter` | not resumable; resume the underlying reader and adapt it again | — | — | open the source again |
 | Channels, broadcasts and HTTP response streams | not resumable | — | — | declared in `capabilities()` |
 
@@ -392,4 +393,4 @@ Kind-aware schemas and checked projections add descriptor and diagnostic work be
 - **Module and names:** the module is `std.data`, with `RecordSet[T]` for collections that end and `RecordStream[T]` for asynchronous sources that may wait. They share one source contract with no third public name; `set.stream()` converts. `std.data` is an RFC 168 composition built on the foundation iteration consumers.
 - **Field paths and applicability:** fields are named by checked paths on the model, such as `Purchase.amount_cents` and `Purchase.shipping.country`, qualified by variant when two variants share a payload model. Cross-kind columns require `align(...)` with identical types. A field on only some selected kinds has column type `FieldValue[T]` with `NotApplicable` and `Present(T)`, distinct from `Option`.
 - **Change envelope:** `Change[K, T]` with `Inserted`, `Updated` and `Deleted`, wrapped in `ChangeEvent[K, T]` with position and transaction boundary. Sources declare `ChangeDelivery` and `PreviousValues`. Other streams yield plain records.
-- **Resumption:** `std.db` table change streams and event families resume from a saved `ResumePosition`, and `snapshot_then_changes()` hands off from a snapshot to changes in one stream. RFC 146 JSONL readers resume from a saved `JsonlPosition` over a seekable reader. Sets and streams built with `from_iter`, channels, broadcasts and HTTP streams are not resumable and say so. Unavailable history is always `DataError.HistoryGap`.
+- **Resumption:** `std.db` table change streams and event families resume from a saved `ResumePosition`, and `snapshot_then_changes()` hands off from a snapshot to changes in one stream. RFC 146 JSONL and RFC 158 XML readers resume from a saved position over any reader. Sets and streams built with `from_iter`, channels, broadcasts and HTTP streams are not resumable and say so. Unavailable history is always `DataError.HistoryGap`.
