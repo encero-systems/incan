@@ -190,6 +190,7 @@ mod tests {
                 provider_operations: &operations,
                 registry_package: None,
                 library_package: None,
+                include_inline_tests: false,
             };
             let mut module = crate::body_ir::build_body_ir_module(&program, &[], &checker.type_info, &context);
             let body = module

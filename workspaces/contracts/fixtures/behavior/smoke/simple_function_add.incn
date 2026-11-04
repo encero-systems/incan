@@ -1,4 +1,4 @@
-# behavior: a public int function taking two parameters returns their sum
+# behavior: A public integer function returns its sum while an inline test module and its test-only import are absent from ordinary run output.
 # expect-stdout:
 #   5
 
@@ -8,3 +8,10 @@ pub def add(a: int, b: int) -> int:
 
 def main() -> None:
     println(add(2, 3))
+
+
+module tests:
+    from std.testing import assert_eq
+
+    def test_addition() -> None:
+        assert_eq(add(2, 3), 5)

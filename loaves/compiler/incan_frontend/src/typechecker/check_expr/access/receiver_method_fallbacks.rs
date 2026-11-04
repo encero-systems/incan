@@ -105,6 +105,7 @@ impl TypeChecker {
             call.expected_return_ty,
         ) {
             if newtype.is_rusttype {
+                self.retain_declared_rusttype_receiver_call(base_ty, &newtype.underlying, method, call.span);
                 self.maybe_record_rusttype_return_coercion(newtype, method, &result, call.span);
             }
             return Some(result);
@@ -127,6 +128,33 @@ impl TypeChecker {
             });
         }
         None
+    }
+
+    /// Apply an exact receiver adapter already admitted for this transparent rusttype method to an ordinary call.
+    ///
+    /// Direct-route rusttypes require every body-less method to back an authored interop edge. Reusing that edge's
+    /// inspected call keeps normal method syntax on the native backing type instead of emitting the source stub.
+    pub(super) fn retain_declared_rusttype_receiver_call(
+        &mut self,
+        receiver: &ResolvedType,
+        underlying: &ResolvedType,
+        method: &str,
+        span: Span,
+    ) {
+        let selected = self
+            .type_info
+            .rust
+            .declared_conversions
+            .iter()
+            .find(|conversion| {
+                (conversion.source == *receiver || conversion.source == *underlying)
+                    && conversion.call.has_receiver
+                    && conversion.call.path.rsplit("::").next() == Some(method)
+            })
+            .map(|conversion| conversion.call.clone());
+        if let Some(call) = selected {
+            self.type_info.rust.checked_calls.insert(span, call);
+        }
     }
 
     /// Apply the remaining bound, backend-magic, external and missing-method rules in their established order.

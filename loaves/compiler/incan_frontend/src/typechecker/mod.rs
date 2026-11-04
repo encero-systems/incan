@@ -107,7 +107,7 @@ mod source_signatures;
 pub use declaration_views::{CheckEnvironmentView, CheckedBindingView, DeclarationView, VisibilityPoint};
 mod trait_bound_relations;
 mod type_info;
-pub(crate) use type_info::{ClassLayoutInfo, RustCheckedCall};
+pub(crate) use type_info::{AmbientLoggerBindingInfo, ClassLayoutInfo, RustCheckedCall};
 pub(crate) use validate_rust_module::is_trivial_body;
 mod union_member_identity;
 mod validate_rust_module;

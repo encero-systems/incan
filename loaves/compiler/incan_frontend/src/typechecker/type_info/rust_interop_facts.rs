@@ -29,6 +29,9 @@ pub struct RustInteropArtifacts {
     /// Exact infallible rusttype edges selected from authored adapters and inspected native signatures.
     /// Ordinary source boundaries select only a matching source/destination pair, never any edge on the owner.
     pub(crate) declared_conversions: Vec<RustDeclaredConversion>,
+    /// Authored rusttype edges whose complete adapter signatures passed declaration checking. Fallible edges remain
+    /// declaration authority even though automatic native conversion currently consumes only infallible edges.
+    pub(crate) validated_rusttype_edges: HashSet<crate::ast::Span>,
     /// Exact owned native From calls applied to each source list element at an argument boundary. The list is
     /// evaluated once; the selected conversion is executed once per element in source order.
     pub element_adjustments: HashMap<crate::ast::Span, RustCheckedCall>,

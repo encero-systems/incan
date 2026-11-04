@@ -212,7 +212,7 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
             refuse(tcx, error);
         }
         for external in &self.plan.externals {
-            let def = match callees::external(tcx, &external.path) {
+            let def = match callees::planned_external(tcx, external) {
                 Ok(def) => def,
                 Err(error) => refuse(tcx, error),
             };

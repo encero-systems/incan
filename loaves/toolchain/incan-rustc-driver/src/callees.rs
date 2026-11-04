@@ -54,7 +54,7 @@ pub fn resolve(tcx: TyCtxt<'_>, callee: &Callee) -> Result<DefId, PlanError> {
         CalleeKind::SharedCallableBody(_) => Err(PlanError::UnknownCallee(
             "shared callable constructors keep rustc's own body".into(),
         )),
-        CalleeKind::Instantiated(path, _) => external(tcx, path),
+        CalleeKind::Instantiated(path, types) => instantiated_external(tcx, path, types),
         CalleeKind::FutureMethod(..) => Err(PlanError::UnknownCallee(
             "unsupported SDK method future outside its boxing shim".into(),
         )),
@@ -267,6 +267,35 @@ fn layout_definition(tcx: TyCtxt<'_>, definition: DefId, expected: DefKind) -> O
 /// concrete Self arguments and bounds remain subject to native signature validation.
 /// A structural slice owner selects one public builtin impl item through the same rustc index used by extraction.
 pub fn external(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
+    external_with_signature(tcx, path, None)
+}
+
+/// Resolve an instantiated external through its exact retained signature when same-named inherent methods live on
+/// different specialized impl owners. Type arguments alone cannot distinguish `Option<&T>::copied` from
+/// `Option<&mut T>::copied`; the checked parameters and result do.
+fn instantiated_external(tcx: TyCtxt<'_>, path: &str, types: &[crate::plan::PlanType]) -> Result<DefId, PlanError> {
+    let plan = crate::adapter::active_plan().map_err(|_| PlanError::UnknownCallee(path.into()))?;
+    let external = plan
+        .externals
+        .iter()
+        .find(|external| external.path == path && external.type_arguments == types)
+        .ok_or_else(|| PlanError::UnknownCallee(path.into()))?;
+    external_with_signature(tcx, path, Some(external))
+}
+
+/// Resolve one planned external using its complete checked signature. Verification must preserve this evidence:
+/// a path alone cannot distinguish same-named methods on specialized inherent impls.
+pub fn planned_external(tcx: TyCtxt<'_>, external: &crate::plan::ExternalFunction) -> Result<DefId, PlanError> {
+    external_with_signature(tcx, &external.path, Some(external))
+}
+
+/// Walk an admitted external path, using a checked signature only to disambiguate specialized inherent impls. Module,
+/// trait, constructor and single-candidate resolution retain their existing public metadata rules.
+fn external_with_signature(
+    tcx: TyCtxt<'_>,
+    path: &str,
+    external: Option<&crate::plan::ExternalFunction>,
+) -> Result<DefId, PlanError> {
     // A public primitive alias names the primitive itself; scalar buckets resolve first, text and slices below.
     let primitive = path
         .strip_prefix("std::primitive::")
@@ -293,7 +322,7 @@ pub fn external(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
                 .filter_map(|child| child.res.opt_def_id())
                 .find(|child| callee_path_step(tcx.def_kind(*child), last))
                 .ok_or_else(|| PlanError::UnknownCallee(path.into()))?,
-            DefKind::Struct | DefKind::Enum => inherent_function(tcx, current, segment)
+            DefKind::Struct | DefKind::Enum => inherent_function_for_external(tcx, current, segment, external)?
                 .or_else(|| enum_constructor(tcx, current, segment))
                 .ok_or_else(|| PlanError::UnknownCallee(path.into()))?,
             DefKind::TyAlias => {
@@ -392,6 +421,52 @@ fn inherent_function(tcx: TyCtxt<'_>, owner: DefId, name: &str) -> Option<DefId>
     inherent_function_in(tcx, &owner_inherent_impls(tcx, owner), name)
 }
 
+/// Select one inherent function, specializing a genuinely ambiguous method set by the complete checked external
+/// signature. This preserves the adapter's unique-callee rule without guessing from method names or impl order.
+fn inherent_function_for_external(
+    tcx: TyCtxt<'_>,
+    owner: DefId,
+    name: &str,
+    external: Option<&crate::plan::ExternalFunction>,
+) -> Result<Option<DefId>, PlanError> {
+    let implementations = owner_inherent_impls(tcx, owner);
+    let candidates = inherent_functions_in(tcx, &implementations, name);
+    if let [selected] = candidates.as_slice() {
+        return Ok(Some(*selected));
+    }
+    let Some(external) = external else {
+        return Ok(None);
+    };
+    let mut matching = Vec::new();
+    for candidate in candidates {
+        if inherent_signature_matches(tcx, candidate, external)? {
+            matching.push(candidate);
+        }
+    }
+    Ok(match matching.as_slice() {
+        [selected] => Some(*selected),
+        _ => None,
+    })
+}
+
+/// Compare one same-named inherent candidate with the fully instantiated parameters and result retained in the plan.
+fn inherent_signature_matches(
+    tcx: TyCtxt<'_>,
+    candidate: DefId,
+    external: &crate::plan::ExternalFunction,
+) -> Result<bool, PlanError> {
+    let arguments = arguments(tcx, candidate, &external.type_arguments)?;
+    let signature = tcx
+        .instantiate_bound_regions_with_erased(tcx.fn_sig(candidate).instantiate(tcx, arguments).skip_normalization());
+    let parameters = external
+        .parameters
+        .iter()
+        .map(|parameter| crate::types::native_type(tcx, parameter))
+        .collect::<Result<Vec<_>, _>>()?;
+    let result = crate::types::native_type(tcx, &external.return_type)?;
+    Ok(signature.inputs() == parameters && signature.output() == result)
+}
+
 /// Every inherent impl rustc's method lookup reaches for a nominal owner: the impls in its defining crate and the
 /// incoherent ones another crate attaches to it. `std::io::Error` is defined below `std`, which supplies its
 /// OS-backed constructors (`new`, `other`, `last_os_error`) as incoherent impls.
@@ -462,18 +537,28 @@ fn primitive_function(tcx: TyCtxt<'_>, bucket: SimplifiedType, name: &str) -> Op
 
 /// Select one public inherent function from exact impl owners, refusing ambiguous same-named declarations.
 fn inherent_function_in(tcx: TyCtxt<'_>, implementations: &[DefId], name: &str) -> Option<DefId> {
-    let mut found = implementations.iter().flat_map(|implementation| {
-        tcx.associated_item_def_ids(*implementation)
-            .iter()
-            .copied()
-            .filter(|item| {
-                tcx.def_kind(*item) == DefKind::AssocFn
-                    && tcx.item_name(*item).as_str() == name
-                    && tcx.visibility(*item).is_public()
-            })
-    });
-    let selected = found.next()?;
-    found.next().is_none().then_some(selected)
+    let found = inherent_functions_in(tcx, implementations, name);
+    match found.as_slice() {
+        [selected] => Some(*selected),
+        _ => None,
+    }
+}
+
+/// Collect public same-named inherent functions without choosing among specialized impl owners.
+fn inherent_functions_in(tcx: TyCtxt<'_>, implementations: &[DefId], name: &str) -> Vec<DefId> {
+    implementations
+        .iter()
+        .flat_map(|implementation| {
+            tcx.associated_item_def_ids(*implementation)
+                .iter()
+                .copied()
+                .filter(|item| {
+                    tcx.def_kind(*item) == DefKind::AssocFn
+                        && tcx.item_name(*item).as_str() == name
+                        && tcx.visibility(*item).is_public()
+                })
+        })
+        .collect()
 }
 
 /// Bind a generic external function's type parameters from the plan's declared signature, as rustc's inference does

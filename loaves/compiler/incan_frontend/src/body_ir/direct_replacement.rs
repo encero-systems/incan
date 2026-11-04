@@ -276,13 +276,10 @@ pub fn is_direct_native_rusttype_alias(newtype: &ast::NewtypeDecl, type_info: &T
         && newtype.method_aliases.is_empty()
         && newtype.method_partials.is_empty()
         && newtype.associated_types.is_empty()
-        && newtype.interop_edges.iter().all(|edge| {
-            type_info
-                .rust
-                .declared_conversions
-                .iter()
-                .any(|checked| checked.span == edge.span)
-        })
+        && newtype
+            .interop_edges
+            .iter()
+            .all(|edge| type_info.rust.validated_rusttype_edges.contains(&edge.span))
         && type_info.rust.storage_types.get(&alias).is_some_and(|storage| {
             !matches!(
                 storage,
