@@ -13,7 +13,7 @@
     - RFC 118 (Incan and Oven command-line surfaces)
     - RFC 120 and RFC 124 (source-symbol and compiled-unit identity)
     - RFC 017 and RFC 085 (constrained types and field constraints)
-    - RFC 126 (Oven debugging and evidence-backed investigations)
+    - RFC 126 (evidence-backed investigations)
     - RFC 131 (error origins, cause chains and opt-in stack capture)
     - RFC 165 (std.db typed embedded storage)
     - RFC 169 (typed record sets and record streams)
@@ -363,7 +363,7 @@ Follow-up questions refer to handles instead of repeating earlier answers:
 {"op": "replay", "capture": "run-41", "against": "current"}
 ```
 
-Each answer names its source locations and identities, states what it left out and why, and fits a declared size. A handle stays valid for the session or capture it belongs to. The terminal client and editors use the same operations; nothing here is agent-only.
+Each answer names its source locations and identities, states what it left out and why, and fits a declared size. A session or capture handle stays valid for its lifetime. A live value handle answers for the stop where it was made, and reports that the stop has ended once the process moves on. The terminal client and editors use the same operations; nothing here is agent-only.
 
 ### Inspect memory through a supported command
 
@@ -508,7 +508,7 @@ A supported artifact must retain or identify matching debug information and sour
 
 A Loaf's debug information, source maps and the layout facts used to present its values must be stored with the Loaf in the local store, beside the artifacts they describe, whether those artifacts were built locally or obtained with the Loaf. The session must obtain them by asking the Loaf, matched by artifact identity, without a network request at debug time. A Loaf published without its source must still carry its debug information, and the session must report that source as unavailable.
 
-Each requested value must distinguish available, optimized out, not captured, out of scope, uninitialized, unsupported, redacted and unreadable states as applicable. Raw foreign layout is not an Incan value merely because bytes are readable. Value display must not call user formatters, properties or other effectful code without an explicit evaluation request. Async task reconstruction, foreign frames and optimized stepping may have narrower support, which must be declared.
+Each requested value must distinguish available, optimized out, not captured, omitted for budget, out of scope, uninitialized, unsupported, redacted, unreadable and lost to a damaged capture, as applicable, and must never render one of these as an ordinary null or empty value. A read that may have effects, including device memory, must not count as passive inspection. Raw foreign layout is not an Incan value merely because bytes are readable. Value display must not call user formatters, properties or other effectful code without an explicit evaluation request. A library may present its own values through inspectors declared in checked metadata; an inspector that would run target code is an evaluation. Async task reconstruction, foreign frames and optimized stepping may have narrower support, which must be declared.
 
 Runtime diagnostics must distinguish an assertion, panic, error returned from an entry point, process signal, requested cancellation and toolchain failure when evidence permits. They must preserve the original message and termination semantics. An opt-in backtrace must use the same symbol and source policy. Unwinding and fatal-signal constraints may prevent complete capture; a missing stack must not be presented as an empty, complete stack. This RFC does not authorize catching a foreign panic and converting it into an ordinary Incan result.
 
@@ -540,7 +540,7 @@ A recorded execution must use an artifact built for recording. The recording mus
 
 Values must be recomputed by replaying the same artifact against the recording. Replay must perform no operation on the host; every recorded operation's result must come from the recording. Replay must reproduce the recorded execution exactly. Where it cannot, for example because memory shared with another process changed or unsafe or foreign code raced, it must report the first point of divergence and must not present anything after it as observed.
 
-A recording must state its scope, what it omitted and the overhead measured while recording. Values of secret types (RFC 103) must be redacted when recorded, never stored in plaintext. Replay past a redacted input requires the secret to be supplied again; otherwise replay stops at that input and later values are reported as unavailable.
+A recording must state its scope, what it omitted and the overhead measured while recording. Values of secret types (RFC 103) must be redacted when recorded, never stored in plaintext. Replay past a redacted input requires the secret to be supplied again; otherwise replay stops at that input and later values are reported as unavailable. A recording must not manufacture RFC 104 receipts for a run that has none, or imply that a raw foreign call was governed.
 
 The provenance index must be built once, by a replay after the run, and kept with the recording. Queries against a completed recording must read that index, run nothing and return the same answer to the same question. A provenance answer must stay in the project's own code: a value produced by a dependency is reported as returned by that call, with its arguments, and the answer goes inside the dependency only on request. A session over a recording may stop at any recorded point, earlier or later than the current one.
 
@@ -554,9 +554,15 @@ Every value change and code patch must be recorded in the session, and the execu
 
 ### Agent use
 
-Every session, capture and language-server operation in this suite must be available as a structured request with a versioned, structured response. A response must fit a declared size; content beyond it must be reachable through continuation handles rather than truncated silently. Sessions, frames, values and captures must have handles that stay valid for the lifetime of the session or capture they belong to, so that a follow-up request never needs an earlier answer repeated.
+Every session, capture and language-server operation in this suite must be available as a structured request with a versioned, structured response. A response must fit a declared size; content beyond it must be reachable through continuation handles rather than truncated silently. Sessions, frames, values and captures must have handles, so that a follow-up request never needs an earlier answer repeated. A session or capture handle must stay valid for its lifetime, and a frame or value handle from a capture or recording for the lifetime of that capture. A frame or value handle from a live process must answer for the stop where it was made, and once the process resumes it must report that the stop has ended; it must never read current memory.
 
 The contract must support questions asked by meaning, including: run until a condition holds in a named function or location; report a value's provenance; and compare a value or outcome across two executions. A session must be addressable from separate requests. Every answer must carry the source locations and identities it refers to and must state explicitly what it did not capture, could not read or left out. These operations must be exposed through the same session contract that serves the terminal and editors, including over MCP.
+
+A bounded run must report why it stopped: condition met, process exit, timeout, cancellation, budget exhausted or engine failure. Not reaching a condition within a budget is inconclusive, not evidence that the condition cannot occur.
+
+At most one client may control a session's execution at a time, and handover must be explicit; other clients may inspect what it has retained. A request that changes the process must name the session revision it expects, and a conflicting request must fail without changing the process. Each request must carry an identity, so that a retry never launches a second process or repeats an operation. Control grants nothing else: evaluation, reruns and source edits keep their own authority. Launch, attach, detach, terminate and client disconnect must each have a stated effect, and a disconnect must not kill an attached process.
+
+Recorded program output and source text are evidence data, not instructions to the agent client.
 
 ### Platforms and engines
 
@@ -646,7 +652,7 @@ Performance qualification must compare disabled and enabled observation under th
 
 ### Relationship to existing proposals
 
-RFC 126 owns durable investigations, hypotheses, experiments and verification. This RFC owns the diagnostic and observation capabilities that an investigation can reference. A standalone capture is sufficient for a failure report; it need not create a second investigation model. Live debugger control and editor adapters must preserve RFC 126's session and control ownership. RFC 126 investigates Rust, Incan and mixed executions; this RFC gives them one debugging experience, so neither narrows the other.
+RFC 126 owns durable investigations, hypotheses, experiments, reduction and verification. This RFC owns sessions, control between clients, values, evaluation, recordings, captures and the agent contract, and an investigation refers to them by identity. A standalone capture is sufficient for a failure report; it need not create a second investigation model. RFC 126 investigates Rust, Incan and mixed executions; this RFC gives them one debugging experience, so neither narrows the other.
 
 RFC 131 owns error origins, cause chains, propagation trails and stack capture for errors, with full stack capture off by default. This RFC applies the same policy to assertions and panics: their ordinary report gives the condition, the location and the compared values; stack capture uses the same runtime configuration; frame values need a debugger or an explicit capture. An Incan developer therefore meets one rule for every kind of failure: location by default, stack on request, values in the debugger.
 
@@ -723,3 +729,4 @@ Source debugging and observer integration require a maintained platform and tool
 - Linux, macOS and Windows are supported with one contract. LLDB is the proposed engine on every platform; platform-specific limitations do not change the contract.
 - Debug information, source maps and layout facts live with the Loaf in the local store. The session asks the Loaf for them and makes no network request at debug time; a Loaf published without source still carries its debug information.
 - A recording keeps what the execution cannot recompute: host-operation results, the clock, randomness, the environment, arguments, foreign-call results and the order of thread synchronization. Values are recomputed by replay, which builds the provenance index once. Answers stay in the project's own code and go into a dependency only on request.
+- At most one client controls a session at a time, with explicit handover and a revision on each request that changes the process. A live value handle answers for the stop where it was made. Recorded output and source text are data, not instructions to an agent. RFC 126 refers to sessions, captures and recordings by identity.
