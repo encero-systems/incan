@@ -1,4 +1,4 @@
-# behavior: editing a field through its owner while a direct view, a collection storing that view, an exclusive view or an owned result dependency of that field is still used is refused (#2500).
+# behavior: editing a field through its owner while a direct view, reusable batch column, memory graph reader, collection-stored view, exclusive view or owned result dependency of that field is still used is refused (#2500, #2519, #2524).
 # expect-diagnostic: INCAN-T0126
 
 class Address:
@@ -20,8 +20,45 @@ class Customer:
         return self.name
 
 
+class ColumnBuffer:
+    pub values: list[int]
+
+
+class ReusableBatch:
+    pub buffer: ColumnBuffer
+
+    pub def column(self) -> Borrowed[ColumnBuffer] from self.buffer:
+        return self.buffer
+
+    pub def refill(mut self) -> None:
+        self.buffer = ColumnBuffer(values=[3, 4])
+
+
+class GraphState:
+    pub nodes: list[int]
+
+
+class MemoryGraph:
+    pub state: GraphState
+
+    pub def read_view(self) -> Borrowed[GraphState] from self.state:
+        return self.state
+
+
 def retained_name_size(customer: Borrowed[Customer]) -> Owned[int] from customer.name:
     return len(customer.name)
+
+
+def refill_while_column_is_live(mut batch: BorrowedMut[ReusableBatch]) -> None:
+    column = batch.column()
+    batch.refill()
+    println(column.values[0])
+
+
+def edit_graph_while_reader_is_live(mut graph: BorrowedMut[MemoryGraph]) -> None:
+    reader = graph.read_view()
+    graph.state = GraphState(nodes=[3, 4])
+    println(reader.nodes[0])
 
 
 def main() -> None:
