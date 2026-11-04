@@ -116,8 +116,8 @@ oven inspect receipt
 oven update
 oven publish
 oven yank widgets 0.4.0 --reason "panics on empty input"
-oven store status
-oven store gc
+oven bakery status
+oven bakery gc
 ```
 
 These commands operate on a selected Loaf or workspace closure. They discover `loaf.toml`, resolve the typed dependency graph, apply inherited workspace authority, and report a plan before effects where policy requires it.

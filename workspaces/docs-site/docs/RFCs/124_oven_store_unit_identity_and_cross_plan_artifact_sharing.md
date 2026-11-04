@@ -111,17 +111,17 @@ The same condition today is caught when the executable is linked and diagnosed f
 ### The store is inspectable and collectable
 
 ```text
-$ oven store status
+$ oven bakery status
   units 1,312 · 6.1 GB payload · 4.4 GB physical (hardlinked)
   reachable from 9 receipts, 2 leases · 380 MB collectable
 
-$ oven store gc
+$ oven bakery gc
   removed 41 units (380 MB); kept everything a receipt or lease reaches
 ```
 
 ### Registry assets land in the same place
 
-Under RFC 125, a unit that arrives from `incan.pub` shows in `oven store status` with `imported` as its origin and the attestation that vouched for it. A later local bake of a unit with the same identity is recognized as already present and is not recompiled.
+Under RFC 125, a unit that arrives from `incan.pub` shows in `oven bakery status` with `imported` as its origin and the attestation that vouched for it. A later local bake of a unit with the same identity is recognized as already present and is not recompiled.
 
 ## Reference-level explanation
 
@@ -204,7 +204,7 @@ Whole-plan reuse remains permitted: a plan whose receipt identity matches a seal
 
 ### Store obligations
 
-The store must hold each unit payload once, addressed by unit identity and payload digest. Payloads are immutable once inserted; the index and referrer tables change only by append and tombstone. The store must verify a payload's digest at admission (insert, import, or first use after the store detects external change to the file) and whenever a unit crosses a trust boundary such as import from a registry. Within one operation, a unit that has been verified and is held by a lease must be treated as immutable and must not be rehashed again; Oven must not recompute the digest of a transitive closure on every logical lookup. Cheap consistency checks (size, modification time, inode) may guard the warm path, with a full rehash on `oven store verify` or on policy. A payload that fails verification must be evicted and the unit treated as absent. The store must keep a name index from package name, version, domain, target, profile facts, and feature set to identities, so a planner can find candidates without scanning payloads. The store must track referrers: every receipt and lease that reaches a unit. Leases keep in-progress plans and explicitly pinned entries live. The store should materialize units into build directories by hard link or reflink where the filesystem allows and must fall back to copying where it does not.
+The store must hold each unit payload once, addressed by unit identity and payload digest. Payloads are immutable once inserted; the index and referrer tables change only by append and tombstone. The store must verify a payload's digest at admission (insert, import, or first use after the store detects external change to the file) and whenever a unit crosses a trust boundary such as import from a registry. Within one operation, a unit that has been verified and is held by a lease must be treated as immutable and must not be rehashed again; Oven must not recompute the digest of a transitive closure on every logical lookup. Cheap consistency checks (size, modification time, inode) may guard the warm path, with a full rehash on `oven bakery verify` or on policy. A payload that fails verification must be evicted and the unit treated as absent. The store must keep a name index from package name, version, domain, target, profile facts, and feature set to identities, so a planner can find candidates without scanning payloads. The store must track referrers: every receipt and lease that reaches a unit. Leases keep in-progress plans and explicitly pinned entries live. The store should materialize units into build directories by hard link or reflink where the filesystem allows and must fall back to copying where it does not.
 
 Collection must remove only units no receipt, lease, or policy pin reaches, must be explicit, and must report what it removed. The bakery has no total-size ceiling: its size follows what it holds, and an insert must never be refused, nor a unit evicted, because of the bakery's total size.
 
