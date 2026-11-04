@@ -9,6 +9,7 @@
 #   1 1
 #   parameter
 #   1 1
+#   ready
 
 model Values:
     """Two independently defaulted lists."""
@@ -26,6 +27,23 @@ model Traced:
     """Evaluate an explicit list before the other field's default."""
     tags: list[str]
     notes: list[str] = tracked("default")
+
+
+model NestedDefaultValue:
+    """Supply a fresh literal default to another model's omitted field."""
+    text: str = "ready"
+
+
+model NestedDefaultExpression:
+    """Keep a nested model construction as an effect-free field default (#2427)."""
+    kind: int
+    value: NestedDefaultValue = NestedDefaultValue()
+    name: str = ""
+
+
+def nested_default_expression(name: str) -> NestedDefaultExpression:
+    """Return a construction whose later supplied field crosses the nested default."""
+    return NestedDefaultExpression(kind=1, name=name)
 
 
 def count_default(tags: list[str] = tracked("parameter")) -> int:
@@ -51,3 +69,4 @@ def main() -> None:
     traced = Traced(tags=tracked("supplied"))
     println(f"{len(traced.tags)} {len(traced.notes)}")
     println(f"{count_default()} {count_default(first.tags)}")
+    println(nested_default_expression("state").value.text)

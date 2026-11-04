@@ -32,6 +32,7 @@ impl TypeChecker {
             ));
         }
         if let (Some(e), Some(expected)) = (expr, self.symbols.current_return_type().cloned()) {
+            self.allow_body_ir_empty_list_return(e, &expected);
             self.record_value_destination_if_compatible(e.span, &return_ty, &expected);
             if matches!(expected, ResolvedType::Function(..)) {
                 self.check_capturing_return(e);

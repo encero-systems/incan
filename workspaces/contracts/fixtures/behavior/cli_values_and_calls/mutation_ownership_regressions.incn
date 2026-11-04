@@ -12,6 +12,7 @@
 #   1 2
 #   2
 #   2
+#   7
 
 def copies(mut table: dict[str, int], mut tags: set[str], mut items: list[int]) -> int:
     b = dict(table)
@@ -50,6 +51,18 @@ class Cell:
 
 class Grid:
     pub cells: list[Cell]
+
+
+model EmptyListField:
+    """Give an inferred empty list a concrete appended element type."""
+    value: int
+
+
+def inferred_empty_list_result() -> list[EmptyListField]:
+    """Return a mutable empty initializer after append closes its element (#2428)."""
+    mut fields = []
+    fields.append(EmptyListField(value=7))
+    return fields
 
 
 def grow(mut pairs: list[tuple[list[int], int]]) -> int:
@@ -117,3 +130,4 @@ def main() -> None:
     println(f"{grow(pairs)} {grid.cells[0].value}")
     println(total([[1], [2]]))
     println(total([["a"], ["b"]]))
+    println(inferred_empty_list_result()[0].value)
