@@ -7,8 +7,6 @@ does. A caller that leaves while its activation compiles can no longer receive t
 socket and exits, as the short-lived command would have been ended with it.
 """
 
-from rust::std::fs import symlink_metadata
-from rust::std::os::unix::fs import MetadataExt
 from rust::std::process import exit
 from pub::incan_platform.ipc import SocketFile, withdraw
 from protocol import PANIC_STATUS
@@ -22,13 +20,6 @@ pub model CallerWatch:
 
     pub descriptor: int
     pub socket: SocketFile
-
-
-pub def owner_uid(path: str) -> Result[u32, str]:
-    """The user that owns the socket file at `path`, which is the worker's own effective user."""
-    match symlink_metadata(path):
-        Ok(found) => return Ok(found.uid())
-        Err(error) => return Err(f"cannot read the compiler worker socket {path}: {error}")
 
 
 pub def abandon(watch: CallerWatch) -> None:
