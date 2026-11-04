@@ -14,7 +14,8 @@ from features import FeatureRequest
 from files import json_text
 from incan_units import obtain_executable, program_binary, executable_view, view_executable
 from json_fields import required_text
-from segment_store import EXPECT_ABSENT, Snapshot, Transaction, begin, commit, put, snapshot
+from pub::incan_platform.store import EXPECT_ABSENT, Snapshot, Transaction, begin, commit, put
+from segment_store import snapshot
 from toolchain import load_toolchain
 from unit import describe
 from unit_rust import prepare_native

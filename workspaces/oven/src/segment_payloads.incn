@@ -1,104 +1,48 @@
-"""Content-named payload files: install each once, protect it from preparation through commit, and check it in place."""
+"""Oven facade-path adapters for platform store payloads."""
 
-from rust::std::process import id
-from rust::std::rc import Rc
-from std.encoding.hex import hexlify
 from std.fs import Path
-from std.hash import file_digest
-from store_index import view_digest
-from segment_files import StoreError, ensure_directory, failure, io_failure, sync_directory, sync_file
-from segment_store import PreparedPayload, sync_durable
+from pub::incan_platform.store import PreparedPayload
+from pub::incan_platform.store.files import StoreError
+from pub::incan_platform.store.path import StorePath
+from pub::incan_platform.store.payloads import (
+    payload_intact as platform_payload_intact,
+    payload_path as platform_payload_path,
+    pin_payload as platform_pin_payload,
+    prepare_payloads as platform_prepare_payloads,
+    put_payload as platform_put_payload,
+    put_payloads as platform_put_payloads,
+)
+from platform_store_path import oven_path, store_path
 
 
-pub def payload_path(root: Path, digest: str) -> Path:
-    """Where the payload of `digest` lives."""
-    return root.joinpath("payloads").joinpath(digest[:2]).joinpath(digest)
+pub def payload_path(root: Union[Path, StorePath], digest: str) -> Path:
+    """Return a canonical payload path through Oven's facade type."""
+    return oven_path(platform_payload_path(store_path(root), digest))
 
 
-pub def pin_payload(root: Path, digest: str) -> Result[PreparedPayload, StoreError]:
-    """Protect one canonical content name before validating or installing it; dropping the descriptor abandons it."""
-    if len(digest) != 64:
-        return Err(failure("format", digest, "payload digest requires 64 hexadecimal digits"))
-    for character in digest:
-        if character not in "0123456789abcdef":
-            return Err(failure("format", digest, "payload digest is not canonical hexadecimal"))
-    leases = root.joinpath("payload-leases")
-    ensure_directory(leases)?
-    pin = leases.joinpath(digest).lock_shared().map_err((error) => io_failure(leases, error))?
-    return Ok(PreparedPayload(digest=digest, pin=Rc.new(pin)))
+pub def pin_payload(root: Union[Path, StorePath], digest: str) -> Result[PreparedPayload, StoreError]:
+    """Pin a payload through either side of the path boundary."""
+    return platform_pin_payload(store_path(root), digest)
 
 
-pub def put_payload(root: Path, source: Path) -> Result[PreparedPayload, StoreError]:
-    """Store immutable, synced content and return its live preparation guard; retain it until a record owns the digest."""
-    digests = put_payloads(root, [source])?
-    return Ok(digests[0])
+pub def put_payload(root: Union[Path, StorePath], source: Path) -> Result[PreparedPayload, StoreError]:
+    """Install one Oven path as a canonical platform payload."""
+    return platform_put_payload(store_path(root), store_path(source))
 
 
-pub def put_payloads(root: Path, sources: list[Path]) -> Result[list[PreparedPayload], StoreError]:
-    """
-    Store each source under its content digest, read-only, in order; an existing payload must hold those bytes.
-
-    Each new file is synced before it is renamed into place, and each payload directory that received one is synced
-    once after all of them, before the caller's commit names them. Returned descriptors retain independent live
-    preparation leases; attach them to the transaction until its committed records own every referenced digest.
-    """
-    return store_payloads(root, sources, true)
+pub def put_payloads(root: Union[Path, StorePath], sources: list[Path]) -> Result[list[PreparedPayload], StoreError]:
+    """Install Oven paths as canonical platform payloads."""
+    return platform_put_payloads(store_path(root), [store_path(source) for source in sources])
 
 
-pub def prepare_payloads(root: Path, sources: list[Path]) -> Result[list[PreparedPayload], StoreError]:
-    """Stage ordered immutable payloads for a transaction that flushes their complete graph before publication."""
-    return store_payloads(root, sources, false)
+pub def prepare_payloads(
+    root: Union[Path, StorePath],
+    sources: list[Path],
+) -> Result[list[PreparedPayload], StoreError]:
+    """Prepare Oven paths for a platform transaction."""
+    return platform_prepare_payloads(store_path(root), [store_path(source) for source in sources])
 
 
-def store_payloads(root: Path, sources: list[Path], durable: bool) -> Result[list[PreparedPayload], StoreError]:
-    """Install each immutable payload once; optionally finish an independent durable insertion."""
-    mut digests: list[PreparedPayload] = []
-    mut touched: set[str] = set()
-    for source in sources:
-        digest = hexlify(file_digest(source, "sha256").map_err((error) => failure("io", source.0, error.message()))?)
-        prepared = pin_payload(root, digest)?
-        target = payload_path(root, digest)
-        if target.is_file():
-            if not payload_intact(root, digest):
-                return Err(failure("integrity", target.0, "a stored payload does not match its name"))
-        else:
-            install_payload(source, target)?
-        # An intact existing name may belong to a writer that died before ordering its directory entry.
-        touched.add(target.parent().0)
-        digests.append(prepared)
-    for directory in sorted([name for name in touched]):
-        sync_directory(Path(directory))?
-    if len(touched) > 0:
-        sync_directory(root.joinpath("payloads"))?
-        sync_directory(root)?
-        sync_directory(root.parent())?
-        if durable:
-            sync_durable(root)?
-    return Ok(digests)
-
-
-def install_payload(source: Path, target: Path) -> Result[None, StoreError]:
-    """Copy one payload beside its place, sync it, make it read-only and rename it into place."""
-    ensure_directory(target.parent())?
-    temporary = Path(f"{target.0}.{id()}.tmp")
-    source.copy(temporary, true, true).map_err((error) => io_failure(temporary, error))?
-    temporary.chmod(true).map_err((error) => io_failure(temporary, error))?
-    sync_file(temporary)?
-    temporary.replace(target).map_err((error) => io_failure(target, error))?
-    return Ok(None)
-
-
-pub def payload_intact(root: Path, digest: str) -> bool:
-    """Whether the stored payload of `digest` still has exactly that content, hashed in place."""
-    target = payload_path(root, digest)
-    if not target.is_file():
-        return false
-    match target.map_read():
-        Err(_) => return false
-        Ok(mapped) =>
-            match mapped.view(0, mapped.len()):
-                None => return false
-                Some(content) => return hexlify(view_digest(content)) == digest
-
-
-# ---- Files ----
+pub def payload_intact(root: Union[Path, StorePath], digest: str) -> bool:
+    """Return whether a canonical platform payload remains intact."""
+    return platform_payload_intact(store_path(root), digest)

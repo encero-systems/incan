@@ -18,7 +18,7 @@ from rust::std::process import Command
 from std.fs import Path
 from std.fs.locking import FileLock
 from rust::std::rc import Rc
-from segment_store import Transaction
+from pub::incan_platform.store import Transaction
 from bakery import (
     bakery,
     claim,

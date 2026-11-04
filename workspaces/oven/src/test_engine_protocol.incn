@@ -11,7 +11,8 @@ from bakery_roots import Collected, collect
 from engine_programs import read_program, select_program, program_handle, NativeUnit, obtain, selected_program
 from engine_epochs import prepare_submit
 from engine_client import service_identity
-from segment_store import Transaction, snapshot, durable_commits, begin, put, commit, commit_group, compact
+from pub::incan_platform.store import Transaction, durable_commits, begin, put, commit, commit_group
+from segment_store import snapshot, compact
 from engine_proofs import report
 from std.json import JsonValue, parse
 from rust::std::process import Child, Command
@@ -161,10 +162,10 @@ pub def test_service_handshake_drain_and_idle() -> Result[None, str]:
     assert first_selection.encodings == 1 and first_selection.commits == 1
     assert repeat_selection.encodings == 0 and repeat_selection.commits == 0
     assert repeat_selection.snapshot.digest == first_selection.snapshot.digest
-    process_lifecycle()?
-    check_worker_retirement()?
     check_collection_before_selection()?
     check_collection_during_execution()?
+    process_lifecycle()?
+    check_worker_retirement()?
     identity = Identity(
         store_id="store",
         profile="profile",
@@ -382,7 +383,8 @@ def check_collection_before_selection() -> Result[None, str]:
             Some(captured.epoch),
             "collection-proof",
         )?
-        assert produced.code == 0 and produced.native_bakes == 1 - turn
+        assert produced.code == 0
+        assert produced.evaluations == 1 - turn and produced.native_bakes == 1 - turn
         mut group: list[Transaction] = []
         if let Some(transaction) = captured.transaction:
             group.append(transaction)
