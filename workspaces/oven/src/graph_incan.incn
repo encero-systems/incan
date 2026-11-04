@@ -32,6 +32,7 @@ const EXPORT_DOMAIN: str = "incan.codegraph.incan/6"
 
 pub def inspect_incan(
     source: Path,
+    profile: str,
     toolchain: Toolchain,
     built: Dict[str, NativeCrate] = {},
     interfaces: Dict[str, Path] = {},
@@ -58,8 +59,14 @@ pub def inspect_incan(
     """
     # 1. The unit is described against the toolchain, and links the interfaces its dependencies were checked into.
     entry_source = source.resolve().map_err((error) => error.message())?
-    mut unit = describe(entry_source, "debug", FeatureRequest(features=features, default_features=defaults),
-                        reader, Some(toolchain), facets)?
+    mut unit = describe(
+        entry_source,
+        profile,
+        FeatureRequest(features=features, default_features=defaults),
+        reader,
+        Some(toolchain),
+        facets,
+    )?
     if source.name() == "lib.incn":
         unit.kind = "library"
     ready = prepared_unit(unit, toolchain, built, interfaces, source_loaves, registry)?
