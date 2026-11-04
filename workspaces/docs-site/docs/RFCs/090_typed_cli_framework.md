@@ -12,9 +12,12 @@
     - RFC 063 (`std.process` process spawning and command execution)
     - RFC 073 (environment matrices and toolchain constraints)
     - RFC 083 (symbol and method aliases)
+    - RFC 085 (field and enum variant metadata)
     - RFC 089 (`std.environ` runtime environment access)
+    - RFC 096 (declaration metadata blocks)
     - RFC 117 (`loaf.toml` and Oven's language-neutral project model)
     - RFC 118 (Incan and Oven command-line surfaces)
+    - RFC 128 (parsed docstrings through `DocInfo`)
 - **Issue:** <https://github.com/encero-systems/incan/issues/87>
 - **RFC PR:** —
 - **Written against:** ~~v0.3~~ v0.5
@@ -53,7 +56,7 @@ This also helps library and application tests. A CLI program should be testable 
 - Provide consistent error rendering that names the failing argument, expected shape, and corrective hint where possible.
 - Standardize exit code mapping for success, usage errors, and application failures.
 - Keep command handlers independent from parsing so CLI logic is easy to unit test.
-- Allow command presentation metadata to live in a typed sidecar spec without requiring new enum syntax.
+- Keep command presentation on the declarations, with no separate spec.
 - Generate shell completion scripts for bash, zsh, fish, and PowerShell from the same spec used for parsing and help.
 
 ## Non-Goals
@@ -143,25 +146,33 @@ The declaration controls the mapping:
 | `reload: bool = false`                            | Adds a `--reload` flag that sets `reload` to `true` when present.       |
 | `output: Path \| None = None`                     | Adds optional `--output PATH`; omitted input produces `None`.           |
 
-Command descriptions do not require new enum syntax. They can live in a typed sidecar spec:
+A command's description sits on its variant, with the same brackets a field uses:
 
 ```incan
-const TOOL_CLI = cli.spec[ToolCommand](
-    name="tool",
-    commands={
-        ToolCommand.Serve: cli.command(description="Run the development server"),
-        ToolCommand.Build: cli.command(description="Build project artifacts"),
-    },
-)
+@derive(CliCommand)
+enum ToolCommand:
+    Serve [description="Run the development server"](ServeArgs)
+    Build [description="Build project artifacts"](BuildArgs)
 ```
 
-The sidecar spec augments the parseable enum/model shape; it does not replace it. If the sidecar omits a command, the command still exists and uses the derived spelling without extra description text. If the sidecar names a command that is not a variant of `ToolCommand`, the spec is invalid.
+Longer metadata can use a braced block, as on a field:
+
+```incan
+@derive(CliCommand)
+enum ToolCommand:
+    Serve(ServeArgs) {
+        description = "Run the development server, reloading when source files change"
+    }
+    Build [description="Build project artifacts"](BuildArgs)
+```
+
+A command with no `description` uses the docstring of its args model, and a single-command program describes itself the same way. Metadata is optional: a variant with none still exists, under its derived spelling.
 
 Manual `match` dispatch is the transparent low-level form. It makes the parse boundary explicit and keeps handlers testable as ordinary functions:
 
 ```incan
 def main(argv: list[str]) -> int:
-    command = TOOL_CLI.parse(argv)?
+    command = parse[ToolCommand](argv)?
 
     match command:
         Serve(args) => run_server_command(args)
@@ -171,7 +182,7 @@ def main(argv: list[str]) -> int:
 An optional binding helper can reduce dispatch boilerplate without becoming a second parser contract:
 
 ```incan
-app = cli.app(TOOL_CLI)
+app = cli.app[ToolCommand]()
     .handler(ToolCommand.Serve, run_server_command)
     .handler(ToolCommand.Build, run_build_command)
 
@@ -182,22 +193,7 @@ def main(argv: list[str]) -> int:
     return app.run(argv)
 ```
 
-This RFC treats that binding form as a dispatch facade, not as a second source of truth. The command enum, argument models, and sidecar spec remain the parseable contract.
-
-A dedicated CLI DSL is also a viable design direction if the sidecar syntax proves too indirect. The DSL would still need to lower to the same `CliSpec`:
-
-```incan
-cli ToolCli for ToolCommand:
-    name = "tool"
-
-    command Serve:
-        description = "Run the development server"
-
-    command Build:
-        description = "Build project artifacts"
-```
-
-This is more local and readable than a const sidecar, but it is new syntax or vocab surface. This RFC keeps it as an open design option rather than silently choosing syntax in a stdlib RFC.
+This RFC treats that binding form as a dispatch facade, not as a second source of truth. The command enum and argument models remain the parseable contract.
 
 Reusable field contracts from RFC 087 compose with CLI argument models. A reusable field can carry the ordinary type, default, and description, while a command-specific model can add CLI presentation metadata at the use site:
 
@@ -297,7 +293,7 @@ Field metadata may customize CLI presentation and input sources, but type inform
 
 `std.cli` must reuse `description` from RFC 021 as the default help text for model fields. A separate `help` key is not part of this RFC's committed surface.
 
-This RFC must not add bracket metadata to enum variants. Current enum syntax already supports payload-carrying variants such as `Serve(ServeArgs)`, but this RFC does not extend variant declarations with `[description="..."]` or similar syntax. Command descriptions may be supplied by a typed sidecar spec, a dedicated CLI DSL if this RFC accepts one, or by a later RFC that defines enum-variant metadata generally.
+Command descriptions must use RFC 085's metadata on enum variants: `Serve [description="Run the development server"](ServeArgs)`, or RFC 096's braced block. A command with no `description` must use its payload model's docstring summary, read through `__doc__()`. A single-command program's description must be its model's docstring summary. A variant with neither has no description, and the command still exists under its derived spelling.
 
 `std.cli` must not reuse RFC 021 `alias` as the spelling for command-line option aliases. Field `alias` is a wire/schema name and participates in model construction, field access, destructuring, and descriptor metadata. Command-line spellings live in the CLI parser namespace and must not change ordinary model member resolution.
 
@@ -363,7 +359,7 @@ A field with a default is optional from the command line. If the user omits it a
 
 A field of type `Option[T]` may be omitted and produces `None` unless a value is supplied by the command line or an environment fallback.
 
-A collection field may use an empty collection as its default when omitted. A required non-empty collection must be explicitly expressible in metadata or rejected until non-empty collection constraints exist.
+A collection field may use an empty collection as its default when omitted. A collection field with no default is required: it must receive at least one value, and omitting it must produce a `CliError`.
 
 Defaults must be ordinary typed Incan values. CLI metadata must not store string defaults that bypass type checking.
 
@@ -501,11 +497,11 @@ A parser builder makes every CLI a second schema. Incan already has the ingredie
 
 Subcommands are sum types. A program invocation chooses one path from a finite set, and each path has its own argument model. Encoding that as an enum is direct, statically inspectable, and testable with ordinary pattern matching.
 
-### Why a sidecar spec owns command presentation
+### Why variants carry their own descriptions
 
-Command descriptions are useful, but adding enum-variant metadata just for CLI help would be the wrong owner. The command enum should stay a pure command shape, and a typed sidecar spec should own presentation details that are specific to the CLI surface.
+A command's description belongs beside the command, as an option's description belongs beside its field. Variant metadata under RFC 085 uses the same `name [metadata]` shape as a field, with RFC 096's braced block when it grows, so a CLI needs no separate structure and no second list of its commands. Metadata is inert for anything but its consumers: it does not change the enum's construction, matching or identity.
 
-This also keeps constant spec data inspectable. A tool can read the command enum and the `TOOL_CLI` sidecar without inspecting function decorators or handler bodies.
+Descriptions stay inspectable: a tool reads them through `__variants__()` and checked metadata without running handlers.
 
 ### Why one underlying spec matters
 
@@ -581,19 +577,23 @@ Rejected. Making any model automatically CLI-eligible merely by importing `std.c
 
 ### A dedicated `cli.args` declaration form
 
-Open, deferred past this RFC. A form such as `cli.args ServeArgs:` (declaring the model with CLI-specific vocabulary directly, rather than an ordinary `model` plus `@derive`) would read more locally but is new syntax or vocab surface that must justify itself beyond a nicer example, the same bar this RFC already applies to the dedicated CLI DSL alternative below. `@derive(CliArgs)` is the answer for this RFC's committed contract; a future RFC may reconsider dedicated declaration syntax once real usage shows the derive form is too indirect.
+Rejected. A form such as `cli.args ServeArgs:` would declare the model with CLI-specific vocabulary rather than an ordinary `model` plus `@derive`. It existed to read more locally, and with metadata on fields and variants the declarations are already local. `@derive(CliArgs)` is the only form.
 
-### Attach command descriptions via RFC 032 value-enum assignment instead of a sidecar
+### Attach command descriptions through RFC 032 value-enum assignment
 
-Considered and rejected for this RFC, worth revisiting when a general enum-variant metadata RFC exists. The proposed shape was `Serve(ServeArgs) = cli.command(description="...")`, reusing RFC 032's `enum Name(str|int): Variant = literal` value-assignment syntax so a command's description could live directly on its variant instead of in a separate `cli.spec[...]` sidecar. This does not work today on two independent grounds: RFC 032 makes payload-carrying variants and value-assignment mutually exclusive (an explicit Non-Goal, enforced by the parser), and even without that conflict, RFC 032 only accepts a `str`/`int` literal as the assigned value, not a function call — Incan has no `const fn` concept (a function provably pure/deterministic enough to fold into a compile-time constant), so `cli.command(...)` cannot be treated as a literal today regardless of the payload restriction. Separately from both syntactic blockers, RFC 032's value slot is conceptually the enum's wire/backing representation (its `str`/`int` identity for serialization, comparison, FFI), not a general per-variant metadata slot — even a hypothetical relaxed literal rule would be reusing the wrong feature for this. The right future vehicle is the general enum-variant metadata RFC this RFC's own "Relationship to field metadata and reusable fields" section already points at ("a later RFC that defines enum-variant metadata generally"), not an expansion of RFC 032's narrower, already-shipped scope. RFC 032 is `Implemented` and is not retroactively amended.
+Rejected. The shape was `Serve(ServeArgs) = cli.command(description="...")`. RFC 032 makes payload-carrying variants and value assignment mutually exclusive and accepts only a `str` or `int` literal, and its value slot is the enum's wire or backing representation, not general metadata. RFC 085's variant metadata puts the description on the variant without touching that slot.
+
+### A typed sidecar spec
+
+Rejected. `cli.spec[ToolCommand](commands={ToolCommand.Serve: cli.command(description="...")})` keeps the enum free of presentation details, but it separates a description from its command, repeats every variant's name, and needs rules for a variant it omits or names wrongly. Variant metadata has none of those problems, and is available to every library rather than only this one.
 
 ### Dedicated CLI DSL
 
-Open. A DSL such as `cli ToolCli for ToolCommand:` would make command descriptions and presentation metadata more local than a const sidecar while still avoiding enum-variant metadata. The cost is a new syntax or vocab surface that must justify itself beyond one nicer example. If accepted, the DSL must lower to the same `CliSpec` as the typed sidecar and must not create a second parser model.
+Rejected. A DSL such as `cli ToolCli for ToolCommand:` was another way to bring descriptions close to their commands. Variant metadata does that with no new CLI vocabulary.
 
 ### Handler-binding-first API
 
-Accepted only as a facade over typed specs. A binding helper may attach a handler to an existing command variant, but it must not create a separate parser contract outside the enum-plus-model spec and sidecar presentation spec.
+Accepted only as a facade over typed specs. A binding helper may attach a handler to an existing command variant, but it must not create a separate parser contract outside the enum and model declarations.
 
 ### Require `incan` compiler CLI migration
 
@@ -626,7 +626,7 @@ Rejected. Dogfooding is valuable, but forcing compiler CLI migration into this R
 - **CLI eligibility is the `CliArgs`/`CliCommand` derived traits, not a bare marker or ambient inference:** `parse[T]`/`spec_for[T]`/`render_help[T]`/`run_cli[T]` each declare two bound overloads, `T with CliArgs` and `T with CliCommand`, dispatched per RFC 025's existing multi-instantiation mechanism (Incan's generic bounds are intersection-only; there is no union-bound syntax, so one declaration cannot accept "either trait"). This also gives the LSP an unambiguous, local signal at the type's own declaration site, without needing to trace `parse[T]` call sites across module or package boundaries to know a model is CLI-shaped. An ambient-by-import mechanism was considered and rejected (see "Alternatives considered").
 - **`@derive(CliArgs)`/`@derive(CliCommand)` are RFC 024 `__derives__` modules, not new compiler-internal derive logic:** unlike `Debug`/`Eq`/`Clone` (Rust proc macros with no Incan-expressible body), `CliArgs`/`CliCommand` are ordinary trait bodies authored in plain Incan, using RFC 021's `Model.__fields__() -> List[FieldInfo]` reflection — the same pattern RFC 024's own `SqlSchema` example already demonstrates. `std.cli` is a library consumer of two already-shipped mechanisms, not a third compiler-magic derive path; this was a real correction caught during this pass, not the original framing. This requires actually populating RFC 021's reserved-but-empty `FieldInfo.extra: dict[str, str]` slot with a field's bracket-metadata keys during reflection — the first real consumer of an extension point RFC 021 already built, not an amendment to RFC 021 (which stays untouched and `Implemented`). `FieldInfo` does not need to expose a field's actual default value: `parse[T]`'s generated command value omits any field it didn't resolve from CLI/env and lets the model's own ordinary default application handle it, so `has_default: bool` (already in `FieldInfo`) is sufficient.
 - **The metadata key set splits into CLI-specific and general-purpose groups, resolving the original naming question without renaming anything:** `option`, `short`, `positional`, and `value_name` remain CLI-specific — meaningful, and diagnosed as a probable missing-`@derive` mistake when absent, only on a field of a `CliArgs`/`CliCommand`-derived type. `env` and `secret` become general-purpose model field metadata, usable on any model regardless of CLI derivation, exactly as `description` already is — `std.cli` reuses them rather than owning them. This split was motivated by genuinely broader utility beyond CLI parsing: an RFC 033 `ctx` typed configuration model has the same "fall back to this environment variable" and "don't display this value" needs independent of ever being parsed as CLI args. No key names changed; the six original names all stay.
-- **The const sidecar (`cli.spec[ToolCommand](...)`) is the only committed command-presentation mechanism:** a dedicated CLI DSL and a dedicated `cli.args`/reused-value-enum declaration form were all considered (see "Alternatives considered") and stay explicitly open/deferred, not spec'd by this RFC. Each would need new syntax or vocab surface to justify itself beyond a nicer-looking example; the sidecar already does the job without that cost. Command descriptions living directly on enum variants — via RFC 032's value-enum assignment or a future dedicated syntax — remains a real, worth-revisiting direction once a general enum-variant metadata RFC exists to own it properly, rather than reusing or loosening RFC 032's narrower, already-shipped wire-representation feature.
+- **Command descriptions live on the variants:** `Serve [description="..."](ServeArgs)`, using RFC 085's variant metadata, with RFC 096's braced block for longer metadata. A command with no `description` uses its payload model's docstring. There is no sidecar spec, dedicated CLI DSL or `cli.args` declaration form, and `CliSpec` is derived from the declarations alone.
 - **Positional fields stay strictly opt-in:** `positional=true` is the only way a field becomes positional; a required scalar field with no default never becomes positional by convention. Matches this RFC's existing default (scalar fields become named options) and the explicit-over-inference instinct applied throughout this pass — two structurally identical fields could legitimately need different treatment, which convention-based inference can't express.
 - **Exit codes: `0` success, `2` usage error, `1` application error**, matching the widely-recognized Unix convention (bash, Python's `argparse`, GNU tools) this RFC's own Prior Art section already gestures at.
 - **A `negate` metadata key, not automatic `--no-*` generation, for default-`true` bool fields:** a `bool` field defaulting to `true` needs an explicit `negate=true` to generate its `--no-<name>` spelling; there is no implicit negation and no rejection of default-`true` bool fields outright. This is a fifth CLI-specific metadata key (joining `option`/`short`/`positional`/`value_name`), chosen over forcing users to invert a field's polarity (e.g. renaming `color: bool = true` to `no_color: bool = false`) just to satisfy the parser.
