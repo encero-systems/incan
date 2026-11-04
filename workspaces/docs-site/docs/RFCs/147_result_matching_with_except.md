@@ -15,6 +15,7 @@
     - RFC 135 (lazy Option defaults)
     - RFC 137 (named payload patterns)
     - RFC 148 (must-use values and deliberate discard)
+    - RFC 149 (non-exhaustive families)
     - RFC 164 (explicit ownership and borrowing)
 - **Issue:** [#2650](https://github.com/encero-systems/incan/issues/2650)
 - **RFC PR:** —
@@ -203,7 +204,7 @@ except_statement ::= statement_ending_in_question_mark NEWLINE
 
 11. An error no arm matches must propagate exactly as `?` propagates it, keeping its case, payload and original capture under RFC 131.
 12. The remainder must be `E` minus every case handled by an arm with no guard whose pattern matches all of that case's values. The remainder must fit the enclosing function's declared error set under RFC 131's widening rule. If it does not, the program must be refused with the uncovered cases named, as `match` does.
-13. If the remainder is empty, the enclosing function need not return `Result`. Otherwise the rules of `?` apply.
+13. If the remainder is empty, the enclosing function need not return `Result`. Otherwise the rules of `?` apply. A foreign `@non_exhaustive` family leaves future cases in the remainder unless an unguarded catch-all arm covers it, under RFC 149.
 14. Propagating out of a `with` suite must run its cleanup, under RFC 094. The block must not bypass a resource's required exit or change which failures it retains.
 
 ### Diagnostics and tooling

@@ -826,7 +826,7 @@ Changing the common error interface or generated validation boundary can affect 
 
 Renaming a public error case, removing its public access path, or making a previously public declaration private is a deliberate compatibility change. A move to another namespace changes the API when the old public binding is removed; moving the implementation while deliberately retaining that binding through an alias or public re-export can preserve the source API. This RFC does not hide these choices behind a separate supposedly stable string code or automatically preserve removed names and namespaces. Aliases and re-exports refer to the same target rather than creating a parallel classification system, and must obey ordinary visibility checks. They preserve source bindings and do not automatically promise an unchanged serialized tag or rendered message.
 
-Adding a case to an existing public closed family can require downstream matches to change. Authors needing a larger family without changing the old contract can use `extends` or composition. Recursive declarations, payload representation cycles, and generic error aliases follow checked type rules rather than opening a family dynamically.
+Adding a case to an existing public closed family can require downstream matches to change. Authors needing a larger family without changing the old contract can use `extends` or composition, and an author expecting the family to grow can mark it `@non_exhaustive` under RFC 149. Recursive declarations, payload representation cycles, and generic error aliases follow checked type rules rather than opening a family dynamically.
 
 ### Prior art
 
