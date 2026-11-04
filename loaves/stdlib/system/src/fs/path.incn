@@ -22,7 +22,6 @@ from rust::std::fs import (
 from rust::std::os::unix::fs import MetadataExt, symlink
 from rust::std::path import Path as RustPath
 from rust::std::time import SystemTime
-from rust::rustix::fs import statvfs
 from std.fs.file import File, _decode_text, _encode_text, _open_file, _validate_open_options
 from std.fs.glob import matches
 from std.fs.locking import (
@@ -35,6 +34,7 @@ from std.fs.locking import (
 from std.fs.mapping import MappedFile, map_read as map_file_read
 from std.fs.metadata import DirEntry, PathStat, DiskUsage
 from std.io import IoError
+from std.primitives.fs.path import PrimitivePath, filesystem_capacity
 
 
 @derive(Clone)
@@ -700,13 +700,8 @@ pub type Path = newtype str:
         Returns:
             `DiskUsage` byte counts, or `Err(IoError)` if the host cannot stat the filesystem.
         """
-        match statvfs(RustPath.new(self.0)):
-            Ok(stats) =>
-                block_size = int(stats.f_bsize)
-                total = int(stats.f_blocks) * block_size
-                used = (int(stats.f_blocks) - int(stats.f_bfree)) * block_size
-                free = int(stats.f_bavail) * block_size
-                return Ok(DiskUsage(total=total, used=used, free=free))
+        match filesystem_capacity(PrimitivePath(value=self.0)):
+            Ok(capacity) => return Ok(DiskUsage(total=capacity.total, used=capacity.used, free=capacity.free))
             Err(err) => return Err(_io_error(self, err))
 
     pub def touch(self, exist_ok: bool) -> Result[None, IoError]:

@@ -95,9 +95,11 @@ impl LanguageServer for IncanLanguageServer {
             Ok(format) => format,
             Err(error) => return Ok(Some(json!({ "error": error }))),
         };
-        let emitted =
-            tokio::task::spawn_blocking(move || emit_contract_model_command_payload(&path, &parsed.model, format))
-                .await;
+        let profile = Arc::clone(&self.profile);
+        let emitted = tokio::task::spawn_blocking(move || {
+            emit_contract_model_command_payload(&path, &parsed.model, format, &profile)
+        })
+        .await;
         match emitted {
             Ok(Ok(payload)) => Ok(Some(payload)),
             Ok(Err(error)) => Ok(Some(json!({ "error": error }))),

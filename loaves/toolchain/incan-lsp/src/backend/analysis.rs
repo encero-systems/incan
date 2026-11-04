@@ -39,6 +39,7 @@ impl IncanLanguageServer {
         let open_sources = self.open_sources(uri, source).await;
         let analysis_uri = uri.clone();
         let sessions = Arc::clone(&self.analysis_sessions);
+        let profile = Arc::clone(&self.profile);
         let source = source.to_owned();
         let result = tokio::task::spawn_blocking(move || match analysis_uri.to_file_path() {
             Ok(path) => analyze(
@@ -48,6 +49,7 @@ impl IncanLanguageServer {
                 version,
                 &open_sources,
                 &sessions,
+                &profile,
             ),
             Err(()) => (
                 vec![lsp_root_error_diagnostic(
@@ -187,10 +189,11 @@ fn analyze(
     version: i32,
     open_sources: &HashMap<PathBuf, String>,
     sessions: &std::sync::Mutex<super::analysis_cache::Sessions>,
+    profile: &str,
 ) -> (Vec<Diagnostic>, Option<DocumentState>) {
     let mut diagnostics = Vec::new();
     trace_graph("describe unit");
-    let session = match unit_description(path).and_then(|unit| {
+    let session = match unit_description(path, profile).and_then(|unit| {
         sessions
             .lock()
             .map_err(|_| incan_driver::error::CliError::failure("analysis session cache lock is poisoned"))?
@@ -484,7 +487,7 @@ fn package_source_path(root: &Path, module_path: &[String]) -> Option<PathBuf> {
 /// The description of the unit that owns `path`, from Oven (`oven describe-unit PATH`), which is the only reader
 /// of project manifests (DD-0008). The `incan` beside this server answers it, started under the name `oven` that
 /// selects its project surface (RFC 118); the search index it names is merged.
-pub(super) fn unit_description(path: &Path) -> incan_driver::error::CliResult<UnitDescription> {
+pub(super) fn unit_description(path: &Path, profile: &str) -> incan_driver::error::CliResult<UnitDescription> {
     use incan_driver::error::CliError;
     use std::os::unix::process::CommandExt;
     let incan = std::env::current_exe()
@@ -494,6 +497,8 @@ pub(super) fn unit_description(path: &Path) -> incan_driver::error::CliResult<Un
         .arg0("oven")
         .arg("describe-unit")
         .arg(path)
+        .arg("--profile")
+        .arg(profile)
         .output()
         .map_err(|error| CliError::failure(format!("cannot run {}: {error}", incan.display())))?;
     if !output.status.success() {

@@ -1,6 +1,6 @@
 # Configure the language server
 
-Use an `incan-lsp` executable built for the same compiler line as your project. Toolchain archives managed by `incan toolchain` contain the native compiler closure; they do not install a language-server executable.
+Use an `incan-lsp` executable built for the same compiler line as your project. Toolchain archives managed by `incan toolchain` contain the native compiler closure; they do not install a language-server executable. The server selects `--profile debug` by default; start it with `--profile release` when the installation provides standard packages and native support for the release profile only.
 
 ## Select an executable in the editor
 

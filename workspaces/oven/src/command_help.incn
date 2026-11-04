@@ -88,7 +88,7 @@ pub def command_help(surface: str, command: str, arguments: list[str]) -> Option
                 return Some(render(BAKERY_USAGE, [], "oven bakery verify"))
     elif command == "fmt" and requested(arguments):
         return Some(format_help())
-    elif command == "mcp" and requested(arguments):
+    elif command == "mcp" and requested(arguments, ["--profile"]):
         return Some(mcp_help())
     elif command in ["--version", "version"] and requested(arguments):
         return Some(render(f"{surface} --version", [], f"{surface} --version"))

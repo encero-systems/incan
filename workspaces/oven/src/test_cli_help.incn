@@ -2,6 +2,7 @@
 
 from std.testing import fail
 from command_help import command_help, usage, version_text
+from graph_mcp import options as mcp_options
 from surfaces import misplaced
 
 
@@ -26,7 +27,7 @@ def assert_help(surface: str, commands: list[tuple[str, str]]) -> None:
         assert synopsis in overview
 
 
-pub def test_help_uses_each_commands_synopsis_and_respects_operands() -> None:
+pub def test_help_uses_each_commands_synopsis_and_respects_operands() -> Result[None, str]:
     """
     Check help text without loading a project, compiler or installed toolchain.
 
@@ -45,7 +46,7 @@ pub def test_help_uses_each_commands_synopsis_and_respects_operands() -> None:
             ("build", "incan build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"),
             ("fmt", "incan fmt [--check] PATH..."),
             ("inspect codegraph", "incan inspect codegraph PATH [GRAPH OPTIONS]"),
-            ("mcp", "incan mcp PATH"),
+            ("mcp", "incan mcp PATH [--profile NAME]"),
             ("toolchain pack", "incan toolchain pack OUT"),
             ("toolchain install", "incan toolchain install ARCHIVE"),
             ("--version", "incan --version"),
@@ -71,11 +72,16 @@ pub def test_help_uses_each_commands_synopsis_and_respects_operands() -> None:
     assert command_help("incan", "run", ["--argv0", "--help", "src/main.incn"]) == None
     assert command_help("oven", "check", ["--profile", "--help", "src/main.incn"]) == None
     assert command_help("incan", "inspect", ["codegraph", ".", "--profile", "--help"]) == None
+    assert command_help("incan", "mcp", [".", "--profile", "--help"]) == None
     assert command_help("incan", "fmt", ["--", "--help"]) == None
     assert command_help("incan", "inspect", ["codegraph", ".", "--query", "defs", "--help"]) == None
     assert command_help("incan", "nonexistent", ["--help"]) == None
     assert command_help("oven", "owner", ["nonexistent", "--help"]) == None
     assert command_help("oven", "bakery", ["status", "--format", "--help"]) == None
+    selected = mcp_options([".", "--profile", "release"])?
+    assert selected.path.0 == "." and selected.profile == "release"
+    assert mcp_options(["."]).map((selected) => selected.profile) == Ok("debug")
+    return Ok(None)
 
 
 pub def test_each_surface_runs_only_its_own_commands() -> None:

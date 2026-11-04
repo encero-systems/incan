@@ -189,6 +189,8 @@ struct LocalCallSignature {
 /// Incan Language Server
 pub struct IncanLanguageServer {
     client: Client,
+    /// Artifact profile selected once when the server starts and applied to every Oven unit description.
+    profile: Arc<str>,
     documents: Arc<RwLock<HashMap<Url, DocumentState>>>,
     /// Only the most recently requested analysis may publish, including after a close and reopen.
     analysis_tickets: RwLock<HashMap<Url, Arc<()>>>,
@@ -199,10 +201,11 @@ pub struct IncanLanguageServer {
 }
 
 impl IncanLanguageServer {
-    /// Initialize document facts and analysis publication tracking for one client connection.
-    pub fn new(client: Client) -> Self {
+    /// Initialize one client connection whose unit descriptions all use `profile`.
+    pub fn new(client: Client, profile: Arc<str>) -> Self {
         Self {
             client,
+            profile,
             documents: Arc::new(RwLock::new(HashMap::new())),
             analysis_tickets: RwLock::new(HashMap::new()),
             analysis_sessions: Arc::new(std::sync::Mutex::new(analysis_cache::Sessions::default())),

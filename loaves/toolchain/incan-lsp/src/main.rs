@@ -10,14 +10,16 @@
 use incan_lsp::IncanLanguageServer;
 use std::ffi::OsString;
 use std::process::ExitCode;
+use std::sync::Arc;
 use tower_lsp::{LspService, Server};
 
 /// Run standalone flags or the stdio server on threads with the compiler's stack budget.
 fn main() -> ExitCode {
     let args = std::env::args_os().skip(1).collect::<Vec<_>>();
-    if let Some(exit_code) = handle_cli_args(&args) {
-        return exit_code;
-    }
+    let profile = match handle_cli_args(&args) {
+        Ok(profile) => profile,
+        Err(exit_code) => return exit_code,
+    };
 
     // The server typechecks on Tokio's worker threads, and typechecking recurses over the AST, so those threads
     // need the same deep stack the CLI runs compilation on. A default worker stack turns a deeply nested
@@ -37,30 +39,38 @@ fn main() -> ExitCode {
     runtime.block_on(async {
         let stdin = tokio::io::stdin();
         let stdout = tokio::io::stdout();
-        let (service, socket) = LspService::new(IncanLanguageServer::new);
+        let (service, socket) = LspService::new(move |client| IncanLanguageServer::new(client, Arc::clone(&profile)));
         Server::new(stdin, stdout, socket).serve(service).await;
         ExitCode::SUCCESS
     })
 }
 
-/// Handle standalone CLI flags before falling back to the stdio LSP server.
-fn handle_cli_args(args: &[OsString]) -> Option<ExitCode> {
+/// Handle standalone flags or return the one artifact profile fixed for the stdio server's lifetime.
+fn handle_cli_args(args: &[OsString]) -> Result<Arc<str>, ExitCode> {
     match args {
-        [] => None,
+        [] => Ok(Arc::from("debug")),
+        [flag, profile] if flag == "--profile" => match profile.to_str() {
+            Some(profile) => Ok(Arc::from(profile)),
+            None => {
+                eprintln!("error: incan-lsp profile must be valid Unicode");
+                eprintln!("usage: incan-lsp [--profile NAME | --version | --help]");
+                Err(ExitCode::from(2))
+            }
+        },
         [arg] if arg == "--version" || arg == "-V" => {
             println!("incan-lsp {}", incan_lang::version::INCAN_VERSION);
-            Some(ExitCode::SUCCESS)
+            Err(ExitCode::SUCCESS)
         }
         [arg] if arg == "--help" || arg == "-h" => {
-            println!("Usage: incan-lsp [--version|--help]");
+            println!("Usage: incan-lsp [--profile NAME | --version | --help]");
             println!();
-            println!("Starts the Incan language server over stdio when no options are supplied.");
-            Some(ExitCode::SUCCESS)
+            println!("Starts the Incan language server over stdio; --profile defaults to debug.");
+            Err(ExitCode::SUCCESS)
         }
         _ => {
             eprintln!("error: unsupported incan-lsp option");
-            eprintln!("usage: incan-lsp [--version|--help]");
-            Some(ExitCode::from(2))
+            eprintln!("usage: incan-lsp [--profile NAME | --version | --help]");
+            Err(ExitCode::from(2))
         }
     }
 }
@@ -75,27 +85,35 @@ mod tests {
     }
 
     #[test]
-    /// An empty argument list selects the JSON-RPC transport.
-    fn no_args_start_lsp_stdio_server() {
-        assert_eq!(handle_cli_args(&[]), None);
+    /// The stdio server defaults to debug and accepts one explicit artifact profile.
+    fn server_profile_is_parsed_once() -> Result<(), Box<dyn std::error::Error>> {
+        let Ok(default) = handle_cli_args(&[]) else {
+            return Err("default profile was refused".into());
+        };
+        let Ok(release) = handle_cli_args(&[arg("--profile"), arg("release")]) else {
+            return Err("release profile was refused".into());
+        };
+        assert_eq!(default.as_ref(), "debug");
+        assert_eq!(release.as_ref(), "release");
+        Ok(())
     }
 
     #[test]
     /// Informational flags exit before initializing the server runtime.
     fn version_and_help_exit_successfully() {
-        assert_eq!(handle_cli_args(&[arg("--version")]), Some(ExitCode::SUCCESS));
-        assert_eq!(handle_cli_args(&[arg("-V")]), Some(ExitCode::SUCCESS));
-        assert_eq!(handle_cli_args(&[arg("--help")]), Some(ExitCode::SUCCESS));
-        assert_eq!(handle_cli_args(&[arg("-h")]), Some(ExitCode::SUCCESS));
+        assert_eq!(handle_cli_args(&[arg("--version")]), Err(ExitCode::SUCCESS));
+        assert_eq!(handle_cli_args(&[arg("-V")]), Err(ExitCode::SUCCESS));
+        assert_eq!(handle_cli_args(&[arg("--help")]), Err(ExitCode::SUCCESS));
+        assert_eq!(handle_cli_args(&[arg("-h")]), Err(ExitCode::SUCCESS));
     }
 
     #[test]
     /// Unknown flags preserve the command-line usage failure status.
     fn unknown_args_exit_with_usage_error() {
-        assert_eq!(handle_cli_args(&[arg("--bogus")]), Some(ExitCode::from(2)));
+        assert_eq!(handle_cli_args(&[arg("--bogus")]), Err(ExitCode::from(2)));
         assert_eq!(
             handle_cli_args(&[arg("--version"), arg("--help")]),
-            Some(ExitCode::from(2))
+            Err(ExitCode::from(2))
         );
     }
 }

@@ -1,10 +1,12 @@
-# behavior: std.fs retains Path method chains beside File imports and its declared IoError result type (#2256)
+# behavior: std.fs retains Path methods, its IoError type and host filesystem byte counts (#2256, #2591)
 # expect-stdout:
 #   std.fs import codegen
 #   config/app.toml
 #   app.toml .toml app config
 #   config/log.txt
 
+from rust::std::process import Command
+from rust::std::string import String as RustString
 from std.fs import Path, File, IoError
 
 
@@ -18,13 +20,14 @@ def consume_file(file: File) -> None:
     pass
 
 
-def main() -> None:
+def main() -> Result[None, str]:
     """Observe lexical paths and wrapped slots returned by selected methods.
 
     1. Construct and pass a stored path.
     2. Read its wrapped text and lexical components.
     3. Read a selected join's wrapped slot directly.
     4. Use the facade's error type in a fallible filesystem signature.
+    5. Compare capacity bytes with the host's independent `df` report.
     """
     # 1. Construct a path with a lexical join.
     println("std.fs import codegen")
@@ -40,8 +43,27 @@ def main() -> None:
     match create_directory(Path("created")):
         Ok(_) => pass
         Err(_) => assert false
+    # 5. The available and total counts use the same 1,024-byte units as the independent host command.
+    assert_disk_usage_matches_df(Path("."))?
+    return Ok(None)
 
 
 def create_directory(path: Path) -> Result[None, IoError]:
     """Return the filesystem operation through the error type imported from the same facade."""
     return path.mkdir(parents=true, exist_ok=true)
+
+
+def assert_disk_usage_matches_df(path: Path) -> Result[None, str]:
+    """Require facade total and available bytes to equal the POSIX `df` report for the same filesystem."""
+    output = Command.new("df").arg("-Pk").arg(path.0).output().map_err((error) => str(error))?
+    if not output.status.success():
+        return Err(RustString.from_utf8(output.stderr).map_err((error) => str(error))?)
+    report = RustString.from_utf8(output.stdout).map_err((error) => str(error))?
+    lines = report.strip().split("\n")
+    fields = lines[len(lines) - 1].split_whitespace()
+    if len(fields) < 4:
+        return Err("df did not report filesystem capacity columns")
+    usage = path.disk_usage().map_err((error) => error.message())?
+    assert usage.total == int(fields[1]) * 1024
+    assert usage.free == int(fields[3]) * 1024
+    return Ok(None)

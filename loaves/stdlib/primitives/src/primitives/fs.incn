@@ -3,4 +3,4 @@
 pub from crate.primitives.fs.file import FileHandle as File, open_read, open_write, read_chunk, write_all
 pub from crate.primitives.fs.locking import FileLock, exclusive, shared, try_exclusive, try_shared
 pub from crate.primitives.fs.mapping import MappedFile, MappedView, map_read
-pub from crate.primitives.fs.path import PrimitivePath as Path
+pub from crate.primitives.fs.path import FilesystemCapacity, PrimitivePath as Path, filesystem_capacity
