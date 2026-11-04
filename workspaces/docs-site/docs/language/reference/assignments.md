@@ -44,6 +44,7 @@ This page specifies binding and assignment statements.
 | Any | A target is an element of a tuple or a `str` | `INCAN-T0001` |
 | Any | A declared name is `print` or `println` | `INCAN-T0001` |
 | `target.field = value` | `target`'s type declares no field `field`, or `target` is a tuple | `INCAN-T0001` |
+| `target = value`, `target.field = value`, `target[index] = value` | Inside a `for` loop that iterates a `list` held at a place, the target is that place or its parent | `INCAN-T0121` |
 | `target.field = value`, `target[index] = value` | The name the write goes through (`p` in `p.x` and in `p.rows[0]`) is a local declared without `mut`, by `let` or a first plain assignment, or a parameter not marked `mut`; an element write only when it writes a `list` element or a `dict` entry | `INCAN-T0001` |
 | `target.method(...)` | The method changes its receiver, and the name the call goes through (`p` in `p.rows.append(x)`) is a local declared without `mut` or a parameter not marked `mut` | `INCAN-T0001` |
 | `for item in iterable:`, `[... for item in iterable]`, `{...: ... for item in iterable}` | The body, element, key, value or filter changes `item`, by a write, a changing method call or advancing a `Generator` item, and the loop reads its items in place from a binding declared without `mut`, a parameter not marked `mut`, a static or a local bound to one, or `self` in a plain `self` method | `INCAN-T0001` |
