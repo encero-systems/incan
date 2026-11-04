@@ -21,6 +21,7 @@
     - RFC 134 (exiting pattern bindings inside resource scopes)
     - RFC 142 (async iteration, task ownership and cancellation)
     - RFC 147 (independent local Result matching)
+    - RFC 154 (closures that capture entered views)
     - RFC 164 (explicit ownership and borrowing; entered views declared `from self`)
     - RFC 165 (`std.db` lazy scope descriptors)
 - **Issue:** [#560](https://github.com/encero-systems/incan/issues/560)
