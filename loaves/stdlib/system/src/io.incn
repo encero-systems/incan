@@ -1,43 +1,11 @@
+"""Higher-level binary streams and typed numeric I/O."""
+
 from rust::std::cell import RefCell
 from rust::std::io import Cursor, Read, Seek, SeekFrom, Write
 from rust::std::rc import Rc
 from rust::byteorder import BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt
+pub from std.primitives.io import Endian, IoError
 from std.derives.collection import FallibleIterator
-from std.traits.error import Error
-
-
-@derive(Clone)
-pub model IoError with Error:
-    """
-    Binary I/O failure.
-
-    `kind` is stable enough for branching on common failures such as `invalid_input`, `unexpected_eof`, and `other`.
-    `detail` keeps the human-readable context. `operation`, `position`, and `path` add optional context for stream and
-    filesystem implementors that share the same `BinaryReader` contract.
-
-    Example:
-
-    ```incan
-    match BytesIO(b"AB").read_exact(4):
-        Ok(data) => println(len(data))
-        Err(err) => println(err.kind)
-    ```
-    """
-
-    pub kind: str
-    pub detail: str
-    pub operation: str = "io"
-    pub position: int = -1
-    pub path: Option[str] = None
-
-    def message(self) -> str:
-        """
-        Return the human-readable error detail.
-
-        Returns:
-            The detail text attached to the failed operation.
-        """
-        return self.detail
 
 pub trait BinaryRead[T]:
     """
@@ -127,15 +95,6 @@ pub trait BinaryWrite[T]:
     """
 
     def write(self, value: T, endian: Endian) -> Result[None, IoError]: ...
-
-
-pub enum Endian:
-    """
-    Byte order for exact-width numeric I/O.
-    """
-
-    Little
-    Big
 
 
 @derive(Debug)
