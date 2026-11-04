@@ -11,8 +11,10 @@ use rustc_ast::{
     self as ast,
     visit::{self, Visitor},
 };
-use rustc_hir::def_id::DefId;
+use rustc_data_structures::unord::UnordSet;
+use rustc_hir::def_id::{CrateNum, DefId, LocalDefId};
 use rustc_middle::ty::TyCtxt;
+use rustc_span::Symbol;
 
 /// Load the explicit crate aliases of retained native constants even when their value types name no native owner.
 /// Body IR materializes each constant read into a Use assignment before other operations consume that temporary.
@@ -197,26 +199,21 @@ pub(crate) fn callee_root(path: &str) -> Option<&str> {
 /// Renamed dependencies and multiple versions must retain rustc's binding rather than selecting the first crate with a
 /// matching package name. A `crate` root names this compilation's injected declarations, rather than an external
 /// dependency. Repeated extern declarations must select the same artifact; conflicting bindings grant no root.
+///
+/// The resolver's map of extern declarations lists exactly the `extern crate` items and the crates they bind, so a
+/// lookup reads those few items instead of every item of the crate.
 pub(crate) fn root(tcx: TyCtxt<'_>, name: &str) -> Option<DefId> {
     if name == "crate" {
         return Some(rustc_hir::def_id::LOCAL_CRATE.as_def_id());
     }
-    let mut imported = tcx.hir_crate_items(()).free_items().filter_map(|item| {
-        let rustc_hir::ItemKind::ExternCrate(original, binding) = tcx.hir_item(item).kind else {
-            return None;
-        };
-        let alias = if binding.name == rustc_span::kw::Underscore {
-            original.unwrap_or(binding.name)
-        } else {
-            binding.name
-        };
-        if alias.as_str() != name {
-            return None;
-        }
-        tcx.extern_mod_stmt_cnum(item.owner_id.def_id)
-    });
-    if let Some(first) = imported.next() {
-        return imported.all(|other| other == first).then(|| first.as_def_id());
+    let imported: UnordSet<CrateNum> = tcx
+        .resolutions(())
+        .extern_crate_map
+        .items()
+        .filter_map(|(item, krate)| (extern_crate_alias(tcx, *item)?.as_str() == name).then_some(*krate))
+        .collect();
+    if !imported.is_empty() {
+        return imported.get_only().map(|krate| krate.as_def_id());
     }
     let mut candidates = tcx
         .crates(())
@@ -227,4 +224,15 @@ pub(crate) fn root(tcx: TyCtxt<'_>, name: &str) -> Option<DefId> {
         return None;
     }
     Some(found)
+}
+
+/// The name an `extern crate` item binds: its alias, or for `as _` the crate it names.
+fn extern_crate_alias(tcx: TyCtxt<'_>, item: LocalDefId) -> Option<Symbol> {
+    let rustc_hir::ItemKind::ExternCrate(original, binding) = tcx.hir_expect_item(item).kind else {
+        return None;
+    };
+    if binding.name == rustc_span::kw::Underscore {
+        return Some(original.unwrap_or(binding.name));
+    }
+    Some(binding.name)
 }

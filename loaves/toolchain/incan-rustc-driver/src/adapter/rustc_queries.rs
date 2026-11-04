@@ -25,7 +25,7 @@ pub(crate) fn recover() {
 }
 
 /// Read the active plan without retaining the slot lock while rustc resolves callees.
-pub(super) fn active_plan() -> Result<Arc<Plan>, DriverError> {
+pub(crate) fn active_plan() -> Result<Arc<ActivePlan>, DriverError> {
     PLAN.lock()
         .map_err(|_| DriverError::State)?
         .as_ref()
@@ -157,14 +157,12 @@ pub(super) fn native_function_signature<'tcx>(
 pub(super) fn planned_function<'plan>(
     tcx: TyCtxt<'_>,
     def: LocalDefId,
-    plan: &'plan Plan,
+    plan: &'plan ActivePlan,
 ) -> Option<&'plan crate::plan::Function> {
-    let name = tcx.opt_item_name(def.to_def_id());
-    plan.functions.iter().find(|function| {
-        tcx.def_kind(def) == rustc_hir::def::DefKind::Fn
-            && declared_at_root(tcx, def)
-            && name.is_some_and(|name| name.as_str() == function.name)
-    })
+    if tcx.def_kind(def) != rustc_hir::def::DefKind::Fn || !declared_at_root(tcx, def) {
+        return None;
+    }
+    plan.function(tcx.opt_item_name(def.to_def_id())?.as_str())
 }
 
 /// A planned callable is declared at the crate root or in one of the root's callable partition modules.
