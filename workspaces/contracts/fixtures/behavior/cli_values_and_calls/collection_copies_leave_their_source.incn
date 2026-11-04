@@ -10,7 +10,7 @@
 class Bag:
     items: list[int]
 
-    def doubled(self) -> int:
+    pub def doubled(self) -> int:
         more = [*self.items, *self.items]
         return len(more) + len(self.items)
 

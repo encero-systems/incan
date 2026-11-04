@@ -104,21 +104,21 @@ pub type Response = newtype AxumRawResponse:
     """
 
     @staticmethod
-    def html(content: str) -> Response:
+    pub def html(content: str) -> Response:
         """Create an HTML response (200 OK)."""
         return Response(response_html(content))
 
     @staticmethod
-    def ok() -> Response:
+    pub def ok() -> Response:
         """Create an empty 200 OK response."""
         return Response(response_ok())
 
     @staticmethod
-    def status(code: int, body: str) -> Response:
+    pub def status(code: int, body: str) -> Response:
         """Create a response with a custom status code."""
         return Response(response_status(code, body))
 
     @staticmethod
-    def redirect(location: str) -> Response:
+    pub def redirect(location: str) -> Response:
         """Create a 302 redirect response."""
         return Response(response_redirect(location))

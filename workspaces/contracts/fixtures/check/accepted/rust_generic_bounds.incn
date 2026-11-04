@@ -36,7 +36,7 @@ pub def identity[T with Owned](value: T) -> T:
 pub class Reader:
     """Exercise the same foreign bound on a generic method."""
 
-    def identity[T with Owned](self, value: T) -> T:
+    pub def identity[T with Owned](self, value: T) -> T:
         """Retain the bound through a method call and its forwarding call."""
         return identity(value)
 

@@ -82,7 +82,7 @@ pub class WorkerHost:
     observer: Option[Emitter] = None
     activation_clock: Option[Clock] = None
 
-    def next(mut self) -> Option[CompileRequest]:
+    pub def next(mut self) -> Option[CompileRequest]:
         """
         The next request for the compiler entry, or `None` once the worker has retired.
 
@@ -103,7 +103,7 @@ pub class WorkerHost:
                         None => pass
         return None
 
-    def complete(mut self, outcome: ActivationOutcome, footprint: int) -> None:
+    pub def complete(mut self, outcome: ActivationOutcome, footprint: int) -> None:
         """Answer the open activation, if there is one."""
         if self.active is not None:
             self.settle(outcome, footprint)
@@ -137,7 +137,7 @@ pub class WorkerHost:
             None => pass
         self.activation_clock = None
 
-    def caller_watch(self) -> Option[CallerWatch]:
+    pub def caller_watch(self) -> Option[CallerWatch]:
         """What the compiler entry watches while the open activation compiles, if one is open."""
         match self.active:
             Some(caller) => return Some(CallerWatch(descriptor=caller.descriptor(), socket=self.socket))

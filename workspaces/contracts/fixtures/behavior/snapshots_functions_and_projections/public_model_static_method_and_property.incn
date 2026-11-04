@@ -7,10 +7,10 @@ pub model Counter:
     value: int
 
     @staticmethod
-    def make(value: int) -> Counter:
+    pub def make(value: int) -> Counter:
         return Counter(value=value)
 
-    def next(self) -> int:
+    pub def next(self) -> int:
         return self.value + 1
 
     pub property current -> int:

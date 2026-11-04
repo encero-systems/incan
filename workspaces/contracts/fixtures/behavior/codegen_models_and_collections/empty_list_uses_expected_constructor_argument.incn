@@ -5,7 +5,7 @@
 class Cursor[T with Clone]:
     pub items: list[T]
 
-    def select[U with Clone](self, value: U) -> Cursor[U]:
+    pub def select[U with Clone](self, value: U) -> Cursor[U]:
         return Cursor(items=[])
 
 

@@ -5,8 +5,8 @@ use super::*;
 impl TypeChecker {
     /// Convert one manifest model export into semantic model metadata.
     pub(in crate::typechecker::collect) fn model_info_from_manifest(&self, export: &ModelExport) -> ModelInfo {
-        let methods = self.methods_from_manifest(&export.methods);
-        let method_overloads = self.method_overloads_from_manifest(&export.methods);
+        let methods = self.methods_from_manifest(&export.methods, Some(&export.name));
+        let method_overloads = self.method_overloads_from_manifest(&export.methods, Some(&export.name));
         ModelInfo {
             type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
             traits: export.traits.clone(),
@@ -23,8 +23,8 @@ impl TypeChecker {
 
     /// Convert one manifest class export into semantic class metadata.
     pub(in crate::typechecker::collect) fn class_info_from_manifest(&self, export: &ClassExport) -> ClassInfo {
-        let methods = self.methods_from_manifest(&export.methods);
-        let method_overloads = self.method_overloads_from_manifest(&export.methods);
+        let methods = self.methods_from_manifest(&export.methods, Some(&export.name));
+        let method_overloads = self.method_overloads_from_manifest(&export.methods, Some(&export.name));
         ClassInfo {
             type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
             extends: export.extends.clone(),
@@ -199,7 +199,7 @@ impl TypeChecker {
                     )
                 })
                 .collect(),
-            methods: self.methods_from_manifest(&export.methods),
+            methods: self.methods_from_manifest(&export.methods, None),
             method_aliases: Self::method_aliases_from_manifest(&export.methods),
             properties: std::collections::HashMap::new(),
             requires: export
@@ -359,8 +359,8 @@ impl TypeChecker {
                 .collect(),
             value_enum,
             derives: export.derives.clone(),
-            method_overloads: self.method_overloads_from_manifest(&export.methods),
-            methods: self.methods_from_manifest(&export.methods),
+            method_overloads: self.method_overloads_from_manifest(&export.methods, Some(&export.name)),
+            methods: self.methods_from_manifest(&export.methods, Some(&export.name)),
         }
     }
 
@@ -382,8 +382,8 @@ impl TypeChecker {
             trait_adoptions: Self::trait_adoptions_from_manifest(&export.traits, &export.trait_adoptions),
             derives: export.derives.clone(),
             method_aliases: Self::method_aliases_from_manifest(&export.methods),
-            methods: self.methods_from_manifest(&export.methods),
-            method_overloads: self.method_overloads_from_manifest(&export.methods),
+            methods: self.methods_from_manifest(&export.methods, Some(&export.name)),
+            method_overloads: self.method_overloads_from_manifest(&export.methods, Some(&export.name)),
         }
     }
 
@@ -503,10 +503,11 @@ impl TypeChecker {
     pub(in crate::typechecker::collect) fn methods_from_manifest(
         &self,
         methods: &[MethodExport],
+        owner: Option<&str>,
     ) -> std::collections::HashMap<String, MethodInfo> {
         methods
             .iter()
-            .map(|method| (method.name.clone(), self.method_info_from_manifest(method)))
+            .map(|method| (method.name.clone(), self.method_info_from_manifest(method, owner)))
             .collect()
     }
 
@@ -529,22 +530,28 @@ impl TypeChecker {
     pub(in crate::typechecker::collect) fn method_overloads_from_manifest(
         &self,
         methods: &[MethodExport],
+        owner: Option<&str>,
     ) -> std::collections::HashMap<String, Vec<MethodInfo>> {
         let mut groups: std::collections::HashMap<String, Vec<MethodInfo>> = std::collections::HashMap::new();
         for method in methods {
             groups
                 .entry(method.name.clone())
                 .or_default()
-                .push(self.method_info_from_manifest(method));
+                .push(self.method_info_from_manifest(method, owner));
         }
         groups
     }
 
-    /// Convert one manifest method export into semantic method metadata.
-    pub(in crate::typechecker::collect) fn method_info_from_manifest(&self, method: &MethodExport) -> MethodInfo {
+    /// Convert one manifest method export into semantic method metadata, owned by the type named `owner`.
+    pub(in crate::typechecker::collect) fn method_info_from_manifest(
+        &self,
+        method: &MethodExport,
+        owner: Option<&str>,
+    ) -> MethodInfo {
         MethodInfo {
             identity: method.canonical.as_ref().and_then(|identity| identity.hydrate()),
-            visibility: method.visibility.into(),
+            scope: MethodScope::written(method.visibility.into(), true),
+            owner: owner.map(str::to_string),
             type_params: method.type_params.iter().map(|tp| tp.name.clone()).collect(),
             type_param_bounds: method
                 .type_params

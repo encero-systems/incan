@@ -9,7 +9,7 @@ class Node:
     pub value: int
     pub next: Option[Node]
 
-    def cut(mut self) -> None:
+    pub def cut(mut self) -> None:
         self.next = None
 
 

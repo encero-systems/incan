@@ -8,7 +8,7 @@ class FactoryBox[T with Clone]:
     pub value: T
 
     @classmethod
-    def make(cls, value: T) -> Self:
+    pub def make(cls, value: T) -> Self:
         return cls(value=value)
 
 

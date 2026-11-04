@@ -72,7 +72,7 @@ pub type Path = newtype str:
     # Python-compatible spelling for callers that look for true-division hooks.
     __truediv__ = alias __div__
 
-    def joinpath(self, segment: str) -> Path:
+    pub def joinpath(self, segment: str) -> Path:
         """
         Append a lexical path segment.
 
@@ -84,7 +84,7 @@ pub type Path = newtype str:
         """
         return Path(RustPath.new(self.0).join(segment).to_string_lossy().into_owned())
 
-    def parent(self) -> Path:
+    pub def parent(self) -> Path:
         """
         Return the lexical parent path.
 
@@ -95,7 +95,7 @@ pub type Path = newtype str:
             Some(parent) => return Path(parent.to_string_lossy().into_owned())
             None => return Path(".")
 
-    def name(self) -> str:
+    pub def name(self) -> str:
         """
         Return the final path component.
 
@@ -106,7 +106,7 @@ pub type Path = newtype str:
             Some(name) => return name.to_string_lossy().into_owned()
             None => return ""
 
-    def suffix(self) -> str:
+    pub def suffix(self) -> str:
         """
         Return the final file extension.
 
@@ -117,7 +117,7 @@ pub type Path = newtype str:
             Some(extension) => return f".{extension.to_string_lossy().into_owned()}"
             None => return ""
 
-    def stem(self) -> str:
+    pub def stem(self) -> str:
         """
         Return the final path component without its last extension.
 
@@ -128,7 +128,7 @@ pub type Path = newtype str:
             Some(stem) => return stem.to_string_lossy().into_owned()
             None => return ""
 
-    def exists(self) -> bool:
+    pub def exists(self) -> bool:
         """
         Check whether the path exists.
 
@@ -137,7 +137,7 @@ pub type Path = newtype str:
         """
         return RustPath.new(self.0).exists()
 
-    def is_file(self) -> bool:
+    pub def is_file(self) -> bool:
         """
         Check whether the path resolves to a regular file.
 
@@ -147,7 +147,7 @@ pub type Path = newtype str:
         """
         return RustPath.new(self.0).is_file()
 
-    def is_dir(self) -> bool:
+    pub def is_dir(self) -> bool:
         """
         Check whether the path resolves to a directory.
 
@@ -156,7 +156,7 @@ pub type Path = newtype str:
         """
         return RustPath.new(self.0).is_dir()
 
-    def is_symlink(self) -> bool:
+    pub def is_symlink(self) -> bool:
         """
         Check whether the path itself is a symbolic link.
 
@@ -165,7 +165,7 @@ pub type Path = newtype str:
         """
         return RustPath.new(self.0).is_symlink()
 
-    def try_exists(self) -> Result[bool, IoError]:
+    pub def try_exists(self) -> Result[bool, IoError]:
         """
         Check existence while preserving host errors.
 
@@ -176,7 +176,7 @@ pub type Path = newtype str:
             Ok(value) => return Ok(value)
             Err(err) => return Err(_io_error(self, err))
 
-    def mkdir(self, parents: bool, exist_ok: bool) -> Result[None, IoError]:
+    pub def mkdir(self, parents: bool, exist_ok: bool) -> Result[None, IoError]:
         """
         Create this directory.
 
@@ -209,7 +209,7 @@ pub type Path = newtype str:
                     return Ok(None)
                 return Err(_io_error(self, err))
 
-    def read_bytes(self) -> Result[bytes, IoError]:
+    pub def read_bytes(self) -> Result[bytes, IoError]:
         """
         Read the entire file into memory as bytes.
 
@@ -220,7 +220,7 @@ pub type Path = newtype str:
             Ok(data) => return Ok(data)
             Err(err) => return Err(_io_error(self, err))
 
-    def write_bytes(self, data: bytes) -> Result[None, IoError]:
+    pub def write_bytes(self, data: bytes) -> Result[None, IoError]:
         """
         Replace the file contents with bytes.
 
@@ -234,7 +234,7 @@ pub type Path = newtype str:
             Ok(_) => return Ok(None)
             Err(err) => return Err(_io_error(self, err))
 
-    def read_text(self, encoding: str, errors: str) -> Result[str, IoError]:
+    pub def read_text(self, encoding: str, errors: str) -> Result[str, IoError]:
         """
         Read the entire file as normalized text.
 
@@ -252,7 +252,7 @@ pub type Path = newtype str:
         data = self.read_bytes()?
         return _decode_text(self, data, encoding, errors)
 
-    def write_text(self, data: str, encoding: str, errors: str, newline: Option[str]) -> Result[None, IoError]:
+    pub def write_text(self, data: str, encoding: str, errors: str, newline: Option[str]) -> Result[None, IoError]:
         """
         Replace the file contents with text, creating the file if needed.
 
@@ -277,7 +277,7 @@ pub type Path = newtype str:
             Ok(_) => return Ok(None)
             Err(err) => return Err(_io_error(self, err))
 
-    def open(
+    pub def open(
         self,
         mode: str = "r",
         buffering: int = -1,
@@ -321,7 +321,7 @@ pub type Path = newtype str:
                 )
             Err(err) => return Err(err)
 
-    def iterdir(self) -> Result[list[Path], IoError]:
+    pub def iterdir(self) -> Result[list[Path], IoError]:
         """
         List direct children of this directory.
 
@@ -338,7 +338,7 @@ pub type Path = newtype str:
                 return Ok([Path(item) for item in out])
             Err(err) => return Err(_io_error(self, err))
 
-    def glob(self, pattern: str) -> Result[list[Path], IoError]:
+    pub def glob(self, pattern: str) -> Result[list[Path], IoError]:
         """
         Return direct children whose names match the `std.fs` glob pattern.
 
@@ -355,7 +355,7 @@ pub type Path = newtype str:
         """
         return _glob_paths(self, pattern, false)
 
-    def rglob(self, pattern: str) -> Result[list[Path], IoError]:
+    pub def rglob(self, pattern: str) -> Result[list[Path], IoError]:
         """
         Recursively return descendants whose names match the glob pattern.
 
@@ -369,7 +369,7 @@ pub type Path = newtype str:
         """
         return _glob_paths(self, pattern, true)
 
-    def scandir(self) -> Result[list[DirEntry], IoError]:
+    pub def scandir(self) -> Result[list[DirEntry], IoError]:
         """
         List direct children as directory-entry views.
 
@@ -381,7 +381,7 @@ pub type Path = newtype str:
             out.append(DirEntry(path=path))
         return Ok(out)
 
-    def stat(self) -> Result[PathStat, IoError]:
+    pub def stat(self) -> Result[PathStat, IoError]:
         """
         Create a metadata view that follows symbolic links.
 
@@ -392,7 +392,7 @@ pub type Path = newtype str:
             Ok(_) => return Ok(PathStat(path=self, follow_symlinks=true))
             Err(err) => return Err(_io_error(self, err))
 
-    def lstat(self) -> Result[PathStat, IoError]:
+    pub def lstat(self) -> Result[PathStat, IoError]:
         """
         Create a metadata view for the path itself.
 
@@ -403,7 +403,7 @@ pub type Path = newtype str:
             Ok(_) => return Ok(PathStat(path=self, follow_symlinks=false))
             Err(err) => return Err(_io_error(self, err))
 
-    def copy(self, target: Union[Path, str], follow_symlinks: bool, preserve_metadata: bool) -> Result[Path, IoError]:
+    pub def copy(self, target: Union[Path, str], follow_symlinks: bool, preserve_metadata: bool) -> Result[Path, IoError]:
         """
         Copy this file, directory tree, or symbolic link to `target`.
 
@@ -483,7 +483,7 @@ pub type Path = newtype str:
                 return Ok(dest)
             Err(err) => return Err(_io_error(self, err))
 
-    def copy_into(
+    pub def copy_into(
         self,
         target_dir: Union[Path, str],
         follow_symlinks: bool,
@@ -503,7 +503,7 @@ pub type Path = newtype str:
         dest = _as_path(target_dir).joinpath(self.name())
         return self.copy(dest, follow_symlinks, preserve_metadata)
 
-    def move(self, target: Union[Path, str]) -> Result[Path, IoError]:
+    pub def move(self, target: Union[Path, str]) -> Result[Path, IoError]:
         """
         Move this path to `target`.
 
@@ -534,7 +534,7 @@ pub type Path = newtype str:
                     return Ok(dest)
                 return Err(_io_error(self, message))
 
-    def move_into(self, target_dir: Union[Path, str]) -> Result[Path, IoError]:
+    pub def move_into(self, target_dir: Union[Path, str]) -> Result[Path, IoError]:
         """
         Move this path into a directory using the current path name.
 
@@ -547,7 +547,7 @@ pub type Path = newtype str:
         dest = _as_path(target_dir).joinpath(self.name())
         return self.move(dest)
 
-    def unlink(self) -> Result[None, IoError]:
+    pub def unlink(self) -> Result[None, IoError]:
         """
         Remove a file or symbolic link.
 
@@ -558,7 +558,7 @@ pub type Path = newtype str:
             Ok(_) => return Ok(None)
             Err(err) => return Err(_io_error(self, err))
 
-    def rmdir(self) -> Result[None, IoError]:
+    pub def rmdir(self) -> Result[None, IoError]:
         """
         Remove an empty directory.
 
@@ -569,7 +569,7 @@ pub type Path = newtype str:
             Ok(_) => return Ok(None)
             Err(err) => return Err(_io_error(self, err))
 
-    def remove_tree(self) -> Result[None, IoError]:
+    pub def remove_tree(self) -> Result[None, IoError]:
         """
         Remove a directory tree.
 
@@ -584,7 +584,7 @@ pub type Path = newtype str:
             Ok(_) => return Ok(None)
             Err(err) => return Err(_io_error(self, err))
 
-    def rename(self, target: Union[Path, str]) -> Result[Path, IoError]:
+    pub def rename(self, target: Union[Path, str]) -> Result[Path, IoError]:
         """
         Rename this path to `target`.
 
@@ -596,7 +596,7 @@ pub type Path = newtype str:
         """
         return self.move(target)
 
-    def replace(self, target: Union[Path, str]) -> Result[Path, IoError]:
+    pub def replace(self, target: Union[Path, str]) -> Result[Path, IoError]:
         """
         Atomically replace `target` with this file on the same filesystem.
 
@@ -619,7 +619,7 @@ pub type Path = newtype str:
             Ok(_) => return Ok(dest)
             Err(err) => return Err(_io_error(dest, err))
 
-    def sync_directory(self) -> Result[None, IoError]:
+    pub def sync_directory(self) -> Result[None, IoError]:
         """
         Request durable persistence of directory-entry changes.
 
@@ -635,13 +635,13 @@ pub type Path = newtype str:
                     Err(err) => return Err(_io_error(self, err))
             Err(err) => return Err(_io_error(self, err))
 
-    def lock_shared(self) -> Result[FileLock, IoError]:
+    pub def lock_shared(self) -> Result[FileLock, IoError]:
         """Acquire a blocking shared advisory lock for this path's stable sibling lock entry."""
         match lock_shared(self.0):
             Ok(lock) => return Ok(lock)
             Err(err) => return Err(_io_error(self, err))
 
-    def map_read(self) -> Result[MappedFile, IoError]:
+    pub def map_read(self) -> Result[MappedFile, IoError]:
         """
         Map this file read-only into memory.
 
@@ -652,25 +652,25 @@ pub type Path = newtype str:
             Ok(mapped) => return Ok(mapped)
             Err(err) => return Err(_io_error(self, err))
 
-    def lock_exclusive(self) -> Result[FileLock, IoError]:
+    pub def lock_exclusive(self) -> Result[FileLock, IoError]:
         """Acquire a blocking exclusive advisory lock for this path's stable sibling lock entry."""
         match lock_exclusive(self.0):
             Ok(lock) => return Ok(lock)
             Err(err) => return Err(_io_error(self, err))
 
-    def try_lock_shared(self) -> Result[Option[FileLock], IoError]:
+    pub def try_lock_shared(self) -> Result[Option[FileLock], IoError]:
         """Try to acquire a shared advisory lock without blocking."""
         match try_lock_shared(self.0):
             Ok(lock) => return Ok(lock)
             Err(err) => return Err(_io_error(self, err))
 
-    def try_lock_exclusive(self) -> Result[Option[FileLock], IoError]:
+    pub def try_lock_exclusive(self) -> Result[Option[FileLock], IoError]:
         """Try to acquire an exclusive advisory lock without blocking."""
         match try_lock_exclusive(self.0):
             Ok(lock) => return Ok(lock)
             Err(err) => return Err(_io_error(self, err))
 
-    def resolve(self) -> Result[Path, IoError]:
+    pub def resolve(self) -> Result[Path, IoError]:
         """
         Resolve this path to its canonical absolute path.
 
@@ -681,7 +681,7 @@ pub type Path = newtype str:
             Ok(path) => return Ok(Path(path.to_string_lossy().into_owned()))
             Err(err) => return Err(_io_error(self, err))
 
-    def absolute(self) -> Result[Path, IoError]:
+    pub def absolute(self) -> Result[Path, IoError]:
         """
         Convert this path to an absolute path without resolving symlinks.
 
@@ -694,7 +694,7 @@ pub type Path = newtype str:
             Ok(cwd) => return Ok(Path(cwd.join(self.0).to_string_lossy().into_owned()))
             Err(err) => return Err(_io_error(self, err))
 
-    def disk_usage(self) -> Result[DiskUsage, IoError]:
+    pub def disk_usage(self) -> Result[DiskUsage, IoError]:
         """
         Read capacity information for the containing filesystem.
 
@@ -710,7 +710,7 @@ pub type Path = newtype str:
                 return Ok(DiskUsage(total=total, used=used, free=free))
             Err(err) => return Err(_io_error(self, err))
 
-    def touch(self, exist_ok: bool) -> Result[None, IoError]:
+    pub def touch(self, exist_ok: bool) -> Result[None, IoError]:
         """
         Create the file if missing, or update its access and modification time.
 
@@ -735,7 +735,7 @@ pub type Path = newtype str:
             Ok(_) => return Ok(None)
             Err(err) => return Err(_io_error(self, err))
 
-    def samefile(self, other: Union[Path, str]) -> Result[bool, IoError]:
+    pub def samefile(self, other: Union[Path, str]) -> Result[bool, IoError]:
         """
         Compare two paths after canonical resolution.
 
@@ -748,7 +748,7 @@ pub type Path = newtype str:
         rhs = _as_path(other)
         return Ok(self.resolve()?.0 == rhs.resolve()?.0)
 
-    def is_mount(self) -> Result[bool, IoError]:
+    pub def is_mount(self) -> Result[bool, IoError]:
         """
         Check whether this path is a filesystem mount point.
 
@@ -762,7 +762,7 @@ pub type Path = newtype str:
             return Ok(current.dev() != parent_meta.dev() or current.ino() == parent_meta.ino())
         return Ok(true)
 
-    def expanduser(self) -> Result[Path, IoError]:
+    pub def expanduser(self) -> Result[Path, IoError]:
         """
         Expand a leading home marker.
 
@@ -777,7 +777,7 @@ pub type Path = newtype str:
             return Ok(home.joinpath(self.0[2:]))
         return Ok(Path(self.0))
 
-    def symlink_to(self, target: Union[Path, str]) -> Result[None, IoError]:
+    pub def symlink_to(self, target: Union[Path, str]) -> Result[None, IoError]:
         """
         Create this path as a symbolic link.
 
@@ -792,7 +792,7 @@ pub type Path = newtype str:
             Ok(_) => return Ok(None)
             Err(err) => return Err(_io_error(self, err))
 
-    def hardlink_to(self, target: Union[Path, str]) -> Result[None, IoError]:
+    pub def hardlink_to(self, target: Union[Path, str]) -> Result[None, IoError]:
         """
         Create this path as a hard link.
 
@@ -807,7 +807,7 @@ pub type Path = newtype str:
             Ok(_) => return Ok(None)
             Err(err) => return Err(_io_error(self, err))
 
-    def chmod(self, readonly: bool) -> Result[None, IoError]:
+    pub def chmod(self, readonly: bool) -> Result[None, IoError]:
         """
         Set or clear the host readonly permission bit.
 
@@ -880,7 +880,7 @@ pub type Path = newtype str:
             Ok(_) => return Ok(None)
             Err(err) => return Err(_io_error(self, err))
 
-    def cwd() -> Result[Path, IoError]:
+    pub def cwd() -> Result[Path, IoError]:
         """
         Return the current working directory.
 
@@ -891,7 +891,7 @@ pub type Path = newtype str:
             Ok(path) => return Ok(Path(path.to_string_lossy().into_owned()))
             Err(err) => return Err(_io_error(Path("."), err))
 
-    def home() -> Result[Path, IoError]:
+    pub def home() -> Result[Path, IoError]:
         """
         Return the home directory.
 

@@ -23,7 +23,7 @@ class allow_class:
     value: int
 
     @rust.allow("non_snake_case")
-    def MixedMethod(self) -> int:
+    pub def MixedMethod(self) -> int:
         return self.value
 
 

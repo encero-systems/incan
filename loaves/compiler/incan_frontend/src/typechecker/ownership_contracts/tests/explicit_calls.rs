@@ -7,7 +7,7 @@ use super::*;
 #[test]
 fn method_input_payload_retains_checked_self_substitution() -> Result<(), Box<dyn std::error::Error>> {
     let checker = checked(
-        "class Reader:\n    def view(self, other: Borrowed[Self]) -> None:\n        pass\ndef run() -> None:\n    reader = Reader()\n    reader.view(reader)\n",
+        "class Reader:\n    pub def view(self, other: Borrowed[Self]) -> None:\n        pass\ndef run() -> None:\n    reader = Reader()\n    reader.view(reader)\n",
     )?;
     assert!(checker.errors.is_empty(), "{:?}", checker.errors);
     assert_eq!(checker.type_info.protocols.explicit_input_calls.len(), 1);
@@ -28,7 +28,7 @@ fn method_flow_preserves_receiver_permissions() -> Result<(), Box<dyn std::error
             true,
         ),
         (
-            "model Counter:\n    value: int\n    def read(self) -> int:\n        let view: Borrowed[int] = self.value\n        return view\n",
+            "model Counter:\n    value: int\n    pub def read(self) -> int:\n        let view: Borrowed[int] = self.value\n        return view\n",
             false,
         ),
     ] {
@@ -64,7 +64,7 @@ fn method_flow_preserves_receiver_permissions() -> Result<(), Box<dyn std::error
         );
     }
     let checker = checked(
-        "model First:\n    value: int\n    def read(self) -> int:\n        let view: Borrowed[int] = self.value\n        return view\nmodel Second:\n    value: int\n    def read(self) -> int:\n        let view: Borrowed[int] = self.value\n        return view\n",
+        "model First:\n    value: int\n    pub def read(self) -> int:\n        let view: Borrowed[int] = self.value\n        return view\nmodel Second:\n    value: int\n    pub def read(self) -> int:\n        let view: Borrowed[int] = self.value\n        return view\n",
     )?;
     assert_eq!(checker.type_info.protocols.explicit_input_flow.len(), 2);
     let mut receivers = std::collections::BTreeSet::new();
@@ -612,23 +612,23 @@ fn explicit_calls_follow_call_site_save_and_restore() -> Result<(), Box<dyn std:
 fn explicit_method_calls_retain_receiver_access() -> Result<(), Box<dyn std::error::Error>> {
     for (source, conflict) in [
         (
-            "def use(reader: Reader, value: str) -> None:\n    reader.read(value)\nclass Reader:\n    def read(self, value: Borrowed[str]) -> None:\n        pass\n",
+            "def use(reader: Reader, value: str) -> None:\n    reader.read(value)\nclass Reader:\n    pub def read(self, value: Borrowed[str]) -> None:\n        pass\n",
             false,
         ),
         (
-            "def use(mut reader: Reader, value: str) -> None:\n    reader.read(value)\nclass Reader:\n    def read(mut self, value: Borrowed[str]) -> None:\n        pass\n",
+            "def use(mut reader: Reader, value: str) -> None:\n    reader.read(value)\nclass Reader:\n    pub def read(mut self, value: Borrowed[str]) -> None:\n        pass\n",
             false,
         ),
         (
-            "def use(reader: Reader, value: str) -> None:\n    reader.read(value)\nclass Reader:\n    def read(mut self, value: Borrowed[str]) -> None:\n        pass\n",
+            "def use(reader: Reader, value: str) -> None:\n    reader.read(value)\nclass Reader:\n    pub def read(mut self, value: Borrowed[str]) -> None:\n        pass\n",
             true,
         ),
         (
-            "def use(mut reader: Reader) -> None:\n    reader.read(reader.value)\nclass Reader:\n    pub value: str\n    def read(mut self, value: Borrowed[str]) -> None:\n        pass\n",
+            "def use(mut reader: Reader) -> None:\n    reader.read(reader.value)\nclass Reader:\n    pub value: str\n    pub def read(mut self, value: Borrowed[str]) -> None:\n        pass\n",
             true,
         ),
         (
-            "def use(reader: Reader, value: str) -> str:\n    reader.read(1, value)\n    return value\nclass Reader:\n    def read(self, value: Borrowed[int]) -> None:\n        pass\n    def read(self, prefix: int, value: Owned[str]) -> None:\n        pass\n",
+            "def use(reader: Reader, value: str) -> str:\n    reader.read(1, value)\n    return value\nclass Reader:\n    pub def read(self, value: Borrowed[int]) -> None:\n        pass\n    pub def read(self, prefix: int, value: Owned[str]) -> None:\n        pass\n",
             true,
         ),
     ] {
@@ -643,7 +643,7 @@ fn explicit_method_calls_retain_receiver_access() -> Result<(), Box<dyn std::err
 #[test]
 fn rejected_method_does_not_retain_input_access() -> Result<(), Box<dyn std::error::Error>> {
     let checker = checked(
-        "def use(reader: Reader, value: str) -> None:\n    reader.read(value)\nclass Reader:\n    def read(self, value: Borrowed[int]) -> None:\n        pass\n",
+        "def use(reader: Reader, value: str) -> None:\n    reader.read(value)\nclass Reader:\n    pub def read(self, value: Borrowed[int]) -> None:\n        pass\n",
     )?;
     assert!(
         checker

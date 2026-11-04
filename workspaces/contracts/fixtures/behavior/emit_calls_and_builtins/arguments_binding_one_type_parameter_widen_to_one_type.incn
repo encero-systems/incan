@@ -17,7 +17,7 @@ model Pair[T]:
 class Picker:
     count: int
 
-    def pick[T](self, a: T, b: T) -> T:
+    pub def pick[T](self, a: T, b: T) -> T:
         return b
 
 

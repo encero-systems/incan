@@ -22,7 +22,7 @@ pub model FixedOffset:
     pub seconds: int
 
     @staticmethod
-    def seconds(value: int) -> Result[FixedOffset, DateTimeError]:
+    pub def seconds(value: int) -> Result[FixedOffset, DateTimeError]:
         """
         Construct a checked fixed offset from seconds.
 
@@ -39,7 +39,7 @@ pub model FixedOffset:
         return Ok(FixedOffset(seconds=value))
 
     @staticmethod
-    def minutes(value: int) -> Result[FixedOffset, DateTimeError]:
+    pub def minutes(value: int) -> Result[FixedOffset, DateTimeError]:
         """
         Construct a checked fixed offset from minutes.
 
@@ -52,7 +52,7 @@ pub model FixedOffset:
         return FixedOffset.seconds(value * _SECONDS_PER_MINUTE)
 
     @staticmethod
-    def hours(value: int) -> Result[FixedOffset, DateTimeError]:
+    pub def hours(value: int) -> Result[FixedOffset, DateTimeError]:
         """
         Construct a checked fixed offset from hours.
 
@@ -65,7 +65,7 @@ pub model FixedOffset:
         return FixedOffset.seconds(value * _SECONDS_PER_HOUR)
 
     @staticmethod
-    def utc() -> FixedOffset:
+    pub def utc() -> FixedOffset:
         """
         Return the zero UTC offset.
 
@@ -74,7 +74,7 @@ pub model FixedOffset:
         """
         return FixedOffset(seconds=0)
 
-    def isoformat(self) -> str:
+    pub def isoformat(self) -> str:
         """
         Format this offset as ISO offset text.
 

@@ -46,7 +46,7 @@ pub model Deque[T with (Clone, Eq)]:
         return Deque(items=[])
 
     @staticmethod
-    def from_iter(items: list[T]) -> Self:
+    pub def from_iter(items: list[T]) -> Self:
         """
         Create a deque from a list.
 
@@ -103,7 +103,7 @@ pub model Deque[T with (Clone, Eq)]:
         """
         return _contains_value(self.items, value)
 
-    def push_back(mut self, value: T) -> None:
+    pub def push_back(mut self, value: T) -> None:
         """
         Append a value at the back of the deque.
 
@@ -112,7 +112,7 @@ pub model Deque[T with (Clone, Eq)]:
         """
         self.items.append(value)
 
-    def append(mut self, value: T) -> None:
+    pub def append(mut self, value: T) -> None:
         """
         Append a value at the back of the deque.
 
@@ -121,7 +121,7 @@ pub model Deque[T with (Clone, Eq)]:
         """
         self.push_back(value)
 
-    def push_front(mut self, value: T) -> None:
+    pub def push_front(mut self, value: T) -> None:
         """
         Append a value at the front of the deque.
 
@@ -134,7 +134,7 @@ pub model Deque[T with (Clone, Eq)]:
             self.items.swap(index, index - 1)
             index -= 1
 
-    def appendleft(mut self, value: T) -> None:
+    pub def appendleft(mut self, value: T) -> None:
         """
         Append a value at the front of the deque.
 
@@ -143,7 +143,7 @@ pub model Deque[T with (Clone, Eq)]:
         """
         self.push_front(value)
 
-    def pop_back(mut self) -> T:
+    pub def pop_back(mut self) -> T:
         """
         Remove and return the back value.
 
@@ -152,7 +152,7 @@ pub model Deque[T with (Clone, Eq)]:
         """
         return self.items.pop()
 
-    def pop(mut self) -> T:
+    pub def pop(mut self) -> T:
         """
         Remove and return the back value.
 
@@ -161,7 +161,7 @@ pub model Deque[T with (Clone, Eq)]:
         """
         return self.pop_back()
 
-    def pop_front(mut self) -> T:
+    pub def pop_front(mut self) -> T:
         """
         Remove and return the front value.
 
@@ -172,7 +172,7 @@ pub model Deque[T with (Clone, Eq)]:
         self.items.remove(0)
         return value
 
-    def popleft(mut self) -> T:
+    pub def popleft(mut self) -> T:
         """
         Remove and return the front value.
 
@@ -181,7 +181,7 @@ pub model Deque[T with (Clone, Eq)]:
         """
         return self.pop_front()
 
-    def clear(mut self) -> None:
+    pub def clear(mut self) -> None:
         """
         Remove every value from the deque.
 
@@ -190,7 +190,7 @@ pub model Deque[T with (Clone, Eq)]:
         while len(self.items) > 0:
             self.items.pop()
 
-    def to_list(self) -> list[T]:
+    pub def to_list(self) -> list[T]:
         """
         Return the deque as a list.
 
@@ -223,7 +223,7 @@ pub model PriorityQueue[T with (Clone, Ord)]:
         return PriorityQueue(items=[], order=PriorityOrder.MinFirst)
 
     @staticmethod
-    def with_order(order: PriorityOrder) -> Self:
+    pub def with_order(order: PriorityOrder) -> Self:
         """
         Create an empty priority queue with an explicit ordering policy.
 
@@ -236,7 +236,7 @@ pub model PriorityQueue[T with (Clone, Ord)]:
         return PriorityQueue(items=[], order=order)
 
     @staticmethod
-    def max_first() -> Self:
+    pub def max_first() -> Self:
         """
         Create an empty max-first priority queue.
 
@@ -246,7 +246,7 @@ pub model PriorityQueue[T with (Clone, Ord)]:
         return PriorityQueue(items=[], order=PriorityOrder.MaxFirst)
 
     @staticmethod
-    def from_iter(items: list[T], order: PriorityOrder = PriorityOrder.MinFirst) -> Self:
+    pub def from_iter(items: list[T], order: PriorityOrder = PriorityOrder.MinFirst) -> Self:
         """
         Create a priority queue from a list.
 
@@ -280,7 +280,7 @@ pub model PriorityQueue[T with (Clone, Ord)]:
         """
         return self.items
 
-    def push(mut self, value: T) -> None:
+    pub def push(mut self, value: T) -> None:
         """
         Insert a value according to the queue ordering policy.
 
@@ -290,7 +290,7 @@ pub model PriorityQueue[T with (Clone, Ord)]:
         self.items.append(value)
         self.bubble_value_left(len(self.items) - 1)
 
-    def pop(mut self) -> T:
+    pub def pop(mut self) -> T:
         """
         Remove and return the next priority value.
 
@@ -301,7 +301,7 @@ pub model PriorityQueue[T with (Clone, Ord)]:
         self.items.remove(0)
         return value
 
-    def peek(self) -> Option[T]:
+    pub def peek(self) -> Option[T]:
         """
         Inspect the next priority value without removing it.
 
@@ -312,7 +312,7 @@ pub model PriorityQueue[T with (Clone, Ord)]:
             return None
         return Some(self.items[0])
 
-    def is_empty(self) -> bool:
+    pub def is_empty(self) -> bool:
         """
         Check whether the queue is empty.
 
@@ -321,7 +321,7 @@ pub model PriorityQueue[T with (Clone, Ord)]:
         """
         return len(self.items) == 0
 
-    def to_list(self) -> list[T]:
+    pub def to_list(self) -> list[T]:
         """
         Return queued values as a list.
 
@@ -330,13 +330,13 @@ pub model PriorityQueue[T with (Clone, Ord)]:
         """
         return self.items
 
-    def bubble_value_left(mut self, start: int) -> None:
+    pub def bubble_value_left(mut self, start: int) -> None:
         mut index = start
         while index > 0 and self.higher_priority(self.items[index], self.items[index - 1]):
             self.items.swap(index, index - 1)
             index -= 1
 
-    def higher_priority(self, left: T, right: T) -> bool:
+    pub def higher_priority(self, left: T, right: T) -> bool:
         match self.order:
             PriorityOrder.MinFirst => return left < right
             PriorityOrder.MaxFirst => return right < left

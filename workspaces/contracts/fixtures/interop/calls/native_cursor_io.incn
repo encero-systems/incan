@@ -30,7 +30,7 @@ class Buffer:
 
     handle: Rc[RefCell[Cursor[bytes]]]
 
-    def read(self, size: u64) -> bytes:
+    pub def read(self, size: u64) -> bytes:
         """Read at most the requested number of bytes through a temporary exclusive guard."""
         mut out = b""
         mut cursor = self.handle.borrow_mut()

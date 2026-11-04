@@ -40,7 +40,7 @@ pub class EnvironError with Error:
     pub detail: str
 
     @staticmethod
-    def from_kind(kind: EnvironErrorKind, key: str, detail: str) -> Self:
+    pub def from_kind(kind: EnvironErrorKind, key: str, detail: str) -> Self:
         """
         Build an environment error from a stable category.
 
@@ -55,12 +55,12 @@ pub class EnvironError with Error:
         return EnvironError(_kind=kind, key=key, detail=detail)
 
     @staticmethod
-    def missing(key: str) -> Self:
+    pub def missing(key: str) -> Self:
         """Build the standard missing-variable error for `key`."""
         return EnvironError.from_kind(EnvironErrorKind.Missing, key, f"environment variable `{key}` is not set")
 
     @staticmethod
-    def invalid_key(key: str) -> Self:
+    pub def invalid_key(key: str) -> Self:
         """Build the standard error for an empty or host-invalid key."""
         return EnvironError.from_kind(
             EnvironErrorKind.InvalidKey,
@@ -69,7 +69,7 @@ pub class EnvironError with Error:
         )
 
     @staticmethod
-    def not_unicode(key: str) -> Self:
+    pub def not_unicode(key: str) -> Self:
         """Build the standard error for a host value that is not Unicode text."""
         return EnvironError.from_kind(
             EnvironErrorKind.NotUnicode,
@@ -78,7 +78,7 @@ pub class EnvironError with Error:
         )
 
     @staticmethod
-    def invalid_value(key: str, target: str) -> Self:
+    pub def invalid_value(key: str, target: str) -> Self:
         """
         Build the standard typed-read conversion error.
 
@@ -95,11 +95,11 @@ pub class EnvironError with Error:
             f"environment variable `{key}` could not be parsed or validated as `{target}`",
         )
 
-    def kind(self) -> EnvironErrorKind:
+    pub def kind(self) -> EnvironErrorKind:
         """Return the typed stable error category for branch-oriented handling."""
         return self._kind
 
-    def kind_name(self) -> str:
+    pub def kind_name(self) -> str:
         """Return the stable lowercase error category spelling."""
         return self._kind.as_str()
 

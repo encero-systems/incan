@@ -215,7 +215,7 @@ impl TypeChecker {
         self.resolve_pending_trait_supertraits();
         self.finalize_supertrait_graph();
         self.merge_supertrait_requires_into_traits();
-        self.settle_trait_implementation_visibility(&program.declarations);
+        self.settle_method_scopes(&program.declarations);
         self.validate_static_dependencies();
         self.collect_testing_fixture_names(program);
         // Every signature is collected, so the function-typed parameters and returns that hold capturing closures

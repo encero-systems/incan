@@ -9,7 +9,7 @@ class Counter:
     pub value: int
 
     @doubled
-    def add(mut self, by: int) -> int:
+    pub def add(mut self, by: int) -> int:
         self.value += by
         return self.value
 

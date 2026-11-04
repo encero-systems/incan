@@ -6,7 +6,7 @@
 pub class Holder:
     pub name: str
 
-    def copy_name(self) -> str:
+    pub def copy_name(self) -> str:
         mut current = ""
         current = self.name
         return current

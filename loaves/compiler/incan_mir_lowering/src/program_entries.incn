@@ -338,7 +338,7 @@ pub model EmittedFrames:
     pub body_positions: list[int]
     pub positions: BTreeMap[RustCanonicalSymbolId, list[int]]
 
-    def contains(self, context: &BodyIrModule, candidate: &RustBody) -> bool:
+    pub def contains(self, context: &BodyIrModule, candidate: &RustBody) -> bool:
         """Reuse an identical canonical frame revisited through module context; differing facts still face overload validation."""
         match candidate.canonical:
             None => return false
@@ -351,7 +351,7 @@ pub model EmittedFrames:
                                 return true
         return false
 
-    def record(mut self, body: &RustBody, position: int) -> None:
+    pub def record(mut self, body: &RustBody, position: int) -> None:
         """Record a checked body position under its canonical identity, preserving emission order for exports."""
         match body.canonical:
             Some(identity) => self.positions.entry(identity.clone()).or_insert([]).push(position)

@@ -31,14 +31,14 @@ pub def size(n: int = len(ITEMS)) -> int:
 pub class Box:
     pub v: int
 
-    def fetch(self, n: int = LIMIT) -> int:
+    pub def fetch(self, n: int = LIMIT) -> int:
         return n + self.v
 
-    def add(self, n: int) -> int:
+    pub def add(self, n: int) -> int:
         return n + self.v
 
     capped = partial add(n=COUNT)
 
     @staticmethod
-    def make(v: int = COUNT) -> Box:
+    pub def make(v: int = COUNT) -> Box:
         return Box(v=v)

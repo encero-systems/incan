@@ -6,5 +6,5 @@ pub model Nomination:
     pub rank: int
     pub relevance_bps: int
 
-    def score(self) -> int:
+    pub def score(self) -> int:
         return self.rank * self.relevance_bps

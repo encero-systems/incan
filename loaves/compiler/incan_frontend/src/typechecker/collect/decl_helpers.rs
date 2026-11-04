@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
-use crate::symbols::{CallableParam, FieldInfo, MethodInfo, PropertyInfo, ResolvedType, TypeBoundInfo};
+use crate::symbols::{CallableParam, FieldInfo, MethodInfo, MethodScope, PropertyInfo, ResolvedType, TypeBoundInfo};
 use crate::typechecker::{BodyIrPropertyBindingInfo, FunctionBindingInfo, TypeChecker};
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_semantics_core::SemanticSourceTargetKind;
@@ -191,6 +191,7 @@ fn method_info_from_decl(
     owner_name: Option<&str>,
     owner_type_params: &[TypeParam],
     owner_self_ty: Option<&ResolvedType>,
+    members_type_private: bool,
 ) -> MethodInfo {
     let active_type_params = type_param_name_set(owner_type_params, &method.node.type_params);
     let type_params: Vec<String> = method.node.type_params.iter().map(|tp| tp.name.clone()).collect();
@@ -273,7 +274,8 @@ fn method_info_from_decl(
     checker.record_caller_visible_mut_params(Some(&identity), &method.node.params, &params);
     MethodInfo {
         identity: Some(identity),
-        visibility: method.node.visibility,
+        scope: MethodScope::written(method.node.visibility, members_type_private),
+        owner: owner_name.map(str::to_string),
         type_params,
         type_param_bounds,
         type_param_bound_details,
@@ -287,12 +289,14 @@ fn method_info_from_decl(
     }
 }
 
-/// Collect methods from method declarations into grouped overloads, preserving same-name declarations.
+/// Collect methods from method declarations into grouped overloads, preserving same-name declarations. An unmarked
+/// method is private to its type when the type's unmarked members are ([`crate::symbols::members_are_type_private`]).
 pub(super) fn collect_method_overloads(
     methods: &[Spanned<MethodDecl>],
     checker: &mut TypeChecker,
     owner_name: Option<&str>,
     owner_type_params: &[TypeParam],
+    members_type_private: bool,
 ) -> HashMap<String, Vec<MethodInfo>> {
     let owner_self_ty = owner_name.map(|name| owner_resolved_type(name, owner_type_params));
     let mut overloads: HashMap<String, Vec<MethodInfo>> = HashMap::new();
@@ -309,6 +313,7 @@ pub(super) fn collect_method_overloads(
                 owner_name,
                 owner_type_params,
                 owner_self_ty.as_ref(),
+                members_type_private,
             ));
     }
     overloads
@@ -390,7 +395,7 @@ pub(super) fn collect_fields(
     checker: &mut TypeChecker,
     owner: &str,
     owner_type_params: &[TypeParam],
-    private_fields_are_type_private: bool,
+    members_type_private: bool,
 ) -> HashMap<String, FieldInfo> {
     let owner_self_ty = owner_resolved_type(owner, owner_type_params);
     let active_type_params = type_param_name_set(owner_type_params, &[]);
@@ -419,7 +424,7 @@ pub(super) fn collect_fields(
                     surface_type_name: Some(crate::symbols::field_surface_type_name(&f.node.ty.node, &ty)),
                     ty,
                     visibility: f.node.visibility,
-                    is_type_private: crate::symbols::field_is_type_private(&f.node, private_fields_are_type_private),
+                    is_type_private: crate::symbols::field_is_type_private(&f.node, members_type_private),
                     owner: Some(owner.to_string()),
                     has_default: f.node.default.is_some(),
                     alias: f.node.metadata.alias.clone(),
@@ -535,7 +540,8 @@ pub(super) fn inject_validate_methods(
         "new",
         MethodInfo {
             identity: None,
-            visibility: Visibility::Public,
+            scope: MethodScope::Public,
+            owner: None,
             type_params: Vec::new(),
             type_param_bounds: HashMap::new(),
             type_param_bound_details: HashMap::new(),

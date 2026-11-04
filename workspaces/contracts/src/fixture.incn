@@ -35,11 +35,11 @@ pub model Fixture:
     # Admission and materialization share only authored inputs, never mutable scratch outputs.
     pub input: FixtureInput = FixtureInput()
 
-    def case_name(self) -> str:
+    pub def case_name(self) -> str:
         """The case's name in reports and selectors: `<family>/<area>/<name>`."""
         return f"{self.family}/{self.area}/{self.name}"
 
-    def project_path(self, scratch: Path) -> Path:
+    pub def project_path(self, scratch: Path) -> Path:
         """The stable working directory and Oven output owner for this case."""
         return scratch.joinpath(f"{self.family}-{self.area}-{self.name}")
 

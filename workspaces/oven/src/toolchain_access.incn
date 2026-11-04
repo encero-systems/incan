@@ -29,11 +29,11 @@ pub model ToolchainAccess:
     # Each names a library of the pinned toolchain the unit links, such as `rustc_driver`.
     pub sysroot_dependencies: list[str] = []
 
-    def declared(self) -> bool:
+    pub def declared(self) -> bool:
         """Whether the unit declares any access at all."""
         return len(self.unstable_features) + len(self.toolchain_components) + len(self.sysroot_dependencies) > 0
 
-    def to_json(self) -> JsonValue:
+    pub def to_json(self) -> JsonValue:
         """The declaration as the unit description spells it."""
         return JsonValue.object(
             {"unstable_features": names(self.unstable_features), "toolchain_components": names(self.toolchain_components), "sysroot_dependencies": names(
@@ -41,7 +41,7 @@ pub model ToolchainAccess:
             )},
         )
 
-    def identity_lines(self) -> list[str]:
+    pub def identity_lines(self) -> list[str]:
         """One line per declared value for the unit's identity, in a canonical order; none for an undeclared unit."""
         features = [f"unstable-feature={name}" for name in sorted(self.unstable_features)]
         components = [f"toolchain-component={name}" for name in sorted(self.toolchain_components)]

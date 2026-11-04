@@ -8,14 +8,14 @@
 
 
 class Box:
-    def get[T with Clone](self, value: T) -> T:
+    pub def get[T with Clone](self, value: T) -> T:
         return value
 
     def inspect[T with Display](self, value: &T) -> str:
         """Format an inferred shared borrow without consuming its caller's value."""
         return f"{value}"
 
-    def confirm[T with (Clone, Display)](self, value: T) -> T:
+    pub def confirm[T with (Clone, Display)](self, value: T) -> T:
         """Infer another method's binder through its shared-reference parameter."""
         println(self.inspect(value))
         return value
@@ -34,7 +34,7 @@ trait Echo:
 
 
 class Pair:
-    def swap[T with Clone, U with Clone](self, left: T, right: U) -> U:
+    pub def swap[T with Clone, U with Clone](self, left: T, right: U) -> U:
         return right
 
 

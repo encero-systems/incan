@@ -27,7 +27,7 @@ pub model Reply:
 
     pub value: int
 
-    def message(self) -> str:
+    pub def message(self) -> str:
         """Observe a nominal error without requiring its type in the consumer."""
         return str(self.value)
 

@@ -96,7 +96,7 @@ pub model InputSelection:
     pub profile: str = "debug"
     pub features: list[str] = []
 
-    def encoded(self) -> JsonValue:
+    pub def encoded(self) -> JsonValue:
         """The selection in its deterministic encoding."""
         return JsonValue.array(
             [JsonValue.string(self.command), JsonValue.string(self.profile), texts(sorted(self.features))],
@@ -118,7 +118,7 @@ pub model InputPath:
     pub path: str
     pub role: InputRole
 
-    def encoded(self) -> JsonValue:
+    pub def encoded(self) -> JsonValue:
         """The path and role in their deterministic encoding."""
         return JsonValue.array([JsonValue.string(self.path), JsonValue.string(self.role.value())])
 
@@ -134,7 +134,7 @@ pub model CapturedInput:
     # Whether its last change was old enough when it was recorded for these metadata to vouch for its bytes later.
     pub settled: bool
 
-    def encoded(self) -> JsonValue:
+    pub def encoded(self) -> JsonValue:
         """The input in its deterministic encoding."""
         return JsonValue.array(
             [
@@ -157,7 +157,7 @@ pub model CapturedListing:
     pub files: list[str]
     pub directories: list[str]
 
-    def encoded(self) -> JsonValue:
+    pub def encoded(self) -> JsonValue:
         """The listing in its deterministic encoding."""
         return JsonValue.array(
             [
@@ -180,7 +180,7 @@ pub model Declarations:
     # The source root the manifest declares, project-relative; empty when it declares none.
     pub source_root: str = ""
 
-    def encoded(self) -> JsonValue:
+    pub def encoded(self) -> JsonValue:
         """The declarations in their deterministic encoding."""
         return JsonValue.array(
             [
@@ -208,7 +208,7 @@ pub model BuildEpoch:
     # The admitted roots the toolchain pin names, derived when the pin was read and reused while it is unchanged.
     pub admitted: list[str] = []
 
-    def identity(self) -> Result[str, str]:
+    pub def identity(self) -> Result[str, str]:
         """The digest of the roots, the selection and what each path in reach held; metadata never enters it."""
         found = [JsonValue.array(
             [JsonValue.string(item.path), JsonValue.string(item.role.value()), JsonValue.string(item.digest)],
@@ -224,7 +224,7 @@ pub model BuildEpoch:
         )
         return Ok(hexlify(sha256.digest(json_text(content)?.encode("utf-8"))))
 
-    def encoded(self) -> Result[str, str]:
+    pub def encoded(self) -> Result[str, str]:
         """The whole epoch as deterministic text: equal epochs encode to equal bytes."""
         return json_text(
             JsonValue.array(
@@ -241,7 +241,7 @@ pub model BuildEpoch:
             ),
         )
 
-    def witnesses(self) -> list[LookupWitness]:
+    pub def witnesses(self) -> list[LookupWitness]:
         """The lookups this epoch recorded: those that resolved to a file and those that found nothing."""
         resolved = [item for item in self.inputs if item.role == InputRole.Resolved]
         mut found = [LookupWitness(path=item.path, resolved=true) for item in resolved]
@@ -250,7 +250,7 @@ pub model BuildEpoch:
         )
         return found
 
-    def input(self, path: str) -> Option[CapturedInput]:
+    pub def input(self, path: str) -> Option[CapturedInput]:
         """The captured input at `path`, if one was found there."""
         for item in self.inputs:
             if item.path == path:
@@ -278,7 +278,7 @@ pub model CaptureCounters:
     # Reads repeated because the file changed while it was read.
     pub retries: int = 0
 
-    def of(self, kind: InputClass) -> ClassCounters:
+    pub def of(self, kind: InputClass) -> ClassCounters:
         """The row of one class of input."""
         match kind:
             InputClass.Frozen => return self.frozen
@@ -308,7 +308,7 @@ pub model AdmittedHome:
     # The standard Loaves' sources.
     pub standard_library: str
 
-    def frozen_roots(self) -> list[str]:
+    pub def frozen_roots(self) -> list[str]:
         """
         The frozen roots the home itself holds: its content-named store and bakery, and the standard Loaves' artifacts
         and sources. The toolchain pin names the rest.

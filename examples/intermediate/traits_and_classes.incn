@@ -46,7 +46,7 @@ class Animal with Describable:
     def describe(self) -> str:
         return f"{self.name} is {self.age} years old"
 
-    def have_birthday(mut self) -> None:
+    pub def have_birthday(mut self) -> None:
         self.age = self.age + 1
 
 

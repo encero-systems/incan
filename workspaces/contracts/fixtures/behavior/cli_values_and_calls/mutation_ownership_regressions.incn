@@ -45,7 +45,7 @@ def fetch(key: str) -> Result[str, str]:
 class Cell:
     pub value: int
 
-    def tag(mut self) -> None:
+    pub def tag(mut self) -> None:
         self.value += 1
 
 

@@ -18,7 +18,7 @@ pub class TaskMemory:
             key: self.entries[key] for key in self.entries.keys() if current(self.entries[key], snapshot, now)
         }
 
-    def record(mut self, task: str, node: str, snapshot: str, ttl: int) -> Result[JsonValue, str]:
+    pub def record(mut self, task: str, node: str, snapshot: str, ttl: int) -> Result[JsonValue, str]:
         """Retain explicit positive feedback for an exact task and proved declaration in the current snapshot."""
         self.expire(snapshot)
         if task.strip() == "" or ttl < 1 or ttl > 86400:
@@ -34,7 +34,7 @@ pub class TaskMemory:
         self.entries[key] = value
         return Ok(value)
 
-    def read(mut self, task: str, snapshot: str) -> JsonValue:
+    pub def read(mut self, task: str, snapshot: str) -> JsonValue:
         """Read only current observations for this exact task; missing observations are an empty array."""
         self.expire(snapshot)
         return JsonValue.array([
@@ -42,7 +42,7 @@ pub class TaskMemory:
             if text(self.entries[key], "task") == task
         ])
 
-    def preferences(mut self, task: str, snapshot: str) -> Dict[str, int]:
+    pub def preferences(mut self, task: str, snapshot: str) -> Dict[str, int]:
         """Expose a bounded ranking boost separately from graph facts and compiler provenance."""
         self.expire(snapshot)
         return {

@@ -10,5 +10,5 @@ pub model Card:
     pub tags: dict[str, Tag]
     pub first: Option[EvidenceId]
 
-    def summary(self) -> str:
+    pub def summary(self) -> str:
         return f"{self.title} {len(self.evidence_ids)} {len(self.tags)}"

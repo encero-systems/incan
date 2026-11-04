@@ -17,7 +17,7 @@ class Book:
     """Own a dictionary behind a nominal wrapper."""
     pub counts: EncodedCounts
 
-    def snapshot(self) -> dict[str, int]:
+    pub def snapshot(self) -> dict[str, int]:
         """Read a nested dictionary field into an independent owned local."""
         counts = self.counts.0
         return counts
@@ -26,14 +26,14 @@ class Book:
 class Counter:
     pub count: int
 
-    def bump(mut self) -> None:
+    pub def bump(mut self) -> None:
         self.count += 1
 
 
 class Registry:
     pub groups: dict[str, list[int]]
 
-    def add(mut self, value: int) -> None:
+    pub def add(mut self, value: int) -> None:
         self.groups["a"].append(value)
 
 

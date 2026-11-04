@@ -24,7 +24,7 @@ enum Slot:
 class Grid:
     pub rows: list[Option[list[int]]]
 
-    def fill(mut self) -> None:
+    pub def fill(mut self) -> None:
         for row in self.rows:
             if let Some(xs) = row:
                 xs.append(7)

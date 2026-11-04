@@ -13,11 +13,11 @@ pub type MappedFile = newtype NativeMapping:
     guarantee.
     """
 
-    def len(self) -> int:
+    pub def len(self) -> int:
         """The number of mapped bytes."""
         return self.0.len()
 
-    def view(self, offset: int, length: int) -> Option[MappedView]:
+    pub def view(self, offset: int, length: int) -> Option[MappedView]:
         """
         Retain a bounded range without copying its bytes, or return `None` for an invalid range.
 
@@ -37,55 +37,55 @@ pub type MappedView = newtype NativeView:
     accept unaligned offsets, and allocate no heap buffer. `to_bytes()` is the explicit copying operation.
     """
 
-    def len(self) -> int:
+    pub def len(self) -> int:
         """The number of bytes in this view."""
         return self.0.len()
 
-    def slice(self, offset: int, length: int) -> Option[MappedView]:
+    pub def slice(self, offset: int, length: int) -> Option[MappedView]:
         """A zero-copy subview, or `None` when the range is negative, overflows, or exceeds this view."""
         return self.0.slice(offset, length).map((view) => MappedView(view))
 
-    def to_bytes(self) -> bytes:
+    pub def to_bytes(self) -> bytes:
         """Copy this view into independently owned bytes."""
         return self.0.to_bytes()
 
-    def read_u8(self, offset: int) -> Option[u8]:
+    pub def read_u8(self, offset: int) -> Option[u8]:
         """An unsigned byte at `offset`, or `None` outside this view."""
         return self.0.read_u8(offset)
 
-    def read_i8(self, offset: int) -> Option[i8]:
+    pub def read_i8(self, offset: int) -> Option[i8]:
         """A signed byte at `offset`, or `None` outside this view."""
         return self.0.read_i8(offset)
 
-    def read_u16_le(self, offset: int) -> Option[u16]:
+    pub def read_u16_le(self, offset: int) -> Option[u16]:
         """A little-endian unsigned 16-bit scalar, or `None` when it exceeds this view."""
         return self.0.read_u16_le(offset)
 
-    def read_u32_le(self, offset: int) -> Option[u32]:
+    pub def read_u32_le(self, offset: int) -> Option[u32]:
         """A little-endian unsigned 32-bit scalar, or `None` when it exceeds this view."""
         return self.0.read_u32_le(offset)
 
-    def read_u64_le(self, offset: int) -> Option[u64]:
+    pub def read_u64_le(self, offset: int) -> Option[u64]:
         """A little-endian unsigned 64-bit scalar, or `None` when it exceeds this view."""
         return self.0.read_u64_le(offset)
 
-    def read_i16_le(self, offset: int) -> Option[i16]:
+    pub def read_i16_le(self, offset: int) -> Option[i16]:
         """A little-endian signed 16-bit scalar, or `None` when it exceeds this view."""
         return self.0.read_i16_le(offset)
 
-    def read_i32_le(self, offset: int) -> Option[i32]:
+    pub def read_i32_le(self, offset: int) -> Option[i32]:
         """A little-endian signed 32-bit scalar, or `None` when it exceeds this view."""
         return self.0.read_i32_le(offset)
 
-    def read_i64_le(self, offset: int) -> Option[i64]:
+    pub def read_i64_le(self, offset: int) -> Option[i64]:
         """A little-endian signed 64-bit scalar, or `None` when it exceeds this view."""
         return self.0.read_i64_le(offset)
 
-    def read_f32_le(self, offset: int) -> Option[f32]:
+    pub def read_f32_le(self, offset: int) -> Option[f32]:
         """A little-endian IEEE-754 32-bit scalar, or `None` when it exceeds this view."""
         return self.0.read_f32_le(offset)
 
-    def read_f64_le(self, offset: int) -> Option[f64]:
+    pub def read_f64_le(self, offset: int) -> Option[f64]:
         """A little-endian IEEE-754 64-bit scalar, or `None` when it exceeds this view."""
         return self.0.read_f64_le(offset)
 

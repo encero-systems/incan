@@ -86,7 +86,7 @@ pub enum OrdinalMapErrorKind(str):
     InvalidKeyOffsets = "invalid_key_offsets"
     MissingKey = "missing_key"
 
-    def as_str(self) -> str:
+    pub def as_str(self) -> str:
         """Return the stable error-kind spelling."""
         return self.value()
 
@@ -101,20 +101,20 @@ pub model OrdinalMapError with Error:
     pub _index: int = -1
 
     @staticmethod
-    def invalid_key_record(detail: str, index: int = -1) -> Self:
+    pub def invalid_key_record(detail: str, index: int = -1) -> Self:
         """Build the standard malformed-key-record error used by `OrdinalKey.from_ordinal_bytes()`."""
         return OrdinalMapError.from_kind(OrdinalMapErrorKind.InvalidKeyRecord, detail, index)
 
     @staticmethod
-    def from_kind(kind: OrdinalMapErrorKind, detail: str, index: int = -1) -> Self:
+    pub def from_kind(kind: OrdinalMapErrorKind, detail: str, index: int = -1) -> Self:
         """Build a structured ordinal-map error from its typed category."""
         return OrdinalMapError(_kind=kind, _kind_name=kind.as_str(), _detail=detail, _index=index)
 
-    def kind(self) -> OrdinalMapErrorKind:
+    pub def kind(self) -> OrdinalMapErrorKind:
         """Return the typed stable error category."""
         return self._kind
 
-    def kind_name(self) -> str:
+    pub def kind_name(self) -> str:
         """Return the stable error category spelling."""
         return self._kind_name
 
@@ -122,7 +122,7 @@ pub model OrdinalMapError with Error:
         """Return the human-readable failure detail."""
         return self._detail
 
-    def index(self) -> int:
+    pub def index(self) -> int:
         """Return the relevant input or byte offset when the error can identify one."""
         return self._index
 
@@ -235,7 +235,7 @@ pub class OrdinalMap[K with (Clone, OrdinalKey)]:
         return _ordinal_map_from_records(empty, -1, key_encoding)
 
     @staticmethod
-    def from_keys(keys: list[K]) -> Result[Self, OrdinalMapError]:
+    pub def from_keys(keys: list[K]) -> Result[Self, OrdinalMapError]:
         """
         Build an ordinal map where each key maps to its zero-based input position.
 
@@ -247,7 +247,7 @@ pub class OrdinalMap[K with (Clone, OrdinalKey)]:
         return OrdinalMap.from_pairs(pairs)
 
     @staticmethod
-    def from_pairs(pairs: list[Tuple[K, int]]) -> Result[Self, OrdinalMapError]:
+    pub def from_pairs(pairs: list[Tuple[K, int]]) -> Result[Self, OrdinalMapError]:
         """
         Build a compact ordinal map from `(key, ordinal)` pairs.
 
@@ -294,7 +294,7 @@ pub class OrdinalMap[K with (Clone, OrdinalKey)]:
         return Ok(_ordinal_map_from_records(records, max_ordinal, key_encoding))
 
     @staticmethod
-    def from_bytes(data: bytes) -> Result[Self, OrdinalMapError]:
+    pub def from_bytes(data: bytes) -> Result[Self, OrdinalMapError]:
         """Decode the deterministic binary `OrdinalMap` container."""
         mut reader = _OrdinalMapReader(data=data, offset=0)
         magic = reader.read_exact(len(_ordinal_map_magic()))?
@@ -436,20 +436,20 @@ pub class OrdinalMap[K with (Clone, OrdinalKey)]:
             Ok(value) => return value
             Err(_) => return _missing_ordinal()
 
-    def get(self, key: K) -> Option[int]:
+    pub def get(self, key: K) -> Option[int]:
         """Safely look up a key using exact byte verification."""
         index = self._find_record(key, true)
         if index < 0:
             return None
         return Some(self._ordinal_at(index))
 
-    def require(self, key: K) -> Result[int, OrdinalMapError]:
+    pub def require(self, key: K) -> Result[int, OrdinalMapError]:
         """Safely look up a key, returning an error when it is absent."""
         match self.get(key):
             Some(value) => return Ok(value)
             None => return Err(_ordinal_map_error(OrdinalMapErrorKind.MissingKey, "OrdinalMap key is not present", -1))
 
-    def get_unchecked(self, key: K) -> int:
+    pub def get_unchecked(self, key: K) -> int:
         """
         Look up a key without exact key-byte verification after a hash match.
 
@@ -461,7 +461,7 @@ pub class OrdinalMap[K with (Clone, OrdinalKey)]:
             return _missing_ordinal()
         return self._ordinal_at(index)
 
-    def get_many(self, keys: list[K]) -> list[Option[int]]:
+    pub def get_many(self, keys: list[K]) -> list[Option[int]]:
         """Safely look up multiple keys using exact byte verification."""
         mut out: list[Option[int]] = []
         for key in keys:
@@ -472,7 +472,7 @@ pub class OrdinalMap[K with (Clone, OrdinalKey)]:
                 out.append(Some(self._ordinal_at(index)))
         return out
 
-    def require_many(self, keys: list[K]) -> Result[list[int], OrdinalMapError]:
+    pub def require_many(self, keys: list[K]) -> Result[list[int], OrdinalMapError]:
         """Safely look up multiple keys, failing on the first missing key."""
         mut out: list[int] = []
         for index, key in enumerate(keys):
@@ -482,7 +482,7 @@ pub class OrdinalMap[K with (Clone, OrdinalKey)]:
             out.append(self._ordinal_at(record_index))
         return Ok(out)
 
-    def get_many_unchecked(self, keys: list[K]) -> list[int]:
+    pub def get_many_unchecked(self, keys: list[K]) -> list[int]:
         """
         Look up multiple keys through the explicit unchecked path.
 
@@ -498,36 +498,36 @@ pub class OrdinalMap[K with (Clone, OrdinalKey)]:
                 out.append(self._ordinal_at(index))
         return out
 
-    def keys(self) -> list[K]:
+    pub def keys(self) -> list[K]:
         """Return keys in canonical ordinal order."""
         return self.key_values
 
-    def max_ordinal(self) -> int:
+    pub def max_ordinal(self) -> int:
         """Return the largest stored ordinal, or `-1` for an empty map."""
         return self.max_ordinal_value
 
-    def key_count(self) -> int:
+    pub def key_count(self) -> int:
         """Return the number of stored keys."""
         return len(self.key_values)
 
-    def ordinal_width_bytes(self) -> int:
+    pub def ordinal_width_bytes(self) -> int:
         """Return the compact byte width used for each ordinal cell."""
         return self.ordinal_width
 
-    def slot_count(self) -> int:
+    pub def slot_count(self) -> int:
         """Return the number of open-addressed lookup slots."""
         return self.slot_count_value
 
-    def storage_bytes(self) -> int:
+    pub def storage_bytes(self) -> int:
         """Return the byte count used by compact storage sections."""
         return len(self.key_records) + len(self.key_offsets) + len(self.ordinals) + len(self.slots) + len(self.metadata)
 
     # Compatibility spelling for callers that expect NumPy-style byte-size inspection.
-    def serialized_size(self) -> int:
+    pub def serialized_size(self) -> int:
         """Return the size of the deterministic serialized container."""
         return len(self.to_bytes())
 
-    def to_bytes(self) -> bytes:
+    pub def to_bytes(self) -> bytes:
         """Serialize this map using the deterministic `INCAN_ORDMAP` binary container."""
         key_section = _ordinal_key_section(self.key_offset_width, self.key_offsets, self.key_records)
         lookup_section = _ordinal_lookup_section(self.slot_width, self.slot_count_value, self.slots)
@@ -596,11 +596,11 @@ model _OrdinalMapReader:
     data: bytes
     offset: int
 
-    def remaining(self) -> int:
+    pub def remaining(self) -> int:
         """Return unread bytes remaining in the container."""
         return len(self.data) - self.offset
 
-    def read_u8(mut self) -> Result[int, OrdinalMapError]:
+    pub def read_u8(mut self) -> Result[int, OrdinalMapError]:
         """Read one unsigned byte from the current cursor."""
         if self.remaining() < 1:
             return Err(
@@ -610,22 +610,22 @@ model _OrdinalMapReader:
         self.offset += 1
         return Ok(value)
 
-    def read_u16_le(mut self) -> Result[int, OrdinalMapError]:
+    pub def read_u16_le(mut self) -> Result[int, OrdinalMapError]:
         """Read a little-endian 16-bit container field."""
         raw = self.read_exact(2)?
         return Ok(_read_u16_le(raw, 0))
 
-    def read_u16_prefixed_bytes(mut self) -> Result[bytes, OrdinalMapError]:
+    pub def read_u16_prefixed_bytes(mut self) -> Result[bytes, OrdinalMapError]:
         """Read a UTF-8 identifier or small payload prefixed by a little-endian `u16` length."""
         size = self.read_u16_le()?
         return self.read_exact(size)
 
-    def read_u64_le(mut self) -> Result[int, OrdinalMapError]:
+    pub def read_u64_le(mut self) -> Result[int, OrdinalMapError]:
         """Read a little-endian 64-bit container field."""
         raw = self.read_exact(8)?
         return Ok(_read_u64_le(raw, 0))
 
-    def read_exact(mut self, size: int) -> Result[bytes, OrdinalMapError]:
+    pub def read_exact(mut self, size: int) -> Result[bytes, OrdinalMapError]:
         """Read exactly `size` bytes from the current cursor."""
         if size < 0:
             return Err(
@@ -643,7 +643,7 @@ model _OrdinalMapReader:
         self.offset += size
         return Ok(self.data[start:self.offset])
 
-    def read_section(mut self) -> Result[bytes, OrdinalMapError]:
+    pub def read_section(mut self) -> Result[bytes, OrdinalMapError]:
         """Read a length-prefixed container section."""
         size = self.read_u64_le()?
         return self.read_exact(size)

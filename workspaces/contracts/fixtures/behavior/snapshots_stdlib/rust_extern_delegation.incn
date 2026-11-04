@@ -12,7 +12,7 @@ class NativeTesting:
 
     @staticmethod
     @rust.extern
-    def platform() -> str:
+    pub def platform() -> str:
         """Return the platform name from the native testing module."""
         ...
 

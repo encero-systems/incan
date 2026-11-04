@@ -23,7 +23,7 @@ pub model DateTimeOffset with OrdinalKey:
     pub offset: FixedOffset
 
     @staticmethod
-    def fromisoformat(value: str) -> Result[DateTimeOffset, DateTimeError]:
+    pub def fromisoformat(value: str) -> Result[DateTimeOffset, DateTimeError]:
         """
         Parse an ISO fixed-offset datetime string.
 
@@ -46,7 +46,7 @@ pub model DateTimeOffset with OrdinalKey:
         return Ok(DateTimeOffset(datetime=datetime, offset=parsed.offset))
 
     @staticmethod
-    def strptime(value: str, format: str) -> Result[DateTimeOffset, DateTimeError]:
+    pub def strptime(value: str, format: str) -> Result[DateTimeOffset, DateTimeError]:
         """
         Parse a fixed-offset datetime with an Incan-native Python-shaped format string.
 
@@ -88,7 +88,7 @@ pub model DateTimeOffset with OrdinalKey:
             Ok(offset) => return Ok(DateTimeOffset(datetime=datetime, offset=offset))
             Err(err) => return Err(OrdinalMapError.invalid_key_record(err.message()))
 
-    def isoformat(self) -> str:
+    pub def isoformat(self) -> str:
         """
         Format this fixed-offset datetime as ISO text.
 
@@ -105,7 +105,7 @@ pub model DateTimeOffset with OrdinalKey:
         out.extend(ordinal_key_signed_magnitude_i64(self.offset.seconds))
         return out
 
-    def strftime(self, format: str) -> Result[str, DateTimeError]:
+    pub def strftime(self, format: str) -> Result[str, DateTimeError]:
         """
         Format this fixed-offset datetime with an Incan-native Python-shaped format string.
 
@@ -147,7 +147,7 @@ pub model DateTimeOffset with OrdinalKey:
             return self.datetime.time.nanosecond < other.datetime.time.nanosecond
         return self._utc_seconds() < other._utc_seconds()
 
-    def add_interval(self, interval: Union[TimeDelta, YearMonthInterval, DateTimeInterval]) -> DateTimeOffset:
+    pub def add_interval(self, interval: Union[TimeDelta, YearMonthInterval, DateTimeInterval]) -> DateTimeOffset:
         """
         Apply a civil interval while preserving this fixed offset.
 

@@ -27,6 +27,7 @@ impl TypeChecker {
             self.type_info.record_resolved_identity(call_site_span, identity);
         }
         let first_error = self.errors.len();
+        self.refuse_inaccessible_method(method, &method_info, receiver_ty, call_site_span);
         let result = self.check_generic_method_call(
             method,
             method_info,

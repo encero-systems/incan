@@ -53,14 +53,14 @@ pub model WorkObserver:
     pub start: Option[() -> Option[Clock]] = None
     pub finish: Option[(Operation, str, Option[Clock], int) -> None] = None
 
-    def begin(self) -> Option[Clock]:
+    pub def begin(self) -> Option[Clock]:
         """Start only a fully configured observer; the empty observer allocates no observation state."""
         if let Some(_) = self.finish:
             if let Some(callback) = self.start:
                 return callback()
         return None
 
-    def record(self, operation: Operation, key: str, clock: Option[Clock], bytes: int) -> None:
+    pub def record(self, operation: Operation, key: str, clock: Option[Clock], bytes: int) -> None:
         """Finish an enabled operation through the caller's sink; no clock means no callback."""
         if let Some(_) = clock:
             if let Some(callback) = self.finish:
@@ -170,7 +170,7 @@ pub model Emitter:
     process: int
 
     @staticmethod
-    def open(destination: str, producer: str, run: str = "", request: str = "") -> Result[Emitter, TraceError]:
+    pub def open(destination: str, producer: str, run: str = "", request: str = "") -> Result[Emitter, TraceError]:
         """Retain a writer and invariant fields once; a refused configuration never changes console output."""
         if not bounded(producer) or not bounded(run) or not bounded(request):
             return Err(TraceError.FieldBound)
@@ -178,7 +178,7 @@ pub model Emitter:
             Emitter(writer=CHANNELS.writer(destination)?, producer=producer, run=run, request=request, process=int(id())),
         )
 
-    def emit(self, clock: Clock, operation: Operation, key: str, bytes: int = 0) -> Result[None, TraceError]:
+    pub def emit(self, clock: Clock, operation: Operation, key: str, bytes: int = 0) -> Result[None, TraceError]:
         """
         Complete a typed operation directly into the bounded native serializer.
 
@@ -229,7 +229,7 @@ pub model Writer:
     scratch: Arc[Mutex[Vec[u8]]]
 
     @staticmethod
-    def open(destination: str) -> Result[Writer, TraceError]:
+    pub def open(destination: str) -> Result[Writer, TraceError]:
         """Open a bounded native buffer once; ownership stays behind the typed writer API."""
         if destination == "" or destination == "-":
             return Err(TraceError.Channel)
@@ -243,12 +243,12 @@ pub model Writer:
             ),
         )
 
-    def record(self, span: &EngineSpan) -> Result[None, TraceError]:
+    pub def record(self, span: &EngineSpan) -> Result[None, TraceError]:
         """Encode into the retained fixed slice; only a complete, bounded record reaches the file buffer."""
         row = wire_record(span)?
         return self.write_record(row)
 
-    def write_record(self, row: &TraceRecord) -> Result[None, TraceError]:
+    pub def write_record(self, row: &TraceRecord) -> Result[None, TraceError]:
         """Encode an admitted typed record into fixed scratch before publishing any of its bytes."""
         mut scratch = self.scratch.lock().map_err((_) => TraceError.Channel)?
         used = fill(scratch.deref_mut(), row)?
@@ -256,7 +256,7 @@ pub model Writer:
         output.write_all(scratch.as_slice().split_at(used).0).map_err((_) => TraceError.Channel)?
         return Ok(None)
 
-    def append(self, text: &str) -> Result[None, TraceError]:
+    pub def append(self, text: &str) -> Result[None, TraceError]:
         """Queue one bounded record; the native buffer drains with back-pressure at its size bound."""
         payload = RustString.from(text).into_bytes()
         return self.write_bytes(payload)
@@ -269,7 +269,7 @@ pub model Writer:
         output.write_all(payload).map_err((_) => TraceError.Channel)?
         return Ok(None)
 
-    def flush(self) -> Result[None, TraceError]:
+    pub def flush(self) -> Result[None, TraceError]:
         """Drain the channel, reporting an incomplete observation if its write fails."""
         mut output = self.output.lock().map_err((_) => TraceError.Channel)?
         output.flush().map_err((_) => TraceError.Channel)?

@@ -18,7 +18,7 @@ pub enum IntakeErrorKind(str):
     Unsupported = "unsupported"
     Cycle = "cycle"
 
-    def as_str(self) -> str:
+    pub def as_str(self) -> str:
         """Return the stable diagnostic category spelling."""
         return self.value()
 
@@ -36,7 +36,7 @@ pub model IntakeError with Error:
         """Render the manifest, literal key segments, category and refusal detail."""
         return f"{self.manifest}: {self.field}: {self.kind.as_str()}: {self.detail}"
 
-    def with_source(self, source: str) -> Self:
+    pub def with_source(self, source: str) -> Self:
         """Attach a literal-key source location; missing fields legitimately have no span."""
         mut location: Option[TomlLocation] = None
         match toml.locate(source, self.field):

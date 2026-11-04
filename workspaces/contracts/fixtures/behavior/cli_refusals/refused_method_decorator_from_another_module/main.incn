@@ -8,7 +8,7 @@ class Box:
     value: int
 
     @logged("label")
-    def label(self, value: int) -> str:
+    pub def label(self, value: int) -> str:
         return f"{value}"
 
 

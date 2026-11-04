@@ -74,14 +74,14 @@ pub model StoreStatus:
     pub unrecorded: int
     pub unrecorded_bytes: int
 
-    def reserved(self) -> int:
+    pub def reserved(self) -> int:
         """The bytes live reservations hold back from admission."""
         mut total = 0
         for reservation in self.reservations:
             total += reservation.outstanding()
         return total
 
-    def admissible(self) -> int:
+    pub def admissible(self) -> int:
         """The bytes a new write could be admitted for now."""
         return self.available - self.reserved() - self.policy.min_free_bytes
 

@@ -6,7 +6,7 @@ model Product:
 class Cart:
     items: list[Product]
 
-    def total(self) -> float:
+    pub def total(self) -> float:
         mut total = 0.0
         for item in self.items:
             total += item.price

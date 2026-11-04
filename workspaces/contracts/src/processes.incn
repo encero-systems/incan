@@ -24,7 +24,7 @@ pub model Outcome:
     # The exit code; `None` when the process ended without one (a signal).
     pub code: Option[int]
 
-    def exit_text(self) -> str:
+    pub def exit_text(self) -> str:
         """The exit code as a report shows it."""
         match self.code:
             Some(code) => return str(code)

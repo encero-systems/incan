@@ -90,13 +90,13 @@ pub model Header:
     # Why the fixture does not hold yet (`# pending:`).
     pub pending: Option[str]
 
-    def items(self, key: str) -> list[str]:
+    pub def items(self, key: str) -> list[str]:
         """The items of the block `key`; empty when it is not declared."""
         if key in self.block_keys:
             return self.block_items[key]
         return []
 
-    def declares(self, key: str) -> bool:
+    pub def declares(self, key: str) -> bool:
         """Whether the header declares the directive `key`."""
         if key in self.block_keys:
             return true
@@ -110,7 +110,7 @@ pub model Header:
             return self.accepted
         return false
 
-    def expected_exit(self) -> int:
+    pub def expected_exit(self) -> int:
         """The exit code a run must end with: the declared one, or 0."""
         match self.exit_code:
             Some(code) => return code

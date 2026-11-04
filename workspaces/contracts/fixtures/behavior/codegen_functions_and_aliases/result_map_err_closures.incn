@@ -8,7 +8,7 @@
 pub model Failure:
     pub detail: str
 
-    def message(self) -> str:
+    pub def message(self) -> str:
         return self.detail
 
 

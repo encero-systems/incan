@@ -27,7 +27,7 @@ class Holder:
     def give_back(self, open: UnixStream) -> None:
         _ = self.stream.replace(Some(open))
 
-    def poll(self, early: bool) -> Result[str, str]:
+    pub def poll(self, early: bool) -> Result[str, str]:
         open = self.lend()?
         match open.set_nonblocking(true):
             Err(error) =>

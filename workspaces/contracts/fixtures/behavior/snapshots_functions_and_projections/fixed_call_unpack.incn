@@ -14,7 +14,7 @@ def route(path: str, method: str) -> str:
 
 
 class Counter:
-    def add(self, left: int, right: int) -> int:
+    pub def add(self, left: int, right: int) -> int:
         return left + right
 
 

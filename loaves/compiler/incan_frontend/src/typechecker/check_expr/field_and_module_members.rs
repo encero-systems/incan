@@ -55,20 +55,14 @@ impl TypeChecker {
             .map(|(name, info)| (name.clone(), info))
     }
 
-    /// Keep type-private field access within the declaring type and module. A caller's equal-spelled owner grants no
-    /// rights to a foreign field, and absent origin evidence cannot prove private access.
+    /// Keep type-private field access within the declaring type and module, by the rule methods share
+    /// ([`Self::type_private_member_is_inaccessible`]).
     pub(super) fn private_field_is_inaccessible(&self, type_name: &str, field: &FieldInfo) -> bool {
         if !field.is_type_private {
             return false;
         }
         let owner = field.owner.as_deref().unwrap_or(type_name);
-        if self.current_method_owner.as_deref() != Some(owner) {
-            return true;
-        }
-        match (field.identity.as_ref(), self.symbols.module_type_identity(owner)) {
-            (Some(field), Some(owner)) => field.origin != owner.origin,
-            _ => true,
-        }
+        self.type_private_member_is_inaccessible(owner, field.identity.as_ref())
     }
 
     /// Report a private field under the source name of the class or model that declares it. The receiver's type

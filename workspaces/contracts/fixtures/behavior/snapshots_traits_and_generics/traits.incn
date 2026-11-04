@@ -93,7 +93,7 @@ class Carton with Resizable:
         self.height *= factor
         self.depth *= factor
 
-    def volume(self) -> float:
+    pub def volume(self) -> float:
         return self.width * self.height * self.depth
 
 

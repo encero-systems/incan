@@ -122,21 +122,21 @@ pub class Reader:
                 None => return Item.Integer(0)
         return current.clone()
 
-    def read(self, item: Item) -> Item:
+    pub def read(self, item: Item) -> Item:
         return self.select(item, ["project", "count"])
 
 
 pub class Holder:
     item: Item
 
-    def observe(self) -> bool:
+    pub def observe(self) -> bool:
         return is_table(self.item)
 
-    def view(self) -> bool:
+    pub def view(self) -> bool:
         current: &Item = self.item
         return current.is_table()
 
-    def walk(self, keys: list[str]) -> bool:
+    pub def walk(self, keys: list[str]) -> bool:
         mut current = self.item
         for key in keys:
             match current.get(key):
@@ -144,12 +144,12 @@ pub class Holder:
                 None => return false
         return current.is_integer()
 
-    def snapshot(mut self) -> bool:
+    pub def snapshot(mut self) -> bool:
         current = self.item
         self.item = Item.Integer(0)
         return current.is_integer()
 
-    def replaced(self) -> bool:
+    pub def replaced(self) -> bool:
         return self.item.is_integer()
 
 

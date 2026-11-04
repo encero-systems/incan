@@ -14,10 +14,10 @@ class Buffer:
     pub items: list[int]
     pub label: str
 
-    async def size_plus(self, extra: Borrowed[int]) -> int:
+    pub async def size_plus(self, extra: Borrowed[int]) -> int:
         return len(self.items) + extra
 
-    async def label_view(self) -> Borrowed[str] from self.label:
+    pub async def label_view(self) -> Borrowed[str] from self.label:
         return self.label
 
 

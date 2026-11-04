@@ -19,7 +19,7 @@ pub model InitializationGate:
     pub release_sender: Sender[bool]
     pub attempts: Arc[AtomicUsize]
 
-    def snapshot(self) -> InitializationGate:
+    pub def snapshot(self) -> InitializationGate:
         """Release a static guard with independent handles to the same channels and attempt count."""
         return InitializationGate(
             started=self.started,

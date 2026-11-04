@@ -12,11 +12,11 @@ pub model ScopedSurfaceEligibility:
     pub call: Option[str] = None
     pub position: str = "DeclarationBody"
 
-    def call_argument(declaration: str, call: str) -> Self:
+    pub def call_argument(declaration: str, call: str) -> Self:
         """Accept the surface in an argument to the named call inside the owning declaration."""
         return ScopedSurfaceEligibility(declaration=declaration, call=Some(call), position="CallArgument")
 
-    def to_json(self) -> JsonValue:
+    pub def to_json(self) -> JsonValue:
         """Encode one positive position using the published descriptor representation."""
         return JsonValue.object(
             {"declaration": JsonValue.string(self.declaration), "clause": optional_text(self.clause), "call": optional_text(
@@ -39,7 +39,7 @@ pub enum ScopedSurfaceSyntax:
     Glyph(str)
     LeadingDotPath(int, Option[int])
 
-    def to_json(self) -> JsonValue:
+    pub def to_json(self) -> JsonValue:
         """Encode the parser's structured syntax descriptor."""
         match self:
             ScopedSurfaceSyntax.Glyph(spelling) =>
@@ -61,11 +61,11 @@ pub enum ScopedSurfaceReceiver:
     Clause(str)
     Custom(str)
 
-    def custom(key: str) -> Self:
+    pub def custom(key: str) -> Self:
         """Name a receiver policy interpreted by the provider's desugarer."""
         return ScopedSurfaceReceiver.Custom(key)
 
-    def descriptor_json(self) -> JsonValue:
+    pub def descriptor_json(self) -> JsonValue:
         """Encode receiver descriptors independently of the worker syntax model's derived JSON."""
         match self:
             ScopedSurfaceReceiver.OwningDeclaration => return JsonValue.string("OwningDeclaration")
@@ -85,11 +85,11 @@ pub model ScopedSurfaceDescriptor:
     pub receiver: Option[ScopedSurfaceReceiver] = None
     pub pairwise: bool = false
 
-    def operator(key: str, glyph: str) -> Self:
+    pub def operator(key: str, glyph: str) -> Self:
         """Register an operator-like glyph without assigning a builtin operation to it."""
         return ScopedSurfaceDescriptor(key=key, syntax=ScopedSurfaceSyntax.Glyph(glyph))
 
-    def binding(key: str, glyph: str) -> Self:
+    pub def binding(key: str, glyph: str) -> Self:
         """Register a binding-like glyph whose meaning belongs to its desugarer."""
         return ScopedSurfaceDescriptor(
             key=key,
@@ -97,7 +97,7 @@ pub model ScopedSurfaceDescriptor:
             family=ScopedSurfaceFamily.BindingLike,
         )
 
-    def leading_dot_path(key: str) -> Self:
+    pub def leading_dot_path(key: str) -> Self:
         """Register a leading-dot path with at least one segment and no upper segment-count bound."""
         return ScopedSurfaceDescriptor(
             key=key,
@@ -105,29 +105,29 @@ pub model ScopedSurfaceDescriptor:
             family=ScopedSurfaceFamily.ExpressionForm,
         )
 
-    def in_declaration_body(self, declaration: str) -> Self:
+    pub def in_declaration_body(self, declaration: str) -> Self:
         """Append a positive declaration-body position."""
         return self.with_eligibilities([ScopedSurfaceEligibility(declaration=declaration)])
 
-    def with_eligibilities(self, eligible_in: list[ScopedSurfaceEligibility]) -> Self:
+    pub def with_eligibilities(self, eligible_in: list[ScopedSurfaceEligibility]) -> Self:
         """Append positive positions in declaration order."""
         mut result = self
         result.eligible_in = result.eligible_in + eligible_in
         return result
 
-    def with_receiver(self, receiver: ScopedSurfaceReceiver) -> Self:
+    pub def with_receiver(self, receiver: ScopedSurfaceReceiver) -> Self:
         """Set the receiver policy retained in accepted leading-dot syntax."""
         mut result = self
         result.receiver = Some(receiver)
         return result
 
-    def pairwise_chain(self) -> Self:
+    pub def pairwise_chain(self) -> Self:
         """Preserve repeated operator occurrences as pairwise links for formatting."""
         mut result = self
         result.pairwise = true
         return result
 
-    def to_json(self) -> JsonValue:
+    pub def to_json(self) -> JsonValue:
         """Encode the descriptor; misuse diagnostics remain disabled outside positive positions."""
         mut receiver = JsonValue.null()
         if let Some(value) = self.receiver:

@@ -17,7 +17,7 @@
 class Cell:
     pub value: int
 
-    def bump(mut self) -> int:
+    pub def bump(mut self) -> int:
         self.value += 1
         return self.value
 

@@ -28,7 +28,7 @@ class Endpoint:
 
     pub stream: Rc[RefCell[UnixStream]]
 
-    def connected(self) -> bool:
+    pub def connected(self) -> bool:
         """Whether the socket still has its peer."""
         return self.stream.borrow().peer_addr().is_ok()
 
