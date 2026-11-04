@@ -13,7 +13,8 @@ pub(super) struct ReturnSignature {
     original: IncanType,
     carrier: IncanType,
     parameters: Vec<String>,
-    identities: BTreeMap<String, CanonicalSymbolId>,
+    // The declaring frame's own map: every module signs every context frame, so a copy per signature was quadratic.
+    identities: bir::SharedIdentities,
     opaque: bool,
     hidden_inputs: Vec<(usize, usize)>,
 }
@@ -181,7 +182,7 @@ pub(super) fn signature(body: &bir::Body) -> ReturnSignature {
         original: body.return_type.clone(),
         carrier: body.return_type.clone(),
         parameters: body.type_parameters.clone(),
-        identities: (*body.named_type_identities).clone(),
+        identities: body.named_type_identities.clone(),
         opaque: trait_type(&body.return_type, &body.named_type_identities),
         hidden_inputs: body
             .params

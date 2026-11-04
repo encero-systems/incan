@@ -705,10 +705,10 @@ fn retain_pattern(pattern: &mut bir::Pattern, identities: &Identities) {
         _ => {}
     }
 }
-/// One declaring frame's checked result and the canonical bindings that give its nominal leaves meaning.
+/// One declaring frame's checked result and the frame's shared canonical bindings that give its nominal leaves meaning.
 struct ReturnCarrier {
     ty: IncanType,
-    identities: Identities,
+    identities: bir::SharedIdentities,
 }
 
 type ReturnCarriers = BTreeMap<CanonicalSymbolId, ReturnCarrier>;
@@ -770,7 +770,7 @@ fn return_carriers(module: &bir::BodyIrModule, context: &[bir::BodyIrModule]) ->
                     identity.clone(),
                     ReturnCarrier {
                         ty: body.return_type.clone(),
-                        identities: (*body.named_type_identities).clone(),
+                        identities: body.named_type_identities.clone(),
                     },
                 )
             })
