@@ -1,0 +1,9 @@
+[project]
+name = "generic_mutable_collection_parameters"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+collection_mutations = { path = "deps/collection_mutations" }
