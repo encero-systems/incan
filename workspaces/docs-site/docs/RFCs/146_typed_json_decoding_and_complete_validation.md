@@ -271,10 +271,10 @@ For `{"title": "Example", "atoms": [{"id": "!"}, {"id": "?"}]}`, decoding stops 
 
 ### Read JSONL one record at a time
 
-A JSONL source is an ordinary iterator with one `Result` per physical record, so a bad line does not stop the next one. Each record failure is a `JsonlRowError`:
+A JSONL source is an ordinary iterator with one `Result` per physical record, so a bad line does not stop the next one. Each record failure is a `JsonlRecordError`:
 
 ```incan
-error JsonlRowError[E with Error]:
+error JsonlRecordError[E with Error]:
     BlankRecord(line: int) = f"JSONL line {line} contains a blank record."
 
     RecordTooLarge(line: int, max_record_bytes: int) = f"JSONL line {line} exceeds {max_record_bytes} bytes."
@@ -295,11 +295,11 @@ def inspect_records(source: str) -> None:
             Ok(value) => println("Valid record.")
             Err(error) => println(error.message())
 
-def snapshots(source: str) -> Iterator[Result[PackageSnapshot, JsonlRowError[JsonDecodeError]]]:
+def snapshots(source: str) -> Iterator[Result[PackageSnapshot, JsonlRecordError[JsonDecodeError]]]:
     return jsonl[PackageSnapshot](source)
 ```
 
-Construction decodes nothing; each step decodes one record. Blank or whitespace-only records produce `JsonlRowError.BlankRecord` with their one-based physical line number, without invoking the decoder or inventing an upstream cause, as the [JSON Lines format](https://jsonlines.org/) requires each record to contain a JSON value. `skip_blank_lines=true` skips them while keeping later line numbers. A normal terminating newline does not create an extra record, and empty input contains zero records.
+Construction decodes nothing; each step decodes one record. Blank or whitespace-only records produce `JsonlRecordError.BlankRecord` with their one-based physical line number, without invoking the decoder or inventing an upstream cause, as the [JSON Lines format](https://jsonlines.org/) requires each record to contain a JSON value. `skip_blank_lines=true` skips them while keeping later line numbers. A normal terminating newline does not create an extra record, and empty input contains zero records.
 
 ### Read large files without loading them
 
@@ -319,7 +319,7 @@ def scan(path: Path) -> Result[None, IoError]:
     return Ok(None)
 ```
 
-A `File` is a `BinaryReader`, and it is read record by record; physical line numbers survive across buffer boundaries. A record longer than `max_record_bytes` becomes `JsonlRowError.RecordTooLarge` for that line, and reading continues with the next line. Over a reader, the source is a `FallibleIterator` whose advancement fails with `IoError`, so a failed read stays distinct from a bad record, and the loop header's `?` propagates it under RFC 115. The caller owns the reader, here through an RFC 094 `with` block.
+A `File` is a `BinaryReader`, and it is read record by record; physical line numbers survive across buffer boundaries. A record longer than `max_record_bytes` becomes `JsonlRecordError.RecordTooLarge` for that line, and reading continues with the next line. Over a reader, the source is a `FallibleIterator` whose advancement fails with `IoError`, so a failed read stays distinct from a bad record, and the loop header's `?` propagates it under RFC 115. The caller owns the reader, here through an RFC 094 `with` block.
 
 ### Resume an interrupted import
 
@@ -395,9 +395,9 @@ This follows the distinction between explicit iterator scope selection and valid
 9. Canonical registered-check model construction and canonical newtype `from_underlying` hooks must expose `Result[Self, ValidationError]`. Authored validators may retain precise domain error return types; canonical boundaries capture those failures under ValidationError while preserving original typed identity, payload, hierarchy, and diagnostics. JSON decoding must use recoverable construction and retain the validation umbrella under its located JsonDecodeError failure. Ordinary implicit coercion keeps RFC 017's existing behavior; this RFC does not turn implicit construction into Result propagation.
 10. Every JsonDecodeError must expose `coverage()`, a structured record of which checks completed, which were blocked by an invalid prerequisite, which were stopped by policy, and which were interrupted, each with its document path. A check that did not run must never be reported as a failure or a success.
 11. `std.json` must export JsonDecodeError, the shared JsonError family, InputPath, SourcePosition, JsonlPosition, JsonlResumeError, and the JSONL functions. A SourcePosition must carry the source identity, a one-based `line`, and a one-based `column` counted in Unicode characters; when the exact UTF-8 location is known, it must also carry a one-based `byte_position`. Rendered and machine-readable reports must use the same convention. Array index segments in an InputPath keep ordinary collection indexing and are not source positions. Missing position evidence must be reported as unavailable, never invented.
-12. A JSONL source must be an ordinary iterator yielding one `Result[T, JsonlRowError[E]]` per physical record and must decode a record only when it is consumed. Over a string it must be an `Iterator`; over a `std.io.BinaryReader` it must be a `FallibleIterator` whose advancement fails with `IoError`, so a record failure stays distinct from a failed read. `std.json.parse_jsonl(source)` must yield dynamic records with `JsonError` causes, and `std.json.jsonl[T](source)` must yield typed records decoded through `T.from_json`.
-13. By default a blank or whitespace-only physical record must yield `JsonlRowError.BlankRecord` with its one-based physical line number, rather than a generic decoder failure or silent skipping. `skip_blank_lines=true` may request skipping; it must not renumber subsequent records. A terminating newline must not create another record, and empty input must contain zero records.
-14. A reader-backed source must read incrementally, without loading the whole input, and must preserve physical line numbers across buffer boundaries. It must require a positive `max_record_bytes`; a longer record must yield `JsonlRowError.RecordTooLarge` for that line, after which reading continues at the next line. Acquiring, owning, and closing the reader belong to the caller.
+12. A JSONL source must be an ordinary iterator yielding one `Result[T, JsonlRecordError[E]]` per physical record and must decode a record only when it is consumed. Over a string it must be an `Iterator`; over a `std.io.BinaryReader` it must be a `FallibleIterator` whose advancement fails with `IoError`, so a record failure stays distinct from a failed read. `std.json.parse_jsonl(source)` must yield dynamic records with `JsonError` causes, and `std.json.jsonl[T](source)` must yield typed records decoded through `T.from_json`.
+13. By default a blank or whitespace-only physical record must yield `JsonlRecordError.BlankRecord` with its one-based physical line number, rather than a generic decoder failure or silent skipping. `skip_blank_lines=true` may request skipping; it must not renumber subsequent records. A terminating newline must not create another record, and empty input must contain zero records.
+14. A reader-backed source must read incrementally, without loading the whole input, and must preserve physical line numbers across buffer boundaries. It must require a positive `max_record_bytes`; a longer record must yield `JsonlRecordError.RecordTooLarge` for that line, after which reading continues at the next line. Acquiring, owning, and closing the reader belong to the caller.
 15. A reader-backed source must provide `with_positions()`, pairing every item, success or failure, with the JsonlPosition after it. A JsonlPosition must carry the one-based `line` and `byte_position` at which the next record starts and a check of the record before it, and must have a stable JSON form. `parse_jsonl` and `jsonl[T]` must accept `after=position` over a `std.io.SeekableReader`; that call must return a `Result` with JsonlResumeError, must seek without decoding the input before the position, and must continue physical line numbering from it. It must fail with `JsonlResumeError.SourceChanged` when the input is shorter than the position or the record before it differs, and must never continue at a byte offset inside different content. When the position follows a final record that had no terminating newline, resuming must accept a newline as that record's terminator and must fail with `SourceChanged` when the record continued instead. Records appended after a position must be read normally, and the source must end at the reader's end.
 16. Collecting JSONL records must use RFC 142's shared consumers, with no JSON-specific collector. Under `item_errors=ErrorPolicy.CollectAll`, `collect` must return `Collected` with the successes in source order and every record failure with its original error and physical line, without implying acceptance or commit. A protective `max_items` limit, a failed read, or cancellation must return `Collected.Stopped` keeping everything consumed. A `take(n)` prefix completes normally for that prefix. Neither must claim validation of an enclosing source or the existence of further records.
 17. Aggregate failures must use RFC 131's common hierarchy, traversal, and diagnostic preservation contracts. A runtime-sized collection must not be disguised as the fixed authored `caused_by` tuple. General aggregate representation is owned by RFC 131; this RFC owns the decoder surfaces that use it.
