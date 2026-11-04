@@ -37,11 +37,12 @@ pub(super) fn carrier_construction<'a>(
     carrier_constructor(facts, callee).map(|id| (id, arguments.as_slice()))
 }
 
-/// The call whose returned view an expression produces: the expression itself, or the call `?` takes a carried view
-/// out of, through parentheses.
+/// The call whose returned view an expression produces: the expression itself, or the call `await` or `?` takes a
+/// view out of, through parentheses.
 pub(super) fn view_call(expression: &Spanned<Expr>) -> &Spanned<Expr> {
     match &expression.node {
         Expr::Paren(inner) | Expr::Try(inner) => view_call(inner),
+        Expr::Surface(surface) if let Some(awaited) = awaited(surface) => view_call(awaited),
         _ => expression,
     }
 }

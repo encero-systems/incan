@@ -218,13 +218,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             |member| member.return_type.clone(),
         );
         let ty = retained_method.as_ref().map_or(ty, |method| method.return_type.clone());
-        let ty = if self
+        let async_target = self
             .type_info
             .calls
             .body_ir_async_call_targets
             .get(&span)
-            .is_some_and(|identity| canonical.as_ref() == Some(identity))
-        {
+            .is_some_and(|identity| canonical.as_ref() == Some(identity));
+        let ty = if async_target {
             IncanType::Generic {
                 base: "Awaitable".into(),
                 args: vec![ty],
@@ -258,6 +258,23 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             type_args: resolved_type_args,
             binding,
         };
+        self.finish_bound_method_call(target, call_args, ty, async_target, span, scope, hir_span_value, out)
+    }
+
+    /// Emit a fully bound source method call, preserving direct and carried returned-view representations. Async
+    /// direct views keep their physical future reference until `await` restores the authenticated source-place alias.
+    #[allow(clippy::too_many_arguments)]
+    fn finish_bound_method_call(
+        &mut self,
+        target: bir::MethodTarget,
+        call_args: Vec<bir::ArgumentElement>,
+        ty: IncanType,
+        async_target: bool,
+        span: ast::Span,
+        scope: bir::ScopeId,
+        hir_span_value: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
         let receiver_argument = match call_args.first() {
             Some(bir::ArgumentElement::One(operand)) => Some(operand.clone()),
             _ => None,
@@ -266,6 +283,21 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             self.view_call_place(span, receiver_argument.as_ref(), call_args.get(1..).unwrap_or_default())
         {
             return match view {
+                Ok((place, access)) if async_target => {
+                    self.awaited_view_places.insert(span, (place, access));
+                    match super::returned_views::async_reference_carrier(ty, access) {
+                        Ok(ty) => self.push_call_temp(
+                            bir::Callee::Method(target),
+                            call_args,
+                            ty,
+                            scope,
+                            hir_span_value,
+                            false,
+                            out,
+                        ),
+                        Err(description) => self.unsupported_operand(description, scope, hir_span_value, out),
+                    }
+                }
                 Ok((place, access)) => self.push_view_call(
                     bir::Callee::Method(target),
                     call_args,

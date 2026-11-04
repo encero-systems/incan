@@ -1,4 +1,4 @@
-# behavior: in an async body, a borrow held across an await keeps its source borrowed, so awaiting a call that changes that source first is refused (#2500).
+# behavior: in an async body, a borrow held across an await and a view returned by an awaited call each keep their source borrowed until last use, so an overlapping change is refused (#2500).
 # expect-diagnostic: INCAN-T0126
 
 import std.async
@@ -18,3 +18,13 @@ async def overlap(mut buffer: BorrowedMut[Buffer]) -> int:
     label: Borrowed[str] = buffer.label
     grown = await grow(buffer, 1)
     return grown + len(label)
+
+
+async def label_view(buffer: Borrowed[Buffer]) -> Borrowed[str] from buffer.label:
+    return buffer.label
+
+
+async def replace_returned_view(mut buffer: BorrowedMut[Buffer]) -> int:
+    label = await label_view(buffer)
+    buffer.label = "changed"
+    return len(label)
