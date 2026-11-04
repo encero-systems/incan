@@ -91,26 +91,26 @@ The counts are illustrative. Reuse and storage facts come from the actual select
 
 ### Keep downloaded work available
 
-A developer downloads verified assets, works offline for several days, and repeatedly edits a local application. Each successful build replaces the project's previous result, so superseded local units stop being reachable; they stay in the store until the developer runs `oven store gc`. Downloaded assets and their required closure stay available throughout. Some backing content may be cold and compressed; the next use restores only the required units without downloading them again.
+A developer downloads verified assets, works offline for several days, and repeatedly edits a local application. Each successful build replaces the project's previous result, so superseded local units stop being reachable; they stay in the store until the developer runs `oven bakery gc`. Downloaded assets and their required closure stay available throughout. Some backing content may be cold and compressed; the next use restores only the required units without downloading them again.
 
 A second checkout that has not built for a week still finds every unit it last used. No build in the first checkout removes them.
 
-Running out of room is visible before an expensive write fails. Oven keeps a free-space reserve, 6 GiB by default, so that a build never fills the disk the operating system and other programs depend on. If a new operation cannot fit, Oven stops and explains the shortfall, including how much `oven store gc` would reclaim and which deliberate prune would free more. It never deletes content to make room on its own. A warm operation that needs no new allocation remains usable.
+Running out of room is visible before an expensive write fails. Oven keeps a free-space reserve, 6 GiB by default, so that a build never fills the disk the operating system and other programs depend on. If a new operation cannot fit, Oven stops and explains the shortfall, including how much `oven bakery gc` would reclaim and which deliberate prune would free more. It never deletes content to make room on its own. A warm operation that needs no new allocation remains usable.
 
 ### See what would be removed
 
 RFC 118 owns the command families. This RFC proposes the following lifecycle operations within those families:
 
 ```text
-oven store status
+oven bakery status
 oven inspect cache
-oven store gc --dry-run
-oven store gc
-oven store prune --downloads --asset sha256:... --dry-run
-oven store prune --downloads --asset sha256:...
-oven store prune --project <project-id> --dry-run
-oven store pin sha256:... --reason "release reproduction"
-oven store unpin <pin-id>
+oven bakery gc --dry-run
+oven bakery gc
+oven bakery prune --downloads --asset sha256:... --dry-run
+oven bakery prune --downloads --asset sha256:...
+oven bakery prune --project <project-id> --dry-run
+oven bakery pin sha256:... --reason "release reproduction"
+oven bakery unpin <pin-id>
 ```
 
 `gc` is RFC 124's collection by reachability: it removes what no retention root reaches, such as superseded generations, retired projects and projects whose directory no longer exists, and `--dry-run` is its preview. Explicit download pruning names assets and reports which persistent retention roots it would remove. Removing one root does not remove shared content retained by another root. Pins remain separate: pruning a download does not silently unpin a reproduction that needs the same bytes.
@@ -129,7 +129,7 @@ If payloads are later collected, the report still says which ones were used and 
 
 Ordinary Oven operations for one user must resolve a shared immutable store independently of the source checkout, project scratch location and test working directory. Build, run, test, SDK/provider preparation and package consumption must use the same selection and admission rules. An explicitly isolated store is permitted, but its isolation and additional storage must be observable; it must not become an undocumented per-command default.
 
-The effective store root must be discoverable through inspection and consistently selectable across command families. A mutable project home must not implicitly require an independent copy of all reusable artifacts. The pub download cache is the shared Loaf store described by RFC 125, not an upstream cache from which another Oven cache receives copies. Admission registers and verifies downloaded units in that shared owner. Read-only packaged owners and verified local mirrors may satisfy selections through the same identity space; their placement must not create another resolver or weaken trust.
+The effective bakery root must be discoverable through inspection and consistently selectable across command families. A mutable project home must not implicitly require an independent copy of all reusable artifacts. The pub download cache is the shared Loaf store described by RFC 125, not an upstream cache from which another Oven cache receives copies. Admission registers and verifies downloaded units in that shared owner. Read-only packaged owners and verified local mirrors may satisfy selections through the same identity space; their placement must not create another resolver or weaken trust.
 
 Normal consumption of a downloaded Loaf must reference its admitted shared location directly. If a consumer-local filesystem entry is needed, it may be a symlink to that location; normal consumption must not copy, reflink or hard-link the Loaf into a project, fixture home, checkout or secondary cache. A different filesystem or unavailable symlink support must not trigger a copy fallback: direct shared paths remain the consumption mechanism. The same compatible downloaded unit must not acquire another persistent payload because another project or command selects it.
 
@@ -149,9 +149,9 @@ Successful admission of a downloaded asset must atomically establish a persisten
 
 A source Loaf and a baked asset retain different capabilities. Keeping source does not establish that a prepared executable variant is available. Inspection must identify which variants and acquisition requirements remain. The retention contract does not promise that previously unselected profiles, targets or features are already present.
 
-The current project receipt registration retains selected content needed by the current published result and its declared active development use. It must protect that content until a newer successful result for the same project replaces it, the project is retired with `oven store prune --project`, or the registered project directory no longer exists. Elapsed time must not end it. A registration whose project directory no longer exists is an orphan: `oven store gc` reports and reclaims it, and nothing else does. An active operation lease independently protects content through the operation.
+The current project receipt registration retains selected content needed by the current published result and its declared active development use. It must protect that content until a newer successful result for the same project replaces it, the project is retired with `oven bakery prune --project`, or the registered project directory no longer exists. Elapsed time must not end it. A registration whose project directory no longer exists is an orphan: `oven bakery gc` reports and reclaims it, and nothing else does. An active operation lease independently protects content through the operation.
 
-Replacing, retiring or orphaning that registration may make old local units eligible for collection; it must not mutate the immutable historical receipt. A downloaded root, explicit pin, retained investigation or another live project root continues to protect shared content independently. Deleting a project directory must not be necessary to retire abandoned development protection; `oven store prune --project` retires it explicitly. Ownership reconciliation must distinguish an absent owner, an idle owner and a live process before making collection decisions.
+Replacing, retiring or orphaning that registration may make old local units eligible for collection; it must not mutate the immutable historical receipt. A downloaded root, explicit pin, retained investigation or another live project root continues to protect shared content independently. Deleting a project directory must not be necessary to retire abandoned development protection; `oven bakery prune --project` retires it explicitly. Ownership reconciliation must distinguish an absent owner, an idle owner and a live process before making collection decisions.
 
 Returning to a retired or collected project may require rebuilding its local units. Recovery must select the compatible units still available and perform only the work required by the requested operation; collection must not itself trigger a complete dependency download, SDK preparation or unrelated workspace rebuild. Requested outputs, source and lockfiles remain user-owned. If necessary inputs are unavailable under the active offline or locked policy, Oven must report that limitation rather than inventing a recoverable executable.
 
@@ -161,7 +161,7 @@ An active operation lease must protect the actual selected representation and cl
 
 ### Automatic maintenance
 
-Automatic maintenance must reclaim only two kinds of content: the private state of an operation whose ownership has confirmably ended, and automatic diagnostic history that has expired or been superseded. Neither can be reused by another project or checkout. Reusable units, downloaded roots, their closures and their materializations must not be removed automatically, by elapsed time, by store size or by admission pressure; RFC 124's collection by reachability, through `oven store gc` and explicit prune, is the only path that removes them. A payload reachable from several roots is retained until every protecting relationship permits its removal. Locally built versus downloaded origin is provenance, not a mutually exclusive ownership classification.
+Automatic maintenance must reclaim only two kinds of content: the private state of an operation whose ownership has confirmably ended, and automatic diagnostic history that has expired or been superseded. Neither can be reused by another project or checkout. Reusable units, downloaded roots, their closures and their materializations must not be removed automatically, by elapsed time, by store size or by admission pressure; RFC 124's collection by reachability, through `oven bakery gc` and explicit prune, is the only path that removes them. A payload reachable from several roots is retained until every protecting relationship permits its removal. Locally built versus downloaded origin is provenance, not a mutually exclusive ownership classification.
 
 The private state of an ended attempt, such as a failed build's staging directory, is retained for at most 24 hours after a confirmed end of ownership, so it can be inspected, and is then reclaimed. Successful replacement should retire unnecessary intermediate state promptly. Last filesystem modification time must not be treated as last use, and elapsed wall time alone must not prove owner death.
 
@@ -179,7 +179,7 @@ A change of project, checkout, command or fixture directory must not create a se
 
 All operations in a shared store must coordinate reservations. Each reservation must record the owning operation, intended work, reserved bytes, observed allocation and lifecycle state. Admission must account for existing concurrent reservations and the free-space reserve. The implementation may use estimates before work starts but must monitor actual allocation and handle overruns through bounded additional admission, backpressure or cancellation-safe refusal.
 
-Oven must not reclaim content to admit a write. When a write cannot be admitted, the operation must stop with the decision-required outcome below, reporting the operation's required space, observed available space, relevant reservations, the reserve, protected totals, and how much `oven store gc` would reclaim. It must not evict active leases, remove persistent download roots, unpin content or delete user-owned outputs, and it must not wait indefinitely without progress or a cancellation path.
+Oven must not reclaim content to admit a write. When a write cannot be admitted, the operation must stop with the decision-required outcome below, reporting the operation's required space, observed available space, relevant reservations, the reserve, protected totals, and how much `oven bakery gc` would reclaim. It must not evict active leases, remove persistent download roots, unpin content or delete user-owned outputs, and it must not wait indefinitely without progress or a cancellation path.
 
 Storage-pressure diagnostics must support deliberate decisions by humans and AI agents. They must expose versioned structured facts alongside the readable explanation: the requested operation, effective policy and accounting scope, required space or its estimated range, observed available allocation, the configured free-space reserve, concurrent reservations, protected content and its retaining roots, content `gc` would reclaim, and the resulting shortfall. Shared allocation must not be counted repeatedly. Estimates, unknowns, and the observation time must be explicit. A diagnostic must not require an agent to parse terminal prose or inspect compiler-internal directories to recover those facts.
 
@@ -229,17 +229,17 @@ When a compiler requires decoded or unpacked content, restoration must produce o
 
 ### Inspection, collection and explicit pruning
 
-`oven store status` must expose aggregate policy and accounting; `oven inspect cache` must expose selected unit, root and availability facts. Both must offer human-readable and versioned machine-readable output. Root kind, referrers, last use, expiry, encoding, availability and protection must be observable without reading compiler-internal directories. Pressure diagnostics, inspection, and dry-run previews must expose compatible structured facts and action consequences, so an agent can inspect a shortfall, compare supported choices, and request a precise action through the same public service used by human-facing commands.
+`oven bakery status` must expose aggregate policy and accounting; `oven inspect cache` must expose selected unit, root and availability facts. Both must offer human-readable and versioned machine-readable output. Root kind, referrers, last use, expiry, encoding, availability and protection must be observable without reading compiler-internal directories. Pressure diagnostics, inspection, and dry-run previews must expose compatible structured facts and action consequences, so an agent can inspect a shortfall, compare supported choices, and request a precise action through the same public service used by human-facing commands.
 
-`oven store gc` must perform RFC 124's collection by reachability: it must remove content that no retention root or lease reaches, including superseded generations and the content of retired and orphaned project registrations, ordering the eligible remainder by age only as a tie-break. It must never remove a persistent download root or pinned content. `--dry-run` must not create store layout, reclaim staging, refresh use records, change registrations or write migration state. It may coordinate a read-only snapshot through existing synchronization. If concurrent work changes eligibility, actual collection must recheck it before mutation; the preview is not an enduring deletion authorization.
+`oven bakery gc` must perform RFC 124's collection by reachability: it must remove content that no retention root or lease reaches, including superseded generations and the content of retired and orphaned project registrations, ordering the eligible remainder by age only as a tie-break. It must never remove a persistent download root or pinned content. `--dry-run` must not create store layout, reclaim staging, refresh use records, change registrations or write migration state. It may coordinate a read-only snapshot through existing synchronization. If concurrent work changes eligibility, actual collection must recheck it before mutation; the preview is not an enduring deletion authorization.
 
-`oven store prune --downloads` must require an explicit asset selection. A package name that identifies several variants must be resolved to a visible selection rather than silently selecting every target/profile. Loaves and their existing package and asset identities remain the basis for selection; this RFC must not introduce a separate named offline-working-set abstraction or resolver. Tags, if supported, may filter or annotate selections but must not establish new package identity, retention authority, or offline availability. A tag selection must resolve to visible concrete roots and variants before a destructive operation. The dry run must show which persistent roots would be removed, which content remains shared or pinned, and what offline availability would change. Actual pruning must protect live leases and either refuse affected active content or offer a clearly reported deferred outcome. Deferred removal must be visible and cancellable before it takes effect.
+`oven bakery prune --downloads` must require an explicit asset selection. A package name that identifies several variants must be resolved to a visible selection rather than silently selecting every target/profile. Loaves and their existing package and asset identities remain the basis for selection; this RFC must not introduce a separate named offline-working-set abstraction or resolver. Tags, if supported, may filter or annotate selections but must not establish new package identity, retention authority, or offline availability. A tag selection must resolve to visible concrete roots and variants before a destructive operation. The dry run must show which persistent roots would be removed, which content remains shared or pinned, and what offline availability would change. Actual pruning must protect live leases and either refuse affected active content or offer a clearly reported deferred outcome. Deferred removal must be visible and cancellable before it takes effect.
 
-`oven store prune --project` must explicitly select the project receipt registrations being retired. Its preview must show the resulting executable availability and shared protection. Retirement must not change authored source, lockfiles, historical receipts or requested outputs, and must protect live operations. Project and download selectors must not be combined ambiguously.
+`oven bakery prune --project` must explicitly select the project receipt registrations being retired. Its preview must show the resulting executable availability and shared protection. Retirement must not change authored source, lockfiles, historical receipts or requested outputs, and must protect live operations. Project and download selectors must not be combined ambiguously.
 
 The absence of `--downloads` must never authorize removal of persistent downloaded roots. Removing a download root does not necessarily reclaim its bytes: another download, current receipt, investigation or pin may still reach them. Pruning must report that result honestly.
 
-`oven store pin` and `oven store unpin` must operate on retention roots with stable identities and discoverable ownership. A root whose required closure is unavailable must not be advertised as an executable reproduction pin; a historical-reference pin is a distinct capability. Pin removal must not imply removal of every underlying payload.
+`oven bakery pin` and `oven bakery unpin` must operate on retention roots with stable identities and discoverable ownership. A root whose required closure is unavailable must not be advertised as an executable reproduction pin; a historical-reference pin is a distinct capability. Pin removal must not imply removal of every underlying payload.
 
 ### Consumer acceptance
 
@@ -253,7 +253,7 @@ The case study must report unique retained allocation, transient peaks, duplicat
 
 Acceptance must establish JEC work counts through ordinary consumer and compiler-case-study operations: zero compiler/SDK/dependency compilation and no unnecessary relinking on an unchanged repeat; rebuilding only units and dependents invalidated by effective input changes; selection-bounded test preparation/execution; shared preparation across a full suite; and recovery without unrelated graph materialization. Deliberate compilation inside a test must remain distinguishable from preparation overhead. Genuine compatibility misses must stay correct and explainable; suppressing identity checks cannot satisfy a work-count target.
 
-For a fixed graph, variant set, concurrency and policy, repeated edit/build/test cycles followed by `oven store gc` must reach a bounded derived footprint. Growth must be attributable to current live content, persistent roots, explicitly retained history or bounded reservations. It must not remain proportional to the number of superseded generations. Tests must reconcile unique allocation, retained roots, actual compilation/link counts and copy work, not infer success from cache-hit text.
+For a fixed graph, variant set, concurrency and policy, repeated edit/build/test cycles followed by `oven bakery gc` must reach a bounded derived footprint. Growth must be attributable to current live content, persistent roots, explicitly retained history or bounded reservations. It must not remain proportional to the number of superseded generations. Tests must reconcile unique allocation, retained roots, actual compilation/link counts and copy work, not infer success from cache-hit text.
 
 Acceptance must prove that a project's registration protects its content regardless of elapsed time until it is replaced, retired or orphaned; that no build, test or admission refusal removes reusable content; that `gc` reclaims superseded generations and retired or orphaned projects while independent downloaded roots and pins survive; and that returning to a collected project rebuilds only the requested affected units.
 
@@ -271,7 +271,7 @@ Latency measurements must include planning, preparation, maintenance, restoratio
 
 ### Defaults and policy ownership
 
-The canonical user/host configuration file is `.oven/config.toml` beneath the user home directory, conventionally `~/.oven/config.toml`. Its storage policy applies across that user's projects and ordinary Oven commands. It is not a second project manifest. A checkout-local `.oven/config.toml` must not implicitly create another shared-store root or accounting scope.
+The canonical user/host configuration file is `config.toml` in the Incan home, the directory `INCAN_HOME` selects (`~/.incan` by default). Its storage policy applies to that home's bakery and to every project and ordinary Oven command that uses the home. A separate Incan home therefore has its own policy and its own bakery. The configuration file is not a second project manifest. A checkout-local configuration file must not implicitly create another bakery root or accounting scope.
 
 The effective policy must expose root selection, failed-attempt TTL, the free-space reserve and the diagnostic-history TTL. These are user or host policy, not authored dependency or compiler-identity inputs, and must not live in `loaf.toml` as source semantics. Relative storage paths in the user configuration must resolve against the configuration directory, not the invoking project's working directory. An explicit operation override must be visible and must not silently rewrite persistent user policy. Inspection must identify the effective configuration file and the source of each policy value.
 
@@ -279,12 +279,14 @@ The optional `[storage]` table defines the following keys. Omitting the table or
 
 | Key                   | Type                      | Meaning                                                                               | Default                                               |
 | --------------------- | ------------------------- | ------------------------------------------------------------------------------------- | ----------------------------------------------------- |
-| `root`               | Nonempty path string      | Shared Loaf-store location; relative to the configuration directory when not absolute | Documented per-user shared store |
+| `root`               | Nonempty path string      | Bakery location; relative to the configuration file's directory when not absolute     | `bakery` in the Incan home       |
 | `min-free-bytes`     | Nonnegative integer bytes | Filesystem free space admission must leave untouched                                  | `6442450944` (6 GiB)             |
 | `failed-attempt-ttl` | Duration string           | Maximum retention of an ended private attempt                                         | `"24h"`                          |
 | `history-ttl`        | Duration string           | Maximum automatic diagnostic-history window; supersession retires it sooner           | `"24h"`                          |
 
-There is deliberately no key for a store size, a derived-state budget, a temporary-allocation budget or an idle expiry of reusable units. The free filesystem space bounds every write, and collection is explicit.
+There is deliberately no key for a bakery size, a derived-state budget, a temporary-allocation budget or an idle expiry of reusable units. The free filesystem space bounds every write, and collection is explicit.
+
+The `INCAN_BAKERY` environment variable, when set, selects the bakery location for that invocation and takes precedence over `root`. It is a visible operation override: status must report it as the source of the effective location, and it must not rewrite the configuration file.
 
 Duration strings must contain a nonnegative integer followed by `s`, `m`, `h` or `d`, meaning seconds, minutes, hours or 24-hour days. Invalid values, unknown keys within `[storage]`, overflow and malformed configuration must produce an actionable diagnostic naming the file, key and accepted form. They must not silently fall back to another value. Other configuration tables retain their own owning contracts.
 
@@ -375,13 +377,13 @@ Bounded diagnostic history means old unpinned details can become unavailable. Su
 
 ## Implementation architecture
 
-This section is non-normative. The existing Oven store remains the physical owner of immutable content, publication, leases and reservations. Incan-authored control-plane policy operates on owned typed snapshots; it does not reconstruct compiler facts or create another artifact graph. An index of live roots and last successful selections can make collection incremental, while a versioned encoded-content descriptor permits hot and cold placements under one logical identity.
+This section is non-normative. The existing bakery remains the physical owner of immutable content, publication, leases and reservations. Incan-authored control-plane policy operates on owned typed snapshots; it does not reconstruct compiler facts or create another artifact graph. An index of live roots and last successful selections can make collection incremental, while a versioned encoded-content descriptor permits hot and cold placements under one logical identity.
 
 Existing Incan streaming compression and filesystem interop should be used where they satisfy the bounded operation. Any missing capability requires a minimal demonstrated and tracked limitation before a narrow native workaround. A resident service may improve coordination, but ordinary commands must retain a correct nonresident execution path.
 
 ## Layers affected
 
-- **Oven store and execution lifecycle:** shared immutable selection, retention roots, leases, reservations, recovery, compression, restoration and honest accounting must obey one contract.
+- **Bakery and execution lifecycle:** shared immutable selection, retention roots, leases, reservations, recovery, compression, restoration and honest accounting must obey one contract.
 - **Oven control plane:** policy must distinguish persistent and disposable state, coordinate ordinary workflows and preserve exact unit/trust identity.
 - **Registry and package consumption:** successful asset admission must establish persistent local retention for the available closure without duplicating shared units.
 - **SDK and toolchain providers:** reusable units and compiler owners must participate in shared selection and lifecycle instead of requiring independent complete stores per consumer.
@@ -392,7 +394,7 @@ No parser, type-system, formatter or source-language syntax change is proposed.
 
 ## Design Decisions
 
-- Reusable units, downloads and their materializations are never removed automatically. Collection follows RFC 124: explicit, by reachability, through `oven store gc` and deliberate prune, with no capacity trigger, no idle-time expiry and no total-size ceiling. A project registration protects its content until it is replaced, retired or orphaned.
+- Reusable units, downloads and their materializations are never removed automatically. Collection follows RFC 124: explicit, by reachability, through `oven bakery gc` and deliberate prune, with no capacity trigger, no idle-time expiry and no total-size ceiling. A project registration protects its content until it is replaced, retired or orphaned.
 - Automatic maintenance reclaims only private state of ended attempts, after at most 24 hours, and diagnostic history, after at most 24 hours or on supersession, without a total history ceiling.
 - Admission is the only capacity control: observed free space, minus concurrent reservations, minus a free-space reserve of 6 GiB by default (`min-free-bytes`). A write that does not fit stops with a decision-required outcome that reports what `gc` would reclaim; Oven never deletes content to make room.
 - Persistent downloaded assets and explicit pins remain protected however large the store grows. Their allocation and the reason for protection remain visible.
@@ -400,4 +402,4 @@ No parser, type-system, formatter or source-language syntax change is proposed.
 - A new caller decision may use an explained proceed/decline prompt in interactive human-facing execution. Machine-readable and noninteractive execution instead exit without prompting, with a nonzero status and structured decision-required details so an agent can choose a follow-up action. Explicit invocation mode governs this behavior; decision-required outcomes remain distinct from success and unrecoverable failures. The existing `--format json` convention explicitly selects noninteractive structured output; decision-required outcomes use exit code 3. Existing codes remain 0 for success, 1 for application failure, and 2 for usage error. RFC 118 records the shared semantics.
 - Loaves and selected verified asset variants provide package organization and download selection. No separate named offline-working-set abstraction is introduced. Tags may be optional selection metadata, but this RFC does not require a tagging API or let tags create package identity, retention authority, or availability guarantees. Destructive selections still resolve to concrete roots and variants.
 - Compression inherits RFC 124's existing store/registry encoding policy and identity rules, while RFC 125 continues to own archive verification and asset admission. RFC 145 adds retention, safe representation lifecycle, bounded restoration, and accounting. Codec level and cold-encoding thresholds are measured tuning rather than a new design decision.
-- Persistent storage policy belongs in the canonical user/host Oven configuration surface, `~/.oven/config.toml`, whose `[storage]` table holds only the store root, the free-space reserve, the ended-attempt TTL and the history TTL.
+- Persistent storage policy belongs in the canonical user/host configuration surface, `config.toml` in the Incan home, whose `[storage]` table holds only the bakery root, the free-space reserve, the ended-attempt TTL and the history TTL. `INCAN_BAKERY` overrides the root visibly for one invocation.
