@@ -30,6 +30,12 @@ pub from primitives.collections import (
     length_set,
     replace_list_at,
 )
+import primitives.vocab
+import primitives.vocab._descriptors
+import primitives.vocab._syntax
+import primitives.vocab._versions
+import primitives.vocab.scoped
+import primitives.vocab.transport
 pub from primitives.native_strings import nul_terminated_utf8
 pub from primitives.output import write_stderr_line, write_stdout_line
 pub from primitives.text import copy_frozen_bytes, decode_utf8, encode_frozen_utf8, encode_utf8

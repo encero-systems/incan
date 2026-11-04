@@ -504,7 +504,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         package: Some("incan_stdlib_primitives"),
         facet: None,
         extra_crate_deps: &[],
-        submodules: &[],
+        submodules: &["vocab"],
         typechecker_only: false,
     },
 ];

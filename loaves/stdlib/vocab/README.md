@@ -1,8 +1,12 @@
 # Vocabulary providers
 
+The foundational authoring contracts live in `std.primitives.vocab`. This package reexports those exact declarations as `std.vocab` and owns the higher-level metadata publication and worker composition. Provider admission, execution, response validation and semantic compilation remain compiler and toolchain responsibilities.
+
 An Incan vocabulary entry exports `library_vocab() -> VocabRegistration`. Returning a registration with `.with_desugarer()` also requires the public synchronous export `desugar(request: DesugarRequest) -> Result[DesugarResponse, DesugarError]`. Oven generates the worker's main and builds it for the host. Consumers use the published descriptors and worker; they do not run registration.
 
-The worker protocol uses the versioned public syntax models in `src/vocab.incn`. Every syntax node carries an original-source byte range. Requests contain one vocabulary node and its module path; the generated adapter accepts a batch from one module and returns one result per node. Responses contain an expression or statements. The compiler validates the schema, output position and every supplied source range before checking that output as ordinary Incan. Missing output ranges inherit the requesting node's range.
+The worker protocol uses the versioned public syntax models reexported from `std.primitives.vocab`. Every syntax node carries an original-source byte range. Requests contain one vocabulary node and its module path; the generated adapter accepts a batch from one module and returns one result per node. Responses contain an expression or statements. The compiler validates the schema, output position and every supplied source range before checking that output as ordinary Incan. Missing output ranges inherit the requesting node's range.
+
+During release bootstrap, the previous compiler first compiles the new Oven source. That Oven generates registration executables which call `std.vocab.registration_metadata(...)`, then compiles the primitive and facade packages before building the `incan_stdlib_interop` vocabulary provider. The generated worker continues to call `std.vocab.run_desugar_worker(...)`. This order proves the executable provider path; a parser-only check does not establish it.
 
 The default provider policy admits the exact units Oven records in the build's provider lock. `INCAN_VOCAB_POLICY=deny` denies execution even for resolved dependencies. Workers receive no granted capabilities. This admission boundary is not an operating-system sandbox: providers must remain pure functions of their requests, and ambient access is unsupported.
 

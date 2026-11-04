@@ -1,11 +1,10 @@
-"""Producer-side `std.vocab` descriptors: keywords, clauses, declarations, DSL surfaces and library manifests."""
+"""Foundational vocabulary descriptors, surfaces and library manifests."""
 
-from std.json import JsonValue
-from std.serde import json
+from rust::serde import Deserialize as RustDeserialize, Serialize as RustSerialize
+from rust::serde_json import Error as JsonError, from_str, to_string
+from rust::std::panic import panic_any
 from scoped import ScopedSurfaceDescriptor, ScopedSurfaceEligibility
-
-pub const VOCAB_METADATA_VERSION: int = 1
-pub const VOCAB_SYNTAX_VERSION: int = 3
+from crate.primitives.vocab._versions import VOCAB_METADATA_VERSION
 
 
 pub enum KeywordActivation:
@@ -18,13 +17,6 @@ pub enum KeywordActivation:
         """Activate when the module imports the specified namespace."""
         return KeywordActivation.OnImport(namespace)
 
-    pub def to_json(self) -> JsonValue:
-        """Encode the existing externally tagged activation contract."""
-        match self:
-            KeywordActivation.Always => return JsonValue.string("Always")
-            KeywordActivation.OnImport(namespace) =>
-                return tagged("OnImport", JsonValue.object({"namespace": JsonValue.string(namespace)}))
-
 
 pub enum KeywordPlacement:
     """The declaration positions accepting a registered keyword."""
@@ -35,12 +27,6 @@ pub enum KeywordPlacement:
     pub def in_block(parents: list[str]) -> Self:
         """Limit a keyword to the named parent declarations."""
         return KeywordPlacement.InBlock(parents)
-
-    pub def to_json(self) -> JsonValue:
-        """Encode the descriptor reader's placement representation."""
-        match self:
-            KeywordPlacement.TopLevel => return JsonValue.string("TopLevel")
-            KeywordPlacement.InBlock(parents) => return tagged("InBlock", texts(parents))
 
 
 pub enum KeywordSurfaceKind(str):
@@ -103,13 +89,6 @@ pub enum ClausePlacement:
     Before(str)
     After(str)
 
-    pub def to_json(self) -> JsonValue:
-        """Encode relative ordering through the existing descriptor tags."""
-        match self:
-            ClausePlacement.Anywhere => return JsonValue.string("Anywhere")
-            ClausePlacement.Before(other) => return tagged("Before", JsonValue.string(other))
-            ClausePlacement.After(other) => return tagged("After", JsonValue.string(other))
-
 
 pub enum DesugarTarget(str):
     """The host syntax position occupied by an expanded declaration."""
@@ -163,14 +142,6 @@ pub model KeywordSpec:
         result.compound_tokens = tokens
         return result
 
-    pub def to_json(self) -> JsonValue:
-        """Encode one low-level keyword using the compiler's descriptor shape."""
-        return JsonValue.object(
-            {"name": JsonValue.string(self.name), "surface_kind": JsonValue.string(self.surface_kind.value()), "compound_tokens": texts(
-                self.compound_tokens,
-            ), "placement": self.placement.to_json()},
-        )
-
 
 pub model KeywordRegistration:
     """A group of keywords with one activation rule."""
@@ -215,14 +186,6 @@ pub model KeywordRegistration:
         result.valid_decorators = result.valid_decorators + decorators
         return result
 
-    pub def to_json(self) -> JsonValue:
-        """Encode the existing keyword group transport."""
-        return JsonValue.object(
-            {"activation": self.activation.to_json(), "keywords": JsonValue.array(
-                [keyword.to_json() for keyword in self.keywords],
-            ), "valid_decorators": texts(self.valid_decorators)},
-        )
-
 
 pub enum ExpressionItemModifierKind(str):
     """The trailing payload accepted after an expression-list item."""
@@ -244,10 +207,6 @@ pub model ExpressionItemModifierSurface:
     pub def expr(keyword: str) -> Self:
         """Construct a modifier whose payload is an expression."""
         return ExpressionItemModifierSurface(keyword=keyword, kind=ExpressionItemModifierKind.Expression)
-
-    pub def to_json(self) -> JsonValue:
-        """Encode the modifier expected by the descriptor reader."""
-        return JsonValue.object({"keyword": JsonValue.string(self.keyword), "kind": JsonValue.string(self.kind.value())})
 
 
 pub model ClauseSurface:
@@ -345,16 +304,6 @@ pub model ClauseSurface:
         for modifier in modifiers:
             result = result.with_expression_item_modifier(modifier)
         return result
-
-    pub def to_json(self) -> JsonValue:
-        """Encode the compiler's clause descriptor without changing its format."""
-        return JsonValue.object(
-            {"keyword": JsonValue.string(self.keyword), "compound_tokens": texts(self.compound_tokens), "body_kind": JsonValue.string(
-                self.body_kind.value(),
-            ), "expression_item_modifiers": JsonValue.array([item.to_json() for item in self.expression_item_modifiers]), "cardinality": JsonValue.string(
-                self.cardinality.value(),
-            ), "placement": self.placement.to_json()},
-        )
 
 
 pub model DeclarationSurface:
@@ -467,18 +416,6 @@ pub model DeclarationSurface:
             result = result.with_declaration(declaration)
         return result
 
-    pub def to_json(self) -> JsonValue:
-        """Encode the existing recursive declaration descriptor."""
-        return JsonValue.object(
-            {"keyword": JsonValue.string(self.keyword), "compound_tokens": texts(self.compound_tokens), "placement": self.placement.to_json(), "head_kind": JsonValue.string(
-                self.head_kind.value(),
-            ), "body_kind": JsonValue.string(self.body_kind.value()), "desugars_to": JsonValue.string(
-                self.desugars_to.value(),
-            ), "clauses": JsonValue.array([clause.to_json() for clause in self.clauses]), "declarations": JsonValue.array(
-                [declaration.to_json() for declaration in self.declarations],
-            )},
-        )
-
     pub def keywords(self) -> list[KeywordSpec]:
         """Derive parser keywords once from this declaration and its children."""
         declaration = KeywordSpec.block(self.keyword).with_compound_tokens(self.compound_tokens)
@@ -491,7 +428,7 @@ pub model DeclarationSurface:
         return keywords
 
 
-@derive(json)
+@derive(RustSerialize, RustDeserialize)
 pub enum EmbeddedFragmentSubmode(str):
     """Fixed lexical grammars; descriptors cannot install arbitrary parser grammars."""
 
@@ -501,6 +438,17 @@ pub enum EmbeddedFragmentSubmode(str):
     RegexTemplate = "RegexTemplate"
     SelectorDeclarationValue = "SelectorDeclarationValue"
     TypePosition = "TypePosition"
+
+    pub def to_json(self) -> str:
+        """Encode this fragment submode through its existing JSON surface."""
+        match to_string(self):
+            Ok(text) => return text
+            Err(error) => panic_any(str(error))
+
+    pub def from_json(source: str) -> Result[Self, str]:
+        """Decode this fragment submode and retain the native decoder's diagnostic text."""
+        result: Result[EmbeddedFragmentSubmode, JsonError] = from_str(source)
+        return result.map_err((error) => str(error))
 
 
 pub model EmbeddedFragmentDescriptor:
@@ -537,18 +485,6 @@ pub model EmbeddedFragmentDescriptor:
         mut result = self
         result.eligible_in.append(eligibility)
         return result
-
-    pub def to_json(self) -> JsonValue:
-        """Publish the descriptor grammar through ordinary vocabulary metadata."""
-        return JsonValue.object(
-            {"key": JsonValue.string(self.key), "submode": JsonValue.string(self.submode.value()), "artifact_key": JsonValue.string(
-                self.artifact_key,
-            ), "eligible_in": JsonValue.array([position.to_json() for position in self.eligible_in]), "misuse_scope": JsonValue.string(
-                "None",
-            ), "diagnostics": JsonValue.array([]), "format_hint": JsonValue.object(
-                {"layout_sensitive": JsonValue.bool(self.layout_sensitive)},
-            )},
-        )
 
 
 pub model DslSurface:
@@ -597,16 +533,6 @@ pub model DslSurface:
         result.scoped_surfaces = result.scoped_surfaces + surfaces
         return result
 
-    pub def to_json(self) -> JsonValue:
-        """Encode a surface in the descriptor reader's format."""
-        return JsonValue.object(
-            {"activation": self.activation.to_json(), "declarations": JsonValue.array(
-                [declaration.to_json() for declaration in self.declarations],
-            ), "embedded_fragments": JsonValue.array([fragment.to_json() for fragment in self.embedded_fragments]), "scoped_surfaces": JsonValue.array(
-                [surface.to_json() for surface in self.scoped_surfaces],
-            )},
-        )
-
     pub def keyword_registration(self) -> KeywordRegistration:
         """Derive the parser keyword group from the authored declarations."""
         mut result = KeywordRegistration.new(self.activation)
@@ -624,14 +550,6 @@ pub model LibraryManifest:
         """Construct an empty version-one library metadata value."""
         return LibraryManifest()
 
-    pub def to_json(self) -> JsonValue:
-        """Encode the compiler's library metadata without a second wire format."""
-        return JsonValue.object(
-            {"format_version": JsonValue.string("V1"), "modules": JsonValue.array(
-                [module.to_json() for module in self.modules],
-            )},
-        )
-
 
 pub enum TypeRef:
     """Structured type references in library metadata."""
@@ -645,20 +563,6 @@ pub enum TypeRef:
         """Construct a named metadata type reference."""
         return TypeRef.Named(name)
 
-    pub def to_json(self) -> JsonValue:
-        """Encode the existing externally tagged library type reference."""
-        match self:
-            TypeRef.Named(name) => return tagged("Named", JsonValue.string(name))
-            TypeRef.Generic(name, arguments) =>
-                return tagged(
-                    "Generic",
-                    JsonValue.array(
-                        [JsonValue.string(name), JsonValue.array([argument.to_json() for argument in arguments])],
-                    ),
-                )
-            TypeRef.Optional(inner) => return tagged("Optional", inner[0].to_json())
-            TypeRef.Union(members) => return tagged("Union", JsonValue.array([member.to_json() for member in members]))
-
 
 pub model FunctionExport:
     """An exported function's parameters, result and asynchronous contract."""
@@ -667,17 +571,6 @@ pub model FunctionExport:
     pub params: list[Tuple[str, TypeRef]] = []
     pub return_type: Option[TypeRef] = None
     pub is_async: bool = false
-
-    pub def to_json(self) -> JsonValue:
-        """Encode the existing library function metadata."""
-        mut returned = JsonValue.null()
-        if let Some(ty) = self.return_type:
-            returned = ty.to_json()
-        return JsonValue.object(
-            {"name": JsonValue.string(self.name), "params": JsonValue.array(
-                [JsonValue.array([JsonValue.string(name), ty.to_json()]) for name, ty in self.params],
-            ), "return_type": returned, "is_async": JsonValue.bool(self.is_async)},
-        )
 
 
 pub enum TypeExportKind(str):
@@ -697,14 +590,6 @@ pub model FieldExport:
     pub field_type: TypeRef
     pub has_default: bool = false
 
-    pub def to_json(self) -> JsonValue:
-        """Encode the existing field metadata."""
-        return JsonValue.object(
-            {"name": JsonValue.string(self.name), "field_type": self.field_type.to_json(), "has_default": JsonValue.bool(
-                self.has_default,
-            )},
-        )
-
 
 pub model TypeExport:
     """An exported library type and its declared public members."""
@@ -715,16 +600,6 @@ pub model TypeExport:
     pub fields: list[FieldExport] = []
     pub methods: list[FunctionExport] = []
 
-    pub def to_json(self) -> JsonValue:
-        """Encode the existing public type metadata."""
-        return JsonValue.object(
-            {"name": JsonValue.string(self.name), "kind": JsonValue.string(self.kind.value()), "type_params": texts(
-                self.type_params,
-            ), "fields": JsonValue.array([field.to_json() for field in self.fields]), "methods": JsonValue.array(
-                [method.to_json() for method in self.methods],
-            )},
-        )
-
 
 pub model ModuleExport:
     """A module path and its exported functions and types."""
@@ -732,14 +607,6 @@ pub model ModuleExport:
     pub path: str
     pub functions: list[FunctionExport] = []
     pub types: list[TypeExport] = []
-
-    pub def to_json(self) -> JsonValue:
-        """Encode the existing public module metadata."""
-        return JsonValue.object(
-            {"path": JsonValue.string(self.path), "functions": JsonValue.array(
-                [function.to_json() for function in self.functions],
-            ), "types": JsonValue.array([ty.to_json() for ty in self.types])},
-        )
 
 
 pub model VocabRegistration:
@@ -789,29 +656,6 @@ pub model VocabRegistration:
         result.custom_desugaring = true
         return result
 
-    pub def metadata(self) -> JsonValue:
-        """
-        Return the compiler's existing versioned VocabMetadata payload.
-
-        1. Derive parser keyword groups from the registered surfaces.
-        2. Encode the registration using the descriptor reader's schema.
-        """
-        # 1. Parser keywords come from the same declaration descriptors.
-        mut registrations = self.keyword_registrations
-        for surface in self.dsl_surfaces:
-            registrations.append(surface.keyword_registration())
-        # 2. Preserve the existing descriptor transport, including its schema version.
-        mut desugarer = JsonValue.null()
-        if self.custom_desugaring:
-            desugarer = JsonValue.object(
-                {"artifact_kind": JsonValue.string("NativeWorker"), "abi_version": JsonValue.int(VOCAB_SYNTAX_VERSION)},
-            )
-        return JsonValue.object(
-            {"metadata_version": JsonValue.int(self.metadata_version), "keyword_registrations": JsonValue.array(
-                [registration.to_json() for registration in registrations],
-            ), "dsl_surfaces": JsonValue.array([surface.to_json() for surface in self.dsl_surfaces]), "library_manifest": self.library_manifest.to_json(), "desugarer": desugarer},
-        )
-
 
 def clause_keyword(clause: ClauseSurface, parent: str) -> KeywordSpec:
     """Select the parser surface kind from a clause's authored payload kind."""
@@ -819,13 +663,3 @@ def clause_keyword(clause: ClauseSurface, parent: str) -> KeywordSpec:
     if clause.body_kind == ClauseBodyKind.NestedItems:
         kind = KeywordSurfaceKind.SubBlock
     return KeywordSpec.new(clause.keyword, kind).with_compound_tokens(clause.compound_tokens).in_block(parent)
-
-
-def texts(values: list[str]) -> JsonValue:
-    """Encode a string list without repeating descriptor plumbing."""
-    return JsonValue.array([JsonValue.string(value) for value in values])
-
-
-def tagged(name: str, payload: JsonValue) -> JsonValue:
-    """Encode one externally tagged descriptor variant."""
-    return JsonValue.object({name: payload})

@@ -193,7 +193,11 @@ impl TypeChecker {
     }
 
     /// Hydrate a forwarded type or source trait from its admitted declaring artifact and checked public membership.
-    /// Trait aliases retain their generic contract without requiring a nominal layout or a native trait item.
+    ///
+    /// Nominal projections prefer the reconstructed artifact layout because its recursive member types have already
+    /// been remapped through their declaring module. Falling back to the raw checked API declaration is valid only
+    /// before that cache exists. Trait aliases retain their generic contract without requiring a nominal layout or a
+    /// native trait item.
     pub(in crate::typechecker::collect) fn symbol_kind_from_type_projection(
         &self,
         projected: Option<&crate::library_manifest::TypeRef>,
