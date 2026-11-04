@@ -269,8 +269,9 @@ pub(super) fn collect_published_constants(
         .collect()
 }
 
-/// Lower executable declarations in source order using the module's already collected checked facts. Attribute
-/// externs and transparent native stubs supply compiler adapters rather than executable source bodies.
+/// Lower executable declarations in source order using the module's already collected checked facts. Inline test
+/// functions remain in the checked module for test-unit selection; ordinary program and library roots never select
+/// them. Attribute externs and transparent native stubs supply compiler adapters rather than executable source bodies.
 pub(super) fn lower_source_bodies(
     program: &ast::Program,
     facts: &BodyIrLoweringFacts<'_, '_>,
@@ -303,6 +304,17 @@ pub(super) fn lower_source_bodies(
                     let selected = observer(function, decl.span, facts, &body);
                     vec![selected.unwrap_or(body)]
                 }
+                ast::Declaration::TestModule(test_module) => test_module
+                    .body
+                    .iter()
+                    .filter_map(|nested| match &nested.node {
+                        ast::Declaration::Function(function) => {
+                            let body = lower_function_body(function, nested.span, facts);
+                            Some(observer(function, nested.span, facts, &body).unwrap_or(body))
+                        }
+                        _ => None,
+                    })
+                    .collect(),
                 ast::Declaration::Model(model) => lower_owner_member_bodies(
                     &model.methods,
                     &model.properties,

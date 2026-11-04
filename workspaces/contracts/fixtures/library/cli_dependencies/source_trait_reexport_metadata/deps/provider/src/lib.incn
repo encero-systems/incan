@@ -1,6 +1,13 @@
 """Retain a source trait alias even when the consumer imports only an ordinary function."""
 pub from std.traits.callable import Callable1 as Unary
 
-pub def ping() -> int:
-    """Return a value without calling through the trait alias."""
-    return 42
+pub def ping(value: int = 42) -> int:
+    """Return a value without calling through the trait alias.
+
+    Args:
+        value: Value to return.
+
+    Example:
+        ping()
+    """
+    return value

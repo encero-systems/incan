@@ -9,7 +9,7 @@ impl TypeChecker {
     /// outside these selected members continue to their declared signatures later in the ordered method pass.
     pub(super) fn runtime_primitive_method_return(&self, base_ty: &ResolvedType, method: &str) -> Option<ResolvedType> {
         if let ResolvedType::Named(name) = base_ty
-            && surface_types::from_str(name.as_str()).is_some()
+            && surface_types::from_str(name.as_str()).is_some_and(surface_accepts_unknown_methods)
             && self.lookup_semantic_type_info(name).is_none()
         {
             return Some(ResolvedType::Unknown);
