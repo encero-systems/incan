@@ -100,6 +100,8 @@ impl BodyBuilder<'_, '_> {
         if planned.len() != invocation.arguments.len() {
             return Err("explicit input call does not retain every supplied argument".into());
         }
+        let declaration_order = invocation.declaration_order;
+        let argument_count = invocation.arguments.len();
         let mut lowered = (0..slots.len()).map(|_| None).collect::<Vec<_>>();
         for argument in invocation.arguments {
             let (slot, expression) = planned
@@ -137,21 +139,37 @@ impl BodyBuilder<'_, '_> {
                 return Err("explicit input parameter was materialized twice".into());
             }
         }
-        let mut operands = Vec::with_capacity(lowered.len());
-        let mut bindings = Vec::with_capacity(lowered.len());
+        let mut operands = Vec::with_capacity(argument_count);
+        let mut bindings = Vec::with_capacity(argument_count);
+        let mut defaulted_slots = Vec::new();
         for (slot, argument) in lowered.into_iter().enumerate() {
-            let (operand, written_position) =
-                argument.ok_or("explicit input defaults require a later source dependency proof")?;
-            operands.push(bir::ArgumentElement::One(operand));
-            bindings.push(bir::BoundArgument { slot, written_position });
+            match argument {
+                Some((operand, written_position)) => {
+                    operands.push(bir::ArgumentElement::One(operand));
+                    bindings.push(bir::BoundArgument { slot, written_position });
+                }
+                None if invocation
+                    .parameters
+                    .get(slot)
+                    .is_some_and(|parameter| parameter.has_default) =>
+                {
+                    defaulted_slots.push(slot);
+                }
+                None => return Err("explicit input call omits a required selected parameter".into()),
+            }
         }
-        Ok((
-            operands,
+        let binding = if declaration_order {
             bir::ArgumentBinding::ResolvedDeclarationOrder {
                 arguments: bindings,
-                defaulted_slots: Vec::new(),
-            },
-        ))
+                defaulted_slots,
+            }
+        } else {
+            bir::ArgumentBinding::Resolved {
+                arguments: bindings,
+                defaulted_slots,
+            }
+        };
+        Ok((operands, binding))
     }
 
     /// The physical local and every stored field must name the checked source place; similar names or layouts do

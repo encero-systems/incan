@@ -6,6 +6,12 @@
 #   empty
 #   kept
 #   heap flat
+#   10
+#   30
+#   40
+#   5
+#   7
+#   generic
 
 """Propagate, construct and match results in explicit bodies, and measure what the error paths leave behind."""
 
@@ -54,6 +60,26 @@ def quiet_route(text: Owned[str], other: Owned[str]) -> None:
         Err(_) => pass
 
 
+def stored(value: Borrowed[int]) -> int:
+    match value:
+        1 => return 10
+        _ => return 20
+
+
+def guarded(value: Borrowed[int], allow: bool) -> int:
+    match value:
+        case 1 if allow: return 30
+        case _: return 40
+
+
+def add(value: Borrowed[int], extra: int = 2) -> int:
+    return value + extra
+
+
+def identity[T](value: Owned[T]) -> T:
+    return value
+
+
 def repeated_paths() -> None:
     """
     Run each error path a thousand times: `?` propagating past a second owner, and a match arm skipping its transfer.
@@ -87,3 +113,10 @@ def main() -> None:
     route("x", "y")
     route("", "y")
     repeated_paths()
+    value = 1
+    println(stored(value))
+    println(guarded(value, true))
+    println(guarded(value, false))
+    println(add(value + 2))
+    println(add(value + 2, 4))
+    println(identity("generic"))

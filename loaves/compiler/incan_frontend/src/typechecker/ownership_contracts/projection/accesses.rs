@@ -493,14 +493,19 @@ impl SourceAccesses<'_, '_> {
         for statement in statements {
             match &statement.node {
                 Statement::Pass => {}
-                // Arm bindings own fresh payloads and record no access; each arm starts after the scrutinee.
+                // Arm bindings own fresh payloads and record no access; guards read them before their arm's body.
                 Statement::Expr(Spanned {
                     node: Expr::Match(scrutinee, arms),
                     ..
                 }) => {
-                    self.expression(scrutinee, false)?;
+                    let consumes_stored_value =
+                        !fresh_match_scrutinee(scrutinee) && self.proof.carrier_loan(scrutinee).is_none();
+                    self.expression(scrutinee, consumes_stored_value)?;
                     let mut reaches = false;
                     for arm in arms {
+                        if let Some(guard) = &arm.node.guard {
+                            self.expression(guard, false)?;
+                        }
                         reaches |= match &arm.node.body {
                             MatchBody::Expr(value) => {
                                 self.expression(value, false)?;
@@ -695,5 +700,14 @@ impl SourceAccesses<'_, '_> {
         }
         self.block(&loop_.body)?;
         Ok(())
+    }
+}
+
+/// Calls, methods and literals produce fresh match inputs; only a stored place consumes its checked value route.
+fn fresh_match_scrutinee(scrutinee: &Spanned<Expr>) -> bool {
+    match &scrutinee.node {
+        Expr::Call(..) | Expr::MethodCall(..) | Expr::Literal(_) => true,
+        Expr::Paren(inner) => fresh_match_scrutinee(inner),
+        _ => false,
     }
 }

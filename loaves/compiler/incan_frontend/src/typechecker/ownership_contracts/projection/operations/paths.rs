@@ -56,17 +56,26 @@ impl SourcePaths<'_> {
             }
             incoming = match &statement.node {
                 Statement::Pass => incoming,
-                // Each arm starts from the evaluated scrutinee; the arms that continue join after the match.
+                // Each arm starts from the evaluated scrutinee. A guard's false edge reaches the next arm, while its
+                // true edge enters that arm's body; continuing bodies join after the exhaustive match.
                 Statement::Expr(Spanned {
                     node: Expr::Match(scrutinee, arms),
                     ..
                 }) => {
                     let evaluated = self.region(scrutinee.span, incoming);
                     let mut outgoing = Vec::new();
+                    let mut remaining = evaluated;
                     for arm in arms {
+                        let arm_input = if let Some(guard) = &arm.node.guard {
+                            let guarded = self.region(guard.span, remaining);
+                            remaining = guarded.clone();
+                            guarded
+                        } else {
+                            remaining.clone()
+                        };
                         outgoing.extend(match &arm.node.body {
-                            MatchBody::Expr(value) => self.region(value.span, evaluated.clone()),
-                            MatchBody::Block(body) => self.block(body, evaluated.clone())?,
+                            MatchBody::Expr(value) => self.region(value.span, arm_input),
+                            MatchBody::Block(body) => self.block(body, arm_input)?,
                         });
                     }
                     outgoing
