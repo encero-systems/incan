@@ -1,9 +1,0 @@
-# behavior: a closure in an explicit method body cannot yet read the receiver (#2500).
-# expect-diagnostic: INCAN-T0123
-
-class Counter:
-    pub value: int
-
-    def scaled(self, factor: Borrowed[Counter]) -> int:
-        read: () -> int = () => self.value * factor.value
-        return read()

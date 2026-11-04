@@ -226,57 +226,50 @@ pub(in crate::typechecker) struct Graph {
     pub entry: usize,
 }
 
-/// A closure bound to a local. It reads each captured Copy value when it is built; its one captured borrow becomes
-/// a shared loan the local holds, reborrowing a captured borrowed local's own loan, so every call of the local is a use
-/// of that borrow.
+/// A closure bound to a local. It reads each captured Copy value when it is built and retains one shared loan for
+/// every other capture, reborrowing a captured alias through its existing loan. Every call of the local uses all of
+/// those retained loans.
 #[derive(Debug, Clone)]
 pub(in crate::typechecker) struct ClosureCaptures {
     pub local: CanonicalSymbolId,
     /// The captured declarations, in the checker's capture order.
     pub captures: Vec<CanonicalSymbolId>,
-    /// The loan held on the one borrowed capture.
-    pub loan: Option<LoanId>,
-    /// The read of each captured Copy value when the closure is built.
-    pub reads: Vec<usize>,
+    /// The declaration and loan for each borrowed capture.
+    pub loans: Vec<(CanonicalSymbolId, LoanId)>,
+    /// The declaration and read event for each captured Copy value.
+    pub reads: Vec<(CanonicalSymbolId, usize)>,
 }
 
-/// Each capture is either the closure's one loan or one read at the closure itself, and the loan is shared, keyed to
-/// the closure and held by its local. The retained links are validated here; they are never recovered from spans.
+/// Each capture is either one shared retained loan or one read at the closure itself. The retained links are
+/// validated here; they are never recovered from spans.
 fn validate_closures(graph: &Graph) -> Result<(), InvalidGraph> {
     for (span, closure) in &graph.closures {
         if closure.local.kind != incan_semantics_core::SemanticSourceTargetKind::Local {
             return Err(InvalidGraph("closure is not bound to a local"));
         }
         let mut covered = BTreeSet::new();
-        if let Some(id) = closure.loan {
+        for (capture, id) in &closure.loans {
             let loan = graph.loans.get(id.0).ok_or(InvalidGraph("closure loan is unknown"))?;
             let Root::Binding(root) = &loan.source.root else {
                 return Err(InvalidGraph("closure loan borrows a bounded temporary"));
             };
-            // A captured borrowed local is reborrowed through its own loan; a captured input is borrowed whole.
-            let source = match loan.parent {
-                Some(parent) => closure
-                    .captures
-                    .iter()
-                    .find(|capture| graph.local_loans.get(*capture) == Some(&parent)),
-                None if loan.source.projection.is_empty() => closure.captures.iter().find(|capture| *capture == root),
-                None => None,
+            // A captured alias is reborrowed through its own loan; a direct capture is borrowed whole.
+            let source_matches = match loan.parent {
+                Some(parent) => graph.local_loans.get(capture) == Some(&parent),
+                None => loan.source.projection.is_empty() && capture == root,
             };
-            let Some(source) = source else {
+            if !closure.captures.contains(capture) || !source_matches {
                 return Err(InvalidGraph("closure loan borrows no captured place"));
-            };
-            if loan.span != *span
-                || loan.kind != LoanKind::Shared
-                || loan.writable
-                || graph.local_loans.get(&closure.local) != Some(&id)
+            }
+            if loan.span != *span || loan.kind != LoanKind::Shared || loan.writable || !covered.insert(capture.clone())
             {
                 return Err(InvalidGraph("closure loan differs from its shared captured borrow"));
             }
-            covered.insert(source.clone());
-        } else if graph.local_loans.contains_key(&closure.local) {
+        }
+        if graph.local_loans.contains_key(&closure.local) {
             return Err(InvalidGraph("closure local holds a loan its closure does not record"));
         }
-        for index in &closure.reads {
+        for (capture, index) in &closure.reads {
             let node = graph
                 .nodes
                 .get(*index)
@@ -284,18 +277,25 @@ fn validate_closures(graph: &Graph) -> Result<(), InvalidGraph> {
             let Event::Access {
                 place,
                 access: Access::Read,
-                through: None,
+                through,
             } = &node.event
             else {
-                return Err(InvalidGraph("closure capture is not a plain read"));
+                return Err(InvalidGraph("closure capture is not a read"));
             };
             let Root::Binding(source) = &place.root else {
                 return Err(InvalidGraph("closure capture reads a bounded temporary"));
             };
+            let source_matches = match through {
+                Some(parent) => {
+                    graph.local_loans.get(capture) == Some(parent)
+                        && graph.loans.get(parent.0).is_some_and(|loan| loan.source == *place)
+                }
+                None => place.projection.is_empty() && capture == source,
+            };
             if node.span != *span
-                || !place.projection.is_empty()
-                || !closure.captures.contains(source)
-                || !covered.insert(source.clone())
+                || !source_matches
+                || !closure.captures.contains(capture)
+                || !covered.insert(capture.clone())
             {
                 return Err(InvalidGraph("closure capture read differs from its capture"));
             }
@@ -382,10 +382,8 @@ fn validate(graph: &Graph) -> Result<Validated, InvalidGraph> {
         if !destinations.insert(*loan) {
             return Err(InvalidGraph("loan has multiple local destinations"));
         }
-        // A closure local is a value of its own that also holds its captured borrow; an alias is only the borrow.
-        if graph.permissions.contains_key(&Root::Binding(local.clone()))
-            && !graph.closures.values().any(|closure| &closure.local == local)
-        {
+        // A local alias is only the borrow and cannot also declare an independent owner.
+        if graph.permissions.contains_key(&Root::Binding(local.clone())) {
             return Err(InvalidGraph("local alias also declares an owned storage root"));
         }
         let source = graph

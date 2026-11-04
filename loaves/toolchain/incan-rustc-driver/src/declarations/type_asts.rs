@@ -606,17 +606,41 @@ pub(super) fn native_callable_object_ast(
     })
 }
 
-/// The Fn object of an environment holding a borrowed reference, outliving that borrow's elided lifetime: a
-/// constructor has exactly one reference input, the capture it boxes.
+/// The Fn object of an environment holding borrowed references, outliving their inferred common bound.
 pub(super) fn borrowing_callable_object_ast(signature: &[PlanType], span: Span) -> Box<ast::Ty> {
+    borrowing_callable_object_ast_with_lifetime(signature, None, span)
+}
+
+/// Build a borrowing callable object whose common bound is inferred or named by its constructor.
+fn borrowing_callable_object_ast_with_lifetime(
+    signature: &[PlanType],
+    lifetime: Option<&str>,
+    span: Span,
+) -> Box<ast::Ty> {
     let mut object = native_callable_object_ast(signature, span, false, false, false);
     if let ast::TyKind::TraitObject(bounds, _) = &mut object.kind {
         bounds.push(ast::GenericBound::Outlives(ast::Lifetime {
             id: ast::DUMMY_NODE_ID,
-            ident: rustc_span::Ident::new(rustc_span::kw::UnderscoreLifetime, span),
+            ident: lifetime.map_or_else(
+                || rustc_span::Ident::new(rustc_span::kw::UnderscoreLifetime, span),
+                |name| rustc_span::Ident::new(rustc_span::Symbol::intern(name), span),
+            ),
         }));
     }
     object
+}
+
+/// Build the boxed borrowing closure result of a constructor with one explicit common capture lifetime.
+pub(crate) fn borrowing_closure_ast(signature: &[PlanType], lifetime: &str, span: Span) -> Box<ast::Ty> {
+    Box::new(ast::Ty {
+        id: ast::DUMMY_NODE_ID,
+        kind: boxed_object_ast(
+            borrowing_callable_object_ast_with_lifetime(signature, Some(lifetime), span),
+            span,
+        ),
+        span,
+        tokens: None,
+    })
 }
 
 /// Construct a function-pointer signature structurally; preflight has proved a final return entry exists.

@@ -92,7 +92,7 @@ pub def assign_callable(
     source = operand_type(builder, value)?
     match place_type(builder.locals, target):
         PlanType.Closure(signature) =>
-            # A closure holding a borrowed capture keeps its borrowing object in the binding.
+            # A closure holding borrowed captures keeps its borrowing object in the binding.
             if source == PlanType.BorrowingClosure(signature):
                 return move_closure(builder, target, value, signature, false, span, true)
             owned = owned_callable_value(builder, value, signature, span)?
@@ -293,23 +293,21 @@ pub def lower_closure(
     if target.local in builder.function_pointer_locals:
         return Err("unsupported Body IR capturing closure stored as a function pointer")
     _ = closure_arguments(signature)?
-    # An environment holding a shared reference lives no longer than its borrow, which checking keeps alive. Its object
-    # takes the lifetime of that one reference.
+    # An environment holding shared references lives no longer than their shortest borrow, which checking keeps alive.
+    # Its object takes that common bound while each capture retains its independent source lifetime.
     mut references = 0
     for capture in capture_types:
         if reference_capture(capture):
             references += 1
-    if references > 1:
-        return Err("unsupported Body IR closure holding more than one borrowed capture")
-    borrowing = references == 1
+    borrowing = references != 0
     if borrowing and true in flags:
-        return Err("unsupported Body IR closure holding a borrowed capture with default parameters")
+        return Err("unsupported Body IR closure holding borrowed captures with default parameters")
     mut native_send = false
     mut native_sync = false
     match native_storage:
         Some(storage) =>
             if borrowing:
-                return Err("unsupported Body IR native callback holding a borrowed capture")
+                return Err("unsupported Body IR native callback holding borrowed captures")
             if not storage.move_capture:
                 return Err("invalid Body IR native callback without owned capture storage")
             native_send = storage.send
