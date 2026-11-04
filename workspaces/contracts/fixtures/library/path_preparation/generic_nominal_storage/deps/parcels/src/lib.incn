@@ -46,3 +46,8 @@ pub def freeze_values[T with Static](values: NativeVec[T]) -> NativeFrozenList[T
 pub def frozen_count[T with Static](values: NativeFrozenList[T]) -> int:
     """Read a native frozen generic argument through its retained storage contract."""
     return int(values.len())
+
+
+pub def freeze_native[T with Static](values: list[T]) -> NativeFrozenList[T]:
+    """Leak a source list into a published native frozen result that keeps its owned elements."""
+    return NativeFrozenList.leak(values)

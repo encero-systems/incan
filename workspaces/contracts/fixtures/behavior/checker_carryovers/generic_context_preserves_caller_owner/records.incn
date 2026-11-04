@@ -6,3 +6,19 @@ pub model EvidenceId:
 pub model Parcel[T]:
     """Store items of the caller-selected type."""
     pub items: list[T]
+
+
+@derive(Clone)
+pub model Box[T with Clone]:
+    """Hold one value of the caller-selected type."""
+    pub value: T
+
+
+pub def unbox[T with Clone](item: Box[T]) -> T:
+    """Return the held value at the caller's type argument."""
+    return item.value
+
+
+pub def rebox[T with Clone](item: Box[T]) -> Box[T]:
+    """Hold the same value in a new box of the caller's type argument."""
+    return Box(value=item.value)
