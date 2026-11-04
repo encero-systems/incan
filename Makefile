@@ -34,7 +34,7 @@ help:  ## Display this help message
 
 .PHONY: examples  ## build - Run examples and check declared frontend-only examples with installed incan
 examples:
-	@bash scripts/run_examples.sh
+	@INCAN_BIN="$${INCAN_BIN:-$(INCAN)}" $(INCAN) run scripts/run_examples.incn
 
 .PHONY: install-hooks  ## build - Point git at the repository's commit hooks
 install-hooks:
