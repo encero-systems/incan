@@ -10,6 +10,7 @@
     - RFC 035 (First-class named function references)
     - RFC 036 (User-defined decorators)
     - RFC 066 (`std.http` HTTP client surface)
+    - RFC 141 (`ArgumentsOf` for handler extraction)
 - **Issue:** [#171](https://github.com/encero-systems/incan/issues/171)
 - **RFC PR:** —
 - **Written against:** v0.2
@@ -183,7 +184,7 @@ Expected semantics:
 
 - route registration belongs to the app
 - route decorators are real decorators or decorator factories
-- handler signatures drive extraction behavior
+- handler signatures drive extraction behavior, through RFC 141's `ArgumentsOf[F]`, so route decorators stay library code
 - plain return values are legal; the framework owns coercion into concrete responses
 - auth and middleware can be applied at app, group, or route scope
 - docs metadata can be inferred from signatures and augmented explicitly
