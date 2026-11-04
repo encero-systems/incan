@@ -9,213 +9,272 @@
     - RFC 070 (Result combinators)
     - RFC 071 (pattern alternatives)
     - RFC 094 (scoped resource lifetimes and finalization)
-    - RFC 129 (binding and borrowing rules)
+    - RFC 129 (binding rules)
     - RFC 131 (typed errors, retained failures, and diagnostics)
     - RFC 134 (pattern bindings with exiting fallbacks)
     - RFC 135 (lazy Option defaults)
     - RFC 137 (named payload patterns)
-- **Issue:** —
+    - RFC 148 (must-use values and deliberate discard)
+    - RFC 164 (explicit ownership and borrowing)
+- **Issue:** [#2650](https://github.com/encero-systems/incan/issues/2650)
 - **RFC PR:** —
 - **Written against:** v0.6
 - **Shipped in:** —
 
 ## Summary
 
-Explore local typed Result matching through a single `except:` block containing ordinary match-style arms, independently of resource management. The working binding candidate makes the successful payload available to subsequent code while error arms supply a fallback value or explicitly leave the continuation. The pattern-block shape is the selected design direction; its attachment syntax, aggregate handling, and propagation boundaries remain under review. This RFC does not introduce thrown exceptions or panic catching.
+A statement ending in `?` may be followed by an `except:` block of ordinary match arms, which handles the listed errors where they happen and lets every other error go to the caller as `?` always does. It reads as "`?`, except for these cases". An arm either supplies a replacement value, so the function continues, or leaves through `return`, `break` or `continue`. This is not exception handling: nothing is thrown, `raise` is unchanged, and panics are not caught. It is a shorter way to match on one `Result` value.
+
+## Core model
+
+1. **`?` still means `?`.** The value is the success payload and errors go to the caller, with the same checks as anywhere else.
+2. **The block lists the exceptions.** Its arms see the error, and an error no arm handles propagates.
+3. **One value, one match.** The block matches the `Result` of its own line and nothing else, under the ordinary rules for match arms.
+4. **An arm continues or leaves.** A value replaces the payload, and an exit leaves as it would anywhere else.
+5. **Removing the block leaves working code.** The line above it is an ordinary `?` line.
 
 ## Motivation
 
-A fallible operation often has a straightforward successful continuation but several distinct error policies: one error permits a default, another permits a different recovery, and the rest must propagate. A full match can push the continuation inside an arm. Combinators express many pipelines well, but substantial pattern-based recovery may require a separate callback whose only purpose is to house those branches.
+A function calls something that returns `Result[T, E]`. The success path is the main story, one or two errors have a sensible local fix, and every other error should go to the caller. Three things exist today, and none is ideal:
 
-The desired outcome is flat application code with visible typed recovery decisions and no loss of error identity or diagnostics. Resource acquisition and cleanup are separate concerns: a calculation, lookup, or boundary validation should not require a with statement merely because it returns Result. RFC 094 owns scoped resource lifetime and temporary-state restoration; this RFC owns the proposed local matching surface.
-
-An additional retained failure must not erase another failure or make it unavailable for typed inspection. How local arms address several retained failures remains a central design question, not an incidental detail of the syntax.
-
-## Goals
-
-- Give local typed error recovery a readable pattern-based surface without requiring a resource scope.
-- Reuse ordinary match arms, payload bindings, and pattern alternatives.
-- Keep the successful continuation flat and statically typed.
-- Preserve concrete error identities, payloads, hierarchy, origins, upstream relationships, and captured diagnostics under RFC 131.
-- Compose with ordinary Result propagation and RFC 070 combinators without replacing them.
-- Make evaluation, failure coverage, and recovery visible in compiler diagnostics and tooling.
-
-## Non-Goals
-
-- Adding exception throwing, changing raise, or catching panics.
-- Defining resource entry, cleanup, or ownership transfer; those belong to RFC 094.
-- Requiring with-attached handlers or making with a general Result wrapper.
-- Turning Err into Option absence or extending RFC 135's or operator to Results.
-- Replacing match, map_err, or_else, or RFC 134 exiting pattern bindings.
-- Silently searching upstream causes, discarding unmatched failures, or treating a message string as error identity.
-- Selecting a scope-outcome container, failures property, or as_result method from earlier test drives as a standard API.
-
-## Guide-level explanation
-
-All except examples describe proposed syntax. The application declarations below are supplied in full to make the test drive independent of an invented stdlib API. They use RFC 131's proposed error declarations. The binding attachment shown here is a candidate, not a finalized grammar or an implemented feature.
-
-### Bind success or recover from a particular error
-
-An application checks a requested batch size against a positive maximum:
+- `?` propagates every error, so it cannot handle just one.
+- Combinators such as `or_else` put case-by-case logic inside a callback whose only job is to hold those branches.
+- `match` works, but the success value has to come out through an `Ok(value) => value` arm, every error arm has to spell out `Err(...)`, and propagating the rest has to be written by hand:
 
 ```incan
-error BatchError:
-    InvalidRequest(requested: int)
-    InvalidLimit(maximum: int)
-    TooLarge(requested: int, maximum: int)
-
-
-def checked_batch_size(requested: int, maximum: int) -> Result[int, BatchError]:
-    if maximum <= 0:
-        return Err(BatchError.InvalidLimit(maximum=maximum))
-    if requested <= 0:
-        return Err(BatchError.InvalidRequest(requested=requested))
-    if requested > maximum:
-        return Err(BatchError.TooLarge(requested=requested, maximum=maximum))
-    return Ok(requested)
-```
-
-The application deliberately caps an oversized request but propagates invalid inputs:
-
-```incan
-def resolve_batch_size(requested: int, maximum: int) -> Result[int, BatchError]:
-    size = checked_batch_size(requested, maximum)
-    except:
-        BatchError.TooLarge(maximum=limit) => limit
-        Err(error) => return Err(error)
-
-    return Ok(size)
-```
-
-Under this candidate, the successful Result payload binds size directly. TooLarge binds its maximum field to limit and supplies that integer as the replacement value. The final arm propagates the original unmatched error unchanged. These are expected test-drive outcomes, not executed compiler results:
-
-- `resolve_batch_size(100, 256)` produces `Ok(100)` without running an error arm.
-- `resolve_batch_size(1000, 256)` produces `Ok(256)` through the selected recovery.
-- `resolve_batch_size(0, 256)` preserves InvalidRequest(requested=0).
-- `resolve_batch_size(100, 0)` preserves InvalidLimit(maximum=0).
-
-This differs from a fallback that always exits: the TooLarge arm establishes a replacement size and continues. RFC 134's let/else form deliberately requires its fallback to leave the continuation.
-
-### Pure error conversion still uses map_err
-
-When every failure should become one application-level error, a combinator remains direct:
-
-```incan
-error JobError:
-    InvalidBatch(original: BatchError):
-        caused_by = original
-
-
-def job_batch_size(requested: int, maximum: int) -> Result[int, JobError]:
-    return checked_batch_size(requested, maximum).map_err(JobError.InvalidBatch)
-```
-
-JobError and job_batch_size are application declarations. The error-constructor callback uses RFC 131's proposed constructor conversion ergonomics; the Result combinator itself is the RFC 070 surface. The wrapper retains the original typed error. This example converts failure; it does not cap the requested size or make the Result successful.
-
-The proposed except form should earn its place where distinct patterns select distinct recovery behavior. A single unconditional conversion is not a reason to replace map_err with a larger block.
-
-### Several retained failures remain an open test drive
-
-Suppose one operation produces DataBaseError.ConnectionReset and its required cleanup also produces CleanupError.RollbackFailed. These names describe application error cases in this scenario; neither is a stdlib API declaration.
-
-Both original failures must survive. A caller should remain able to inspect each by its concrete identity. The syntax does not yet establish whether arms match the complete failed Result, explicitly selected aggregate members, or a separate retained-error traversal. Matching one member must not silently handle its peers, and displaying one primary error must not discard the others.
-
-A whole-aggregate catch-all was considered, but making a specific error arm stop being useful merely because another failure was retained raises a DX concern. Automatically running several ordinary-looking arms also has a cost: that would be traversal rather than ordinary one-value match dispatch, with additional questions about early return and remaining failures. Neither rule is selected. RFC 131 owns the shared retention and inspection contract; this RFC must settle how its local patterns consume that contract before advancing beyond Draft.
-
-## Reference-level explanation
-
-### Pattern-block direction
-
-1. The local handling surface must use one except block containing ordinary `pattern =>` arms. Repeated except pattern clauses and an else error handler are not the working direction.
-2. Typed patterns must resolve checked case identities, visibility, aliases, and payload fields under ordinary error and match rules. Patterns must not dispatch on rendered messages or invented stable string codes.
-3. A bare error-case pattern abbreviates its corresponding Err pattern. For example, `BatchError.TooLarge(maximum=limit)` abbreviates `Err(BatchError.TooLarge(maximum=limit))`. This abbreviation must not search nested causes or erase a retained wrapper.
-4. Err(error) binds the complete failure value presented to matching. The final aggregate presentation and per-member binding contract remain unresolved; a single-case test drive must not be presented as solving aggregate handling.
-5. Successful completion must skip error arms. Handled and unhandled paths must remain statically checked; no path may continue with an uninitialized binding or silently declare an unmatched failure successful.
-
-### Candidate binding contract
-
-The guide's working form is a simple binding followed immediately by its handling block:
-
-```incan
-name = result_expression
-except:
-    error_pattern => fallback_expression
+profile = match store.fetch(user_id):
+    Ok(value) => value
+    Err(StoreError.Unavailable(_)) => cache.last_known(user_id)
     Err(error) => return Err(error)
 ```
 
-For this candidate, result_expression has type Result[T, E]. It must be evaluated exactly once. Ok(value) establishes the binding with type T, while a selected continuing error arm must supply a value assignable to T. An arm may instead leave the continuation through legal enclosing control flow. The source binding must not be available inside an arm before a value has been established.
+Only one line of that says anything specific to this program.
 
-This is a candidate contract for review, not a settled change to every assignment. A binding without an attached except block retains its ordinary Result-valued meaning. Host forms such as reassignment, destructuring, annotated bindings, return expressions, or standalone expressions have not been selected.
+## Goals
 
-Arm ordering, coverage diagnostics, and the exact value-yielding rule for multiline arms must follow a precise selected contract before implementation. The natural candidate is ordinary ordered match dispatch for one value, with its existing unreachable-pattern and coverage checks; aggregate dispatch remains separately open.
+- Handle selected errors locally while keeping the successful path flat.
+- Keep propagation visible at the call, with the rules `?` already has.
+- Reuse ordinary match arms, payload bindings, guards and alternatives.
+- Let a function return a narrower error set than the call it handles.
+- Preserve error identity, payloads and diagnostics under RFC 131.
 
-### Propagation and diagnostics
+## Non-Goals
 
-The final design must identify which Result is matched and where fallible operations inside handlers propagate. It must not silently convert the handler into an ambient catch for unrelated question-mark propagation, acquisition failure, or panic. A fallback failure must not recursively re-enter its own handler through an implicit retry rule.
+- Throwing exceptions, changing `raise`, or catching panics.
+- A general `try` block that intercepts every failure in a suite.
+- Resource entry and cleanup, which belong to RFC 094.
+- Replacing `match`, `map_err`, `or_else`, or RFC 134's `let ... else`.
+- Searching upstream causes, or matching on message text.
 
-Unmatched and additional retained failures must remain available for propagation. The shared failure representation, diagnostics, and inspection follow RFC 131. Explicit recovery from a matched failure must be distinguishable from accidentally dropping another failure; this RFC does not create an unbounded global error-history buffer.
+## Guide-level explanation
 
-Diagnostics must identify the attached source expression, its Result success and error types, each selected case and payload binding, continuing-arm type mismatches, incomplete coverage, unreachable patterns, and any unresolved propagation or retention obligation. A misplaced question mark that has already extracted T must not be mistaken for a Result source merely because except follows it.
+Every `except` example below is proposed by this RFC.
+
+### Handle one error and let the rest go
+
+A profile page serves a cached copy while the store is down. Every other store failure goes to the caller:
+
+```incan
+error StoreError:
+    Unavailable(reason: str)
+    Forbidden(user_id: str)
+    Corrupt(path: str)
+
+def profile_page(store: ProfileStore, cache: ProfileCache, user_id: str) -> Result[Page, StoreError]:
+    profile = store.fetch(user_id)?
+    except:
+        StoreError.Unavailable(_) => cache.last_known(user_id)
+
+    return Ok(render(profile))
+```
+
+`ProfileStore`, `ProfileCache`, `Page` and `render` are the application's own. `profile` is the plain value, because of the `?`. On success the block is skipped. On `Unavailable`, the arm's value becomes `profile` and the function continues. `Forbidden` and `Corrupt` have no arm, so they go to the caller, keeping their identity and origin.
+
+An arm can bind the payload it needs, using RFC 137's named patterns:
+
+```incan
+size = checked_batch_size(requested, maximum)?
+except:
+    BatchError.TooLarge(maximum=limit) => limit
+```
+
+### Leave from an arm
+
+An arm may leave, as anywhere else. An import loop skips blank rows and lets everything else go to the caller:
+
+```incan
+for line in lines:
+    row = parse_row(line)?
+    except:
+        RowError.Blank => continue
+
+    totals.add(row)
+```
+
+### Use it without a value
+
+A cleanup step treats "already gone" as success:
+
+```incan
+remove_lock(lock_path)?
+except:
+    LockError.Missing(_) => None
+```
+
+### Return a narrower error
+
+Handling a case removes it from what can propagate, so a function can promise less than the call it makes. Under RFC 131, a function must handle excluded cases before returning a narrower set, and this is how:
+
+```incan
+error NetworkError:
+    Offline
+    TimedOut
+
+error StorageError:
+    Corrupt(path: str)
+
+error StoreError = NetworkError | StorageError
+
+def cached_profile(store: ProfileStore, cache: ProfileCache, user_id: str) -> Result[Profile, StorageError]:
+    profile = store.fetch(user_id)?
+    except:
+        NetworkError.Offline => cache.last_known(user_id)
+        NetworkError.TimedOut => cache.last_known(user_id)
+
+    return Ok(profile)
+```
+
+Without those arms, `?` would refuse the line, because `NetworkError` does not fit in `StorageError`. If every case has an arm, nothing is left to propagate, and the function need not return `Result` at all:
+
+```incan
+def status_code(request: Request) -> int:
+    response = handle(request)?
+    except:
+        RequestError.NotFound(_) => return 404
+        RequestError.Forbidden(_) => return 403
+        RequestError.Internal(_) => return 500
+
+    return response.status
+```
+
+### When a simpler form fits
+
+A single default is `unwrap_or`, and converting every failure to one application error is `map_err`. `except` earns its place when different errors get different treatment.
+
+### When the recovery fails
+
+A failing recovery propagates its own error, as `or_else` does:
+
+```incan
+config = load_config(path)?
+except:
+    ConfigError.Missing(_) => load_bundled_defaults()?
+```
+
+The `?` inside the arm goes straight to the caller, and never re-enters this block. To keep both failures, the author wraps the fallback's error in a case with a field for the original, as RFC 131's constructor form of `map_err` does.
+
+## Reference-level explanation
+
+### Syntax
+
+```text
+except_statement ::= statement_ending_in_question_mark NEWLINE
+                     "except" ":" NEWLINE INDENT match_arm+ DEDENT
+```
+
+1. An `except:` block must follow a binding statement or expression statement whose value expression ends in `?`, aligned with that statement. Binding statements include `name = e?`, `name: T = e?`, `mut name = e?`, reassignment, tuple destructuring and `_ = e?`. Blank lines and comments must not detach the block.
+2. `except` must be a contextual keyword, recognized only in this position when followed by `:` and a line break, so that a name `except` and an annotated binding `except: int = 3` keep their meaning.
+3. An `except:` after a statement that does not end in `?` must be refused, with a diagnostic pointing at where the `?` belongs. So must an `except:` after a `?` on an `Option`, with a pointer to RFC 134's `let ... else`.
+
+### The block and what it matches
+
+4. The block must apply to the `?` that ends the statement. An inner `?`, as in `checked(parse(raw)?, maximum)?`, must propagate directly and must not reach the block.
+5. The source expression must be evaluated exactly once. On `Ok`, the block must be skipped.
+6. Arms must be ordinary `match` arms whose subject is the error value of type `E`: ordered dispatch, guards, alternatives, `case` blocks and unreachable-arm checks all apply. A pattern `Ok(...)` or `Err(...)` must be refused, because the subject is the error. A catch-all is `error => ...` or `_ => ...`.
+7. Patterns must resolve checked case identities and payload fields under RFC 131 and RFC 137. They must not match rendered messages or search causes. An `Err` carries one error value, and an arm matches that one value, including an aggregate such as RFC 094's `ScopeFailure.Multiple` or an RFC 131 application aggregate, as a whole.
+
+### Arm values and exits
+
+8. An arm whose body is an expression must produce a value assignable to `T`, the payload type. A block arm produces no value and must end by leaving, under the existing match rule.
+9. `return`, `break`, `continue` and `?` inside an arm must behave as they do anywhere else in the function, and a failure inside an arm must not re-enter its own block. The matched failure counts as handled, and keeping both failures requires an explicit payload.
+10. A name the statement newly binds must not be available inside an arm, and a reassigned `mut` name must still hold its old value there.
+
+### Propagation
+
+11. An error no arm matches must propagate exactly as `?` propagates it, keeping its case, payload and original capture under RFC 131.
+12. The remainder must be `E` minus every case handled by an arm with no guard whose pattern matches all of that case's values. The remainder must fit the enclosing function's declared error set under RFC 131's widening rule. If it does not, the program must be refused with the uncovered cases named, as `match` does.
+13. If the remainder is empty, the enclosing function need not return `Result`. Otherwise the rules of `?` apply.
+14. Propagating out of a `with` suite must run its cleanup, under RFC 094. The block must not bypass a resource's required exit or change which failures it retains.
+
+### Diagnostics and tooling
+
+15. Diagnostics must name the source expression, its `T` and `E`, each uncovered case, continuing-arm type mismatches and unreachable arms.
+16. Hover must show the source `Result[T, E]`, the bound `T` and the remainder that propagates. Rename, go-to-definition and completion must keep canonical case and field identities. The failure origin must stay distinct from the recovery site.
+17. The formatter must keep `except:` aligned with its statement and must not merge it onto one line.
+
+### Conformance workloads
+
+| Workload | Required evidence |
+| --- | --- |
+| Paths | Success, a recovered error and a propagated error each behave as specified, with exactly-once evaluation and unselected arms unevaluated. |
+| Hosts | Every statement form in the syntax accepts a block, and a misplaced `except:` is refused with its diagnostic. |
+| Contextual keyword | Existing names `except` and `except: int = 3` keep their meaning. |
+| Inner `?` | An inner `?` propagates directly, and a `?` inside an arm does not re-enter the block. |
+| Exits | `return`, `break` and `continue` from an arm work, and a block arm that can fall through is refused. |
+| Narrowing | A function returns a narrower error set when arms cover the excluded cases, is refused when they do not, and needs no `Result` when nothing remains. |
+| Guards | A guarded arm does not remove its case from the remainder. |
+| Identity | A propagated error keeps its case, payload and origin. |
+| Resources | Propagating out of a `with` suite runs cleanup. |
 
 ## Design details
 
-### Interaction with other control flow
+### Why the `?` is written
 
-Result matching and resource lifetime are separate language concerns. RFC 094 remains responsible for running required cleanup before its operation is considered complete. A local Result handler must not bypass an active resource's required exit or change which typed failures that resource retains.
+A form with no `?` was the earlier direction. Its first line read as if the name held a `Result`, it left errors leaving with nothing at the call to show it, and it changed a binding's type based on the next line. Writing the `?` keeps the first line's ordinary meaning and gives one rule for the propagation check. The keyword then reads as English, "`?`, except for these cases", rather than suggesting a thrown exception.
 
-This proposal does not introduce a general try block. Handling an expression's returned Result and intercepting every failure originating anywhere in a suite are different contracts; the latter is not selected by the binding example. Ordinary return, loop control, and question-mark rules remain authoritative except for an explicitly specified new boundary. The exact boundary is listed as open below.
+### Why unmatched errors propagate
 
-### Interaction with existing proposals
+Without propagation, this form is the `match` expression in the Motivation under another name. Propagation is the feature. It is also what lets a function narrow its error set with no extra machinery.
 
-RFC 070 remains the standard Result combinator contract. RFC 134 handles successful pattern extraction whose unsuccessful path must exit. RFC 135 chooses among optional values rather than treating errors as absence. RFC 137 supplies named payload patterns. RFC 131 preserves original error identity, hierarchy, cause relationships, and aggregate members; this RFC must not invent a parallel error representation.
+### Aggregates
 
-### Compatibility and inspectability
+RFC 131 decided that an `Err` holds one value, with no implicit error iteration, and RFC 094 selected `ScopeFailure.Multiple` for a body and cleanup that both fail. An arm therefore matches an aggregate as a whole, and handling each member is ordinary iteration in a helper. Python needed a separate `except*` ([PEP 654](https://peps.python.org/pep-0654/)) to dispatch on group members, which this RFC does not add.
 
-Existing Result bindings, match statements, combinators, and question-mark propagation must keep their current meaning when no new construct is present. The except spelling must be activated in its selected grammatical position without an unreviewed global identifier reservation. Older compilers may reject the proposed form; no source migration is required merely to retain existing explicit Result code.
+### Prior art
 
-Hover and signature help must expose both the source Result[T, E] and the candidate binding's resulting T, without suggesting that the source function itself became infallible. Go-to-definition, rename, diagnostics, and pattern completion must retain canonical case and field identities. Generated control flow must remain attributable to the source operation and selected arm, while original failure origins remain distinct from the recovery site.
-
-Conformance requires paired success, recovered-error, and propagated-error examples; exactly-once evaluation; typed payload extraction; laziness of unselected arms; rejection of invalid continuing-arm types and unavailable bindings; and preservation of every remaining failure and its diagnostic provenance. Aggregate and propagation acceptance cases must be fixed before the RFC advances beyond Draft. No implementation or runtime proof is claimed by this document.
+Scala's `Try(f()).recover { case e: X => fallback }` takes a partial function and leaves unmatched failures as failures, the closest value-based analog. Swift's `do/catch` propagates uncaught errors from a throwing function and requires exhaustive catches only when the context cannot throw, the same rule as this RFC's empty remainder. Kotlin's `try` is an expression whose unmatched exceptions propagate, and OCaml's `match ... with exception` is similar. Zig's `f() catch |err| switch (err) { ... else => return err }` and Rust's `match` require spelling out propagation, the shape this RFC removes.
 
 ## Alternatives considered
 
-- **Keep ordinary match and combinators only.** This remains a viable baseline. The new form must justify its grammar and typing costs through readable local recovery and a flatter continuation.
-- **Repeated except clauses.** Not the preferred shape: a single block reuses ordinary match arms and their payload bindings and alternatives.
-- **An else error block.** Less explicit about typed failure handling; the discussion selected except as the working keyword.
-- **Attach error matching only to with.** Not the selected host direction: ordinary validation and calculations need no resource lifetime. Any future composition must preserve RFC 094's ownership and finalization contract.
-- **Capture every with block in a new outcome container.** Experimental scope capture, failures views, and as_result methods exposed unresolved lifetime and multi-error semantics. This RFC does not select that API or require it for ordinary Result matching.
-- **Automatically dispatch every retained failure through ordinary-looking arms.** Not selected: several arms could execute, and early return could leave peers unhandled. This needs an explicit traversal and retention contract, not an accidental change to match semantics.
+- **Keep `match` and combinators only:** workable, but handling one error means writing the `Ok` arm, the `Err` wrappers and the propagation by hand.
+- **No `?` on the statement:** see "Why the `?` is written".
+- **Exhaustive arms with explicit propagation:** this is `match` under another name.
+- **`recover:` or another word:** the mechanism is the same, but `except` reads as a sentence after `?`.
+- **Repeated `except X:` clauses:** a single block reuses match arms, bindings and alternatives.
+- **An expression form, such as `f(g()? except: ...)`:** would put an indented block inside an expression, which Incan does not allow anywhere.
+- **A general `try` block:** intercepting every failure in a suite is a different contract, and hides which call failed.
+- **Attaching to `with` only:** ordinary calculations need no resource lifetime.
+- **Running several arms for an aggregate's members:** several arms could execute, and an early return could leave members unhandled.
+- **Linking the original failure implicitly when recovery fails:** RFC 131's `or_else` requires an explicit payload, and this RFC matches it.
 
 ## Drawbacks
 
-- Local pattern recovery overlaps existing match and Result combinators, increasing the number of ways to express error handling.
-- The binding candidate changes the visible bound type from Result[T, E] to T when an attached block is present; tooling and diagnostics must make that distinction clear.
-- The except spelling may suggest thrown exceptions even though the proposed mechanism handles typed Result values only.
-- Value-yielding multiline arms, propagation boundaries, and aggregate matching require real design work. Attractive examples with one error must not conceal those gaps.
+Another way to handle errors overlaps `match` and the combinators. A reader who stops at the first line sees errors leaving, and has to read the next line for the exceptions. The word `except` still reminds Python users of exceptions until they see the `?`. An implicit remainder means a newly added error case propagates without a compile error, as with `?`, where an exhaustive `match` would flag it.
 
 ## Layers affected
 
-- **Parser / AST:** the chosen Result-handling host and one match-arm block require an explicit grammatical relationship.
-- **Typechecker / control flow:** source Result typing, error patterns, binding availability, arm result types, coverage, propagation boundaries, and retained-error obligations must be checked together.
-- **IR Lowering / Emission:** source evaluation, success binding, lazy handler dispatch, ordinary exits, and mandatory enclosing cleanup must preserve the selected semantics and error provenance.
-- **Formatter:** attached blocks, match arms, and multiline bodies need stable formatting without conversion into repeated clauses or an else block.
-- **LSP / Tooling:** completion, source Result and bound-value types, case and payload identity, diagnostics, and generated-control-flow explanations must reflect the selected contract.
-- **Error integration:** RFC 131's shared retained-failure and diagnostic contracts must serve the new surface without a separate implicit error engine.
+- **Parser and AST:** the contextual keyword and the attached block.
+- **Typechecker:** the error-valued subject, arm types, remainder computation and the narrowing check.
+- **Lowering and emission:** evaluation, dispatch, exits and propagation with preserved origins.
+- **Formatter:** the attached block's layout.
+- **Language server:** hovers for `T`, `E` and the remainder, and arm completion.
+- **Documentation:** the error-handling guide and reference.
 
 ## Design Decisions
 
-- Explore except as an independent Result-matching feature rather than making it part of resource management in RFC 094.
-- Use one except block containing ordinary match-style arms, retaining typed case identity, payload bindings, and pattern alternatives. The attachment host is still a candidate.
-- Preserve Result-based errors without changing raise, introducing exception throwing, or catching panics. Failure retention and diagnostic provenance follow RFC 131.
-
-## Unresolved questions
-
-- Which host syntax should be selected: the attached binding candidate, an independently usable expression form, or another explicit Result boundary?
-- What value-yielding and definite-assignment rules govern multiline arms, reassignment, annotated bindings, and destructuring?
-- Must error coverage be exhaustive, or may omitted cases propagate implicitly under a checked enclosing Result contract?
-- Where do question-mark propagation, nested handler failures, explicit returns, and loop exits go, including fallible argument evaluation before the matched Result exists?
-- How do arms address retained aggregate members or umbrellas while keeping every unmatched failure available, without implicitly searching causes or disguising multi-arm traversal as ordinary match?
-- When recovery itself fails, how are the original failure and recovery failure retained and exposed through the shared RFC 131 contract?
-- Does selective recovery provide enough readability benefit over ordinary match, or_else, and map_err to justify another construct? The complete batch-size example and retained-failure scenarios should decide this rather than syntax preference alone.
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- **Form:** a statement ending in `?`, followed by one `except:` block of ordinary match arms, on binding statements and expression statements only. The keyword is contextual.
+- **Unmatched errors:** propagate exactly as `?` does, checked against the function's declared error set. Handled cases leave the remainder, so a function can narrow its errors, and an empty remainder needs no `Result`.
+- **Arms:** the subject is the error value. An expression arm supplies the replacement, a block arm must leave, and exits behave as they do anywhere else.
+- **Scope:** the block covers only the `?` ending its line. An inner `?` and a `?` inside an arm propagate directly, with no re-entry.
+- **Aggregates:** an arm matches one error value as a whole, under RFC 131 and RFC 094.
+- **Failed recovery:** propagates its own error, as `or_else` does. Keeping both requires an explicit payload.
