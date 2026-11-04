@@ -1,4 +1,4 @@
-# behavior: primitive filesystem resources read bounded chunks, retain views and release owned handles and locks (#2501)
+# behavior: primitive filesystem resources read and decode source bytes, retain views and release owned handles and locks (#2501)
 # expect-stdout:
 #   0
 #   3 3 3 1
@@ -11,10 +11,20 @@
 #   true
 #   true
 #   true
+#   source café
+#   true
+#   bad�tail
+#   true
+#   cut�
+#   99 97 102 195 169 0
+#   true
 
-"""Exercise source reading and retained filesystem resources without importing the std.fs facade."""
+"""Exercise source reading, UTF-8 decoding and retained resources without importing higher standard facades."""
 
 from std.primitives.fs import MappedView, Path, map_read, open_read, open_write, read_chunk, try_exclusive, write_all
+from std.primitives.fs.file import read_remaining
+from std.primitives.native_strings import nul_terminated_utf8
+from std.primitives.text import decode_utf8
 
 
 def read_source_chunks(path: Path, chunk_size: int) -> Result[list[bytes], str]:
@@ -36,6 +46,16 @@ def write_source(path: Path, data: bytes) -> Result[None, str]:
     file = open_write(path)?
     _ = write_all(file, data)?
     return Ok(None)
+
+
+def read_source(path: Path, replace_invalid: bool) -> Result[str, str]:
+    """Read one source file as bytes and decode it through the primitive UTF-8 boundary."""
+    file = open_read(path)?
+    data = read_remaining(file)?
+    accepted, text_or_detail = decode_utf8(data, replace_invalid)
+    if accepted:
+        return Ok(text_or_detail)
+    return Err(text_or_detail)
 
 
 def first_byte(path: Path) -> Result[int, str]:
@@ -87,6 +107,13 @@ def read_failed() -> Result[bool, str]:
         Err(_) => return Ok(true)
 
 
+def decode_failed(path: Path) -> bool:
+    """Report whether strict primitive decoding refuses one malformed source file."""
+    match read_source(path, false):
+        Ok(_) => return false
+        Err(_) => return true
+
+
 def main() -> Result[None, str]:
     """
     Exercise primitive filesystem resources.
@@ -95,6 +122,8 @@ def main() -> Result[None, str]:
     2. Keep two owned readers at independent cursor positions.
     3. Report open and read failures and release a handle on early return.
     4. Retain a mapped view and release exclusive lock guards.
+    5. Decode valid, malformed and truncated source bytes with strict and replacement behavior.
+    6. Build independent NUL-terminated UTF-8 storage and reject an interior NUL.
     """
     empty_path = Path(value="primitive-source-empty")
     source_path = Path(value="primitive-source-data")
@@ -133,4 +162,25 @@ def main() -> Result[None, str]:
     lock_path = Path(value="primitive-source-lock")
     println(lock_conflicts(lock_path)?)
     println(lock_released(lock_path)?)
+
+    # 5. Source loading uses the same strict and replacement byte decoder as generated programs.
+    valid_path = Path(value="primitive-source-valid-utf8")
+    malformed_path = Path(value="primitive-source-malformed-utf8")
+    truncated_path = Path(value="primitive-source-truncated-utf8")
+    write_source(valid_path, b"source caf\xc3\xa9")?
+    write_source(malformed_path, b"bad\xfftail")?
+    write_source(truncated_path, b"cut\xe2\x82")?
+    println(read_source(valid_path, false)?)
+    println(decode_failed(malformed_path))
+    println(read_source(malformed_path, true)?)
+    println(decode_failed(truncated_path))
+    println(read_source(truncated_path, true)?)
+
+    # 6. The returned buffer owns its copy and contains exactly one trailing terminator.
+    terminated = nul_terminated_utf8("café")?
+    println(" ".join([str(int(byte)) for byte in terminated]))
+    interior = b"a\x00b".decode().unwrap_or("")
+    match nul_terminated_utf8(interior):
+        Ok(_) => println(false)
+        Err(_) => println(true)
     return Ok(None)

@@ -430,8 +430,13 @@ def compiled_frame(declaration: &LoafCallable) -> Option[tuple[Body, str]]:
 
 
 def runtime_canonical(module: &BodyIrModule, path: str) -> Result[Option[RustCanonicalSymbolId], str]:
-    """Resolve a runtime facade once from its checked public export map, retaining canonical provider ownership."""
-    if not path.startswith("incan_native_runtime::"):
+    """Resolve an admitted lowering facade from its checked public export map, retaining provider ownership."""
+    mut owner = ""
+    if path.startswith("incan_native_runtime::"):
+        owner = "incan_native_runtime"
+    elif path.startswith("incan_stdlib_primitives::"):
+        owner = "incan_stdlib_primitives"
+    else:
         return Ok(None)
     mut selected: Option[RustCanonicalSymbolId] = None
     for position in range(len(module.runtime_callable_bindings)):
@@ -440,7 +445,7 @@ def runtime_canonical(module: &BodyIrModule, path: str) -> Result[Option[RustCan
             continue
         match binding.canonical.origin:
             SymbolOrigin.Package(library=library, module_path=_owner) =>
-                if library != "incan_native_runtime":
+                if library != owner:
                     return Err(f"invalid runtime facade owner for {path}")
             _ => return Err(f"invalid runtime facade owner for {path}")
         match selected:

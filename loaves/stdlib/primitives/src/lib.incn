@@ -10,3 +10,7 @@ import primitives.fs.mapping
 import primitives.fs.path
 import primitives.hmac
 import primitives.errors
+import primitives.native_strings
+import primitives.text
+pub from primitives.native_strings import nul_terminated_utf8
+pub from primitives.text import copy_frozen_bytes, decode_utf8, encode_frozen_utf8, encode_utf8
