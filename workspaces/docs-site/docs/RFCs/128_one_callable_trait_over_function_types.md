@@ -10,6 +10,7 @@
     - RFC 041 (first-class Rust interop authoring; the `Fn`, `FnMut`, and `FnOnce` markers)
     - RFC 042 (traits are always abstract)
     - RFC 068 (protocol hooks for core language syntax; `__call__` and the fixed-arity callable traits)
+    - RFC 082 (checked API documentation; docstring parsing)
     - RFC 115 (fallible iteration and combinators; stored generic callbacks)
     - RFC 141 (type matching; `std.reflection` `TypeInfo` and `ParameterListInfo`)
     - #1790 (a `mut` parameter marker in function types)
@@ -265,6 +266,29 @@ def main() -> None:
 
 The description is the contract of the value's checked type where it is asked for. `Formatter().format` names the method, so it reports both parameters. Inside `show`, the same method is seen through `Callable[(text: str) -> str]`, which promises only `text`, so that is what it reports. A parameter that a narrower callable type hides cannot be called through it either. A library that needs a function's complete declaration, such as a decorator, sees it where the function is declared.
 
+A named function or method also reports its name and docstring, so a library can describe it without a second copy of that text:
+
+```incan
+signature = Formatter().format.__signature__()
+println(signature.name)    # Some("format")
+println(signature.doc)     # the parsed docstring, when the method has one
+```
+
+### Decorating a method
+
+A decorator generic over the whole callable may return a wrapper on a `self` method. It applies to the bound method each time the method is read from a value, so it sees the caller-facing signature and never names the receiver:
+
+```incan
+class Invoices:
+    @timed
+    def send(self, customer: str, amount: int) -> Receipt:
+        ...
+
+invoices.send("acme", 1200)
+```
+
+Here `invoices.send` is `timed` applied to the bound method, so `F` has `customer` and `amount` and no `self`. Because the decorator runs on each read, a wrapper that keeps state across reads keeps it on the receiver or in its module.
+
 ### Holding a callable in a model
 
 Because the return type is spelled, a nominal declaration can bound its own type parameter and store the value:
@@ -394,6 +418,10 @@ The RFC 035 `Callable[Params, R]` function-type shorthand must be retired withou
 - The removed-name diagnostic may share that code or take its own; either way it must have a catalog entry and an `incan explain` text.
 - `INCAN-T0106` keeps its code and covers only a marker on a nominal declaration. Its parameter-count case must be removed from the catalog entry, the `incan explain` text, and the CLI reference.
 
+### Decorated methods
+
+A decorator of a `self` method that is generic over the whole callable and returns something other than its input must be applied to the bound method each time the method is read from a value: `value.method` must evaluate the decorator on the bound method. `F` is then the bound method's checked type, whose caller-facing signature has no receiver, and the receiver and borrow rules above apply to that bound value as they do anywhere else. The limits of `INCAN-T0116` must not apply to such a decorator, because it never names the receiver and receives an ordinary value, so it may be imported and public. A `(F) -> F` decorator keeps its existing application.
+
 ### Library metadata
 
 A library's checked metadata must preserve the complete signature, receiver requirements, invocation guarantees, and generic invocation requirements so consumers check the same contract. Original nominal type identity and other trait bounds must survive export, import, and forwarding.
@@ -409,7 +437,9 @@ The description must be read with `value.__signature__()`, which returns a `std.
 - `parameters`, a `ParameterListInfo` (RFC 141) whose entries give each caller-facing parameter's name where one is promised, kind, type as a `TypeInfo` with its display name, required or optional status, and `mut` marker;
 - `returns`, the return type as a `TypeInfo`;
 - `receiver`, an `Option[ReceiverInfo]` that records what supplies the bound receiver and whether invocation reads, mutates, or consumes it;
-- the signature's type parameters, with substitutions applied when the signature is specialized.
+- the signature's type parameters, with substitutions applied when the signature is specialized;
+- `name`, an `Option[str]` with the declared name of a named function or method, absent for a closure or a value known only through `Callable[S]`;
+- `doc`, an `Option[DocInfo]` with the declaration's docstring parsed as RFC 082 reads it: its `summary`, the first paragraph; its `description`; and its documented `parameters` and `returns`.
 
 These types must be read-only values, and `std.reflection` must not add them to the automatic prelude.
 
@@ -539,3 +569,5 @@ This RFC is done when:
 - **Inherited features.** `Callable` expresses whatever function types express, including the `mut` parameter marker of #1790 once it lands, with no rule of its own.
 - **Compiler-known.** `std.traits.callable` declares and documents `Callable`; the checker supplies its requirement.
 - **One identity.** A callable value satisfies the same bound in every package; a backend that breaks this is not acceptable.
+- **Name and docstring.** `__signature__()` reports a named function's name and parsed docstring, so libraries can describe a function from one source.
+- **Decorated methods.** A whole-callable decorator that returns a wrapper applies to the bound method on each read. It never names the receiver, so `INCAN-T0116`'s limits do not apply to it, and it may be imported and public.
