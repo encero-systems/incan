@@ -186,6 +186,7 @@ A directory with a `Cargo.toml` and no `loaf.toml` is not a project for either s
 | Target, carrier, provider, and artifact lifecycle                                  | `oven`          | `plan`, `check`, `build`, `bake`, `run`, `test`, `inspect`, `describe-unit`, `bakery` (`status`, `verify`, `gc`) |
 | Resident compiler owners                                                           | `oven`          | `owner` (`stop`)                                                                                                |
 | Environments, typed actions, project mutations                                     | `oven`          | `env`, `action`, `starter`, `mix`                                                                               |
+| Investigations of failures and questions                                           | `oven`          | `investigate`                                                                                                   |
 
 An operation that changes dependency resolution, registry trust, a lock, generated project state, selected toolchain/provider, target output, or execution receipt belongs to Oven even when the selected sources are entirely Incan.
 
