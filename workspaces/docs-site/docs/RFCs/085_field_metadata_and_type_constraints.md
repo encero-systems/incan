@@ -39,6 +39,7 @@ This RFC strengthens Incan model fields as readable row-contract declarations. I
 6. **Metadata has lanes:** compiler-semantic keys affect language behavior, standard descriptive keys are checked and preserved for tools, and namespaced keys are inert metadata for explicit consumers.
 7. **Evidence is not inline truth:** confidence, evidence trails, timestamps, review state, and authority records should attach to stable field anchors in metadata artifacts, not clutter handwritten model declarations.
 8. **Extraction is a first-class consumer:** the checked metadata extractor must preserve field facts in a stable, machine-readable form suitable for docs, adapters, artifact inspection, dependency indexing, compatibility checks, and blast-radius analysis.
+9. **Variants carry metadata like fields:** an enum variant takes the same brackets, right after its name, and metadata never changes how an enum is built or matched.
 
 ## Motivation
 
@@ -56,6 +57,7 @@ The model object sits at the center of checked metadata, docs, adapters, compati
 
 - Extend RFC 021 field metadata while preserving the existing syntax.
 - Define standard compiler-known field metadata keys beyond `alias` and `description`.
+- Let enum variants carry the same metadata as fields, readable through `__variants__()`.
 - Add `default_factory` for fresh per-instance defaults.
 - Attach custom field checks with `validate=check` metadata while retaining type-shaped constraints and typed error diagnostics.
 - Allow fallible default factories with original failures retained under a ValidationError umbrella and a statically visible Result-returning construction contract.
@@ -184,6 +186,26 @@ model Event:
 
 For large adapter mappings, use the schema block surface from RFC 086 rather than turning every field into a wall of brackets.
 
+### Metadata on enum variants
+
+An enum variant takes the same metadata as a field, in the same position, right after its name:
+
+```incan
+enum PaymentMethod:
+    Card [description="Credit or debit card"]
+    BankTransfer [description="SEPA or ACH transfer", tags=["slow"]]
+
+enum Environment(str):
+    Production [description="The live system"] = "production"
+    Staging = "staging"
+
+enum BuildOutcome:
+    Finished [description="The build succeeded"](report: BuildReport)
+    Failed(message: str)
+```
+
+Generated documentation shows these descriptions, and `Environment.__variants__()` gives a library the same facts `__fields__()` gives it for a model. RFC 090 uses this for command descriptions, and a namespaced key such as `Card [json.name="card"]` is available to whichever library consumes it. Metadata does not change how an enum is built or matched, and an RFC 032 value stays the enum's backing value.
+
 ## Reference-level explanation
 
 ### Field metadata syntax
@@ -203,6 +225,20 @@ metadata_key = IDENT ("." IDENT)* ;
 This RFC extends `metadata_key` to allow dotted namespaced keys. Unqualified keys are reserved for compiler-known or language-standard metadata. Dotted keys are namespaced metadata.
 
 The `as "wire"` alias sugar from RFC 021 remains valid and continues to be equivalent to `alias="wire"` where RFC 021 says it is allowed.
+
+### Enum variant metadata
+
+Enum variants accept the same metadata syntax as fields:
+
+```text
+variant_decl = IDENT field_meta? variant_payload? variant_value? ;
+```
+
+- Variant metadata must accept the standard descriptive keys `description`, `title`, `deprecated`, `tags` and `classification`, and namespaced keys, with the same safe values as field metadata. A key that only makes sense for a stored field, such as `alias`, `default_factory`, `validate`, `primary_key`, `read_only` or `write_only`, must be refused with a diagnostic naming the key.
+- Variant metadata must not change construction, matching, exhaustiveness, identity or an RFC 032 value.
+- `Enum.__variants__()` must return a `FrozenList[VariantInfo]` without needing a value of the enum. Each `VariantInfo` must carry the variant's `name`, `description`, payload `fields` as `FieldInfo` records, and `extra` for its other metadata. Checked metadata must preserve the same facts across package boundaries.
+- `error` cases are not variants for this purpose, because RFC 131 gives each case its own declaration body.
+- `T.__doc__()` on a model, class or enum must return an `Option[DocInfo]`, RFC 128's parsed form of a docstring, so that a library reads a type's documentation the same way it reads a function's.
 
 ### Safe metadata values
 
@@ -512,3 +548,4 @@ Artifact metadata should preserve field metadata losslessly for packages that cl
 - Allow `examples` to contain safe metadata values assignable to the field type, with string examples allowed when typed examples are not available.
 - Keep `primary_key` and `primary_key_position` as field metadata. Composite key order is represented by field-level positions; richer model-level identity constraints are not part of this design.
 - Treat stable field anchors as source-field and model-field metadata identities, not as external alias identities. A canonical field rename is a new source identity unless a future migration or rename-marker feature explicitly preserves continuity. External aliases and adapter mappings do not by themselves preserve the Incan field anchor.
+- Enum variants take the same metadata as fields, with the same `name [metadata]` shape and RFC 096 blocks. `__variants__()` exposes it, as `__fields__()` does for models, and `T.__doc__()` exposes a type's parsed docstring. A key meaningful only for a stored field is refused on a variant.
