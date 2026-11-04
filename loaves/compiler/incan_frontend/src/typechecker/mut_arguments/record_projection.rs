@@ -105,6 +105,7 @@ fn unfinished_or_unrepresented_facts_are_never_discarded() {
                     position: 1,
                     place: ArgumentPlace::Temporary,
                     uncopyable_type: None,
+                    shared_native_field: false,
                     span,
                     through_local: None,
                 }],

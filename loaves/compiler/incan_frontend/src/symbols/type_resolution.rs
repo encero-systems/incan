@@ -290,6 +290,9 @@ pub fn render_resolved_type_as_rust_arg(ty: &ResolvedType) -> String {
             if collections::from_str(name.as_str()) == Some(CollectionTypeId::Tuple) {
                 return render_rust_tuple(args);
             }
+            if args.is_empty() {
+                return name.clone();
+            }
             if name == "[]"
                 && let [element] = args.as_slice()
             {

@@ -184,9 +184,20 @@ impl TypeChecker {
         parameters: &[String],
         bindings: &mut HashMap<String, ResolvedType>,
     ) {
+        self.infer_rust_bound_bindings(&signature.bounds, parameters, bindings);
+    }
+
+    /// Close binders from retained predicates after a concrete Self template or written argument has supplied their
+    /// subject. This serves both callable signatures and implementation-only bounds such as `I: Iterator<Item=&T>`.
+    pub(in crate::typechecker::check_expr) fn infer_rust_bound_bindings(
+        &self,
+        bounds: &[RustTraitBound],
+        parameters: &[String],
+        bindings: &mut HashMap<String, ResolvedType>,
+    ) {
         for _ in 0..parameters.len() {
             let before = bindings.len();
-            for predicate in &signature.bounds {
+            for predicate in bounds {
                 self.infer_rust_associated_bindings(predicate, parameters, bindings);
                 if let Some(inferred) = self.rust_predicate_arguments(predicate, parameters, bindings) {
                     for (name, value) in inferred {
@@ -210,9 +221,25 @@ impl TypeChecker {
         parameters: &[String],
         bindings: &mut HashMap<String, ResolvedType>,
     ) {
-        let Some(subject) = bindings.get(&predicate.self_type).cloned() else {
-            return;
+        // A direct binding is the caller's type, whose binders may share the callee's names; only a subject built from
+        // the callee's own template can still be open.
+        let subject = match bindings.get(&predicate.self_type) {
+            Some(bound) => bound.clone(),
+            None => {
+                let template = self.instantiate_rust_signature_type(
+                    &self.native_rust_signature_type(&predicate.self_type, ""),
+                    parameters,
+                    bindings,
+                );
+                if first_open_type_param(&template, parameters).is_some() {
+                    return;
+                }
+                template
+            }
         };
+        if matches!(subject, ResolvedType::Unknown | ResolvedType::CallSiteInfer) {
+            return;
+        }
         for associated in &predicate.associated_type_bindings {
             let Some(actual) = self.rust_binding_associated_type(&subject, &predicate.path, &associated.name) else {
                 continue;

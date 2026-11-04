@@ -1,4 +1,4 @@
-# behavior: Rust Duration fields retain value arguments, exact numeric results, and PartialEq comparisons through source receivers and nested fields, and assigning an imported Rust associated call directly to a model field keeps its target (#2223)
+# behavior: Rust Duration fields retain value arguments, exact numeric results, and PartialEq comparisons through source receivers and nested fields; assigning an imported Rust associated call directly to a model field keeps its target; and authored Clone and equality slots dispatch through their source implementations under generic and collection calls (#2223, #2430)
 # expect-stdout:
 #   5
 #   7
@@ -8,6 +8,26 @@
 #   4
 
 from rust::std::time import Duration as RustDuration
+from std.collections import Deque
+
+
+enum Equivalent:
+    """Treat both variants as equal through authored behavior."""
+
+    First
+    Second
+
+    def __eq__(self, other: Self) -> bool:
+        return true
+
+
+model Changed:
+    """Make an authored clone observably different from the automatic slot."""
+
+    value: int
+
+    def clone(self) -> Self:
+        return Changed(value=self.value + 1)
 
 
 model Span:
@@ -60,7 +80,20 @@ def show_field_assignment() -> None:
     println(timer.delay.as_secs())
 
 
+def copy_value[T with Clone](value: &T) -> T:
+    """Call the receiver's authored Clone slot through its generic bound."""
+    return value.clone()
+
+
+def show_authored_standard_slots() -> None:
+    """Dispatch generic cloning and collection membership to authored methods."""
+    assert copy_value(Changed(value=1)).value == 2
+    values: Deque[Equivalent] = Deque(items=[Equivalent.First])
+    assert Equivalent.Second in values
+
+
 def main() -> None:
     """Run each Duration observation in the order of the cases it carries."""
     show_field_calls()
     show_field_assignment()
+    show_authored_standard_slots()
