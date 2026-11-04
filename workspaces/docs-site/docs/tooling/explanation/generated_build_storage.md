@@ -5,6 +5,7 @@ Dev.8 keeps native build artifacts in the project or installed toolchain that ow
 | Artifact | Location |
 | --- | --- |
 | Program executable | `<project>/target/incan/<profile>/bin/<crate>` |
+| Test executable of one test file | `<project>/target/incan/<profile>/tests/<file stem>/<crate>` |
 | Path dependency library and sidecars | `<consumer>/target/incan/loaves/<package>/<profile>/` |
 | Standard package library and sidecars | `<home>/toolchains/0.6.0-dev.8/loaves/<package>/<profile>/` |
 | Unit input observations | `<project>/target/incan/observations/` |

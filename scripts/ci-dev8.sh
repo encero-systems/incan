@@ -114,33 +114,10 @@ build_runner() {
     [[ -x "$runner" ]] || fail "runner build produced no executable at $runner"
 }
 
-# Test every Oven unit, and every Loaf's Incan test sources from that Loaf, through the installed toolchain, one source
-# per invocation so a source can be excluded on its own. The expected ids cover both.
+# Test every Oven unit, and every Loaf's Incan test sources from that Loaf, through the installed toolchain; the
+# program runs one source per invocation, several at once, and compares the passing ids with the expected ones.
 run_oven_tests() {
-    local file status=0 passed failed
-    for file in "$ROOT"/workspaces/oven/src/test_*.incn; do
-        [[ -f "$file" ]] || fail 'Oven test sources are absent'
-        (cd "$ROOT/workspaces/oven" && "$oven" test "$file") >> "$run/oven-tests.log" 2>&1 || status=1
-    done
-    for file in "$ROOT"/loaves/*/*/tests/test_*.incn; do
-        [[ -f "$file" ]] || continue
-        # The record contracts' canonical controls need the frontend's native adapter, which their manifest omits.
-        [[ $file == "$ROOT"/loaves/compiler/internal_models/tests/* ]] && continue
-        # Compiler Loaves link native support, which an installed bundle ships for the release profile only.
-        (cd "${file%/tests/*}" && "$oven" test "$file" --profile release) >> "$run/oven-tests.log" 2>&1 || status=1
-    done
-    "$ROOT/scripts/test-checker-records.sh" "$oven" "$run/checker-records" >> "$run/oven-tests.log" 2>&1 || status=1
-    passed=$(awk '/^test_[[:alnum:]_]+[.]incn::test_[[:alnum:]_]+ PASSED$/ {n++} END {print n+0}' "$run/oven-tests.log")
-    failed=$(awk '/^test_[[:alnum:]_]+[.]incn::test_[[:alnum:]_]+ (FAILED|XPASS)( |$)/ {n++} END {print n+0}' "$run/oven-tests.log")
-    awk '/^test_[[:alnum:]_]+[.]incn::test_[[:alnum:]_]+ PASSED$/ {print $1}' "$run/oven-tests.log" \
-        | sort > "$run/oven-passed-ids.txt"
-    sort "$ROOT/workspaces/contracts/dev8-oven-tests.txt" > "$run/oven-expected-ids.txt"
-    jq -n --argjson passed "$passed" --argjson failed "$failed" \
-        --argjson expected "$(wc -l < "$run/oven-expected-ids.txt" | tr -d ' ')" \
-        '{passed:$passed, failed:$failed, expected:$expected}' > "$run/oven-tests.json"
-    diff -u "$run/oven-expected-ids.txt" "$run/oven-passed-ids.txt" > "$run/oven-test-diff.txt" || status=1
-    [[ $status == 0 && $failed == 0 ]] || fail "Oven tests: $passed PASS, $failed FAIL; test ids differ or an invocation failed"
-    echo "Oven tests: $passed PASS, $failed FAIL"
+    "$oven" run "$ROOT/scripts/oven_tests.incn" -- "$oven" "$run"
 }
 
 # Require the installed server's initialize, navigation and stale-buffer contract, never an optional skipped session.

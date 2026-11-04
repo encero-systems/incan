@@ -6,7 +6,7 @@ from rust::std::string import String as RustString
 from std.fs import Path
 from std.json import JsonValue
 from files import parse_json, read
-from incan_units import compile_unit, stored_executable, test_report
+from incan_units import compile_unit, stored_executable, test_report, test_source_name
 from intake import read_project, source_root_of
 from json_fields import array, text_field
 from observation import trace_launch
@@ -42,8 +42,8 @@ def is_test_source(source: Path) -> bool:
 
 
 pub def tests_binary(unit: UnitDescription) -> Path:
-    """Where a test unit's executable is stored in its project."""
-    return stored_executable(unit, "tests")
+    """Where a test unit's executable is stored in its project: `target/incan/<profile>/tests/<source stem>/<crate>`."""
+    return stored_executable(unit, f"tests/{test_source_name(unit)}")
 
 
 pub def run_tests(unit: UnitDescription, toolchain: Toolchain) -> Result[i32, str]:

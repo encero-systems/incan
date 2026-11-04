@@ -1,0 +1,277 @@
+"""Verify the Oven test step's options, invocation order, admission, log joining, id parsing and summary."""
+
+from std.fs import Path
+from std.tempfile import TemporaryDirectory
+from check_test_support import write
+from oven_tests import (
+    HEADROOM_BYTES,
+    LOWERING_RESERVATION_BYTES,
+    PROJECT_RESERVATION_BYTES,
+    Invocation,
+    admitted,
+    default_jobs,
+    file_lines,
+    invocations,
+    join_logs,
+    log_name,
+    parse_options,
+    run_all,
+    shared_memory,
+    summarize,
+    summary_document,
+)
+
+const GIB: int = 1073741824
+const RECORD_FILES: FrozenList[str] = [
+    "src/checker_records.incn",
+    "src/record_scope.incn",
+    "src/records.incn",
+    "src/record_service.incn",
+    "tests/canonical_record_controls.incn",
+    "tests/test_record_scope.incn",
+]
+
+
+def test_jobs_follow_the_configured_count_then_the_cores() -> Result[None, str]:
+    """A positive configured count wins; otherwise the cores decide, and at least one runs."""
+    assert default_jobs("3", 18) == 3
+    assert default_jobs("", 18) == 18
+    assert default_jobs("two", 4) == 4
+    assert default_jobs("0", 4) == 4
+    assert default_jobs("", 0) == 1
+    return Ok(None)
+
+
+def test_reservations_share_physical_memory_less_the_headroom() -> Result[None, str]:
+    """Project-scale work reserves 4 GiB and lowering-scale work 6 GiB, and 1 GiB is never reserved."""
+    assert PROJECT_RESERVATION_BYTES == 4 * GIB
+    assert LOWERING_RESERVATION_BYTES == 6 * GIB
+    assert HEADROOM_BYTES == GIB
+    assert shared_memory(7 * GIB) == 6 * GIB
+    assert shared_memory(16 * GIB) == 15 * GIB
+    assert shared_memory(0) == 0
+    return Ok(None)
+
+
+def test_explicit_options_override_the_defaults() -> Result[None, str]:
+    """`--jobs` selects the count and `--memory` the shared memory in GiB, before or after the operands."""
+    options = parse_options(["--jobs", "5", "oven", "evidence"], "2", 18, 7 * GIB)?
+    assert options.jobs == 5
+    assert options.memory == 6 * GIB
+    assert options.oven == "oven"
+    assert options.evidence.0.endswith("/evidence")
+    assert parse_options(["oven", "evidence"], "", 18, 4 * GIB)?.jobs == 18
+    assert parse_options(["oven", "evidence"], "2", 18, 4 * GIB)?.jobs == 2
+    assert parse_options(["oven", "evidence", "--jobs", "1"], "", 18, 0)?.jobs == 1
+    assert parse_options(["oven", "evidence", "--memory", "15"], "", 18, 128 * GIB)?.memory == 15 * GIB
+    return Ok(None)
+
+
+def test_admission_keeps_reservations_within_memory() -> Result[None, str]:
+    """A 7 GiB host runs every invocation alone; a 16 GiB host runs three Oven units, or lowering beside two."""
+    reservations = [4 * GIB, 4 * GIB, 4 * GIB, 4 * GIB, 6 * GIB, 6 * GIB]
+    everything = [0, 1, 2, 3, 4, 5]
+    small = shared_memory(7 * GIB)
+    assert admitted(reservations, everything, [], 3, small) == [0]
+    assert admitted(reservations, [1, 2, 3, 4, 5], [4 * GIB], 3, small) == []
+    assert admitted(reservations, [4, 5], [], 3, small) == [4]
+    large = shared_memory(16 * GIB)
+    assert admitted(reservations, everything, [], 4, large) == [0, 1, 2]
+    assert admitted(reservations, [3, 4, 5], [4 * GIB, 4 * GIB], 4, large) == [3]
+    assert admitted(reservations, [4, 5], [4 * GIB, 4 * GIB], 4, large) == [4]
+    assert admitted(reservations, [5], [6 * GIB, 4 * GIB, 4 * GIB], 4, large) == []
+    assert admitted(reservations, [4, 5], [6 * GIB], 4, large) == [4]
+    return Ok(None)
+
+
+def test_an_oversized_reservation_runs_alone_and_zero_memory_bounds_nothing() -> Result[None, str]:
+    """Work larger than memory still starts when nothing runs; unknown memory leaves only the count."""
+    reservations = [6 * GIB, 4 * GIB, 4 * GIB]
+    assert admitted(reservations, [0, 1, 2], [], 4, 4 * GIB) == [0]
+    assert admitted(reservations, [1, 2], [6 * GIB], 4, 4 * GIB) == []
+    assert admitted(reservations, [0, 1, 2], [], 2, 0) == [0, 1]
+    assert admitted(reservations, [0, 1, 2], [], 1, 64 * GIB) == [0]
+    return Ok(None)
+
+
+def test_refused_arguments_name_the_problem() -> Result[None, str]:
+    """Missing operands, unknown options and bad counts are refused."""
+    assert refusal(parse_options(["oven"], "", 1, 0)) == "OVEN and EVIDENCE are required"
+    assert refusal(parse_options(["oven", "a", "b"], "", 1, 0)) == "OVEN and EVIDENCE are required"
+    assert refusal(parse_options(["--fast", "oven", "a"], "", 1, 0)) == "unknown option `--fast`"
+    assert refusal(parse_options(["oven", "a", "--jobs"], "", 1, 0)) == "`--jobs` needs a positive number"
+    assert refusal(parse_options(["oven", "a", "--jobs", "0"], "", 1, 0)) == "`--jobs` needs a positive number"
+    assert refusal(parse_options(["oven", "a", "--memory", "x"], "", 1, 0)) == "`--memory` needs a positive number"
+    return Ok(None)
+
+
+def test_passing_and_failing_lines_match_whole_test_ids() -> Result[None, str]:
+    """Only exact result lines count; failures may carry a reason, passes may not."""
+    lines = [
+        "test_b.incn::test_two PASSED",
+        "test_a.incn::test_one PASSED",
+        "test_a.incn::test_skip SKIPPED",
+        "test_c.incn::test_bad FAILED",
+        "test_c.incn::test_lucky XPASS (strict)",
+        "test_c.incn::test_worse FAILED: assertion",
+        "  test_d.incn::test_indented PASSED",
+        "test_d.incn::test_trailing PASSED ",
+        "test-e.incn::test_dash PASSED",
+        "test_e.incn::check_name PASSED",
+        "test_e.incn::test_noted PASSED in 2ms",
+        "test_f.incn::test_carriage PASSED\r",
+    ]
+    summary = summarize("\n".join(lines) + "\n", "test_a.incn::test_one\ntest_b.incn::test_two\n")?
+    assert summary.passed == 2
+    assert summary.failed == 2
+    assert summary.passed_ids == ["test_a.incn::test_one", "test_b.incn::test_two"]
+    return Ok(None)
+
+
+def test_ids_sort_in_byte_order() -> Result[None, str]:
+    """Ids sort as `LC_ALL=C sort` orders them: digits and capitals before the underscore and lowercase."""
+    names = ["test_b", "test_B", "test_1", "test__"]
+    log = "".join([f"test_z.incn::{name} PASSED\n" for name in names])
+    summary = summarize(log, "test_z.incn::test_b\ntest_z.incn::test_1\n")?
+    assert summary.passed_ids == [
+        "test_z.incn::test_1",
+        "test_z.incn::test_B",
+        "test_z.incn::test__",
+        "test_z.incn::test_b",
+    ]
+    assert summary.expected_ids == ["test_z.incn::test_1", "test_z.incn::test_b"]
+    return Ok(None)
+
+
+def test_expected_lines_count_as_wc_does() -> Result[None, str]:
+    """A final newline ends the last line; blank lines inside the list still count."""
+    assert file_lines("a\nb\n") == ["a", "b"]
+    assert file_lines("a\n\nb\n") == ["a", "", "b"]
+    assert file_lines("a") == ["a"]
+    assert file_lines("") == []
+    return Ok(None)
+
+
+def test_summary_document_is_spelled_as_jq_prints_it() -> Result[None, str]:
+    """The counts document keeps the former `jq` spelling byte for byte."""
+    summary = summarize("test_a.incn::test_one PASSED\ntest_a.incn::test_two FAILED\n", "x\ny\nz\n")?
+    assert summary_document(summary) == "{\n  \"passed\": 1,\n  \"failed\": 1,\n  \"expected\": 3\n}\n"
+    return Ok(None)
+
+
+def test_log_names_sort_in_invocation_order() -> Result[None, str]:
+    """A zero-padded position orders the logs; the stem names the source."""
+    assert log_name(0, Path("/r/test_cli.incn")) == "000-test_cli.log"
+    assert log_name(42, Path("/r/test_owner.incn")) == "042-test_owner.log"
+    assert log_name(1234, Path("/r/test_x.incn")) == "1234-test_x.log"
+    return Ok(None)
+
+
+def test_invocations_follow_the_former_order_and_exclusions() -> Result[None, str]:
+    """Oven units first, then Loaf tests from their Loaf, then the isolated record contract."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    fixture(root)?
+    evidence = root.joinpath("evidence")
+    logs = evidence.joinpath("oven-tests")
+    planned = invocations(root, evidence, logs)?
+    oven = root.joinpath("workspaces/oven")
+    lowering = root.joinpath("loaves/compiler/lowering")
+    loaf_a = root.joinpath("loaves/group_b/loaf_a")
+    loaf_b = root.joinpath("loaves/group_a/loaf_b")
+    contract = evidence.joinpath("checker-records/project/src/test_record_scope.incn")
+    assert [item.arguments for item in planned] == [
+        ["test", oven.joinpath("src/test_alpha.incn").0],
+        ["test", oven.joinpath("src/test_beta.incn").0],
+        ["test", lowering.joinpath("tests/test_three.incn").0, "--profile", "release"],
+        ["test", loaf_b.joinpath("tests/test_one.incn").0, "--profile", "release"],
+        ["test", loaf_a.joinpath("tests/test_one.incn").0, "--profile", "release"],
+        ["test", loaf_a.joinpath("tests/test_two.incn").0, "--profile", "release"],
+        ["test", contract.0, "--profile", "release"],
+    ]
+    assert [item.directory for item in planned] == [oven.0, oven.0, lowering.0, loaf_b.0, loaf_a.0, loaf_a.0, ""]
+    assert [item.reservation for item in planned] == [4 * GIB, 4 * GIB, 6 * GIB, 4 * GIB, 4 * GIB, 4 * GIB, 6 * GIB]
+    assert planned[6].log.0 == logs.joinpath("006-test_record_scope.log").0
+    return Ok(None)
+
+
+def test_record_contract_project_copies_its_sources_and_names_the_adapter() -> Result[None, str]:
+    """The isolated project holds the six copied sources and a manifest that adds the frontend."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    fixture(root)?
+    evidence = root.joinpath("evidence")
+    _ = invocations(root, evidence, evidence.joinpath("oven-tests"))?
+    project = evidence.joinpath("checker-records/project")
+    for name in RECORD_FILES:
+        copied = project.joinpath("src").joinpath(Path(name).name())
+        assert copied.read_text("utf-8", "strict").map_err((error) => error.message())? == f"# {name}\n"
+    frontend = root.joinpath("loaves/compiler/incan_frontend").0
+    manifest = project.joinpath("loaf.toml").read_text("utf-8", "strict").map_err((error) => error.message())?
+    expected = [
+        "[project]",
+        "name = \"checker_record_contract_test\"",
+        "version = \"0.1.0\"",
+        "private = true",
+        "[project.scripts]",
+        "contract = \"src/test_record_scope.incn\"",
+        "[dependencies]",
+        f"incan_frontend = {{ loaf = \"incan_frontend\", path = \"{frontend}\" }}",
+    ]
+    assert manifest == "\n".join(expected) + "\n"
+    assert refusal(invocations(root, evidence, evidence.joinpath("oven-tests"))) != ""
+    return Ok(None)
+
+
+def test_missing_oven_sources_fail_the_step() -> Result[None, str]:
+    """The step refuses a checkout without Oven test sources."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    write(root, "workspaces/oven/src/main.incn", "")?
+    evidence = root.joinpath("evidence")
+    assert refusal(invocations(root, evidence, evidence)) == "Oven test sources are absent"
+    return Ok(None)
+
+
+def test_joined_log_keeps_invocation_order_whatever_the_schedule() -> Result[None, str]:
+    """Logs written at once join in invocation order, and one failure fails the run."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    logs = root.joinpath("logs")
+    logs.mkdir(true, true).map_err((error) => error.message())?
+    mut planned: list[Invocation] = []
+    for index in range(7):
+        log = logs.joinpath(log_name(index, Path(f"/r/test_{index}.incn")))
+        planned.append(Invocation(arguments=[f"line {index}"], directory=root.0, reservation=GIB, log=log))
+    assert run_all("/bin/echo", planned, 5, 3 * GIB)?
+    joined = join_logs(planned, root.joinpath("joined.log"))?
+    assert joined == "line 0\nline 1\nline 2\nline 3\nline 4\nline 5\nline 6\n"
+    assert not run_all("/usr/bin/false", planned, 4, 0)?
+    return Ok(None)
+
+
+def fixture(root: Path) -> Result[None, str]:
+    """A checkout with Oven units, Loaf tests, hidden and excluded entries, and the record contract sources."""
+    write(root, "workspaces/oven/src/test_beta.incn", "")?
+    write(root, "workspaces/oven/src/test_alpha.incn", "")?
+    write(root, "workspaces/oven/src/main.incn", "")?
+    write(root, "workspaces/oven/src/test_note.md", "")?
+    write(root, "loaves/group_b/loaf_a/tests/test_two.incn", "")?
+    write(root, "loaves/group_b/loaf_a/tests/test_one.incn", "")?
+    write(root, "loaves/group_b/loaf_a/tests/helper.incn", "")?
+    write(root, "loaves/group_b/loaf_a/tests/test_folder.incn/inner.incn", "")?
+    write(root, "loaves/group_a/loaf_b/tests/test_one.incn", "")?
+    write(root, "loaves/group_a/.hidden/tests/test_one.incn", "")?
+    write(root, "loaves/group_a/loaf_c/src/test_source.incn", "")?
+    write(root, "loaves/compiler/incan_frontend/loaf.toml", "")?
+    write(root, "loaves/compiler/lowering/tests/test_three.incn", "")?
+    for name in RECORD_FILES:
+        write(root, f"loaves/compiler/internal_models/{name}", f"# {name}\n")?
+    return Ok(None)
+
+
+def refusal[T](result: Result[T, str]) -> str:
+    """The refusal message, or nothing when the call succeeded."""
+    match result:
+        Ok(_) => return ""
+        Err(message) => return message
