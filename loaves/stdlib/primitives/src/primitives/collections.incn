@@ -1,0 +1,100 @@
+"""Owned collection storage operations independent of language indexing, equality and display policy."""
+
+from rust::std::clone import Clone
+from rust::std::cmp import Eq
+from rust::std::collections import HashMap as RuntimeDict, HashSet as RuntimeSet
+from rust::std::hash import Hash
+from rust::std::primitive import usize
+from rust::std::vec import Vec
+
+
+pub def empty_list[T]() -> list[T]:
+    """Allocate empty list storage without invoking a generated list constructor."""
+    return Vec.new()
+
+
+pub def append_list[T](mut values: list[T], value: T) -> None:
+    """Append one owned value to caller-owned list storage."""
+    Vec.push(values, value)
+
+
+pub def length_list[T](values: &list[T]) -> int:
+    """Return the number of elements in list storage without consuming it."""
+    native: &Vec[T] = values
+    return int(native.len())
+
+
+pub def clone_list[T with Clone](values: &list[T]) -> list[T]:
+    """Explicitly copy list storage and each element through its native `Clone` contract."""
+    native: &Vec[T] = values
+    return Clone.clone(native)
+
+
+pub def copy_list_at[T with Clone](values: &list[T], position: usize) -> Result[T, str]:
+    """
+    Copy the element at one nonnegative storage position.
+
+    This operation deliberately does not normalize language indices or raise `IndexError`; language adapters retain
+    those policies. An absent position is an ordinary primitive error.
+    """
+    native: &Vec[T] = values
+    match native.get(position):
+        Some(value) => return Ok(Clone.clone(value))
+        None => return Err("list position is outside storage")
+
+
+pub def replace_list_at[T](mut values: list[T], position: usize, value: T) -> Result[None, str]:
+    """
+    Replace the element at one nonnegative storage position.
+
+    The replacement is checked before the new owner is installed. Language index normalization and diagnostic
+    presentation remain outside this primitive.
+    """
+    if int(position) >= len(values):
+        return Err("list position is outside storage")
+    values[int(position)] = value
+    return Ok(None)
+
+
+pub def empty_set[T]() -> Set[T]:
+    """Allocate empty hash-set storage without invoking a generated set constructor."""
+    return RuntimeSet.new()
+
+
+pub def insert_set[T with (Eq, Hash)](mut values: Set[T], value: T) -> None:
+    """Insert one owned value into caller-owned hash-set storage."""
+    RuntimeSet.insert(values, value)
+
+
+pub def length_set[T](values: &Set[T]) -> int:
+    """Return the number of elements in hash-set storage without consuming it."""
+    native: &RuntimeSet[T] = values
+    return int(native.len())
+
+
+pub def clone_set[T with Clone](values: &Set[T]) -> Set[T]:
+    """Explicitly copy hash-set storage and each element through its native `Clone` contract."""
+    native: &RuntimeSet[T] = values
+    return Clone.clone(native)
+
+
+pub def empty_dict[K, V]() -> Dict[K, V]:
+    """Allocate empty hash-map storage without invoking a generated dictionary constructor."""
+    return RuntimeDict.new()
+
+
+pub def insert_dict[K with (Eq, Hash), V](mut values: Dict[K, V], key: K, value: V) -> None:
+    """Insert or replace one owned key-value pair in caller-owned hash-map storage."""
+    RuntimeDict.insert(values, key, value)
+
+
+pub def length_dict[K, V](values: &Dict[K, V]) -> int:
+    """Return the number of entries in hash-map storage without consuming it."""
+    native: &RuntimeDict[K, V] = values
+    return int(native.len())
+
+
+pub def clone_dict[K with Clone, V with Clone](values: &Dict[K, V]) -> Dict[K, V]:
+    """Explicitly copy hash-map storage, keys and values through their native `Clone` contracts."""
+    native: &RuntimeDict[K, V] = values
+    return Clone.clone(native)
