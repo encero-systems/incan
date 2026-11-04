@@ -22,7 +22,7 @@
 
 ## Summary
 
-Introduce type-shape matching using ordinary Incan type notation, with explicit `infer name` captures, `or` between alternative type patterns, and named compile-time type operations defined through matching. The same pattern language supports inspecting the structured field types required by RFC 086 and computing types from statically known inputs. Standard operations include `ElementOf`, `ReturnOf`, `SignatureOf`, and `ParametersOf`. Exact type references retain ordinary resolution, captures never depend on imports or capitalization, RFC 029 value narrowing remains unchanged, and RFC 107 type tokens retain their bounded dispatch role. Scala 3 match types provide the principal design precedent; TypeScript supplies the explicit `infer` capture notation.
+Introduce type-shape matching using ordinary Incan type notation, with explicit `infer name` captures, `or` between alternative type patterns, and named compile-time type operations defined through matching. The same pattern language supports inspecting the structured field types required by RFC 086 and computing types from statically known inputs. Standard operations include `ElementOf`, `ReturnOf`, `SignatureOf`, `ParametersOf`, and `ArgumentsOf`, a model of a function's parameters that a call can be made from. Exact type references retain ordinary resolution, captures never depend on imports or capitalization, RFC 029 value narrowing remains unchanged, and RFC 107 type tokens retain their bounded dispatch role. Scala 3 match types provide the principal design precedent; TypeScript supplies the explicit `infer` capture notation.
 
 ## Core model
 
@@ -48,6 +48,7 @@ Bare captures such as `list[element]` create a collision if an imported type als
 - Expose reflection matching without string parsing or constructing a sample row.
 - Define readable, user-authored compile-time type operations.
 - Provide standard element, return, signature, and parameter projections.
+- Let libraries forward a call and build one from data, through `ArgumentsOf`, without compiler support of their own.
 - Preserve callable contracts through projections and package boundaries.
 - Diagnose unresolved names, unsupported inputs, ambiguous callable surfaces, and non-terminating operations.
 - Keep reflection matching, value narrowing, and type-token dispatch consistent without conflating their guarantees.
@@ -73,7 +74,7 @@ The proposed APIs are imported from the existing reflection module:
 
 ```incan
 from std.reflection import TypeInfo, ParameterListInfo
-from std.reflection import ElementOf, ReturnOf, SignatureOf, ParametersOf
+from std.reflection import ArgumentsOf, ElementOf, ReturnOf, SignatureOf, ParametersOf
 ```
 
 These names must not be added to the automatic prelude. `TypeInfo` describes a type, while `ParameterListInfo` describes a reflected callable parameter list. Neither is RFC 107's `Type[T]` token. Ordinary import, alias, and visibility rules apply to these names and the named operations.
@@ -297,7 +298,7 @@ type FormatterParameters = ParametersOf[Formatter]
 type Validator = Callable[FormatterParameters -> bool]
 ```
 
-`Validator` accepts the same required `text` and optional keyword-only `limit` as `Formatter`, but returns `bool`. The compiler retains `FormatterParameters` as a parameter-pack alias, preserving names, order, parameter kinds, omission rules, types, and access markers. It is not an ordinary value type and does not provide runtime argument forwarding.
+`Validator` accepts the same required `text` and optional keyword-only `limit` as `Formatter`, but returns `bool`. The compiler retains `FormatterParameters` as a parameter-pack alias, preserving names, order, parameter kinds, omission rules, types, and access markers. It is not an ordinary value type and does not provide runtime argument forwarding; `ArgumentsOf`, below, is the value form.
 
 A full signature capture is also readable:
 
@@ -314,6 +315,44 @@ type CallResult[T] = match T:
 ```
 
 In that pattern, `parameters` captures the whole parameter pack. It does not mean one positional argument.
+
+### Turn a function's parameters into a value
+
+A wrapper has to accept whatever a function accepts and pass it on, and a library that decodes a request has to turn text into a function's arguments. `ArgumentsOf[F]` is a model of `F`'s parameters, and a call can be made from it. A decorator can then wrap any function:
+
+```incan
+from std.datetime import Instant
+from std.reflection import ArgumentsOf, ReturnOf, SignatureOf
+
+def timed[F](func: F) -> Callable[SignatureOf[F]]:
+    def wrapper(**args: ArgumentsOf[F]) -> ReturnOf[F]:
+        started = Instant.now()
+        result = func(**args)
+        println(f"took {started.elapsed()}")
+        return result
+    return wrapper
+
+@timed
+def send_invoice(customer: str, amount: int, note: str = "") -> Receipt:
+    ...
+
+send_invoice("acme", 1200)
+```
+
+`**args: ArgumentsOf[F]` declares exactly `F`'s parameters, so `send_invoice` still accepts the same calls, and `func(**args)` passes them on. A library can also build the value itself:
+
+```incan
+from std.json import JsonDecodeError
+from std.serde.json import Deserialize
+
+def call_from_json[F where ArgumentsOf[F] with Deserialize](func: F, text: str) -> Result[ReturnOf[F], JsonDecodeError]:
+    args = ArgumentsOf[F].from_json(text)?
+    return Ok(func(**args))
+
+receipt = call_from_json(send_invoice, '{"customer": "acme", "amount": 1200}')?
+```
+
+The text leaves out `note`, so the argument is not passed and `send_invoice`'s own default applies. Decoding uses the same rules as any other model, and all this is checked when compiling: a parameter type with no JSON form fails the bound and names the parameter.
 
 ### Keep runtime inspection separate from static projection
 
@@ -392,6 +431,7 @@ User-defined operations may recurse when the compiler can establish termination.
 | `SignatureOf[F]`  | A function type or one unambiguous checked `Callable[S]` contract | Caller-facing function type `S`                    |
 | `ReturnOf[F]`     | The same callable domain as `SignatureOf`                         | The result type from `SignatureOf[F]`              |
 | `ParametersOf[F]` | The same callable domain as `SignatureOf`                         | The full parameter pack from `SignatureOf[F]`      |
+| `ArgumentsOf[F]`  | The same callable domain as `SignatureOf`                         | A model of the parameters of `SignatureOf[F]`      |
 
 Element projections must follow the checked iteration contract for the selected input, including standard iterable collections, iterator types, transparent aliases, and generic bounds that establish an item type. An associated item member must be resolved through its owning iteration trait under RFC 098, not by finding any unrelated member named Item. Multiple unresolved competing iteration contracts must produce an ambiguity diagnostic. Fallible source errors must not become part of the element type unless the yielded item itself has that type. Projection must not execute iteration or add an iteration capability to the input. For every nonempty tuple, the projected item type must be the canonical union of all position types under RFC 029, retaining checked type identities and constraints. The operation must not select the first position alone, infer a common supertype, or substitute Any. An empty-tuple projection must produce a compile-time unsupported-input diagnostic identifying the absence of element positions. It must not fabricate Any, None, or a bottom type. An empty runtime value of a typed collection such as `list[int]` must not change its declared element projection.
 
@@ -410,6 +450,20 @@ Parameter packs must be a distinct compile-time signature-component kind. They m
 A reusable parameter pack must be nameable through the existing type-declaration spelling, such as `type FormatterParameters = ParametersOf[Formatter]`. The checker must retain its parameter-pack kind rather than reinterpret the declaration as an ordinary value type. The name must be accepted wherever the corresponding direct parameter-pack projection is accepted, including `Callable[FormatterParameters -> R]`. Alias resolution, visibility, imports, and checked package metadata must preserve that kind and the complete parameter contract. Type operations returning a captured parameter pack must likewise retain its kind when named through this declaration spelling.
 
 This narrow pack use must not imply arbitrary pack expansion into tuples, generic argument lists, calls, or collections. A parameter pack used where an ordinary type is required, including as a variable's annotation, must produce a kind-mismatch diagnostic. Naming a pack must not manufacture callable state, evaluate defaults, or provide runtime argument forwarding.
+
+### Arguments of a callable
+
+`ArgumentsOf[F]` must produce a model with one field per caller-facing parameter of `SignatureOf[F]`, with the same names, order and types. A bound receiver must be absent. Two callables with the same caller-facing signature must produce the same type. The result is an ordinary value type, so it may be stored, passed and returned. While `F` is a type parameter, the operation remains a pending obligation that resolves when `F` is specialized.
+
+- Every parameter must be named. An unnamed parameter, as in `Callable[(str, int) -> bool]`, must produce a diagnostic. A parameter marked `mut` must also produce one, because its changes must reach the caller and a field cannot carry them.
+- `*values: T` must become a field `values: list[T]`, and `**options: T` a field `options: dict[str, T]`.
+- A parameter with a default must become a field that may be omitted, read as `Option[T]` with `None` meaning omitted, and `__fields__()` must report it with `has_default`. The operation must not evaluate or copy the default expression.
+- `__fields__()` must give each field the description the function's docstring documents for that parameter.
+- A `with` obligation on `ArgumentsOf[F]` for a derivable trait, such as `Deserialize`, `Serialize`, `Clone` or `Debug`, must be met by deriving it when every field type supports it. Otherwise it must fail as an ordinary bound and name the parameter.
+
+A call `func(**args)` with `args: ArgumentsOf[F]` must pass each present field as the argument of that name, and must pass nothing for an omitted field, so the callee's own default runs. It must be accepted only when `func` accepts `F`'s calls. A function may declare `**args: ArgumentsOf[F]` as its only parameter beside a receiver. It then has exactly `F`'s parameters, with their kinds and omission rules, accepts the same calls, satisfies `Callable[SignatureOf[F]]` and collects its arguments into `args`.
+
+Building an arguments value must not call anything or grant anything: a call still needs a value of `F`. This operation is not general pack expansion. A pack still must not expand into tuples, generic argument lists or collections.
 
 ### Reflected-type carrier and fields
 
@@ -453,7 +507,7 @@ RFC 107 explicitly excludes general type-level functions and type switches. This
 
 RFC 098 proposes implementation-chosen members in trait headers, such as `trait PullIterator[infer Item]`, with choices supplied by adoptions such as `PullIterator[str]`. That use declares a trait-owned relationship; an `infer element` type pattern here captures a component of an existing checked type. The shared marker must not merge their scopes or allow pattern syntax in trait headers. Associated types remain trait-owned relationships, while named type operations are explicitly applied transformations. `ElementOf` supports checked iterable and iterator contracts and must project their item type from the owning contract rather than inspect implementation storage or guess from method names.
 
-RFC 128 owns the shared signature model and callable adoption. This RFC projects that model. `SignatureOf` and `ParametersOf` must not define a second, less expressive parameter system or discard receiver obligations to make forwarding appear valid. General argument forwarding and pack expansion remain separate capabilities.
+RFC 128 owns the shared signature model and callable adoption. This RFC projects that model. `SignatureOf` and `ParametersOf` must not define a second, less expressive parameter system or discard receiver obligations to make forwarding appear valid. `ArgumentsOf` provides argument forwarding through a model value, and pack expansion remains a separate capability.
 
 ### Observable acceptance
 
@@ -477,6 +531,7 @@ An accepted implementation must demonstrate the illustrated exact and nested mat
 - **Expose only descriptor constructors such as `TypeInfo.List(...)`:** usable internally, but it makes libraries translate ordinary Incan type notation into another vocabulary.
 - **Copy TypeScript's conditional-type syntax:** more punctuation and nested branching than the match syntax already familiar to Incan users.
 - **Make `ParametersOf` a tuple of types:** rejected as the normative signature projection because it loses keyword rules, optionality, variadic kinds, and parameter access markers.
+- **Compiler support for each library that needs forwarding:** every decorator framework, web server and tool server would need its own compiler feature. `ArgumentsOf` gives them all one ordinary type, as Python's `**kwargs: Unpack[...]` does for its typed wrappers.
 - **Provide only compiler-known operations:** simpler, but prevents libraries from naming and sharing checked type transformations using the same pattern language.
 
 ## Drawbacks
@@ -500,9 +555,10 @@ Exact identity matching may require more explicit cases than subtype-oriented ma
 
 ## Design Decisions
 
-- `std.reflection` exposes `TypeInfo`, `ParameterListInfo`, `ElementOf`, `ReturnOf`, `SignatureOf`, and `ParametersOf` through explicit imports rather than the automatic prelude. Reflected descriptions remain distinct from RFC 107's `Type[T]` tokens.
+- `std.reflection` exposes `TypeInfo`, `ParameterListInfo`, `ArgumentsOf`, `ElementOf`, `ReturnOf`, `SignatureOf`, and `ParametersOf` through explicit imports rather than the automatic prelude. Reflected descriptions remain distinct from RFC 107's `Type[T]` tokens.
 - Captures may require traits using `infer name with Trait`. Checked conformance and ordinary generic-bound rules determine matching without erasing exact type identity or inferring capabilities from method names. Unresolved obligations remain pending. Reflected captures remain descriptions rather than gaining the described type's runtime or static capabilities.
 - `ElementOf` covers standard iterable collections, including tuples, and checked iterable and iterator contracts. It projects the yielded item type without executing iteration, guessing from storage, or conflating a fallible source error with its item type. Ambiguous item contracts receive diagnostics. Nonempty tuples project the ordinary normalized union of their position types, including a single member for repeated identical types. An empty tuple receives an unsupported-input diagnostic because it has no element positions; empty values of typed collections retain their declared element type.
+- `ArgumentsOf[F]` is an ordinary model of `F`'s parameters. `func(**args)` calls from it, `**args: ArgumentsOf[F]` declares `F`'s parameters, and an omitted field leaves the callee's default to run. It is how a generic wrapper or a decoding library forwards a call, and packs stay compile-time.
 - Reusable parameter packs use the existing type-declaration spelling, such as `type FormatterParameters = ParametersOf[Formatter]`. The checker and package metadata preserve their distinct compile-time kind and complete parameter contracts. Named packs may be reused in signature parameter positions without becoming value types or runtime argument-forwarding mechanisms.
 - Type patterns use `or` for alternatives and retain `|` for exact union types. Alternatives must introduce the same binding names with agreeing capture kinds; ordinary expression `or` and value-pattern alternation remain unchanged. The rule applies to reflected-type matching and compile-time type operations.
 - User-defined type operations may recurse when termination can be established. Structural descent through captured type components is supported without additional proof syntax; cycles or recursion without established progress produce diagnostics. Compiler resource limits report the reduction chain rather than crash or fabricate a type.
