@@ -39,12 +39,12 @@ Read this RFC as six foundations:
 
 1. **Scoped lifetime is a language primitive:** users should be able to express "this value is active for this block" without manual `close()`, `end()`, `release()`, or paired setup/cleanup calls.
 2. **Cleanup is guaranteed after entry:** once `__enter__` succeeds, `__exit__` must run exactly once when the block exits, including fallthrough, `return`, `break`, `continue`, `?` propagation, and panic/assert exits.
-3. **Cleanup is distinct from Result handling:** the manager must not suppress a failure or catch a panic. Local typed Result matching is explored independently in RFC 147; ScopeExit remains informational and cleanup-oriented.
+3. **Cleanup is distinct from Result handling:** the manager must not suppress a failure or catch a panic. Local typed Result matching belongs to RFC 147; ScopeExit remains informational and cleanup-oriented.
 4. **The protocol is explicit and typed:** context-manager support is ordinary Incan API surface, not hidden naming magic that only the compiler understands.
 5. **Vocabulary blocks may desugar through context managers:** domain-specific soft syntax can use the same scoped cleanup contract instead of inventing one-off entry/exit behavior.
 6. **Async safety is explicit:** context managers that interact with task-local state, guards, locks, spans, or transactions must not be accidentally held across suspension points without a type-level contract.
 
-The purpose of with is a scoped resource lifetime or temporary runtime state that must be finished or restored. An ordinary fallible calculation or validation check needs no with statement merely because it returns Result; ordinary matching and RFC 070 combinators remain available. Local Result capture and except handling are separate design work under RFC 147, not prerequisites for this lifetime contract.
+The purpose of with is a scoped resource lifetime or temporary runtime state that must be finished or restored. An ordinary fallible calculation or validation check needs no with statement merely because it returns Result; ordinary matching and RFC 070 combinators remain available. Local Result handling with `except` belongs to RFC 147 and is not a prerequisite for this lifetime contract.
 
 ## Motivation
 
@@ -244,7 +244,7 @@ The `span` block is not defined here, but the important contract is that a vocab
 
 ### Result matching is independent
 
-RFC 147 explores local typed Result matching through one except block with ordinary match-style arms. Its attachment syntax, value binding, aggregate matching, and propagation boundaries remain under review there. This RFC does not require an except block, scope capture expression, new outcome container, or per-failure dispatch mechanism to establish a resource lifetime. Its fallible-finalization propagation contract remains an obligation of the resource construct itself.
+RFC 147 owns local typed Result matching, through a `?` followed by one `except:` block of ordinary match arms. This RFC does not require an except block, scope capture expression, new outcome container, or per-failure dispatch mechanism to establish a resource lifetime. Its fallible-finalization propagation contract remains an obligation of the resource construct itself.
 
 ## Reference-level explanation
 
@@ -441,7 +441,7 @@ Context managers are not a macro system. A vocabulary block that lowers to a con
 
 5. Model context managers as destructors only. Rejected because destructors are not visible enough in Incan source, cannot receive an explicit `ScopeExit`, and would tie the public contract too closely to backend behavior.
 
-6. Make with the host for general Result capture and local except matching. Not selected as this RFC's purpose: validation and calculations may fail without acquiring a resource, so RFC 147 explores the handling feature independently.
+6. Make with the host for general Result capture and local except matching. Not selected as this RFC's purpose: validation and calculations may fail without acquiring a resource, so RFC 147 owns the handling feature independently.
 
 ## Drawbacks
 
@@ -479,9 +479,9 @@ Vocabulary blocks that lower through context managers can use the same internal 
 - `as` accepts ordinary irrefutable binding patterns. A refutable extraction requires an explicit failure path rather than an implicit panic; no new starred pattern syntax is introduced.
 - Entered borrowed views invalidated by exit cannot escape through returns, storage, closures or tasks. Independently owned results may escape under ordinary ownership rules; explicit resource-specific checked transfer can preserve a resource beyond the scope. Retaining an owned path does not keep its resource alive. Receiver and protocol details must enforce these rules without changing them.
 
-- Retain with for explicit scoped resource lifetimes and temporary runtime state with guaranteed finalization attempts or restoration. Temporary workspaces and scoped validation policy are motivating cases. Existing drop-based resource cleanup remains relevant; the context adaptation must establish the promised explicit boundary rather than claim to invent automatic cleanup. Ordinary Result handling does not require with. Scope-result capture and local except handling remain separate design work under RFC 147.
+- Retain with for explicit scoped resource lifetimes and temporary runtime state with guaranteed finalization attempts or restoration. Temporary workspaces and scoped validation policy are motivating cases. Existing drop-based resource cleanup remains relevant; the context adaptation must establish the promised explicit boundary rather than claim to invent automatic cleanup. Ordinary Result handling does not require with. Local `except` handling belongs to RFC 147.
 
-- Separate local except matching into RFC 147. The preferred single match-arm block is retained there as an independent Result-handling direction; it is not part of the with grammar specified here. Resource lifetime and finalization must remain complete without that extension.
+- Separate local except matching into RFC 147. Its block of match arms is an independent Result-handling feature, not part of the with grammar specified here. Resource lifetime and finalization must remain complete without that extension.
 
 - Always retain failures from the body and every attempted cleanup, including nested cleanup failures. Preserve original typed identities and diagnostic provenance under RFC 131; reporting or propagation precedence must never discard another failure. Independent failures remain distinct aggregate members rather than invented upstream causes. ScopeFailure.Multiple and work-before-inside-out-cleanup presentation are selected. Propagation follows the protocol decision above; under a panic, the retained failures travel on the panic's report.
 
