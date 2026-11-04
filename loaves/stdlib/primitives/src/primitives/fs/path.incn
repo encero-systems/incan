@@ -1,6 +1,19 @@
 """Simple lexical paths for primitive filesystem operations."""
 
-from rust::std::fs import remove_file
+from rust::std::fs import (
+    File,
+    copy,
+    create_dir,
+    create_dir_all,
+    metadata,
+    read,
+    read_dir,
+    remove_dir_all,
+    remove_file,
+    rename,
+    set_permissions,
+    write,
+)
 from rust::std::path import Path as RustPath
 
 
@@ -19,6 +32,101 @@ pub class PrimitivePath:
     pub def join(self, segment: str) -> PrimitivePath:
         """Return a lexical child path without querying the filesystem."""
         return PrimitivePath(value=RustPath.new(self.value).join(segment).to_string_lossy().into_owned())
+
+    pub def parent(self) -> PrimitivePath:
+        """Return the lexical parent, or `.` when the path has none."""
+        match RustPath.new(self.value).parent():
+            Some(parent) => return PrimitivePath(value=parent.to_string_lossy().into_owned())
+            None => return PrimitivePath(value=".")
+
+    pub def name(self) -> str:
+        """Return the final lexical component, or an empty string when absent."""
+        match RustPath.new(self.value).file_name():
+            Some(name) => return name.to_string_lossy().into_owned()
+            None => return ""
+
+    pub def exists(self) -> bool:
+        """Return whether this path resolves to a filesystem entry."""
+        return RustPath.new(self.value).exists()
+
+    pub def is_file(self) -> bool:
+        """Return whether this path resolves to a regular file."""
+        return RustPath.new(self.value).is_file()
+
+    pub def is_directory(self) -> bool:
+        """Return whether this path resolves to a directory."""
+        return RustPath.new(self.value).is_dir()
+
+    pub def is_symlink(self) -> bool:
+        """Return whether the path itself is a symbolic link."""
+        return RustPath.new(self.value).is_symlink()
+
+    pub def create_directory(self, parents: bool, exist_ok: bool) -> Result[None, str]:
+        """Create this directory with explicit parent and existing-directory behavior."""
+        if exist_ok and self.is_directory():
+            return Ok(None)
+        if parents:
+            match create_dir_all(RustPath.new(self.value)):
+                Ok(_) => return Ok(None)
+                Err(error) =>
+                    if exist_ok and self.is_directory():
+                        return Ok(None)
+                    return Err(f"{error}")
+        match create_dir(RustPath.new(self.value)):
+            Ok(_) => return Ok(None)
+            Err(error) =>
+                if exist_ok and self.is_directory():
+                    return Ok(None)
+                return Err(f"{error}")
+
+    pub def read_all(self) -> Result[bytes, str]:
+        """Read all bytes from one bounded metadata or payload file."""
+        return read(RustPath.new(self.value)).map_err((error) => f"{error}")
+
+    pub def write_all(self, data: bytes) -> Result[None, str]:
+        """Replace one bounded metadata file with the supplied bytes."""
+        return write(RustPath.new(self.value), data).map_err((error) => f"{error}")
+
+    pub def children(self) -> Result[list[PrimitivePath], str]:
+        """Return direct child paths in host iteration order without traversal or sorting policy."""
+        mut children: list[PrimitivePath] = []
+        match read_dir(RustPath.new(self.value)):
+            Err(error) => return Err(f"{error}")
+            Ok(entries) =>
+                for entry in entries:
+                    match entry:
+                        Err(error) => return Err(f"{error}")
+                        Ok(found) => children.append(PrimitivePath(value=found.path().to_string_lossy().into_owned()))
+        return Ok(children)
+
+    pub def length(self) -> Result[int, str]:
+        """Return the logical byte length of this filesystem entry."""
+        return metadata(RustPath.new(self.value)).map((found) => int(found.len())).map_err((error) => f"{error}")
+
+    pub def copy_to(self, target: PrimitivePath) -> Result[None, str]:
+        """Copy this regular file to an explicit target path."""
+        match copy(RustPath.new(self.value), RustPath.new(target.value)):
+            Ok(_) => return Ok(None)
+            Err(error) => return Err(f"{error}")
+
+    pub def set_readonly(self, readonly: bool) -> Result[None, str]:
+        """Set the host read-only permission bit on this path."""
+        found = metadata(RustPath.new(self.value)).map_err((error) => f"{error}")?
+        mut permissions = found.permissions()
+        permissions.set_readonly(readonly)
+        return set_permissions(RustPath.new(self.value), permissions).map_err((error) => f"{error}")
+
+    pub def remove_directory_tree(self) -> Result[None, str]:
+        """Remove this directory tree; callers remain responsible for refusing a symbolic-link root."""
+        return remove_dir_all(RustPath.new(self.value)).map_err((error) => f"{error}")
+
+    pub def replace(self, target: PrimitivePath) -> Result[None, str]:
+        """Rename this path over an explicit same-filesystem target."""
+        return rename(RustPath.new(self.value), RustPath.new(target.value)).map_err((error) => f"{error}")
+
+    pub def sync_all(self) -> Result[None, str]:
+        """Synchronize this file or directory and its metadata through the host filesystem."""
+        return File.open(RustPath.new(self.value)).and_then((file) => file.sync_all()).map_err((error) => f"{error}")
 
     pub def remove(self) -> Result[None, str]:
         """Remove this file, reporting the host failure text without adding facade policy."""
