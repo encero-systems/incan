@@ -1,4 +1,4 @@
-# behavior: native enum patterns retain exact payloads, nested variants, Rust discriminants, source field value arguments, shared payload clones, fresh non-Clone owners in if let and while let, and the borrowed payload's owner; literal payload sub-patterns keep the instantiated payload type (rust-12); native unit variants keep their constant identities and compare through their own implementation; native public fields preserve named construction order and writable storage; and a native UTF-8 error displays through captured Result mappers and narrowed callable formatters forwarded across source calls
+# behavior: native enum patterns retain exact payloads, nested variants, Rust discriminants, source field value arguments, shared payload clones, fresh non-Clone owners in if let and while let, and the borrowed payload's owner; an omitted native owner default closes construction and matching consistently (#2440); literal payload sub-patterns keep the instantiated payload type (rust-12); native unit variants keep their constant identities and compare through their own implementation; native public fields preserve named construction order and writable storage; and a native UTF-8 error displays through captured Result mappers and narrowed callable formatters forwarded across source calls
 # expect-stdout:
 #   borrowed
 #   missing
@@ -82,6 +82,13 @@ def flow_score(value: ControlFlow[int, str]) -> int:
         ControlFlow.Break(score) => return score
         ControlFlow.Continue(text) => return len(text)
         _ => return -1
+
+
+def default_flow_score(value: ControlFlow[int]) -> int:
+    """Read a native enum whose omitted Continue owner uses the Rust declaration's default."""
+    match value:
+        ControlFlow.Break(score) => return score
+        ControlFlow.Continue(_) => return -1
 
 
 def bound_name(value: Bound[u8]) -> str:
@@ -179,8 +186,10 @@ def show_payload_patterns() -> None:
     println(comparison_name(Ordering.Greater))
     stopped: ControlFlow[int, str] = ControlFlow.Break(9)
     continued: ControlFlow[int, str] = ControlFlow.Continue("abc")
+    defaulted: ControlFlow[int] = ControlFlow.Break(7)
     assert flow_score(stopped) == 9
     assert flow_score(continued) == 3
+    assert default_flow_score(defaulted) == 7
     envelope = Envelope(value=continued)
     assert envelope.score() == 3
     assert envelope.score() == 3

@@ -17,6 +17,7 @@ pub enum TupleElement:
 
     Int
     Float
+    Numeric(SizedNumeric)
     Bool
     Unit
     String
@@ -308,6 +309,7 @@ pub def tuple_element_type(element: TupleElement) -> PlanType:
     match element:
         TupleElement.Int => return PlanType.Int
         TupleElement.Float => return PlanType.Float
+        TupleElement.Numeric(kind) => return sized_plan_type(kind)
         TupleElement.Bool => return PlanType.Bool
         TupleElement.Unit => return PlanType.Unit
         TupleElement.String => return PlanType.String

@@ -515,13 +515,16 @@ impl TypeChecker {
                 && let Some(metadata) = self.rust_item_metadata_for_path(&constructor)
                 && let RustItemKind::Function(signature) = &metadata.kind
             {
-                return Some(self.validate_rust_function_call_with_expected(
+                let result = self.validate_rust_function_call_with_expected(
                     &metadata.canonical_path,
                     signature,
                     args,
                     span,
                     expected_return_ty,
-                ));
+                );
+                self.retain_rust_variant_construction(&path, method, args, &params, span);
+                self.retain_rust_variant_owner(&path, args, &params, expected_return_ty, span);
+                return Some(result);
             }
             let arg_types = self.check_call_arg_types_for_params(args, &params);
             let mut type_bindings = std::collections::HashMap::new();
@@ -535,6 +538,7 @@ impl TypeChecker {
             );
             self.type_info.record_call_site_callable_params_exact(span, &params);
             self.retain_rust_variant_construction(&path, method, args, &params, span);
+            self.retain_rust_variant_owner(&path, args, &params, expected_return_ty, span);
             return Some(ResolvedType::RustPath(path));
         }
         Some(
