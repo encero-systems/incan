@@ -201,7 +201,7 @@ async def bump(shared_counter: Mutex[Counter]) -> Counter:
         return counter      # refused: `counter` borrows the guard, which exits here
 ```
 
-The lock acquisition suspends before context entry. `counter` is exclusive access tied to the guard, so the checker refuses returning it, storing it, or capturing it in a closure or task; the guard's exit releases the lock with no live view left behind. Returning `counter.value()`, an owned copy of the count, is fine. An `await` inside the suite is permitted only when the guard and `counter` satisfy the ordinary checked suspension proof. The current async mutex supports guards held across await; the context protocol must not assume that every guard is unsafe or that every resource is safe to suspend.
+The lock acquisition suspends before context entry. `counter` is exclusive access tied to the guard, so the checker refuses returning it, storing it, capturing it in a task, or capturing it in a closure that outlives the suite; the guard's exit releases the lock with no live view left behind. Returning `counter.value()`, an owned copy of the count, is fine. An `await` inside the suite is permitted only when the guard and `counter` satisfy the ordinary checked suspension proof. The current async mutex supports guards held across await; the context protocol must not assume that every guard is unsafe or that every resource is safe to suspend.
 
 ### Test drive: cleanup that suspends
 
@@ -307,7 +307,7 @@ class Guard with ContextManager[Reference[Counter], None]:
         ...
 ```
 
-The checker must refuse returning such a binding, storing it, or capturing it in a closure or task, and the binding's borrow must end before `__exit__` runs. An implementation of `__enter__` must not declare a borrowed source other than its receiver.
+The checker must refuse returning such a binding, storing it, capturing it in a task, or capturing it in a closure that outlives the suite, under RFC 154, and the binding's borrow must end before `__exit__` runs. An implementation of `__enter__` must not declare a borrowed source other than its receiver.
 
 A lazy scope descriptor can therefore be used directly in a header such as `with db.open(path).read() as reader:`. RFC 165 owns that library adaptation: header evaluation constructs the descriptor, while entry performs the database acquisition and starts the read. A fallible eager acquisition still uses its explicit Result handling before entry, as in the earlier file examples.
 
