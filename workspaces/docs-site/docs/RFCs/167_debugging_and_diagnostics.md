@@ -16,7 +16,7 @@
     - RFC 126 (Oven debugging and evidence-backed investigations)
     - RFC 131 (error origins, cause chains and opt-in stack capture)
     - RFC 165 (std.db typed embedded storage)
-    - RFC 169 (typed datasets)
+    - RFC 169 (typed record sets and record streams)
 - **Issue:** [#1640](https://github.com/encero-systems/incan/issues/1640)
 - **RFC PR:** —
 - **Written against:** v0.6
@@ -520,7 +520,7 @@ Stack capture for assertions and panics must follow RFC 131's policy for errors:
 
 A debugging session must offer, for a stopped execution, a namespace view of the selected frame's parameters, locals and captured closure values, and of the values of the modules it uses. Each entry must carry its declared type and an availability state from the set above.
 
-Collections and models must support bounded tabular views: rows for list and map entries, columns for model fields, with paging rather than complete materialization. Typed datasets (RFC 169) should use the same view. A table must show its total size when known and must say when it shows only part of a collection.
+Collections and models must support bounded tabular views: rows for list and map entries, columns for model fields, with paging rather than complete materialization. Record batches (RFC 169) should use the same view; a record set or stream shows its declared kinds, schema and source capabilities without being read. A table must show its total size when known and must say when it shows only part of a collection.
 
 An evaluation must be an explicit request. Its expression language is the selected frame's language. It must be checked against the selected frame's scope and types, as source written at that location would be, and must be refused with an ordinary diagnostic when it does not check. An evaluation that only reads values must run no code in the stopped process. An evaluation that calls program code must be requested as such; it runs in the stopped process, using code produced by the same compiler identity that built the artifact, and its result must say that code ran. A result must identify the frame and execution it was evaluated in. Evaluation must never rerun the program or reconstruct a value from current source.
 

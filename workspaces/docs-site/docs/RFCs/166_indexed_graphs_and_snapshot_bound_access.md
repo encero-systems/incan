@@ -12,7 +12,7 @@
     - RFC 115 (fallible iteration)
     - RFC 161 (semantic core IR)
     - RFC 165 (typed embedded storage)
-    - RFC 169 (typed datasets and structured streams)
+    - RFC 169 (typed record sets and record streams)
 - **Issue:** [#2524](https://github.com/encero-systems/incan/issues/2524)
 - **RFC PR:** —
 - **Written against:** v0.6
@@ -170,7 +170,7 @@ def store_and_read_calls(path: Path) -> Result[None, db.OperationError]:
         graph = snapshot.graph[Function, CompilerEdge]("compiler.calls")?
 
         with graph.incoming(normalize).cursor(
-            max_rows=256, max_bytes=1_048_576,
+            max_records=256, max_bytes=1_048_576,
         ) as cursor:
             while let Some(batch) = cursor.next_batch()?:
                 for edge in batch:
@@ -230,11 +230,11 @@ Graph-owned mutations must pass through supported operations, including payload 
 
 ### Typed relationship graph
 
-RFC 169 proposes a common dataset and structured-stream interface for heterogeneous model variants. This graph RFC retains ownership of node/edge identity, adjacency, and traversal. Multiple typed node and edge payloads do not depend on the full dataset interface.
+RFC 169 defines the common record-set and record-stream interface for records of several model kinds. This graph RFC retains ownership of node/edge identity, adjacency, and traversal. Multiple typed node and edge payloads do not depend on that interface.
 
 `RelationGraph[N, E]` must store typed node payloads `N` and edge payloads `E`, with stable node and edge identities scoped to its instance. `add_node(value)` returns a `ScopedNodeId`; `add_edge(source, target, payload)` returns `Result[ScopedEdgeId, GraphError]`. It must support parallel edges, payload lookup and replacement, node deletion with incident-edge removal, and forward/reverse adjacency. An edge update must not accidentally replace another parallel edge with the same endpoints. Removed identities must not be reused within that graph instance.
 
-`E` may be a complete model or an explicit payload enum admitting several edge models; `N` has the same freedom for node models. Stored relationships must preserve the checked variant and payload identities. Selecting one relationship kind must be possible through a declared family/variant index without decoding unrelated edge payloads. The graph adapter must validate compatible descriptors and must not collapse different variants because field names happen to match. RFC 169 owns their general heterogeneous dataset and stream projection surface.
+`E` may be a complete model or an explicit payload enum admitting several edge models; `N` has the same freedom for node models. Stored relationships must preserve the checked variant and payload identities. Selecting one relationship kind must be possible through a declared family/variant index without decoding unrelated edge payloads. The graph adapter must validate compatible descriptors and must not collapse different variants because field names happen to match. RFC 169 owns their general record-set and record-stream projection surface.
 
 The required relation surface is directed: `source -> target` is authoritative, and incoming adjacency is reverse lookup over the same edge records. An undirected extension must be explicitly selected and must define its identity and traversal rules; this RFC does not imply an undirected constructor or silently add a second edge.
 
@@ -300,7 +300,7 @@ The required public operation shapes are below. Concrete generic parameter names
 | `graph.read_view()` on an in-memory graph | A shared reader that borrows the graph. Its public source dependency is the graph receiver; it cannot escape that owner or permit conflicting graph mutation. |
 | `snapshot.graph[N, E](name)` | A fallible database reader that owns a lease on the selected snapshot, graph definition and indexes. Successful acquisition establishes that retention; the handle may outlive the binding used to obtain it. |
 | `reader.incoming(key)` / `reader.outgoing(key)` | A lazy adjacency selection retaining the reader dependency and direction. Constructing it does not materialize neighbors. |
-| `selection.cursor(max_rows=..., max_bytes=...)` | A scoped cursor borrowing its selection/reader, with checked keys, fixed ordering and bounded state. Entering the scope acquires cursor resources; exit releases them without committing. |
+| `selection.cursor(max_records=..., max_bytes=...)` | A scoped cursor borrowing its selection/reader, with checked keys, fixed ordering and bounded state. Entering the scope acquires cursor resources; exit releases them without committing. |
 | `cursor.next_batch()` | `Result[Option[Batch], F]`, with typed edge identity/endpoints and requested payloads. Absence means completed adjacency, never exhaustion of a work budget. |
 | Explicit bounded traversal page | Values plus `Complete`, `Limited`, `Cancelled` or `Failed`, counters and an optional compatible continuation. Continuation retains its read scope and required state. |
 
@@ -420,4 +420,4 @@ Read scopes, typed failures, cursors and completeness add concepts beyond a smal
 - **Storage ownership:** graph definitions, node memberships and edge records are logical structures. Incoming/outgoing indexes are derived access paths. Raw structural fields become private in indexed containers, with migration diagnostics and supported replacements; constructor and method compatibility remains governed by RFC 047.
 - **Reader lifetime:** memory readers and ordinary cursors borrow their actual source. Database snapshot graph readers own acquired leases; explicitly retained continuations may do the same. Borrowed buffers cannot outlive or be invalidated by their owners, and ordinary users rely on duckborrowing.
 - **Traversal surface:** explicit pages and scoped batch cursors are required. Fallible iterator convenience uses the same engine and preserves limited outcomes; it is not a separate prerequisite. Limits must never look like successful exhaustion.
-- **Dataset boundary:** RFC 169 owns general sparse heterogeneous projections and structured streams. Supporting multiple graph payload kinds and implementing the graph reader do not depend on that entire surface.
+- **Record-set boundary:** RFC 169 owns general projections over records of several kinds, record streams and change streams. Supporting multiple graph payload kinds and implementing the graph reader do not depend on that surface.
