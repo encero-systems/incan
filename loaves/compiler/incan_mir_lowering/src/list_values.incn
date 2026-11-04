@@ -121,14 +121,14 @@ pub def checked_list_argument(
                 match read.place.global():
                     Some(_global) => return Err("unsupported Body IR mutable static borrow through source function")
                     None => pass
-            if mutable and read.fact != OwnershipFact.MutBorrow and read.fact != OwnershipFact.Move:
+            if mutable and read.fact != OwnershipFact.MutBorrow and read.fact != OwnershipFact.Move and not has_slice_projection(read.place):
                 return Err("unsupported Body IR list argument without mutable borrow fact")
             if is_element_place(builder, read.place)?:
-                # A shared parameter reads an indexed or sliced list through a copy that stays owned until its scope
-                # ends.
-                if not mutable:
+                # A shared parameter and a fresh projected owner read through a copy that stays owned until its scope
+                # ends. A slice is such an owner: its Move fact distinguishes it from stored indexed list storage.
+                if not mutable or read.fact == OwnershipFact.Move or has_slice_projection(read.place):
                     copied = materialized_receiver(builder, read.place, span)?
-                    return list_borrow(builder, copied, false, span)
+                    return list_borrow(builder, copied, mutable, span)
                 # An exclusive argument reaches the list stored in the container, so its change lands there.
                 stored = mutable_element_place(builder, read.place, span)?
                 return list_borrow(builder, stored, true, span)
@@ -150,6 +150,15 @@ pub def checked_list_argument(
                     return list_borrow(builder, literal_place, false, span)
                 _ => return Err("unsupported Body IR constant list argument")
         _ => return Err("unsupported Body IR constant list argument")
+
+
+def has_slice_projection(source: &RustPlace) -> bool:
+    """Recognize a projection that materializes a fresh sequence owner instead of naming stored element storage."""
+    for projection in source.projection:
+        match projection:
+            PlaceElem.Slice(start=_start, end=_end, step=_step) => return true
+            _ => pass
+    return false
 
 
 pub def cloned_list(mut builder: Builder, source: Place, span: SourceSpan) -> Result[Place, str]:

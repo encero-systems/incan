@@ -87,7 +87,7 @@ impl<'params, 'args, 'call> CallArgumentBindings<'params, 'args, 'call> {
         actual: &ResolvedType,
         span: Span,
     ) {
-        checker.infer_call_argument_type_param_bindings(&param.ty, actual, self.type_bindings);
+        checker.infer_call_argument_type_param_bindings(&param.ty, actual, span, self.type_bindings);
         checker.emit_arg_type_mismatch_if_needed(
             self.context.callee,
             param.name(),
@@ -181,7 +181,7 @@ impl<'params, 'args, 'call> CallArgumentBindings<'params, 'args, 'call> {
             }
         } else if let Some(param) = self.rest_positional {
             let expected = list_ty(param.ty.clone());
-            checker.infer_call_argument_type_param_bindings(&expected, actual, self.type_bindings);
+            checker.infer_call_argument_type_param_bindings(&expected, actual, expr.span, self.type_bindings);
             checker.emit_arg_type_mismatch_if_needed(
                 self.context.callee,
                 param.name(),
@@ -239,7 +239,7 @@ impl<'params, 'args, 'call> CallArgumentBindings<'params, 'args, 'call> {
             }
         } else if let Some(param) = self.rest_keyword {
             let expected = dict_ty(ResolvedType::Str, param.ty.clone());
-            checker.infer_call_argument_type_param_bindings(&expected, actual, self.type_bindings);
+            checker.infer_call_argument_type_param_bindings(&expected, actual, expr.span, self.type_bindings);
             checker.emit_arg_type_mismatch_if_needed(
                 self.context.callee,
                 param.name(),
@@ -283,18 +283,47 @@ impl<'params, 'args, 'call> CallArgumentBindings<'params, 'args, 'call> {
 
 impl TypeChecker {
     /// Infer a call argument's binders through the outer shared borrow already admitted by argument compatibility.
-    /// Matching reference arguments retain structural inference. This adjustment belongs to argument binding rather
-    /// than general type inference, where applying a borrow to a return type would change the checked contract.
+    /// A checked native slice view supplies the element only when the parameter expects a source list; other source
+    /// values keep their source type. This adjustment belongs to argument binding rather than general type inference,
+    /// where applying a borrow to a return type would change the checked contract.
     fn infer_call_argument_type_param_bindings(
         &self,
         expected: &ResolvedType,
         actual: &ResolvedType,
+        span: Span,
         bindings: &mut std::collections::HashMap<String, ResolvedType>,
     ) {
+        let native = self
+            .type_info
+            .rust
+            .checked_calls
+            .get(&span)
+            .map(|call| &call.return_type)
+            .filter(|ty| {
+                matches!(ty, ResolvedType::Ref(inner) | ResolvedType::RefMut(inner)
+                    if matches!(inner.as_ref(), ResolvedType::Generic(base, _) if base == "[]"))
+            });
         let expected = match expected {
             ResolvedType::Ref(inner) if !matches!(actual, ResolvedType::Ref(_) | ResolvedType::RefMut(_)) => inner,
             _ => expected,
         };
+        let (native_expected, native_actual) = match (expected, native) {
+            (
+                ResolvedType::Ref(expected) | ResolvedType::RefMut(expected),
+                Some(ResolvedType::Ref(actual) | ResolvedType::RefMut(actual)),
+            ) => (expected.as_ref(), Some(actual.as_ref())),
+            (_, Some(ResolvedType::Ref(actual) | ResolvedType::RefMut(actual))) => (expected, Some(actual.as_ref())),
+            _ => (expected, None),
+        };
+        if let ResolvedType::Generic(expected_name, expected_arguments) = native_expected
+            && collection_type_id(expected_name) == Some(CollectionTypeId::List)
+            && let Some(ResolvedType::Generic(actual_name, actual_arguments)) = native_actual
+            && actual_name == "[]"
+            && let ([expected_element], [actual_element]) = (expected_arguments.as_slice(), actual_arguments.as_slice())
+        {
+            self.infer_type_param_bindings(expected_element, actual_element, bindings);
+            return;
+        }
         self.infer_type_param_bindings(expected, actual, bindings);
     }
 
