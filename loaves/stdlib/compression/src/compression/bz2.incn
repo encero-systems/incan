@@ -137,7 +137,7 @@ def _compress_file_stream(
     """
     Compress bytes from a file stream into a binary sink.
     """
-    mut handle = source.handle.borrow_mut()
+    mut handle = source.handle.handle.borrow_mut()
     mut reader = BzEncoder.new(Read.by_ref(handle), compression)
     while true:
         mut chunk: bytes = b""
@@ -177,7 +177,7 @@ def _decompress_file_stream(
     """
     Decompress bzip2 bytes from a file stream into a binary sink.
     """
-    mut handle = source.handle.borrow_mut()
+    mut handle = source.handle.handle.borrow_mut()
     mut reader = BzDecoder.new(Read.by_ref(handle))
     while true:
         mut chunk: bytes = b""

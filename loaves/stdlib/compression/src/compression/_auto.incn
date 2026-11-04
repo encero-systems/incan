@@ -210,7 +210,7 @@ def _decompress_gzip_stream(
                     _write_sink_bytes(Some(Codec.Gzip), "decompress_auto_stream", target, chunk)?
                 Err(err) => return Err(_codec_error(Codec.Gzip, "decompress_auto_stream", err.to_string()))
     elif isinstance(source, File):
-        mut handle = source.handle.borrow_mut()
+        mut handle = source.handle.handle.borrow_mut()
         mut reader = GzDecoder.new(Cursor.new(prefix).chain(Read.by_ref(handle)))
         while true:
             mut chunk: bytes = b""
@@ -243,7 +243,7 @@ def _decompress_zlib_stream(
                     _write_sink_bytes(Some(Codec.Zlib), "decompress_auto_stream", target, chunk)?
                 Err(err) => return Err(_codec_error(Codec.Zlib, "decompress_auto_stream", err.to_string()))
     elif isinstance(source, File):
-        mut handle = source.handle.borrow_mut()
+        mut handle = source.handle.handle.borrow_mut()
         mut reader = ZlibDecoder.new(Cursor.new(prefix).chain(Read.by_ref(handle)))
         while true:
             mut chunk: bytes = b""
@@ -279,7 +279,7 @@ def _decompress_zstd_stream(
                         Err(err) => return Err(_codec_error(Codec.Zstd, "decompress_auto_stream", err.to_string()))
             Err(err) => return Err(_codec_error(Codec.Zstd, "decompress_auto_stream", err.to_string()))
     elif isinstance(source, File):
-        mut handle = source.handle.borrow_mut()
+        mut handle = source.handle.handle.borrow_mut()
         match ZstdReadDecoder.new(Cursor.new(prefix).chain(Read.by_ref(handle))):
             Ok(reader) =>
                 mut adapter = reader
@@ -315,7 +315,7 @@ def _decompress_bz2_stream(
                     _write_sink_bytes(Some(Codec.Bz2), "decompress_auto_stream", target, chunk)?
                 Err(err) => return Err(_codec_error(Codec.Bz2, "decompress_auto_stream", err.to_string()))
     elif isinstance(source, File):
-        mut handle = source.handle.borrow_mut()
+        mut handle = source.handle.handle.borrow_mut()
         mut reader = BzDecoder.new(Cursor.new(prefix).chain(Read.by_ref(handle)))
         while true:
             mut chunk: bytes = b""
@@ -348,7 +348,7 @@ def _decompress_lzma_stream(
                     _write_sink_bytes(Some(Codec.Lzma), "decompress_auto_stream", target, chunk)?
                 Err(err) => return Err(_codec_error(Codec.Lzma, "decompress_auto_stream", err.to_string()))
     elif isinstance(source, File):
-        mut handle = source.handle.borrow_mut()
+        mut handle = source.handle.handle.borrow_mut()
         mut reader = XzDecoder.new(Cursor.new(prefix).chain(Read.by_ref(handle)))
         while true:
             mut chunk: bytes = b""
@@ -381,7 +381,7 @@ def _decompress_snappy_stream(
                     _write_sink_bytes(Some(Codec.Snappy), "decompress_auto_stream", target, chunk)?
                 Err(err) => return Err(_codec_error(Codec.Snappy, "decompress_auto_stream", err.to_string()))
     elif isinstance(source, File):
-        mut handle = source.handle.borrow_mut()
+        mut handle = source.handle.handle.borrow_mut()
         mut reader = FrameDecoder.new(Cursor.new(prefix).chain(Read.by_ref(handle)))
         while true:
             mut chunk: bytes = b""

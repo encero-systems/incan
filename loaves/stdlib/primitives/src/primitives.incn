@@ -2,6 +2,8 @@
 
 const _HEX_LOWER: str = "0123456789abcdef"
 
+pub from crate.primitives.fs import Path
+
 
 pub def hexlify(data: bytes) -> str:
     """
