@@ -3,7 +3,9 @@
 from std.fs import Path
 from std.environ import get_or
 from rust::std::os::unix::process import CommandExt
-from rust::std::process import Command
+from rust::std::process import Child, Command, Stdio
+from rust::std::thread import sleep
+from rust::std::time import Duration
 from rust::std::string import String as RustString
 from std.json import JsonValue
 from pub::incan_platform.ipc import Connection, listen
@@ -250,3 +252,69 @@ def hello_through_parent(scratch: Path) -> Result[None, str]:
         assert result.status.success(), str(error)
         assert str(output) == "hello\n"
     return Ok(None)
+
+
+pub def test_an_owner_retires_once_its_socket_or_home_is_gone() -> Result[None, str]:
+    """
+    An owner whose socket path is removed, or whose home is deleted, exits within seconds, long before its idle limit;
+    one left alone retires at its idle limit. None of them needs its socket to be dialed.
+    """
+    scratch = scratch_directory()?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{home()?.0}/bin/incan")
+    socketless = scratch.path().joinpath("socketless")
+    homeless = scratch.path().joinpath("homeless")
+    idle = scratch.path().joinpath("idle")
+    first = started_owner(binary, socketless, "600")?
+    second = started_owner(binary, homeless, "600")?
+    third = started_owner(binary, idle, "4")?
+    leftovers = [owner_socket(homeless)?, owner_socket(idle)?]
+    remove(Path(owner_socket(socketless)?))?
+    homeless.remove_tree().map_err((error) => error.message())?
+    # Every owner is waited for, or killed, before any assertion, so a failure leaves none behind.
+    socket_gone = exits_within(first, 5)?
+    home_gone = exits_within(second, 5)?
+    idle_over = exits_within(third, 10)?
+    assert socket_gone, "an owner outlived its socket path"
+    assert home_gone, "an owner outlived its home"
+    assert idle_over, "an owner outlived its idle limit"
+    # An owner that retired on its own removed the socket it bound.
+    for socket in leftovers:
+        assert not Path(socket).exists(), socket
+    return Ok(None)
+
+
+def owner_socket(owner_home: Path) -> Result[str, str]:
+    """The socket of the test owner of `owner_home`, in the user's endpoint directory as a real owner's is."""
+    return Ok(f"{socket_prefix(owner_home.joinpath("owners").0)?}g.sock")
+
+
+def started_owner(binary: str, owner_home: Path, idle: str) -> Result[Child, str]:
+    """Start the installed command as the owner of `owner_home`, idle for at most `idle` seconds, once it is ready."""
+    owners = owner_home.joinpath("owners")
+    socket = owner_socket(owner_home)?
+    ready = f"{socket_prefix(owners.0)?}g.ready"
+    mut listener = listen(ready, false)?
+    mut command = Command.new(binary)
+    command.arg("--internal-owner").arg(socket).arg("g").arg(ready).arg(idle)
+    command.env("INCAN_HOME", owner_home.0).env("OVEN_TRACE", owners.joinpath("g.trace").0)
+    command.stdin(Stdio.null()).stdout(Stdio.null()).stderr(Stdio.null())
+    mut child = command.spawn().map_err((error) => f"cannot start {binary}: {error}")?
+    for poll in range(2500):
+        match listener.poll()?:
+            Some(_) =>
+                remove(Path(ready))?
+                return Ok(child)
+            None => sleep(Duration.from_millis(2))
+    _ = child.kill()
+    return Err("the owner was not ready in time")
+
+
+def exits_within(mut child: Child, seconds: int) -> Result[bool, str]:
+    """Whether `child` exits within `seconds`; one that does not is killed, so no test leaves an owner behind."""
+    for poll in range(seconds * 20):
+        match child.try_wait().map_err((error) => str(error))?:
+            Some(_) => return Ok(true)
+            None => sleep(Duration.from_millis(50))
+    _ = child.kill()
+    _ = child.wait()
+    return Ok(false)

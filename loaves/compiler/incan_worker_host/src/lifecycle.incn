@@ -4,8 +4,9 @@ When a compiler worker retires: the lifecycle policy, apart from the sockets it 
 A worker serves one activation at a time. It retires after `IDLE_SECONDS` without a request; when its physical
 footprint stays more than `FOOTPRINT_MARGIN` bytes above its post-start baseline for `FOOTPRINT_STRIKES` activations
 in a row; at once when its footprint after an activation exceeds `FOOTPRINT_CEILING`, because only exiting returns a
-heavy compile's peak heap; when a request of another protocol or generation reaches it; and when the process could not
-be restored after an activation. A contained compiler panic does not retire it.
+heavy compile's peak heap; when a request of another protocol or generation reaches it; when nothing can reach it any
+more, because its socket path no longer leads to its socket or its home is gone; and when the process could not be
+restored after an activation. A contained compiler panic does not retire it.
 """
 
 from rust::std::time import Instant
@@ -36,6 +37,8 @@ pub enum Retirement:
     """Why a worker retires."""
 
     Idle
+    # Nothing can reach the worker any more: its socket path leads elsewhere, or its home is gone.
+    Unreachable
     Footprint
     Incompatible
     # The caller requested one activation, so successful cleanup is followed by process teardown.

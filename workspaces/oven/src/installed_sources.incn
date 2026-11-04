@@ -1,0 +1,119 @@
+"""
+Whether a build's selected sources are the ones the installed native generation was built from (#2451).
+
+An installed native crate is linked only into builds of the sources it was built from: its exact-artifact guard in
+`rust_units` refuses any other. A source build whose selected std, runtime or compiler sources differ from the
+installation's would otherwise reach that guard one crate at a time, after compiling replacements it cannot link. This
+comparison runs first, over every installed native crate the build reaches, and refuses once, before anything is
+compiled, naming each crate whose sources differ.
+
+The comparison reads the same evidence the guard does: the producer's recorded source inventory (`library.d`) and the
+`sources` dimension of its input proof, reconciled against the selected source project.
+"""
+
+from std.fs import Path
+from files import read
+from home import TOOLCHAIN, home
+from loaf_local_graph import LocalFacet
+from observation import load_ledger, SETTLE_SECONDS
+from rust_build import RustBuild, native_artifacts, selected_toolchain
+from rust_freshness import dependency_inputs, recorded_sources, source_paths
+from rust_manifest import rust_facet
+from unit_freshness import fingerprint
+
+# The input proofs of an installed producer, the portable one first; each names its `sources` dimension.
+const PROOFS: FrozenList[str] = ["library.portable-inputs", "library.oven-inputs"]
+const SOURCES_PART: str = "sources "
+
+
+pub def require_installed_sources(facets: list[LocalFacet], request: RustBuild) -> Result[None, str]:
+    """Refuse a build that reaches installed native crates built from other sources than the selected ones."""
+    differing = differing_crates(facets, request)?
+    if len(differing) == 0:
+        return Ok(None)
+    return Err(mismatch(differing))
+
+
+pub def mismatch(differing: list[str]) -> str:
+    """The refusal: the rule, the crates it names, and both ways forward."""
+    standard = home().map((path) => path.joinpath("toolchains").joinpath(TOOLCHAIN).joinpath("stdlib").0)
+    shipped = standard.unwrap_or("the installed toolchain's stdlib directory")
+    names = ", ".join(differing)
+    lines = [
+        "the selected sources differ from the sources the installed native generation was built from",
+        "  = note: an installed native crate is linked only into builds of its own sources",
+        f"  = note: the selected sources differ for: {names}",
+        "  = hint: install a toolchain built from these sources",
+        f"  = hint: or, for standard packages, set INCAN_STDLIB to the installed standard library: {shipped}",
+    ]
+    return "\n".join(lines)
+
+
+pub def differing_crates(facets: list[LocalFacet], request: RustBuild) -> Result[list[str], str]:
+    """The installed native crates the build reaches whose selected sources are not the ones they were built from."""
+    artifacts = installed_artifacts(request)?
+    mut differing: list[str] = []
+    for facet in facets:
+        declared = rust_facet(facet.project, false, request.manifests)?
+        if declared.kind == "" or declared.crate_name in differing:
+            continue
+        # A crate the installation lacks, or names twice, is the guard's to judge; it compares no sources.
+        match installed_directory(artifacts, declared.crate_name):
+            None => pass
+            Some(directory) =>
+                if not built_from(Path(facet.project), directory)?:
+                    differing.append(declared.crate_name)
+    return Ok(sorted(differing))
+
+
+def installed_artifacts(request: RustBuild) -> Result[Dict[str, list[str]], str]:
+    """The installed generation's native artifacts by crate, as the guard indexes them."""
+    if len(request.installed) > 0:
+        return Ok(request.installed)
+    return Ok(native_artifacts(selected_toolchain(request)?.externs))
+
+
+def installed_directory(artifacts: Dict[str, list[str]], name: str) -> Option[Path]:
+    """The producer directory of the installation's one artifact of crate `name`."""
+    if name not in artifacts or len(artifacts[name]) != 1:
+        return None
+    return Some(Path(artifacts[name][0]).parent())
+
+
+pub def built_from(project: Path, directory: Path) -> Result[bool, str]:
+    """
+    Whether the installed producer in `directory` was built from the sources `project` holds now.
+
+    1. Read the `sources` dimension its input proof recorded.
+    2. Locate the files its dependency inventory lists in `project`, and digest them as its key does.
+    3. Missing evidence, or a listed file the project lacks, is no proof that it was.
+    """
+    # 1. A producer without a recorded source dimension was never proved against any sources.
+    recorded = recorded_sources_part(directory)?
+    inventory = directory.joinpath("library.d")
+    if recorded == "" or not inventory.is_file():
+        return Ok(false)
+    # 2. The inventory names files relative to the project the producer was built from.
+    paths, _ = dependency_inputs(read(inventory)?)?
+    match source_paths(project, inventory, [], paths):
+        Err(_) => return Ok(false)
+        Ok(selected) =>
+            # The guard reads the same ledger next, so digests taken here are not taken twice.
+            mut ledger = load_ledger(directory.joinpath("observations.json"), SETTLE_SECONDS)
+            # 3. A file the inventory lists and the project lacks is a different source.
+            match recorded_sources(selected, project, ledger):
+                Err(_) => return Ok(false)
+                Ok(sources) =>
+                    ledger.save()?
+                    return Ok(fingerprint(sorted(sources))? == recorded)
+
+
+def recorded_sources_part(directory: Path) -> Result[str, str]:
+    """The `sources` digest of the first input proof the producer kept; empty when it kept none."""
+    for name in PROOFS:
+        proof = directory.joinpath(name)
+        if proof.is_file():
+            for line in read(proof)?.split("\n"):
+                if line.startswith(SOURCES_PART):
+                    return Ok(line[len(SOURCES_PART):])
+    return Ok("")
