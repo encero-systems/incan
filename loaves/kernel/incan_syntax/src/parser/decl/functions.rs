@@ -55,6 +55,11 @@ impl<'a> Parser<'a> {
         allow_abstract: bool,
     ) -> Result<Spanned<MethodDecl>, CompileError> {
         let start = self.current_span().start;
+        let visibility = if self.match_keyword(KeywordId::Pub) {
+            Visibility::Public
+        } else {
+            Visibility::Private
+        };
         let mut surface_modifiers = Vec::new();
         while let Some(id) = self.match_surface_keyword(KeywordSurfaceKind::DeclarationModifier) {
             surface_modifiers.push(SurfaceModifier {
@@ -111,6 +116,7 @@ impl<'a> Parser<'a> {
 
         Ok(Spanned::new(
             MethodDecl {
+                visibility,
                 decorators,
                 surface_modifiers,
                 name,

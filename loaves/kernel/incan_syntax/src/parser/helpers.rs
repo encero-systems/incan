@@ -146,11 +146,25 @@ impl<'a> Parser<'a> {
 
     /// Whether the current token stream starts a function/method declaration (`[soft_kw ...] def`).
     fn starts_surface_function_decl(&self) -> bool {
-        if self.check_keyword(KeywordId::Def) {
+        self.starts_surface_function_decl_at(self.pos)
+    }
+
+    /// Whether the current token stream starts a method declaration in a type body, optionally marked `pub`.
+    fn starts_method_decl(&self) -> bool {
+        self.starts_surface_function_decl()
+            || (self.check_keyword(KeywordId::Pub) && self.starts_surface_function_decl_at(self.pos + 1))
+    }
+
+    /// Whether the tokens from `start` begin a function/method declaration (`[soft_kw ...] def`).
+    fn starts_surface_function_decl_at(&self, start: usize) -> bool {
+        if matches!(
+            self.tokens.get(start).map(|t| &t.kind),
+            Some(TokenKind::Keyword(KeywordId::Def))
+        ) {
             return true;
         }
 
-        let mut idx = self.pos;
+        let mut idx = start;
         let mut saw_modifier = false;
         while let Some(token) = self.tokens.get(idx) {
             let id = match &token.kind {

@@ -67,6 +67,7 @@ impl TypeChecker {
             .filter(|field| self.member_binding_is_active(field.span))
             .collect::<Vec<_>>();
         self.refuse_awaitable_adoptions(&model.name, &resolved_trait_adoptions);
+        self.refuse_pub_on_trait_implementations(&model.name, &model.traits, &model.methods);
 
         // ---- Field metadata and checked defaults ----
         let mut method_names = HashSet::new();

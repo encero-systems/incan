@@ -12,6 +12,10 @@ pub struct MethodExport {
     /// Canonical member declaration identity, distinct for same-name overloads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub canonical: Option<CanonicalIdentityExport>,
+    /// Source-level method visibility (#2570). Older manifests omitted it, and every method was public to their
+    /// consumers, so absence remains public; new manifests serialize only the private case.
+    #[serde(default, skip_serializing_if = "MemberVisibilityExport::is_public")]
+    pub visibility: MemberVisibilityExport,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alias_of: Option<String>,
     pub type_params: Vec<TypeParamExport>,

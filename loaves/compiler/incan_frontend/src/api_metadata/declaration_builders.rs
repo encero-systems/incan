@@ -249,7 +249,7 @@ pub(super) fn api_trait(
                 canonical: None,
                 ty: type_ref_from_resolved(ty),
                 surface_type_name: Some(ty.to_string()),
-                visibility: crate::library_manifest::FieldVisibilityExport::Public,
+                visibility: crate::library_manifest::MemberVisibilityExport::Public,
                 has_default: false,
                 default: None,
                 alias: None,

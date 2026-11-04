@@ -150,6 +150,7 @@ impl TypeChecker {
             resolved_trait_adoptions.push(resolved);
         }
         self.refuse_awaitable_adoptions(&en.name, &resolved_trait_adoptions);
+        self.refuse_pub_on_trait_implementations(&en.name, &en.traits, &en.methods);
         resolved_trait_adoptions
     }
 

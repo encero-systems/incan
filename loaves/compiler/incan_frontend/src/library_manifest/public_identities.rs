@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use incan_semantics_core::CanonicalSymbolId;
 
-use super::{CanonicalIdentityExport, FieldExport, FieldVisibilityExport, LibraryManifest};
+use super::{CanonicalIdentityExport, FieldExport, LibraryManifest, MemberVisibilityExport};
 
 /// Canonical membership of the manifest's public surface: exported types plus their published public members.
 ///
@@ -176,7 +176,7 @@ fn add_public_fields(fields: &[FieldExport], identities: &mut BTreeSet<Canonical
     add_each(
         fields
             .iter()
-            .filter(|field| field.visibility == FieldVisibilityExport::Public)
+            .filter(|field| field.visibility == MemberVisibilityExport::Public)
             .map(|field| &field.canonical),
         identities,
     );
@@ -187,7 +187,7 @@ mod tests {
     use super::public_executable_identities;
     use crate::library_manifest::{
         CanonicalIdentityExport, ExportIdentity, ExportIdentityKind, ExportIdentityProjection, FieldExport,
-        FieldVisibilityExport, LibraryManifest, ModelExport, TypeRef,
+        LibraryManifest, MemberVisibilityExport, ModelExport, TypeRef,
     };
     use incan_semantics_core::{
         CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
@@ -256,9 +256,9 @@ mod tests {
             trait_adoptions: Vec::new(),
             derives: Vec::new(),
             fields: vec![
-                field("visible", Some(visible), FieldVisibilityExport::Public),
-                field("secret", Some(private), FieldVisibilityExport::Private),
-                field("unproven", None, FieldVisibilityExport::Public),
+                field("visible", Some(visible), MemberVisibilityExport::Public),
+                field("secret", Some(private), MemberVisibilityExport::Private),
+                field("unproven", None, MemberVisibilityExport::Public),
             ],
             properties: Vec::new(),
             methods: Vec::new(),
@@ -287,7 +287,11 @@ mod tests {
     }
 
     /// Retain a field's explicit publication proof and visibility independently of its source spelling.
-    fn field(name: &str, canonical: Option<CanonicalIdentityExport>, visibility: FieldVisibilityExport) -> FieldExport {
+    fn field(
+        name: &str,
+        canonical: Option<CanonicalIdentityExport>,
+        visibility: MemberVisibilityExport,
+    ) -> FieldExport {
         FieldExport {
             name: name.into(),
             canonical,

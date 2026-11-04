@@ -50,6 +50,7 @@ mod descriptors_and_derives;
 mod enums;
 mod interop_adapters;
 mod member_preparation;
+mod method_visibility;
 mod models;
 mod newtypes;
 mod registry_decorators;

@@ -48,6 +48,7 @@ impl TypeChecker {
             .filter(|field| self.member_binding_is_active(field.span))
             .collect::<Vec<_>>();
         self.refuse_awaitable_adoptions(&class.name, &resolved_trait_adoptions);
+        self.refuse_pub_on_trait_implementations(&class.name, &class.traits, &class.methods);
 
         // RFC 021: Field aliases are NOT supported on class declarations.
         // Reject any field metadata on class fields.

@@ -225,8 +225,8 @@ pub(super) fn api_field_markdown(owner: &str, field: &FieldExport) -> String {
         facts.push(format!("description: {}", inline_code(description)));
     }
     let kind = match field.visibility {
-        FieldVisibilityExport::Private => "private field",
-        FieldVisibilityExport::Public => "public field",
+        MemberVisibilityExport::Private => "private field",
+        MemberVisibilityExport::Public => "public field",
     };
     checked_api_markdown(
         format!("field {}.{}: {}", owner, field.name, format_type_ref(&field.ty)),
@@ -235,7 +235,7 @@ pub(super) fn api_field_markdown(owner: &str, field: &FieldExport) -> String {
     )
 }
 
-/// Format a checked public method preview as hover markdown.
+/// Format a checked method preview as hover markdown, naming its recorded visibility (#2570).
 pub(super) fn api_method_markdown(owner: &str, method: &ApiMethod) -> String {
     let mut facts = Vec::new();
     push_docstring_fact(&mut facts, method.docstring.as_deref());
@@ -245,7 +245,11 @@ pub(super) fn api_method_markdown(owner: &str, method: &ApiMethod) -> String {
     if !method.has_body {
         facts.push("body: abstract".to_string());
     }
-    checked_api_markdown(format_api_method_signature(owner, method), "public method", facts)
+    let kind = match method.visibility {
+        MemberVisibilityExport::Private => "private method",
+        MemberVisibilityExport::Public => "public method",
+    };
+    checked_api_markdown(format_api_method_signature(owner, method), kind, facts)
 }
 
 /// Wrap a checked metadata signature and fact list in LSP markdown.

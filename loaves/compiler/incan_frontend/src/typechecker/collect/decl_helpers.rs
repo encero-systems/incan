@@ -273,6 +273,7 @@ fn method_info_from_decl(
     checker.record_caller_visible_mut_params(Some(&identity), &method.node.params, &params);
     MethodInfo {
         identity: Some(identity),
+        visibility: method.node.visibility,
         type_params,
         type_param_bounds,
         type_param_bound_details,
@@ -534,6 +535,7 @@ pub(super) fn inject_validate_methods(
         "new",
         MethodInfo {
             identity: None,
+            visibility: Visibility::Public,
             type_params: Vec::new(),
             type_param_bounds: HashMap::new(),
             type_param_bound_details: HashMap::new(),
