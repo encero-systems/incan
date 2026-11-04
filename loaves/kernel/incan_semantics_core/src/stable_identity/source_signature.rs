@@ -43,7 +43,8 @@ struct SourceParameter {
     has_default: bool,
     /// Whether the source callable exposes mutation through this parameter.
     is_mut: bool,
-    /// Explicit source access is semantic even when the underlying value type is identical.
+    /// Explicit source access is semantic even when the underlying value type is identical; inferred refinement is
+    /// deliberately normalized to the plain source spelling.
     input_access: IncanInputAccess,
     /// Checked source type, with nominal provenance preserved.
     ty: SourceType,
@@ -87,7 +88,7 @@ impl SourceSignatureContext<'_> {
                     kind: parameter.kind,
                     has_default: parameter.has_default,
                     is_mut: parameter.is_mut,
-                    input_access: parameter.input_access,
+                    input_access: source_input_access(parameter.input_access),
                     ty: self.ty(&parameter.ty)?,
                 })
             })
@@ -138,5 +139,13 @@ impl SourceSignatureContext<'_> {
             IncanType::Infer | IncanType::Unknown | IncanType::Unsupported(_) => return None,
             atom => SourceType::Atom(atom.clone()),
         })
+    }
+}
+
+/// Project executable inference back to the ordinary source contract whose declaration identity it refines.
+fn source_input_access(access: IncanInputAccess) -> IncanInputAccess {
+    match access {
+        IncanInputAccess::InferredShared => IncanInputAccess::Inferred,
+        other => other,
     }
 }

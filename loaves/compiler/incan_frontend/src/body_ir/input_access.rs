@@ -148,6 +148,7 @@ mod tests {
     fn access_survives_callable_containers() -> Result<(), Box<dyn std::error::Error>> {
         for access in [
             IncanInputAccess::Inferred,
+            IncanInputAccess::InferredShared,
             IncanInputAccess::Shared,
             IncanInputAccess::Exclusive,
             IncanInputAccess::Owned,
@@ -208,6 +209,7 @@ mod tests {
         };
         for input_access in [
             IncanInputAccess::Inferred,
+            IncanInputAccess::InferredShared,
             IncanInputAccess::Shared,
             IncanInputAccess::Exclusive,
             IncanInputAccess::Owned,
@@ -232,7 +234,7 @@ mod tests {
             body_keys.insert(semantic_digest(&executable)?);
         }
         assert_eq!(source_keys.len(), 4);
-        assert_eq!(body_keys.len(), 4);
+        assert_eq!(body_keys.len(), 5);
         Ok(())
     }
     /// Function and method inputs are admitted, and their frame locals use the payload type.

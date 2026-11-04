@@ -815,6 +815,7 @@ fn retain_parameter_ownership(
                 (!exclude_receiver || param.name != "self")
                     && match param.input_access {
                         incan_semantics_core::IncanInputAccess::Shared
+                        | incan_semantics_core::IncanInputAccess::InferredShared
                         | incan_semantics_core::IncanInputAccess::Exclusive => true,
                         incan_semantics_core::IncanInputAccess::Owned => false,
                         incan_semantics_core::IncanInputAccess::Inferred => param.mutable && !param.native_owned,

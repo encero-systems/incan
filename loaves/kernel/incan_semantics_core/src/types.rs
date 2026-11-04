@@ -434,12 +434,22 @@ pub enum IncanInputAccess {
     Exclusive,
     /// Ownership transfer, or a checked Copy value; never an implicit repair clone.
     Owned,
+    /// Shared access inferred from the complete checked body and published for every caller.
+    ///
+    /// Unlike [`Self::Shared`], this is not an explicit source obligation and therefore requires no explicit-input
+    /// body profile. Its distinct wire value preserves the authored difference between plain `T` and `Borrowed[T]`.
+    InferredShared,
 }
 
 impl IncanInputAccess {
-    /// Distinguish ordinary inference without interpreting a source type's display spelling.
+    /// Whether source access remains inferred rather than explicitly annotated.
     pub const fn is_inferred(&self) -> bool {
-        matches!(self, Self::Inferred)
+        matches!(self, Self::Inferred | Self::InferredShared)
+    }
+
+    /// Whether the checked callable receives shared access without ownership transfer.
+    pub const fn is_shared(&self) -> bool {
+        matches!(self, Self::Shared | Self::InferredShared)
     }
 
     /// Render an explicit contract for diagnostics; this spelling is not used to recognize its identity.
@@ -449,6 +459,7 @@ impl IncanInputAccess {
             Self::Shared => Some("Borrowed"),
             Self::Exclusive => Some("BorrowedMut"),
             Self::Owned => Some("Owned"),
+            Self::InferredShared => None,
         }
     }
 }

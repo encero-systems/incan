@@ -1,4 +1,4 @@
-# behavior: projected reads permit final owner transfers; reuse and conditional paths retain owners (#2256)
+# behavior: projected reads permit final owner transfers; reuse and conditional paths retain owners; plain read-only non-Clone parameters lend across repeated and recursive calls while function values keep by-value inputs and moving bodies stay owned (#2256)
 # expect-stdout:
 #   ["x", "x"]
 #   taken 4 kept 4
@@ -13,6 +13,7 @@ from rust::std::string import String as RustString
 from rust::std::mem import drop as discard
 from rust::std::sync import Mutex
 from rust::memory_probe import peak_resident_bytes
+from shared_reads import poisoned as module_poisoned
 
 
 model Client:
@@ -73,6 +74,7 @@ def main() -> Result[None, str]:
     assert conditional_native_owner(true) == 1
     assert conditional_native_owner(false) == 0
     conditional_guard_owner()
+    plain_native_owner_contracts()
     println("ownership controls hold")
 
     # 3. Exclude a full second list while allowing allocator variation.
@@ -285,3 +287,48 @@ def conditional_guard_owner() -> None:
         pass
     elif owner.try_lock().is_ok():
         pass
+
+
+def plain_native_owner_contracts() -> None:
+    """Exercise inferred shared access, recursion, adapters and the retained owned control for one native owner."""
+    owner = Mutex.new(7)
+    assert not poisoned(owner)
+    assert not poisoned(owner)
+
+    module_owner = Mutex.new(11)
+    assert not module_poisoned(module_owner)
+    assert not module_poisoned(module_owner)
+
+    recursive = Mutex.new(8)
+    assert not recursive_left(recursive, 2)
+    assert not recursive_left(recursive, 3)
+
+    callback = poisoned
+    assert not callback(Mutex.new(9))
+
+    moved = move_lock(Mutex.new(10))
+    assert not moved.is_poisoned()
+
+
+def poisoned(lock: Mutex[int]) -> bool:
+    """Read a non-Clone native owner through an ordinary plain parameter."""
+    return lock.is_poisoned()
+
+
+def recursive_left(lock: Mutex[int], remaining: int) -> bool:
+    """Forward a read-only owner through the left half of a mutually recursive pair."""
+    if remaining == 0:
+        return lock.is_poisoned()
+    return recursive_right(lock, remaining - 1)
+
+
+def recursive_right(lock: Mutex[int], remaining: int) -> bool:
+    """Forward a read-only owner through the right half of a mutually recursive pair."""
+    if remaining == 0:
+        return lock.is_poisoned()
+    return recursive_left(lock, remaining - 1)
+
+
+def move_lock(lock: Mutex[int]) -> Mutex[int]:
+    """Return the native owner so this plain parameter remains a move rather than an inferred loan."""
+    return lock

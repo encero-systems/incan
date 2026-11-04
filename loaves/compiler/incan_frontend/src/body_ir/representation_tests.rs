@@ -131,11 +131,11 @@ fn checked_seed(
     Ok((program, facts, seed))
 }
 
-/// Compare the ordering-sensitive private-loan fixed point, including a multi-step forwarding edge and an escaped
-/// callable. Synthetic native identity is adapter input; the checker still supplies all executable operations.
+/// Prove the decreasing shared-access fixed point across forwarding, recursion and a function-item adapter while a
+/// value-returning body and explicit source contracts keep their established ownership.
 fn assert_shared_loans() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "model Native:\n    value: int\ndef leaf(items: Native) -> int:\n    return 1\ndef forward(items: Native) -> int:\n    return leaf(items)\ndef escaped(items: Native) -> int:\n    return 2\ndef use() -> int:\n    callback = escaped\n    return callback(Native(value=1))\n";
-    let (program, _, mut candidate) = checked_seed(source)?;
+    let source = "model Native:\n    value: int\nclass Reader:\n    pub def read(self, items: Native) -> int:\n        return items.value\ntrait Fetcher:\n    def fetch(self, scope: Native, request: Native) -> int: ...\nclass Fetch with Fetcher:\n    def fetch(self, scope: Native, request: Native) -> int:\n        return scope.value + request.value\ndef leaf(items: Native) -> int:\n    return items.value\ndef explicit(items: &Native) -> int:\n    return items.value\ndef forward(items: Native) -> int:\n    return leaf(items)\ndef explicit_forward(items: Native) -> int:\n    return explicit(items)\ndef method_forward(reader: Reader, items: Native) -> int:\n    return reader.read(items)\ndef trait_forward[F with Fetcher](source: F, scope: Native, request: Native) -> int:\n    return source.fetch(scope, request)\ndef left(items: Native, remaining: int) -> int:\n    if remaining == 0:\n        return items.value\n    return right(items, remaining - 1)\ndef right(items: Native, remaining: int) -> int:\n    if remaining == 0:\n        return items.value\n    return left(items, remaining - 1)\ndef escaped(items: Native) -> int:\n    return items.value\ndef take(items: Native) -> Native:\n    return items\ndef use() -> int:\n    callback = escaped\n    return callback(Native(value=1))\n";
+    let (_, _, mut candidate) = checked_seed(source)?;
     for body in &mut candidate.bodies {
         for identity in std::sync::Arc::make_mut(&mut body.named_type_identities)
             .values_mut()
@@ -145,44 +145,165 @@ fn assert_shared_loans() -> Result<(), Box<dyn std::error::Error>> {
             identity.origin = incan_semantics_core::SymbolOrigin::RustCrate(vec!["native".to_owned()]);
         }
     }
+    let leaf = candidate
+        .bodies
+        .iter_mut()
+        .find(|body| body.name == "leaf")
+        .ok_or("missing profiled loan body")?;
+    leaf.checked_input_profile = Some(bir::CheckedInputProfile {
+        version: 1,
+        owner: leaf.canonical.clone().ok_or("missing profiled loan identity")?,
+        parameters: leaf
+            .params
+            .iter()
+            .enumerate()
+            .map(|(slot, parameter)| bir::CheckedInputParameter {
+                slot,
+                access: parameter.input_access,
+            })
+            .collect(),
+        owned_initializers: Vec::new(),
+    });
     for access in [
         incan_semantics_core::IncanInputAccess::Shared,
         incan_semantics_core::IncanInputAccess::Exclusive,
         incan_semantics_core::IncanInputAccess::Owned,
     ] {
-        let mut explicit = candidate
+        let mut explicit = candidate.clone();
+        let parameter = explicit
+            .bodies
+            .iter_mut()
+            .find(|body| body.name == "leaf")
+            .ok_or("missing explicit loan control")?;
+        parameter.params[0].input_access = access;
+        let original_type = parameter.params[0].ty.clone();
+        super::shared_reads::retain(&mut explicit, &[]);
+        let parameter = explicit
             .bodies
             .iter()
             .find(|body| body.name == "leaf")
-            .ok_or("missing explicit loan control")?
-            .clone();
-        explicit.params[0].input_access = access;
-        let original_type = explicit.params[0].ty.clone();
-        assert!(!super::shared_reads::retain_parameters(&mut explicit, &[], true));
-        assert_eq!(explicit.params[0].ty, original_type);
-        assert_eq!(explicit.locals[explicit.params[0].local.index()].ty, original_type);
+            .ok_or("missing retained explicit loan control")?;
+        assert_eq!(parameter.params[0].input_access, access);
+        assert_eq!(parameter.params[0].ty, original_type);
+        assert_eq!(parameter.locals[parameter.params[0].local.index()].ty, original_type);
     }
-    let mut expected = candidate.clone();
-    super::legacy_shared_reads::retain(&mut expected, &program);
-    super::shared_reads::retain(&mut candidate, &program);
-    assert_same_module(&expected, &candidate)?;
-    for name in ["leaf", "forward"] {
+    super::shared_reads::retain(&mut candidate, &[]);
+    for name in ["leaf", "forward", "explicit_forward", "left", "right", "escaped"] {
         let body = candidate
             .bodies
             .iter()
             .find(|body| body.name == name)
             .ok_or("missing loan body")?;
-        assert!(
-            matches!(body.params[0].ty, super::IncanType::Ref(_)),
+        assert_eq!(
+            body.params[0].input_access,
+            incan_semantics_core::IncanInputAccess::InferredShared,
             "{name}: {body:#?}"
         );
+        if name == "leaf" {
+            let retained = body
+                .checked_input_profile
+                .as_ref()
+                .and_then(|profile| profile.parameters.first())
+                .ok_or("missing retained loan profile")?;
+            assert_eq!(retained.access, body.params[0].input_access);
+        }
+        assert!(matches!(body.params[0].ty, super::IncanType::Named(_)));
     }
-    let escaped = candidate
+    let method = candidate
         .bodies
         .iter()
-        .find(|body| body.name == "escaped")
-        .ok_or("missing escaped body")?;
-    assert!(matches!(escaped.params[0].ty, super::IncanType::Named(_)));
+        .find(|body| body.name == "read")
+        .ok_or("missing loan method")?;
+    assert_eq!(
+        method.params[1].input_access,
+        incan_semantics_core::IncanInputAccess::InferredShared
+    );
+    let method_forward = candidate
+        .bodies
+        .iter()
+        .find(|body| body.name == "method_forward")
+        .ok_or("missing loan method caller")?;
+    assert_eq!(
+        method_forward.params[1].input_access,
+        incan_semantics_core::IncanInputAccess::InferredShared
+    );
+    let trait_forward = candidate
+        .bodies
+        .iter()
+        .find(|body| body.name == "trait_forward")
+        .ok_or("missing loan trait caller")?;
+    assert_eq!(
+        trait_forward.params[1].input_access,
+        incan_semantics_core::IncanInputAccess::Inferred,
+        "{trait_forward:#?}"
+    );
+    assert_eq!(
+        trait_forward.params[2].input_access,
+        incan_semantics_core::IncanInputAccess::Inferred,
+        "{trait_forward:#?}"
+    );
+    let implementation = candidate
+        .bodies
+        .iter()
+        .find(|body| body.name == "fetch")
+        .ok_or("missing retained trait implementation")?;
+    assert!(
+        implementation.params[1..]
+            .iter()
+            .all(|parameter| parameter.input_access == incan_semantics_core::IncanInputAccess::Inferred)
+    );
+    let take = candidate
+        .bodies
+        .iter()
+        .find(|body| body.name == "take")
+        .ok_or("missing owned result body")?;
+    assert_eq!(
+        take.params[0].input_access,
+        incan_semantics_core::IncanInputAccess::Inferred
+    );
+    let use_body = candidate
+        .bodies
+        .iter()
+        .find(|body| body.name == "use")
+        .ok_or("missing function item body")?;
+    let adapter = use_body.block.stmts.iter().find_map(|statement| {
+        let bir::StatementKind::Assign {
+            rvalue: bir::Rvalue::Closure { params, body, .. },
+            ..
+        } = &statement.kind
+        else {
+            return None;
+        };
+        matches!(
+            body.stmts.as_slice(),
+            [bir::Statement {
+                kind: bir::StatementKind::Call {
+                    callee: bir::Callee::Function(bir::CallableTarget::Named(_)),
+                    ..
+                },
+                ..
+            }]
+        )
+        .then_some((params, body))
+    });
+    let (parameters, body) = adapter.ok_or("missing function item adapter")?;
+    assert!(!body.function_item);
+    assert_eq!(
+        parameters[0].input_access,
+        incan_semantics_core::IncanInputAccess::Inferred
+    );
+    let Some(bir::Statement {
+        kind: bir::StatementKind::Call { args, .. },
+        ..
+    }) = body.stmts.first()
+    else {
+        return Err("function item adapter has no forwarding call".into());
+    };
+    assert!(matches!(
+        args.first(),
+        Some(bir::ArgumentElement::One(bir::Operand::Place(read)))
+            if read.fact == bir::OwnershipFact::Borrow && !read.last_use
+    ));
     Ok(())
 }
 
