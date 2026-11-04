@@ -101,6 +101,7 @@ impl TypeChecker {
             dependency_member_symbols: HashMap::new(),
             dependency_member_type_aliases: HashMap::new(),
             dependency_registry_definitions: HashMap::new(),
+            dependency_registry_consts: HashMap::new(),
             dependency_member_partial_projections: HashMap::new(),
             dependency_direct_member_symbols: HashMap::new(),
             dependency_direct_member_type_aliases: HashMap::new(),

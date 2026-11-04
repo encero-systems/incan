@@ -62,6 +62,7 @@ impl TypeChecker {
         self.register_dependency_derivable_metadata(module_name, module_ast);
         self.cache_dependency_direct_member_symbols(module_name, module_ast, true);
         self.cache_dependency_registry_definitions(module_name, module_ast, true);
+        self.cache_dependency_registry_consts(module_ast);
         self.cache_dependency_member_symbols(module_name, module_ast, true);
         let owned_names = module_ast
             .declarations
@@ -149,6 +150,7 @@ impl TypeChecker {
         self.register_dependency_derivable_metadata(module_name, module_ast);
         self.cache_dependency_direct_member_symbols(module_name, module_ast, false);
         self.cache_dependency_registry_definitions(module_name, module_ast, false);
+        self.cache_dependency_registry_consts(module_ast);
         self.cache_dependency_member_symbols(module_name, module_ast, false);
         let owned_names = module_ast
             .declarations
@@ -419,6 +421,7 @@ impl TypeChecker {
         self.dependency_member_symbols.clear();
         self.dependency_member_type_aliases.clear();
         self.dependency_registry_definitions.clear();
+        self.dependency_registry_consts.clear();
         self.dependency_member_partial_projections.clear();
         self.dependency_direct_member_symbols.clear();
         self.dependency_direct_member_type_aliases.clear();
@@ -469,6 +472,7 @@ impl TypeChecker {
         self.dependency_member_symbols.clear();
         self.dependency_member_type_aliases.clear();
         self.dependency_registry_definitions.clear();
+        self.dependency_registry_consts.clear();
         self.dependency_member_partial_projections.clear();
         self.dependency_direct_member_symbols.clear();
         self.dependency_direct_member_type_aliases.clear();
