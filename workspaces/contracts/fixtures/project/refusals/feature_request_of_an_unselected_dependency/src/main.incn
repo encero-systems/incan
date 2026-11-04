@@ -3,7 +3,7 @@
 # expect-stderr-contains:
 #   `engine`
 # cli-commands:
-#   describe-unit src/main.incn
+#   oven describe-unit src/main.incn
 #   build src/main.incn
 #   build rust_consumer
 

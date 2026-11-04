@@ -26,7 +26,7 @@ The toolchain must include standard-package artifacts for `release`. A home cont
 
 ## Retain evidence
 
-Capture `incan check src/main.incn --format json` for diagnostics and `incan describe-unit src/main.incn` for the selected unit, features and Loaf paths. Program output is under `target/incan/<profile>/bin/`. There is no JSON build-report flag.
+Capture `incan check src/main.incn --format json` for diagnostics and `oven describe-unit src/main.incn` for the selected unit, features and Loaf paths. Program output is under `target/incan/<profile>/bin/`. There is no JSON build-report flag.
 
 For graph consumers, use `incan inspect codegraph . --format jsonl --strict` to refuse unchecked units. Without `--strict`, inspect warnings and degraded records before interpreting an empty query as absence of references. [Agent context CLI and MCP](../reference/agent_context_cli.md) specifies schemas and freshness.
 

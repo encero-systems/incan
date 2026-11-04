@@ -1,0 +1,17 @@
+# behavior: A project, bakery or owner command run as incan fails before running, naming the oven command it moved to (RFC 118).
+# cli-commands:
+#   describe-unit src/main.incn
+#   owner stop
+#   bakery status
+#   bakery gc --help
+#   inspect dependencies src/main.incn
+#   inspect run 0123456789abcdef0123456789abcdef --proofs
+# expect-stdout:
+# expect-stderr-contains:
+#   moved to `oven
+#   Run `incan --help` for usage.
+# expect-exit: 2
+
+def main() -> None:
+    """Provide a source that refused invocations never compile."""
+    pass

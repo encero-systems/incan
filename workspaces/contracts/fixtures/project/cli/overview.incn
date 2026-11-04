@@ -1,20 +1,18 @@
-# behavior: All overview spellings list every public command and the CLI reference without loading a project.
+# behavior: All incan overview spellings list every public incan command and the CLI reference without loading a project.
 # cli-commands:
 #   --help
 #   -h
 #   help
 # expect-stdout-contains:
+#   usage: incan COMMAND [OPTIONS]
 #   incan --version
 #   incan run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
 #   incan check PATH [--format text|json] [UNIT OPTIONS]
+#   incan explain CODE
 #   incan test PATH [UNIT OPTIONS]
-#   incan describe-unit PATH [UNIT OPTIONS]
 #   incan build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
 #   incan fmt [--check] PATH...
-#   incan owner stop
-#   incan bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE
 #   incan inspect codegraph PATH [GRAPH OPTIONS]
-#   incan inspect dependencies PATH [UNIT OPTIONS]
 #   incan mcp PATH
 #   incan toolchain pack OUT
 #   incan toolchain install ARCHIVE

@@ -383,7 +383,7 @@ pub def test_status_attributes_the_store_to_its_roots_and_changes_nothing() -> R
     assert len(status.ended) == 1 and len(status.active) == 0
     assert text(document, ["store_source"]) == "default"
     readable = status_text(status)
-    assert "incan bakery gc" in readable and first.0 in readable and "orphaned" in readable, readable
+    assert "oven bakery gc" in readable and first.0 in readable and "orphaned" in readable, readable
     assert "location: default" in readable, readable
     return Ok(None)
 

@@ -19,7 +19,7 @@ incan test tests/test_main.incn
 ## Inspect selected dependencies
 
 ```bash
-incan describe-unit src/main.incn
+oven describe-unit src/main.incn
 ```
 
 Check the package, source root, profile and Loaf artifact directories. `INCAN_STDLIB` must name the matching standard-package source directory; compiled artifacts must exist in the selected home and profile. A missing `.incnlib` is an installation or profile mismatch, not a request to download another build system.

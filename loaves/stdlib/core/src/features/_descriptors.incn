@@ -91,7 +91,7 @@ pub const checked_c_binding_references: FrozenList[CapabilityReference] = [
 pub const oven_interop_requirements_forms: FrozenList[str] = [
     "[interop.c]",
     "incan check src/main.incn",
-    "incan describe-unit src/main.incn",
+    "oven describe-unit src/main.incn",
 ]
 pub const oven_interop_requirements_references: FrozenList[CapabilityReference] = [
     CapabilityReference(label="Project configuration", path="../../tooling/reference/project_configuration.md#interopc"),
@@ -579,7 +579,7 @@ pub const async_race_references: FrozenList[CapabilityReference] = [
 ]
 pub const project_lifecycle_forms: FrozenList[str] = [
     "loaf.toml",
-    "incan describe-unit src/main.incn",
+    "oven describe-unit src/main.incn",
     "incan build src/main.incn",
 ]
 pub const project_lifecycle_references: FrozenList[CapabilityReference] = [
@@ -623,7 +623,7 @@ pub const stable_diagnostics_references: FrozenList[CapabilityReference] = [
     CapabilityReference(label="Release 0.4", path="../../release_notes/0_4.md"),
 ]
 pub const build_reports_and_rust_inspection_forms: FrozenList[str] = [
-    "incan describe-unit src/main.incn",
+    "oven describe-unit src/main.incn",
     "incan inspect codegraph src/main.incn --format jsonl",
 ]
 pub const build_reports_and_rust_inspection_references: FrozenList[CapabilityReference] = [
@@ -632,7 +632,7 @@ pub const build_reports_and_rust_inspection_references: FrozenList[CapabilityRef
 ]
 pub const build_test_oven_observability_forms: FrozenList[str] = [
     "OVEN_TRACE=- incan run src/main.incn",
-    "incan describe-unit src/main.incn",
+    "oven describe-unit src/main.incn",
 ]
 pub const build_test_oven_observability_references: FrozenList[CapabilityReference] = [
     CapabilityReference(label="CLI reference", path="../../tooling/reference/cli_reference.md"),
@@ -656,7 +656,7 @@ pub const compiled_providers_sdk_components_package_features_forms: FrozenList[s
     "[project.features]\ndefault = [\"json\"]\njson = []",
     "incan build src/main.incn --features json",
     "when feature(\"json\"):\n    pub from json_support import JsonReport",
-    "incan describe-unit src/main.incn",
+    "oven describe-unit src/main.incn",
 ]
 pub const compiled_providers_sdk_components_package_features_references: FrozenList[CapabilityReference] = [
     CapabilityReference(

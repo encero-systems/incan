@@ -1,56 +1,104 @@
-"""CLI help contracts, including exact command synopses and the boundaries of help flag recognition."""
+"""CLI help contracts for both surfaces, including exact synopses, ownership and the boundaries of help flags."""
 
 from std.testing import fail
-from command_help import command_help, usage
+from command_help import command_help, usage, version_text
+from surfaces import misplaced
+
+
+def assert_help(surface: str, commands: list[tuple[str, str]]) -> None:
+    """Each command's detailed help on `surface` begins with its synopsis and example, and the overview lists it."""
+    overview: list[str] = usage(surface).split("\n")
+    assert overview[0] == f"usage: {surface} COMMAND [OPTIONS]"
+    for invocation, synopsis in commands:
+        parts = invocation.split(" ")
+        command = parts[0]
+        prefix = parts[1:]
+        # Both help flags print this command's contract, rather than a sibling's help.
+        for flag in ["--help", "-h"]:
+            response: Option[str] = command_help(surface, command, prefix + [flag])
+            match response:
+                None => fail(f"{synopsis}: missing help")
+                Some(text) =>
+                    assert text.split("\n")[0] == f"usage: {synopsis}"
+                    assert "\nOptions:\n" in text
+                    assert "\nExample:\n  " in text
+        # The overview and detailed help agree on the complete synopsis.
+        assert synopsis in overview
 
 
 pub def test_help_uses_each_commands_synopsis_and_respects_operands() -> None:
     """
     Check help text without loading a project, compiler or installed toolchain.
 
-    1. Each command's detailed help begins with its documented synopsis and includes an example.
-    2. The overview uses those same synopses.
+    1. Each `incan` command's detailed help begins with its documented synopsis and includes an example.
+    2. Each `oven` command's does too, and the project commands both surfaces run name the invoked surface.
     3. Program arguments, option values and unknown commands never become help requests.
     """
-    commands: list[tuple[str, str]] = [
-        ("run", "incan run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"),
-        ("check", "incan check PATH [--format text|json] [UNIT OPTIONS]"),
-        ("explain", "incan explain CODE"),
-        ("test", "incan test PATH [UNIT OPTIONS]"),
-        ("describe-unit", "incan describe-unit PATH [UNIT OPTIONS]"),
-        ("build", "incan build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"),
-        ("fmt", "incan fmt [--check] PATH..."),
-        ("owner stop", "incan owner stop"),
-        ("bakery status", "incan bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE"),
-        ("inspect codegraph", "incan inspect codegraph PATH [GRAPH OPTIONS]"),
-        ("inspect dependencies", "incan inspect dependencies PATH [UNIT OPTIONS]"),
-        ("mcp", "incan mcp PATH"),
-        ("toolchain pack", "incan toolchain pack OUT"),
-        ("toolchain install", "incan toolchain install ARCHIVE"),
-        ("--version", "incan --version"),
-    ]
-    for invocation, synopsis in commands:
-        parts = invocation.split(" ")
-        command = parts[0]
-        prefix = parts[1:]
-        # 1. Both help flags print this command's contract, rather than a sibling's help.
-        for flag in ["--help", "-h"]:
-            response: Option[str] = command_help(command, prefix + [flag])
-            match response:
-                None => fail(f"{synopsis}: missing help")
-                Some(text) =>
-                    assert text.split("\n")[0] == f"usage: {synopsis}"
-                    assert "\nOptions:\n" in text
-                    assert "\nExample:\n  incan " in text
-        # 2. The overview and detailed help agree on the complete synopsis.
-        overview: list[str] = usage().split("\n")
-        assert synopsis in overview
+    # 1. The language surface.
+    assert_help(
+        "incan",
+        [
+            ("run", "incan run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"),
+            ("check", "incan check PATH [--format text|json] [UNIT OPTIONS]"),
+            ("explain", "incan explain CODE"),
+            ("test", "incan test PATH [UNIT OPTIONS]"),
+            ("build", "incan build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"),
+            ("fmt", "incan fmt [--check] PATH..."),
+            ("inspect codegraph", "incan inspect codegraph PATH [GRAPH OPTIONS]"),
+            ("mcp", "incan mcp PATH"),
+            ("toolchain pack", "incan toolchain pack OUT"),
+            ("toolchain install", "incan toolchain install ARCHIVE"),
+            ("--version", "incan --version"),
+        ],
+    )
+    # 2. The project surface.
+    assert_help(
+        "oven",
+        [
+            ("run", "oven run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"),
+            ("check", "oven check PATH [--format text|json] [UNIT OPTIONS]"),
+            ("test", "oven test PATH [UNIT OPTIONS]"),
+            ("describe-unit", "oven describe-unit PATH [UNIT OPTIONS]"),
+            ("build", "oven build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"),
+            ("owner stop", "oven owner stop"),
+            ("bakery status", "oven bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE"),
+            ("inspect dependencies", "oven inspect dependencies PATH [UNIT OPTIONS]"),
+            ("--version", "oven --version"),
+        ],
+    )
     # 3. Help flags in value or program positions retain their ordinary meaning.
-    assert command_help("run", ["src/main.incn", "--", "--help"]) == None
-    assert command_help("run", ["--argv0", "--help", "src/main.incn"]) == None
-    assert command_help("check", ["--profile", "--help", "src/main.incn"]) == None
-    assert command_help("fmt", ["--", "--help"]) == None
-    assert command_help("inspect", ["codegraph", ".", "--query", "defs", "--help"]) == None
-    assert command_help("nonexistent", ["--help"]) == None
-    assert command_help("owner", ["nonexistent", "--help"]) == None
-    assert command_help("bakery", ["status", "--format", "--help"]) == None
+    assert command_help("incan", "run", ["src/main.incn", "--", "--help"]) == None
+    assert command_help("incan", "run", ["--argv0", "--help", "src/main.incn"]) == None
+    assert command_help("oven", "check", ["--profile", "--help", "src/main.incn"]) == None
+    assert command_help("incan", "fmt", ["--", "--help"]) == None
+    assert command_help("incan", "inspect", ["codegraph", ".", "--query", "defs", "--help"]) == None
+    assert command_help("incan", "nonexistent", ["--help"]) == None
+    assert command_help("oven", "owner", ["nonexistent", "--help"]) == None
+    assert command_help("oven", "bakery", ["status", "--format", "--help"]) == None
+
+
+pub def test_each_surface_runs_only_its_own_commands() -> None:
+    """
+    A command the other surface owns has no help there and is refused, naming the surface that owns it; the project
+    commands run on both, and `--version` names the invoked surface.
+    """
+    for command in [["describe-unit"], ["owner", "stop"], ["bakery", "status"], ["inspect", "dependencies"]]:
+        assert command_help("incan", command[0], command[1:] + ["--help"]) == None
+        match misplaced("incan", command[0], command[1:]):
+            None => fail(f"incan {command[0]} was not refused")
+            Some(reason) =>
+                assert "moved to `oven " in reason, reason
+        assert misplaced("oven", command[0], command[1:]) == None
+    moved = misplaced("incan", "inspect", ["run", "ID", "--proofs"])
+    assert moved == Some("`incan inspect run` moved to `oven inspect run`")
+    for command in [["explain"], ["fmt"], ["mcp"], ["toolchain", "pack"], ["inspect", "codegraph"]]:
+        assert command_help("oven", command[0], command[1:] + ["--help"]) == None
+        match misplaced("oven", command[0], command[1:]):
+            None => fail(f"oven {command[0]} was not refused")
+            Some(reason) =>
+                assert "is a language command: run `incan " in reason, reason
+        assert misplaced("incan", command[0], command[1:]) == None
+    for command in ["run", "check", "test", "build", "--version", "help"]:
+        assert misplaced("incan", command, []) == None and misplaced("oven", command, []) == None
+    assert version_text("oven").startswith("oven 0.6.")
+    assert version_text("incan").startswith("incan 0.6.")

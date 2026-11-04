@@ -60,7 +60,7 @@ Use the record exported by that producer. Its exact entry identities must alread
 ## Inspect the selection
 
 ```bash
-incan describe-unit src/main.incn
+oven describe-unit src/main.incn
 ```
 
 The unit description lists active features, Loaves, Rust crates and native artifacts. Keep authored manifests and source under version control. Dev.8 has no `incan lock` command or lock-policy flags.
