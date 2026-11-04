@@ -635,14 +635,18 @@ impl TypeChecker {
         };
         let module = &module;
 
-        // Only check modules that were pre-imported; skip std and unresolved ones.
-        let module_name = canonicalize_source_module_segments(&module.segments).join("_");
-        let Some(exports) = self.dependency_exports.get(&module_name) else {
+        // Only source modules of this unit are checked here; a compiled Loaf's imports are checked against its
+        // manifest. The module resolves the way the module graph resolved it, so a standard package's `std.*`
+        // spelling of its own module and a sibling-relative path are checked too (#2595).
+        let Some(exports) = self
+            .dependency_module_entry_for_path(module, &self.dependency_exports)
+            .cloned()
+        else {
             return;
         };
 
         let mut exported_names: HashSet<String> = HashSet::new();
-        for sym in exports {
+        for sym in &exports {
             match sym {
                 ExportedSymbol::Const(name)
                 | ExportedSymbol::Static(name)
