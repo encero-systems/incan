@@ -1,6 +1,6 @@
 # RFC 169: Typed record sets and record streams
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-11-01
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
