@@ -17,7 +17,7 @@
     - RFC 161 (semantic core IR)
     - RFC 166 (indexed graphs and snapshot-bound graph access)
     - RFC 168 (foundational primitives and dependency direction)
-    - RFC 169 (typed datasets and structured streams)
+    - RFC 169 (typed record sets and record streams)
 - **Issue:** [#2519](https://github.com/encero-systems/incan/issues/2519)
 - **RFC PR:** —
 - **Written against:** v0.6
@@ -82,6 +82,7 @@ The standard library should offer a reusable, native foundation. A database must
 - Preserve observable differences between absent, deleted, inaccessible, unavailable and damaged data.
 - Support incremental consumers through precise read evidence and bounded changes, including negative reads and newly matching records.
 - Make memory, copying, I/O, retention and failure behavior inspectable and testable.
+- Let applications declare how much history each view keeps, prune it by changing that declaration, and reclaim what it releases.
 - Serve static publication and interactive applications without making filesystem support or persistence mandatory.
 
 ## Non-Goals
@@ -228,6 +229,37 @@ The preview begins with the same selected records. Editing it does not edit `pub
 
 `store.view(name)` opens a named view or atomically creates an empty one if it does not exist. `store.fork(snapshot, name)` requires a new name and must not replace an existing view. These root operations follow the same atomic publication and durability rules as record transactions.
 
+### Keep and reclaim history
+
+Every commit replaces a view's current revision, and the replaced revision stays readable for a while. That history lets a reader time travel to an earlier revision, and lets a consumer that saved its position resume after a restart instead of reloading everything (RFC 169). History costs disk, so each view has a policy that says how much to keep. Without one, a disk store keeps superseded revisions for 24 hours. An application that needs something else declares it. A site that wants to roll back a bad publish might keep a week:
+
+```incan
+from std import db
+from std.datetime import Duration
+
+def keep_rollback_history(store: db.Store) -> Result[None, db.DbError]:
+    """Keep a week of published revisions, and at least the last 50, so a bad publish can be rolled back."""
+    published = store.view("published")?
+    published.set_history(db.HistoryPolicy(expire_after=Some(Duration.days(7)), keep_last=50))?
+    return Ok(None)
+
+def run_nightly_maintenance(store: db.Store) -> Result[None, db.DbError]:
+    """Reclaim released history and report anything a live reader is still holding."""
+    report = store.compact()?
+    print(f"reclaimed {report.reclaimed_bytes} bytes from {report.removed_revisions} revisions")
+    for hold in report.held:
+        print(f"{hold.holder} still holds revision {hold.revision} of {hold.view}")
+    return Ok(None)
+```
+
+`expire_after` counts from when a revision was replaced, so a revision that was current for a month still stays readable for a further week. `keep_last` keeps at least that many superseded revisions however old they are; either rule keeps a revision. `expire_after=None` keeps everything until the policy changes, and `expire_after=Some(Duration.seconds(0))` keeps only the current revision. Shortening a policy is how an application prunes history. A released revision cannot be read again, even while its bytes are still on disk.
+
+Memory and spooled-memory stores keep only the current revision unless a view declares otherwise. Their contents do not survive a restart, so there is nothing to resume, and an interactive application publishing many small states must not hold a day of them in working memory.
+
+A live reader keeps what it is reading, past the policy if it has to. A saved position does not: a consumer that stays away longer than the policy gets `DataError.HistoryGap` when it returns, and reloads. `view.history()` reports the oldest readable revision and who is holding anything older, so a reader that never finishes is visible rather than a mystery on a full disk.
+
+Ordinary writes reclaim released history a little at a time, so a store nobody maintains still stays within its policy. `store.compact()` is the vacuum: it reclaims all released history that no live reader holds, rewrites what remains in bounded memory, and reports what it did. Compression happens inside that rewrite; it is not a separate operation and it never changes a record's identity.
+
 ### Connect typed families
 
 A publisher can declare a relationship from `Document` records to `Asset` records with an `AssetUse` payload. The relationship descriptor names both endpoint families, its payload schema and uniqueness constraints. Creating an edge with reversed or incompatible endpoints is rejected. Relationships have their own identities, so two different uses of one asset need not collapse into one edge.
@@ -246,7 +278,7 @@ Interactive state may remain in a memory store. A render pass reads one snapshot
 
 An application may use `std.db` directly as its local transactional database: open a disk, temporary spooled-memory or memory store, register typed families, update records, follow indexed relationships and read a consistent snapshot. A query library may instead consume bounded typed batches from that same snapshot and supply joins, grouping, sorting or analytical expressions. Both use the same storage and publication contracts; neither requires SQL.
 
-Model-shaped data does not imply one heap-allocated model per scanned row. Selecting two numeric fields from a wide family must have a batch path that does not decode every unrelated field or construct every complete record. Indexed application reads and analytical scans are complementary access patterns, not separate databases containing duplicate authoritative records.
+Model-shaped data does not imply one heap-allocated model per scanned record. Selecting two numeric fields from a wide family must have a batch path that does not decode every unrelated field or construct every complete record. Indexed application reads and analytical scans are complementary access patterns, not separate databases containing duplicate authoritative records.
 
 ## Reference-level explanation
 
@@ -273,7 +305,10 @@ The following are required concepts and proposed public names. Generic family an
 | `ChangePage`          | Bounded committed differences between two identified snapshots, with explicit continuation.                          |
 | `CommitReceipt`       | Transaction identity, prior and successor view revisions, changed roots and achieved durability.                     |
 | `Reservation`         | A coordinated, bounded allocation allowance for staging, admission or compaction, released when the operation ends.  |
-| `RecordBatch[P]`      | A bounded typed field projection from one pinned family snapshot, with explicit buffer ownership and continuation.   |
+| `HistoryPolicy`       | How long a view keeps superseded revisions: `expire_after` and `keep_last`; either rule keeps a revision.            |
+| `HistoryReport`       | A view's effective policy, oldest readable revision, readable revisions, history bytes and holders of released revisions. |
+| `CompactionReport`    | The revisions `compact()` removed, the bytes it reclaimed and each released revision it could not remove, with its holder. |
+| `RecordBatch[P]`      | RFC 169's batch type: here a bounded typed field projection from one pinned family snapshot, with explicit buffer ownership and continuation. |
 
 Persistent record identity must not be a process pointer, row offset, index slot, graph-local integer or filesystem path. Physical deduplication must not collapse distinct logical records. Revisions and view revisions must distinguish logical content identity from physical layout generation; compaction must not appear as a logical record edit.
 
@@ -327,7 +362,7 @@ Time travel means explicitly reading an identified retained historical snapshot 
 
 New source or data versions do not invalidate an active read of an older snapshot. A compiler may capture snapshot A, finish checking A after snapshot B is published, and store its result together with an explicit association to A and the producer/dependency evidence. This does not grant an old transaction permission to overwrite a changed view head: result storage uses a valid publication transaction or isolated result view under the existing conflict rules. Storing a result for A and selecting it as the current result are distinct operations. Selection for B requires validation of its input/profile evidence; current-head publication remains concurrency-checked. A newer snapshot alone does not require discarding or recomputing every result produced against an older one.
 
-Historical availability follows retention, not an unlimited-history promise. An active snapshot protects the records and backing resources needed to read it. Reopening a historical revision after its retention ends may report an unavailable-snapshot error; it must never substitute the latest revision. Memory and spooled-memory modes support retained history within their lifetimes without acquiring restart persistence. Persisted history in disk mode remains subject to the declared retention and durability contracts.
+Historical availability follows the view's history policy, not an unlimited-history promise. An active snapshot protects the records and backing resources needed to read it. Opening a revision the policy has released must report an unavailable-snapshot error naming the requested revision and the view's oldest readable one; it must never substitute the latest revision. Memory and spooled-memory modes support retained history within their lifetimes without acquiring restart persistence. Persisted history in disk mode remains subject to the policy and the durability contracts.
 
 Delta Lake's [historical snapshot reads](https://docs.delta.io/delta-batch/) and Apache Iceberg's [time travel](https://iceberg.apache.org/docs/latest/) provide prior art for historical selection. This RFC does not adopt their storage formats, query languages or table-level transaction boundaries. Historical reads and [concurrent commit validation](https://docs.delta.io/concurrency-control/) are separate concerns.
 
@@ -345,21 +380,21 @@ Holding an idle snapshot must not load or retain all of its records, relationshi
 
 ### Typed batches and storage access
 
-RFC 169 proposes the common heterogeneous dataset and structured-stream interface over these storage capabilities, including variant-aware sparse schemas and cross-variant projections. The single-family batch contract here remains independently implementable; this reference does not require the entire RFC 169 surface for the database primitive.
+RFC 169 defines the common record-set and record-stream interface, `std.data`, over these storage capabilities, including records of several kinds, cross-kind projections, table change streams and resumption. The single-family batch contract here does not require that whole surface for the database primitive.
 
-The proposed `RecordBatch[P]` represents a bounded, typed field projection `P` from one family under one snapshot. A batch must carry its projection descriptor, row count, stable record/revision associations where requested, and explicit completion or continuation evidence. Field columns must preserve their declared value, optionality and ordering semantics; they must not be untyped dictionaries or a foreign query engine's mandatory public types.
+`RecordBatch[P]` is RFC 169's batch type. A `std.db` batch represents a bounded, typed field projection `P` from one family under one snapshot. A batch must carry its projection descriptor, record count, stable record/revision associations where requested, and explicit completion or continuation evidence. Field columns must preserve their declared value, optionality and ordering semantics; they must not be untyped dictionaries or a foreign query engine's mandatory public types.
 
-The store must offer a scan path that exposes selected fields in typed batches without constructing an owned full model for every row. A native column-oriented profile must support this for declared scalar and variable-width field types. Custom codecs and other layouts must advertise whether they can supply projected columns directly or require bounded decoding/transposition. That work must be observable, and a caller must be able to reject an unsupported direct-column requirement rather than unknowingly accept a row-by-row fallback. This does not require every family, payload or index to use one physical columnar layout.
+The store must offer a scan path that exposes selected fields in typed batches without constructing an owned full model for every record. A native column-oriented profile must support this for declared scalar and variable-width field types. Custom codecs and other layouts must advertise whether they can supply projected columns directly or require bounded decoding/transposition. That work must be observable, and a caller must be able to reject an unsupported direct-column requirement rather than unknowingly accept a record-by-record fallback. This does not require every family, payload or index to use one physical columnar layout.
 
-Batch buffers and borrowed columns inherit snapshot and mapping lifetimes. Zero-copy is a per-buffer capability, not a universal claim: decompression, schema conversion and layout conversion may allocate and must count those bytes. Row and byte budgets must apply to scan work, decoded buffers and retained continuation state, not only the returned batch size. Releasing a batch must release its temporary buffers and leases when no other consumer retains them.
+Batch buffers and borrowed columns inherit snapshot and mapping lifetimes. Zero-copy is a per-buffer capability, not a universal claim: decompression, schema conversion and layout conversion may allocate and must count those bytes. Record and byte budgets must apply to scan work, decoded buffers and retained continuation state, not only the returned batch size. Releasing a batch must release its temporary buffers and leases when no other consumer retains them.
 
-Storage selectors may use declared indexes, key ranges and supported typed predicates. A scan must report which requested predicates were applied exactly and which remain for the caller; an unsupported predicate must never be silently treated as satisfied. Any pruning must preserve all potentially matching rows under the declared value semantics. A query runtime owns residual expression evaluation, join ordering, aggregation, vectorized operators and execution strategy. A graph runtime owns traversal. Neither is required merely to open a store or read a record.
+Storage selectors may use declared indexes, key ranges and supported typed predicates. A scan must report which requested predicates were applied exactly and which remain for the caller; an unsupported predicate must never be silently treated as satisfied. Any pruning must preserve all potentially matching records under the declared value semantics. A query runtime owns residual expression evaluation, join ordering, aggregation, vectorized operators and execution strategy. A graph runtime owns traversal. Neither is required merely to open a store or read a record.
 
 Point reads, graph access and projected batches must agree on the same snapshot's logical contents. Batch access must contribute the same kind of selection and negative-read evidence as other reads, so an incremental consumer cannot reuse an answer after newly matching records appear. Efficient batches are a storage capability; parity with an established analytical engine requires separate query-engine and workload evidence.
 
 ### Ownership of projected access
 
-RFC 164 owns explicit borrowing and returned reference contracts. Read-only projected views use `Borrowed[T]`; `Reference[T]` denotes exclusive access, not an independently retained snapshot or lease. A projection borrowing a batch or snapshot must retain its checked source dependency. An independently retained batch or cursor may instead own buffer handles and a lease over its immutable selection; ownership of the handle does not require a complete decoded model per row or exclusive allocation of every page. A view into that batch remains bounded by the buffer owner it actually borrows. The compiler must not silently acquire a lease or materialize records to repair an escaping borrow. Ordinary callers infer these dependencies through duckborrowing. Primitive signatures must expose the owning or borrowed result explicitly under RFC 164; implementation must include compile-pass and compile-fail examples proving that callers cannot return a column beyond its batch, close its backing resource while a borrow remains usable, or use an exclusive reference as a retained snapshot. An explicitly retained batch owns its backing buffers and immutable-selection lease; closing the originating cursor or database handle does not revoke that ownership. Later writes create new revisions rather than mutate the retained batch. Releasing its last owner makes its storage eligible for normal reclamation only when no other retention protects it. Exact accessor names are implementation work within these fixed lifetime rules.
+RFC 164 owns explicit borrowing and returned reference contracts. Read-only projected views use `Borrowed[T]`; `Reference[T]` denotes exclusive access, not an independently retained snapshot or lease. A projection borrowing a batch or snapshot must retain its checked source dependency. An independently retained batch or cursor may instead own buffer handles and a lease over its immutable selection; ownership of the handle does not require a complete decoded model per record or exclusive allocation of every page. A view into that batch remains bounded by the buffer owner it actually borrows. The compiler must not silently acquire a lease or materialize records to repair an escaping borrow. Ordinary callers infer these dependencies through duckborrowing. Primitive signatures must expose the owning or borrowed result explicitly under RFC 164; implementation must include compile-pass and compile-fail examples proving that callers cannot return a column beyond its batch, close its backing resource while a borrow remains usable, or use an exclusive reference as a retained snapshot. An explicitly retained batch owns its backing buffers and immutable-selection lease; closing the originating cursor or database handle does not revoke that ownership. Later writes create new revisions rather than mutate the retained batch. Releasing its last owner makes its storage eligible for normal reclamation only when no other retention protects it. Exact accessor names are implementation work within these fixed lifetime rules.
 
 ### Read traces, changes and invalidation
 
@@ -369,15 +404,29 @@ Read validation returns `Unchanged`, `Changed` or a typed inability to validate;
 
 A trace for an incomplete page certifies only the observed prefix and its continuation contract, not a complete predicate result. Lazy readers must record the reads actually consumed. Early termination and limits must remain visible in the result evidence.
 
-Changes must name the before and after snapshots and distinguish inserts, updates and deletions. Unchanged content reached through different physical pages is not a semantic change. Changes may be paged or coalesced by an explicit profile, but a consumer needing every intermediate event must use a separately retained event family rather than infer a delivery log from a snapshot diff.
+Changes must name the before and after snapshots and distinguish inserts, updates and deletions. Unchanged content reached through different physical pages is not a semantic change. Changes may be paged or coalesced by an explicit profile, but a consumer needing every intermediate event must use a separately retained event family rather than infer a delivery log from a snapshot diff. RFC 169's table change streams, `changes(after=)` and `snapshot_then_changes()`, deliver these changes as typed change events.
 
 `std.db` must not invoke callbacks, schedule recomputation or deliver UI events during commit or change enumeration. A reactive runtime owns scheduling, cancellation, reentrancy and back-pressure. A store may expose bounded notifications as wake-up hints only if the retained snapshot/change API remains the recovery authority.
 
+### History policy
+
+Each view must have a `HistoryPolicy(expire_after, keep_last)` that decides how long its superseded revisions stay readable. A superseded revision is kept while it was replaced less than `expire_after` ago, or while it is among the `keep_last` most recently superseded revisions; either rule keeps it. `expire_after=None` means superseded revisions never expire. A view's current revision is always readable.
+
+A view without a declared policy must use its store's default. On a disk store the default is `HistoryPolicy()`, whose `expire_after` is 24 hours and whose `keep_last` is 0. On a memory or spooled-memory store the default is `HistoryPolicy(expire_after=Some(Duration.seconds(0)))`. A fork starts with its store's default, not its source view's policy.
+
+`view.set_history(policy)` must publish under the same atomic and durability rules as other root operations, and must apply to the view's existing history as well as its future revisions. Release is final: a revision the policy has released stays unavailable after the policy is lengthened, and the view's oldest readable revision only moves forward. Age must be measured from when a revision was replaced. Restarts and clock changes must not expire a revision early, and the effective expiry must be inspectable.
+
+Released means unavailable to new reads at once, whether or not its bytes have been reclaimed, so that availability never depends on when compaction ran. A retained snapshot, live reader lease, mapped view, `RevisionRef[T]` or `PayloadRef` must keep what it already reaches readable through that handle after the policy releases it; it does not make the revision readable to anyone else. `ObservedRevision[T]`, `PayloadIdentity` and a saved RFC 169 `ResumePosition` must not hold history.
+
+`view.history()` must return a `HistoryReport` with the effective policy, the oldest readable revision and when it expires, the number of readable revisions, the bytes history occupies, and each holder of a released revision with the revision it holds.
+
+Writes must reclaim released history incrementally, each within a bounded amount of work, so a store whose application never calls `compact()` holds no more than its policies keep and its live readers hold. `store.compact()` must reclaim all released history that no live reader holds and rewrite the remaining contents under the compaction rules below. It must return a `CompactionReport` with the revisions removed, the bytes reclaimed and each released revision it could not remove with its holder. A holder must never fail or block compaction. Compaction may compress what it rewrites under the store's storage profile. Compression is a storage encoding: it must not change a record or revision identity.
+
 ### Retention, collection and compaction
 
-Reachability roots include published views, explicitly retained snapshots, live reader and mapped-view leases, required history, retained sealed sets and protected in-flight publication results. Root registration, publication and collection must share a race-free coordination protocol. Releasing a view must not collect bytes still reachable through another view, exact revision reference or live lease.
+Reachability roots include published views, explicitly retained snapshots, live reader and mapped-view leases, the history each view's policy keeps, retained sealed sets and protected in-flight publication results. Root registration, publication and collection must share a race-free coordination protocol. Releasing a view must not collect bytes still reachable through another view, exact revision reference or live lease.
 
-Collection must derive eligibility from reachability and declared retention. Size caps, age or memory pressure alone must not authorize deletion of reachable records. A resource limit may suspend work or return a typed resource error; it must not weaken integrity or retention silently.
+Collection must derive eligibility from reachability and the view's history policy. Size caps, memory pressure or age outside that policy must not authorize deletion of reachable records. A resource limit may suspend work or return a typed resource error; it must not weaken integrity or retention silently.
 
 Operations that stage significant data must reserve their temporary allocation through shared store coordination. Reservations must identify their owner and ceiling, account for actual use, and be released or recovered after the owner ends. They are admission controls, not permission to evict protected data. A reservation does not promise that a filesystem cannot subsequently return an I/O or space error.
 
@@ -399,7 +448,7 @@ Physical availability, accepted provenance and selection into a view are distinc
 
 `DbError` must distinguish scope/schema mismatch, conflict, busy coordination, resource exhaustion, unsupported capability or format, unavailable snapshot, invalid cursor, corruption, content-identity collision, access refusal and indeterminate commit. Error details must preserve the operation and relevant typed identities without requiring callers to parse prose. If existence cannot be disclosed, an access refusal may conceal it; corruption must not become a cache miss.
 
-Inspection must expose capabilities, schemas, view and snapshot identities, index coverage, retained roots, outstanding leases, transaction outcomes and storage-format profiles. Per-operation counters must distinguish bytes verified, mapped, copied and decoded; index pages touched; records examined and returned; files and bytes written; and budget termination. Shared physical pages must not be counted as separate physical allocations merely because multiple processes map them.
+Inspection must expose capabilities, schemas, view and snapshot identities, index coverage, retained roots, history policies, outstanding leases, transaction outcomes and storage-format profiles. Per-operation counters must distinguish bytes verified, mapped, copied and decoded; index pages touched; records examined and returned; files and bytes written; and budget termination. Shared physical pages must not be counted as separate physical allocations merely because multiple processes map them.
 
 ### Conformance workloads
 
@@ -410,6 +459,7 @@ Inspection must expose capabilities, schemas, view and snapshot identities, inde
 | Concurrent preparation   | Competing writers serialize or conflict correctly; readers remain snapshot-consistent; retries do not duplicate a transaction.                                                                                                                  |
 | Scope and integrity      | Wrong-store handles, incompatible schemas, damaged pages and forced digest collisions fail distinctly without exposing unrelated data.                                                                                                          |
 | Fork and retention       | Forks share contents; edits remain isolated; leases protect selected roots during concurrent collection and compaction.                                                                                                                         |
+| History policy | Default, age-only, count-only, combined, current-only and never-expiring policies keep exactly the revisions they promise across restart. A released revision is unavailable before and after compaction and stays so when the policy is lengthened. A live reader keeps its revision and is reported as its holder; a saved position does not hold history and resumes with a gap. Memory and spooled-memory stores hold only the current revision by default. A store whose application never calls `compact()` stays within its policy under a sustained write load. |
 | Incremental publication  | Body, title, include, template, route, rename and deletion changes produce the same outputs as a clean recomputation, including one source rendered under multiple profiles and routes.                                                         |
 | Interactive experience   | A render reads one state snapshot; a draft fork cannot mutate the published view; stale cursors and absent-selection changes are detected; no callback or effect executes inside storage operations.                                            |
 | Scale and memory         | Point reads, bounded ranges, idle snapshots and streaming compaction are measured at increasing corpus sizes; counters expose unrelated work and hidden whole-store materialization.                                                            |
@@ -430,7 +480,7 @@ The database must be a separately selectable standard-library capability. Import
 
 A compiler may consume the platform storage contract directly. Opening its own stored facts must not depend on compiling a downstream query library with that compiler. Optional query adapters consume the same records and snapshots; they must not maintain a second authoritative copy of the compiler graph. Syntax records are not checked semantic facts: their producer, schema, revision and cross-references must keep that distinction explicit, including RFC 161's checked SCIR authority.
 
-RFC 145 owns Oven's download, development-state and evidence-retention policy. This RFC supplies roots, leases, reservations and collection mechanisms that can enforce that policy; it does not import Oven's expiration defaults into application databases. Policy may explicitly retire an eligible registration, after which the substrate collects only content no longer reachable from any protected root. Compact historical evidence can use non-retaining observations rather than accidentally pinning every past executable. Adopting the shared substrate must reuse the admitted owner, not copy a closure into a second database.
+RFC 145 owns Oven's download, development-state and evidence-retention policy. This RFC supplies roots, leases, reservations and collection mechanisms that can enforce that policy; it does not import Oven's expiration policy into application databases. A view's history policy is independent of it, and its 24-hour default only shares a number with RFC 145's diagnostic-history window. Policy may explicitly retire an eligible registration, after which the substrate collects only content no longer reachable from any protected root. Compact historical evidence can use non-retaining observations rather than accidentally pinning every past executable. Adopting the shared substrate must reuse the admitted owner, not copy a closure into a second database.
 
 Incan owns the authored semantics and algorithms. Existing native libraries may supply narrow platform mechanisms through ordinary interop. An implementation must not replace the proposed typed Incan surface with a private Rust API for convenience.
 
@@ -452,10 +502,15 @@ This RFC adds a standard module. It does not reopen RFC 047 or reinterpret exist
 - **Put a complete analytical or graph-query engine in `std.db`:** rejected because storage access must remain independently selectable and domain-neutral. Query libraries can consume typed scans and graph views.
 - **Serialize arbitrary native objects:** rejected because process-local layout and resources cannot define portable durable identity or safe recovery.
 - **Make persistence mandatory for interactive state:** rejected because transient state and pure in-memory graphs are first-class workloads.
+- **Keep no history by default, as SQLite does:** a consumer could not resume after a restart without first declaring a policy, so the common case would need configuration before it worked.
+- **Keep all history by default, as Datomic does:** the disk of an application that never thought about history would grow for as long as it runs.
+- **A separate prune operation:** changing the policy already prunes, and `compact()` already reclaims. A second operation would add a second way to decide what stays.
+- **Saved positions that hold history, as Postgres replication slots do:** one abandoned consumer could fill the disk. A consumer that stays away past the policy gets a typed gap instead, as a Kafka consumer does past its topic's retention.
+- **Availability that depends on whether compaction has run, as Delta Lake time travel does:** the same read could succeed or fail depending on maintenance timing. A released revision is unavailable from the moment it is released.
 
 ## Drawbacks
 
-The standard library would acquire a long-lived storage-format and recovery commitment. Precise identities, leases, cursors and trace semantics add API weight, and typed schemas require explicit evolution. Retention can consume disk until a caller releases roots; bounded resource errors are less convenient than silent eviction. Supporting disk, spooled-memory and memory modes requires conformance across different failure models. These costs are justified only if consumers actually share the implementation and its proofs.
+The standard library would acquire a long-lived storage-format and recovery commitment. Precise identities, leases, cursors and trace semantics add API weight, and typed schemas require explicit evolution. Retention can consume disk until a caller releases roots, and a live reader that never finishes holds history past its policy; bounded resource errors are less convenient than silent eviction. The default history window costs a disk store a day of superseded revisions that an application may never read. Supporting disk, spooled-memory and memory modes requires conformance across different failure models. These costs are justified only if consumers actually share the implementation and its proofs.
 
 ## Layers affected
 
@@ -470,6 +525,8 @@ The standard library would acquire a long-lived storage-format and recovery comm
 - **Scope semantics:** `.read()` selects a read-only transaction; `.write()` commits modifying operations independently; `.transaction()` groups reads and writes with explicit commit. Cursor close does not select publication policy.
 - **Storage modes:** disk, temporary spooled-memory and memory modes preserve the same logical data contract. Spilling is not committing, and memory mode never silently spills.
 - **History:** retained historical snapshots remain coherent and readable; results can be stored against their original input snapshot. Reuse for newer inputs is a separate validation decision.
+- **History policy:** each view declares how long superseded revisions stay readable through `HistoryPolicy(expire_after, keep_last)`, where either rule keeps a revision. A disk store defaults to 24 hours; memory and spooled-memory stores default to the current revision only. Live readers hold what they read; saved positions hold nothing. Release is final and takes effect before reclamation.
+- **Pruning and vacuuming:** shortening the policy prunes. Writes reclaim released history incrementally, and `store.compact()` reclaims the rest and rewrites what remains in bounded memory, reporting what it removed and what live readers still hold. Compression is a storage encoding inside that rewrite.
 - **Crumb:** `std.primitives.crumb` owns typed encoding and reconstruction. `.crumble()` and `Model.from_crumb(...)` are the model-facing pair. The database owns indexing, transactions, physical sharing and retention.
 - **Representation freedom:** typed sharing in memory, inline scalar values and encoded field contents are valid physical choices. No raw native struct dump, compulsory eager serialization or universal zero-copy promise is adopted.
 - **Field identity and equality:** field-scoped hashes locate candidates; typed equality confirms matches. Logical records remain distinct even when contents share storage.
