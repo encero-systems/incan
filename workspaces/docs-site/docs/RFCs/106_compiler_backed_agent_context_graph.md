@@ -82,7 +82,7 @@ Repowise adds a useful adjacent lesson for architecture tooling: structural sour
 - Standardizing every possible edge kind.
 - Replacing LSP. The agent context graph complements editor interactions rather than replacing live language-server diagnostics and completions.
 - Matching generic cross-language indexers on language count. Incan may support adapters, but the native value is language-specific precision.
-- Freezing MCP tool names, storage backend choices, or service command names beyond the `incan inspect codegraph` export.
+- Freezing storage backend choices.
 - Indexing arbitrary non-Incan languages. Mixed-language workspaces may expose foreign artifacts through adapters. Rust is not one of those languages: Incan compiles through it, interoperates with it, and is written in it, so Rust facts are the same facts under a `language` attribute rather than a foreign-language adapter. See *One graph across Incan and Rust*.
 
 ## Guide-level explanation
@@ -112,10 +112,10 @@ MCP serving, task-ranked context packing, process-risk scoring, and architecture
 A human or agent can ask direct graph questions:
 
 ```bash
-incan tools agent-graph summary
-incan tools agent-graph find "Base32"
-incan tools agent-graph module "encoding"
-incan tools agent-graph neighbors "encoding::base32::decode"
+incan inspect codegraph summary
+incan inspect codegraph find "Base32"
+incan inspect codegraph module "encoding"
+incan inspect codegraph neighbors "encoding::base32::decode"
 ```
 
 These commands are useful for debugging the graph and for deterministic low-level exploration, but they are not the main agent path.
@@ -125,7 +125,7 @@ These commands are useful for debugging the graph and for deterministic low-leve
 The main workflow is task-ranked context:
 
 ```bash
-incan tools agent-context pack --task "add strict padding validation to base32 decoding" --budget 8000 --format compact
+incan inspect context --task "add strict padding validation to base32 decoding" --budget 8000 --format compact
 ```
 
 The output should include a ranked, token-budgeted context pack: relevant declarations, modules, imports, call/reference neighborhoods, checked signatures, diagnostics, tests when known, and source anchors. The pack should be deterministic for the same graph snapshot, task string, budget, and ranking configuration.
@@ -381,11 +381,11 @@ The graph service remains the semantic-context producer. Read-only task-context 
 
 Graph export must support JSONL for streaming ingestion and should support pretty JSON for debugging. Agent context packing should support a compact text format designed for LLM consumption. The compact format should avoid repeated fully qualified names, preserve local IDs, expose edge direction, include provenance, and be deterministic.
 
-The compact format is not required to be stable in the same way as the graph JSONL schema until explicitly versioned.
+The compact format is a versioned contract. Each pack must state its format version, and changes must follow RFC 102's compatibility rule.
 
 ### MCP surface
 
-The MCP surface should expose task-level tools before raw graph tools. Raw graph tools are still required for debugging, but agents should be able to make one high-level call for task context instead of a sequence of low-level searches.
+The MCP surface must be served by `incan mcp`, a `std.mcp` server under RFC 156, with its tools listed in that server's catalog. It should expose task-level tools before raw graph tools. Raw graph tools are still required for debugging, but agents should be able to make one high-level call for task context instead of a sequence of low-level searches.
 
 MCP resources should expose read-only orientation such as graph summary, schema, indexed packages, stale status, and current snapshot. MCP tools that mutate index state, record feedback, or trigger reindexing must be explicit and policy-visible.
 
@@ -679,28 +679,6 @@ The task-context ranker's baseline is simple: exact identifiers, module/name/doc
 - **Packaging / Workspaces**: package identity, workspace roots, lockfiles, generated artifacts, and registry metadata contribute to graph identity and staleness.
 - **VCS / Coverage inputs**: git history, ownership signals, co-change data, coverage reports, and explicit decision records may contribute optional process-risk facts, but they must remain provenance-tagged and absent when inputs are unavailable.
 
-## Implementation Plan
-
-### Phase 1: Compiler-backed graph export
-
-- Export file, module, declaration, import, export, reference, call, diagnostic, span and provenance records from the compiler's own frontend, with strict checked and tolerant work-in-progress modes.
-- Give every declaration a reversible, span-free canonical identity and every record a graph-schema version.
-
-### Phase 2: One graph across Incan and Rust
-
-- Add namespace nodes over the module graph so a package's modules and the Rust items a module reaches are one subgraph.
-- Retire `rust_item` and `uses_rust_item` in favor of reference and call records whose `canonical_owner` names the Rust declaration, with reachability reported as a lower bound.
-
-### Phase 3: Semantic digests
-
-- Digest each declaration's checked meaning separately from its documentation, so a consumer can tell "changed" from "re-documented".
-- Fold closure digests over the graph's edges so a component's digest moves when anything it reaches moves, and back Rust bodies with MIR-derived digests.
-
-### Phase 4: Context surfaces
-
-- Define the CLI and MCP surfaces for raw graph exploration and task-ranked context packing, the compact deterministic agent context format, snapshot identities, staleness checks, and the optional process-risk and feedback facts.
-- Share the exporter's analysis services with the LSP so editor features read the same records.
-
 ## Progress Checklist
 
 ### Graph export
@@ -728,7 +706,7 @@ The task-context ranker's baseline is simple: exact identifiers, module/name/doc
 
 - [ ] MCP surface for graph exploration and task-ranked context packing.
 - [ ] Compact deterministic agent context format beside JSON and JSONL.
-- [ ] Content-addressed snapshot identities and staleness checks.
+- [ ] Snapshot identities and staleness checks.
 - [ ] Optional process-risk facts (churn, ownership, co-change, coverage) with provenance and absence when inputs are unavailable.
 - [ ] Feedback and task-memory signals with automatic expiry.
 - [ ] LSP features reading the same graph records.
@@ -740,16 +718,16 @@ The task-context ranker's baseline is simple: exact identifiers, module/name/doc
 
 ## Design Decisions
 
-- The v0.4 public CLI surface is `incan inspect codegraph`. Higher-level graph service commands, MCP tools, and task-packing commands remain follow-up work and may use a `context`, `agent`, or other namespace once those consumers are designed.
+- Commands live under `incan inspect`, as RFC 118 assigns semantic products to `incan`: `incan inspect codegraph` for the graph and its queries, and `incan inspect context` for task-ranked packs. MCP tools are served by `incan mcp`, a `std.mcp` server under RFC 156.
 - The stable JSONL contract is the compiler-backed graph export shape for source-backed records: header schema/toolchain/mode/root/language metadata, deterministic record IDs, record kind, `language` on source-backed records, provenance, degraded state, source spans where available, containment/import/export/reference/call-syntax facts where available, and diagnostics. New fields must be additive or guarded by a schema version.
 - Native Incan JSONL is the source of truth for this RFC. A SCIP exporter may be added as an adapter for external code-intelligence ecosystems, but SCIP does not replace the native graph schema.
-- The first release does not require Merkle snapshot roots. Deterministic IDs, schema versions, compiler versions, source roots, and degraded-state markers are sufficient for the v0.4 baseline; content-addressed graph snapshots, context-pack identity, and Merkle-style integrity are follow-up work.
+- There are no Merkle snapshot roots. A snapshot is identified by its source roots, schema version and compiler version, and semantic digests answer what changed. Nothing needs to verify part of a graph without the whole, and a published graph inherits its Loaf's content identity under RFC 124.
 - The edge and body-fact baseline is containment, imports, public exports, declaration structure, syntax-level reference and call-site records, spans, and diagnostics. Resolved reference targets, resolved call targets, aliases, implements, test edges, generated-from edges, match-dispatch families, metadata body facts, and richer pattern facts are graph layers over that baseline.
 - Derived architecture findings and process-risk signals are separate record classes with different jobs. Architecture findings may be emitted as records or reports, but they must cite graph evidence; risk signals may explain priority, but they must not replace architectural evidence.
 - Process-risk records are not part of the baseline export beyond schema/provenance space for their consumers. Churn, ownership, co-change, coverage, decision staleness, trend snapshots, and predictive evaluation require Incan-specific validation before any prioritization claim is treated as more than evidence.
 - Live LSP graph snapshots should materialize the same fact model as persisted or exported graph snapshots. Dirty editor buffers require partial/stale markers and must not be silently mixed with checked persisted facts.
 - Feedback and learned usefulness signals belong in the agent-context or MCP layer rather than the core compiler export. The compiler may expose stable graph identities that make feedback expiry possible, but it should not own agent memory policy.
-- Compact task-context format is a consumer contract layered on top of JSONL. The JSONL graph export is the compatibility-stable contract for Planned status; compact context packing should become stable only when the MCP/task-context layer is implemented and evaluated.
+- The compact task-context format is a versioned contract layered on top of JSONL, because agents depend on its shape as tools depend on the graph's. Each pack states its format version, and changes follow RFC 102's compatibility rule.
 - Identity and digest are separate fields. Identity answers which declaration a fact is about and must survive edits; a semantic digest answers whether its meaning changed. A single content-addressed field cannot do both, and the graph is the normative source of the digest RFC 124 folds into unit identity.
 - One graph spans both languages. A declaration is a `Declaration` whatever its surface syntax, and `language` is an attribute of the fact rather than a partition of the schema. The reserved `rust_item` node kind and `uses_rust_item` edge kind are retired: they encode the distinction `language` exists to dissolve, and would leave two ways to state one relationship.
 - Reachability over Rust is a lower bound, not an exact answer. Unresolved edges count as reachable and affectedness propagates downstream. This binds consumers: anything skipping work on a reachability answer must err toward doing the work, because a missed node is a wrong build while a spurious one is only slow.
