@@ -1,8 +1,10 @@
-# behavior: a free function can return a view of a borrowed parameter's place, directly or carried in a `Result`, and its caller works on its own value through that view (#2500).
+# behavior: a free function can return a view of a borrowed parameter's place, directly or carried in a `Result`; its caller can pass and store that direct result without a wrapper, and an owned result can retain the declared source through its last value use (#2500).
 # expect-stdout:
 #   6
+#   1
 #   Utrecht!
 #   9
+#   8
 
 """Return views of a parameter's field from free functions."""
 
@@ -26,9 +28,12 @@ def checked_key(entry: Borrowed[Entry]) -> Result[Borrowed[str], str] from entry
     return Ok(entry.key)
 
 
+def measured(key: Borrowed[str]) -> int:
+    return len(key)
+
+
 def describe(entry: Borrowed[Entry]) -> int:
-    key = key_of(entry)
-    return len(key) + entry.size
+    return measured(key_of(entry)) + entry.size
 
 
 def shout(mut entry: BorrowedMut[Entry]) -> None:
@@ -41,11 +46,23 @@ def checked_length(entry: Borrowed[Entry]) -> Result[int, str]:
     return Ok(len(key) + 1)
 
 
+def retained_length(entry: Borrowed[Entry]) -> Owned[int] from entry.key:
+    return len(entry.key)
+
+
+def stored_view_count(entry: Borrowed[Entry]) -> int:
+    keys = [key_of(entry)]
+    return len(keys)
+
+
 def main() -> None:
     mut entry = Entry(key="ada", size=3)
     println(describe(entry))
+    println(stored_view_count(entry))
     shout(entry)
     println(entry.key)
     match checked_length(entry):
         Ok(length) => println(length)
         Err(reason) => println(reason)
+    length = retained_length(entry)
+    println(length)

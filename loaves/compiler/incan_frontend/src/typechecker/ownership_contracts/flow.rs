@@ -143,6 +143,9 @@ pub(in crate::typechecker) struct InvocationArgument {
 pub(in crate::typechecker) struct Invocation {
     pub callee: CanonicalSymbolId,
     pub receiver: Option<LoanId>,
+    /// A native by-value receiver has an evaluation and optional source but no borrow loan.
+    pub receiver_owned: bool,
+    pub receiver_source: Option<Place>,
     pub arguments: Vec<InvocationArgument>,
     pub receiver_evaluation: Option<InputEvaluation>,
     pub completion_node: usize,
@@ -214,6 +217,10 @@ pub(in crate::typechecker) struct Graph {
     pub loans: Vec<Loan>,
     /// Explicit local declarations retain their selected loan independently of display spelling.
     pub local_loans: BTreeMap<CanonicalSymbolId, LoanId>,
+    /// Owned locals whose values keep one or more checked source loans alive through their last value use.
+    pub dependent_locals: BTreeMap<CanonicalSymbolId, Vec<LoanId>>,
+    /// Aggregate expression spans whose physical value stores the retained references.
+    pub dependent_values: BTreeSet<HirSourceSpan>,
     /// Canonical owned destinations are distinct from local aliases and invocation-bounded argument owners.
     pub owned_locals: BTreeMap<CanonicalSymbolId, OwnedInitialization>,
     /// Argument-to-loan bindings are retained at construction; lowering must not recover them from similar spans.
@@ -394,6 +401,22 @@ fn validate(graph: &Graph) -> Result<Validated, InvalidGraph> {
             return Err(InvalidGraph("local loan refers to its own destination"));
         }
     }
+    for (local, loans) in &graph.dependent_locals {
+        if local.kind != incan_semantics_core::SemanticSourceTargetKind::Local
+            || !graph.permissions.contains_key(&Root::Binding(local.clone()))
+            || loans.is_empty()
+        {
+            return Err(InvalidGraph("dependent value has no owned local destination"));
+        }
+        for loan in loans {
+            if !destinations.insert(*loan) || graph.loans.get(loan.0).is_none() {
+                return Err(InvalidGraph("dependent value has an unknown or reused loan"));
+            }
+        }
+    }
+    if graph.dependent_values.len() > graph.dependent_locals.len() {
+        return Err(InvalidGraph("dependent aggregate has no local destination"));
+    }
 
     // ---- Referenced edges and storage identities ----
     for (index, node) in graph.nodes.iter().enumerate() {
@@ -533,6 +556,18 @@ fn validate_invocations(graph: &Graph) -> Result<(), InvalidGraph> {
                 }
                 _ => return Err(InvalidGraph("argument access and source loan disagree")),
             }
+        }
+        if invocation.receiver_owned {
+            if invocation.receiver.is_some() || invocation.receiver_evaluation.is_none() {
+                return Err(InvalidGraph("owned receiver has a borrow loan or no evaluation"));
+            }
+            if let Some(source) = &invocation.receiver_source
+                && !graph.permissions.contains_key(&source.root)
+            {
+                return Err(InvalidGraph("owned receiver names an unknown source owner"));
+            }
+        } else if invocation.receiver_source.is_some() {
+            return Err(InvalidGraph("borrowed receiver retains a separate owned source"));
         }
         if let Some(receiver) = invocation.receiver {
             validate_invocation_loan(graph, *span, receiver)?;

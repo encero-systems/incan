@@ -114,7 +114,20 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             let inferred_task =
                 assignment.ty.is_none() && super::runtime_nominals::retains_task_storage(self.type_info, storage);
             let native_frozen = assignment.ty.is_none() && super::rust_values::native_frozen_storage(storage);
-            if future || inferred_task || native_frozen {
+            let reference_list = assignment.ty.is_none()
+                && self
+                    .input_body
+                    .as_ref()
+                    .ok()
+                    .and_then(|proof| proof.as_ref())
+                    .is_some_and(|proof| proof.dependent_value(assignment.value.span))
+                && matches!(
+                    storage,
+                    IncanType::Generic { base, args }
+                        if base == "List"
+                            && matches!(args.as_slice(), [IncanType::Ref(_) | IncanType::RefMut(_)])
+                );
+            if future || inferred_task || native_frozen || reference_list {
                 *ty = storage.clone();
             }
         }

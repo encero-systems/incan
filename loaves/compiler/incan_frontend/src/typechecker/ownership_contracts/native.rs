@@ -51,8 +51,10 @@ fn native_input_call(
         _ if !checked.has_receiver => None,
         Some(ResolvedType::Ref(_)) => Some(Receiver::Immutable),
         Some(ResolvedType::RefMut(_)) => Some(Receiver::Mutable),
-        // A receiver taken by value consumes the caller's storage, which this profile does not move.
-        _ => return None,
+        // A value receiver is represented as present here; source flow reads or moves it according to its checked
+        // Copy capability instead of manufacturing a receiver loan.
+        Some(_) => Some(Receiver::Immutable),
+        None => return None,
     };
     let mut parameters = checked.parameters.get(first..)?.to_vec();
     let mut modes = Vec::with_capacity(parameters.len());
@@ -98,6 +100,20 @@ fn native_input_call(
 }
 
 impl crate::typechecker::TypeCheckInfo {
+    /// Whether a selected native method takes its receiver by value rather than by shared or mutable reference.
+    pub(in crate::typechecker) fn native_value_receiver(&self, span: Span) -> bool {
+        self.protocols
+            .explicit_input_calls
+            .get(&span)
+            .is_some_and(|call| call.kind == InputCallKind::Native && call.receiver.is_some())
+            && self
+                .rust
+                .checked_calls
+                .get(&span)
+                .and_then(|call| call.parameters.first())
+                .is_some_and(|parameter| !matches!(parameter.ty, ResolvedType::Ref(_) | ResolvedType::RefMut(_)))
+    }
+
     /// Whether the call at `span` is a native associated function written on its type, as in `HashMap.new()`: its
     /// method syntax names the type, not a receiver value, so it is called like a free function.
     pub(in crate::typechecker) fn native_associated_call(&self, span: Span) -> bool {

@@ -8,6 +8,78 @@ use super::{Builder, ResolvedType, Unavailable};
 use crate::ast::{CallArg, Expr, FStringFormat, FStringPart, ListEntry, Span, Spanned};
 
 impl Builder<'_> {
+    /// Evaluate a list that stores returned views, retaining each substituted source loan under the list value.
+    /// Non-view elements keep the same Copy-scalar boundary as an ordinary admitted list literal.
+    pub(super) fn dependent_list(
+        &mut self,
+        entries: &[ListEntry],
+        incoming: &[usize],
+    ) -> Result<Option<(Vec<usize>, Vec<super::LoanId>)>, Unavailable> {
+        let mut has_view = false;
+        for entry in entries {
+            let ListEntry::Element(value) = entry else { continue };
+            let call = super::super::builtins::view_call(value);
+            let native = self
+                .checker
+                .type_info
+                .protocols
+                .explicit_input_calls
+                .get(&call.span)
+                .is_some_and(|call| call.kind == super::super::InputCallKind::Native);
+            has_view |= !native && self.view_source(value)?.is_some();
+        }
+        if !has_view {
+            return Ok(None);
+        }
+        let mut incoming = incoming.to_vec();
+        let mut loans = Vec::new();
+        for entry in entries {
+            let value = match entry {
+                ListEntry::Element(value) => value,
+                ListEntry::Spread(value) => {
+                    return Err(Unavailable {
+                        span: value.span,
+                        reason: "a reference-carrying list cannot infer spread dependencies".into(),
+                    });
+                }
+            };
+            let call = super::super::builtins::view_call(value);
+            let native = self
+                .checker
+                .type_info
+                .protocols
+                .explicit_input_calls
+                .get(&call.span)
+                .is_some_and(|call| call.kind == super::super::InputCallKind::Native);
+            if !native && let Some(source) = self.view_source(value)? {
+                let (outgoing, path) = self.evaluate_view_source(value, source, incoming)?;
+                incoming = outgoing;
+                loans.push(path.through.ok_or(Unavailable {
+                    span: value.span,
+                    reason: "stored returned view has no result loan".into(),
+                })?);
+                continue;
+            }
+            if !matches!(
+                self.checker.type_info.expr_type(value.span),
+                Some(
+                    ResolvedType::Int
+                        | ResolvedType::Float
+                        | ResolvedType::Numeric(_)
+                        | ResolvedType::Bool
+                        | ResolvedType::Unit
+                )
+            ) {
+                return Err(Unavailable {
+                    span: value.span,
+                    reason: "a reference-carrying list needs returned views or Copy scalar elements".into(),
+                });
+            }
+            incoming = self.expression(value, incoming, false)?;
+        }
+        Ok(Some((incoming, loans)))
+    }
+
     /// A fresh primitive list evaluates each Copy scalar in written order and retains no borrowed dependency.
     /// Spreads, non-Copy elements and reference-carrying aggregates need separate retained-owner projection.
     pub(super) fn scalar_list(

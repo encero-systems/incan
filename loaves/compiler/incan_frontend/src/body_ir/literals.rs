@@ -48,7 +48,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 }
             }
         }
-        let ty = self.retained_list_type(&self.resolve_ty(span), &elements);
+        let retain_references = self
+            .input_body
+            .as_ref()
+            .ok()
+            .and_then(|proof| proof.as_ref())
+            .is_some_and(|proof| proof.dependent_value(span));
+        let ty = self.retained_list_type(&self.resolve_ty(span), &elements, retain_references);
         self.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
         self.push_assign_temp(
             bir::Rvalue::Aggregate(bir::AggregateKind::List, elements),

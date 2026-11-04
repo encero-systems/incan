@@ -8,7 +8,7 @@ use crate::typechecker::ownership_contracts::flow::{
     Node, OperandDependency, OperationInputs, OwnedInitialization, Permission, Place, Projection, Root,
 };
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, IncanInputAccess};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Append a source anchor selected by the authenticated callable's structural binding map.
 fn anchor(positions: &Positions, span: HirSourceSpan) -> Result<String, NodeBindingError> {
@@ -171,6 +171,19 @@ pub(super) fn project(positions: &Positions, graph: &Graph, fields: &mut Vec<Str
         locals.push((key, row));
     }
     ordered_fields(locals, fields)?;
+    let mut dependent = Vec::new();
+    for (local, loans) in &graph.dependent_locals {
+        let mut row = vec![positions.identity(local)?];
+        let key = canonical_key(&row);
+        row.push(loans.len().to_string());
+        row.extend(loans.iter().map(|loan| loan.0.to_string()));
+        dependent.push((key, row));
+    }
+    ordered_fields(dependent, fields)?;
+    fields.push(graph.dependent_values.len().to_string());
+    for span in &graph.dependent_values {
+        fields.push(anchor(positions, *span)?);
+    }
     let mut owned = Vec::new();
     for (destination, initializer) in &graph.owned_locals {
         let mut row = vec![positions.identity(destination)?];
@@ -211,6 +224,14 @@ pub(super) fn project(positions: &Positions, graph: &Graph, fields: &mut Vec<Str
         let key = canonical_key(&row);
         row.push(positions.identity(&invocation.callee)?);
         loan_option(invocation.receiver, &mut row);
+        row.push(invocation.receiver_owned.to_string());
+        match &invocation.receiver_source {
+            Some(source) => {
+                row.push("some".into());
+                place(positions, source, &mut row)?;
+            }
+            None => row.push("none".into()),
+        }
         row.push(invocation.arguments.len().to_string());
         for argument in &invocation.arguments {
             row.extend([
@@ -393,6 +414,8 @@ impl Reader<'_> {
             permissions: self.ordered_map(Self::root, Self::permission)?,
             loans: self.list(Self::loan)?,
             local_loans: self.ordered_map(Self::identity, |reader| Ok(LoanId(reader.number()?)))?,
+            dependent_locals: self.ordered_map(Self::identity, Self::loan_ids)?,
+            dependent_values: self.span_set()?,
             owned_locals: self.ordered_map(Self::identity, Self::owned_initialization)?,
             operations: self.ordered_map(Self::semantic_span, Self::operation)?,
             invocations: self.ordered_map(Self::semantic_span, Self::invocation)?,
@@ -428,6 +451,19 @@ impl Reader<'_> {
             items.push(item(self)?);
         }
         Ok(items)
+    }
+    /// A count-prefixed set of graph-local loan identifiers retained in source order.
+    fn loan_ids(&mut self) -> Result<Vec<LoanId>, NodeBindingError> {
+        self.list(|reader| Ok(LoanId(reader.number()?)))
+    }
+    /// A canonical count-prefixed set of aggregate source spans.
+    fn span_set(&mut self) -> Result<BTreeSet<HirSourceSpan>, NodeBindingError> {
+        let spans = self.list(Self::semantic_span)?;
+        let set = spans.iter().copied().collect::<BTreeSet<_>>();
+        if set.len() != spans.len() {
+            return Err(NodeBindingError::MissingNode);
+        }
+        Ok(set)
     }
     /// An item written after `some`, or nothing after `none`.
     fn optional<T>(
@@ -492,6 +528,8 @@ impl Reader<'_> {
         Ok(Invocation {
             callee: self.identity()?,
             receiver: self.loan_option()?,
+            receiver_owned: self.boolean()?,
+            receiver_source: self.optional(Self::place)?,
             arguments: self.list(Self::invocation_argument)?,
             receiver_evaluation: self.optional(Self::input_evaluation)?,
             completion_node: self.number()?,

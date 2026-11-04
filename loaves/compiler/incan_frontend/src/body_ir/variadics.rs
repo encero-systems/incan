@@ -225,7 +225,9 @@ impl BodyBuilder<'_, '_> {
         self.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
         let checked = parameter_storage_type(declaration.ty.clone(), source_kind);
         let ty = match &rvalue {
-            bir::Rvalue::Aggregate(bir::AggregateKind::List, elements) => self.retained_list_type(&checked, elements),
+            bir::Rvalue::Aggregate(bir::AggregateKind::List, elements) => {
+                self.retained_list_type(&checked, elements, false)
+            }
             _ => checked,
         };
         Ok(self.push_assign_temp(rvalue, ty, scope, hir_span(span), out))
