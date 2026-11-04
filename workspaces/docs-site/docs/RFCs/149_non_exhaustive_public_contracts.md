@@ -219,7 +219,7 @@ RFC 131 already says that adding a case to a public closed family can require do
 - **Treat workspace siblings as local:** they are versioned separately, so they can see a new case before they are updated.
 - **Refuse it on error families:** leaves libraries with the same problem and no answer.
 - **An open-field pattern form:** record patterns already leave unnamed fields unconstrained.
-- **A marker on one enum case:** would need a new attachment point for one use, when a case can carry a `@non_exhaustive` model.
+- **A marker on one enum case:** a case can already carry a `@non_exhaustive` model, so a second rule would add nothing.
 - **New syntax for a checked catch-all, such as `@unknown`:** a lint gives the same review with no new syntax.
 - **Letting `from` consume a growing model:** a dependency upgrade would silently change the shape of the consumer's model.
 - **Decoding unknown tags into a catch-all:** a wire-format concern, which belongs with RFC 146.
