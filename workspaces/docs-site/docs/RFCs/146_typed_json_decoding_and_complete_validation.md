@@ -26,7 +26,7 @@
 
 ## Summary
 
-Give standard typed JSON decoding a non-generic JsonDecodeError umbrella that preserves original validation failures, structured document paths, and available source positions. Derived decoding checks nested validated values and model validation, collects all independently discoverable input failures by default, and exposes a complete generated Result contract without requiring callers to enumerate validator error types. An explicit FailFast policy stops decoding at the first failure. Source positions count lines and characters from one. JSONL sources are ordinary iterators of per-record results, read lazily from a string or from a `std.io.BinaryReader`, and collected through RFC 142's shared consumers, which keep successful records and distinguish invalid records from source interruption. RFC 131 owns the general error mechanism; this RFC owns its JSON integration and the typed decoding contract that replaces string-returning decoding.
+Give standard typed JSON decoding a non-generic JsonDecodeError umbrella that preserves original validation failures, structured document paths, and available source positions. Derived decoding checks nested validated values and model validation, collects all independently discoverable input failures by default, and exposes a complete generated Result contract without requiring callers to enumerate validator error types. An explicit FailFast policy stops decoding at the first failure. Source positions count lines and characters from one. JSONL sources are ordinary iterators of per-record results, read lazily from a string or from a `std.io.BinaryReader`, and collected through RFC 142's shared consumers, which keep successful records and distinguish invalid records from source interruption. A reader-backed source reports the position after each record and resumes from a saved position over a seekable reader, failing when the input before that position has changed. RFC 131 owns the general error mechanism; this RFC owns its JSON integration and the typed decoding contract that replaces string-returning decoding.
 
 ## Core model
 
@@ -54,6 +54,7 @@ JSONL adds a separate concern: a malformed record need not prevent later records
 - Validate nested values and declared model invariants before exposing a successful instance.
 - Stop at the first failure when an explicit FailFast policy is active.
 - Read JSONL lazily from strings and from `std.io.BinaryReader`, one typed result per record, and collect it through RFC 142's shared consumers with retained successes and honest interruption reporting.
+- Resume an interrupted JSONL import after a saved position, without decoding the input before it, and detect when that input has changed.
 - Replace string-returning typed decoding with the typed contract.
 
 ## Non-Goals
@@ -63,6 +64,7 @@ JSONL adds a separate concern: a malformed record need not prevent later records
 - Select a new failure policy for every iterator, concurrent operation, or effectful callback.
 - Execute checks whose required decoded values are unavailable, inspect unexecuted branches of an authored validator, or fabricate downstream failures after malformed syntax.
 - Implicitly commit valid records, retry source reads, or roll back earlier application effects.
+- Wait for more lines at the end of a file that is still being written; a reader-backed source ends at the reader's end.
 - Redesign JSON serialization, introduce separately authored string error codes, or expose sensitive input values automatically.
 
 ## Guide-level explanation
@@ -319,6 +321,42 @@ def scan(path: Path) -> Result[None, IoError]:
 
 A `File` is a `BinaryReader`, and it is read record by record; physical line numbers survive across buffer boundaries. A record longer than `max_record_bytes` becomes `JsonlRowError.RecordTooLarge` for that line, and reading continues with the next line. Over a reader, the source is a `FallibleIterator` whose advancement fails with `IoError`, so a failed read stays distinct from a bad record, and the loop header's `?` propagates it under RFC 115. The caller owns the reader, here through an RFC 094 `with` block.
 
+### Resume an interrupted import
+
+An import of a 10 GB log that fails at 7 GB should not start again from the first line. The import pairs each record with its position and saves both, and a later run continues after the saved position:
+
+```incan
+from std.fs import Path
+from std.io import IoError
+from std.json import JsonlPosition, JsonlResumeError, jsonl
+
+error ImportError = IoError | JsonlResumeError
+
+def resume_import(path: Path, saved: JsonlPosition, mut catalog: Catalog) -> Result[None, ImportError]:
+    with path.open("rb")? as file:
+        records = jsonl[PackageSnapshot](file, max_record_bytes=1_000_000, after=saved)?
+        for record, position in records.with_positions()?:
+            match record:
+                Ok(snapshot) => catalog.add(snapshot, position)
+                Err(error) => catalog.reject(error, position)
+    return Ok(None)
+```
+
+`Catalog` is the application's own store, and it saves each record with the position after it. `with_positions()` pairs every record's result with the `JsonlPosition` after it, including after a record that failed, so a resumed import skips every record it already handled. A `JsonlPosition` holds the one-based `line` and `byte_position` at which the next record starts, with a check of the record before it, and has a stable JSON form. The first run reads without `after`; `after=saved` seeks the reader to that byte without decoding anything before it and continues line numbering from that line, so later failures still report their physical lines. It requires a `std.io.SeekableReader`, which `std.fs.File` and `std.io.BytesIO` implement.
+
+Before reading, `after=` checks that the input still holds the record the position follows. A shorter input, or a different record before the position, fails with `JsonlResumeError.SourceChanged` rather than continuing at a byte offset inside different content:
+
+```incan
+error JsonlResumeError:
+    Read(cause: IoError):
+        message = "The JSONL reader could not be positioned."
+        caused_by = cause
+
+    SourceChanged(line: int) = f"The input no longer matches the saved position at line {line}."
+```
+
+Records appended after the position are read normally, so resuming a log that has grown since picks up the new lines; the source still ends at the reader's end. The check covers the record before the position, not all earlier content, so an input rewritten further back is not detected. When the catalog stores each record and its position in one transaction, a failure never imports a record twice; an application that saves them separately must tolerate rereading the records after its last saved position.
+
 ### Collect all records and failures
 
 To get every good record and every bad one, collect with RFC 142's shared consumer:
@@ -356,19 +394,20 @@ This follows the distinction between explicit iterator scope selection and valid
 8. Generated integration must use declared validator return types and nested validation or decoding contracts. It must not inspect function bodies to guess possible failures. Original failures must be retained before a textual adapter can discard them; reconstructing error identity by parsing a message is forbidden.
 9. Canonical registered-check model construction and canonical newtype `from_underlying` hooks must expose `Result[Self, ValidationError]`. Authored validators may retain precise domain error return types; canonical boundaries capture those failures under ValidationError while preserving original typed identity, payload, hierarchy, and diagnostics. JSON decoding must use recoverable construction and retain the validation umbrella under its located JsonDecodeError failure. Ordinary implicit coercion keeps RFC 017's existing behavior; this RFC does not turn implicit construction into Result propagation.
 10. Every JsonDecodeError must expose `coverage()`, a structured record of which checks completed, which were blocked by an invalid prerequisite, which were stopped by policy, and which were interrupted, each with its document path. A check that did not run must never be reported as a failure or a success.
-11. `std.json` must export JsonDecodeError, the shared JsonError family, InputPath, SourcePosition, and the JSONL functions. A SourcePosition must carry the source identity, a one-based `line`, and a one-based `column` counted in Unicode characters; when the exact UTF-8 location is known, it must also carry a one-based `byte_position`. Rendered and machine-readable reports must use the same convention. Array index segments in an InputPath keep ordinary collection indexing and are not source positions. Missing position evidence must be reported as unavailable, never invented.
+11. `std.json` must export JsonDecodeError, the shared JsonError family, InputPath, SourcePosition, JsonlPosition, JsonlResumeError, and the JSONL functions. A SourcePosition must carry the source identity, a one-based `line`, and a one-based `column` counted in Unicode characters; when the exact UTF-8 location is known, it must also carry a one-based `byte_position`. Rendered and machine-readable reports must use the same convention. Array index segments in an InputPath keep ordinary collection indexing and are not source positions. Missing position evidence must be reported as unavailable, never invented.
 12. A JSONL source must be an ordinary iterator yielding one `Result[T, JsonlRowError[E]]` per physical record and must decode a record only when it is consumed. Over a string it must be an `Iterator`; over a `std.io.BinaryReader` it must be a `FallibleIterator` whose advancement fails with `IoError`, so a record failure stays distinct from a failed read. `std.json.parse_jsonl(source)` must yield dynamic records with `JsonError` causes, and `std.json.jsonl[T](source)` must yield typed records decoded through `T.from_json`.
 13. By default a blank or whitespace-only physical record must yield `JsonlRowError.BlankRecord` with its one-based physical line number, rather than a generic decoder failure or silent skipping. `skip_blank_lines=true` may request skipping; it must not renumber subsequent records. A terminating newline must not create another record, and empty input must contain zero records.
 14. A reader-backed source must read incrementally, without loading the whole input, and must preserve physical line numbers across buffer boundaries. It must require a positive `max_record_bytes`; a longer record must yield `JsonlRowError.RecordTooLarge` for that line, after which reading continues at the next line. Acquiring, owning, and closing the reader belong to the caller.
-15. Collecting JSONL records must use RFC 142's shared consumers, with no JSON-specific collector. Under `item_errors=ErrorPolicy.CollectAll`, `collect` must return `Collected` with the successes in source order and every record failure with its original error and physical line, without implying acceptance or commit. A protective `max_items` limit, a failed read, or cancellation must return `Collected.Stopped` keeping everything consumed. A `take(n)` prefix completes normally for that prefix. Neither must claim validation of an enclosing source or the existence of further records.
-16. Aggregate failures must use RFC 131's common hierarchy, traversal, and diagnostic preservation contracts. A runtime-sized collection must not be disguised as the fixed authored `caused_by` tuple. General aggregate representation is owned by RFC 131; this RFC owns the decoder surfaces that use it.
-17. Standard typed model decoding must reject unknown fields by default with a distinct UnknownField case retaining the structured input path and accepted input names for that object. Diagnostics must clearly identify the unexpected member, show accepted field names and available source positions, and should offer a correction when a clear match exists without applying it automatically. Model wire aliases must follow the checked decoder contract, and declared dictionary keys must not be mistaken for unknown model fields. An explicit tolerance option may ignore unknown fields but must retain syntax checking and normal validation of declared fields. Unknown-field failures must participate in the same collection of independently discoverable errors as other decoding failures.
-18. Ordinary JSON decoding rules must follow established Serde behavior unless this RFC explicitly specifies a different contract. Standard Serde failure categories must be preserved as distinct typed errors with structured locations and clear diagnostics, without text-based reconstruction. Duplicate model-field inputs, including accepted aliases resolving to one field, must report DuplicateField rather than choose a value; diagnostics should identify both occurrences when source information is available. Dictionary and dynamic JSON behavior must retain their separately applicable contracts. The baseline must not weaken typed failure retention, complete validation, or the settled unknown-field and blank-record policies.
-19. Deserialize must require `from_json(json_str: str) -> Result[Self, JsonDecodeError]` for both generated and handwritten implementations. A handwritten implementation with any other return type is an ordinary type error, whose diagnostic names the method, its actual return type, and the required one. String errors must never be converted into purported structured or original domain failures.
-20. Typed and dynamic JSON decoding must follow RFC 152's depth convention: they must accept `max_depth: Option[int]`, defaulting to 128, where only an explicit `None` lifts the limit, and must report nesting deeper than it as the shared `JsonError.TooDeep(path, max_depth)` case, with the path where the limit was reached, before allocating for the deeper levels. Typed decoding surfaces that case with its identity, as it does `JsonError.Parse`. Dynamic parsing into `JsonValue` must keep its nesting on a heap work stack and never recurse on the call stack.
-21. All decoder and collector diagnostics must uphold RFC 103's Incan-wide secret non-disclosure invariant, including failures before secret construction. Checked sensitivity must survive derive and error boundaries. Retained failures, source excerpts, upstream messages, paths, and metadata must not bypass secret protection or create ordinary plaintext copies solely for reporting. Details that cannot be established safe to expose must be omitted or redacted in human diagnostics, machine inspection, verbose output, stack traces, and audit export alike.
-22. Dynamic JSON and typed model decoding must reuse the shared JsonError family for underlying JSON failures, preserving case identities, payloads, and diagnostics. Each existing JsonError category must be one native case with the same meaning. JsonDecodeError is the broader typed-decoding umbrella that includes those shared failures alongside located validation failures and aggregation; dynamic values must not acquire model-validation requirements. Dynamic parsing keeps `Result[JsonValue, JsonError]`, and serialization is unchanged.
-23. Custom derives that produce decoders must publish their checked validation contracts through RFC 131's derive metadata, preserving sensitivity under RFC 103. A contract the decoder cannot check must be diagnosed rather than guessed from annotations or function bodies.
+15. A reader-backed source must provide `with_positions()`, pairing every item, success or failure, with the JsonlPosition after it. A JsonlPosition must carry the one-based `line` and `byte_position` at which the next record starts and a check of the record before it, and must have a stable JSON form. `parse_jsonl` and `jsonl[T]` must accept `after=position` over a `std.io.SeekableReader`; that call must return a `Result` with JsonlResumeError, must seek without decoding the input before the position, and must continue physical line numbering from it. It must fail with `JsonlResumeError.SourceChanged` when the input is shorter than the position or the record before it differs, and must never continue at a byte offset inside different content. When the position follows a final record that had no terminating newline, resuming must accept a newline as that record's terminator and must fail with `SourceChanged` when the record continued instead. Records appended after a position must be read normally, and the source must end at the reader's end.
+16. Collecting JSONL records must use RFC 142's shared consumers, with no JSON-specific collector. Under `item_errors=ErrorPolicy.CollectAll`, `collect` must return `Collected` with the successes in source order and every record failure with its original error and physical line, without implying acceptance or commit. A protective `max_items` limit, a failed read, or cancellation must return `Collected.Stopped` keeping everything consumed. A `take(n)` prefix completes normally for that prefix. Neither must claim validation of an enclosing source or the existence of further records.
+17. Aggregate failures must use RFC 131's common hierarchy, traversal, and diagnostic preservation contracts. A runtime-sized collection must not be disguised as the fixed authored `caused_by` tuple. General aggregate representation is owned by RFC 131; this RFC owns the decoder surfaces that use it.
+18. Standard typed model decoding must reject unknown fields by default with a distinct UnknownField case retaining the structured input path and accepted input names for that object. Diagnostics must clearly identify the unexpected member, show accepted field names and available source positions, and should offer a correction when a clear match exists without applying it automatically. Model wire aliases must follow the checked decoder contract, and declared dictionary keys must not be mistaken for unknown model fields. An explicit tolerance option may ignore unknown fields but must retain syntax checking and normal validation of declared fields. Unknown-field failures must participate in the same collection of independently discoverable errors as other decoding failures.
+19. Ordinary JSON decoding rules must follow established Serde behavior unless this RFC explicitly specifies a different contract. Standard Serde failure categories must be preserved as distinct typed errors with structured locations and clear diagnostics, without text-based reconstruction. Duplicate model-field inputs, including accepted aliases resolving to one field, must report DuplicateField rather than choose a value; diagnostics should identify both occurrences when source information is available. Dictionary and dynamic JSON behavior must retain their separately applicable contracts. The baseline must not weaken typed failure retention, complete validation, or the settled unknown-field and blank-record policies.
+20. Deserialize must require `from_json(json_str: str) -> Result[Self, JsonDecodeError]` for both generated and handwritten implementations. A handwritten implementation with any other return type is an ordinary type error, whose diagnostic names the method, its actual return type, and the required one. String errors must never be converted into purported structured or original domain failures.
+21. Typed and dynamic JSON decoding must follow RFC 152's depth convention: they must accept `max_depth: Option[int]`, defaulting to 128, where only an explicit `None` lifts the limit, and must report nesting deeper than it as the shared `JsonError.TooDeep(path, max_depth)` case, with the path where the limit was reached, before allocating for the deeper levels. Typed decoding surfaces that case with its identity, as it does `JsonError.Parse`. Dynamic parsing into `JsonValue` must keep its nesting on a heap work stack and never recurse on the call stack.
+22. All decoder and collector diagnostics must uphold RFC 103's Incan-wide secret non-disclosure invariant, including failures before secret construction. Checked sensitivity must survive derive and error boundaries. Retained failures, source excerpts, upstream messages, paths, and metadata must not bypass secret protection or create ordinary plaintext copies solely for reporting. Details that cannot be established safe to expose must be omitted or redacted in human diagnostics, machine inspection, verbose output, stack traces, and audit export alike.
+23. Dynamic JSON and typed model decoding must reuse the shared JsonError family for underlying JSON failures, preserving case identities, payloads, and diagnostics. Each existing JsonError category must be one native case with the same meaning. JsonDecodeError is the broader typed-decoding umbrella that includes those shared failures alongside located validation failures and aggregation; dynamic values must not acquire model-validation requirements. Dynamic parsing keeps `Result[JsonValue, JsonError]`, and serialization is unchanged.
+24. Custom derives that produce decoders must publish their checked validation contracts through RFC 131's derive metadata, preserving sensitivity under RFC 103. A contract the decoder cannot check must be diagnosed rather than guessed from annotations or function bodies.
 
 ## Design details
 
@@ -402,6 +441,8 @@ Collection is not a JSON concern. RFC 142's consumers, available on synchronous 
 
 Lazy decoding over an already materialized `str` still retains the complete input text; it is not a way to stream a large file. The reader-backed source reads `std.io.BinaryReader` incrementally, preserves physical record locations across buffer boundaries, and distinguishes record errors from source-read failures through the `FallibleIterator` contract. `max_record_bytes` bounds a single record; it is separate from the buffering of the reader and from the outcomes a collector retains. Acquisition, ownership, and closing of the reader stay with the caller, typically through an RFC 094 `with` block.
 
+A JsonlPosition describes where the next record starts in one input, not the application's progress. Resuming needs a reader that can seek, so `after=` takes a `std.io.SeekableReader`: a `BinaryReader` that also provides `seek(offset, whence) -> Result[int, IoError]`, as `std.fs.File` and `std.io.BytesIO` already do. Checking only the record before the position keeps resuming proportional to one record, not to the input already read. Saving the position after the effects it covers, ideally in the same transaction, is the application's responsibility.
+
 Accumulation can retain memory proportional to input size. Full collection has no hidden outcome-retention cap; protective limits are explicit and stop with everything consumed so far. Completion is relative to the supplied input scope, never evidence that an enclosing source was exhausted. Any streaming delivery of successful values exposes application effects separately from the promise to report failures at the end. An aggregate does not roll back earlier effects.
 
 ### The typed contract
@@ -414,6 +455,7 @@ The public JSON entry points are:
 - dynamic `JsonValue` parsing, returning the shared `JsonError`;
 - `parse_jsonl(source)`, yielding lazy dynamic records;
 - `jsonl[T](source)`, yielding lazy typed records, over a string or a `BinaryReader`;
+- `after=position` on either JSONL function, resuming over a `SeekableReader` and returning JsonlResumeError;
 - serialization, unchanged.
 
 Code written against another signature, such as a handwritten `from_json` returning `Result[Self, str]` or a caller expecting `parse_jsonl` to return a list, receives an ordinary type error naming the actual and required types. Rendered text is produced only explicitly, at a presentation boundary.
@@ -448,7 +490,8 @@ A stable umbrella simplifies signatures but leaves concrete domain matching open
 
 ## Layers affected
 
-- **Stdlib JSON and JSONL APIs:** typed decoder errors, `coverage()`, source positions, lazy string- and reader-backed JSONL sources, and their record errors, exported from `std.json`.
+- **Stdlib JSON and JSONL APIs:** typed decoder errors, `coverage()`, source positions, lazy string- and reader-backed JSONL sources, their record errors, and JSONL positions and resumption, exported from `std.json`.
+- **Stdlib I/O:** the `std.io.SeekableReader` trait, implemented by `std.fs.File` and `std.io.BytesIO`.
 - **Derive protocol and validation integration:** checked generated signatures, nested validated construction, FailFast scope inheritance, and preservation before textual adaptation.
 - **Typechecker / callable metadata:** visibility of generated Result contracts and type errors for implementations with other signatures.
 - **Runtime and diagnostics:** structured input locations, one-based source positions, coverage, and integration with RFC 131 aggregate traversal and retained diagnostics.
@@ -458,7 +501,7 @@ A stable umbrella simplifies signatures but leaves concrete domain matching open
 
 - Standard typed JSON decoding uses the non-generic JsonDecodeError umbrella; callers do not enumerate nested validator failures.
 - JsonDecodeError includes the shared JsonError family rather than duplicating parser failures, and adds typed validation and aggregation. Each existing JsonError category is one native case with the same meaning, and dynamic JSON keeps the JsonError boundary.
-- `std.json` exports JsonDecodeError, JsonError, InputPath, SourcePosition, and the JSONL functions: `from std.json import JsonDecodeError`.
+- `std.json` exports JsonDecodeError, JsonError, InputPath, SourcePosition, JsonlPosition, JsonlResumeError, and the JSONL functions: `from std.json import JsonDecodeError`.
 - InvalidValue retains the structured document location and original concrete domain failure together, including its typed payload and hierarchy.
 - Ordinary nested matching can recognize a specific retained failure through RFC 131's checked matching contract; callers retain a fallback for unhandled failures.
 - Document paths are structured typed segments, never formatted string locations. Source positions are separate structured data with one-based lines and Unicode-character columns and an optional one-based `byte_position`, the same in rendered and machine-readable reports.
@@ -473,5 +516,6 @@ A stable umbrella simplifies signatures but leaves concrete domain matching open
 - JSONL sources are ordinary iterators of one `Result` per physical record, decoded only when consumed: `parse_jsonl` for dynamic records and `jsonl[T]` for typed ones, over a string or a `std.io.BinaryReader`. Over a reader they are `FallibleIterator`s whose reads fail with `IoError`.
 - JSONL is strict by default: blank and whitespace-only records produce BlankRecord with the one-based physical line, `skip_blank_lines=true` skips them without renumbering, a final terminator is not a record, and empty input contains zero records. A reader-backed record longer than `max_record_bytes` produces RecordTooLarge and reading continues.
 - JSONL collection uses RFC 142's shared consumers: `collect(item_errors=ErrorPolicy.CollectAll)` returns `Collected` with successes and every failure, `max_items` stops with everything consumed, and a `take(n)` prefix completes normally. `std.json` defines no collector of its own.
+- A reader-backed JSONL source pairs each record with the JsonlPosition after it through `with_positions()`. `after=position` over a `std.io.SeekableReader` resumes without decoding earlier input, continues physical line numbers, reads appended records, and fails with `JsonlResumeError.SourceChanged` when the input is shorter or the record before the position differs. The source does not wait for more lines; it ends at the reader's end.
 - Uniform inspection of retained failures reuses RFC 131's shared umbrella and aggregate contract, without a JSON-only `failures()` method.
 - Typed and dynamic decoding follow RFC 152's depth convention: `max_depth` is 128 by default, only an explicit `None` lifts it, exceeding it is the shared `JsonError.TooDeep` case, and dynamic parsing never recurses on the call stack.
