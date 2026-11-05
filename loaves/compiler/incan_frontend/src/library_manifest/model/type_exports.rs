@@ -213,6 +213,12 @@ pub enum TypeRef {
         mode: incan_lang::lang::types::ownership::OwnershipMode,
         inner: Box<TypeRef>,
     },
+    /// A canonical source trait represented by a type token, never a standalone runtime type.
+    ///
+    /// Appended so every earlier serialized discriminant remains unchanged.
+    Trait {
+        identity: incan_semantics_core::CanonicalSymbolId,
+    },
 }
 
 /// Exported field metadata for models and classes.

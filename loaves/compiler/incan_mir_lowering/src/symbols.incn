@@ -34,6 +34,7 @@ pub def type_component(ty: &RustType) -> str:
         RustType.Never => return symbol_component("!")
         RustType.Primitive(primitive) => return primitive_component(primitive)
         RustType.Named(name) => return "_named" + symbol_component(str(name))
+        RustType.Trait(identity) => return "_trait" + symbol_component(identity.render_compact())
         RustType.Generic(base=base, args=arguments) =>
             return type_sequence(symbol_component(str(base)) + f"_args_{len(arguments)}", arguments)
         RustType.Decimal(precision=precision, scale=scale) => return f"_decimal_{precision}_{scale}"

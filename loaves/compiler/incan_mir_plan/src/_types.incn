@@ -1,6 +1,7 @@
 """Plan value types and source spans: scalars, sized numerics, list leaves, tuple elements and their projections."""
 
 from rust::std::sync import Arc
+from rust::incan_semantics_core import CanonicalSymbolId
 
 
 @derive(Clone, PartialEq)
@@ -257,6 +258,9 @@ pub enum PlanType:
     # A class field that reaches its own class by value is stored on the heap: exactly one owned referent. Reads
     # dereference it and construction boxes the checked value, so the source value keeps its referent type.
     Boxed(list[PlanType])
+    # Canonical source-trait identity admitted only as a TypeToken's represented type. This remains last so older
+    # serialized plan discriminants keep their existing values.
+    Trait(CanonicalSymbolId)
 
 
 pub def list_leaf_type(leaf: ListLeaf) -> PlanType:

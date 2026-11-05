@@ -1,6 +1,6 @@
 """A consumer calling a function a sibling module re-exports under a further name."""
 
-from facade import b_calculate, relayed_scalar, measure, echo, typed_target, safe_typed_target
+from facade import b_calculate, relayed_scalar, measure, echo, typed_target, safe_typed_target, TargetKind as FacadeTargetKind
 from pub::facades import format_scalar, WrappedValue as ProviderValue
 from relay import scalar_again
 
@@ -41,4 +41,6 @@ pub def run_renamed_export() -> None:
     assert echo("x", 2) == "x"
     assert typed_target(6, int).value == 6
     assert int(safe_typed_target(7, float).value) == 7
+    assert typed_target(8, FacadeTargetKind).value == "trait 8"
+    assert safe_typed_target(9, FacadeTargetKind).value == "trait 9"
     assert apply_scalar(double) == 8

@@ -553,6 +553,7 @@ pub(super) fn alias_targets_declaration(alias: &ApiAlias, module_path: &[String]
 pub(super) fn type_ref_doc_name(ty: &TypeRef) -> String {
     match ty {
         TypeRef::Named { name, .. } => name.clone(),
+        TypeRef::Trait { identity } => identity.declaration_name.clone(),
         TypeRef::Applied { name, args, .. } => {
             let args = args.iter().map(type_ref_doc_name).collect::<Vec<_>>().join(", ");
             format!("{name}[{args}]")

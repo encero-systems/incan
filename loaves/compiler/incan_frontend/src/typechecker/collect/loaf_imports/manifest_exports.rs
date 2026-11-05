@@ -205,6 +205,9 @@ impl TypeChecker {
         if projected.is_some_and(|ty| ty.has_native_union()) {
             return Some(SymbolKind::Type(TypeInfo::TypeAlias));
         }
+        if let crate::library_manifest::TypeRef::Trait { identity } = projected? {
+            return self.trait_symbol_kind_from_identity(identity, None);
+        }
         let crate::library_manifest::TypeRef::Named {
             origin: Some(origin), ..
         } = projected?
@@ -213,33 +216,7 @@ impl TypeChecker {
         };
         let canonical = origin.canonical.hydrate()?;
         if canonical.kind == SemanticSourceTargetKind::Trait {
-            let entry = self.loaves.declaring_loaf(&canonical)?;
-            if entry.artifact.identity != origin.provider {
-                return None;
-            }
-            let manifest = &entry.artifact.manifest;
-            let identity = manifest
-                .contract_metadata
-                .identity_graph
-                .exports
-                .iter()
-                .find(|identity| {
-                    identity.kind == crate::library_manifest::ExportIdentityKind::Trait
-                        && identity.canonical.as_ref().and_then(|value| value.hydrate()).as_ref() == Some(&canonical)
-                })?;
-            let kind = if identity.public_path.len() == 2 {
-                manifest
-                    .exports
-                    .traits
-                    .iter()
-                    .find(|item| item.name == identity.public_name)
-                    .map(|item| SymbolKind::Trait(self.trait_info_from_manifest(item)))
-            } else {
-                Self::api_declaration_for_target_path(manifest, &identity.source_path).and_then(|declaration| {
-                    self.symbol_kind_from_api_declaration(manifest.contract_metadata.api.as_ref(), declaration)
-                })
-            };
-            return kind.filter(|kind| matches!(kind, SymbolKind::Trait(_)));
+            return self.trait_symbol_kind_from_identity(&canonical, Some(&origin.provider));
         }
         let (entry, identity) = self.loaves.public_nominal(&canonical)?;
         let artifact = &entry.artifact;
@@ -259,6 +236,45 @@ impl TypeChecker {
                 self.symbol_kind_from_api_declaration(artifact.manifest.contract_metadata.api.as_ref(), declaration)
             })
         }
+    }
+
+    /// Reconstruct one trait from the exact canonical identity admitted by its declaring manifest.
+    ///
+    /// `expected_provider` retains the older named-projection check that the alias metadata and selected artifact name
+    /// the same provider. Native trait projections already carry the canonical identity directly and need no route
+    /// provenance check.
+    fn trait_symbol_kind_from_identity(
+        &self,
+        canonical: &CanonicalSymbolId,
+        expected_provider: Option<&crate::loaf_index::LoafIdentity>,
+    ) -> Option<SymbolKind> {
+        let entry = self.loaves.declaring_loaf(canonical)?;
+        if expected_provider.is_some_and(|provider| &entry.artifact.identity != provider) {
+            return None;
+        }
+        let manifest = &entry.artifact.manifest;
+        let identity = manifest
+            .contract_metadata
+            .identity_graph
+            .exports
+            .iter()
+            .find(|identity| {
+                identity.kind == crate::library_manifest::ExportIdentityKind::Trait
+                    && identity.canonical.as_ref().and_then(|value| value.hydrate()).as_ref() == Some(canonical)
+            })?;
+        let kind = if identity.public_path.len() == 2 {
+            manifest
+                .exports
+                .traits
+                .iter()
+                .find(|item| item.name == identity.public_name)
+                .map(|item| SymbolKind::Trait(self.trait_info_from_manifest(item)))
+        } else {
+            Self::api_declaration_for_target_path(manifest, &identity.source_path).and_then(|declaration| {
+                self.symbol_kind_from_api_declaration(manifest.contract_metadata.api.as_ref(), declaration)
+            })
+        };
+        kind.filter(|kind| matches!(kind, SymbolKind::Trait(_)))
     }
 
     /// Reconstruct a checked `rust::` reexport from the ABI metadata shipped beside the public manifest.

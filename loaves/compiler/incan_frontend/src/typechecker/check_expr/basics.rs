@@ -240,6 +240,18 @@ impl TypeChecker {
                 return ResolvedType::Unknown;
             }
             SymbolKind::Trait(_) => {
+                if self.is_type_token_value_span(span) {
+                    let Some(identity) = self.symbols.identity_of(sym_id).cloned() else {
+                        self.errors.push(errors::type_name_used_as_value(name, span));
+                        return ResolvedType::Unknown;
+                    };
+                    return self.finish_identifier_read(
+                        span,
+                        IdentKind::Value,
+                        ResolvedType::TypeToken(Box::new(ResolvedType::Trait(identity))),
+                        source_target,
+                    );
+                }
                 if !self.is_type_receiver_span(span) {
                     self.errors.push(errors::type_name_used_as_value(name, span));
                     self.type_info.expressions.ident_kinds.insert(span, IdentKind::Trait);

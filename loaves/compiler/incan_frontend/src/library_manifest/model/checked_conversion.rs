@@ -56,7 +56,11 @@ pub(super) fn rewrite_type_ref_names(
                 rewrite_type_ref_names(member, owner_module_path, public_names, source_paths_by_leaf);
             }
         }
-        TypeRef::TypeParam { .. } | TypeRef::SelfType | TypeRef::RustPath { .. } | TypeRef::Unknown => {}
+        TypeRef::Trait { .. }
+        | TypeRef::TypeParam { .. }
+        | TypeRef::SelfType
+        | TypeRef::RustPath { .. }
+        | TypeRef::Unknown => {}
     }
 }
 

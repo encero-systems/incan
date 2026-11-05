@@ -372,6 +372,7 @@ impl TypeChecker {
             | ResolvedType::Unknown
             | ResolvedType::TypeVar(_)
             | ResolvedType::RustPath(_)
+            | ResolvedType::Trait(_)
             | ResolvedType::CallSiteInfer => true,
             ResolvedType::Int
             | ResolvedType::Float

@@ -64,12 +64,24 @@ pub model FloatTarget:
     pub value: float
 
 
+pub model TraitTarget:
+    pub value: str
+
+
+pub trait TargetKind:
+    def target_name(self) -> str: ...
+
+
 pub def typed_target(value: int, target: Type[int]) -> IntegerTarget:
     return IntegerTarget(value=value)
 
 
 pub def typed_target(value: int, target: Type[float]) -> FloatTarget:
     return FloatTarget(value=float(value))
+
+
+pub def typed_target(value: int, target: Type[TargetKind]) -> TraitTarget:
+    return TraitTarget(value=f"trait {value}")
 
 
 pub safe_typed_target = alias typed_target

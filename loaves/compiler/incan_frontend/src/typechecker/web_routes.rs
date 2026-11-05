@@ -297,6 +297,7 @@ impl TypeChecker {
             ResolvedType::Generic(name, args) => self.generic_route_type_shape(name, args, role),
             ResolvedType::Named(name) => self.named_route_type_shape(name, role),
             ResolvedType::TypeVar(_)
+            | ResolvedType::Trait(_)
             | ResolvedType::SelfType
             | ResolvedType::Ref(_)
             | ResolvedType::RefMut(_)

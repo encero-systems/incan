@@ -83,6 +83,7 @@ impl TypeChecker {
                 Err("FrozenSet values do not yet have an RFC 113 structural encoding".to_string())
             }
             ResolvedType::Named(name) => self.registry_descriptor_named_type_is_valid(name, visiting),
+            ResolvedType::Trait(_) => Err("traits have no standalone descriptor value representation".to_string()),
             ResolvedType::Generic(name, arguments) => match collection_type_id(name) {
                 Some(CollectionTypeId::Option) if arguments.len() == 1 => {
                     self.registry_descriptor_value_type_is_valid(&arguments[0], visiting)
@@ -141,7 +142,8 @@ impl TypeChecker {
             | ResolvedType::FrozenStr
             | ResolvedType::FrozenBytes
             | ResolvedType::Unit
-            | ResolvedType::Named(_) => Ok(()),
+            | ResolvedType::Named(_)
+            | ResolvedType::Trait(_) => Ok(()),
             ResolvedType::Generic(_, arguments) | ResolvedType::Tuple(arguments) => {
                 for argument in arguments {
                     self.registry_type_reference_is_valid(argument)?;

@@ -102,7 +102,7 @@ target: Type[int] = int
 schemas: list[Type[Schema]] = [Schema, return_schema()]
 ```
 
-Token targets include `int`, `float`, `str`, `bool`, visible models and enums, constrained scalar types, transparent type aliases, and newtypes. A transparent alias normalizes through its complete target chain for compatibility and overload selection. Distinct aliases of the same target therefore cannot declare separate overloads. A newtype remains a distinct token target.
+Token targets include `int`, `float`, `str`, `bool`, visible models, enums and traits, constrained scalar types, transparent type aliases, and newtypes. Trait tokens retain the checked trait declaration through aliases, source facades, and compiled packages. A transparent alias normalizes through its complete target chain for compatibility and overload selection. Distinct aliases of the same target therefore cannot declare separate overloads. A newtype remains a distinct token target.
 
 An overload may select a precise return type from a value-position token:
 

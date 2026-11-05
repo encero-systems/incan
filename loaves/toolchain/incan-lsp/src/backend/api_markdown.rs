@@ -418,6 +418,7 @@ pub(super) fn format_param(param: &ParamExport) -> String {
 pub(super) fn format_type_ref(ty: &TypeRef) -> String {
     match ty {
         TypeRef::Named { name, .. } => name.clone(),
+        TypeRef::Trait { identity } => identity.declaration_name.clone(),
         TypeRef::Applied { name, args, .. } => {
             format!(
                 "{name}[{}]",

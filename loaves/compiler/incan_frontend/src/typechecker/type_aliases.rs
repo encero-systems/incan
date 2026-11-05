@@ -181,6 +181,7 @@ impl TypeChecker {
     /// happen to be in scope for source typechecking.
     pub fn canonicalize_public_library_nominals(&self, ty: &mut ResolvedType) {
         match ty {
+            ResolvedType::Trait(_) => {}
             ResolvedType::Named(name) => self.qualify_public_library_nominal_name(name),
             ResolvedType::Generic(name, args) => {
                 self.qualify_public_library_nominal_name(name);

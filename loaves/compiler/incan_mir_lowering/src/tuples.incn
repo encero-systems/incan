@@ -32,6 +32,7 @@ pub def type_name(ty: &RustType) -> str:
         RustType.Function(params=_params, return_type=_result) => return "Function"
         RustType.Primitive(value) => return str(value)
         RustType.Named(name) => return "Named[" + str(name) + "]"
+        RustType.Trait(identity) => return "Trait[" + identity.render_compact() + "]"
         RustType.Generic(base=base, args=arguments) =>
             mut names: list[str] = []
             for argument in arguments:

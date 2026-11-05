@@ -336,6 +336,7 @@ impl TypeChecker {
             ResolvedType::Ref(_)
             | ResolvedType::RefMut(_)
             | ResolvedType::TypeToken(_)
+            | ResolvedType::Trait(_)
             | ResolvedType::FrozenList(_)
             | ResolvedType::FrozenDict(_, _)
             | ResolvedType::FrozenSet(_)

@@ -142,6 +142,7 @@ pub def native_source_type(
             return Ok(
                 PlanType.TypeToken([native_source_type(constructors, nominals, enums, unions, represented, intrinsics)?]),
             )
+        RustType.Trait(identity) => return Ok(PlanType.Trait(identity.clone()))
         RustType.Unsupported(description) => return Err(f"unsupported Body IR type {description}")
         RustType.NativeBuiltin(RuntimeBuiltinType.ValidationError) => return Ok(PlanType.ValidationError)
         RustType.Function(params=parameters, return_type=result) =>

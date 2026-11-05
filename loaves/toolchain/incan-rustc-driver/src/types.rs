@@ -98,6 +98,12 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         },
         PlanType::NativeTraitObject(path, send, sync) => marked_trait_object_type(tcx, path, *send, *sync)?,
         PlanType::TypeToken(elements) => type_token_type(tcx, elements)?,
+        PlanType::Trait(_) => {
+            return Err(PlanError::Unsupported {
+                function: "source trait".into(),
+                reason: "a source trait identity has storage only inside TypeToken".into(),
+            });
+        }
         PlanType::ScalarRef(elements) => scalar_reference_type(tcx, elements, false)?,
         PlanType::ScalarMutRef(elements) => scalar_reference_type(tcx, elements, true)?,
         PlanType::Future(arguments) => future_alias_type(tcx, arguments)?,

@@ -11,6 +11,8 @@ use incan_lang::lang::types::numerics::{self, NumericTypeId};
 
 use serde::{Deserialize, Serialize};
 
+use crate::facts::CanonicalSymbolId;
+
 /// Read the arity of a Rust tuple type spelling, or `None` when the shape cannot be established.
 ///
 /// This is the single place the compiler decides whether an interop value is destructurable, shared by the
@@ -113,6 +115,10 @@ pub enum IncanType {
     },
     /// The target's C char category, whose signedness comes from the selected native toolchain.
     NativeCChar,
+    /// Canonical checked source trait represented by a type token; it has no standalone runtime storage.
+    ///
+    /// Appended so every earlier serialized discriminant remains unchanged.
+    Trait(CanonicalSymbolId),
 }
 
 /// Physical Rust storage of compiler-owned builtin values. These paths identify the existing native ABI, not a
@@ -237,6 +243,7 @@ impl IncanType {
             Self::Never | Self::TypeVar(_) | Self::SelfType | Self::Infer | Self::Unknown | Self::Unsupported(_) => {
                 AbiV0Ownership::Unknown
             }
+            Self::Trait(_) => AbiV0Ownership::Unknown,
             _ => AbiV0Ownership::Owned,
         }
     }
@@ -246,6 +253,7 @@ impl IncanType {
         match self {
             Self::Primitive(_) => AbiV0Representation::BuiltinValue,
             Self::Named(_) => AbiV0Representation::SourceNominal,
+            Self::Trait(_) => AbiV0Representation::Unknown,
             Self::Decimal { .. } => AbiV0Representation::BuiltinValue,
             Self::Generic { .. } => AbiV0Representation::GenericInstance,
             Self::Function { .. } => AbiV0Representation::FunctionValue,
@@ -331,6 +339,7 @@ impl fmt::Display for IncanType {
             Self::Never => write!(f, "!"),
             Self::Primitive(primitive) => write!(f, "{primitive}"),
             Self::Named(name) | Self::TypeVar(name) => write!(f, "{name}"),
+            Self::Trait(identity) => write!(f, "{}", identity.declaration_name),
             Self::Generic { base, args } => write_joined_type_args(f, base, args),
             Self::Decimal { precision, scale } => write!(f, "decimal[{precision}, {scale}]"),
             Self::Function { params, return_type } => {

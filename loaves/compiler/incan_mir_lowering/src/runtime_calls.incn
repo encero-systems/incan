@@ -748,6 +748,7 @@ def runtime_argument(
             if len(represented) != 1:
                 return Err("invalid governed runtime type token arity")
             return Ok(RustType.TypeToken(runtime_argument(module, represented[0], intrinsics, unions)?))
+        PlanType.Trait(identity) => return Ok(RustType.Trait(identity))
         PlanType.Generator(leaf, depth) =>
             mut element = runtime_argument(module, list_leaf_type(leaf), intrinsics, unions)?
             for _level in range(depth):

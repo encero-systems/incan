@@ -74,6 +74,7 @@ pub def model_type(
         RustType.Primitive(primitive) => return primitive_type(primitive)
         RustType.TypeToken(represented) =>
             return Ok(PlanType.TypeToken([model_type(constructors, declarations, represented)?]))
+        RustType.Trait(identity) => return Ok(PlanType.Trait(identity.clone()))
         RustType.Function(params=parameters, return_type=result) => return function_pointer_type(parameters, result)
         RustType.Tuple(_elements) => return retained_model_type(constructors, declarations, ty)
         RustType.Decimal(precision=_precision, scale=_scale) => return Ok(PlanType.Decimal)

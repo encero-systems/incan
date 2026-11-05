@@ -1,6 +1,7 @@
 //! The publication audit that projects identities, types, places, rvalues and statements into published form.
 
 use super::*;
+use crate::{SemanticSourceTargetKind, SymbolNamespace};
 
 impl<'a> PublicationAudit<'a> {
     /// Preserve a checked fragment-local reflection binder without admitting it as a callable package dependency.
@@ -146,6 +147,14 @@ impl<'a> PublicationAudit<'a> {
             IncanType::Primitive(_) | IncanType::Never | IncanType::Decimal { .. } | IncanType::NativeBuiltin(_) => {
                 Ok(())
             }
+            IncanType::Trait(identity)
+                if identity.kind == SemanticSourceTargetKind::Trait
+                    && identity.namespace == SymbolNamespace::OrdinaryLexical
+                    && identity.scope_discriminant.is_none()
+                    && matches!(&identity.origin, SymbolOrigin::Module(_) | SymbolOrigin::Package { .. }) =>
+            {
+                Ok(())
+            }
             IncanType::RustInteropPath(path) if path == "str" => Ok(()),
             IncanType::Generic { base, args }
                 if matches!(base.as_str(), "[]" | "Awaitable" | "$FrozenList" | "$FrozenSet") =>
@@ -200,6 +209,7 @@ impl<'a> PublicationAudit<'a> {
             | IncanType::SelfType
             | IncanType::RustInteropPath(_)
             | IncanType::NativeTraitObject { .. }
+            | IncanType::Trait(_)
             | IncanType::Infer
             | IncanType::Unknown
             | IncanType::Unsupported(_) => Err(CoverageReason::UnresolvedReference),
