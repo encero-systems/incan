@@ -25,21 +25,26 @@ struct InherentSpecialization {
 }
 
 impl TypeChecker {
-    /// Retain an imported native value's inherent length method through ordinary metadata dispatch. Builtin source
-    /// collections and text keep their own length contract; native lengths return int or usize. No native identity
-    /// or missing method is invented.
+    /// Retain an imported native value's inherent length method through ordinary metadata dispatch.
+    ///
+    /// A binding may expose a source collection while retaining a native borrowed carrier, such as `&[u8]` behind
+    /// `bytes`; that executable carrier selects its own `len`. Ordinary source collections and text keep their builtin
+    /// length contract, and native lengths return int or usize. No native identity or missing method is invented.
     pub(in crate::typechecker) fn retain_native_length_call(
         &mut self,
         receiver: &crate::ast::Spanned<crate::ast::Expr>,
         ty: &ResolvedType,
         span: crate::ast::Span,
     ) -> bool {
-        if matches!(ty, ResolvedType::Generic(name, _) if crate::typechecker::helpers::collection_type_id(name).is_some())
-            || matches!(ty, ResolvedType::RustPath(path) if self.rust_array_parts(path).is_some())
+        let native = self.rust_native_value_type(receiver).unwrap_or_else(|| ty.clone());
+        if (&native == ty
+            && matches!(ty, ResolvedType::Generic(name, _)
+                if crate::typechecker::helpers::collection_type_id(name).is_some()))
+            || matches!(&native, ResolvedType::RustPath(path) if self.rust_array_parts(path).is_some())
         {
             return false;
         }
-        let Some((path, _, _, _)) = self.rust_identity_for_type(ty) else {
+        let Some(path) = self.rust_canonical_path_for_receiver_type(&native) else {
             return false;
         };
         let Some(metadata) = self.rust_item_metadata_for_path(&path) else {

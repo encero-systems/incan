@@ -3,6 +3,33 @@
 use super::*;
 
 impl TypeChecker {
+    /// Recheck an open native call argument after this source call has closed its parameter type.
+    ///
+    /// Native receiver inference can initially retain a source view containing the callee's own type parameter. Once
+    /// another checked native carrier closes that parameter, the instantiated destination selects the concrete native
+    /// owner and signature, just as an explicit annotation at the argument would. Already closed and nonnative
+    /// arguments keep their first check.
+    pub(super) fn settle_native_call_arguments_at_instantiation(
+        &mut self,
+        type_params: &[String],
+        params: &[CallableParam],
+        args: &[CallArg],
+        bindings: &std::collections::HashMap<String, ResolvedType>,
+    ) {
+        for (expression, parameter) in Self::arguments_with_parameters(params, args) {
+            let Some(parameter) = parameter else { continue };
+            if first_open_type_param(&parameter.ty, type_params).is_none()
+                || !self.type_info.rust.checked_calls.contains_key(&expression.span)
+            {
+                continue;
+            }
+            let instantiated = substitute_resolved_type(&parameter.ty, bindings);
+            if first_open_type_param(&instantiated, type_params).is_none() {
+                self.check_expr_with_expected(expression, Some(&instantiated));
+            }
+        }
+    }
+
     /// Retype a generic call's literal arguments at its instantiation (see
     /// [`Self::retype_literal_arguments_at_instantiation`]) and close each binding the arguments left open with the
     /// type the literals give it, for a function and a generic method alike (#1561).

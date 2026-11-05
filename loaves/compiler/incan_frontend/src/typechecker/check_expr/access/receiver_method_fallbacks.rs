@@ -177,6 +177,9 @@ impl TypeChecker {
         if !self.is_generic_placeholder_type(receiver) {
             return None;
         }
+        if let Some(result) = self.resolve_bound_rust_trait_method(call, receiver, arg_types) {
+            return Some(result);
+        }
         let name = self.generic_placeholder_name(receiver).map(str::to_string)?;
         self.resolve_generic_placeholder_method(
             &name,
