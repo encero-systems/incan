@@ -52,6 +52,9 @@ impl BodyBuilder<'_, '_> {
                     out,
                 )?
             }
+            Some(CheckedInputSource::CarriedLocal) => {
+                return Err("owned local source must not retain a carrier local loan".into());
+            }
             Some(CheckedInputSource::Temporary) => {
                 return Err("owned local source must not retain an invocation temporary".into());
             }

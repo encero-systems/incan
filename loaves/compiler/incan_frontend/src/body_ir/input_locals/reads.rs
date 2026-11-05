@@ -91,10 +91,21 @@ impl BodyBuilder<'_, '_> {
     ) -> Option<bir::Operand> {
         let source = self.checked_borrow_source(expression)?;
         let result = (|| {
-            let CheckedInputSource::Place { root, fields } = source? else {
+            let source = source?;
+            let place = self.lower_expr_to_place(expression, scope, out);
+            if matches!(source, CheckedInputSource::CarriedLocal) {
+                let ty = self.resolve_ty(expression.span);
+                let fact = if ty.abi_v0_facts().ownership.is_trivially_copy() {
+                    bir::OwnershipFact::Copy
+                } else {
+                    bir::OwnershipFact::Borrow
+                };
+                self.consume_place_read(&place);
+                return Ok(bir::Operand::place(place, fact, false));
+            }
+            let CheckedInputSource::Place { root, fields } = source else {
                 return Err("local alias has no original source storage".to_owned());
             };
-            let place = self.lower_expr_to_place(expression, scope, out);
             self.authenticate_input_place(&place, &root, &fields)?;
             let ty = self.resolve_ty(expression.span);
             let fact = if ty.abi_v0_facts().ownership.is_trivially_copy() {

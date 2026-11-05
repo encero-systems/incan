@@ -122,6 +122,9 @@ impl BodyBuilder<'_, '_> {
                     self.authenticate_input_place(&place, &root, &fields)?;
                     self.explicit_place_operand(place, &ty, argument.access, expression)?
                 }
+                Some(CheckedInputSource::CarriedLocal) => {
+                    return Err("explicit input argument cannot use a retained carrier local proof".into());
+                }
                 Some(CheckedInputSource::Temporary) | None => {
                     let value = self.lower_boundary_value(expression, Some(&ty), scope, out);
                     self.explicit_temporary_operand(value, ty, argument.access, expression.span, scope, out)?
