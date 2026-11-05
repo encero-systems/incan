@@ -34,7 +34,7 @@ from type_parameters import Instance, instantiate, request_instance
 from function_frames import frame_parameter_type
 from frame_instances import merge_externals
 from runtime_frames import runtime_frame_adapter
-from runtime_requirements import RuntimeRequirement, RuntimeRetention
+from runtime_requirements import RuntimeRequirement
 from layout_types import carrier_name, native_source_type
 from native_type_identity import ConstructorIndex
 from program_context import ProgramContext, retain_nominal_tables
@@ -60,19 +60,23 @@ pub model RuntimeRedirects:
     """
     Index settled runtime signatures without repeatedly walking already-built function plans. `native` holds each
     path whose signature without type arguments settled as native linkage, so a later queue request never examines it
-    again.
+    again. `deferred` holds each runtime path whose declaration this attempt has not loaded, and `missing` the one
+    requirement each such declaration records, at the first call that selected it.
     """
 
     pub entries: BTreeMap[str, list[int]]
     pub bindings: list[RuntimeRedirect]
     pub native: BTreeMap[str, bool]
+    pub deferred: BTreeMap[str, bool]
+    pub missing: list[RuntimeRequirement]
 
 
 pub def runtime_redirects() -> RuntimeRedirects:
     """Start one signature inventory for the complete checked instance queue."""
     entries: BTreeMap[str, list[int]] = BTreeMap.new()
     native: BTreeMap[str, bool] = BTreeMap.new()
-    return RuntimeRedirects(entries=entries, bindings=[], native=native)
+    deferred: BTreeMap[str, bool] = BTreeMap.new()
+    return RuntimeRedirects(entries=entries, bindings=[], native=native, deferred=deferred, missing=[])
 
 
 pub def retain_runtime_instances(
@@ -87,7 +91,7 @@ pub def retain_runtime_instances(
     mut nominal_instances: list[NominalInstance],
     mut unions: list[RustType],
     mut redirects: RuntimeRedirects,
-) -> Result[RuntimeRetention, str]:
+) -> Result[None, str]:
     """
     Retain runtime selections: 1. Retain coroutines. 2. Close frames and register implementations. 3. Retain native calls.
 
@@ -95,12 +99,21 @@ pub def retain_runtime_instances(
     its closed frame joins the ordinary queue, and every call with that exact runtime signature names that frame.
     The queue owns its shared union inventory; only newly retained nominal declarations invalidate that inventory.
     The explicit foreign mutable loan keeps frame retention from snapshotting every checked body per request.
+    A call whose runtime declaration this attempt has not loaded stays unbound: it is neither redirected nor settled as
+    native linkage, and its requirement waits in `redirects.missing` until the queue drains.
     """
-    requirements = missing_runtime_requirements(module, externals, functions, redirects)?
-    if len(requirements) != 0:
-        return Ok(RuntimeRetention.NeedsRuntime(requirements))
+    # Defer missing declarations first, so no step below binds a call to a declaration this attempt lacks.
+    defer_missing_runtime(module, externals, functions, redirects)?
     # 1. Retain coroutine instances before ordinary call frames.
-    retain_runtime_future_instances(program.constructors.as_ref(), module, functions, instances, intrinsics, unions)?
+    retain_runtime_future_instances(
+        program.constructors.as_ref(),
+        module,
+        functions,
+        instances,
+        intrinsics,
+        unions,
+        redirects,
+    )?
     # 2. Close each newly selected body, adapt its inputs and retain its canonical instance and final redirection.
     # Each exact signature settles once: a redirected one leaves the list, a native one stays and is not reexamined.
     mut keep: list[bool] = []
@@ -108,6 +121,9 @@ pub def retain_runtime_instances(
     mut linked: list[ExternalFunction] = []
     for position in range(len(externals)):
         if settled_native(redirects, borrowed_at(externals, position)):
+            keep.append(true)
+            continue
+        if deferred_runtime(redirects, borrowed_at(externals, position).path):
             keep.append(true)
             continue
         external = borrowed_at(externals, position).clone()
@@ -194,7 +210,7 @@ pub def retain_runtime_instances(
             _ = externals.pop()
         externals.extend(retained)
     merge_externals(externals, linked)?
-    return Ok(RuntimeRetention.Complete)
+    return Ok(None)
 
 
 def runtime_selection(external: &ExternalFunction) -> CalleeKind:
@@ -222,41 +238,52 @@ def settle_native(mut redirects: RuntimeRedirects, external: ExternalFunction) -
         redirects.native.insert(external.path, true)
 
 
-def missing_runtime_requirements(
+def deferred_runtime(redirects: &RuntimeRedirects, path: str) -> bool:
+    """Whether this attempt already found a runtime path's declaration missing; nothing loads it before the next one."""
+    match redirects.deferred.get(path):
+        None => return false
+        Some(_deferred) => return true
+
+
+def defer_missing_runtime(
     module: &BodyIrModule,
     externals: &list[ExternalFunction],
     functions: &list[Function],
-    redirects: &RuntimeRedirects,
-) -> Result[list[RuntimeRequirement], str]:
+    mut redirects: RuntimeRedirects,
+) -> Result[None, str]:
     """
     Demand only selected external calls and deferred coroutine callees, before mutating their frame inventories.
-    A signature settled as native linkage already met its demand.
+    A signature settled as native linkage already met its demand, and a deferred path already recorded its own.
     """
-    mut requests: list[RuntimeRequirement] = []
     for position in range(len(externals)):
         external = borrowed_at(externals, position)
         if settled_native(redirects, external):
             continue
-        retain_runtime_requirement(module, external.path, external.span, requests)?
+        retain_runtime_requirement(module, external.path, external.span, redirects)?
     for position in range(len(functions)):
         function = borrowed_at(functions, position)
         match function.future_callee:
             Some(callee) =>
                 match callee.kind:
                     CalleeKind.Instantiated(path, _arguments) =>
-                        retain_runtime_requirement(module, path, callee.span, requests)?
+                        retain_runtime_requirement(module, path, callee.span, redirects)?
                     _ => pass
             None => pass
-    return Ok(requests)
+    return Ok(None)
 
 
 def retain_runtime_requirement(
     module: &BodyIrModule,
     path: str,
     span: SourceSpan,
-    mut requests: list[RuntimeRequirement],
+    mut redirects: RuntimeRedirects,
 ) -> Result[None, str]:
-    """Bind a demand through the checked public facade; a missing facade never acquires an invented identity."""
+    """
+    Bind a demand through the checked public facade; a missing facade never acquires an invented identity. A missing
+    declaration defers its path and records one requirement per canonical identity.
+    """
+    if deferred_runtime(redirects, path):
+        return Ok(None)
     match runtime_canonical(module, path)?:
         None => return Ok(None)
         Some(identity) =>
@@ -268,10 +295,11 @@ def retain_runtime_requirement(
                 declaration = borrowed_at(module.loaf_callables, position)
                 if declaration.canonical == identity:
                     return Ok(None)
-            for request in requests:
+            redirects.deferred.insert(path, true)
+            for request in redirects.missing:
                 if request.canonical == identity:
                     return Ok(None)
-            requests.append(RuntimeRequirement(canonical=identity.clone(), path=path, span=span))
+            redirects.missing.append(RuntimeRequirement(canonical=identity.clone(), path=path, span=span))
     return Ok(None)
 
 
@@ -430,6 +458,7 @@ def retain_runtime_future_instances(
     mut instances: list[Instance],
     mut intrinsics: list[EnumDeclaration],
     unions: &list[RustType],
+    redirects: &RuntimeRedirects,
 ) -> Result[None, str]:
     """
     Select governed async bodies behind boxing shims.
@@ -437,7 +466,8 @@ def retain_runtime_future_instances(
     1. Close their retained arguments. 2. Verify captures and queue the source coroutine.
 
     Future constructors hold their callee outside ordinary terminators. Their exact capture ABI must agree with the
-    source coroutine; no ordinary return adapter may turn its deferred execution into an eager call.
+    source coroutine; no ordinary return adapter may turn its deferred execution into an eager call. A callee whose
+    declaration this attempt has not loaded keeps its unbound selection.
     """
     nominals = borrowed_table(module.nominal_declarations)
     enums = borrowed_table(module.enum_declarations)
@@ -458,7 +488,7 @@ def retain_runtime_future_instances(
                         span = callee.span
                     _ => pass
             None => pass
-        if path == "":
+        if path == "" or deferred_runtime(redirects, path):
             continue
         # 1. Close the retained source declaration's arguments.
         body = runtime_async_body(module, path, len(types))?
