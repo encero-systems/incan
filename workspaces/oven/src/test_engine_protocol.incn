@@ -673,6 +673,8 @@ def process_lifecycle() -> Result[None, str]:
     mut second = launch_service(binary, root, identity)?
     mut silent = await_connection(root, identity)?
     mut channel = await_service(root, identity)?
+    # The handshake bound ended with the handshake: this client waits for its build as long as a command does.
+    channel.transport.wait_at_most(600)
     silent.close()?
     peer = channel.transport.peer()?
     assert peer.pid == Some(first.pid()) or peer.pid == Some(second.pid())
