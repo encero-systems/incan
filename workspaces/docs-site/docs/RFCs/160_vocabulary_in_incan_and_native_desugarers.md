@@ -243,7 +243,7 @@ It also contains the canonical surface representation a desugarer reads and writ
 - `VocabSyntaxNode`, `VocabDeclaration`, `VocabClause`, `IncanExpr`, `IncanStatement`, `IncanDeclaration`, `Span`;
 - `DesugarRequest`, `DesugarResponse`, `DesugarOutput`, `DesugarError`.
 
-These carry the shapes RFC 027 and RFC 081 define, expressed as Incan models and enums, with constructors and accessors for authoring desugarers. The representation is initially syntax-shaped, but it is deliberately not the compiler's private syntax tree. It is a published, versioned contract that the compiler translates from and into its own representations. Changing the compiler's internal syntax tree therefore never changes a package's interface. A later schema version may target RFC 161's semantic core directly.
+These carry the shapes RFC 027 and RFC 081 define, expressed as Incan models and enums, with constructors and accessors for authoring desugarers. The representation is syntax-shaped, but it is deliberately not the compiler's private syntax tree. It is a published, versioned contract that the compiler translates from and into its own representations. Changing the compiler's internal syntax tree therefore never changes a package's interface. A desugarer's output is checked like authored source and then normalizes into RFC 161's semantic core, so a package never writes the semantic core directly and cannot bypass checking.
 
 ### Relationship to source surfaces
 
