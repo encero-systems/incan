@@ -22,7 +22,7 @@ Redesign Incan's `std.web` platform so the stdlib can provide HTTP applications 
 
 This RFC defines the intended end-state for `std.web`: Incan's standard-library surface for serving HTTP applications and APIs.
 
-The developer experience should be native to Incan rather than shaped by backend interop constraints. The primary server-side experience is FastAPI-like: `@get(...)` route decorators, an `App` built from those routes, typed parameters, plain return values, framework-owned serialization, and first-class platform features such as auth, middleware, validation, lifecycle, and docs. The platform should also support a Django-style organization layer and a declarative DSL when those provide real ergonomic value.
+The developer experience should be native to Incan rather than shaped by backend interop constraints. The primary server-side experience is FastAPI-like: `@web.get(...)` route decorators, an `App` built from those routes, typed parameters, plain return values, framework-owned serialization, and first-class platform features such as auth, middleware, validation, lifecycle, and docs. The platform should also support a Django-style organization layer and a declarative DSL when those provide real ergonomic value.
 
 This RFC is intentionally an umbrella design RFC for the serving side. It defines the product shape, semantics direction, capability boundaries, and migration goals for `std.web`. A sub-area deep enough to require its own precise RFC refines this design rather than replacing it.
 
@@ -66,22 +66,22 @@ This means:
 The primary experience should feel close to FastAPI:
 
 ```incan
-from std.web import App, get, post
+from std import web
 
-@get("/")
+@web.get("/")
 async def index() -> dict[str, str]:
     return {"message": "Hello World"}
 
-@get("/users/{id}")
+@web.get("/users/{id}")
 async def get_user(id: int) -> User:
     return load_user(id)?
 
-@post("/users")
+@web.post("/users")
 async def create_user(body: CreateUser) -> User:
     return save_user(body)?
 
 def main():
-    App(routes=[index, get_user, create_user]).run(port=8080)
+    web.App(routes=[index, get_user, create_user]).run(port=8080)
 ```
 
 From a user's point of view:
@@ -279,7 +279,7 @@ The primary surface should be the reference mental model. Secondary surfaces sho
 
 - **RFC 023** establishes the current stdlib/runtime handoff baseline, but this RFC aims to remove more user-facing interop leakage from the final experience.
 - **RFC 035** is important because function values are a natural part of handler, middleware, and decorator systems.
-- **RFC 036** is foundational because proper decorators are central to the desired `@get(...)` model.
+- **RFC 036** is foundational because proper decorators are central to the desired `@web.get(...)` model.
 - **RFC 027** matters because DSL forms should prefer vocab/desugaring over new compiler special-cases.
 - **RFC 031** matters because framework growth should live comfortably in the library ecosystem.
 
@@ -389,4 +389,4 @@ This includes:
 3. Docs and schema generation should infer contracts from checked handler signatures, models, auth metadata, and response declarations. Explicit metadata should be available for summaries, tags, examples, security requirements, and cases where inference would be ambiguous or misleading.
 4. Django-style organization is a secondary surface, not the primary model. `std.web` should own the serving primitives and any lightweight grouping concepts needed by the core platform; larger project-layout conventions may live in higher-level libraries unless they prove necessary as standard-library facades over the same `App` model.
 5. RFC 037 owns HTTP serving. gRPC, Arrow-oriented, or other transport RFCs may reuse concepts such as `App`, `Route`, `Schema`, `Guard`, and lifecycle hooks, but must not be forced into a fake-HTTP abstraction or make RFC 037 responsible for their wire-level details.
-6. An application is built from values. `@get` and `@post` turn a function into a route value, and `App(routes=[...], groups=[...])` lists what it serves, in a function, because a module holds only declarations. Nothing depends on when a decorator runs, tests build their own application, and one route can appear in more than one application. A route no application lists is reported by a lint.
+6. An application is built from values. `@web.get` and `@web.post` turn a function into a route value, and `App(routes=[...], groups=[...])` lists what it serves, in a function, because a module holds only declarations. Nothing depends on when a decorator runs, tests build their own application, and one route can appear in more than one application. A route no application lists is reported by a lint.
