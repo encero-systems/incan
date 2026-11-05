@@ -129,7 +129,7 @@ An inspection view can show that `api_token` exists, is required, and has type `
 
 ### Module surface
 
-`std.secrets` must expose `SecretStr`, `SecretBytes`, `SecretError`, `SecretErrorKind`, `SecretSourceKind`, `SecretStorageProtection`, `RedactedSecret`, and `redacted`.
+`std.secrets` must expose `SecretStr`, `SecretBytes`, `SecretError`, `SecretErrorKind`, `SecretSourceKind`, `SecretStorageProtection`, `RedactedSecret`, `redacted`, and `random_token`.
 
 ```incan
 from std.serde.json import Serialize
@@ -171,6 +171,9 @@ pub model SecretError with Error:
 
 
 pub def redacted(secret: SecretStr | SecretBytes) -> RedactedSecret: ...
+
+
+pub def random_token(bytes: int = 32) -> Result[SecretStr, SecretError]: ...
 ```
 
 This is a normative source-signature sketch for prospective APIs, not a claim that the pre-implementation compiler can check the block as a standalone module. It uses current Incan union, value-enum, public-model, field-alias, trait-adoption, and function-signature spelling; `...` omits implementation bodies, while `SecretStr` and `SecretBytes` are specified below.
@@ -178,6 +181,8 @@ This is a normative source-signature sketch for prospective APIs, not a claim th
 `RedactedSecret` is an intentionally public, forgeable, non-secret serialization marker. Direct construction carries no security or trust authority: constructing a marker never makes a plain value secret, and consumers must derive sensitivity from the checked secret type or another authoritative policy source rather than trusting marker claims. `redacted` produces the canonical marker by setting `sensitive=True`, `redacted=True`, and `type_` to exactly `"SecretStr"` or `"SecretBytes"`. Ordinary serialization uses the field alias and therefore emits exactly `{"sensitive": true, "redacted": true, "type": "SecretStr"}` or the corresponding `SecretBytes` object. The adapter contains no provenance, storage mode, payload slot, or payload-derived value.
 
 `SecretError` is the only public operation error for secret storage and payload access. `message()` must return a stable redacted explanation selected only from `kind`; it must not expose payload, length, invalid UTF-8 position, cryptographic algorithm detail, nonce, key epoch, source identifier, or another payload-derived fact. `InvalidUtf8` reports failed UTF-8 validation, `IntegrityFailure` reports the first authenticated-storage verification failure, `Poisoned` reports later access to a value whose integrity has already failed, and `StorageUnavailable` reports inability to establish or maintain the selected storage contract.
+
+`random_token` must return a URL-safe token built from that many secure random bytes, for values such as invite codes, API tokens and reset links. It requires RFC 104's `host.random`, and its source kind must be `SecretSourceKind.Generated`.
 
 `SecretStr` must represent owned UTF-8 secret text. `SecretBytes` must represent owned binary secret material.
 
