@@ -61,7 +61,7 @@ Record the chosen route, clicks, wrong turns, unclear terms, and missing prerequ
 
 ## Automated guard
 
-`make docs-check-learning` verifies:
+`make docs` runs the learning-journey check, which verifies:
 
 - the six route markers and representative project links;
 - the self-contained Incan/IncQL boundary with no dead external destination;

@@ -7,9 +7,8 @@ Use an installed dev.8 toolchain for compiler work. The repository has no Cargo 
 From the repository root:
 
 ```bash
-make pre-commit-fast
-make reference-contract-check
-make docs-build
+make pre-commit
+make docs
 ```
 
 The fast gate checks Rust formatting, US English, changed rustdocs and the skill table. Reference review and strict documentation builds are separate checks.

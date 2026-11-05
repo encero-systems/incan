@@ -9,7 +9,7 @@ from std.environ import get_or
 from std.json import JsonValue
 from std.hash import sha256
 from std.encoding.hex import hexlify
-from files import json_text, make_directory, read_json, write
+from files import json_text, make_directory, read, read_json, write
 from home import TOOLCHAIN, standard_packages
 from json_fields import array_value, required_items, required_text, string_value
 from toolchain import (
@@ -47,6 +47,8 @@ const FROM_PROFILE: str = "../../../"
 const RESTATED_RECORD_SUFFIX: str = "native.json.oven-unit"
 pub const PACK_USAGE: str = "incan toolchain pack OUT"
 pub const INSTALL_USAGE: str = "incan toolchain install ARCHIVE"
+const RUST_TOOLCHAIN: str = "1.98.0"
+const RUST_INSTALL_COMMAND: str = "rustup toolchain install 1.98.0 --profile minimal --component rustc-dev"
 
 
 pub def help_text(command: str) -> str:
@@ -628,14 +630,18 @@ def install_staged(archive: Path, stage: Path, target: Path) -> Result[None, str
     """
     # 1. Nothing in the archive can land outside the stage or plant the machine's sysroot link.
     mut clock = begin()
-    listing = command_text("tar", ["-tf", archive.0])?
+    listing = command_text("tar", ["-tf", archive.0]).map_err(
+        (error) => f"cannot inventory toolchain archive {archive.0}: {error}",
+    )?
     record(Operation.ArchiveInventory, archive.0, clock)
     for entry in listing.split("\n"):
         if entry != "" and not safe_member(entry):
             return Err(f"unsafe toolchain archive member: {entry}")
     # 2. The archive is unpacked into the stage.
     clock = begin()
-    run_command("tar", ["-xf", archive.0, "-C", stage.0])?
+    run_command("tar", ["-xf", archive.0, "-C", stage.0]).map_err(
+        (error) => f"cannot unpack toolchain archive {archive.0} into {stage.0}: {error}",
+    )?
     record(Operation.ArchiveUnpack, archive.0, clock)
     # 3. The archive is a toolchain of this Oven, and every path its manifest names stays inside the toolchain.
     document = read_json(stage.joinpath("toolchain.json"))?
@@ -650,8 +656,13 @@ def install_staged(archive: Path, stage: Path, target: Path) -> Result[None, str
     verify_contents(toolchain)?
     # 5. The machine's Rust installation is linked in, and the driver proves it is the compiler it was built against.
     sysroot = local_sysroot()?
-    symlink(sysroot.0, stage.joinpath("sysroot").0).map_err((error) => str(error))?
-    run_command(toolchain.driver, ["--identity", toolchain.sysroot])?
+    sysroot_link = stage.joinpath("sysroot")
+    symlink(sysroot.0, sysroot_link.0).map_err(
+        (error) => f"cannot link Rust sysroot {sysroot.0} at {sysroot_link.0}: {error}",
+    )?
+    run_command(toolchain.driver, ["--identity", toolchain.sysroot]).map_err(
+        (error) => f"cannot verify compiler {toolchain.driver} against Rust sysroot {toolchain.sysroot}: {error}",
+    )?
     # 6. Only a verified toolchain replaces the installed one.
     publish_install(stage, target, admission)?
     println(f"installed {TOOLCHAIN}: {target.0}")
@@ -716,15 +727,43 @@ def manifest_paths(document: JsonValue) -> Result[list[str], str]:
 
 
 def local_sysroot() -> Result[Path, str]:
-    """Select an explicit sysroot, else rustup 1.98.0, else rustc; identity verification decides compatibility."""
+    """Select the pinned complete Rust sysroot, reporting the exact command that provisions missing prerequisites."""
     configured = get_or("INCAN_SYSROOT", "")
     if configured != "":
-        return Path(configured).resolve().map_err((error) => error.message())
-    match command_text("rustup", ["run", "1.98.0", "rustc", "--print", "sysroot"]):
-        Ok(output) => return Path(output.strip()).resolve().map_err((error) => error.message())
-        Err(_) =>
-            output = command_text("rustc", ["--print", "sysroot"])?
-            return Path(output.strip()).resolve().map_err((error) => error.message())
+        sysroot = Path(configured)
+            .resolve()
+            .map_err((error) => f"cannot resolve INCAN_SYSROOT {configured}: {error.message()}")?
+        require_rust_components(sysroot)?
+        return Ok(sysroot)
+    output = command_text("rustup", ["run", RUST_TOOLCHAIN, "rustc", "--print", "sysroot"]).map_err(
+        (_) => f"Rust {RUST_TOOLCHAIN} with rustc-dev is required; run: {RUST_INSTALL_COMMAND}",
+    )?
+    sysroot = Path(output.strip())
+        .resolve()
+        .map_err((error) => f"cannot resolve the Rust {RUST_TOOLCHAIN} sysroot {output.strip()}: {error.message()}")?
+    require_rust_components(sysroot)?
+    return Ok(sysroot)
+
+
+pub def require_rust_components(sysroot: Path) -> Result[None, str]:
+    """Require the compiler libraries the installed driver links against, before verifying that driver."""
+    manifest = sysroot.joinpath("lib/rustlib/components")
+    components = read(manifest).map_err(
+        (_) => f"Rust {RUST_TOOLCHAIN} has no component manifest at {manifest.0}; run: {RUST_INSTALL_COMMAND}",
+    )?
+    if not has_component(components, "rustc-dev"):
+        return Err(
+            f"Rust {RUST_TOOLCHAIN} is missing required component rustc-dev; run: rustup component add --toolchain {RUST_TOOLCHAIN} rustc-dev",
+        )
+    return Ok(None)
+
+
+def has_component(manifest: str, required: str) -> bool:
+    """Recognize a target-independent component or its host-qualified manifest entry."""
+    for component in manifest.split("\n"):
+        if component == required or component.startswith(required + "-"):
+            return true
+    return false
 
 
 def publish_install(stage: Path, target: Path, admission: InstallationAdmission) -> Result[None, str]:

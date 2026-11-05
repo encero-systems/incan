@@ -32,6 +32,7 @@ Select the primary areas touched (used for review routing; labels are managed se
 
 - [ ] `make test` / `cargo test`
 - [ ] `make examples` (if relevant)
+- [ ] `make test` (affected families, or list focused selectors below)
 - [ ] `incan fmt --check .` (if relevant)
 - [ ] Manual verification described below
 
@@ -54,5 +55,4 @@ If docs updated:
 - [ ] I kept public docs user-focused and moved internals to contributing docs when appropriate
 - [ ] I avoided duplicating canonical install/run instructions in multiple places
 - [ ] I added/updated tests where it materially reduces regressions
-
 

@@ -38,8 +38,8 @@ Do not use `/fix` as a substitute for first-pass diagnosis when the problem is s
 8. Append short timestamped entries to `## Activity` as you work. Log each major action instead of relying on a final prose recap.
 9. After edits, run `make fmt`.
 10. Run the smallest relevant contract selector (one case or area) from `workspaces/contracts/README.md`; run the affected whole families at commit points.
-11. Run `make pre-commit-fast` (formatting, spelling, rustdoc, and skill-table checks).
-12. If `make pre-commit-fast` fails for reasons unrelated to your fixes, keep the local fixes and report the failure as residual risk in the report file.
+11. Run `make pre-commit` (formatting, spelling, rustdoc, and skill-table checks).
+12. If `make pre-commit` fails for reasons unrelated to your fixes, keep the local fixes and report the failure as residual risk in the report file.
 13. If findings remain unresolved, classify each as one of:
    - out of scope,
    - risky without user confirmation,
@@ -54,7 +54,7 @@ Do not use `/fix` as a substitute for first-pass diagnosis when the problem is s
 - Use `incan inspect codegraph PATH --query defs TERM` or `--query callers TERM` for declaration and call relationships before grep.
 - Extend an existing case before adding one; add a case only when no case in the same area can carry the behavior. The whole suite stays under about 3,000 tests. Never add a case per bug: name it in `# behavior:`. Each library case has one producer Loaf carrying all its declarations.
 - Change design records only when a decision changes, in a sentence or two. Keep decisions, boundaries, consequences, and non-goals under about 1,000 words; mechanisms belong in commit messages and rustdoc, never a paragraph per commit.
-- Run `make us-english-check` before every commit.
+- Run `incan run scripts/check_us_english.incn` before every commit.
 - Keep docs and code aligned. If you fix behavior, update user-facing docs that claim the old behavior. If behavior is out of scope, correct the docs instead of inventing implementation.
 - For Rust prose comments, write natural paragraphs and let `make fmt` wrap them. Do not manually chop prose into short lines.
 - For Markdown, keep prose as natural paragraphs. Do not introduce short-prosed or mechanically chopped text.
@@ -67,11 +67,11 @@ Do not use `/fix` as a substitute for first-pass diagnosis when the problem is s
 
 - `make fmt`
 - the smallest relevant contract selector during development, then affected whole families at commit points
-- `make pre-commit-fast` (`make fmt-check`, `make us-english-check`, `make rustdoc-gate`, and `make agents-doc-sync`)
+- `make pre-commit` (`make pre-commit`, `incan run scripts/check_us_english.incn`, `incan run scripts/check_changed_rustdocs.incn`, and `incan run scripts/check_agents_doc_sync.incn`)
 
 Use `incan run workspaces/contracts/src/main.incn -- INCAN workspaces/contracts/fixtures SELECTOR`, substituting the compiler under test and selector. Oven owns builds and execution; never run Cargo. Verify command names against the Makefile and `workspaces/oven/src/main.incn`.
 
-If `make pre-commit-fast` fails because of unrelated sandbox or network issues, say so explicitly in `.agents/state/review-report.md`. That does not justify leaving local findings unfixed.
+If `make pre-commit` fails because of unrelated sandbox or network issues, say so explicitly in `.agents/state/review-report.md`. That does not justify leaving local findings unfixed.
 
 The report must remain a structured artifact. Do not replace it with a narrative summary. If `## Activity` is missing, repair the report before you finish. For orchestrated runs, the canonical report should stay thin and findings-driven; do not recreate a giant per-file checklist there.
 

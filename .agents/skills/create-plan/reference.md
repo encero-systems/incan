@@ -42,11 +42,11 @@ Replace bracketed sections. Remove sections that do not apply. Point **Gate** at
 
 | Step | Command |
 |------|---------|
-| Format | `make fmt` (Incan) / `make fmt-check` (IncQL) / … |
+| Format | `make fmt` (Incan) / `make pre-commit` (IncQL) / … |
 | Focused contracts | `incan run workspaces/contracts/src/main.incn -- INCAN workspaces/contracts/fixtures SELECTOR` (Incan; substitute compiler and case/area selector) |
 | Commit contracts | Same runner with affected whole-family selectors (Incan) |
-| Fast gate | `make pre-commit-fast` (Incan) / [verified target repo gate] |
-| Before every commit | `make us-english-check` (Incan) |
+| Fast gate | `make pre-commit` (Incan) / [verified target repo gate] |
+| Before every commit | `incan run scripts/check_us_english.incn` (Incan) |
 
 ## Success criteria
 

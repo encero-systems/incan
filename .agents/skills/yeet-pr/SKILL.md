@@ -40,12 +40,12 @@ If either skill is missing, stop and say which standard is unavailable instead o
    - Stage only in-scope files, preferably by explicit path.
    - Use `git add -A` only when the whole worktree is confirmed in scope.
    - Commit with the standards-compliant subject.
-   - Run `make us-english-check` before every commit in Incan, including any merge commit.
+   - Run `incan run scripts/check_us_english.incn` before every commit in Incan, including any merge commit.
    - Do not amend or rewrite user commits unless the user explicitly asks.
 
 5. **Verify after the final history shape**
    - If checks already ran before a rebase/merge, rerun at least focused checks after the rebase/merge.
-   - Prefer the repo's documented gate when feasible. For Incan, use `make pre-commit-fast` (formatting, spelling, rustdoc, and skill-table checks) unless the user asked for a narrower publish. Run the smallest relevant contract selectors during development and affected whole families at commit points, using `workspaces/contracts/README.md`; the fast gate does not run contracts.
+   - Prefer the repo's documented gate when feasible. For Incan, use `make pre-commit` (formatting, spelling, rustdoc, and skill-table checks) unless the user asked for a narrower publish. Run the smallest relevant contract selectors during development and affected whole families at commit points, using `workspaces/contracts/README.md`; the fast gate does not run contracts.
    - Verify commands against the Makefile and `workspaces/oven/src/main.incn`; Oven owns builds and execution, and Cargo commands are not supported. Use `incan inspect codegraph PATH --query defs TERM` or `--query callers TERM` for declaration and call relationships before grep.
    - Check test changes against the budget: extend existing cases before adding any, add only when no same-area case can carry the behavior, keep the whole suite under about 3,000 tests, name guarded bugs in `# behavior:`, and use one producer Loaf carrying all declarations per library case.
    - Design records change only when a decision changes, in a sentence or two. Keep decisions, boundaries, consequences, and non-goals under about 1,000 words; mechanisms belong in commit messages and rustdoc, never a paragraph per commit.

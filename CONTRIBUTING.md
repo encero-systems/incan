@@ -18,7 +18,7 @@ Use an installed dev.8 toolchain with its matching compiled standard packages. S
 ```bash
 git clone https://github.com/encero-systems/incan
 cd incan
-make install-hooks
+git config core.hooksPath "$PWD/.githooks"
 incan run examples/simple/hello.incn
 ```
 
@@ -49,17 +49,16 @@ Extend an existing contract case in the same area before adding a case. Preserve
 
 ```bash
 make fmt
-make pre-commit-fast
-make us-english-check
+make pre-commit
 ```
 
 `make fmt` runs file-scoped rustfmt. Format Incan like the surrounding source. Every changed Rust function or method needs accurate rustdoc; every new Incan declaration needs a docstring. Use Result propagation rather than `.unwrap()` or `.expect()`, including in tests.
 
-Run `make docs-build` from `workspaces/docs-site` when changing the docs site. Review each page's intent separately: a successful build proves links and rendering, while reference pages still need a complete public contract.
+Run `make docs` when changing the docs site. Review each page's intent separately: a successful build proves links and rendering, while reference pages still need a complete public contract.
 
 ## Check documentation paths
 
-Run `make doc-paths` to check concrete repository references in contributor documentation, non-state Markdown under `.agents/`, contributor pages and Loaf READMEs. Point each reference at the current owning source, or remove it when that source is gone. Do not create a file merely to satisfy a reference.
+`make pre-commit` checks concrete repository references in contributor documentation, non-state Markdown under `.agents/`, contributor pages and Loaf READMEs. Point each reference at the current owning source, or remove it when that source is gone. Do not create a file merely to satisfy a reference.
 
 The checker also reads fenced examples and diagrams. Use real repository inputs for runnable examples. `scripts/check_doc_paths.allow` records intentional illustrative references as a document, exact token and reason separated by tabs; a trailing `/**` names a subtree. An exception must explain an illustrative reference, never hide a stale implementation path.
 

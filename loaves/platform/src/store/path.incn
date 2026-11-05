@@ -12,14 +12,15 @@ from std.primitives.fs.path import PrimitivePath
 
 
 pub model StoreIoError:
-    """One store filesystem failure with its path and host detail preserved."""
+    """One store filesystem failure with its operation, path and host detail preserved."""
 
     pub path: str
     pub detail: str
+    pub operation: str = "store io"
 
     pub def message(self) -> str:
-        """Return the host failure detail used by the store's typed error boundary."""
-        return self.detail
+        """Return an actionable diagnostic naming the failed operation and path."""
+        return f"{self.operation} {self.path}: {self.detail}"
 
 
 pub model StorePathStat:

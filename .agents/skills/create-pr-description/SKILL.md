@@ -60,9 +60,9 @@ If the template is not found, the skill uses the standard template structure.
 
 ### Testing / verification
 - [ ] Relevant contracts: `incan run workspaces/contracts/src/main.incn -- INCAN workspaces/contracts/fixtures SELECTOR` (substitute compiler and selector; whole families at commit points)
-- [ ] `make fmt-check` / `make rustdoc-gate` (changed Rust)
-- [ ] `make pre-commit-fast` (formatting, spelling, rustdoc, skill table)
-- [ ] `make us-english-check` before every commit
+- [ ] `make pre-commit` / `incan run scripts/check_changed_rustdocs.incn` (changed Rust)
+- [ ] `make pre-commit` (formatting, spelling, rustdoc, skill table)
+- [ ] `incan run scripts/check_us_english.incn` before every commit
 - Manual verification notes
 
 ### Docs impact
@@ -126,9 +126,9 @@ This PR fixes RFC 042 trait supertrait assignability and generic upcast compatib
 ## Testing / verification
 
 - [ ] Relevant `check` and `behavior` contracts; record selectors and affected whole-family counts
-- [ ] `make fmt-check` / `make rustdoc-gate` (changed Rust)
-- [ ] `make pre-commit-fast`
-- [ ] `make us-english-check` before every commit
+- [ ] `make pre-commit` / `incan run scripts/check_changed_rustdocs.incn` (changed Rust)
+- [ ] `make pre-commit`
+- [ ] `incan run scripts/check_us_english.incn` before every commit
 - [ ] Manual verification described below
 
 **Coverage to verify:**
@@ -190,9 +190,9 @@ This PR implements RFC 035: First-class named function references in Incan. Name
 ## Testing / verification
 
 - [ ] Relevant `check` and `behavior` contracts; record selectors and affected whole-family counts
-- [ ] `make fmt-check` / `make rustdoc-gate` (changed Rust)
-- [ ] `make pre-commit-fast`
-- [ ] `make us-english-check` before every commit
+- [ ] `make pre-commit` / `incan run scripts/check_changed_rustdocs.incn` (changed Rust)
+- [ ] `make pre-commit`
+- [ ] `incan run scripts/check_us_english.incn` before every commit
 - [ ] Manual verification described below
 
 **Coverage to verify:**

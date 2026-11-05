@@ -113,10 +113,10 @@ incan run workspaces/contracts/src/main.incn -- INCAN workspaces/contracts/fixtu
 
 # Rust formatting and fast local gate; these do not run contracts
 make fmt
-make pre-commit-fast
+make pre-commit
 ```
 
-`make fmt-check`, `make us-english-check`, and `make rustdoc-gate` are also available separately. Run `make us-english-check` before every commit. Oven builds and runs units; never run Cargo. Verify commands against the Makefile and `workspaces/oven/src/main.incn`.
+`make pre-commit`, `incan run scripts/check_us_english.incn`, and `incan run scripts/check_changed_rustdocs.incn` are also available separately. Run `incan run scripts/check_us_english.incn` before every commit. Oven builds and runs units; never run Cargo. Verify commands against the Makefile and `workspaces/oven/src/main.incn`.
 
 ## Step 5: Verify
 

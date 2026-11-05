@@ -36,7 +36,7 @@ jobs:
         with:
           components: rustfmt
       - name: Check Rust formatting
-        run: make fmt-check
+        run: git ls-files -z 'loaves/*.rs' ':!:loaves/**/fixtures/**' | xargs -0 rustfmt +nightly --edition 2024 --config skip_children=true --check
       - name: Install dev.8
         uses: ./.github/actions/install-build-toolchain
         with:
@@ -56,6 +56,6 @@ jobs:
           fi
           incan run scripts/check_changed_rustdocs.incn -- --base "$base_ref"
       - name: Check US English
-        run: make us-english-check
+        run: incan run scripts/check_us_english.incn
       - name: Check the AGENTS.md skill table
-        run: make agents-doc-sync-ci
+        run: incan run scripts/check_agents_doc_sync.incn
