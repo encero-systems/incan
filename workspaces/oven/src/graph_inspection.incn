@@ -41,6 +41,7 @@ from cli_help import render as render_help
 const QUERY_KINDS: FrozenList[str] = ["defs", "refs", "callers", "callees", "imports"]
 pub const USAGE: str = "incan inspect codegraph PATH [GRAPH OPTIONS]"
 pub const VALUE_OPTIONS: FrozenList[str] = [
+    "--profile",
     "--query",
     "--format",
     "--limit",
@@ -57,6 +58,7 @@ pub model GraphOptions:
     """A source or project and its graph presentation, independent of compiler semantics."""
 
     pub path: str = ""
+    pub profile: str = "debug"
     pub format: str = "jsonl"
     pub query: str = ""
     pub term: str = ""
@@ -131,6 +133,7 @@ pub def help_text() -> str:
         USAGE,
         [
             "  --format json|jsonl|compact  Output format (default jsonl); compact requires --task.",
+            "  --profile NAME              Select the artifact profile (default debug).",
             "  --query KIND TERM           Query defs, refs, callers, callees or imports.",
             "  --limit N                   Maximum query hits (default 20; minimum 0).",
             "  --task TASK                 Select a context pack; excludes --query and --stale.",
@@ -156,8 +159,10 @@ def read_query(mut result: GraphOptions, arguments: list[str], index: int) -> Re
 
 
 def apply_flag(mut result: GraphOptions, flag: str, item: str) -> Result[None, str]:
-    """Apply one value flag, retaining its format, limit, budget, task or snapshot constraints."""
-    if flag == "--format":
+    """Apply one value flag, retaining its profile, format, limit, budget, task or snapshot constraints."""
+    if flag == "--profile":
+        result.profile = item
+    elif flag == "--format":
         result.format = item
     elif flag == "--limit":
         result.limit = limit_of(item)?
@@ -252,10 +257,17 @@ pub def prepare_inspection(selected: GraphOptions) -> Result[PreparedInspection,
     source = entry_source(path)
     mut paths: list[GraphUnit] = []
     if source.is_file() and source.name().endswith(".incn"):
-        paths = inspect_source(source, toolchain, selected.substitutes)?
+        paths = inspect_source(source, selected.profile, toolchain, selected.substitutes)?
     else:
         root = owning_project(path, selected.path)?
-        paths = inspect_rust(root, "debug", FeatureRequest(), selected.substitutes, toolchain, selected.query == "defs")?
+        paths = inspect_rust(
+            root,
+            selected.profile,
+            FeatureRequest(),
+            selected.substitutes,
+            toolchain,
+            selected.query == "defs",
+        )?
     trace(f"graph preparation: {started.elapsed().as_millis()} ms")
     # 3. CLI and service consumers share the same rendered facts and freshness checks.
     return Ok(PreparedInspection(paths=paths, root=path.0, selected=selected, toolchain=toolchain))
@@ -362,7 +374,15 @@ def presentation_inputs(
         match relative_scope(root, anchors):
             None => return Ok(None)
             Some(scope) => key_root = f"relative:{scope}"
-    mut inputs = [PRESENTATION_DOMAIN, snapshot, key_root, selected.format, selected.query, selected.term]
+    mut inputs = [
+        PRESENTATION_DOMAIN,
+        snapshot,
+        key_root,
+        selected.profile,
+        selected.format,
+        selected.query,
+        selected.term,
+    ]
     inputs = inputs + [str(selected.limit), str(selected.strict)]
     inputs = inputs + [selected.task, str(selected.budget)]
     boost_values = JsonValue.object(
@@ -580,7 +600,12 @@ def warn(message: str) -> None:
     _ = err.write_all(RustString.from(f"{message}\n").into_bytes())
 
 
-def inspect_source(source: Path, toolchain: Toolchain, substitutes: Dict[str, str]) -> Result[list[GraphUnit], str]:
+def inspect_source(
+    source: Path,
+    profile: str,
+    toolchain: Toolchain,
+    substitutes: Dict[str, str],
+) -> Result[list[GraphUnit], str]:
     """
     Inspect the source closure through checked interfaces, without building an Incan library.
 
@@ -593,19 +618,26 @@ def inspect_source(source: Path, toolchain: Toolchain, substitutes: Dict[str, st
     match project_root_of(source):
         None =>
             parent = source.parent()
-            graph = inspect_incan(source, toolchain)?
+            graph = inspect_incan(source, profile, toolchain)?
             return Ok([GraphUnit(path=graph, root=parent, source_root=parent.0)])
         Some(root) =>
             # 2. A project's dependencies contribute the graphs they published, and registry Loaves theirs.
-            prepared = prepare_graph(root, "debug", FeatureRequest(), substitutes, toolchain)?
+            prepared = prepare_graph(root, profile, FeatureRequest(), substitutes, toolchain)?
             mut paths = prepared.paths + registry_graphs(registry_artifacts(prepared.facets, prepared.request)?)
             # 3. A library is already among the prepared graphs; any other source adds the graph of its own unit.
             if source.name() != "lib.incn":
                 paths.append(own_unit_graph(source, root, prepared, toolchain)?)
             # 4. The standard Loaves the units reach join, except the one the project itself is.
             package = rust_facet(root.0, false, prepared.request.manifests)?.package
-            standard = standard_graphs(root, "debug", toolchain, paths, prepared.registry, package,
-                                       prepared.request.manifests)?
+            standard = standard_graphs(
+                root,
+                profile,
+                toolchain,
+                paths,
+                prepared.registry,
+                package,
+                prepared.request.manifests,
+            )?
             return Ok(paths + standard)
 
 
@@ -620,9 +652,19 @@ def own_unit_graph(
         if facet.project == root.0 and facet.domain.value() == "target":
             loaves = unit_loaves(facet, prepared.interfaces, prepared.request.manifests)?
             natives = unit_natives(facet, prepared.built, prepared.request, loaves)?
-            graph = inspect_incan(source, toolchain, natives, prepared.interfaces, facet.features, false, loaves,
-                                  registry=Some(prepared.registry), reader=prepared.request.manifests,
-                                  facets=prepared.facets)?
+            graph = inspect_incan(
+                source,
+                prepared.request.profile,
+                toolchain,
+                natives,
+                prepared.interfaces,
+                facet.features,
+                false,
+                loaves,
+                registry=Some(prepared.registry),
+                reader=prepared.request.manifests,
+                facets=prepared.facets,
+            )?
             return Ok(GraphUnit(path=graph, root=root, source_root=root.0))
     return Err("inspection selected no source unit")
 

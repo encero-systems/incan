@@ -53,7 +53,7 @@ def checked_graph(root: Path) -> Result[str, str]:
     """Export current source through Oven, refusing any unchecked unit or failed command."""
     mut command = Command.new(var("INCAN").unwrap_or("incan"))
     command.current_dir(root.0)
-    for argument in ["inspect", "codegraph", SOURCE, "--format", "jsonl", "--strict"]:
+    for argument in ["inspect", "codegraph", SOURCE, "--profile", "release", "--format", "jsonl", "--strict"]:
         command.arg(argument)
     output = command.output().map_err((error) => error.to_string())?
     if not output.status.success():

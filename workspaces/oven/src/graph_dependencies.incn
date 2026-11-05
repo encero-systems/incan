@@ -163,9 +163,7 @@ pub def prepare_graph(
 ) -> Result[GraphDependencies, str]:
     """Prepare one inspection with one registry reading and one source-project traversal, never retained globally."""
     mut preparation = GraphPreparation(registry=read_registry_units(Path(toolchain.registry_units))?)
-    return prepare_project_graph(
-        root, profile, features, substitutes, toolchain, ancestors, published_only, preparation,
-    )
+    return prepare_project_graph(root, profile, features, substitutes, toolchain, ancestors, published_only, preparation)
 
 
 def prepare_project_graph(
@@ -233,8 +231,15 @@ def prepare_project_graph(
     trace(f"graph native lookup {root.0}: {prepared.elapsed().as_millis()} ms")
     closure = native_closure(root, request)?
     checked = Instant.now()
-    checked_paths, interfaces = checked_units(facets, built, request, toolchain, len(ancestors) == 0,
-                                             published_only, available)?
+    checked_paths, interfaces = checked_units(
+        facets,
+        built,
+        request,
+        toolchain,
+        len(ancestors) == 0,
+        published_only,
+        available,
+    )?
     trace(f"graph checked exports {root.0}: {checked.elapsed().as_millis()} ms")
     # 4. Further projects the manifest names are inspected on their own, and their graphs join this one's.
     mut paths = checked_paths
@@ -271,8 +276,16 @@ def source_graphs(
                     return Err(f"cyclic codegraph source selection: {project.0}")
                 if project.0 in preparation.sources:
                     continue
-                additional = prepare_project_graph(project, profile, FeatureRequest(), {}, toolchain,
-                                                   ancestors + [root.0], false, preparation)?
+                additional = prepare_project_graph(
+                    project,
+                    profile,
+                    FeatureRequest(),
+                    {},
+                    toolchain,
+                    ancestors + [root.0],
+                    false,
+                    preparation,
+                )?
                 paths = paths + additional.paths
             return Ok(paths)
 
@@ -512,8 +525,19 @@ def checked_units(
         mut selected: list[LocalFacet] = []
         if facet.domain == DependencyDomain.Target:
             selected = facets
-        path = inspect_incan(source, toolchain, natives, interfaces, facet.features, false, loaves,
-                             registry=Some(registry), reader=request.manifests, facets=selected)?
+        path = inspect_incan(
+            source,
+            request.profile,
+            toolchain,
+            natives,
+            interfaces,
+            facet.features,
+            false,
+            loaves,
+            registry=Some(registry),
+            reader=request.manifests,
+            facets=selected,
+        )?
         trace(f"graph checked {package}: {started.elapsed().as_millis()} ms")
         if not is_unchecked(path):
             interfaces[package] = interface_directory(path)

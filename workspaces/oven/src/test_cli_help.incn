@@ -70,6 +70,7 @@ pub def test_help_uses_each_commands_synopsis_and_respects_operands() -> None:
     assert command_help("incan", "run", ["src/main.incn", "--", "--help"]) == None
     assert command_help("incan", "run", ["--argv0", "--help", "src/main.incn"]) == None
     assert command_help("oven", "check", ["--profile", "--help", "src/main.incn"]) == None
+    assert command_help("incan", "inspect", ["codegraph", ".", "--profile", "--help"]) == None
     assert command_help("incan", "fmt", ["--", "--help"]) == None
     assert command_help("incan", "inspect", ["codegraph", ".", "--query", "defs", "--help"]) == None
     assert command_help("incan", "nonexistent", ["--help"]) == None

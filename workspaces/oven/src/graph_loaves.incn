@@ -105,7 +105,18 @@ def standard_graph(
         source = library_source(Path(source_root), reader)?
         natives = unit_natives(facet, {}, request)?
         legacy = inspect_incan(
-            source, toolchain, natives, {}, facet.features, false, [], Some(owner), Some(registry), reader, facets,
+            source,
+            profile,
+            toolchain,
+            natives,
+            {},
+            facet.features,
+            false,
+            [],
+            Some(owner),
+            Some(registry),
+            reader,
+            facets,
         )?
         return Ok(GraphUnit(path=legacy, root=Path(f"@std/{package}"), package=package, source_root=source_root))
     return Err(f"no standard graph source selected for {package}")
