@@ -202,20 +202,21 @@ class SupportDesk:
 ```
 
 ```incan
-server = Server(name="support-desk", version="1.4.0", tools=[desk.search_tickets], resources=[desk.ticket], prompts=[desk.triage])
+def build_server(desk: SupportDesk) -> Server:
+    return Server(name="support-desk", version="1.4.0", tools=[desk.search_tickets], resources=[desk.ticket], prompts=[desk.triage])
 ```
 
 A variable in the URI template must be a parameter of the handler. MCP prompt arguments are strings, so a prompt's parameters must be `str` or `Option[str]`. A server that breaks either rule refuses to start.
 
 ### Serve over HTTP
 
-`mount` puts the same server on a `std.web` application, which owns serving, authentication and guards:
+`mount` turns the same server into a group for a `std.web` application, which owns serving, authentication and guards:
 
 ```incan
 from std.web import App
 
-app = App()
-server.mount(app, path="/mcp")?
+def build_app(server: Server) -> Result[App, McpError]:
+    return Ok(App(groups=[server.mount(path="/mcp")?]))
 ```
 
 Over HTTP, `ToolContext.current().principal` comes from the application's `AuthProvider`. Over stdio it is `None`, because the protocol says stdio servers take credentials from the environment.
@@ -305,7 +306,7 @@ In stdio mode the AI client starts your program and reads its messages from stan
 35. In-flight requests must run through RFC 142's `for_each_concurrent` with `limit=max_concurrent`, with no scheduler of its own.
 36. While `serve_stdio` runs, everything the process and its children write to standard output, including through native libraries, must reach stderr, and only the server must write to the protocol stream.
 37. `std.io` must provide `stdin()` as a `BinaryReader` with an async form, and `stdout()`.
-38. `server.mount(app, path, ...)` must serve Streamable HTTP on an RFC 037 `App`, taking the same limits. Authentication must come from the application's `AuthProvider` and `Guard` into `ToolContext.current().principal`, and must not be reimplemented by `std.mcp`.
+38. `server.mount(path, ...)` must return a group that serves Streamable HTTP on an RFC 037 `App`, taking the same limits. Authentication must come from the application's `AuthProvider` and `Guard` into `ToolContext.current().principal`, and must not be reimplemented by `std.mcp`.
 39. `mount` and its `std.web` dependency must be separately selectable, so a server that only uses stdio, such as `incan mcp`, does not carry the web stack.
 
 ### Conformance workloads
