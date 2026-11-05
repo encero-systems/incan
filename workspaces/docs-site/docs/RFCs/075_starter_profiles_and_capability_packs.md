@@ -623,7 +623,7 @@ Human-readable output may be optimized for terminal use, but it must not be the 
 
 ### Descriptor compatibility
 
-Each starter or mix descriptor may declare `requires-incan`. If present, the active toolchain must satisfy the descriptor constraint before the descriptor is applied.
+Each starter or mix descriptor may declare `requires-incan`. If present, the toolchain selected under RFC 073 must satisfy the descriptor constraint before the descriptor is applied.
 
 If a descriptor is applied to an existing project, its `requires-incan` must also be compatible with the project's effective toolchain constraint. The descriptor must not silently loosen `[project].requires-incan`. If the descriptor requires a narrower range, the CLI may propose a manifest update, but it must show the resulting effective constraint before writing.
 

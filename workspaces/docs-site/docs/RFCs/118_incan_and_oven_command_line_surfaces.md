@@ -180,7 +180,7 @@ A directory with a `Cargo.toml` and no `loaf.toml` is not a project for either s
 | Direct source/module execution outside a Loaf, or explicitly requested direct work | `incan`         | `run --direct`, `-m`, `-c`, `repl`                                                                              |
 | Parsing, checking, formatting, compiler diagnostics                                | `incan`         | `check`, `fmt`                                                                                                  |
 | Language services and semantic products                                            | `incan`         | `lsp`, `inspect` (including `inspect codegraph`), `architect`, `mcp`                                            |
-| Toolchain installation and packing                                                 | `incan`         | `toolchain` (`install`, `pack`)                                                                                 |
+| Toolchain installation and packing                                                 | `incan`         | `toolchain` (`install`, `list`, `default`, `remove`, `target`, `pack`)                                                                                 |
 | Manifest and workspace selection                                                   | `oven`          | `init`, `new`, member selection                                                                                 |
 | Dependency, lock, and registry lifecycle                                           | `oven`          | `add` (shorthand for `dependency add`), `dependency`, `remove`, `update`, `lock`, `registry`, `publish`, `yank`, `audit` |
 | Target, carrier, provider, and artifact lifecycle                                  | `oven`          | `plan`, `check`, `build`, `bake`, `run`, `test`, `inspect`, `describe-unit`, `bakery` (`status`, `verify`, `gc`) |
@@ -246,6 +246,8 @@ These four are the whole alias set. Every other project operation is spelled wit
 The Incan distribution is the installation and update unit. It includes a compatible compiler/runtime and Oven core/provider set, and exposes both command entry points. A Rust-only project may use Oven, but installs the Incan distribution; it does not need to author Incan sources or separately install a competing Oven product.
 
 The distribution must report compatible component versions and reject an unsupported Oven/provider/compiler combination before it claims to have produced a plan or bake. The receipt records the selected component identities.
+
+Several distributions must be able to live side by side in one Incan home. `incan toolchain install <version>` adds one, `list` shows them, `default <version>` chooses the active one, and `remove <version>` deletes one. Installing a version must not disturb another, and a project must not have to be rebuilt because another version was installed, because the toolchain is already part of a unit's identity in the shared bakery. The `incan` and `oven` entry points run the toolchain selected under RFC 073: inside a project, one that satisfies the project's constraints, and otherwise the active one.
 
 ### Relationship to RFC 090
 
