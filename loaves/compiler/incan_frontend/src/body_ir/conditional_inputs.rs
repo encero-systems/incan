@@ -79,9 +79,9 @@ impl BodyBuilder<'_, '_> {
         }
     }
 
-    /// Only statement-if scopes and statement loops with explicit joins may transfer a canonical whole subject
-    /// conditionally. Assertion failure messages, expression conditionals and comprehension loops keep their
-    /// existing deliberate refusal.
+    /// Only scopes whose continuing owner state is restored or explicitly joined may transfer a canonical whole
+    /// subject conditionally. Statement branches and assertion-failure messages provide that policy; expression
+    /// conditionals and comprehension loops remain refused.
     pub(super) fn input_transfer_path_supported(&self, local: bir::LocalId) -> bool {
         (self.conditional_scopes.is_empty() && self.loop_scopes.is_empty())
             || (self

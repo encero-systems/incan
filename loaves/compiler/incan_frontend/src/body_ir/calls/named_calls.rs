@@ -547,6 +547,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // a call carrying one holds its carrier, as a method call's does.
         if let Some(view) = self.view_call_place(span, None, &bound.arguments) {
             return match view {
+                Ok((place, access)) if bound.is_async => {
+                    self.awaited_view_places.insert(span, (place, access));
+                    match super::returned_views::async_reference_carrier(ty, access) {
+                        Ok(ty) => self.push_call_temp(target, bound.arguments, ty, scope, hir_span_value, false, out),
+                        Err(description) => self.unsupported_operand(description, scope, hir_span_value, out),
+                    }
+                }
                 Ok((place, access)) => self.push_view_call(target, bound.arguments, place, access, hir_span_value, out),
                 Err(description) => self.unsupported_operand(description, scope, hir_span_value, out),
             };

@@ -1,4 +1,4 @@
-# behavior: a task spawned from an explicit body would outlive the body's borrowed inputs, so spawning a call that borrows one is refused (#2500).
+# behavior: a spawned task retains its dependencies and is refused when it could outlive the borrowed input it holds (#2500).
 # expect-diagnostic: INCAN-T0123
 
 import std.async

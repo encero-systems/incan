@@ -592,10 +592,10 @@ impl Builder<'_> {
     }
 
     /// The returned view relation of a selected call itself, direct or carried, read from its callee's contract
-    /// without its body.
+    /// without its body. Await and grouping preserve the selected call's relationship.
     pub(super) fn call_relation(&self, expression: &Spanned<Expr>) -> Result<Option<ViewRelation>, Unavailable> {
+        let expression = super::super::builtins::view_call(expression);
         match &expression.node {
-            Expr::Paren(inner) => return self.call_relation(inner),
             Expr::Call(..) | Expr::MethodCall(..) => {}
             _ => return Ok(None),
         }
@@ -631,6 +631,15 @@ impl Builder<'_> {
         let incoming = match &expression.node {
             // `?` continues on the carried view's place; its error path leaves the body carrying no loan.
             Expr::Paren(inner) | Expr::Try(inner) => return self.evaluate_view_call(inner, relation, incoming),
+            Expr::Surface(surface) if super::super::builtins::awaited(surface).is_some() => {
+                let awaited = super::super::builtins::awaited(surface).ok_or(Unavailable {
+                    span,
+                    reason: "await has no returned-view expression".into(),
+                })?;
+                let call = super::super::builtins::view_call(awaited);
+                self.awaited.insert(call.span);
+                return self.evaluate_view_call(awaited, relation, incoming);
+            }
             Expr::MethodCall(receiver, _, _, arguments) => {
                 self.apply_call(Some(receiver), arguments, span, incoming)?
             }
