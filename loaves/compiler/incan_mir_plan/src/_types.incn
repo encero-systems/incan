@@ -82,7 +82,7 @@ pub enum ListLeaf:
     USize
     # Exact-width numeric storage uses the same carrier table as scalar overflow results.
     Numeric(SizedNumeric)
-    # A local collection may hold an exact shared reference without copying its referent into the collection.
+    # A local collection may hold an exact shared or exclusive reference without copying its referent into the collection.
     Reference(list[PlanType])
 
 

@@ -224,6 +224,10 @@ impl CheckedInputBody<'_> {
             Expr::Paren(inner) | Expr::Unary(_, inner) | Expr::Field(inner, _) | Expr::Try(inner) => {
                 self.visit_operation_expression(inner, parameters, execution, seen)?;
             }
+            Expr::Index(base, index) => {
+                self.visit_operation_expression(base, parameters, execution, seen)?;
+                self.visit_operation_expression(index, parameters, execution, seen)?;
+            }
             Expr::Binary(left, _, right) => {
                 self.visit_operation_expression(left, parameters, execution, seen)?;
                 self.visit_operation_expression(right, parameters, execution, seen)?;

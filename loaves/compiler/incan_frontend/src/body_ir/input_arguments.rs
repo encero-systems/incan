@@ -73,9 +73,9 @@ impl BodyBuilder<'_, '_> {
                 IncanInputAccess::Shared
             };
             let receiver = match (checked.source, checked.owned) {
-                (Some(CheckedInputSource::Place { root, fields }), false) => {
+                (Some(CheckedInputSource::Place { root, fields, elements }), false) => {
                     let place = self.lower_expr_to_place(receiver, scope, out);
-                    self.authenticate_input_place(&place, &root, &fields)?;
+                    self.authenticate_input_place(&place, &root, &fields, &elements)?;
                     self.consume_input_source_read(receiver, &place);
                     let fact = if checked.exclusive {
                         bir::OwnershipFact::MutBorrow
@@ -84,14 +84,14 @@ impl BodyBuilder<'_, '_> {
                     };
                     bir::Operand::place(place, fact, false)
                 }
-                (Some(CheckedInputSource::Place { root, fields }), true) => {
+                (Some(CheckedInputSource::Place { root, fields, elements }), true) => {
                     let ty = self
                         .type_info
                         .expr_type(receiver.span)
                         .map(|ty| self.checked_type(ty))
                         .ok_or("explicit method receiver has no checked type")?;
                     let place = self.lower_expr_to_place(receiver, scope, out);
-                    self.authenticate_input_place(&place, &root, &fields)?;
+                    self.authenticate_input_place(&place, &root, &fields, &elements)?;
                     self.explicit_place_operand(place, &ty, access, receiver)?
                 }
                 (Some(CheckedInputSource::Temporary) | None, _) => {
@@ -146,12 +146,12 @@ impl BodyBuilder<'_, '_> {
                 .ok_or("explicit input has no selected value parameter")?;
             let ty = self.checked_type(&parameter.ty);
             let value = match argument.source {
-                Some(CheckedInputSource::Place { root, fields }) => {
+                Some(CheckedInputSource::Place { root, fields, elements }) => {
                     if self.resolve_ty(expression.span) != ty {
                         return Err("explicit source-place input cannot coerce or copy its owner".into());
                     }
                     let place = self.lower_expr_to_place(expression, scope, out);
-                    self.authenticate_input_place(&place, &root, &fields)?;
+                    self.authenticate_input_place(&place, &root, &fields, &elements)?;
                     self.explicit_place_operand(place, &ty, argument.access, expression)?
                 }
                 Some(CheckedInputSource::CarriedLocal) => {
@@ -209,19 +209,33 @@ impl BodyBuilder<'_, '_> {
         place: &bir::Place,
         root: &CanonicalSymbolId,
         fields: &[CanonicalSymbolId],
+        elements: &[usize],
     ) -> Result<(), String> {
         let local = place
             .local_id()
             .and_then(|id| self.locals.get(id.index()))
             .ok_or("explicit input has no local owner storage")?;
-        if local.identity.as_ref() != Some(root) || place.projection.len() != fields.len() {
+        if local.identity.as_ref() != Some(root) || place.projection.len() != fields.len() + elements.len() {
             return Err("explicit input storage differs from its checked source owner".into());
         }
-        for (projection, field) in place.projection.iter().zip(fields) {
-            if !matches!(projection, bir::PlaceElem::Field { canonical: Some(identity), structural: false, .. } if identity == field)
-            {
-                return Err("explicit input storage differs from its checked field projection".into());
+        let mut fields = fields.iter();
+        for (position, projection) in place.projection.iter().enumerate() {
+            if elements.contains(&position) {
+                if !matches!(projection, bir::PlaceElem::Index(_)) {
+                    return Err("explicit input storage differs from its checked element projection".into());
+                }
+            } else {
+                let field = fields
+                    .next()
+                    .ok_or("explicit input lost its checked field projection")?;
+                if !matches!(projection, bir::PlaceElem::Field { canonical: Some(identity), structural: false, .. } if identity == field)
+                {
+                    return Err("explicit input storage differs from its checked field projection".into());
+                }
             }
+        }
+        if fields.next().is_some() {
+            return Err("explicit input did not materialize every checked field projection".into());
         }
         Ok(())
     }

@@ -4,6 +4,26 @@ use super::{BodyBuilder, IncanType, SemanticSourceTargetKind, ast, bir};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 
 impl BodyBuilder<'_, '_> {
+    /// Give an all-view list the physical reference carrier declared by each selected call, rather than the
+    /// substituted source place's referent type. Mixed or spread entries retain their existing refusal boundary.
+    pub(super) fn retained_reference_list_type(&self, entries: &[ast::ListEntry]) -> Option<IncanType> {
+        let types: Option<Vec<_>> = entries
+            .iter()
+            .map(|entry| {
+                let ast::ListEntry::Element(value) = entry else {
+                    return None;
+                };
+                let call_span = self.input_body.as_ref().ok()?.as_ref()?.view_call_span(value);
+                let (access, _, _) = self.type_info.selected_call_view(call_span)?;
+                Some(super::returned_views::reference_value(
+                    self.resolve_ty(value.span),
+                    access,
+                ))
+            })
+            .collect();
+        types.and_then(|types| Self::homogeneous_list_type(&types))
+    }
+
     /// Retain a canonical set conversion's element from its already evaluated builtin iterable. Frozen constants
     /// carry their own checked type; other sources require a whole local's retained storage. Source model/class
     /// spellings cannot grant builtin iteration, and a generic body must declare the exact set return contract

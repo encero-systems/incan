@@ -317,6 +317,11 @@ impl CheckedInputBody<'_> {
                 place.projection.push(flow::Projection::Field(field.clone()));
                 Ok(Some((place, through)))
             }
+            Expr::Index(base, index) => {
+                let (mut place, through) = self.call_place(base)?.ok_or("input index has no stored owner")?;
+                place.projection.push(flow::Projection::Element(index.span));
+                Ok(Some((place, through)))
+            }
             _ => Ok(None),
         }
     }
