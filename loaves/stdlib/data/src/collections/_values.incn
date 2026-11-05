@@ -1,0 +1,33 @@
+"""Value helpers shared by the list-backed `std.collections` containers."""
+
+from rust::incan_std_core::collections import list_get
+
+
+pub def _value_index[T with (Clone, Eq)](items: list[T], value: T) -> int:
+    for index in range(len(items)):
+        if items[index] == value:
+            return index
+    return -1
+
+
+pub def _contains_value[T with (Clone, Eq)](items: &list[T], value: T) -> bool:
+    """Borrow the collection while retaining the explicit Clone and Eq effects of each comparison."""
+    for index in range(len(items)):
+        item: &T = list_get(items, index)
+        if _clone_referent(item) == value:
+            return true
+    return false
+
+
+pub def _value_range[T with (Clone, Ord)](items: list[T], start: T, end: T) -> list[T]:
+    mut out: list[T] = []
+    for item in items:
+        value: T = item.clone()
+        if value >= start and value < end:
+            out.append(value)
+    return out
+
+
+pub def _clone_referent[T with Clone](value: &T) -> T:
+    """Retain an explicit Clone effect on the referent rather than copying its shared reference."""
+    return value.clone()
