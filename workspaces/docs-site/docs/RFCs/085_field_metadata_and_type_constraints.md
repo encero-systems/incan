@@ -228,7 +228,7 @@ model Customer:
 
 The field keeps its identity. `std.db` reads records stored under the old name with no migration, an API diff reports a rename rather than a removal and an addition, and generated documentation shows the history. The nested block uses RFC 150's vocabulary, so `since`, `retire_in` and `message` mean what they mean on `deprecated`. `retire_in` is a plan rather than a deadline: once the package reaches that version, a lint suggests removing the key, and nothing changes on its own. Enum variants take the same key.
 
-`renamed_from` is separate from `as`, which sets a wire name. `email_address as "email" [renamed_from="email"]: str` keeps JSON using `email`.
+`renamed_from` is separate from `as`, which sets a wire name. `email_address [renamed_from="email"] as "email": str` keeps JSON using `email`.
 
 ## Reference-level explanation
 
