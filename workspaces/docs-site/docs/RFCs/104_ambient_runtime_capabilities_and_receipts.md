@@ -410,9 +410,10 @@ Receipts must be typed records in `std.db`'s format, so a run's evidence is read
 
 ```incan
 # Follow refusals live, and pick up where this left off after a restart
-refused = receipts.changes(after=last_seen).filter((r) => r.status == ReceiptStatus.Denied)
-async for receipt in refused:
-    alert(receipt)
+async def watch_refusals(last_seen: ResumePosition) -> None:
+    refused = receipts.changes(after=last_seen).filter((r) => r.status == ReceiptStatus.Denied)
+    async for receipt in refused:
+        alert(receipt)
 ```
 
 - `receipts.changes(after=position)` must deliver receipts as an RFC 169 `RecordStream`, and a saved position must resume it. `--report json` is one way of reading the same records, and must be able to cover any retained range of a run that is still going.
