@@ -17,12 +17,12 @@
 
 ## Summary
 
-`std.math.Relaxed` is a small library type whose `+`, `-` and `*` allow the compiler to regroup and combine them, which is what lets a numeric loop use SIMD. `float` stays strict, so only values an author has wrapped are affected, and the wrapping is visible in source. Results may differ from strict arithmetic in the last digits and may vary between targets, builds and runs. Separately, `mul_add` gives `float` and `f32` a fused multiply-add with one rounding, which is more exact rather than less.
+`std.math.relax(x)` wraps a value in a small library type, `Relaxed[T]`, whose `+`, `-`, `*` and `/` allow the compiler to regroup and combine them, which is what lets a numeric loop use SIMD. `float` stays strict, so only values an author has relaxed are affected, and that is visible in source. Results may differ from strict arithmetic in the last digits and may vary between targets, builds and runs. Separately, `mul_add` gives `float` and `f32` a fused multiply-add with one rounding, which is more exact rather than less.
 
 ## Core model
 
 1. **Ordinary float operators never change.** No flag, block or dependency relaxes them.
-2. **Relaxation belongs to a type.** A value is relaxed because it is a `Relaxed`, so a reviewer can see where it starts and ends.
+2. **Relaxation belongs to a value.** `relax(x)` makes a `Relaxed` value, so a reviewer can see where relaxing starts and ends.
 3. **`Relaxed` is library code.** It uses ordinary operator traits, and the compiler has no special knowledge of it.
 4. **It is a permission, not a promise.** The compiler may optimize, and the result may vary, but no speedup is guaranteed.
 5. **`mul_add` is a different contract.** It is exact and repeatable, and is never split into two steps.
@@ -56,7 +56,7 @@ Incan's numeric loops deserve this speed where an author wants it, without putti
 - Global fast-math flags, or relaxing blocks or functions.
 - Guaranteed vectorization or a promised speedup.
 - Platform-independent relaxed results.
-- Relaxed division or remainder.
+- Relaxed remainder.
 
 ## Guide-level explanation
 
@@ -67,33 +67,34 @@ Incan's numeric loops deserve this speed where an author wants it, without putti
 A search service ranks documents by the similarity of their embeddings:
 
 ```incan
-from std.math import Relaxed
+from std.math import relax
 
 def dot(left: list[float], right: list[float]) -> float:
-    mut total = Relaxed(0.0)
+    mut total = relax(0.0)
     for index in range(len(left)):
-        total += Relaxed(left[index]) * right[index]
+        total += relax(left[index]) * right[index]
     return total.value
 ```
 
-`Relaxed(x)` wraps a value, an operation with a `Relaxed` on the left stays relaxed, and `.value` gives the `float` back. The function's signature is unaffected, so nothing about relaxation leaks to its callers.
+`relax(x)` wraps a value, an operation with a `Relaxed` value on the left stays relaxed, and `.value` gives the `float` back. The function's signature is unaffected, so nothing about relaxation leaks to its callers.
 
 Longer formulas stay readable. A polynomial evaluated by Horner's method:
 
 ```incan
 def score(x: float, a: float, b: float, c: float) -> float:
-    return ((Relaxed(a) * x + b) * x + c).value
+    return ((relax(a) * x + b) * x + c).value
 ```
 
-`Relaxed[f32]` works the same way, with `Relaxed[f32](0.0)` to start from a literal. Mixing `Relaxed[f32]` with `Relaxed[float]` needs an explicit conversion, as `f32` and `float` do.
+`Relaxed[f32]` works the same way, with `relax[f32](0.0)` to start from a literal. Mixing `Relaxed[f32]` with `Relaxed[float]` needs an explicit conversion, as `f32` and `float` do.
 
 ### What you give up
 
 A relaxed result may differ from the strict one in rounding and in the sign of zero, and may differ between targets, builds and runs. That is fine for ranking documents and wrong for a ledger, and the author decides which applies. NaN and infinity flow through `Relaxed[float]` as they do through `float`. `Relaxed[f32]` keeps `f32`'s promise of finite values, so a non-finite result raises `ValueError`.
 
-`Relaxed` has `+`, `-`, `*`, their compound forms and negation, and nothing else:
+`Relaxed` has `+`, `-`, `*`, `/`, their compound forms and negation, and nothing else:
 
-- `/` and `%` are not available. Incan's `/` raises `ZeroDivisionError` and its `%` takes the divisor's sign, so `-7.0 % 3.0` is `2.0`, where Rust's relaxed remainder would give `-1.0`. To relax a division by a repeated value, multiply by its reciprocal: `Relaxed(x) * (1.0 / n)`.
+- `/` keeps Incan's rule: a zero divisor raises `ZeroDivisionError`. Dividing many values by one divisor gets the full speedup, because the check only has to run once. With a different divisor for each element, the check limits it.
+- `%` is not available. Incan's `%` takes the divisor's sign, so `-7.0 % 3.0` is `2.0`, where Rust's relaxed remainder would give `-1.0`, so it would disagree before any relaxing happened.
 - Comparisons go through `.value`, so a decision made on a relaxed result is visible.
 
 ### Not in validation
@@ -117,10 +118,10 @@ If `mul_add` were ever split into a multiply and an add, `error` would always be
 
 ### `Relaxed`
 
-1. `std.math` must provide `Relaxed[T]` for `T` of `float` and `f32`, holding one public field, `value: T`, and adopting `Copy`.
+1. `std.math` must provide `relax[T](value: T) -> Relaxed[T]` and the type `Relaxed[T]`, for `T` of `float` and `f32`. `Relaxed[T]` must hold one public field, `value: T`, and adopt `Copy`. `relax` is how a value is made, and the type name is for annotations.
 2. `Relaxed` must be written in Incan, using RFC 028's operator traits and RFC 005 interop to Rust's algebraic operations. The compiler must have no knowledge of it beyond those general facilities.
-3. It must adopt `Add`, `Sub` and `Mul` for a right operand of `Relaxed[T]` or `T`, each with output `Relaxed[T]`, along with their compound-assignment forms and `Neg`.
-4. It must not adopt `Div`, `Mod`, `Eq` or `Ord`. A `/`, `%` or comparison must get a diagnostic pointing at `.value` or, for division, a reciprocal.
+3. It must adopt `Add`, `Sub`, `Mul` and `Div` for a right operand of `Relaxed[T]` or `T`, each with output `Relaxed[T]`, along with their compound-assignment forms and `Neg`. A zero divisor must raise `ZeroDivisionError`, as `/` does on `T`.
+4. It must not adopt `Mod`, `Eq` or `Ord`. A `%` or comparison must get a diagnostic pointing at `.value`.
 5. A left operand of `T` with a right operand of `Relaxed[T]` must be refused under RFC 028's rules, and the diagnostic must suggest swapping or wrapping the left operand.
 6. A `Relaxed` value must hold nothing beyond its value, and its operations must add no allocation or call overhead compared with the Rust operations they use.
 
@@ -145,7 +146,8 @@ If `mul_add` were ever split into a multiply and an add, `error` would always be
 | --- | --- |
 | Strictness | The same arithmetic on `float` gives identical results in a program with and without `Relaxed` elsewhere. |
 | Speed | A `Relaxed` dot product matches the equivalent hand-written Rust loop on the same machine. |
-| Operators | `+`, `-`, `*`, their compound forms and negation work with `Relaxed` and plain right operands; `/`, `%`, comparisons and a plain left operand are refused with their diagnostics. |
+| Operators | `+`, `-`, `*`, `/`, their compound forms and negation work with `Relaxed` and plain right operands; `%`, comparisons and a plain left operand are refused with their diagnostics. |
+| Division | A zero divisor raises `ZeroDivisionError`, and a fixed-divisor loop keeps the speedup with its check in place. |
 | Special values | NaN and infinity flow through `Relaxed[float]`, and a non-finite `Relaxed[f32]` raises `ValueError`. |
 | Fused | `a.mul_add(b, -(a * b))` gives the exact rounding error on every supported target. |
 | Construction | `Relaxed` in a registered check is refused, and `mul_add` is accepted. |
@@ -156,9 +158,9 @@ If `mul_add` were ever split into a multiply and an add, `error` would always be
 
 The opt-in has to attach to something. A type keeps ordinary operators, so a formula still reads as a formula, while the wrapping shows exactly which values are affected. Rust's `Wrapping<T>` takes the same approach for integer overflow. Conversions stay at the edges of a calculation, so a function's signature need not change.
 
-### Why no division or remainder
+### Why division keeps its check, and why no remainder
 
-Incan's `/` and `%` differ from Rust's: a zero divisor raises `ZeroDivisionError`, and `%` takes the divisor's sign. A relaxed `%` would disagree with `%` before any relaxing happened. The only extra permission relaxed division offers is using a reciprocal, which an author can write directly. swift-numerics made the same choice, offering only sum, product and multiply-add.
+A relaxed value is still an Incan value, so `/` keeps its `ZeroDivisionError`. Measured the same way as the table above, per 1,000 elements: dividing by a fixed divisor took 510 ns strict and 107 ns relaxed with the check in place, because the check moves out of the loop. Dividing by a different divisor each time took 606 ns strict and 617 ns relaxed with the check, and 126 ns relaxed without it. The check therefore costs nothing in the common fixed-divisor case and limits the varying one, which is the right trade for keeping one rule for `/`. Incan's `%` takes the divisor's sign where Rust's takes the dividend's, so a relaxed `%` would disagree with `%` before any relaxing happened, and no workload needs it.
 
 ### Reaching Rust's operations
 
@@ -174,7 +176,10 @@ Rust's algebraic operations and `mul_add` are inherent methods on its primitive 
 - **A block or function decorator:** arithmetic would depend on a surrounding mode, which is `-ffast-math` in miniature, and it would need compiler support.
 - **Per-operation methods, `algebraic_add`:** Rust's names are long, and formulas become nested calls. `a.algebraic_mul(x).algebraic_add(b)` reads worse the longer it gets.
 - **Shorter method names, `fast_add`:** the same nesting, a name that says what is gained and not what is given up, and a clash with Rust's unsafe `fadd_fast`.
-- **Relaxed division and remainder:** see "Why no division or remainder".
+- **Dropping the zero check on relaxed division:** faster with a different divisor each time, but `/` would then mean two things.
+- **Leaving division out and asking for a reciprocal:** loses a real speedup and makes authors write what the compiler can do.
+- **A relaxed remainder:** see "Why division keeps its check, and why no remainder".
+- **Spelling construction `Relaxed(x)`:** reads as a type, where `relax(x)` reads as the action it is.
 - **Comparisons on `Relaxed`:** would hide a branch on a varying value, where `.value` makes it visible.
 - **`Relaxed` allowed in validation:** the same check could pass on one machine and fail on another.
 
@@ -184,7 +189,7 @@ Wrapping values and unwrapping with `.value` adds words to a loop. A plain left 
 
 ## Layers affected
 
-- **Standard library:** `std.math.Relaxed`, written in Incan.
+- **Standard library:** `std.math.relax` and `Relaxed`, written in Incan.
 - **Interop:** reaching inherent methods on Rust primitive types.
 - **Float methods:** `mul_add`, under RFC 009.
 - **Construction safety:** certifying `mul_add` and not `Relaxed`'s operations.
@@ -192,8 +197,8 @@ Wrapping values and unwrapping with `.value` adds words to a loop. A plain left 
 
 ## Design Decisions
 
-- **Surface:** a library type, `std.math.Relaxed[T]`, with ordinary operators. `float` and its operators stay strict, and there is no flag, block or decorator.
-- **Operations:** `+`, `-`, `*`, compound forms and negation. Division and remainder are left out because Incan's differ from Rust's, and comparisons go through `.value`.
+- **Surface:** `std.math.relax(x)` makes a `Relaxed[T]`, a library type with ordinary operators. `float` and its operators stay strict, and there is no flag, block or decorator.
+- **Operations:** `+`, `-`, `*`, `/`, compound forms and negation. `/` keeps Incan's `ZeroDivisionError`, remainder is left out because Incan's differs from Rust's, and comparisons go through `.value`.
 - **`mul_add`:** an ordinary method on `float` and `f32`, exact and fused, and never described as relaxed.
 - **Special values:** stated in Incan terms. NaN and infinity flow through `float`, and `f32` keeps its finiteness promise.
 - **Construction:** `Relaxed` is refused under RFC 122, and `mul_add` is certified.
