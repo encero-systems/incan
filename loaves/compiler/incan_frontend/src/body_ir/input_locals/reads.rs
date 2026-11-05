@@ -40,20 +40,22 @@ impl BodyBuilder<'_, '_> {
                         .and_then(|local| local.identity.as_ref())
                         .ok_or("local alias has no canonical physical owner")?;
                     let mut fields = Vec::new();
-                    for field in &alias.place.projection {
-                        let bir::PlaceElem::Field {
-                            canonical: Some(identity),
-                            structural: false,
-                            ..
-                        } = field
-                        else {
-                            return Err("local alias source is not checked static storage");
-                        };
-                        fields.push(identity.clone());
+                    let mut elements = Vec::new();
+                    for (position, projection) in alias.place.projection.iter().enumerate() {
+                        match projection {
+                            bir::PlaceElem::Field {
+                                canonical: Some(identity),
+                                structural: false,
+                                ..
+                            } => fields.push(identity.clone()),
+                            bir::PlaceElem::Index(_) => elements.push(position),
+                            _ => return Err("local alias source is not checked stored storage"),
+                        }
                     }
                     Ok(CheckedInputSource::Place {
                         root: root.clone(),
                         fields,
+                        elements,
                     })
                 })())
             }
@@ -69,11 +71,16 @@ impl BodyBuilder<'_, '_> {
                         .resolved_identity(expression.span)
                         .filter(|identity| identity.kind == SemanticSourceTargetKind::Field)
                         .ok_or("local alias projection has no checked field identity")?;
-                    let CheckedInputSource::Place { root, mut fields } = source? else {
+                    let CheckedInputSource::Place {
+                        root,
+                        mut fields,
+                        elements,
+                    } = source?
+                    else {
                         return Err("local alias cannot project an invocation temporary");
                     };
                     fields.push(identity.clone());
-                    Ok(CheckedInputSource::Place { root, fields })
+                    Ok(CheckedInputSource::Place { root, fields, elements })
                 })())
             }
             _ => None,
@@ -103,10 +110,10 @@ impl BodyBuilder<'_, '_> {
                 self.consume_place_read(&place);
                 return Ok(bir::Operand::place(place, fact, false));
             }
-            let CheckedInputSource::Place { root, fields } = source else {
+            let CheckedInputSource::Place { root, fields, elements } = source else {
                 return Err("local alias has no original source storage".to_owned());
             };
-            self.authenticate_input_place(&place, &root, &fields)?;
+            self.authenticate_input_place(&place, &root, &fields, &elements)?;
             let ty = self.resolve_ty(expression.span);
             let fact = if ty.abi_v0_facts().ownership.is_trivially_copy() {
                 bir::OwnershipFact::Copy

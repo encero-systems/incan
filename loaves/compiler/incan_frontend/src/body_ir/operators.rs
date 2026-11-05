@@ -35,9 +35,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return value;
         };
         let ty = self.resolve_ty(expression.span);
+        let selected_view_call = self
+            .input_body
+            .as_ref()
+            .ok()
+            .and_then(|proof| proof.as_ref())
+            .map(|proof| proof.view_call_span(expression))
+            .and_then(|span| self.type_info.selected_call_view(span))
+            .is_some();
         if read.fact == bir::OwnershipFact::Borrow
             && !ty.abi_v0_facts().ownership.is_trivially_copy()
-            && matches!(self.checked_borrow_source(expression), Some(Ok(_)))
+            && (matches!(self.checked_borrow_source(expression), Some(Ok(_))) || selected_view_call)
         {
             // The checked loan includes the operation's consumption point, so later operands cannot invalidate
             // this storage. Materializing an owned text temporary here would silently repair the explicit borrow.

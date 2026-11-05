@@ -89,10 +89,14 @@ pub(super) fn checked_list_leaf_type(leaf: &ListLeaf) -> Result<PlanType, PlanEr
         ListLeaf::Reference(elements) => matches!(
             elements.as_slice(),
             [PlanType::EnumRef(..)
+                | PlanType::EnumMutRef(..)
                 | PlanType::ModelRef(..)
+                | PlanType::ModelMutRef(..)
                 | PlanType::StringRef
+                | PlanType::StringMutRef
                 | PlanType::StrRef
                 | PlanType::ScalarRef(_)
+                | PlanType::ScalarMutRef(_)
                 | PlanType::SliceRef(_)]
         ),
         ListLeaf::List(elements, _) => elements.len() == 1,
