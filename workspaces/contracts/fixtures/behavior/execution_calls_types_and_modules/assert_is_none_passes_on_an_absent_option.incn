@@ -1,0 +1,19 @@
+# behavior: `assert o is None` passes on an absent Option, including one a standard method returns
+# expect-stdout:
+#   absent
+#   3
+
+"""`assert o is None` passes on an absent Option, including one a standard method returns."""
+
+from std.json import JsonValue
+
+
+def main() -> None:
+    """Assert absence on a local and on a standard method's result, then bind a present payload."""
+    missing: Option[int] = None
+    assert missing is None
+    assert JsonValue.object({}).get("absent") is None
+    println("absent")
+    present: Option[int] = Some(3)
+    assert present is Some(n)
+    println(n)
