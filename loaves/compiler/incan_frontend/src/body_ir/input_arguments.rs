@@ -252,7 +252,7 @@ impl BodyBuilder<'_, '_> {
             return Err("checked Copy semantics require a compatible native input carrier".into());
         }
         let (fact, last_use) = match access {
-            IncanInputAccess::Shared => (bir::OwnershipFact::Borrow, false),
+            IncanInputAccess::Shared | IncanInputAccess::InferredShared => (bir::OwnershipFact::Borrow, false),
             IncanInputAccess::Exclusive => (bir::OwnershipFact::MutBorrow, false),
             IncanInputAccess::Owned if copy => (bir::OwnershipFact::Copy, false),
             IncanInputAccess::Owned => {
@@ -295,7 +295,10 @@ impl BodyBuilder<'_, '_> {
                 return Err("explicit temporary input requires a fresh owned result".into());
             }
         }
-        if matches!(access, IncanInputAccess::Shared | IncanInputAccess::Exclusive) {
+        if matches!(
+            access,
+            IncanInputAccess::Shared | IncanInputAccess::InferredShared | IncanInputAccess::Exclusive
+        ) {
             if !matches!(value, bir::Operand::Place(_)) {
                 value = self.push_assign_temp(bir::Rvalue::Use(value), ty, scope, hir_span(span), out);
             }

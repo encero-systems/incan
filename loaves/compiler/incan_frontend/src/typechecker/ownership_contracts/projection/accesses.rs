@@ -207,8 +207,11 @@ impl SourceAccesses<'_, '_> {
                     }
                     self.expression(value, true)?;
                 }
-                IncanInputAccess::Shared | IncanInputAccess::Exclusive if source.is_some() => {}
-                IncanInputAccess::Shared | IncanInputAccess::Exclusive => self.expression(value, true)?,
+                IncanInputAccess::Shared | IncanInputAccess::InferredShared | IncanInputAccess::Exclusive
+                    if source.is_some() => {}
+                IncanInputAccess::Shared | IncanInputAccess::InferredShared | IncanInputAccess::Exclusive => {
+                    self.expression(value, true)?
+                }
                 IncanInputAccess::Inferred => self.expression(value, false)?,
             }
         }

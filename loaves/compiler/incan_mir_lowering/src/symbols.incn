@@ -111,9 +111,10 @@ def parameter_component(parameter: &IncanCallableParam) -> str:
 
 
 def input_access_component(access: &IncanInputAccess) -> str:
-    """Keep explicit access contracts distinct even when their underlying value and binding mutability agree."""
+    """Keep checked access contracts distinct even when their underlying value and binding mutability agree."""
     match access:
         IncanInputAccess.Inferred => return "_access_inferred"
+        IncanInputAccess.InferredShared => return "_access_inferred_shared"
         IncanInputAccess.Shared => return "_access_shared"
         IncanInputAccess.Exclusive => return "_access_exclusive"
         IncanInputAccess.Owned => return "_access_owned"

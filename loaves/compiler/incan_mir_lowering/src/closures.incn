@@ -114,7 +114,7 @@ pub def signature_input(
     A callable's input as its declaration's frame receives it: a list or collection by the caller-owned reference, and
     for a `mut` parameter the exclusive borrow of the caller's value.
 
-    Explicit checked access selects an owned value or a true shared/exclusive reference before ordinary defaults.
+    Checked access selects an owned value or a true shared/exclusive reference before ordinary defaults.
     Binding mutability does not change that access. A checked native collection consumes its outer value;
     references inside its elements keep their own ABI.
     """
@@ -125,6 +125,7 @@ pub def signature_input(
         match input_access:
             IncanInputAccess.Owned => return Ok(ty)
             IncanInputAccess.Shared => return shared_receiver_type(ty)
+            IncanInputAccess.InferredShared => return shared_receiver_type(ty)
             IncanInputAccess.Exclusive => return mutable_receiver_type(ty)
             _ => return Err("invalid Body IR explicit input access")
     # Every function frame stores its parameters this way, so a function item, a lifted closure and an annotated
