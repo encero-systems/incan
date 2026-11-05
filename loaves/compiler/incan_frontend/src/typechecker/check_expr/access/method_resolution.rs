@@ -351,6 +351,12 @@ impl TypeChecker {
                     &resolved_call,
                 )?;
                 if nt.is_rusttype {
+                    self.retain_declared_rusttype_receiver_call(
+                        call.receiver_ty,
+                        &nt.underlying,
+                        resolved_method,
+                        call.span,
+                    );
                     self.maybe_record_rusttype_return_coercion(&nt, resolved_method, &ret, call.span);
                 }
                 Some(ret)

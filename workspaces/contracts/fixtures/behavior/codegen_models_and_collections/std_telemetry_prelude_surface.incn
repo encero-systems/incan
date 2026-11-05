@@ -1,8 +1,9 @@
-# behavior: std.telemetry exports TelemetryValue, Attributes, Resource, InstrumentationScope and SpanContext, and a string telemetry value displays its text
+# behavior: std.telemetry exports its prelude values, string telemetry displays text, and ambient logging accepts typed fields
 # expect-stdout:
 #   hello
 
 from std.telemetry import TelemetryValue, Attributes, Resource, InstrumentationScope, SpanContext
+from std.logging import Level, basic_config
 
 
 def touch_value(value: TelemetryValue) -> str:
@@ -26,4 +27,6 @@ def touch_span_context(context: SpanContext) -> None:
 
 
 def main() -> None:
+    basic_config(level=Level.FATAL)
+    log.info("disabled", fields={"count": 1})
     println(touch_value(TelemetryValue.string("hello")))

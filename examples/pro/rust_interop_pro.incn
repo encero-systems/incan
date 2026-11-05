@@ -39,6 +39,7 @@ Incan's `str` maps to Rust `String`. Rust method signatures come from checked AB
 """
 
 from rust::std::time import Instant
+from rust::std::string import ToString
 from rust::uuid @ "1.0" with ["v4"] import Uuid
 from std.async.task import spawn_blocking
 from std.async.time import sleep, timeout

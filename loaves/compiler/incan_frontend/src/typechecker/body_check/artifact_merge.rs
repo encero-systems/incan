@@ -230,6 +230,7 @@ pub(super) fn append_rust(target: &mut RustInteropArtifacts, local: RustInteropA
         checked_calls,
         argument_adjustments,
         declared_conversions,
+        validated_rusttype_edges,
         element_adjustments,
         field_adjustments,
         field_projection_paths,
@@ -264,6 +265,7 @@ pub(super) fn append_rust(target: &mut RustInteropArtifacts, local: RustInteropA
     target.checked_calls.extend(checked_calls);
     target.argument_adjustments.extend(argument_adjustments);
     target.declared_conversions.extend(declared_conversions);
+    target.validated_rusttype_edges.extend(validated_rusttype_edges);
     target.element_adjustments.extend(element_adjustments);
     target.field_adjustments.extend(field_adjustments);
     target.field_projection_paths.extend(field_projection_paths);

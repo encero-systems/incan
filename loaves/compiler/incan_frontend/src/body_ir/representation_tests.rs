@@ -125,6 +125,7 @@ fn checked_seed(
         provider_operations: &providers,
         registry_package: None,
         library_package: None,
+        include_inline_tests: false,
     };
     let seed = super::build_module_seed(&program, &[], &facts, &context);
     Ok((program, facts, seed))
@@ -253,6 +254,7 @@ fn assert_settled_function_seeds() -> Result<(), Box<dyn std::error::Error>> {
         provider_operations: &providers,
         registry_package: None,
         library_package: None,
+        include_inline_tests: false,
     };
     let expected = super::build_module_seed(&program, &[], checker.type_info(), &context);
     let mut actual = expected.clone();
@@ -414,6 +416,7 @@ fn assert_free_function_input_baseline() -> Result<(), Box<dyn std::error::Error
         provider_operations: &providers,
         registry_package: None,
         library_package: None,
+        include_inline_tests: false,
     };
     let reports = tempfile::tempdir()?;
     std::fs::write(reports.path().join("interrupted.tmp"), b"{\"equal\":")?;
@@ -580,6 +583,7 @@ fn checked_metadata_seed(source: &str) -> Result<(TypeCheckInfo, bir::BodyIrModu
         provider_operations: &providers,
         registry_package: None,
         library_package: Some("metadata"),
+        include_inline_tests: false,
     };
     let module = super::build_module_seed(&program, &[], &facts, &context);
     Ok((facts, module))

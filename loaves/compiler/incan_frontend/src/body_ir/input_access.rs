@@ -252,6 +252,7 @@ mod tests {
             provider_operations: &providers,
             registry_package: None,
             library_package: None,
+            include_inline_tests: false,
         };
         let module = super::super::build_module_seed(&program, &[], &facts, &context);
         let mut inputs = 0;
@@ -291,6 +292,7 @@ mod tests {
             provider_operations: &providers,
             registry_package: None,
             library_package: None,
+            include_inline_tests: false,
         };
         let module = super::super::build_module_seed(&program, &[], &facts, &context);
         let body = module.bodies.first().ok_or("missing body")?;

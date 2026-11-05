@@ -1,4 +1,4 @@
-# behavior: Native generic calls preserve explicit and opaque loans, binders, callbacks and independent owners, close binders projected from source collections, as for Command.args, Command.envs and Vec.extend, retain exclusive authority through mutable slice dereferences, contextually type range literals, fix a method's open result at a typed use, and take a local's open owner arguments from its first type-dependent use after length and emptiness reads, as for HashMap.new with insert, Vec.new with push, a typed parameter, a typed return and an annotated place, pass a `str` constant to a generic Rust parameter as a `str` value passes, select an implicit native trait method through its bound, and infer a source generic from a native slice view (#2256, #2432, #2434, #2436, #2481, #2590)
+# behavior: Native generic calls preserve explicit and opaque loans, binders, callbacks and independent owners, close binders projected from source collections, as for Command.args, Command.envs and Vec.extend, retain exclusive authority through mutable slice dereferences, contextually type range literals, fix a method's open result at a typed use, take an impl binder from a borrowed Option receiver before projecting copied's owned result, and take a local's open owner arguments from its first type-dependent use after length and emptiness reads, as for HashMap.new with insert, Vec.new with push, a typed parameter, a typed return and an annotated place, pass a `str` constant to a generic Rust parameter as a `str` value passes, select an implicit native trait method through its bound, and infer a source generic from a native slice view (#2256, #2432, #2434, #2436, #2481, #2590)
 # expect-stdout:
 #   7
 #   leaf
@@ -29,6 +29,7 @@
 #   1
 #   1
 #   1
+#   2
 #   7
 #   42
 #   false
@@ -329,6 +330,14 @@ def show_first_use_arguments() -> None:
     println(held.len())
 
 
+def show_copied_option_payload() -> None:
+    """Copy a borrowed scalar from a Rust Option whose receiver fixes the impl binder."""
+    mut counts: HashMap[str, int] = HashMap.new()
+    counts.insert("one", 1)
+    current = counts.get("one").copied().unwrap_or(0)
+    println(current + 1)
+
+
 def show_nonreturning_call() -> None:
     """Print the result of the selected Rust function, then end the program through a nonreturning one."""
     println(panicking())
@@ -364,6 +373,7 @@ def main() -> None:
     show_projected_binders()
     show_frozen_text_arguments()
     show_first_use_arguments()
+    show_copied_option_payload()
     # 5. Observe native trait and slice-bound source generics.
     show_bound_native_values()
     # 6. Observe a native nonreturning call, which ends the program.

@@ -1,4 +1,4 @@
-# behavior: primitive HMAC preserves known vectors, stored incremental state, keyed reset and verification (RFC 168)
+# behavior: primitive HMAC preserves known vectors, inferred facade signers, stored state, reset and verification (RFC 168)
 # expect-stdout:
 #   primitive-hmac-ok
 
@@ -30,6 +30,9 @@ def main() -> None:
     tag = hmac_sha256.digest(key, data)
     assert hexlify(tag) == "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
     assert legacy_hmac.digest(key, data) == tag
+    mut legacy_signer = legacy_hmac.new(key)
+    legacy_signer.update(data)
+    assert legacy_signer.finalize_bytes() == tag
     assert hexlify(hmac_sha256.digest(b"", b"")) == "b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"
     long_key = b"\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa"
     assert len(long_key) == 131

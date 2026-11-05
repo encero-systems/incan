@@ -239,6 +239,14 @@ impl TypeChecker {
         }
         let (entry, identity) = self.loaves.public_nominal(&canonical)?;
         let artifact = &entry.artifact;
+        let qualified = canonical_public_library_type_name(&entry.key, &export_public_name(identity));
+        if let Some(info) = self
+            .transitive_pub_types
+            .get(&qualified)
+            .and_then(|infos| infos.first())
+        {
+            return Some(SymbolKind::Type(info.clone()));
+        }
         if identity.public_path.len() == 2 {
             self.manifest_nominal_type_info(&artifact.manifest, &identity.public_name)
                 .map(SymbolKind::Type)

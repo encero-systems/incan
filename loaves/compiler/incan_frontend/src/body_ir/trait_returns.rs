@@ -701,6 +701,7 @@ mod carrier_identity_tests {
                 provider_operations: &providers,
                 registry_package: None,
                 library_package: None,
+                include_inline_tests: false,
             },
         );
         let owner = module.nominal_declarations.first().ok_or("missing source owner")?;
