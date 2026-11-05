@@ -42,6 +42,9 @@ pub const LOWERING_RESERVATION_BYTES: int = 6 * GIB
 pub const HEADROOM_BYTES: int = GIB
 const PASSED: str = "^test_[A-Za-z0-9_]+[.]incn::test_[A-Za-z0-9_]+ PASSED$"
 const FAILED: str = "^test_[A-Za-z0-9_]+[.]incn::test_[A-Za-z0-9_]+ (FAILED|XPASS)( |$)"
+# These read the installed toolchain and require it unchanged, which another invocation's first use of a native crate can
+# break, so they run after the others have finished.
+const NEEDS_SETTLED_INSTALLATION: FrozenList[str] = ["test_engine_protocol.incn"]
 const RECORD_SOURCES: FrozenList[str] = ["checker_records", "record_scope", "records", "record_service"]
 const RECORD_TESTS: FrozenList[str] = ["canonical_record_controls", "test_record_scope"]
 const USAGE: str = "usage: oven_tests.incn OVEN EVIDENCE [--jobs N] [--memory GIB]"
@@ -69,6 +72,8 @@ pub model Invocation:
     pub directory: str
     pub reservation: int
     pub log: Path
+    # Runs by itself after the others, because it requires an installation that has stopped changing.
+    pub alone: bool = false
 
 
 pub model Summary:
@@ -168,7 +173,9 @@ def run(options: Options) -> Result[str, str]:
     logs = options.evidence.joinpath("oven-tests")
     logs.mkdir(true, true).map_err((error) => error.message())?
     planned = invocations(root, options.evidence, logs)?
-    succeeded = run_all(options.oven, planned, options.jobs, options.memory)?
+    ran = run_all(options.oven, [item for item in planned if not item.alone], options.jobs, options.memory)?
+    ran_alone = run_all(options.oven, [item for item in planned if item.alone], 1, options.memory)?
+    succeeded = ran and ran_alone
     log = options.evidence.joinpath("oven-tests.log")
     joined = join_logs(planned, log)?
     expected = read(root.joinpath("workspaces/contracts/dev8-oven-tests.txt"))?
@@ -187,7 +194,8 @@ pub def invocations(root: Path, evidence: Path, logs: Path) -> Result[list[Invoc
         if not source.is_file():
             return Err("Oven test sources are absent")
         unit = ["test", source.0]
-        planned.append(invocation(unit, oven.0, PROJECT_RESERVATION_BYTES, logs, len(planned), source))
+        alone = source.name() in NEEDS_SETTLED_INSTALLATION
+        planned.append(invocation(unit, oven.0, PROJECT_RESERVATION_BYTES, logs, len(planned), source, alone))
     compiler = root.joinpath("loaves/compiler").0 + "/"
     excluded = root.joinpath("loaves/compiler/internal_models/tests").0 + "/"
     for source in loaf_tests(root.joinpath("loaves"))?:
@@ -211,10 +219,11 @@ def invocation(
     logs: Path,
     position: int,
     source: Path,
+    alone: bool = false,
 ) -> Invocation:
     """One invocation whose log name orders it by its position."""
     log = logs.joinpath(log_name(position, source))
-    return Invocation(arguments=arguments, directory=directory, reservation=reservation, log=log)
+    return Invocation(arguments=arguments, directory=directory, reservation=reservation, log=log, alone=alone)
 
 
 def reservation_of(source: Path, compiler: str) -> int:
