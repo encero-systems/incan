@@ -439,6 +439,7 @@ The description must be read with `value.__signature__()`, which returns a `std.
 - `receiver`, an `Option[ReceiverInfo]` that records what supplies the bound receiver and whether invocation reads, mutates, or consumes it;
 - the signature's type parameters, with substitutions applied when the signature is specialized;
 - `name`, an `Option[str]` with the declared name of a named function or method, absent for a closure or a value known only through `Callable[S]`;
+- `contract`, an `Option[ContractInfo]` with the declaration's RFC 111 contract, absent for a value known only through a `Callable` that states none;
 - `doc`, an `Option[DocInfo]` with the declaration's docstring parsed as RFC 082 reads it: its `summary`, the first paragraph; its `description`; and its documented `parameters` and `returns`.
 
 These types must be read-only values, and `std.reflection` must not add them to the automatic prelude.
