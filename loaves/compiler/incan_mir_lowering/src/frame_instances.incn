@@ -43,6 +43,7 @@ def retain_generic_decorator_frames(
     file: str,
     mut intrinsics: list[EnumDeclaration],
     mut functions: list[Function],
+    mut names: FunctionNames,
     mut externals: list[ExternalFunction],
     mut instances: list[Instance],
     mut cells: list[StaticCell],
@@ -78,8 +79,8 @@ def retain_generic_decorator_frames(
                 )?
                 signature = frame_signature(function)
                 original_name = function.name
-                retain_instance(functions, function)?
-                append_synthesized(functions, synthesized)?
+                retain_instance(functions, names, function)?
+                append_synthesized(functions, names, synthesized)?
                 merge_externals(externals, runtime)?
                 merge_instance_requests(instances, pending)
                 initializer = instantiate(template, arguments, [])?
@@ -98,8 +99,8 @@ def retain_generic_decorator_frames(
                 if init_function.return_type != PlanType.FunctionPointer(signature):
                     return Err("unsupported Body IR generic decorator initializer outside its original's signature")
                 initializer_name = init_function.name
-                retain_instance(functions, init_function)?
-                append_synthesized(functions, init_synthesized)?
+                retain_instance(functions, names, init_function)?
+                append_synthesized(functions, names, init_synthesized)?
                 merge_externals(externals, init_runtime)?
                 merge_instance_requests(instances, init_pending)
                 cell, frames, cache_runtime = cached_binding_frames(
@@ -116,7 +117,7 @@ def retain_generic_decorator_frames(
                 )?
                 cells.append(cell)
                 for frame in frames:
-                    retain_instance(functions, frame)?
+                    retain_instance(functions, names, frame)?
                 merge_externals(externals, cache_runtime)?
     return Ok(None)
 
@@ -152,6 +153,7 @@ pub def lower_instances(
     mut queue = instance_queue()
     mut runtime_unions = list(unions)
     mut redirects = runtime_redirects()
+    mut names = function_names()
     governed_runtime = len(context.runtime_callable_bindings) != 0 or governed_runtime_module(owners)
     if governed_runtime:
         retain_runtime_instances(
@@ -181,7 +183,7 @@ pub def lower_instances(
         if len(declarations) != 0:
             runtime_unions = collect_unions(context)
         role, source_index = instance_frame_selection(body, original_callable, owners)?
-        retain_nominal_tables(program, context)
+        retain_nominal_tables(program, context)?
         constructors = program.constructors.as_ref()
         retain_body_carriers(constructors, context, intrinsics, body, files[source_index])?
         retain_generic_decorator_frames(
@@ -195,39 +197,29 @@ pub def lower_instances(
             files[source_index],
             intrinsics,
             functions,
+            names,
             externals,
             instances,
             cells,
         )?
         enqueue_instances(queue, instances)
-        diagnostic_context = f"{body.name} at {files[source_index]}"
-        function, runtime, pending, synthesized = lower_function(
+        mut scheduled = lower_instance_frame(
             context,
             program,
+            request,
             body,
-            unions,
-            sources[source_index],
-            files[source_index],
-            intrinsics,
-            storage_arguments,
             role,
-        ).map_err((reason) => f"{reason} in {diagnostic_context}")?
-        mut retained_function = function
-        retained_function.signature_lifetimes = lifetimes
-        retained_function.generic_loans = instance_loans(program, context, request, runtime_unions, intrinsics)?
-        retain_instance(functions, retained_function)?
-        append_synthesized(functions, synthesized)?
-        append_generator_constructor(
-            constructors,
-            functions,
-            context,
-            body,
+            storage_arguments,
+            lifetimes,
+            unions,
+            runtime_unions,
             sources[source_index],
             files[source_index],
             intrinsics,
+            functions,
+            names,
+            externals,
         )?
-        _ = merge_externals(externals, runtime)?
-        mut scheduled = pending
         enqueue_instances(queue, scheduled)
         if governed_runtime:
             retain_runtime_instances(
@@ -252,6 +244,46 @@ pub def lower_instances(
         return Ok(RuntimeRetention.NeedsRuntime(redirects.missing))
     redirect_runtime_calls(functions, redirects)?
     return Ok(RuntimeRetention.Complete)
+
+
+def lower_instance_frame(
+    context: &BodyIrModule,
+    program: ProgramContext,
+    request: &Instance,
+    body: &RustBody,
+    role: DecoratorFrame,
+    storage_arguments: list[RustType],
+    lifetimes: list[list[str]],
+    unions: list[RustType],
+    runtime_unions: &list[RustType],
+    source: str,
+    file: str,
+    mut intrinsics: list[EnumDeclaration],
+    mut functions: list[Function],
+    mut names: FunctionNames,
+    mut externals: list[ExternalFunction],
+) -> Result[list[Instance], str]:
+    """Lower one closed instance frame, retain it with the functions it synthesizes, and return its own requests."""
+    diagnostic_context = f"{body.name} at {file}"
+    function, runtime, pending, synthesized = lower_function(
+        context,
+        program,
+        body,
+        unions,
+        source,
+        file,
+        intrinsics,
+        storage_arguments,
+        role,
+    ).map_err((reason) => f"{reason} in {diagnostic_context}")?
+    mut retained_function = function
+    retained_function.signature_lifetimes = lifetimes
+    retained_function.generic_loans = instance_loans(program, context, request, runtime_unions, intrinsics)?
+    retain_instance(functions, names, retained_function)?
+    append_synthesized(functions, names, synthesized)?
+    append_generator_constructor(program.constructors.as_ref(), functions, context, body, source, file, intrinsics)?
+    _ = merge_externals(externals, runtime)?
+    return Ok(pending)
 
 
 def instance_loans(
@@ -305,26 +337,56 @@ def instance_frame_selection(
     return Ok((role, source_index))
 
 
-def retain_instance(mut functions: list[Function], function: Function) -> Result[None, str]:
+pub model FunctionNames:
+    """
+    Positions of one plan function list by symbol. Plan function lists only grow, so each lookup first indexes the
+    rows any producer appended since the previous one, starting from `indexed`.
+    """
+
+    pub positions: BTreeMap[str, list[int]]
+    pub indexed: int
+
+
+pub def function_names() -> FunctionNames:
+    """Start an index for one plan function list; its first lookup indexes the rows already retained."""
+    positions: BTreeMap[str, list[int]] = BTreeMap.new()
+    return FunctionNames(positions=positions, indexed=0)
+
+
+pub def named_functions(mut names: FunctionNames, functions: &list[Function], name: str) -> list[int]:
+    """Index the rows appended since the last lookup, then return this symbol's positions in list order."""
+    while names.indexed < len(functions):
+        names.positions.entry(str(borrowed_at(functions, names.indexed).name)).or_insert([]).push(names.indexed)
+        names.indexed += 1
+    mut found: list[int] = []
+    match names.positions.get(name):
+        Some(indexed) =>
+            for position in indexed:
+                found.append(int(position.clone()))
+        None => pass
+    return found
+
+
+def retain_instance(mut functions: list[Function], mut names: FunctionNames, function: Function) -> Result[None, str]:
     """Refuse a native instance symbol that collides with another retained source declaration."""
-    for position in range(len(functions)):
-        retained = borrowed_at(functions, position)
-        if retained.name == function.name:
-            return Err(f"unsupported Body IR type parameter instance symbol collision {function.name}")
+    if len(named_functions(names, functions, function.name)) != 0:
+        return Err(f"unsupported Body IR type parameter instance symbol collision {function.name}")
     functions.append(function)
     return Ok(None)
 
 
-pub def append_synthesized(mut functions: list[Function], additions: list[Function]) -> Result[None, str]:
+pub def append_synthesized(
+    mut functions: list[Function],
+    mut names: FunctionNames,
+    additions: list[Function],
+) -> Result[None, str]:
     """Add closure bodies and constructors once; two functions sharing one item's forwarding environment agree on it."""
     for addition in additions:
         mut present = false
-        for position in range(len(functions)):
-            retained = borrowed_at(functions, position)
-            if retained.name == addition.name:
-                if retained != addition:
-                    return Err(f"invalid Body IR synthesized function collision {addition.name}")
-                present = true
+        for position in named_functions(names, functions, addition.name):
+            if borrowed_at(functions, position) != addition:
+                return Err(f"invalid Body IR synthesized function collision {addition.name}")
+            present = true
         if not present:
             functions.append(addition)
     return Ok(None)

@@ -73,7 +73,7 @@ from lowering import BodyIrModule
 from checked_values import scalar_operand, target_read
 from assignments import lower_local_assignment
 from closure_lifting import synthesize
-from frame_instances import append_synthesized, merge_externals
+from frame_instances import append_synthesized, function_names, merge_externals, named_functions
 from function_frames import lower_function
 from list_values import list_assignment, list_base_place, projected_element_read
 from hashed_collections import dictionary_value_read
@@ -101,6 +101,7 @@ pub def lower_computed_statics(
     """
     mut cells: list[StaticCell] = []
     mut keys: list[int] = []
+    mut names = function_names()
     for slot in range(len(module.static_declarations)):
         declaration = module.static_declarations[slot]
         for binding in module.decorated_bindings:
@@ -123,12 +124,10 @@ pub def lower_computed_statics(
                 )?
                 mut original_function = original
                 original_function.name = f"{function_name(module, binding.original_body)}__incan_original"
-                for retained_position in range(len(functions)):
-                    retained = borrowed_at(functions, retained_position)
-                    if retained.name == original_function.name:
-                        return Err("unsupported Body IR original callable name collision")
+                if len(named_functions(names, functions, original_function.name)) != 0:
+                    return Err("unsupported Body IR original callable name collision")
                 functions.append(original_function)
-                append_synthesized(functions, original_synthesized)?
+                append_synthesized(functions, names, original_synthesized)?
                 _ = merge_externals(externals, original_runtime)?
                 merge_instance_requests(instances, original_pending)
         match declaration.initial:
@@ -178,7 +177,7 @@ pub def lower_computed_statics(
                     functions.append(module_initializer(program.statics.as_ref(), key, initializer.span))
                     _ = merge_externals(externals, module_initialization_externals(initializer.span))?
                 functions.append(initializer)
-                append_synthesized(functions, synthesized)?
+                append_synthesized(functions, names, synthesized)?
                 _ = merge_externals(externals, runtime)?
                 merge_instance_requests(instances, pending)
             RustStaticInitializer.List(_) | RustStaticInitializer.Dict(_) =>

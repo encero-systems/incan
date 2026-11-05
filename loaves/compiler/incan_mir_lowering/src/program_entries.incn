@@ -30,7 +30,14 @@ from async_ import boxed_future_constructor, async_entry, async_test_name, evalu
 from type_parameters import Instance, request_instance, merge_instance_requests
 from lowering import BodyIrModule
 from program_refusals import append_generator_constructor
-from frame_instances import append_synthesized, external_index, merge_externals, merge_indexed
+from frame_instances import (
+    append_synthesized,
+    external_index,
+    function_names,
+    merge_externals,
+    merge_indexed,
+    named_functions,
+)
 from function_frames import lower_function
 
 
@@ -61,8 +68,7 @@ pub def lower_ordinary_bodies(
     for position in range(len(context.bodies)):
         owner = body_module_identity(body_at(context.bodies, position))?
         module_bodies.entry(owner).or_insert([]).push(position)
-    mut names: BTreeMap[str, bool] = BTreeMap.new()
-    mut named = 0
+    mut names = function_names()
     mut signatures = external_index()
     for index in range(len(checked)):
         checked_module = borrowed_at(checked, index)
@@ -93,12 +99,8 @@ pub def lower_ordinary_bodies(
             ).map_err((reason) => reason + diagnostic_owner)?
             merge_instance_requests(instances, pending)
             # Frames any helper appended since the last check are named first, so the check covers every frame.
-            while named < len(functions):
-                names.insert(str(borrowed_at(functions, named).name), true)
-                named += 1
-            match names.get(function.name):
-                Some(_retained) => return Err(f"unsupported Body IR overloaded function {body.name}")
-                None => pass
+            if len(named_functions(names, functions, function.name)) != 0:
+                return Err(f"unsupported Body IR overloaded function {body.name}")
             functions.append(function)
             if kind == "library" and body.is_async:
                 mut captures: list[PlanType] = []
@@ -114,7 +116,7 @@ pub def lower_ordinary_bodies(
                     ),
                 )
             emitted_frames.record(body, position)
-            append_synthesized(functions, synthesized)?
+            append_synthesized(functions, names, synthesized)?
             append_async_entry(context, body, function, index == entry, tests, intrinsics, functions, externals)?
             append_generator_constructor(
                 program.constructors.as_ref(),
