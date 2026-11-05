@@ -677,7 +677,7 @@ The tables below are the seed catalog. Each row is one clippy lint and fills exa
 | `trim_split_whitespace` | `s.strip().split_whitespace()` where `s.split_whitespace()` is meant (semantic) | | |
 | `unused_unit` | | | `-> None` is the required spelling of a value-less return type; there is no `()` to drop |
 | `unwrap_or_default` | | | no `unwrap_or_default`; `unwrap_or([])` is the spelling |
-| `upper_case_acronyms` | `class HTTPClient` where `HttpClient` is meant; the style guide's `UpperCamelCase` rule does not yet say how an acronym is cased, so this entry needs that ruling before it ships (syntax) | | |
+| `upper_case_acronyms` | `class HTTPClient` where `HttpClient` is meant. An acronym of three or more letters is cased as a word. A two-letter acronym may stay capitalized unless it opens a multi-word name, so `BytesIO`, `Io` and `IoError` pass and `IOError` does not (syntax) | | |
 | `while_let_on_iterator` | | | no `while let`; `for` is the iteration form |
 | `wrong_self_convention` | `is_`, `to_`, and `as_` prefixes checked against `self` versus `mut self`; `into_` has no consuming receiver and is not checked (syntax) | | |
 
@@ -1115,3 +1115,4 @@ This RFC is done when:
 - **`[incan.lints.per-file-allow]` stays.** A `tests/` directory would otherwise carry one identical module-position `@allow(...)` per file; the table is that decorator written once, keeps Ruff's single verb, and cannot relax a `forbid`.
 - **Exit codes stay `0`/`1`.** The toolchain's convention is one success code and one failure code, the JSON report tells findings from operational errors, and a third code is a toolchain-wide change that RFC 118 decides, not this RFC.
 - **The language server calls the engine.** Catalog findings reach the editor through `incan architect`'s engine, not through `incan check` running the `syntax` tier, so the checker keeps reporting compiler facts and language errors only and one evaluator produces every finding.
+- Acronyms in `UpperCamelCase`: an acronym of three or more letters is cased as a word, as in `HttpClient`. A two-letter acronym may stay capitalized unless it opens a multi-word name, so `BytesIO` and `IoError` pass and `IOError` does not. `upper_case_acronyms` checks this mechanically: in a run of capitals, the last one starts the next word unless the run ends the name, so `QName` is a one-letter word followed by `Name`, and `IOError` is a two-letter acronym opening the name.
