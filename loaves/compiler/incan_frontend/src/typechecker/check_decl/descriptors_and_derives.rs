@@ -183,7 +183,7 @@ impl TypeChecker {
             | ResolvedType::Bytes
             | ResolvedType::FrozenStr
             | ResolvedType::FrozenBytes => Ok(()),
-            ResolvedType::Named(name) => match self.lookup_type_info(name) {
+            ResolvedType::Named(name) => match self.lookup_semantic_type_info(name) {
                 Some(TypeInfo::Enum(info)) if info.variant_fields.values().all(Vec::is_empty) => Ok(()),
                 Some(TypeInfo::Newtype(info)) if !info.is_rusttype => {
                     self.registry_descriptor_value_type_is_valid(&info.underlying, visiting)
@@ -194,13 +194,14 @@ impl TypeChecker {
         }
     }
 
-    /// Validate nominal descriptor components while detecting recursive snapshot graphs.
+    /// Validate nominal descriptor components while detecting recursive snapshot graphs. An imported model's field
+    /// types name their declarations by carrier, so each component resolves through its declaration identity (#2605).
     pub(super) fn registry_descriptor_named_type_is_valid(
         &self,
         name: &str,
         visiting: &mut HashSet<String>,
     ) -> Result<(), String> {
-        let Some(type_info) = self.lookup_type_info(name) else {
+        let Some(type_info) = self.lookup_semantic_type_info(name) else {
             return Err(format!("unknown nominal type `{name}`"));
         };
         match type_info {

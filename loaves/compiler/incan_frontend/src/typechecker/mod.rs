@@ -710,6 +710,11 @@ pub struct TypeChecker {
     /// This cache is deliberately separate from imported static types. A `Registry[K, T]` type alone is not proof of
     /// a canonical registry definition; only an owned `Registry.define(...)` declaration contributes a fact here.
     pub dependency_registry_definitions: HashMap<String, DependencyRegistryDefinitions>,
+    /// Registry structural values of dependency source modules' `pub const` declarations, keyed by canonical identity
+    /// and computed in the declaring module's scope. A descriptor naming an imported const records this value, as one
+    /// naming a local const records its own; a const that is not structural keeps its refusal.
+    pub dependency_registry_consts:
+        HashMap<CanonicalSymbolId, Result<incan_semantics_core::SemanticRegistryValue, String>>,
     /// Exact source-module partial projection metadata collected from dependencies, keyed by canonical module name.
     ///
     /// Source imports must preserve the callable projection, not only the callable signature, so const evaluation and

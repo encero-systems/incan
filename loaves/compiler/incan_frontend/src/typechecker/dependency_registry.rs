@@ -91,6 +91,42 @@ impl TypeChecker {
         );
     }
 
+    /// Record each `pub const` of one dependency module as the registry structural value it denotes, computed with the
+    /// module's own consts and names, so a consumer's descriptor can name it as it names a local const (#2605). A
+    /// const that is not structural, or whose expansion is cyclic, records its refusal instead.
+    pub(super) fn cache_dependency_registry_consts(&mut self, module_ast: &Program) {
+        let module_consts = module_ast
+            .declarations
+            .iter()
+            .filter_map(|declaration| match &declaration.node {
+                Declaration::Const(konst) => Some((konst.name.clone(), (konst.clone(), declaration.span))),
+                _ => None,
+            })
+            .collect::<HashMap<_, _>>();
+        let consumer_consts = std::mem::replace(&mut self.const_decls, module_consts);
+        let mut values = Vec::new();
+        for declaration in &module_ast.declarations {
+            let Declaration::Const(konst) = &declaration.node else {
+                continue;
+            };
+            if konst.visibility != Visibility::Public {
+                continue;
+            }
+            let Some(identity) = self
+                .symbols
+                .lookup(&konst.name)
+                .and_then(|id| self.symbols.identity_of(id))
+                .filter(|identity| identity.kind == SemanticSourceTargetKind::Const)
+                .cloned()
+            else {
+                continue;
+            };
+            values.push((identity, self.registry_structural_value(&konst.value)));
+        }
+        self.const_decls = consumer_consts;
+        self.dependency_registry_consts.extend(values);
+    }
+
     /// Recover the source-module identity for a dependency registry without inferring it from its lookup key.
     ///
     /// The parser records the module file path for normal compilation. Its path below `src/` is the source authority
