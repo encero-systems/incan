@@ -24,6 +24,7 @@ impl TypeChecker {
                 CallableParam {
                     name: param.name.clone(),
                     ty,
+                    surface_type_name: None,
                     kind: ParamKind::Normal,
                     has_default: false,
                     is_partial_preset: false,
@@ -51,6 +52,7 @@ impl TypeChecker {
                 CallableParam {
                     name: param.name.clone(),
                     ty,
+                    surface_type_name: None,
                     kind: ParamKind::Normal,
                     has_default: false,
                     is_partial_preset: false,

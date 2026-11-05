@@ -34,6 +34,9 @@ pub struct MethodExport {
 pub struct ParamExport {
     pub name: String,
     pub ty: TypeRef,
+    /// Authored alias-bearing type spelling retained only for presentation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface_type_name: Option<String>,
     #[serde(default)]
     pub kind: ParamKindExport,
     #[serde(default)]

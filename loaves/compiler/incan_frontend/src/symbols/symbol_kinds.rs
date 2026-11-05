@@ -128,10 +128,15 @@ pub struct FunctionOverloadInfo {
 /// RFC 038 requires callable values to retain rest-parameter shape instead of collapsing to a flat list of types. The
 /// optional `name` lets explicit `Callable[...]` types keep unnamed fixed parameters while declarations and methods
 /// preserve names for keyword binding.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone)]
 pub struct CallableParam {
     pub name: Option<String>,
     pub ty: ResolvedType,
+    /// Authored type spelling retained only when the annotation contains a transparent type alias.
+    ///
+    /// Semantic compatibility, overload selection, hashing and lowering use [`Self::ty`]. This sidecar is
+    /// presentation provenance for diagnostics and tooling and must never create alias identity.
+    pub surface_type_name: Option<String>,
     pub kind: ParamKind,
     pub has_default: bool,
     /// This parameter receives a construction-time-captured partial preset when its caller omits it.
@@ -149,12 +154,39 @@ pub struct CallableParam {
     pub is_mut: bool,
 }
 
+impl PartialEq for CallableParam {
+    /// Compare only callable semantics; authored alias spelling is display provenance.
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.ty == other.ty
+            && self.kind == other.kind
+            && self.has_default == other.has_default
+            && self.is_partial_preset == other.is_partial_preset
+            && self.is_mut == other.is_mut
+    }
+}
+
+impl Eq for CallableParam {}
+
+impl std::hash::Hash for CallableParam {
+    /// Hash only callable semantics so an alias spelling cannot create a distinct function type or overload key.
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+        self.ty.hash(state);
+        self.kind.hash(state);
+        self.has_default.hash(state);
+        self.is_partial_preset.hash(state);
+        self.is_mut.hash(state);
+    }
+}
+
 impl CallableParam {
     /// Build metadata for a source-declared callable parameter.
     pub fn named(name: impl Into<String>, ty: ResolvedType, kind: ParamKind) -> Self {
         Self {
             name: Some(name.into()),
             ty,
+            surface_type_name: None,
             kind,
             has_default: false,
             is_partial_preset: false,
@@ -167,6 +199,7 @@ impl CallableParam {
         Self {
             name: Some(name.into()),
             ty,
+            surface_type_name: None,
             kind,
             has_default,
             is_partial_preset: false,
@@ -179,6 +212,7 @@ impl CallableParam {
         Self {
             name: None,
             ty,
+            surface_type_name: None,
             kind: ParamKind::Normal,
             has_default: false,
             is_partial_preset: false,
@@ -189,6 +223,12 @@ impl CallableParam {
     /// Return this parameter with the callable type's `mut` marker set as given.
     pub fn with_mut(mut self, is_mut: bool) -> Self {
         self.is_mut = is_mut;
+        self
+    }
+
+    /// Return this parameter with its authored alias-bearing type spelling retained for presentation.
+    pub fn with_surface_type_name(mut self, surface_type_name: Option<String>) -> Self {
+        self.surface_type_name = surface_type_name;
         self
     }
 

@@ -65,6 +65,7 @@ pub fn map_resolved_type_leaves(
                 .map(|p| CallableParam {
                     name: p.name.clone(),
                     ty: walk(&p.ty),
+                    surface_type_name: p.surface_type_name.clone(),
                     kind: p.kind,
                     has_default: p.has_default,
                     is_partial_preset: p.is_partial_preset,
@@ -138,6 +139,7 @@ pub fn substitute_method_info(info: &MethodInfo, map: &HashMap<String, ResolvedT
             .map(|p| CallableParam {
                 name: p.name.clone(),
                 ty: substitute_resolved_type(&p.ty, map),
+                surface_type_name: p.surface_type_name.clone(),
                 kind: p.kind,
                 has_default: p.has_default,
                 is_partial_preset: p.is_partial_preset,

@@ -13,10 +13,12 @@ impl TypeChecker {
             .params
             .iter()
             .map(|p| {
+                let surface_type_name = self.alias_surface_type_name(&p.node.ty.node);
                 let ty = self.resolve_type_checked(&p.node.ty);
                 let is_mut = self.def_param_shows_changes_to_caller(&p.node, &ty);
                 CallableParam::named_with_default(p.node.name.clone(), ty, p.node.kind, p.node.default.is_some())
                     .with_mut(is_mut)
+                    .with_surface_type_name(surface_type_name)
             })
             .collect();
         let return_type = self.resolve_type_checked(&func.return_type);

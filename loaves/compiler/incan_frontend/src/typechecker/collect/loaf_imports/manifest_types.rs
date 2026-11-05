@@ -647,6 +647,7 @@ impl TypeChecker {
                         .map_or(param.has_default, ParamDefaultExport::is_materializable),
                 )
                 .with_mut(param.is_mut)
+                .with_surface_type_name(param.surface_type_name.clone())
             })
             .collect()
     }

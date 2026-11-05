@@ -89,6 +89,7 @@ impl TypeChecker {
             validate_source_type_names: false,
             unknown_source_type_names_emitted: HashSet::new(),
             source_type_declaration_names: HashSet::new(),
+            source_type_alias_names: HashSet::new(),
             annotation_owner: None,
             static_decl_positions: HashMap::new(),
             checking_registry_entry_static_initializer: false,

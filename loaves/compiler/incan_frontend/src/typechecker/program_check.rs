@@ -133,6 +133,7 @@ impl TypeChecker {
         self.validate_source_type_names = false;
         self.unknown_source_type_names_emitted.clear();
         self.source_type_declaration_names = Self::collect_source_type_declaration_names(&program.declarations);
+        self.source_type_alias_names = Self::collect_source_type_alias_names(&program.declarations);
         self.const_decls.clear();
         self.static_decls.clear();
         self.local_function_decls.clear();

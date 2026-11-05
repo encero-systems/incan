@@ -667,6 +667,11 @@ pub struct TypeChecker {
     /// names such a type is an ordinary nominal, and the collection pass can meet the annotation before it meets the
     /// declaration, so the bare-collection refusal consults this set rather than the symbol table alone (#1749).
     source_type_declaration_names: HashSet<String>,
+    /// Transparent aliases the current program declares, recorded before source-order collection.
+    ///
+    /// Callable display provenance needs to recognize a forward-declared alias without changing the semantic
+    /// resolver's declaration-order rules.
+    source_type_alias_names: HashSet<String>,
     /// The callable whose signature and body annotations are being checked, when one is active.
     ///
     /// An unknown type name inside a callable is most likely a type parameter that was never declared, so the

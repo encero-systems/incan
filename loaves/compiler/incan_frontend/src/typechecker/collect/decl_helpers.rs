@@ -55,6 +55,7 @@ fn resolve_owner_self_reference(
                 .map(|param| CallableParam {
                     name: param.name,
                     ty: resolve_owner_self_reference(param.ty, Some(owner_name), Some(owner_self_ty)),
+                    surface_type_name: param.surface_type_name,
                     kind: param.kind,
                     has_default: param.has_default,
                     is_partial_preset: param.is_partial_preset,
@@ -139,6 +140,7 @@ fn shadow_declared_type_params(ty: ResolvedType, type_param_names: &HashSet<Stri
                 .map(|param| CallableParam {
                     name: param.name,
                     ty: shadow_declared_type_params(param.ty, type_param_names),
+                    surface_type_name: param.surface_type_name,
                     kind: param.kind,
                     has_default: param.has_default,
                     is_partial_preset: param.is_partial_preset,
@@ -241,10 +243,12 @@ fn method_info_from_decl(
         .params
         .iter()
         .map(|p| {
+            let surface_type_name = checker.alias_surface_type_name(&p.node.ty.node);
             let ty = resolve_declared_type(checker, &p.node.ty, &active_type_params, owner_name, owner_self_ty);
             let is_mut = checker.def_param_shows_changes_to_caller(&p.node, &ty);
             CallableParam::named_with_default(p.node.name.clone(), ty, p.node.kind, p.node.default.is_some())
                 .with_mut(is_mut)
+                .with_surface_type_name(surface_type_name)
         })
         .collect();
     let return_type = resolve_declared_type(

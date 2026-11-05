@@ -31,6 +31,7 @@ impl TypeChecker {
                 CallableParam {
                     name: param.name.clone(),
                     ty,
+                    surface_type_name: param.surface_type_name.clone(),
                     kind: param.kind,
                     has_default: param.has_default,
                     is_partial_preset: param.is_partial_preset,
