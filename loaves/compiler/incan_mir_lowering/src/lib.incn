@@ -126,7 +126,7 @@ pub def unit_plan(
     modules: &list[BodyIrModule],
     inputs: SourceInputs,
     entry: int,
-    kind: str,
+    kind: &str,
     mut published: list[NativeUnionDeclaration],
 ) -> Result[UnitPlanning, str]:
     """Borrow checked modules and consume their source inputs to lower a program, library or collected test unit."""
@@ -135,7 +135,7 @@ pub def unit_plan(
         inputs.sources,
         inputs.files,
         entry,
-        kind,
+        str(kind),
         inputs.tests,
         published,
         inputs.overflow_checks,
@@ -147,8 +147,8 @@ pub def program_refusals(
     inputs: SourceInputs,
     entry: int,
     progress: bool,
-    selection: str,
-    kind: str,
+    selection: &str,
+    kind: &str,
 ) -> RefusalPlanning:
     """Consume source inputs for complete or exact-body refusal collection, optionally reporting its current body."""
     return checked_program_refusals(
@@ -157,12 +157,12 @@ pub def program_refusals(
         inputs.files,
         entry,
         progress,
-        selection,
-        kind,
+        str(selection),
+        str(kind),
         inputs.overflow_checks,
     )
 
 
-pub def numeric_carrier(ty: PlanType) -> bool:
+pub def numeric_carrier(ty: &PlanType) -> bool:
     """Share lowering's numeric classification with native owned-result validation without a second carrier list."""
-    return checked_numeric_carrier(ty)
+    return checked_numeric_carrier(ty.clone())

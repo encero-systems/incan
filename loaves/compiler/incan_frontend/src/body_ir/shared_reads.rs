@@ -4,8 +4,15 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use super::{CanonicalSymbolId, IncanType, SemanticSourceTargetKind, bir};
+use super::{CanonicalSymbolId, IncanPrimitiveType, IncanType, SemanticSourceTargetKind, bir};
+use incan_lang::lang::{builtins::BuiltinFnId, types::collections::CollectionTypeId};
 use incan_semantics_core::SymbolOrigin;
+
+mod derived_reads;
+mod match_reads;
+
+use derived_reads::derived_temporaries_are_read_only;
+use match_reads::{match_bindings_are_read_only, pattern_is_read_only, pattern_selects_shared_carrier};
 
 type Candidate = (usize, usize, usize);
 
@@ -122,8 +129,8 @@ struct ReadContext<'a> {
     field_types: &'a FieldTypes,
     candidates: &'a HashSet<Candidate>,
     local: bir::LocalId,
-    owner: &'a IncanType,
     cursor: bool,
+    derived: bool,
 }
 
 /// Retain native cursors, infer plain shared parameters to a greatest fixed point and rewrite every caller from the
@@ -352,8 +359,8 @@ fn parameter_is_read_only(
         field_types,
         candidates,
         local: parameter.local,
-        owner: &parameter.ty,
         cursor: false,
+        derived: false,
     };
     readonly(&body.block.stmts, &context)
 }
@@ -410,6 +417,10 @@ fn retain_function_item_adapter(
     });
     if adapts_inferred_shared {
         body.function_item = false;
+        // The adapter takes the whole callable signature and forwards every input, so no input is left to a default.
+        for parameter in params.iter_mut() {
+            parameter.default = bir::CallableParamDefault::Required;
+        }
     }
 }
 
@@ -566,7 +577,10 @@ fn retain_cursors(
                 .projection
                 .iter()
                 .all(|step| matches!(step, bir::PlaceElem::Field { .. }))
-            && source.local_id().is_some();
+            && source
+                .local_id()
+                .and_then(|root| body.locals.get(root.index()))
+                .is_some_and(|root| !matches!(root.origin, bir::LocalOrigin::Temporary));
         if (!field_view && writes.len() < 2) || writes.iter().any(|(place, _)| !place.projection.is_empty())
             || writes.iter().skip(1).any(|(_, value)| !matches!(value,
                 bir::Rvalue::Use(bir::Operand::Place(read)) if whole_type(&read.place, &body.locals) == Some(&reference)))
@@ -577,8 +591,8 @@ fn retain_cursors(
             field_types,
             candidates,
             local,
-            owner: &owner,
             cursor: true,
+            derived: false,
         };
         if !readonly(&body.block.stmts, &context) || source_changes(&body.block.stmts, &source, local) {
             continue;
@@ -623,8 +637,8 @@ fn whole_type<'a>(place: &bir::Place, locals: &'a [bir::LocalDecl]) -> Option<&'
     locals.get(place.local_id()?.index()).map(|local| &local.ty)
 }
 
-/// Recover the exact checked type read from a local or global place through retained nominal and payload projections.
-/// Index and slice projections remain declined because Body IR does not retain their selected element type here.
+/// Recover the exact checked type read from a local or global place through retained nominal, collection and payload
+/// projections. An index is admitted only where the checked container itself determines one element type.
 fn place_type(place: &bir::Place, locals: &[bir::LocalDecl], field_types: &FieldTypes) -> Option<IncanType> {
     let mut ty = match &place.root {
         bir::PlaceRoot::Local(local) => locals.get(local.index())?.ty.clone(),
@@ -640,12 +654,55 @@ fn place_type(place: &bir::Place, locals: &[bir::LocalDecl], field_types: &Field
                 structural: false,
                 ..
             } => field_types.projected(identity, &ty)?,
+            bir::PlaceElem::Index(index) => indexed_type(&ty, index)?,
+            bir::PlaceElem::Slice { .. } => sliced_type(&ty)?,
             bir::PlaceElem::UnionMember { ty } => ty.clone(),
             bir::PlaceElem::OptionPayload { payload_type, .. } => payload_type.clone(),
             _ => return None,
         };
     }
     Some(ty)
+}
+
+/// Resolve an indexed place without guessing a user-defined indexing contract or a heterogeneous dynamic tuple slot.
+fn indexed_type(ty: &IncanType, index: &bir::Operand) -> Option<IncanType> {
+    match ty {
+        IncanType::NativeArray { element, .. } => return Some(element.as_ref().clone()),
+        IncanType::Tuple(elements) => {
+            let bir::Operand::Constant(bir::Constant::Int(index)) = index else {
+                return None;
+            };
+            return usize::try_from(*index)
+                .ok()
+                .and_then(|index| elements.get(index))
+                .cloned();
+        }
+        _ => {}
+    }
+    let (collection, arguments) = ty.collection()?;
+    match collection {
+        CollectionTypeId::List | CollectionTypeId::FrozenList => arguments.first().cloned(),
+        CollectionTypeId::Dict | CollectionTypeId::FrozenDict => arguments.get(1).cloned(),
+        _ => None,
+    }
+}
+
+/// Preserve the checked carrier of a builtin slice. Element selection is separate from slicing and remains covered by
+/// [`indexed_type`].
+fn sliced_type(ty: &IncanType) -> Option<IncanType> {
+    match ty {
+        IncanType::Primitive(IncanPrimitiveType::Str | IncanPrimitiveType::Bytes) | IncanType::NativeArray { .. } => {
+            Some(ty.clone())
+        }
+        _ if matches!(
+            ty.collection(),
+            Some((CollectionTypeId::List | CollectionTypeId::FrozenList, _))
+        ) =>
+        {
+            Some(ty.clone())
+        }
+        _ => None,
+    }
 }
 
 /// Return the checked value type of a place operand without treating literals as storage.
@@ -658,6 +715,9 @@ fn operand_type(value: &bir::Operand, locals: &[bir::LocalDecl], field_types: &F
 
 /// Prove all uses in this frame while conservatively declining unsupported control flow and escaping values.
 fn readonly(statements: &[bir::Statement], context: &ReadContext<'_>) -> bool {
+    if !derived_temporaries_are_read_only(statements, context) {
+        return false;
+    }
     let mut accepted = true;
     walk(statements, &mut |statement| {
         accepted &= shared_statement(statement, context);
@@ -665,7 +725,8 @@ fn readonly(statements: &[bir::Statement], context: &ReadContext<'_>) -> bool {
     accepted
 }
 
-/// Admit a shared call or local reference binding; consuming, exclusive and escaping operations keep owned storage.
+/// Admit observations, shared calls and local reference bindings; consuming, exclusive and escaping operations keep
+/// owned storage. Work unrelated to this parameter never weakens its proof.
 fn shared_statement(statement: &bir::Statement, context: &ReadContext<'_>) -> bool {
     use bir::StatementKind as S;
     match &statement.kind {
@@ -679,10 +740,15 @@ fn shared_statement(statement: &bir::Statement, context: &ReadContext<'_>) -> bo
             if let bir::Rvalue::Use(value) = rvalue
                 && uses(value, context.local)
             {
+                let source = operand_type(value, context.locals, context.field_types);
+                let destination = whole_type(place, context.locals);
                 return scalar_projection(value, context.local)
-                    || whole_type(place, context.locals) == Some(&IncanType::Ref(Box::new(context.owner.clone())));
+                    || source.as_ref().is_some_and(|source| {
+                        destination == Some(&IncanType::Ref(Box::new(source.clone())))
+                            || borrowed_temporary(value, place, source, context.locals)
+                    });
             }
-            shared_rvalue(rvalue, context.local)
+            shared_rvalue(rvalue, context)
         }
         S::Call {
             destination,
@@ -697,9 +763,12 @@ fn shared_statement(statement: &bir::Statement, context: &ReadContext<'_>) -> bo
                 return false;
             }
             args.iter().enumerate().all(|(index, argument)| {
+                if !argument_uses(argument, context.local) {
+                    return true;
+                }
                 let Some(value) = argument.as_one() else { return false };
-                !uses(value, context.local)
-                    || scalar_projection(value, context.local)
+                scalar_projection(value, context.local)
+                    || (read_only_callee(callee) && !through_payload(value))
                     || call_parameter(callee, index, context.signatures, context.candidates)
                         .and_then(|parameter| parameter.shared_owner(context.candidates))
                         .is_some_and(|owner| {
@@ -707,50 +776,180 @@ fn shared_statement(statement: &bir::Statement, context: &ReadContext<'_>) -> bo
                         })
             })
         }
-        S::If { cond, .. } => !uses(cond, context.local),
+        S::If { .. } => true,
         S::Loop { .. } | S::UnsafeRegion { .. } | S::Drop { .. } | S::Continue => true,
         S::Return { value } | S::Break { value } => value
             .as_ref()
             .is_none_or(|value| !uses(value, context.local) || scalar_projection(value, context.local)),
-        S::Expr { value } => !uses(value, context.local) || scalar_projection(value, context.local),
+        S::Expr { value } => {
+            !uses(value, context.local)
+                || !matches!(value, bir::Operand::Place(read) if read.fact == bir::OwnershipFact::Move)
+        }
         S::IterNext {
             destination, iterator, ..
         } => destination.local_id() != Some(context.local) && !uses(iterator, context.local),
-        S::Assert { kind, message, .. } => {
-            let value = match kind {
-                bir::AssertionKind::Condition { cond } => cond,
-                bir::AssertionKind::Pattern { scrutinee, .. } => scrutinee,
-                bir::AssertionKind::Raises { call, .. } => call,
-            };
-            !uses(value, context.local) && message.as_ref().is_none_or(|value| !uses(value, context.local))
+        S::Assert { kind, .. } => match kind {
+            bir::AssertionKind::Pattern { scrutinee, pattern } if uses(scrutinee, context.local) => {
+                borrowed(scrutinee, context.local)
+                    && pattern_selects_shared_carrier(pattern)
+                    && pattern_is_read_only(pattern)
+            }
+            bir::AssertionKind::Raises { call, .. } => !uses(call, context.local),
+            _ => true,
+        },
+        S::TryPropagate {
+            destination, operand, ..
+        } => destination.local_id() != Some(context.local) && !uses(operand, context.local),
+        S::Await { destination, awaited } => {
+            destination
+                .as_ref()
+                .is_none_or(|place| place.local_id() != Some(context.local))
+                && !uses(awaited, context.local)
         }
-        _ => false,
+        S::Race { destination, .. } => destination
+            .as_ref()
+            .is_none_or(|place| place.local_id() != Some(context.local)),
+        S::Yield { value } => !uses(value, context.local),
+        S::Unsupported { .. } => false,
     }
 }
 
-/// Ordinary scalar work and formatting may coexist with a read loan; closure environments and aggregate ownership
-/// are declined. A checked Copy field projection observes its scalar without copying the native owner.
-fn shared_rvalue(value: &bir::Rvalue, local: bir::LocalId) -> bool {
+/// Admit rvalues that either do not mention this parameter or have read-only semantics. Aggregate construction,
+/// closure capture and generator capture remain ownership boundaries when they contain the parameter.
+fn shared_rvalue(value: &bir::Rvalue, context: &ReadContext<'_>) -> bool {
+    let local = context.local;
     match value {
         bir::Rvalue::Use(value) | bir::Rvalue::UnaryOp(_, value) | bir::Rvalue::IsInstance { value, .. } => {
             !uses(value, local) || scalar_projection(value, local)
         }
-        bir::Rvalue::BinaryOp(_, left, right) => {
-            (!uses(left, local) || scalar_projection(left, local))
-                && (!uses(right, local) || scalar_projection(right, local))
+        bir::Rvalue::BinaryOp(operator, left, right) => {
+            let comparison = matches!(
+                operator,
+                bir::BinOp::Eq
+                    | bir::BinOp::Ne
+                    | bir::BinOp::Lt
+                    | bir::BinOp::Le
+                    | bir::BinOp::Gt
+                    | bir::BinOp::Ge
+                    | bir::BinOp::Is
+                    | bir::BinOp::IsNot
+            );
+            (!uses(left, local) || comparison || scalar_projection(left, local))
+                && (!uses(right, local) || comparison || scalar_projection(right, local))
         }
         bir::Rvalue::Format(parts) => parts.iter().all(|part| match part {
             bir::FormatPart::Literal(_) => true,
-            bir::FormatPart::Expr { operand, .. } => !uses(operand, local) || scalar_projection(operand, local),
+            bir::FormatPart::Expr { .. } => true,
         }),
         bir::Rvalue::Match { scrutinee, arms } => {
-            !uses(scrutinee, local)
-                && arms
-                    .iter()
-                    .all(|arm| arm.guard.as_ref().is_none_or(|guard| !uses(guard, local)) && !uses(&arm.result, local))
+            (!uses(scrutinee, local)
+                || ((borrowed(scrutinee, local) || context.derived)
+                    && arms.iter().any(|arm| pattern_selects_shared_carrier(&arm.pattern))
+                    && arms.iter().all(|arm| pattern_is_read_only(&arm.pattern))))
+                && arms.iter().all(|arm| {
+                    arm.guard
+                        .as_ref()
+                        .is_none_or(|guard| !uses(guard, local) || scalar_projection(guard, local))
+                        && (!uses(&arm.result, local) || scalar_projection(&arm.result, local))
+                })
+                && match_bindings_are_read_only(arms, context)
         }
-        _ => false,
+        bir::Rvalue::Aggregate(_, elements) => !elements.iter().any(|element| argument_uses(element, local)),
+        bir::Rvalue::Dict(entries) => !entries.iter().any(|entry| dict_entry_uses(entry, local)),
+        bir::Rvalue::ResultVariant(variant) => !uses(&variant.payload, local),
+        bir::Rvalue::Closure { captured_operands, .. } => !captured_operands.iter().any(|operand| uses(operand, local)),
+        bir::Rvalue::Generator {
+            source,
+            captured_operands,
+            ..
+        } => !uses(source, local) && !captured_operands.iter().any(|operand| uses(operand, local)),
+        bir::Rvalue::ValueEnumVariant(_) | bir::Rvalue::FieldlessEnumVariant(_) => true,
     }
+}
+
+/// A compiler temporary may carry a checked shared collection or iterator view without turning an ordinary user
+/// binding into an alias implicitly.
+fn borrowed_temporary(
+    value: &bir::Operand,
+    destination: &bir::Place,
+    source: &IncanType,
+    locals: &[bir::LocalDecl],
+) -> bool {
+    matches!(value, bir::Operand::Place(read)
+        if matches!(read.fact, bir::OwnershipFact::Borrow | bir::OwnershipFact::Clone))
+        && whole_type(destination, locals) == Some(source)
+        && destination
+            .local_id()
+            .and_then(|local| locals.get(local.index()))
+            .is_some_and(|local| matches!(local.origin, bir::LocalOrigin::Temporary))
+}
+
+/// Whether a call element reads this local. Named and spread elements stay distinct from a resolved fixed slot.
+fn argument_uses(argument: &bir::ArgumentElement, local: bir::LocalId) -> bool {
+    match argument {
+        bir::ArgumentElement::One(operand) | bir::ArgumentElement::Named { operand, .. } => uses(operand, local),
+        bir::ArgumentElement::Spread(spread) => uses(&spread.source, local),
+    }
+}
+
+/// Whether a dictionary construction entry consumes this local.
+fn dict_entry_uses(entry: &bir::DictEntry, local: bir::LocalId) -> bool {
+    match entry {
+        bir::DictEntry::Pair(key, value) => uses(key, local) || uses(value, local),
+        bir::DictEntry::Spread(spread) => uses(&spread.source, local),
+    }
+}
+
+/// Whether a read reaches a narrowed union or option payload, which native lowering can't project through a lent enum.
+fn through_payload(value: &bir::Operand) -> bool {
+    matches!(value, bir::Operand::Place(read) if read.place.projection.iter().any(|step| matches!(
+        step,
+        bir::PlaceElem::UnionMember { .. } | bir::PlaceElem::OptionPayload { .. }
+    )))
+}
+
+/// Compiler-owned helpers whose inputs are observations or explicit value-producing operations over observations.
+/// Extraction and validation helpers stay owned because they may consume carrier payloads.
+fn read_only_callee(callee: &bir::Callee) -> bool {
+    if let bir::Callee::Function(bir::CallableTarget::Named(target)) = callee {
+        return target.builtin == Some(BuiltinFnId::Len);
+    }
+    let bir::Callee::Helper(helper) = callee else {
+        return false;
+    };
+    matches!(
+        helper,
+        bir::HelperOp::StrConcat
+            | bir::HelperOp::StrEq
+            | bir::HelperOp::StrNe
+            | bir::HelperOp::StrLt
+            | bir::HelperOp::StrLe
+            | bir::HelperOp::StrGt
+            | bir::HelperOp::StrGe
+            | bir::HelperOp::StrUpper
+            | bir::HelperOp::StrLower
+            | bir::HelperOp::StrStrip
+            | bir::HelperOp::StrLen
+            | bir::HelperOp::StrReplace
+            | bir::HelperOp::StrJoin
+            | bir::HelperOp::StrSplit
+            | bir::HelperOp::StrContains
+            | bir::HelperOp::StrNotContains
+            | bir::HelperOp::ListConcat
+            | bir::HelperOp::ListRepeat
+            | bir::HelperOp::ListContains
+            | bir::HelperOp::ListNotContains
+            | bir::HelperOp::SetContains
+            | bir::HelperOp::SetNotContains
+            | bir::HelperOp::DictContainsKey
+            | bir::HelperOp::DictNotContainsKey
+    )
+}
+
+/// Whether this exact operand is already represented as a shared read of the candidate.
+fn borrowed(value: &bir::Operand, local: bir::LocalId) -> bool {
+    matches!(value, bir::Operand::Place(read)
+        if read.place.local_id() == Some(local) && read.fact == bir::OwnershipFact::Borrow)
 }
 
 /// A checked Copy read through a field observes that field rather than transferring its native owner.

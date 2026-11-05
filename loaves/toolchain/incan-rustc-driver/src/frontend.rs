@@ -452,6 +452,7 @@ fn lower_compilation_plan(
     published_unions: &mut Vec<NativeUnionDeclaration>,
 ) -> Result<crate::plan::Plan, Box<dyn std::error::Error>> {
     tracing::debug!(target: "incan::invocation", modules = ?program.modules, "checked direct-route Body IR");
+    let kind_name = kind.as_str().to_owned();
     loop {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::lower_program", modules = program.modules.len()).entered();
         let inputs = SourceInputs {
@@ -465,7 +466,7 @@ fn lower_compilation_plan(
             &program.modules,
             inputs,
             program.entry.try_into()?,
-            kind.as_str().to_owned(),
+            &kind_name,
             &mut attempt_unions,
         )
         .inspect_err(|_| receipt.deterministic())?
@@ -516,6 +517,7 @@ fn census_complete(
         return Ok(false);
     }
     let selection = std::env::var("INCAN_DIRECT_CENSUS_BODY").unwrap_or_default();
+    let kind_name = kind.as_str().to_owned();
     let selected = !selection.is_empty();
     let refusals = loop {
         let outcome = program_refusals(
@@ -528,8 +530,8 @@ fn census_complete(
             },
             program.entry.try_into()?,
             false,
-            selection.clone(),
-            kind.as_str().to_owned(),
+            &selection,
+            &kind_name,
         );
         match outcome {
             RefusalPlanning::NeedsRuntime(requirements) => satisfy_runtime_requirements(program, requirements)?,
@@ -548,8 +550,8 @@ fn census_complete(
             },
             program.entry.try_into()?,
             true,
-            selection,
-            kind.as_str().to_owned(),
+            &selection,
+            &kind_name,
         ) {
             RefusalPlanning::Complete(reported) if reported == refusals => {}
             _ => return Err("settled census changed during progress reporting".into()),

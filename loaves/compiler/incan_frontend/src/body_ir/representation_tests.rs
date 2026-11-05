@@ -94,6 +94,7 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
     assert_free_function_input_baseline()?;
     assert_shared_loans()?;
     assert_projected_shared_loans()?;
+    assert_complete_shared_read_shapes()?;
     assert_lent_and_moved_read()?;
     assert_equality_contract()?;
     let mut changed = seed.clone();
@@ -382,6 +383,50 @@ fn assert_projected_shared_loans() -> Result<(), Box<dyn std::error::Error>> {
                     if read.fact == bir::OwnershipFact::Move || read.last_use)
         )
     }));
+    Ok(())
+}
+
+/// Prove every admitted observation shape borrows its plain parameter while the corresponding store, escape, capture
+/// or item-taking shape retains owned access. Unrelated aggregates, results, closures and matches do not weaken an
+/// otherwise read-only body.
+fn assert_complete_shared_read_shapes() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "model Native:\n    value: int\ndef narrowed(value: str | None) -> str:\n    if value is not None:\n        return value.upper()\n    return \"missing\"\ndef discarded(item: Native) -> int:\n    _ = item\n    return 1\ndef formatted(item: Native) -> str:\n    return f\"{item:?}\"\ndef stored(item: Native) -> list[Native]:\n    return [item]\ndef compared(value: str) -> bool:\n    return value == \"chosen\"\ndef returned(value: str) -> str:\n    return value\ndef matched(item: Result[Native, str]) -> int:\n    match item:\n        Ok(_) => return 1\n        Err(_) => return 0\ndef match_take(item: Result[Native, str]) -> Native:\n    match item:\n        Ok(value) => return value\n        Err(_) => return Native(value=0)\ndef indexed(items: list[Native]) -> int:\n    return items[0].value\ndef index_take(items: list[Native]) -> Native:\n    return items[0]\ndef iterated(items: list[Native]) -> int:\n    mut total = 0\n    for item in items:\n        total += item.value\n    return total\ndef loop_take(items: list[Native]) -> Native:\n    for item in items:\n        return item\n    return Native(value=0)\ndef unrelated(item: Native) -> int:\n    values = [1, 2]\n    callback: Callable[int, int] = (value) => value + 1\n    result: Result[int, str] = Ok(callback(values[0]))\n    match result:\n        Ok(_) => pass\n        Err(_) => pass\n    return item.value\ndef captured(item: Native) -> int:\n    callback: () -> int = () => item.value\n    return callback()\n";
+    let (_, _, mut module) = checked_seed(source)?;
+    super::shared_reads::retain_modules(std::slice::from_mut(&mut module), &[]);
+
+    for name in ["formatted", "compared", "matched", "indexed", "iterated", "unrelated"] {
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == name)
+            .ok_or("missing admitted shared-read shape")?;
+        assert_eq!(
+            body.params[0].input_access,
+            incan_semantics_core::IncanInputAccess::InferredShared,
+            "{name}: {body:#?}"
+        );
+    }
+    for name in [
+        "stored",
+        "returned",
+        "match_take",
+        "index_take",
+        "discarded",
+        "narrowed",
+        "loop_take",
+        "captured",
+    ] {
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == name)
+            .ok_or("missing refused shared-read shape")?;
+        assert_eq!(
+            body.params[0].input_access,
+            incan_semantics_core::IncanInputAccess::Inferred,
+            "{name}: {body:#?}"
+        );
+    }
     Ok(())
 }
 
