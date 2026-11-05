@@ -20,7 +20,7 @@ fn invalid_graph_restore_requires_the_exact_analysis_fault() -> Result<(), Box<d
         positions: &positions,
         values: checked[5..].iter(),
     };
-    let graph = reader.graph()?;
+    let graph = reader.graph(2)?;
     reader.finish()?;
     let invalid_entry = graph.nodes.len();
     let mut invalid = checked.clone();
@@ -75,7 +75,7 @@ fn owned_initializer_restore_requires_the_exact_source_event() -> Result<(), Box
         positions: &positions,
         values: checked[5..].iter(),
     };
-    let graph = reader.graph()?;
+    let graph = reader.graph(2)?;
     reader.finish()?;
     let initializer = graph.owned_locals.values().next().ok_or("missing owned initializer")?;
     assert!(initializer.source.is_some());
@@ -131,7 +131,7 @@ fn operation_dependency_restore_requires_its_exact_analysis_fault() -> Result<()
         positions: &positions,
         values: checked[5..].iter(),
     };
-    let graph = reader.graph()?;
+    let graph = reader.graph(2)?;
     reader.finish()?;
     assert_eq!(graph.operations.len(), 1);
     for completion in [true, false] {
@@ -195,7 +195,7 @@ fn invocation_evaluation_restore_requires_its_exact_analysis_fault() -> Result<(
         positions: &positions,
         values: checked[5..].iter(),
     };
-    let graph = reader.graph()?;
+    let graph = reader.graph(2)?;
     reader.finish()?;
     assert_eq!(graph.invocations.len(), 1);
     let mut positive = BodyLocal {

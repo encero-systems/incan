@@ -232,6 +232,8 @@ pub(super) fn project(positions: &Positions, graph: &Graph, fields: &mut Vec<Str
             }
             None => row.push("none".into()),
         }
+        row.push(invocation.receiver_dependencies.len().to_string());
+        row.extend(invocation.receiver_dependencies.iter().map(|loan| loan.0.to_string()));
         row.push(invocation.arguments.len().to_string());
         for argument in &invocation.arguments {
             row.extend([
@@ -408,7 +410,7 @@ impl Reader<'_> {
     /// Restore the full graph without consulting checked current-state payloads. The caller must run analysis.
     ///
     /// The record holds the graph's sections in this order, each a count-prefixed run its own reader decodes.
-    pub fn graph(&mut self) -> Result<Graph, NodeBindingError> {
+    pub fn graph(&mut self, schema: usize) -> Result<Graph, NodeBindingError> {
         Ok(Graph {
             owner: self.identity()?,
             entry: self.number()?,
@@ -419,7 +421,7 @@ impl Reader<'_> {
             dependent_values: self.span_set()?,
             owned_locals: self.ordered_map(Self::identity, Self::owned_initialization)?,
             operations: self.ordered_map(Self::semantic_span, Self::operation)?,
-            invocations: self.ordered_map(Self::semantic_span, Self::invocation)?,
+            invocations: self.ordered_map(Self::semantic_span, |reader| reader.invocation(schema))?,
             closures: self.ordered_map(Self::semantic_span, Self::closure)?,
             nodes: self.list(Self::node)?,
         })
@@ -525,12 +527,13 @@ impl Reader<'_> {
     }
     /// An invocation: its callee, receiver loan and arguments, then how its receiver is evaluated, the node that
     /// completes it and the nodes of its final accesses.
-    fn invocation(&mut self) -> Result<Invocation, NodeBindingError> {
+    fn invocation(&mut self, schema: usize) -> Result<Invocation, NodeBindingError> {
         Ok(Invocation {
             callee: self.identity()?,
             receiver: self.loan_option()?,
             receiver_owned: self.boolean()?,
             receiver_source: self.optional(Self::place)?,
+            receiver_dependencies: if schema >= 2 { self.loan_ids()? } else { Vec::new() },
             arguments: self.list(Self::invocation_argument)?,
             receiver_evaluation: self.optional(Self::input_evaluation)?,
             completion_node: self.number()?,

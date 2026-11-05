@@ -177,6 +177,9 @@ pub struct RustCheckedCall {
     pub storage: Option<RustCheckedSignature>,
     /// Source declaration binders active when this native call was admitted, independently of nominal spellings.
     pub source_type_parameters: Vec<String>,
+    /// Signature-local loan identities retained from rustc, one entry per native parameter and one for the result.
+    /// Empty facts, including synthetic calls and older manifests, authorize no retained result dependency.
+    pub signature_loans: Vec<Vec<String>>,
     /// Flat, checked Deref/DerefMut callees evaluated on the receiver before written ordinary arguments.
     pub receiver_adjustments: Vec<RustCheckedCall>,
     /// Public item path of the selected free function or associated function.

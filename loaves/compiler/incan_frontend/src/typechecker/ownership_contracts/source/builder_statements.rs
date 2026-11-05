@@ -150,6 +150,20 @@ impl Builder<'_> {
             self.retain_local_loan(assignment, root, loan, path)?;
             return Ok((incoming, true));
         }
+        // A native borrowed result keeps its physical Rust value while retaining every caller-owned input named by
+        // the checked signature. Unlike a source returned view, it is never replaced by a source-place alias.
+        if let Some(relation) = self.native_result_relation(&assignment.value)?
+            && !relation.sources.is_empty()
+        {
+            let (incoming, loans) = self.evaluate_native_result(&assignment.value, &relation, incoming)?;
+            if self.graph.dependent_locals.insert(root.clone(), loans).is_some() {
+                return Err(Unavailable {
+                    span: assignment.name_span,
+                    reason: "native borrowed result local has more than one dependency destination".into(),
+                });
+            }
+            return Ok((incoming, true));
+        }
         // A top-level owned result keeps its declared source dependency while remaining independent value storage.
         if let Some(relation) = self.owned_relation(&assignment.value)? {
             let (incoming, path) = self.evaluate_view_call(&assignment.value, relation, incoming)?;

@@ -429,6 +429,6 @@ impl TypeChecker {
         if self.errors.len() == errors_before {
             self.retain_checked_rust_function(path, sig, &callable_returns, span);
         }
-        ret
+        self.native_borrowed_source_result(span, ret)
     }
 }

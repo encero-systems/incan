@@ -116,15 +116,15 @@ impl Builder<'_> {
 
     /// A statement `match` evaluates its scrutinee once. Every arm starts from that evaluation and binds its payload
     /// as a fresh owner, and the arms that continue join after the match. A guard evaluates with that arm's binding;
-    /// its false path continues to the next arm without retaining the binding. On a call carrying a view, the call's
-    /// result loan covers the arms: the binding of the variant holding the view (`Ok` or `Some`, or `Err` for a view
-    /// carried in the error) aliases the caller's place under it, while the other arms hold no view.
+    /// its false path continues to the next arm without retaining the binding. Source carried views alias their
+    /// caller place; native carriers retain their physical payload and every signature-proven owner dependency.
     pub(super) fn match_statement(
         &mut self,
         scrutinee: &Spanned<Expr>,
         arms: &[Spanned<MatchArm>],
         incoming: Vec<usize>,
     ) -> Result<Vec<usize>, Unavailable> {
+        let mut native = None;
         let (evaluated, view) = if let Some(relation) = self.call_relation(scrutinee)?
             && let Some(payload) = relation.carried
         {
@@ -135,6 +135,12 @@ impl Builder<'_> {
             (evaluated, Some((path, payload)))
         } else if self.is_taken_carrier(scrutinee) {
             return Err(super::taken_carrier(scrutinee.span));
+        } else if let Some(relation) = self.native_result_relation(scrutinee)?
+            && let Some(payload) = relation.carried
+        {
+            let (evaluated, loans) = self.evaluate_native_result(scrutinee, &relation, incoming)?;
+            native = Some((loans, payload));
+            (evaluated, None)
         } else if fresh_scrutinee(scrutinee) {
             (self.expression(scrutinee, incoming, false)?, None)
         } else {
@@ -152,7 +158,15 @@ impl Builder<'_> {
             });
             match binding {
                 Some((path, (name, span))) => self.view_arm_binding(name, span, path)?,
-                None => self.arm_binding(&arm.node.pattern)?,
+                None => {
+                    self.arm_binding(&arm.node.pattern)?;
+                    if let Some((loans, payload)) = &native
+                        && let Some((name, span)) =
+                            super::super::builtins::carried_view_binding(&arm.node.pattern, *payload)
+                    {
+                        self.native_arm_binding(name, span, loans)?;
+                    }
+                }
             }
             let arm_input = if let Some(guard) = &arm.node.guard {
                 let guarded = self.expression(guard, remaining, false)?;
@@ -350,6 +364,30 @@ impl Builder<'_> {
             });
         }
         self.aliases.insert(identity, path.clone());
+        Ok(())
+    }
+
+    /// Retain a native carrier payload's physical value while attaching every result loan to its canonical match
+    /// binding. The ordinary arm binding has already established independent storage for this payload.
+    fn native_arm_binding(&mut self, name: &str, span: Span, loans: &[super::LoanId]) -> Result<(), Unavailable> {
+        let identity = self
+            .checker
+            .type_info
+            .resolved_write_identity(span, name)
+            .cloned()
+            .ok_or(Unavailable {
+                span,
+                reason: "missing checked native match binding".into(),
+            })?;
+        if loans.is_empty() {
+            return Ok(());
+        }
+        if self.graph.dependent_locals.insert(identity, loans.to_vec()).is_some() {
+            return Err(Unavailable {
+                span,
+                reason: "native match binding has more than one dependency destination".into(),
+            });
+        }
         Ok(())
     }
 

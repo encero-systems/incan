@@ -87,7 +87,7 @@ pub(super) fn project(positions: &Positions, local: &BodyLocal, fields: &mut Fie
             "input-flow".into(),
             positions.nodes.anchor(span_of(owner))?.path,
             "graph".into(),
-            "1".into(),
+            "2".into(),
         ];
         match flow {
             InputFlow::Checked { graph, analysis } => {
@@ -124,13 +124,15 @@ pub(super) fn project(positions: &Positions, local: &BodyLocal, fields: &mut Fie
 /// Decode one complete ownership protocol row. Neither missing owners nor duplicate rows can introduce authority.
 pub(super) fn restore(positions: &Positions, local: &mut BodyLocal, row: &[String]) -> Result<(), NodeBindingError> {
     let anchor = positions.span(&row[1])?;
+    let schema = match row.get(3).map(String::as_str) {
+        Some("1") => 1,
+        Some("2") => 2,
+        _ => return Err(NodeBindingError::Unsupported("input record schema")),
+    };
     let mut reader = Reader {
         positions,
-        values: row[3..].iter(),
+        values: row[4..].iter(),
     };
-    if reader.token()? != "1" {
-        return Err(NodeBindingError::Unsupported("input record schema"));
-    }
     match (row[0].as_str(), row[2].as_str()) {
         ("input-copy", "types") => {
             let owner = reader.identity()?;
@@ -239,7 +241,7 @@ pub(super) fn restore(positions: &Positions, local: &mut BodyLocal, row: &[Strin
                 }
                 state @ ("checked" | "invalid") => {
                     let checked = state == "checked";
-                    let graph = reader.graph()?;
+                    let graph = reader.graph(schema)?;
                     let owner = graph.owner.clone();
                     let analysis = flow::analyze(&graph);
                     let flow = if checked {

@@ -146,6 +146,8 @@ pub(in crate::typechecker) struct Invocation {
     /// A native by-value receiver has an evaluation and optional source but no borrow loan.
     pub receiver_owned: bool,
     pub receiver_source: Option<Place>,
+    /// Loans held by a native by-value receiver and transferred through this invocation.
+    pub receiver_dependencies: Vec<LoanId>,
     pub arguments: Vec<InvocationArgument>,
     pub receiver_evaluation: Option<InputEvaluation>,
     pub completion_node: usize,
@@ -569,8 +571,15 @@ fn validate_invocations(graph: &Graph) -> Result<(), InvalidGraph> {
             {
                 return Err(InvalidGraph("owned receiver names an unknown source owner"));
             }
-        } else if invocation.receiver_source.is_some() {
-            return Err(InvalidGraph("borrowed receiver retains a separate owned source"));
+            if invocation
+                .receiver_dependencies
+                .iter()
+                .any(|dependency| graph.loans.get(dependency.0).is_none())
+            {
+                return Err(InvalidGraph("owned receiver has an unknown dependency loan"));
+            }
+        } else if invocation.receiver_source.is_some() || !invocation.receiver_dependencies.is_empty() {
+            return Err(InvalidGraph("borrowed receiver retains separate owned state"));
         }
         if let Some(receiver) = invocation.receiver {
             validate_invocation_loan(graph, *span, receiver)?;
