@@ -155,25 +155,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             // Body IR cannot represent.
             // A captured `Borrowed[T]` local of an explicit body has no local of its own: the closure copies the Copy
             // value of the place it borrows, or borrows any other value, while the checker keeps that place borrowed.
-            let (outer_place, outer_ty, fact, last_use, identity, previous) = match self.bindings.get(name) {
-                Some(&outer_local) => {
-                    let ty = self.locals[outer_local.index()].ty.clone();
-                    let place = bir::Place::from_local(outer_local);
-                    let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
-                    let identity = self.locals[outer_local.index()].identity.clone();
-                    (place, ty, fact, last_use, identity, Some(outer_local))
-                }
-                None => match self.closure_alias_capture(name, expr_span) {
-                    Some((identity, place, referent)) => {
-                        let fact = if referent.abi_v0_facts().ownership.is_trivially_copy() {
-                            bir::OwnershipFact::Copy
-                        } else {
-                            bir::OwnershipFact::Borrow
-                        };
-                        (place, referent, fact, false, Some(identity), None)
-                    }
-                    None => continue,
-                },
+            let Some((outer_place, outer_ty, fact, last_use, identity, previous)) =
+                self.closure_capture(name, expr_span)
+            else {
+                continue;
             };
             captured_operands.push(bir::Operand::place(outer_place, fact, last_use));
 
@@ -255,6 +240,45 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             hir_span_value,
             out,
         )
+    }
+
+    /// Resolve one free name to the enclosing place and checked ownership fact the closure captures.
+    fn closure_capture(
+        &mut self,
+        name: &str,
+        span: ast::Span,
+    ) -> Option<(
+        bir::Place,
+        IncanType,
+        bir::OwnershipFact,
+        bool,
+        Option<CanonicalSymbolId>,
+        Option<bir::LocalId>,
+    )> {
+        if let Some(outer_local) = self.bindings.get(name).copied() {
+            let ty = self.locals[outer_local.index()].ty.clone();
+            let place = bir::Place::from_local(outer_local);
+            let identity = self.locals[outer_local.index()].identity.clone();
+            let (mut fact, mut last_use) = self.ownership_fact_for_place(&place, &ty);
+            if identity.as_ref().is_some_and(|identity| {
+                self.input_body
+                    .as_ref()
+                    .ok()
+                    .and_then(|proof| proof.as_ref())
+                    .is_some_and(|proof| proof.closure_borrows_capture(hir_span(span), identity))
+            }) {
+                fact = bir::OwnershipFact::Borrow;
+                last_use = false;
+            }
+            return Some((place, ty, fact, last_use, identity, Some(outer_local)));
+        }
+        let (identity, place, referent) = self.closure_alias_capture(name, span)?;
+        let fact = if referent.abi_v0_facts().ownership.is_trivially_copy() {
+            bir::OwnershipFact::Copy
+        } else {
+            bir::OwnershipFact::Borrow
+        };
+        Some((place, referent, fact, false, Some(identity), None))
     }
 
     /// A `Borrowed[T]` local of an explicit body that the closure at `span` captures, as the body's ownership graph

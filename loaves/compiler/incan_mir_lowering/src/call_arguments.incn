@@ -225,6 +225,8 @@ pub def call_argument_operand(
         return explicit_argument_operand(builder, value, ty, span, input_access)
     match ty:
         PlanType.ClosureRef(signature) => return callable_argument(builder, value, signature, span)
+        PlanType.BorrowingClosure(signature) => return callable_argument(builder, value, signature, span, true)
+        PlanType.BorrowingClosureRef(signature) => return callable_argument(builder, value, signature, span, true)
         PlanType.StringRef => return borrow_text_operand(builder, value, span)
         PlanType.StrRef => return borrow_str_operand(builder, value, span)
         PlanType.ValidationErrorRef =>

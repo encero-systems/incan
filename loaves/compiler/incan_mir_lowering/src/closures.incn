@@ -41,7 +41,7 @@ from pub::incan_mir_plan import (
     EnumDeclaration,
     ExternalFunction,
 )
-from pub::incan_mir_plan import block as plan_block, place as plan_place
+from pub::incan_mir_plan import block as plan_block, place as plan_place, assign as plan_assign
 from types import primitive_type
 from classes import receiver_mode, parameter_local_index
 from async_ import evaluator_name
@@ -263,7 +263,7 @@ pub def validate_callable_representation(body: &RustBody) -> Result[None, str]:
 
 
 pub def parameter_representation(body: &RustBody, local: int, ty: PlanType) -> Result[PlanType, str]:
-    """A selected generic value owns its environment; an ordinary environment-capable function parameter borrows it."""
+    """A selected generic value owns its environment; a call-only parameter owns one temporary lending envelope."""
     match ty:
         PlanType.FunctionPointer(signature) =>
             match body.callable_representation:
@@ -274,7 +274,7 @@ pub def parameter_representation(body: &RustBody, local: int, ty: PlanType) -> R
                     for held in representation.closure_holding_parameters:
                         if int(held.index()) == local:
                             _ = closure_arguments(signature)?
-                            return Ok(PlanType.ClosureRef(signature))
+                            return Ok(PlanType.BorrowingClosure(signature))
                 None => pass
         _ => pass
     return Ok(ty)
@@ -525,6 +525,55 @@ pub def pointer_forwarder(name: str, signature: list[PlanType], span: SourceSpan
         locals=locals,
         blocks=[plan_block([], call, span), plan_block([], TerminatorKind.Return, span)],
         span=span,
+    )
+
+
+pub def borrowed_callable_forwarder(
+    name: str,
+    signature: list[PlanType],
+    borrowing_source: bool,
+    span: SourceSpan,
+) -> Result[Function, str]:
+    """Forward a shared callable through a call-owned borrowing envelope with the same signature."""
+    mut source = PlanType.ClosureRef(signature)
+    mut callee = CalleeKind.CallClosure(signature)
+    if borrowing_source:
+        source = PlanType.BorrowingClosureRef(signature)
+        callee = CalleeKind.CallBorrowingClosure(signature)
+    mut locals = [Local(ty=signature[-1], span=span), Local(ty=source, span=span)]
+    mut parameters = [Parameter(name="__incan_callable", ty=source, span=span)]
+    mut operands: list[Operand] = []
+    for index in range(len(signature) - 1):
+        ty = signature[index]
+        locals.append(Local(ty=ty, span=span))
+        parameters.append(Parameter(name=f"__incan_argument_{index}", ty=ty, span=span))
+        place = plan_place(index + 2, span)
+        mut kind = OperandKind.Copy(place)
+        if ty == PlanType.String or is_exclusive_borrow(ty) or owned_nominal_input(ty):
+            kind = OperandKind.Move(place)
+        operands.append(Operand(kind=kind, span=span))
+    inputs = closure_arguments(signature)?
+    packed = len(locals)
+    locals.append(Local(ty=PlanType.CallableArguments(inputs), span=span))
+    pack = plan_assign(plan_place(packed, span), RvalueKind.Tuple(operands), span)
+    receiver = Operand(kind=OperandKind.Copy(plan_place(1, span)), span=span)
+    arguments = [receiver, Operand(kind=OperandKind.Move(plan_place(packed, span)), span=span)]
+    call = TerminatorKind.Call(
+        Callee(kind=callee, span=span),
+        arguments,
+        plan_place(0, span),
+        1,
+        Unwind.Continue,
+    )
+    return Ok(
+        Function(
+            name=name,
+            parameters=parameters,
+            return_type=signature[-1],
+            locals=locals,
+            blocks=[plan_block([pack], call, span), plan_block([], TerminatorKind.Return, span)],
+            span=span,
+        ),
     )
 
 
