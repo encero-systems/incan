@@ -200,7 +200,7 @@ A check attached to an individual field is not a cross-field model contract. Reu
 
 ### Composing normalization and validation
 
-The following proposed example combines a shared field check, two source normalization contracts, a model-local field check, and a whole-model check. All declarations are application-defined. RFC 122 supplies fieldmethods; RFC 143 supplies keyword cloning. ValidationError is RFC 131's proposed shared validation umbrella; its final stdlib module placement remains open.
+The following proposed example combines a shared field check, two source normalization contracts, a model-local field check, and a whole-model check. All declarations are application-defined. RFC 122 supplies fieldmethods; RFC 143 supplies keyword cloning. ValidationError is RFC 131's shared validation umbrella, exported from `std.validation` under RFC 122.
 
 ```incan
 error AccountError:
