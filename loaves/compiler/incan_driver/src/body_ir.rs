@@ -10,6 +10,10 @@ use std::collections::BTreeSet;
 
 /// Build authored modules in collection order against one provider catalog and the preceding dependency context.
 /// The unit kind supplies publication identity; no caller may rebuild a module with a different library contract.
+///
+/// A member of an import cycle is also lowered against the declarations of the cycle's members that follow it, so it
+/// sees every other member's models whatever order the cycle's bodies are lowered in. Those declarations leave the
+/// context once the member is lowered; each member's complete module takes their place in turn.
 pub fn lower_authored_modules(
     modules: &[ParsedModule],
     analysis: &CompilationAnalysis,
@@ -18,15 +22,30 @@ pub fn lower_authored_modules(
 ) -> Result<(), String> {
     let provider_operations = incan_frontend::body_ir::ProviderOperationCatalog::from_loaves(session.loaves())?;
     let unit = session.unit();
-    for module in modules {
+    let library_package = (unit.kind == UnitKind::Library).then_some(unit.package.as_str());
+    let cycle_peers = crate::modules::import_cycle_peers(modules, session.own_standard_package());
+    for (index, module) in modules.iter().enumerate() {
         let type_info = analysis
             .type_info_for_path(&module.file_path)
             .ok_or("module analysis is missing")?;
+        let completed = bodies.len();
+        for &peer in cycle_peers[index].iter().filter(|&&peer| peer > index) {
+            let peer_module = &modules[peer];
+            let peer_info = analysis
+                .type_info_for_path(&peer_module.file_path)
+                .ok_or("module analysis is missing")?;
+            bodies.push(incan_frontend::body_ir::build_cycle_declarations(
+                &peer_module.ast,
+                &peer_module.path_segments,
+                peer_info,
+                library_package,
+            ));
+        }
         let context = incan_frontend::body_ir::BodyIrContext {
             modules: bodies,
             provider_operations: &provider_operations,
             registry_package: Some(&unit.package),
-            library_package: (unit.kind == UnitKind::Library).then_some(unit.package.as_str()),
+            library_package,
         };
         if let Some(directory) = std::env::var_os("INCAN_BODY_IR_FREE_BASELINE") {
             incan_frontend::body_ir::verify_free_function_inputs(
@@ -40,6 +59,7 @@ pub fn lower_authored_modules(
         }
         let lowered =
             incan_frontend::body_ir::build_body_ir_module(&module.ast, &module.path_segments, type_info, &context);
+        bodies.truncate(completed);
         bodies.push(lowered);
     }
     Ok(())
