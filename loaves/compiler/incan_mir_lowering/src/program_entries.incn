@@ -325,7 +325,7 @@ def exports_name(exports: list[PlanExport], name: str) -> bool:
     return false
 
 
-def is_package_identity(identity: &RustCanonicalSymbolId) -> bool:
+def is_package_identity(identity: RustCanonicalSymbolId) -> bool:
     """Whether a package declares `identity`, so a Loaf compiles it."""
     match identity.origin:
         SymbolOrigin.Package(library=_library, module_path=_path) => return true
@@ -351,7 +351,7 @@ pub model EmittedFrames:
                                 return true
         return false
 
-    pub def record(mut self, body: &RustBody, position: int) -> None:
+    pub def record(mut self, body: RustBody, position: int) -> None:
         """Record a checked body position under its canonical identity, preserving emission order for exports."""
         match body.canonical:
             Some(identity) => self.positions.entry(identity.clone()).or_insert([]).push(position)

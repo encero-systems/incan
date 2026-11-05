@@ -52,7 +52,7 @@ from matches import enum_payload_read
 from carrier_operands import boundary_operand
 
 
-pub def location(span: &RustSpan, source: &str, file: str) -> SourceSpan:
+pub def location(span: RustSpan, source: str, file: str) -> SourceSpan:
     """Map the checked byte offset to its line and byte column through borrowed UTF-8 line views."""
     mut start = 0
     mut number = 1
@@ -67,7 +67,7 @@ pub def location(span: &RustSpan, source: &str, file: str) -> SourceSpan:
     return plan_span(file=file, line=number, column=1)
 
 
-pub def line_starts(source: &str) -> list[int]:
+pub def line_starts(source: str) -> list[int]:
     """Each line's starting byte offset, then the offset just past the last line, as `location` counts them."""
     mut starts: list[int] = [0]
     mut start = 0
@@ -78,7 +78,7 @@ pub def line_starts(source: &str) -> list[int]:
     return starts
 
 
-pub def indexed_location(starts: &list[int], span: &RustSpan, file: str) -> SourceSpan:
+pub def indexed_location(starts: list[int], span: RustSpan, file: str) -> SourceSpan:
     """Map a byte offset as `location` does, by binary search over the frame's line starts."""
     offset = int(span.start)
     mut low = 0
@@ -102,7 +102,7 @@ pub def builder_location(builder: &Builder, span: &RustSpan) -> SourceSpan:
     return indexed_location(builder.line_starts, span, builder.file)
 
 
-pub def scalar_place(mut builder: Builder, value: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+pub def scalar_place(mut builder: Builder, value: RustPlace, span: SourceSpan) -> Result[Place, str]:
     """Map a local or proven model field into the native frame, which reserves local zero for return."""
     validate_callback_place(builder, value)?
     match union_projection(builder, value, span)?:
@@ -212,8 +212,8 @@ def retained_tuple_constant(
 
 pub def place_read(
     mut builder: Builder,
-    value: &RustPlace,
-    fact: &OwnershipFact,
+    value: RustPlace,
+    fact: OwnershipFact,
     span: SourceSpan,
 ) -> Result[Operand, str]:
     """Turn a place read into a copy or move exactly as Body IR's ownership fact says."""
@@ -243,7 +243,7 @@ pub def place_read(
     return target_read(builder, source, fact, span)
 
 
-pub def reference_read_fact(fact: &OwnershipFact) -> bool:
+pub def reference_read_fact(fact: OwnershipFact) -> bool:
     """Admit checked value reads of a logical reference. Copy, clone, borrow, and last-use transfer never authorize moving its referent; unknown and mutable borrowing remain separate operations."""
     match fact:
         (OwnershipFact.Copy | OwnershipFact.Clone | OwnershipFact.Borrow | OwnershipFact.Move) => return true
@@ -253,7 +253,7 @@ pub def reference_read_fact(fact: &OwnershipFact) -> bool:
 pub def reference_value_read(
     mut builder: Builder,
     value: &RustPlace,
-    fact: &OwnershipFact,
+    fact: OwnershipFact,
     span: SourceSpan,
 ) -> Result[Option[Operand], str]:
     """
@@ -307,7 +307,7 @@ def is_direct_tuple_field(place: Place) -> bool:
 pub def target_read(
     mut builder: Builder,
     target: Place,
-    fact: &OwnershipFact,
+    fact: OwnershipFact,
     span: SourceSpan,
 ) -> Result[Operand, str]:
     """Read callable storage or apply checked ownership to ordinary fields and payloads through their actual carrier."""
@@ -376,7 +376,7 @@ pub def target_read(
 def owned_target_read(
     mut builder: Builder,
     target: Place,
-    fact: &OwnershipFact,
+    fact: OwnershipFact,
     span: SourceSpan,
 ) -> Result[Operand, str]:
     """Apply checked ownership to ordinary storage after callable and producer representations have been handled."""
@@ -484,7 +484,7 @@ def reads_through_reference(place: Place) -> bool:
         _ => return false
 
 
-pub def scalar_constant(constant: &RustConstant, span: SourceSpan) -> Result[Operand, str]:
+pub def scalar_constant(constant: RustConstant, span: SourceSpan) -> Result[Operand, str]:
     """Turn a scalar literal into a plan constant; other literal kinds are refused by name."""
     match constant.clone():
         RustConstant.Int(number) => return Ok(literal(Constant.Int(number), span))

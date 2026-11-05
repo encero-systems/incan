@@ -275,7 +275,7 @@ def receiver_borrow(
         _ => return Err("unsupported Body IR Method nonplace receiver")
 
 
-pub def receiver_mode(value: &LocalOrigin) -> Option[bool]:
+pub def receiver_mode(value: LocalOrigin) -> Option[bool]:
     """Read receiver origins through the typed Rust-enum boundary used for imported struct variants."""
     match value:
         LocalOrigin.Receiver(mutable=mutable) =>

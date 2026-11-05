@@ -52,7 +52,7 @@ from list_methods import argument_place, argument_value, call_destination
 
 def value_enum_receiver_place(
     mut builder: Builder,
-    argument: &RustArgumentElement,
+    argument: RustArgumentElement,
     span: SourceSpan,
 ) -> Result[Place, str]:
     """Keep the checked receiver's dereference and field projections before reading its native enum discriminant."""

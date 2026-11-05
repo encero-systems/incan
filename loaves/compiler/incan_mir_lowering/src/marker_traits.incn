@@ -12,7 +12,7 @@ enum MarkerTrait:
     TomlDeserialize
 
 
-pub def validate_marker_traits(declaration: &NominalDeclaration) -> Result[None, str]:
+pub def validate_marker_traits(declaration: NominalDeclaration) -> Result[None, str]:
     """Require canonical source identity, empty slots and arguments, and the retained serde derive. Empty Incan markers have no additional native layout or operation and must not introduce a dependency on their own provider."""
     mut result: list[MarkerTrait] = []
     for adoption in declaration.trait_adoptions:
@@ -34,7 +34,7 @@ pub def validate_marker_traits(declaration: &NominalDeclaration) -> Result[None,
     return Ok(None)
 
 
-def standard_marker(identity: &CanonicalSymbolId) -> Option[MarkerTrait]:
+def standard_marker(identity: CanonicalSymbolId) -> Option[MarkerTrait]:
     """Match the selected standard declaration rather than a source trait sharing its diagnostic spelling."""
     if identity.kind != SemanticSourceTargetKind.Trait or identity.namespace != SymbolNamespace.OrdinaryLexical:
         return None
@@ -47,7 +47,7 @@ def standard_marker(identity: &CanonicalSymbolId) -> Option[MarkerTrait]:
     return None
 
 
-def standard_marker_origin(origin: &SymbolOrigin) -> bool:
+def standard_marker_origin(origin: SymbolOrigin) -> bool:
     """Authenticate the source package and module rather than a same-named local declaration."""
     match origin:
         SymbolOrigin.Package(library=library, module_path=path) =>

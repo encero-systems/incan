@@ -403,7 +403,7 @@ def bind_shared_enum_payload(
     mut builder: Builder,
     local: int,
     payload: Place,
-    fact: &OwnershipFact,
+    fact: OwnershipFact,
     span: SourceSpan,
 ) -> Result[bool, str]:
     """Preserve a checker-retained shared reference binding: copy a reference payload or borrow its owned nominal field. Match declaration slots rather than diagnostic names, and never materialize owned text or move an owner's payload into a reference slot."""
@@ -432,7 +432,7 @@ pub def bind_enum_fields(
     mut builder: Builder,
     source: Place,
     variant: int,
-    fields: &list[RustPattern],
+    fields: list[RustPattern],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Bind checked enum payload slots through the same downcast and ownership path for source enums and unions."""
@@ -481,8 +481,8 @@ def moved_native_enum_payload(
     mut builder: Builder,
     source: Place,
     payload: Place,
-    fields: &list[RustPattern],
-    fact: &OwnershipFact,
+    fields: list[RustPattern],
+    fact: OwnershipFact,
     span: SourceSpan,
 ) -> Result[Operand, str]:
     """

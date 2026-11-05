@@ -419,7 +419,7 @@ def own_runtime_frame(module: &BodyIrModule, identity: &RustCanonicalSymbolId) -
     return Ok(found)
 
 
-def compiled_frame(declaration: &LoafCallable) -> Option[tuple[Body, str]]:
+def compiled_frame(declaration: LoafCallable) -> Option[tuple[Body, str]]:
     """Read the producer's authenticated frame and native item together without fabricating either from a name."""
     match declaration.rust_path():
         None => return None

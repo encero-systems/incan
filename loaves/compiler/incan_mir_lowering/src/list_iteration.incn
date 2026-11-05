@@ -156,7 +156,7 @@ pub def shared_sequence_receiver(
 pub def frozen_dictionary_element(
     mut builder: Builder,
     receiver: Place,
-    source: &RustPlace,
+    source: RustPlace,
     slot: int,
     span: SourceSpan,
 ) -> Result[Place, str]:
@@ -518,7 +518,7 @@ def in_place_item(
 pub def iterator_assignment(
     mut builder: Builder,
     destination: Place,
-    value: &RustRvalue,
+    value: RustRvalue,
     span: SourceSpan,
 ) -> Result[None, str]:
     """
@@ -569,7 +569,7 @@ pub def iterator_assignment(
         _ => return Err("unsupported Body IR list iterator initialization")
 
 
-def iteration_root(mut builder: Builder, value: &RustPlace, exclusive: bool, span: SourceSpan) -> Result[Place, str]:
+def iteration_root(mut builder: Builder, value: RustPlace, exclusive: bool, span: SourceSpan) -> Result[Place, str]:
     """
     Select the list a loop iterates: a loop changing the items of a list held by a list element or dictionary value
     iterates the stored list itself, reached through the container's checked reborrows.
@@ -624,6 +624,6 @@ pub def list_root_place(mut builder: Builder, value: &RustPlace, span: SourceSpa
     return list_base_place(builder, value, span)
 
 
-def list_projection_refusal(name: str, ty: PlanType, projection: &PlaceElem) -> str:
+def list_projection_refusal(name: str, ty: PlanType, projection: PlaceElem) -> str:
     """Name the retained carrier and projection that cannot provide structural collection storage."""
     return f"unsupported Body IR list root projection in {name}: {ty:?}; {projection:?}"

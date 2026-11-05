@@ -16,7 +16,7 @@ from classes import frame_type, function_name, parameter_local_index
 from decls import library_item, library_enum_item
 
 
-pub def standard_comparison_slot(identity: &CanonicalSymbolId, name: str) -> bool:
+pub def standard_comparison_slot(identity: CanonicalSymbolId, name: str) -> bool:
     """Require the checked member identity of the standard comparison protocol, in source or SDK form."""
     if (
         identity.kind != SemanticSourceTargetKind.Method

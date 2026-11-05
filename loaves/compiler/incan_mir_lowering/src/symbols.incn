@@ -84,7 +84,7 @@ def primitive_component(primitive: &Primitive) -> str:
         Primitive.Unit => return symbol_component("Unit")
 
 
-def builtin_component(builtin: &RuntimeBuiltinType) -> str:
+def builtin_component(builtin: RuntimeBuiltinType) -> str:
     """Encode the closed builtin runtime identity independently of its diagnostic renderer."""
     match builtin:
         RuntimeBuiltinType.ValidationError => return symbol_component("runtime::ValidationError")
@@ -111,7 +111,7 @@ def parameter_component(parameter: &IncanCallableParam) -> str:
     )
 
 
-def input_access_component(access: &IncanInputAccess) -> str:
+def input_access_component(access: IncanInputAccess) -> str:
     """Keep checked access contracts distinct even when their underlying value and binding mutability agree."""
     match access:
         IncanInputAccess.Inferred => return "_access_inferred"
@@ -121,7 +121,7 @@ def input_access_component(access: &IncanInputAccess) -> str:
         IncanInputAccess.Owned => return "_access_owned"
 
 
-def parameter_kind_component(kind: &IncanCallableParamKind) -> str:
+def parameter_kind_component(kind: IncanCallableParamKind) -> str:
     """Keep normal, positional-rest and keyword-rest inputs distinct even when their element types agree."""
     match kind:
         IncanCallableParamKind.Normal => return "_normal"

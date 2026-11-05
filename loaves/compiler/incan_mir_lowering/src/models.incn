@@ -189,7 +189,7 @@ pub def hashed_element(declarations: &list[NominalDeclaration], ty: &RustType) -
     return primitive_leaf(ty, true)
 
 
-def model_equality(declaration: &NominalDeclaration) -> bool:
+def model_equality(declaration: NominalDeclaration) -> bool:
     """Require a checked derive or the explicit canonical source equality witness before hashed carrier admission."""
     if "Eq" in declaration.derives:
         return true
@@ -489,8 +489,8 @@ pub def field_slot(value: &RustPlaceElem, declaration: &NominalDeclaration) -> R
 
 
 def checked_field_identity(
-    declaration: &NominalDeclaration,
-    identity: &CanonicalSymbolId,
+    declaration: NominalDeclaration,
+    identity: CanonicalSymbolId,
 ) -> Result[CanonicalSymbolId, str]:
     """Apply an exact required-field witness once, refusing conflicting bindings instead of selecting by field name."""
     mut selected = identity.clone()
@@ -535,7 +535,7 @@ pub def constructor_index(
         None => return Err("unsupported Body IR nonlocal model constructor")
 
 
-def validate_constructor_binding(binding: &ArgumentBinding, count: int, fields: int) -> Result[None, str]:
+def validate_constructor_binding(binding: ArgumentBinding, count: int, fields: int) -> Result[None, str]:
     """Require every field slot exactly once; Body IR supplies elements in canonical field order."""
     match binding:
         ArgumentBinding.Resolved(arguments=bindings, defaulted_slots=defaults) =>

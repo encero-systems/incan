@@ -260,7 +260,7 @@ def deferred_shadowed_default(body: &Body, concrete: &RustType, arguments: list[
     return false
 
 
-def first_instantiation(retained: list[TraitImplementation], candidate: &TraitImplementation) -> Result[bool, str]:
+def first_instantiation(retained: list[TraitImplementation], candidate: TraitImplementation) -> Result[bool, str]:
     """Report whether this adopter has no instantiation of the default yet; a conflicting second one refuses."""
     for implementation in retained:
         if implementation.owner != candidate.owner:
@@ -382,7 +382,7 @@ def tuple_type_of(elements: list[RustType]) -> RustType:
 
 
 def concrete_self_type(
-    owner: &CanonicalSymbolId,
+    owner: CanonicalSymbolId,
     mut owners: list[NominalDeclaration],
     mut enums: list[RustEnumDeclaration],
 ) -> Result[RustType, str]:
@@ -588,7 +588,7 @@ def declared_owner_method(
     return Ok(selected)
 
 
-def method_belongs_to_owner(method: &CanonicalSymbolId, owner: &CanonicalSymbolId) -> bool:
+def method_belongs_to_owner(method: CanonicalSymbolId, owner: CanonicalSymbolId) -> bool:
     """Preserve an exact checked overload when its canonical declaration is already inside the receiver owner."""
     return (
         method.origin == owner.origin
@@ -766,7 +766,7 @@ def receiver_owner(
         Some(_value) => return Ok(None)
 
 
-def receiver_place_type(mut builder: Builder, place: &RustPlace, span: SourceSpan) -> Result[PlanType, str]:
+def receiver_place_type(mut builder: Builder, place: RustPlace, span: SourceSpan) -> Result[PlanType, str]:
     """The carrier a receiver place reads: a static's selected path, a collection element, or a frame model path."""
     match place.global():
         Some(global) => return computed_static_type(builder, place, global)

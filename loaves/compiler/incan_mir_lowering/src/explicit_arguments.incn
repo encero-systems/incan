@@ -81,7 +81,7 @@ pub def explicit_place_argument(
 
 
 pub def explicit_input_operation(
-    locals: &list[Local],
+    locals: list[Local],
     source: Place,
     fact: OwnershipFact,
     expected: PlanType,

@@ -87,7 +87,7 @@ def collect_type(
 
 
 def retain_instance(
-    declaration: &EnumDeclaration,
+    declaration: EnumDeclaration,
     arguments: list[RustType],
     mut instances: list[EnumInstance],
     ancestors: list[str],
