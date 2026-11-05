@@ -378,8 +378,9 @@ impl Body {
     }
 
     /// Missing or mismatched source authority cannot be replaced by parameter ABI inference. The initial profile
-    /// admits fixed synchronous source-function and method frames, a method's receiver keeping its ordinary borrowed
-    /// slot; deferred, generic and native boundaries remain staged.
+    /// admits synchronous source-function and method frames, including retained generic binders and representable
+    /// source defaults, with a method's receiver keeping its ordinary borrowed slot; deferred and native boundaries
+    /// remain staged.
     pub fn input_profile_gap(&self) -> Option<&'static str> {
         let explicit = self
             .params
@@ -432,7 +433,6 @@ impl Body {
             crate::SemanticSourceTargetKind::Function | crate::SemanticSourceTargetKind::Method
         ) || self.is_async
             || self.is_generator()
-            || !self.type_parameters.is_empty()
             || self.extern_delegation.is_some()
             || !self.native_attributes.is_empty()
         {
@@ -446,7 +446,10 @@ impl Body {
                 return Some("explicit input profile disagrees with its parameter slot or access");
             }
             if parameter.kind != crate::IncanCallableParamKind::Normal
-                || !matches!(parameter.default, CallableParamDefault::Required)
+                || !matches!(
+                    parameter.default,
+                    CallableParamDefault::Required | CallableParamDefault::Source(_)
+                )
                 || (!parameter.input_access.is_inferred() && parameter.native_owned)
             {
                 return Some("explicit input profile does not admit packed, deferred or native-owned inputs");

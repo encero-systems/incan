@@ -391,6 +391,7 @@ impl TypeChecker {
 
         match callee_ty {
             ResolvedType::Function(params, ret) => {
+                let first_error = self.errors.len();
                 let mut type_bindings = std::collections::HashMap::new();
                 if let Some(expected) = expected_return_ty {
                     self.infer_type_param_bindings(&ret, expected, &mut type_bindings);
@@ -408,6 +409,9 @@ impl TypeChecker {
                 let final_params = Self::substitute_callable_params(&resolved_params, &type_bindings);
                 self.type_info.record_call_site_callable_params(span, &final_params);
                 self.check_capturing_value_call_arguments(callee, &params, args);
+                if self.errors.len() == first_error {
+                    self.record_indirect_input_call(callee.span, &final_params, span);
+                }
                 substitute_resolved_type(&ret, &type_bindings)
             }
             ty if self.is_user_operator_receiver(&ty)

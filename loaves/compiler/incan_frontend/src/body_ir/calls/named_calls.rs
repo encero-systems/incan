@@ -361,13 +361,16 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let mut place = bir::Place::from_local(local);
         super::carrier_projection::retain_checked_narrowing(&mut place, &self.locals[local.index()].ty, &checked);
         let (fact, last_use) = self.ownership_fact_for_place(&place, &self.locals[local.index()].ty.clone());
-        let (mut operands, binding) =
-            match self.bind_declared_args(&format!("local callable `{name}`"), Some(slots), args, scope, out) {
-                Ok(bound) => bound,
-                Err(description) => {
-                    return self.unsupported_operand(description, scope, hir_span_value, out);
-                }
-            };
+        let target = self.type_info.resolved_identity(callee.span).cloned();
+        let explicit = self.bind_explicit_input_args(target.as_ref(), args, span, scope, out);
+        let (mut operands, binding) = match explicit.unwrap_or_else(|| {
+            self.bind_declared_args(&format!("local callable `{name}`"), Some(slots), args, scope, out)
+        }) {
+            Ok(bound) => bound,
+            Err(description) => {
+                return self.unsupported_operand(description, scope, hir_span_value, out);
+            }
+        };
         let shared = params
             .iter()
             .enumerate()
