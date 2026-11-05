@@ -12,4 +12,8 @@ The root `hexlify(data: bytes) -> str` operation returns lowercase hexadecimal t
 
 `std.primitives.text` copies borrowed UTF-8 text into owned bytes and decodes borrowed bytes into owned text with strict or replacement behavior. `std.primitives.native_strings` builds independently owned NUL-terminated UTF-8 storage only after rejecting every interior NUL. Builtin codecs retain their label ordering and structured error adaptation, while checked C lowering retains foreign-call admission and the buffer for the complete native call.
 
+`std.primitives.collections` owns list, set and dictionary storage allocation, mutation, length observation and explicit copying. Its checked list-position operations accept nonnegative native positions and return ordinary errors; language index normalization, equality, display and canonical diagnostics remain in their existing adapters. Generated programs keep using the language runtime's own operations, because the runtime builds below the standard packages.
+
+`std.primitives.output` writes complete UTF-8 lines and returns actual host write failures as text without depending on higher-level I/O errors. Generated stdout and panic-hook stderr keep their own paths in the language runtime.
+
 Other hashing algorithms, argument-vector policy and temporary directories remain in their existing standard packages. This package does not implement database storage, a Crumb format or ownership features merely by providing these algorithms.

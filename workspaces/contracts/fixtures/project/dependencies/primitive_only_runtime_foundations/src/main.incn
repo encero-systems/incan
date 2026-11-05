@@ -1,0 +1,18 @@
+# behavior: a primitive collection and output program selects no higher-level standard package (#2501)
+# expect-dependencies:
+# expect-std-packages:
+#   incan_stdlib_core
+#   incan_stdlib_primitives
+# expect-active-features:
+
+"""Use collection and output foundations without a higher-level standard-package dependency."""
+
+from std.primitives.collections import append_list, empty_list, length_list
+from std.primitives.output import write_stdout_line
+
+
+def main() -> Result[None, str]:
+    """Allocate one primitive list and write its length without a convenience standard package."""
+    mut values = empty_list[int]()
+    append_list(values, 1)
+    return write_stdout_line(str(length_list(values)))
