@@ -5,8 +5,9 @@ use super::*;
 impl TypeChecker {
     /// Resolve generic and nongeneric source receivers through the same declaration method tables.
     ///
-    /// Named receivers without a visible type remain permissive; generic receivers without a declaration continue to
-    /// their bound/external fallback. Only a nongeneric enum receives the existing generated message member here.
+    /// Named receivers without a visible type remain permissive when their registry surface is open; generic receivers
+    /// without a declaration continue to their bound/external fallback. Only a nongeneric enum receives the existing
+    /// generated message member here.
     pub(super) fn resolve_nominal_receiver_method(
         &mut self,
         call: &MethodCallSite<'_>,
@@ -20,7 +21,12 @@ impl TypeChecker {
             _ => return None,
         };
         let Some(info) = self.lookup_semantic_type_info(name).cloned() else {
-            return if generic { None } else { Some(ResolvedType::Unknown) };
+            let open_surface = surface_types::from_str(name).is_some_and(surface_accepts_unknown_methods);
+            return if generic || !open_surface {
+                None
+            } else {
+                Some(ResolvedType::Unknown)
+            };
         };
         if let TypeInfo::Newtype(newtype) = &info {
             return self.resolve_nominal_newtype_method(call, base_ty, name, newtype, surface, arg_types);

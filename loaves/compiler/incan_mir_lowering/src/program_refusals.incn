@@ -119,7 +119,7 @@ def body_refusals(
                 Err(error) =>
                     refusals.append(f"{body.name}: {error}")
                     continue
-            if not ordinary_body(context, body, emitted_frames):
+            if not ordinary_body(context, body, emitted_frames, kind):
                 continue
             # A frame reached again is skipped as compilation skips it, whether or not its first lowering refused.
             emitted_frames.record(body, position)

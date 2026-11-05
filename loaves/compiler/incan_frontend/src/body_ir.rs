@@ -103,8 +103,8 @@ pub fn registry_helper_identities(info: &TypeCheckInfo) -> Vec<CanonicalSymbolId
     registry_effects::helper_identities(info)
 }
 
-/// Build Body IR v0 for every top-level function declaration and every non-abstract class/model/trait method in a
-/// typechecked module.
+/// Build Body IR v0 for every top-level function declaration, inline-test function and non-abstract
+/// class/model/trait method in a typechecked module.
 ///
 /// `ast::Declaration::Function` items each produce one [`bir::Body`], matching the [`CompilerNodeId`]
 /// [`crate::hir::build_hir_v0`] assigns the corresponding declaration (see that function's docs).

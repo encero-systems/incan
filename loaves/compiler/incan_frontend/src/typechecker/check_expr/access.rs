@@ -78,6 +78,14 @@ mod rust_receivers;
 mod rust_traits;
 mod web_extractors;
 
+/// Whether an unresolved registered surface can defer its method set to a runtime or stdlib provider.
+///
+/// Validation errors have a compiler-known constructor and data surface, so an absent method is a source error. The
+/// other categories retain their existing open method policy until their provider declarations carry complete facts.
+fn surface_accepts_unknown_methods(id: SurfaceTypeId) -> bool {
+    surface_types::category(id) != surface_types::SurfaceTypeCategory::Validation
+}
+
 /// The method the stdlib `Hash` trait declares, which no type meeting a `Hash` bound provides (#1822).
 const HASH_DUNDER: &str = "__hash__";
 
@@ -659,8 +667,13 @@ impl TypeChecker {
             }
         }
         let display = base_ty.to_string();
-        let known_runtime = surface_types::from_str(display.as_str()).is_some();
-        if !(matches!(base_ty, ResolvedType::Named(name) if self.symbols.lookup(name).is_none()) || known_runtime) {
+        let surface = surface_types::from_str(display.as_str());
+        let open_runtime = surface.is_some_and(surface_accepts_unknown_methods);
+        let unresolved_external = matches!(
+            base_ty,
+            ResolvedType::Named(name) if self.symbols.lookup(name).is_none() && surface.is_none()
+        );
+        if !(unresolved_external || open_runtime) {
             self.errors
                 .push(errors::missing_method(&base_ty.to_string(), call.method, call.span));
         }
