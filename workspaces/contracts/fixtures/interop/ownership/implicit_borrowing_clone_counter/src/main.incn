@@ -1,8 +1,9 @@
-# behavior: private helpers that only read a Rust tree value walk it from a field, from a parameter, through a helper chain and through a cursor without copying the tree (the crate's clone counter stays at 0); an explicit clone counts once; a child taken as an owned value counts its subtree; a snapshot taken before the owner is replaced counts the whole tree; a tree handed to functions declared over a reference, to a returned callable, to a trait default's callable, to a returned cursor, to a helper that clears it and to a walk over a reference parameter adds nothing; a helper handed the same tree twice costs one copy of it; forwarding an explicit exclusive reference mutates the original tree without copying it
+# behavior: private helpers that only read a Rust tree value or a source model wrapping it walk from a field, from a parameter, through a helper chain and through a cursor without copying the tree (the crate's clone counter stays at 0); an explicit clone counts once; a child taken as an owned value counts its subtree; a snapshot taken before the owner is replaced counts the whole tree; a tree handed to functions declared over a reference, to a returned callable, to a trait default's callable, to a returned cursor, to a helper that clears it and to a walk over a reference parameter adds nothing; a helper handed the same tree twice costs one copy of it; forwarding an explicit exclusive reference mutates the original tree without copying it
 # expect-stdout:
 #   observe true clones 0
 #   is_table true clones 0
 #   inspect true clones 0
+#   model true true clones 0
 #   ref local true clones 0
 #   walk true clones 0
 #   selected true clones 1
@@ -20,6 +21,14 @@
 # `Clone for Item` counts one per node it copies; `../README.md` derives every expected count.
 
 from rust::borrow_fixture import Item, clones, document
+
+
+model Envelope:
+    item: Item
+
+
+def read_envelope(envelope: Envelope) -> bool:
+    return envelope.item.is_table()
 
 
 def traverse(item: Item, keys: list[str]) -> bool:
@@ -168,6 +177,10 @@ def main() -> None:
     holder = Holder(item=document())
     println(f"is_table {holder.observe()} clones {clones()}")
     println(f"inspect {inspect(document())} clones {clones()}")
+    envelope = Envelope(item=document())
+    first_model_read = read_envelope(envelope)
+    second_model_read = read_envelope(envelope)
+    println(f"model {first_model_read} {second_model_read} clones {clones()}")
     println(f"ref local {holder.view()} clones {clones()}")
     walked = holder.walk(["project", "count"])
     println(f"walk {walked} clones {clones()}")

@@ -374,7 +374,6 @@ pub(super) fn retain_module_representations(
     nominal_carriers::retain(module, type_info, context);
     primitive_adapters::retain(module);
     union_layouts::retain(module);
-    shared_reads::retain(module, context);
 }
 
 /// Collect the identity-bearing leaves of `ty` with their structural paths below `path`, through generic arguments and

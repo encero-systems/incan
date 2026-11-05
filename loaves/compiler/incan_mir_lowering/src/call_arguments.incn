@@ -26,7 +26,7 @@ from rust::incan_semantics_core::body_ir import (
 )
 from generators import generator_reference, is_generator_type, is_generator_reference
 from frozen_equality import frozen_reference_type, frozen_place, borrow_frozen
-from element_places import is_element_place
+from element_places import is_element_place, element_place_type
 from element_borrows import shared_element_place
 from validation_errors import validation_error_reference
 from text_plan import owned_literal
@@ -316,45 +316,82 @@ def inferred_shared_argument(
     span: SourceSpan,
 ) -> Result[Operand, str]:
     """
-    Borrow an exact retained owner directly, while preserving the established materialization path for coercions.
+    Lend a plain input whose callee published shared access.
 
-    The analysis fact changes a plain owner ABI to shared access. It does not erase a checked call-site conversion:
-    ranges becoming lists, literals becoming frozen views, and callable envelopes must first use their ordinary
-    parameter materialization. Exact stored owners still require the retained Body IR borrow fact.
+    That access already decided to lend, so the read's ownership fact, which describes a by-value call, decides nothing
+    here. Only this frame's plan types are exact after instantiation.
+
+    1. Lend a stored owner of the selected type, a reference to it, or a shared list element directly.
+    2. Use the ordinary lending route of a carrier that has one; it applies conversions such as a range becoming a list.
+    3. Apply any other checked conversion to fresh storage and lend that.
     """
     match reference_contract(expected):
         Err(_reason) => return call_argument_operand(builder, value, expected, span)
         Ok((referent, writable)) =>
             if writable:
                 return Err("invalid Body IR inferred shared reference carrier")
-            match value:
-                RustOperand.Place(read) =>
-                    if read.place.global() == None and not is_element_place(builder, read.place)?:
-                        source = scalar_place(builder, read.place, span)?
-                        actual = place_type(builder.locals, source)
-                        if actual == referent:
-                            return explicit_place_argument(
-                                builder,
-                                source,
-                                read.fact,
-                                expected,
-                                IncanInputAccess.InferredShared,
-                                span,
-                            )
-                        match reference_contract(actual):
-                            Ok((held, _held_writable)) =>
-                                if held == referent:
-                                    return explicit_place_argument(
-                                        builder,
-                                        source,
-                                        read.fact,
-                                        expected,
-                                        IncanInputAccess.InferredShared,
-                                        span,
-                                    )
-                            Err(_reason) => pass
-                RustOperand.Constant(_constant) => pass
+            # 1. Exact storage needs no copy and no conversion.
+            match exact_shared_storage(builder, value, referent, span)?:
+                Some(source) =>
+                    return explicit_place_argument(
+                        builder,
+                        source,
+                        OwnershipFact.Borrow,
+                        expected,
+                        IncanInputAccess.InferredShared,
+                        span,
+                    )
+                None => pass
+            # 2. These carriers already lend through the route an ordinary parameter of that carrier takes.
+            if has_ordinary_lending_route(expected):
+                return call_argument_operand(builder, value, expected, span)
+            # 3. A union member becoming its union, for example, has no storage of the selected type yet.
             return materialized_shared_argument(builder, value, expected, referent, span)
+
+
+def exact_shared_storage(
+    mut builder: Builder,
+    value: &RustOperand,
+    referent: PlanType,
+    span: SourceSpan,
+) -> Result[Option[Place], str]:
+    """Reach storage that already holds the selected type, or a reference to it, without copying or converting."""
+    match value:
+        RustOperand.Constant(_constant) => return Ok(None)
+        RustOperand.Place(read) =>
+            match read.place.global():
+                Some(_global) => return Ok(None)
+                None => pass
+            if is_element_place(builder, read.place)?:
+                match element_place_type(builder, read.place):
+                    Ok(element) =>
+                        if element == referent:
+                            return shared_element_place(builder, read.place, span)
+                    Err(_reason) => pass
+                return Ok(None)
+            source = scalar_place(builder, read.place, span)?
+            actual = place_type(builder.locals, source)
+            if actual == referent:
+                return Ok(Some(source))
+            match reference_contract(actual):
+                Ok((held, _held_writable)) =>
+                    if held == referent:
+                        return Ok(Some(source))
+                Err(_reason) => pass
+            return Ok(None)
+
+
+def has_ordinary_lending_route(ty: PlanType) -> bool:
+    """Whether `call_argument_operand` lends this reference carrier itself, including its call-site conversions."""
+    if is_list(ty) or is_collection(ty):
+        return true
+    match ty:
+        PlanType.StringRef => return true
+        PlanType.ValidationErrorRef => return true
+        PlanType.SliceRef(_elements) => return true
+        PlanType.ScalarRef(_elements) => return true
+        PlanType.FrozenCollectionRef(_name, _elements) => return true
+        _ => return false
 
 
 def materialized_shared_argument(
