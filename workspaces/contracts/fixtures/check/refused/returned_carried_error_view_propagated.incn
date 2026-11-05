@@ -1,4 +1,4 @@
-# behavior: `?` on a call whose error carries a view would pass that view on out of the caller, which is refused (#2500).
+# behavior: `?` on a call whose error carries a view is refused when the enclosing result does not carry an error view of the same source (#2500).
 # expect-diagnostic: INCAN-T0123
 
 class Account:

@@ -5,13 +5,16 @@ use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, IncanInputAccess};
 use super::{CheckedInputBody, TypeCheckInfo, flow};
 use crate::symbols::CallableParam;
 
-/// A checked source argument names existing storage or a real invocation-bounded temporary.
+/// A checked input source names existing storage, a retained view-carrying local or a real invocation-bounded
+/// temporary.
 pub(crate) enum CheckedInputSource {
     /// Field projections retain canonical declaration identities rather than matching display names.
     Place {
         root: CanonicalSymbolId,
         fields: Vec<CanonicalSymbolId>,
     },
+    /// A stored aggregate owns its carrier while retaining a checked loan to one borrowed component.
+    CarriedLocal,
     /// The source graph owns the temporary's expression and invocation ancestry.
     Temporary,
 }
@@ -111,9 +114,9 @@ impl TypeCheckInfo {
         Some((view.access, view.source.slot.clone(), view.source.fields.clone()))
     }
 
-    /// The returned view a selected call carries in one payload of its `Result` or `Option` result, with the same
-    /// access, source slot and stored-field path as a direct view, and the payload carrying it: `0` for `Ok` or
-    /// `Some`, `1` for `Err`.
+    /// The returned view a selected call carries in one payload of its result, with the same access, source slot
+    /// and stored-field path as a direct view, and the payload carrying it: `0` for `Ok` or `Some`, `1` for `Err`,
+    /// or the borrowed element's position in a tuple.
     pub(crate) fn selected_carried_view(
         &self,
         span: HirSourceSpan,

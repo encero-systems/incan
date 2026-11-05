@@ -1,9 +1,10 @@
-# behavior: a tuple result can carry a returned view in one element: the body returns the source place in that element and owned values in the others, and the caller unpacks the call into a view of its own place and fresh owners of the other elements (#2500).
+# behavior: a tuple result can carry a returned view in one element: the body returns the source place in that element and owned values in the others; the caller can unpack the call or bind and use the whole tuple while its source stays borrowed (#2500).
 # expect-stdout:
 #   7
 #   2
 #   Rotterdam 2
 #   ada 6
+#   true
 
 """Return a view paired with owned values in a tuple, and unpack it at the call."""
 
@@ -39,6 +40,12 @@ def show(tag: Borrowed[Tag]) -> int:
     return hits + len(name)
 
 
+def show_bound(tag: Borrowed[Tag]) -> None:
+    """Bind and compare the whole tuple while its borrowed element keeps the tag's name loan live."""
+    pair = tag.label()
+    println(pair == pair)
+
+
 def relabel(mut address: BorrowedMut[Address]) -> int:
     mut city, visits = address.edit_city()
     city = "Rotterdam"
@@ -58,3 +65,4 @@ def main() -> None:
     println(f"{address.city} {address.visits}")
     entry = Entry(key="ada", size=3)
     println(describe(entry))
+    show_bound(tag)
