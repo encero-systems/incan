@@ -1,6 +1,6 @@
 # RFC 109: Receiver chain combinators (`tap` and `then`)
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-06-06
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
