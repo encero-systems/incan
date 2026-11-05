@@ -7,7 +7,7 @@ impl Callbacks<'_> {
     pub(super) fn replace_plan(&mut self, tcx: TyCtxt<'_>, plan: Plan) {
         self.plan = Arc::new(plan);
         match PLAN.lock() {
-            Ok(mut slot) => *slot = Some(Arc::clone(&self.plan)),
+            Ok(mut slot) => *slot = Some(Arc::new(ActivePlan::new(Arc::clone(&self.plan)))),
             Err(_) => tcx.dcx().fatal(DriverError::State.to_string()),
         }
     }

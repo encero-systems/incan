@@ -52,12 +52,12 @@ impl<'a> Sources<'a> {
         let text = source.src.as_ref().ok_or_else(invalid)?;
         let line = usize::try_from(location.line - 1).map_err(|_| invalid())?;
         let column = usize::try_from(location.column - 1).map_err(|_| invalid())?;
-        let mut offset = 0usize;
-        let mut lines = text.split_inclusive('\n');
-        for _ in 0..line {
-            offset += lines.next().ok_or_else(invalid)?.len();
-        }
-        let text = lines.next().ok_or_else(invalid)?;
+        // rustc's line table, computed once per file, locates the line; rescanning the text before it for every
+        // span made span construction quadratic in the file's length.
+        let starts = source.lines();
+        let offset = starts.get(line).ok_or_else(invalid)?.0 as usize;
+        let end = starts.get(line + 1).map_or(text.len(), |next| next.0 as usize);
+        let text = text.get(offset..end).ok_or_else(invalid)?;
         let (within, character) = text.char_indices().nth(column).ok_or_else(invalid)?;
         let start = source.start_pos + BytePos(u32::try_from(offset + within).map_err(|_| invalid())?);
         let width = u32::try_from(character.len_utf8()).map_err(|_| invalid())?;

@@ -19,17 +19,20 @@ use rustc_span::FileName;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+mod active_plan;
 mod callbacks;
 mod library_verification;
 mod rustc_queries;
 
+pub(crate) use active_plan::ActivePlan;
 use library_verification::*;
 pub(crate) use rustc_queries::*;
 
 /// Compilation is serialized: `PLAN` and `FAILURE` are process-global slots, also in the resident worker.
 static COMPILATION: Mutex<()> = Mutex::new(());
-/// Query providers are function pointers, so the invocation's source-owned plan has an explicit scoped slot.
-static PLAN: Mutex<Option<Arc<Plan>>> = Mutex::new(None);
+/// Query providers are function pointers, so the invocation's source-owned plan has an explicit scoped slot, with its
+/// name index.
+static PLAN: Mutex<Option<Arc<ActivePlan>>> = Mutex::new(None);
 /// Typed errors raised while loading metadata or source locations survive rustc's fatal-error boundary.
 static FAILURE: Mutex<Option<PlanError>> = Mutex::new(None);
 
@@ -133,7 +136,7 @@ pub fn compile(
 
     // ---- Fresh rustc session and planned MIR ----
     let plan = Arc::new(plan);
-    *PLAN.lock().map_err(|_| DriverError::State)? = Some(Arc::clone(&plan));
+    *PLAN.lock().map_err(|_| DriverError::State)? = Some(Arc::new(ActivePlan::new(Arc::clone(&plan))));
     *FAILURE.lock().map_err(|_| DriverError::State)? = None;
     let mut args = compilation_arguments(crate_name, output, identity, kind, overflow_checks, &plan.span.file);
     let all = externs.iter().chain(&shared).cloned().collect::<Vec<_>>();
