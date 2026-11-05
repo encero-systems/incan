@@ -34,8 +34,6 @@ A type defines its total order in one place: `__cmp__(self, other) -> Ordering`.
 Custom ordering today means two methods that have to agree:
 
 ```incan
-from std.derives.comparison import Ord
-
 model Task with Ord:
     priority: int
     name: str
@@ -70,7 +68,7 @@ Python 2 had `__cmp__` and `cmp()`, and Python 3 removed them because `__cmp__` 
 
 ## Guide-level explanation
 
-Every name below from `std.derives.comparison` other than `Eq` and `Ord` is proposed by this RFC.
+`Ordering`, `cmp` and `compare` are proposed by this RFC. `Ord` is in the prelude.
 
 ### Derive it
 
@@ -94,7 +92,7 @@ def supports(candidate: Version, minimum: Version) -> bool:
 For a custom order, write one method:
 
 ```incan
-from std.derives.comparison import Ord, Ordering, cmp
+from std.derives.comparison import Ordering, cmp
 
 model Task with Ord:
     priority: int
@@ -217,7 +215,7 @@ A second trait would need rules for how it relates to `Ord`, what happens when t
 
 ### Why `cmp` is imported
 
-An ordering is defined rarely, and a file doing so already imports `Ord` from the same module. An explicit import keeps the prelude small and keeps the name's origin at the top of the file.
+An ordering is defined rarely, so the names are not worth a place in every module. `Ord` is already in the prelude, and an explicit import of `Ordering` and `cmp` keeps the prelude small and keeps their origin at the top of the file.
 
 ### Why `clamp` cannot fail
 
