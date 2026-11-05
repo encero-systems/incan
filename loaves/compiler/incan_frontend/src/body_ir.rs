@@ -363,6 +363,8 @@ struct BodyBuilder<'type_info, 'source> {
     input_local_bindings: Vec<bir::ExplicitInputBinding>,
     /// The declared view this body returns, once its parameter locals exist.
     returned_view: Option<returned_views::ReturnedViewSource>,
+    /// The parameter loan retained by an owned native result, kept distinct from returned-place aliasing.
+    retained_result_source: Option<usize>,
     /// Each lowered call carrying a view in its `Result` or `Option`, by call span: its substituted place, access and
     /// the payload carrying the view.
     carried_view_places: HashMap<ast::Span, (bir::Place, incan_semantics_core::IncanInputAccess, usize)>,

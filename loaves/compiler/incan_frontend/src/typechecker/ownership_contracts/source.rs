@@ -116,6 +116,9 @@ struct Builder<'a> {
     constrained: BTreeSet<Root>,
     borrowed_inputs: BTreeSet<Root>,
     loops: Vec<LoopEdges>,
+    /// The declared source dependency of a top-level owned result. The result remains value storage rather than a
+    /// source alias, but it must carry a checked loan of this place.
+    owned_source: Option<Place>,
     /// The declared returned view: whether it is exclusive, and the exact source place every return borrows.
     view: Option<(bool, Place)>,
     /// The `Result` or `Option` payload or the tuple element carrying the returned view, or `None` for a view returned
@@ -192,6 +195,12 @@ fn build_graph(
         span,
         reason: reason.into(),
     })?;
+    let owned_source = crate::ownership_metadata::owned_result_source(contract)
+        .map_err(|reason| Unavailable {
+            span,
+            reason: reason.into(),
+        })?
+        .map(|(_, source)| source.clone());
     if contract.is_some_and(|contract| {
         contract.modes.iter().any(|mode| {
             mode.component.parameter.is_some()
@@ -254,6 +263,7 @@ fn build_graph(
         closures: BTreeMap::new(),
         awaited: BTreeSet::new(),
         loops: Vec::new(),
+        owned_source: None,
         view: None,
         view_carried: None,
         view_in_tuple: false,
@@ -276,7 +286,7 @@ fn build_graph(
     }
     if let Some(view) = view {
         let root = match view.source.slot {
-            SourceSlot::Receiver => receiver_root.ok_or(Unavailable {
+            SourceSlot::Receiver => receiver_root.clone().ok_or(Unavailable {
                 span,
                 reason: "returned view names an absent receiver".into(),
             })?,
@@ -299,6 +309,29 @@ fn build_graph(
         builder.view = Some((view.access == incan_semantics_core::IncanInputAccess::Exclusive, place));
         builder.view_carried = view.carried;
         builder.view_in_tuple = super::super::written_tuple_elements(&callable.return_type().node).is_some();
+    }
+    if let Some(source) = owned_source {
+        let root = match source.slot {
+            SourceSlot::Receiver => receiver_root.clone().ok_or(Unavailable {
+                span,
+                reason: "owned result dependency names an absent receiver".into(),
+            })?,
+            SourceSlot::Parameter(slot) => {
+                let parameter = parameters.get(slot).ok_or(Unavailable {
+                    span,
+                    reason: "owned result dependency names an absent parameter".into(),
+                })?;
+                builder.binding_root(
+                    &parameter.node.name,
+                    parameter.span,
+                    SemanticSourceTargetKind::Parameter,
+                )?
+            }
+        };
+        builder.owned_source = Some(Place {
+            root: Root::Binding(root),
+            projection: source.fields.iter().cloned().map(Projection::Field).collect(),
+        });
     }
     let result = builder.block(body, vec![0]);
     view_errors.append(&mut builder.view_errors);
@@ -326,6 +359,28 @@ impl Builder<'_> {
                 span: expression.span,
                 reason: "operator needs selected callable access facts".into(),
             });
+        }
+        if matches!(expression.node, Expr::Field(_, _) | Expr::Index(_, _))
+            && let Some((incoming, path)) = self.projected_view_place(expression, incoming.clone())?
+        {
+            let ty = self.checker.type_info.expr_type(expression.span).ok_or(Unavailable {
+                span: expression.span,
+                reason: "missing checked projected-view type".into(),
+            })?;
+            let access = if consume && !self.copy_value(ty) {
+                Access::Move
+            } else {
+                Access::Read
+            };
+            return Ok(self.event(
+                incoming,
+                Event::Access {
+                    place: path.place,
+                    access,
+                    through: path.through,
+                },
+                expression.span,
+            ));
         }
         match &expression.node {
             Expr::Ident(_) | Expr::SelfExpr | Expr::Field(_, _) | Expr::Index(_, _) => {

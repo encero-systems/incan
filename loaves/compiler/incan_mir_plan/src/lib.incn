@@ -109,6 +109,8 @@ pub model Function:
     pub signature_lifetimes: list[list[str]] = []
     # Type-parameter provenance retains hidden native lifetime arguments independently of explicit references.
     pub generic_loans: list[GenericLoan] = []
+    # Parameter slot whose loan is retained inside an owned native result; -1 means no retained result source.
+    pub retained_result_source: int = -1
 
 
 @derive(Clone, PartialEq)

@@ -336,6 +336,7 @@ pub(super) fn lower_function_body(
     );
     retain_parameter_ownership(&mut builder, &params, false);
     builder.prepare_returned_view(binding.and_then(|binding| binding.identity.as_ref()), &params, false);
+    builder.prepare_retained_result_source(binding.and_then(|binding| binding.identity.as_ref()), &params, false);
     let rebound = lowering_facts
         .type_info
         .declarations
@@ -366,6 +367,7 @@ pub(super) fn lower_function_body(
 
     let named_type_identities =
         builder.finish_type_identities(parameter_types::retained_type_identities(lowering_facts.type_info));
+    let returned_view = result_dependency(&builder);
     bir::Body {
         type_parameters: builder.type_parameters,
         trait_default_instantiation: None,
@@ -378,7 +380,7 @@ pub(super) fn lower_function_body(
         return_type: owner_return_type,
         checked_input_profile,
         explicit_input_bindings: std::mem::take(&mut builder.input_local_bindings),
-        returned_view: builder.returned_view.as_ref().map(|source| source.view.clone()),
+        returned_view,
         callable_representation: Some(bir::CallableRepresentation {
             function_pointer_locals: builder.function_pointer_locals,
             closure_holding_locals: builder.closure_holding_locals,
@@ -488,6 +490,11 @@ pub(super) fn lower_method_body(
         &params,
         method.receiver.is_some(),
     );
+    builder.prepare_retained_result_source(
+        binding.and_then(|binding| binding.identity.as_ref()),
+        &params,
+        method.receiver.is_some(),
+    );
     let rebound = lowering_facts
         .type_info
         .declarations
@@ -517,6 +524,7 @@ pub(super) fn lower_method_body(
 
     let named_type_identities =
         builder.finish_type_identities(parameter_types::retained_type_identities(lowering_facts.type_info));
+    let returned_view = result_dependency(&builder);
     Some(bir::Body {
         trait_default_instantiation: None,
         nominal_instantiation: Vec::new(),
@@ -539,7 +547,7 @@ pub(super) fn lower_method_body(
         return_type: owner_return_type,
         checked_input_profile,
         explicit_input_bindings: std::mem::take(&mut builder.input_local_bindings),
-        returned_view: builder.returned_view.as_ref().map(|source| source.view.clone()),
+        returned_view,
         callable_representation: Some(bir::CallableRepresentation {
             function_pointer_locals: builder.function_pointer_locals,
             closure_holding_locals: builder.closure_holding_locals,
@@ -652,6 +660,22 @@ fn carried_return_type(
         },
         _ => ty,
     }
+}
+
+/// Publish one result-source relationship without changing Body IR's positional representation. Shared and
+/// exclusive access remain returned views; owned access marks only a native result's retained parameter loan.
+fn result_dependency(builder: &BodyBuilder<'_, '_>) -> Option<bir::ReturnedView> {
+    builder
+        .returned_view
+        .as_ref()
+        .map(|source| source.view.clone())
+        .or_else(|| {
+            builder.retained_result_source.map(|slot| bir::ReturnedView {
+                slot,
+                access: incan_semantics_core::IncanInputAccess::Owned,
+                carried: None,
+            })
+        })
 }
 
 /// Declare every free-function parameter before lowering defaults, preserving the shared replacement receiver

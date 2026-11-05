@@ -3,8 +3,6 @@
 #   10
 #   2
 #   4
-# pending: #2500: a shared returned field view followed by source replacement is outside the completed explicit source-flow profile
-
 """Exercise the RFC 164 ownership shapes required by storage and graph readers."""
 
 

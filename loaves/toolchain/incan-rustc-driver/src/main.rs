@@ -56,6 +56,7 @@ mod native_trait_bridges;
 mod panic_hooks;
 mod plan;
 mod program_entries;
+mod retained_result_loans;
 mod rust_codegraph;
 mod rust_facts;
 mod rust_graph_bodies;

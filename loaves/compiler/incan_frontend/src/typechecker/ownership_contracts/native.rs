@@ -185,6 +185,22 @@ impl crate::typechecker::TypeChecker {
                 sources.push(source);
             }
         }
+        // A method on a native owner with lifetime parameters may return the owner's carried loan rather than the
+        // receiver reference's call-bounded loan. Rust's signature establishes that result lifetime, and the source
+        // receiver is the Incan value that physically carries it.
+        if sources.is_empty()
+            && call.has_receiver
+            && call
+                .parameters
+                .first()
+                .map(|parameter| match &parameter.ty {
+                    ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => inner.as_ref(),
+                    value => value,
+                })
+                .is_some_and(|receiver| self.type_holds_native_signature_loan(receiver))
+        {
+            sources.push(SourceSlot::Receiver);
+        }
         if sources.is_empty() {
             return Err(format!(
                 "native call `{}` returns a borrowed value without an admitted Incan owner",

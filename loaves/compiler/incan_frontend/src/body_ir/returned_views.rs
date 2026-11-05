@@ -46,6 +46,28 @@ impl BodyBuilder<'_, '_> {
         });
     }
 
+    /// Select the parameter loan retained by a top-level owned result. This records only the signature relation;
+    /// the owned result remains ordinary value storage and never aliases the selected source place.
+    pub(super) fn prepare_retained_result_source(
+        &mut self,
+        owner: Option<&CanonicalSymbolId>,
+        params: &[bir::CallableParam],
+        has_receiver: bool,
+    ) {
+        let contract = owner.and_then(|owner| self.type_info.declarations.ownership_contracts.get(owner));
+        let Ok(Some((_mode, source))) = crate::ownership_metadata::owned_result_source(contract) else {
+            return;
+        };
+        let slot = match source.slot {
+            SourceSlot::Receiver if has_receiver => 0,
+            SourceSlot::Receiver => return,
+            SourceSlot::Parameter(slot) => slot + usize::from(has_receiver),
+        };
+        if params.get(slot).is_some() {
+            self.retained_result_source = Some(slot);
+        }
+    }
+
     /// Return a borrow of exactly the declared source place. The checker proved the relation; this authenticates
     /// the lowered place against the declared local and field identities before borrowing it.
     pub(super) fn lower_view_return(

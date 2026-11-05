@@ -14,7 +14,7 @@ pub def direct_view_access(body: &RustBody) -> Option[IncanInputAccess]:
     """The access of a body's direct returned view; a carried view returns an owned carrier and has none."""
     match body.returned_view:
         Some(view) =>
-            if view.carried.is_none():
+            if view.access != IncanInputAccess.Owned and view.carried.is_none():
                 return Some(view.access)
         None => pass
     return None
