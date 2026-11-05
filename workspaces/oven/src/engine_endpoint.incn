@@ -16,6 +16,8 @@ from owner_endpoint import bindable, prepare_directory, socket_prefix
 from unit_freshness import fingerprint
 
 const STARTUP_POLLS: int = 2500
+# A loaded host can hold either side of the handshake for seconds. The bound only delays refusing a stuck peer.
+pub const HANDSHAKE_SECONDS: u64 = 30
 
 
 pub model ServiceEndpoint:
@@ -98,8 +100,8 @@ pub def handshake(initial: Channel, identity: Identity) -> Result[Channel, Refus
     mut channel = initial
     if channel.transport.peer().map_err(transport)?.uid != identity.uid:
         return Err(Refusal(kind=RefusalKind.Identity, detail="engine service peer user mismatch"))
-    channel.transport.wait_at_most(5)
-    channel.transport.write_at_most(5)
+    channel.transport.wait_at_most(HANDSHAKE_SECONDS)
+    channel.transport.write_at_most(HANDSHAKE_SECONDS)
     sent = channel.send(zero_id(), Message.Hello(identity.hello()))?
     match sent:
         SendOutcome.Blocked => return Err(transport("initial Hello has no data credit"))
