@@ -174,7 +174,7 @@ pub enum RvalueKind:
     ReifyFunction(Operand)
     # Expose a checked function pointer's address without changing its argument or return signature.
     FunctionAddress(Operand)
-    # Borrow an owned closure's callable object as the shared view a call or closure-holding parameter takes.
+    # Borrow an owned closure's callable object as the shared view a call or lending envelope takes.
     ClosureObject(Place)
     # Test the selected variant using Rust's actual discriminant type and value, including explicit repr values.
     IsVariant(Place, int)
@@ -251,7 +251,7 @@ pub enum CalleeKind:
     CallClosure(list[PlanType])
     # Invoke the owned callable object by moving it with one packed argument tuple.
     CallClosureOnce(list[PlanType])
-    # Invoke the shared view of a callable object that holds a borrowed capture, with one packed argument tuple.
+    # Invoke the shared view of a callable object that holds borrowed captures, with one packed argument tuple.
     CallBorrowingClosure(list[PlanType])
     # Read a clone of computed static storage slot `n`, running its initializer first if nothing has yet.
     StaticLoad(int)

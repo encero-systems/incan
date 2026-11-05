@@ -16,7 +16,7 @@ pub fn function(
         .enumerate()
         .map(|(index, parameter)| ast::Param {
             attrs: ThinVec::new(),
-            ty: crate::futures::constructor_parameter_type(function, index, span),
+            ty: crate::closures::constructor_parameter_type(function, index, span),
             pat: Box::new(ast::Pat {
                 id: ast::DUMMY_NODE_ID,
                 kind: ast::PatKind::Ident(ast::BindingMode::NONE, ident(&parameter.name, span), None),
@@ -29,7 +29,8 @@ pub fn function(
         })
         .collect();
     let output = ast::FnRetTy::Ty(
-        crate::futures::constructor_return_type(function, span)
+        crate::closures::constructor_return_type(function, span)
+            .or_else(|| crate::futures::constructor_return_type(function, span))
             .or_else(|| {
                 crate::validation::carried_output(plan, function).map(|carrier| carried_output_ty(carrier, span))
             })
@@ -37,6 +38,9 @@ pub fn function(
     );
     let mut declaration = ast::FnDecl { inputs, output };
     let mut generics = crate::futures::constructor_generics(function, span);
+    generics
+        .params
+        .extend(crate::closures::constructor_generics(function, span).params);
     generics
         .params
         .extend(crate::signature_lifetimes::apply(function, &mut declaration, span)?.params);

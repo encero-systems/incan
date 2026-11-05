@@ -341,7 +341,7 @@ pub def target_read(
             if fact != OwnershipFact.Move or target.projection != Projection.Whole:
                 return Err("unsupported Body IR future read without whole ownership transfer")
             return Ok(read_place(target, true, span))
-        PlanType.ClosureRef(_signature) =>
+        (PlanType.ClosureRef(_signature) | PlanType.BorrowingClosureRef(_signature)) =>
             match fact:
                 OwnershipFact.Unknown => return Err("unsupported Body IR unknown callable-object ownership")
                 OwnershipFact.MutBorrow => return Err("unsupported Body IR mutable callable-object borrow")

@@ -107,11 +107,9 @@ struct Builder<'a> {
     carriers: BTreeMap<CanonicalSymbolId, matches::BoundCarrier>,
     /// Locals a `match` or `?` already took a carried view out of; any later use of them is refused.
     taken_carriers: BTreeSet<CanonicalSymbolId>,
-    /// Locals bound to a closure, with the place and loan of the borrow each holds. A closure local can only be
-    /// called.
-    closures: BTreeMap<CanonicalSymbolId, Option<Path>>,
-    /// Closure locals whose borrow is of a value that is not Copy, which the closure holds by reference.
-    reference_closures: BTreeSet<CanonicalSymbolId>,
+    /// Locals bound to a closure, with every place and loan the closure holds. A closure local can only be called or
+    /// lent to a parameter whose body only calls it.
+    closures: BTreeMap<CanonicalSymbolId, Vec<Path>>,
     /// Calls an `await` suspends on directly. A call to an async callable anywhere else would leave a future holding
     /// its loans, which is not modeled.
     awaited: BTreeSet<Span>,
@@ -252,7 +250,6 @@ fn build_graph(
         carriers: BTreeMap::new(),
         taken_carriers: BTreeSet::new(),
         closures: BTreeMap::new(),
-        reference_closures: BTreeSet::new(),
         awaited: BTreeSet::new(),
         loops: Vec::new(),
         view: None,

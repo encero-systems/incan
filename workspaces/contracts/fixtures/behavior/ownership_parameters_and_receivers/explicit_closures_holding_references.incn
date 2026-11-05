@@ -1,4 +1,4 @@
-# behavior: a closure in an explicit body can capture a shared borrow of a value that is not Copy, from a borrowed input or a `Borrowed[T]` local, and call it, including in a loop; the closure holds a reference to the borrowed place, which stays borrowed while the closure can be called (#2500).
+# behavior: a closure in an explicit body holds Copy captures by value and borrows every other captured place through its last call, including an owned local, receiver, exclusive input, returned view, several places and loop-called local (#2500).
 # expect-stdout:
 #   8
 #   15
@@ -6,6 +6,11 @@
 #   8
 #   abc
 #   5
+#   10
+#   11
+#   6
+#   7
+#   12
 
 """Closures that hold references to borrowed values in explicit bodies."""
 
@@ -13,6 +18,16 @@
 class Counter:
     pub value: int
     pub name: str
+
+    def bump(mut self) -> Reference[Self] from self:
+        """Increment this counter and return its existing storage."""
+        self.value += 1
+        return self
+
+    def scaled(self, factor: Borrowed[Counter]) -> int:
+        """Read the receiver and another borrowed place through one closure."""
+        read: () -> int = () => self.value * factor.value
+        return read()
 
 
 class Tally:
@@ -53,6 +68,38 @@ def tally(start: Borrowed[Tally]) -> int:
     return read()
 
 
+def exclusive_capture(mut counter: BorrowedMut[Counter]) -> int:
+    """Reborrow an exclusive input shared until the closure's last call."""
+    read: () -> int = () => counter.value
+    seen = read()
+    counter.value += 2
+    return seen + counter.value
+
+
+def owned_capture(start: Borrowed[Counter]) -> int:
+    """Borrow an owned non-Copy local until the closure's last call."""
+    mut owned = Counter(value=start.value, name="owned")
+    read: () -> int = () => owned.value
+    seen = read()
+    owned.value += 3
+    return seen + owned.value
+
+
+def two_borrowed_captures(left: Borrowed[int], right: Borrowed[int]) -> int:
+    """Retain two borrowed Copy-valued inputs through the closure's last call."""
+    both: () -> int = () => left + right
+    return both()
+
+
+def returned_view_capture(mut counter: BorrowedMut[Counter]) -> int:
+    """Reborrow a returned view until its closure's last call."""
+    view = counter.bump()
+    read: () -> int = () => view.value
+    seen = read()
+    counter.value += 2
+    return seen + counter.value
+
+
 def main() -> None:
     mut counter = Counter(value=4, name="abc")
     println(total(counter))
@@ -64,3 +111,13 @@ def main() -> None:
     println(counter.name)
     start = Tally(value=4)
     println(tally(start))
+    mut exclusive = Counter(value=4, name="exclusive")
+    println(exclusive_capture(exclusive))
+    owned = Counter(value=4, name="owned")
+    println(owned_capture(owned))
+    receiver = Counter(value=2, name="receiver")
+    factor = Counter(value=3, name="factor")
+    println(receiver.scaled(factor))
+    println(two_borrowed_captures(2, 5))
+    mut viewed = Counter(value=4, name="viewed")
+    println(returned_view_capture(viewed))

@@ -17,6 +17,70 @@ use rustc_middle::{mir, ty};
 use rustc_span::{Span, Spanned};
 use thin_vec::{ThinVec, thin_vec};
 
+/// Whether this synthesized function constructs an environment whose references bound the returned callable.
+fn borrowing_constructor(function: &Function) -> Option<&[PlanType]> {
+    match &function.return_type {
+        PlanType::BorrowingClosure(signature) => Some(signature),
+        _ => None,
+    }
+}
+
+/// Give a borrowing constructor one result lifetime bounded by every independently borrowed capture.
+pub(crate) fn constructor_generics(function: &Function, span: Span) -> ast::Generics {
+    let mut generics = ast::Generics::default();
+    if borrowing_constructor(function).is_none() {
+        return generics;
+    }
+    generics.params.push(lifetime_parameter("'closure", Vec::new(), span));
+    for (index, parameter) in function.parameters.iter().enumerate() {
+        let ty = declarations::ty(&parameter.ty, span);
+        if matches!(ty.kind, ast::TyKind::Ref(..)) {
+            let bound = ast::GenericBound::Outlives(lifetime("'closure", span));
+            generics
+                .params
+                .push(lifetime_parameter(&format!("'capture_{index}"), vec![bound], span));
+        }
+    }
+    generics
+}
+
+/// Preserve a constructor capture's type while naming each outer reference lifetime independently.
+pub(crate) fn constructor_parameter_type(function: &Function, index: usize, span: Span) -> Box<ast::Ty> {
+    let mut ty = crate::futures::constructor_parameter_type(function, index, span);
+    if borrowing_constructor(function).is_some()
+        && let ast::TyKind::Ref(region, _) = &mut ty.kind
+    {
+        *region = Some(lifetime(&format!("'capture_{index}"), span));
+    }
+    ty
+}
+
+/// Bind a borrowing closure result to the common lifetime all of its capture loans outlive.
+pub(crate) fn constructor_return_type(function: &Function, span: Span) -> Option<Box<ast::Ty>> {
+    borrowing_constructor(function).map(|signature| declarations::borrowing_closure_ast(signature, "'closure", span))
+}
+
+/// Build one named lifetime use for a generated signature.
+fn lifetime(name: &str, span: Span) -> ast::Lifetime {
+    ast::Lifetime {
+        id: ast::DUMMY_NODE_ID,
+        ident: rustc_span::Ident::new(rustc_span::Symbol::intern(name), span),
+    }
+}
+
+/// Declare one generated lifetime parameter with its outlives bounds.
+fn lifetime_parameter(name: &str, bounds: Vec<ast::GenericBound>, span: Span) -> ast::GenericParam {
+    ast::GenericParam {
+        id: ast::DUMMY_NODE_ID,
+        ident: rustc_span::Ident::new(rustc_span::Symbol::intern(name), span),
+        attrs: ThinVec::new(),
+        bounds,
+        is_placeholder: false,
+        kind: ast::GenericParamKind::Lifetime,
+        colon_span: None,
+    }
+}
+
 /// Identify a reusable or consuming closure constructor, returning the lifted function and its capture count.
 pub fn constructor(function: &Function) -> Option<(&str, i64)> {
     function.blocks.iter().find_map(|block| match &block.terminator.kind {

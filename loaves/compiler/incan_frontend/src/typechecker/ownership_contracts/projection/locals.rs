@@ -129,7 +129,16 @@ impl<'a> CheckedInputBody<'a> {
             .map(|closure| closure.captures.as_slice())
     }
 
-    /// The checked referent type of a local this body declares `Borrowed[T]` or `BorrowedMut[T]`.
+    /// Whether this exact closure retains `capture` through a checked loan rather than a Copy read.
+    pub(crate) fn closure_borrows_capture(&self, span: HirSourceSpan, capture: &CanonicalSymbolId) -> bool {
+        self.graph
+            .closures
+            .get(&span)
+            .is_some_and(|closure| closure.loans.iter().any(|(identity, _)| identity == capture))
+    }
+
+    /// The checked referent type of a local alias: an explicit borrowed annotation's underlying value or the closed
+    /// binding type of an unannotated returned view.
     pub(crate) fn local_value_type(&self, local: &CanonicalSymbolId) -> Option<&'a ResolvedType> {
         self.facts
             .protocols
@@ -137,6 +146,7 @@ impl<'a> CheckedInputBody<'a> {
             .get(local)
             .filter(|mode| mode.owner == self.owner)
             .map(|mode| &mode.value_type)
+            .or_else(|| self.facts.expressions.body_ir_binding_types.get(local))
     }
 
     /// Select the exact declaration and initializer whose loan this body already authenticated. A matching name,
