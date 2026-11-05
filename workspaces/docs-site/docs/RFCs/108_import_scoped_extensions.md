@@ -1,6 +1,6 @@
 # RFC 108: Import-scoped extensions
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-06-06
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
