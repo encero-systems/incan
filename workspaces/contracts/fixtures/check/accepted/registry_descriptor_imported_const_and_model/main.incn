@@ -1,0 +1,29 @@
+# behavior: a registry descriptor records an imported structural const as its value, and an imported Descriptor model whose fields have an imported newtype and enum type is a valid descriptor type (#2605)
+# expect-accepted:
+
+from std.registry import Registry, RegistryEntry, RegistrySubject, SubjectKind
+from catalog import FORMS, ProbeDescriptor, ProbeId, ProbeKind, SUMMARY
+
+
+@derive(Descriptor)
+model LocalDescriptor:
+    pub summary: str
+    pub forms: FrozenList[str]
+
+
+pub static locals: Registry[str, LocalDescriptor] = Registry.define(subjects=[SubjectKind.CompilationUnit])
+pub static local_entry: RegistryEntry[str, LocalDescriptor] = locals.entry(
+    key="local",
+    subject=RegistrySubject.current_unit(),
+    descriptor=LocalDescriptor(summary=SUMMARY, forms=FORMS),
+)
+pub static probes: Registry[str, ProbeDescriptor] = Registry.define(subjects=[SubjectKind.CompilationUnit])
+pub static probe: RegistryEntry[str, ProbeDescriptor] = probes.entry(
+    key="probe",
+    subject=RegistrySubject.current_unit(),
+    descriptor=ProbeDescriptor(id=ProbeId("probe"), kind=ProbeKind.Stable, summary=SUMMARY),
+)
+
+
+def main() -> None:
+    println("ok")

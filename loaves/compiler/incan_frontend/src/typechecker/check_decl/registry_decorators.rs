@@ -329,18 +329,28 @@ impl TypeChecker {
     }
 
     /// Convert one expression to an RFC 113 structural snapshot without evaluating user code.
-    pub(super) fn registry_structural_value(&self, expr: &Spanned<Expr>) -> Result<SemanticRegistryValue, String> {
+    pub(in crate::typechecker) fn registry_structural_value(
+        &self,
+        expr: &Spanned<Expr>,
+    ) -> Result<SemanticRegistryValue, String> {
         self.registry_structural_value_with_consts(expr, &mut HashSet::new())
     }
 
     /// Convert one expression to a checked structural snapshot, expanding local const declarations through the
-    /// compiler's already-parsed declaration graph. This is not runtime evaluation: only the RFC 113 literal/model
-    /// subset is traversed, and cycles are rejected explicitly.
+    /// compiler's already-parsed declaration graph. An imported `pub const` is recorded as the value its declaring
+    /// module computed for it. This is not runtime evaluation: only the RFC 113 literal/model subset is traversed, and
+    /// cycles are rejected explicitly.
     pub(super) fn registry_structural_value_with_consts(
         &self,
         expr: &Spanned<Expr>,
         expanding_consts: &mut HashSet<String>,
     ) -> Result<SemanticRegistryValue, String> {
+        if let Expr::Ident(name) = &expr.node
+            && !self.const_decls.contains_key(name)
+            && let Some(value) = self.imported_registry_const(expr.span, name)
+        {
+            return value.clone();
+        }
         match &expr.node {
             Expr::Literal(Literal::Int(value)) => Ok(SemanticRegistryValue::Int(value.value)),
             Expr::Literal(Literal::Float(value)) => Ok(SemanticRegistryValue::Float(value.repr.clone())),
@@ -414,6 +424,16 @@ impl TypeChecker {
             }
             _ => Err("@describe values must be literals, safe const references, collections, newtypes, or Descriptor model literals".to_string()),
         }
+    }
+
+    /// The structural value recorded for the imported `pub const` an identifier names, found by the const's canonical
+    /// identity rather than its spelling. A name that is not an imported source const has none.
+    fn imported_registry_const(&self, span: Span, name: &str) -> Option<&Result<SemanticRegistryValue, String>> {
+        let identity = self
+            .type_info
+            .resolved_identity(span)
+            .or_else(|| self.symbols.lookup(name).and_then(|id| self.symbols.identity_of(id)))?;
+        self.dependency_registry_consts.get(identity)
     }
 
     /// Snapshot `Some(value)` as a structural option without evaluating user code.

@@ -1,0 +1,23 @@
+# behavior: a registry descriptor cannot reach a private const of another module; its import is refused (#2605)
+# expect-diagnostic: INCAN-I0001
+# expect-diagnostic: INCAN-T0001
+
+from std.registry import Registry, RegistryEntry, RegistrySubject, SubjectKind
+from catalog import SECRET
+
+
+@derive(Descriptor)
+model SecretDescriptor:
+    pub summary: str
+
+
+pub static secrets: Registry[str, SecretDescriptor] = Registry.define(subjects=[SubjectKind.CompilationUnit])
+pub static secret: RegistryEntry[str, SecretDescriptor] = secrets.entry(
+    key="secret",
+    subject=RegistrySubject.current_unit(),
+    descriptor=SecretDescriptor(summary=SECRET),
+)
+
+
+def main() -> None:
+    println("ok")
