@@ -6,7 +6,7 @@ from rust::std::thread import sleep
 from rust::std::time import Duration, Instant
 from std.encoding.hex import hexlify
 from std.fs import Path
-from pub::incan_platform.ipc import Connection, Listener, listen, session_id, stale
+from pub::incan_platform.ipc import Listener, listen, session_id, stale
 from decimal_text import digits_only
 from engine_channel import Channel, Envelope, SendOutcome
 from engine_endpoint import HANDSHAKE_SECONDS, endpoint, owner_uid, transport
@@ -45,6 +45,13 @@ pub class Client:
     pub pending: list[Pending] = []
     pub pins: list[ExecutionLease] = []
     pub closed: bool = false
+
+
+class Greeting:
+    """An accepted connection waiting to present its complete initial Hello without blocking other clients."""
+
+    pub channel: Channel
+    pub accepted: int
 
 
 pub def serve(arguments: list[str]) -> Result[None, Refusal]:
@@ -97,30 +104,49 @@ def withdraw_stale(path: str) -> Result[None, Refusal]:
 def event_loop(mut listener: Listener, mut state: ServiceState, idle: int) -> Result[None, Refusal]:
     """Poll bounded client state and release it after use; no decoded compilation closure enters this process."""
     mut clients: list[Client] = []
+    mut greetings: list[Greeting] = []
     clock = Instant.now()
     while true:
+        now = int(clock.elapsed().as_millis())
         match listener.poll().map_err(transport)?:
             Some(connected) =>
-                if len(clients) < MAX_CLIENTS and not state.stopping:
-                    match greet(connected, state):
-                        Ok(client) => clients.append(client)
-                        Err(_) => pass
+                if len(clients) + len(greetings) < MAX_CLIENTS and not state.stopping:
+                    greetings.append(Greeting(channel=Channel(transport=connected), accepted=now))
             None => pass
+        greetings = greet_ready(greetings, clients, state, now)
         if len(clients) > 0:
             for index in range(len(clients)):
                 mut client = clients[index]
                 service_client(client, state)
                 clients[index] = client
             clients = [client for client in clients if not client.closed]
-        state.clients = len(clients)
-        if state.stopping or state.exits(int(clock.elapsed().as_millis()), idle * 1000):
+        state.clients = len(clients) + len(greetings)
+        if state.stopping or state.exits(now, idle * 1000):
             return Ok(None)
         sleep(Duration.from_millis(2))
 
 
-def greet(connected: Connection, state: ServiceState) -> Result[Client, Refusal]:
+def greet_ready(greetings: list[Greeting], mut clients: list[Client], state: ServiceState, now: int) -> list[Greeting]:
+    """Admit every ready Hello while silent peers wait independently until their bounded handshake expires."""
+    mut waiting: list[Greeting] = []
+    for index in range(len(greetings)):
+        mut greeting = greetings[index]
+        if now - greeting.accepted >= int(HANDSHAKE_SECONDS) * 1000:
+            _ = greeting.channel.transport.close()
+            continue
+        match greeting.channel.transport.readable():
+            Ok(true) =>
+                match greet(greeting.channel, state):
+                    Ok(client) => clients.append(client)
+                    Err(_) => pass
+            Ok(false) => waiting.append(greeting)
+            Err(_) => _ = greeting.channel.transport.close()
+    return waiting
+
+
+def greet(initial: Channel, state: ServiceState) -> Result[Client, Refusal]:
     """Authenticate OS credentials and Hello before assigning a fresh nonzero session id."""
-    mut channel = Channel(transport=connected)
+    mut channel = initial
     channel.transport.wait_at_most(HANDSHAKE_SECONDS)
     channel.transport.write_at_most(HANDSHAKE_SECONDS)
     first = channel.receive()?
