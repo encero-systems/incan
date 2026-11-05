@@ -7,7 +7,7 @@
     - RFC 017 (validated newtypes with implicit coercion)
     - RFC 048 (checked contract metadata, Incan emit, and interrogation tooling)
     - RFC 078 (tool execution and typed workflow actions)
-    - RFC 080 (AI assets, models, prompts, evals, and agent metadata)
+    - RFC 080 (declared AI assets)
     - RFC 085 (field metadata and type-shaped constraints)
     - RFC 091 (constrained integer newtype storage carriers)
     - RFC 096 (declaration metadata blocks)

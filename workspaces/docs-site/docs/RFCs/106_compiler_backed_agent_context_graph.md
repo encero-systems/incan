@@ -9,7 +9,7 @@
     - RFC 048 (checked contract metadata, Incan emit, and interrogation tooling)
     - RFC 077 (workspace and multi-package projects)
     - RFC 078 (tool execution and typed workflow actions)
-    - RFC 080 (AI assets, models, prompts, evals, and agent metadata)
+    - RFC 080 (declared AI assets)
     - RFC 082 (checked API documentation generation)
     - RFC 096 (declaration metadata blocks)
     - RFC 105 (architect rule engine)

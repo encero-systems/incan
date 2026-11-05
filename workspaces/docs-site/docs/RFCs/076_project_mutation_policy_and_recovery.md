@@ -204,6 +204,7 @@ Mutation plans should classify changes into risk categories, including at least:
 - `config`: formatter, linter, editor, build, package, or tool configuration
 - `ownership`: generated-file ownership or provenance policy changes
 - `agent-guidance`: agent skills, workflows, instruction references, or safety labels
+- `ai-asset`: a model, prompt, dataset or eval declared under RFC 080
 - `docs`: documentation-only files
 - `asset`: non-rendered copied files
 
@@ -270,7 +271,7 @@ A source's state must never fail a build. This matches how Cargo treats a yanked
 
 - `plan`, `build`, `test`, and `check` must warn when the project contains output from a `yanked`, `revoked`, `vulnerable`, `source-mismatch`, or `quarantined` source, naming the source and the affected origin. Locked and offline builds under RFC 020 must otherwise be unchanged.
 - A new mutation from a `revoked`, `vulnerable`, or `quarantined` source must be blocked, and a new resolution must not select a `yanked` source.
-- `oven audit` must be the explicit check. It must report package dependencies under RFC 125's advisories and the recorded template and mix origins together, and must support `--format json`.
+- `oven audit` must be the explicit check. It must report package dependencies under RFC 125's advisories, the recorded template and mix origins, and RFC 080 assets together, and must support `--format json`.
 - `oven audit` must exit non-zero for `revoked`, `vulnerable`, `source-mismatch`, and `quarantined`. It must report `yanked`, `stale`, `superseded`, and `unknown` as warnings, and `--deny <state>` must make any of them fail. A project or organization that wants a bad source to stop its pipeline runs `oven audit` in CI.
 
 ### Policy storage and precedence
@@ -361,7 +362,7 @@ The same policy result should power terminal diagnostics, machine-readable JSON,
 
 - **Storage.** Project-local policy is the typed `[policy]` table in `loaf.toml`; organization policy is Oven-controlled organization configuration (RFC 117), optionally fed by signed registry events (RFC 125); a developer profile may only tighten. Audit facts (outcome, policy id, approval kind, approver, source identity and integrity state, plan hash) are receipt facts and never live in the manifest.
 - **Minimum syntax.** `[policy]` carries a `default` outcome, one outcome per standard risk category (`[policy.risk]`), and an ordered list of source rules (`[[policy.sources]]`) each naming a source kind or registry identity, an optional trust tier and pin form, and an outcome. Nothing else is required; the schema is additive.
-- **Standard risk categories.** The eleven categories in the reference section are standardized. Extension categories use an `x-` prefix, must appear in machine-readable output, and default to `require-approval`.
+- **Standard risk categories.** The twelve categories in the reference section are standardized. Extension categories use an `x-` prefix, must appear in machine-readable output, and default to `require-approval`.
 - **Reviewer and owner requirements.** Policy distinguishes two approval kinds, `local-confirmation` and `independent-approval`, and records the approving identity in the receipt as an opaque stable identifier. It does not implement reviewer assignment or ownership rules; those are interpreted by external review systems and by registry organization events under RFC 125.
 - **Organization-level policy discovery.** Through Oven-controlled organization configuration only, with signed registry policy events as an optional source. The most restrictive applicable decision wins. No hosted product semantics are defined here.
 - **Builds warn, and `oven audit` is the check,** as with Cargo and security advisories. A quarantined, revoked or vulnerable source blocks future mutation from that source and makes `plan`, `build`, `test`, and `check` warn. It never fails a build on its own, and locked or offline builds (RFC 020) continue unchanged. `oven audit` exits non-zero for those states, so a project that wants a bad source to stop its pipeline runs it in CI. There is no setting that makes a build fail.

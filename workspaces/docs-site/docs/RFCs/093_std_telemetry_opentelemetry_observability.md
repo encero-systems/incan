@@ -12,7 +12,7 @@
     - RFC 063 (`std.process` process spawning and command execution)
     - RFC 066 (`std.http` HTTP client surface)
     - RFC 072 (`std.logging`)
-    - RFC 080 (AI assets, models, prompts, evals, and agent metadata)
+    - RFC 080 (declared AI assets)
     - RFC 084 (RHS partial callable presets)
     - RFC 089 (`std.environ`)
     - RFC 090 (typed CLI framework)

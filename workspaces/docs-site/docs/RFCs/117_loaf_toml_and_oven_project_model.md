@@ -466,7 +466,7 @@ The following authored concepts move into `loaf.toml` under Oven ownership. Thei
 
 RFC 015 is implemented, so RFC 117 supersedes its `incan.toml` discovery and `[tool.incan.envs]` configuration placement. RFCs 073, 076, and 078 are amended to name the `[envs]`, `[policy]`, and `[actions]` roots and RFC 118 command surfaces; they carry no legacy configuration compatibility.
 
-The table roots are `[envs]`, `[actions]`, `[policy]`, `[mixes]`, and `[templates]`. Their dedicated RFCs own the detailed schema and semantics. No `[oven.*]` prefix is needed: a `loaf.toml` is already Oven's authored project document, and roots should name their semantic domain instead. They must remain explicit, scoped, inspectable, and free of implicit lifecycle execution. RFC 118 owns whether users invoke those semantics through `incan`, `oven`, aliases, or another command arrangement.
+The table roots are `[envs]`, `[actions]`, `[policy]`, `[mixes]`, `[templates]`, and `[assets]`. Their dedicated RFCs own the detailed schema and semantics. No `[oven.*]` prefix is needed: a `loaf.toml` is already Oven's authored project document, and roots should name their semantic domain instead. They must remain explicit, scoped, inspectable, and free of implicit lifecycle execution. RFC 118 owns whether users invoke those semantics through `incan`, `oven`, aliases, or another command arrangement.
 
 ### Standard environments
 
@@ -527,6 +527,7 @@ loaf.toml
 ├── [policy]                  RFC 076, rehomed by RFC 117
 ├── [mixes]                   RFC 075, governed by RFC 076
 ├── [templates]               RFC 074, governed by RFC 076
+├── [assets]                  RFC 080, governed by RFC 076
 ├── [incan.source]            built-in Incan source facet
 ├── [rust.source] / [rust.*]  built-in Rust source facet; RFC 119 owns exceptions
 ├── [interop.c]               RFC 116's checked C interop envelope

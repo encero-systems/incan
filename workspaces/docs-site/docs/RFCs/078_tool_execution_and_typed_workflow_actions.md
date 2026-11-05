@@ -11,7 +11,7 @@
     - RFC 076 (project mutation policy and recovery)
     - RFC 077 (workspace and multi-package projects)
     - RFC 079 (`incan.pub` artifact graph)
-    - RFC 080 (AI assets and agent metadata)
+    - RFC 080 (declared AI assets)
     - RFC 090 (typed CLI framework)
     - RFC 104 (capabilities, limits and receipts)
     - RFC 117 (`loaf.toml` and Oven's language-neutral project model)
@@ -32,7 +32,7 @@ This RFC defines a typed workflow-action and tool-execution model for Loaf proje
 Read this RFC as seven foundations:
 
 1. **Actions are project workflow contracts:** an action describes a known project operation such as run, test, lint, format, generate, validate, publish, evaluate, or serve.
-2. **Tools are executable providers:** a tool may come from a package, built-in command, local path, registry artifact, or AI asset runtime, but its source and permissions are explicit.
+2. **Tools are executable providers:** a tool may come from a package, built-in command, local path, registry artifact, or a runtime from a higher-level framework, but its source and permissions are explicit.
 3. **Execution mode matters:** actions distinguish project-context execution from isolated one-off tool execution.
 4. **No hidden lifecycle hooks:** installing a package or resolving a dependency must not run arbitrary project mutation hooks.
 5. **Policy gates risk:** actions that mutate files, access the network, use models, or run external tools are classified for RFC 076 policy.
@@ -63,7 +63,7 @@ RFC 015 already has envs and scripts. RFC 075 lets mixes advertise tooling actio
 - Defining a remote build or distributed task execution service.
 - Allowing package install or import to run arbitrary setup hooks.
 - Defining exact syntax for every action kind.
-- Defining AI model execution semantics in full. RFC 080 owns AI assets and model metadata.
+- Defining AI model execution semantics. RFC 080 owns declared AI assets, and a higher-level framework owns runtimes.
 - Defining no-std/freestanding target profiles, kernel support, unsafe/layout controls, panic strategy, or allocator strategy. Action capability and receipt metadata may inform those RFCs, but this RFC is not the freestanding/kernel RFC.
 - Requiring every project script to be converted to a typed action.
 
@@ -133,7 +133,7 @@ An isolated tool should not become a project dependency merely because it was ex
 
 `std.actions` must provide `action` and `ActionKind`. `action` must be an ordinary RFC 036 decorator factory that returns an action value, with no compiler knowledge of the name beyond what RFC 104 checks.
 
-A function with `@action` must take parameters that `std.cli` can derive flags from, either individually or as one model, and must return `None`, a typed report model, or a `Result` of either. An `Err`, or a report that marks failure, must be a non-zero exit. `kind`, `caps`, `inputs`, `outputs`, `mutates` and `scope` must have the same meaning as in `loaf.toml`.
+A function with `@action` must take parameters that `std.cli` can derive flags from, either individually or as one model, and must return `None`, a typed report model, or a `Result` of either. An `Err`, or a report that marks failure, must be a non-zero exit. `kind`, `caps`, `uses`, `inputs`, `outputs`, `mutates` and `scope` must have the same meaning as in `loaf.toml`, where `uses` names RFC 080 assets.
 
 `caps=` must follow RFC 104: a compile error when it omits something the body uses, and a ceiling while the action runs. It is optional, and without it the action has neither.
 
@@ -181,7 +181,7 @@ Tool sources may include:
 - git sources
 - public catalog tools
 - private catalog tools
-- AI asset runtimes from RFC 080
+- runtimes a higher-level framework provides
 
 The selected tool source, version, content hash, publisher, and trust metadata must be represented in machine-readable output when available.
 
@@ -323,4 +323,4 @@ The recommended implementation shape is to build an action registry from built-i
 - **Isolated tool execution uses the Oven store.** Tools are units under RFC 124, cached globally by unit identity and shared across projects; there is no per-project tool cache. `--fresh` requests a temporary environment for one run.
 - **Inputs and outputs for unpredictable tools.** Declared as `outputs = "unpredictable"`; observed outputs are recorded in the receipt and surfaced as the post-run diff above. Tools that can predict outputs declare them and are checked against the receipt.
 - **Secrets and credentials.** Action metadata may declare named credential requirements (kind and purpose), never values. Policy mediates each request; values are resolved from Oven-controlled secure storage (the credential references RFC 117 already keeps outside the project) as RFC 103 secret values; every request is receipted under RFC 104 with redaction.
-- **AI-backed actions.** Metadata carries three fields, execution locality (`local` or `cloud`), a cost class, and a privacy label, referencing RFC 080 assets where they exist; policy may block cloud execution. The field shapes are fixed here; their detailed semantics remain RFC 080's.
+- **AI-backed actions.** Metadata carries three fields, execution locality (`local` or `remote`), a cost class, and a privacy label, referencing RFC 080 assets where they exist; policy may block remote execution. The field shapes are fixed here; their detailed semantics remain RFC 080's.

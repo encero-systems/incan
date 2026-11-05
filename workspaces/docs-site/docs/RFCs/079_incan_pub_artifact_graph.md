@@ -13,7 +13,7 @@
     - RFC 076 (project mutation policy and recovery)
     - RFC 077 (workspace and multi-package projects)
     - RFC 078 (tool execution and typed workflow actions)
-    - RFC 080 (AI assets and agent metadata)
+    - RFC 080 (declared AI assets)
 - **Issue:** <https://github.com/encero-systems/incan/issues/407>
 - **RFC PR:** —
 - **Written against:** v0.3
@@ -207,7 +207,7 @@ Artifact cards must include:
 - examples and quickstart references
 - limitations or intended-use notes when applicable
 
-For AI assets, cards should also include model lineage, datasets, evals, adapters, intended use, limitations, privacy concerns, and local/cloud execution requirements as defined by RFC 080.
+For AI assets, cards should also show the declared kind, digest, license, execution and data retention from RFC 080, and may carry richer metadata such as lineage, evals and limitations from a higher-level framework.
 
 ### Local tooling boundary
 

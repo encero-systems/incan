@@ -12,7 +12,7 @@
     - RFC 077 (workspace and multi-package projects)
     - RFC 078 (tool execution and typed workflow actions)
     - RFC 079 (`incan.pub` artifact graph)
-    - RFC 080 (AI assets, models, prompts, evals, and agent metadata)
+    - RFC 080 (declared AI assets)
     - RFC 082 (checked API documentation generation)
     - RFC 085 (field metadata and type-shaped constraints)
     - RFC 086 (schema descriptors and adapters)
@@ -306,7 +306,7 @@ Registry metadata may enrich local inspection, but it must not replace receiver-
 
 ### Relationship to RFC 080
 
-RFC 080 owns AI asset metadata, prompt templates, datasets, evals, agent guidance, and local/cloud execution constraints. This RFC requires those facts to appear in inspection output when they are project-relevant and available.
+RFC 080 owns declared AI assets, including prompts, datasets, evals, agent guidance, and local or remote execution. This RFC requires those facts to appear in inspection output when they are project-relevant and available.
 
 Prompt templates and system messages that affect project behavior must be inspectable as artifacts. Agent guidance must remain descriptive and must not cause implicit agent execution.
 
