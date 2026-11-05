@@ -1,8 +1,9 @@
-//! High-level DSL surface types plus low-level keyword registration DTOs (Data Transfer Object).
+//! Compiler-side transport for foundational vocabulary descriptors.
 //!
-//! Companion crates should usually describe their grammar through [`DslSurface`], [`DeclarationSurface`], and
-//! [`ClauseSurface`] inside the `library_vocab()` entrypoint. [`crate::VocabRegistration`], [`KeywordRegistration`],
-//! and [`KeywordSpec`] remain available for compiler tooling and simple escape-hatch registrations.
+//! Incan authors use the canonical contracts from `std.primitives.vocab`, normally through the identity-preserving
+//! `std.vocab` facade. This crate decodes their published representation for parser and compiler tooling; it does not
+//! own a second source-language declaration identity. Companion crates should usually describe their grammar through
+//! [`DslSurface`], [`DeclarationSurface`], and [`ClauseSurface`] inside the `library_vocab()` entrypoint.
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};

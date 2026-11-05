@@ -8,6 +8,7 @@ fn segs(parts: &[&str]) -> Vec<String> {
 /// Ordinary package admission and publication ownership share the module catalog.
 fn known_stdlib_modules_cover_existing_surface_paths() {
     assert!(is_known_stdlib_module(&segs(&["std", "primitives"])));
+    assert!(is_known_stdlib_module(&segs(&["std", "primitives", "vocab"])));
     let policy = crate::lang::standard_packages::standard_package_namespace_policy("incan_stdlib_primitives");
     assert_eq!(
         policy.map(|policy| policy.namespace_roots.as_slice()),

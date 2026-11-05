@@ -1,11 +1,13 @@
-"""The published `std.vocab` syntax schema that desugaring workers receive and return."""
+"""Foundational structured syntax exchanged with vocabulary transformations."""
 
-from std.serde import json
+from rust::serde import Deserialize as RustDeserialize, Serialize as RustSerialize
 from scoped import ScopedSurfaceReceiver
-from crate.vocab._descriptors import VOCAB_SYNTAX_VERSION, EmbeddedFragmentSubmode
+from crate.primitives.vocab._descriptors import EmbeddedFragmentSubmode
+from crate.primitives.vocab._versions import VOCAB_SYNTAX_VERSION
+from crate.primitives.vocab.transport import decode_vocab, encode_vocab
 
 
-@derive(json)
+@derive(RustSerialize, RustDeserialize)
 pub model Span:
     """A half-open byte range in the requesting module's original source."""
 
@@ -13,7 +15,7 @@ pub model Span:
     pub end: int
 
 
-@derive(json)
+@derive(RustSerialize, RustDeserialize)
 pub model IncanExpr:
     """Structured host expression syntax with an explicit original-source span."""
 
@@ -33,7 +35,7 @@ pub model IncanExpr:
         return IncanExpr(span=span, kind=IncanExprKind.List(items))
 
 
-@derive(json)
+@derive(RustSerialize, RustDeserialize)
 pub enum IncanExprKind:
     """Expression payloads; each recursive expression is independently spanned."""
 
@@ -55,7 +57,7 @@ pub enum IncanExprKind:
     Scoped(VocabScopedSurface)
 
 
-@derive(json)
+@derive(RustSerialize, RustDeserialize)
 pub model VocabScopedSurface:
     """An accepted expression payload with its descriptor identity and parser-retained owner context."""
 
@@ -65,7 +67,7 @@ pub model VocabScopedSurface:
     pub kind: VocabScopedSurfaceKind
 
 
-@derive(json)
+@derive(RustSerialize, RustDeserialize)
 pub model VocabSurfaceOwner:
     """The exact declaration, clause and call-argument context that admitted a scoped expression."""
 
@@ -74,7 +76,7 @@ pub model VocabSurfaceOwner:
     pub call: Option[str] = None
 
 
-@derive(json)
+@derive(RustSerialize, RustDeserialize)
 pub enum VocabScopedSurfaceKind:
     """A scoped field path or glyph's structured operands; these are input syntax, not executable operations."""
 
@@ -82,7 +84,7 @@ pub enum VocabScopedSurfaceKind:
     Glyph(str, list[IncanExpr])
 
 
-@derive(json)
+@derive(RustSerialize, RustDeserialize)
 pub model VocabFragment:
     """An owned fragment with its canonical descriptor identity and structured lexical tree."""
 
@@ -95,7 +97,7 @@ pub model VocabFragment:
     pub layout_sensitive: bool
 
 
-@derive(json)
+@derive(RustSerialize, RustDeserialize)
 pub model VocabFragmentNode:
     """One lexical node with an original-source range, including every embedded expression hole."""
 
@@ -103,7 +105,7 @@ pub model VocabFragmentNode:
     pub kind: VocabFragmentNodeKind
 
 
-@derive(json)
+@derive(RustSerialize, RustDeserialize)
 pub enum VocabFragmentNodeKind:
     """Fragment grammar productions, independent of compiler-private node definitions."""
 
@@ -119,7 +121,7 @@ pub enum VocabFragmentNodeKind:
     TypeShape(VocabFragmentType)
 
 
-@derive(json)
+@derive(RustSerialize, RustDeserialize)
 pub model VocabFragmentElement:
     """A markup element retaining its name, attributes, children and source range."""
 
@@ -130,7 +132,7 @@ pub model VocabFragmentElement:
     pub self_closing: bool
 
 
-@derive(json)
+@derive(RustSerialize, RustDeserialize)
 pub model VocabFragmentAttribute:
     """A markup attribute whose optional value remains a structured lexical node."""
 
@@ -139,7 +141,7 @@ pub model VocabFragmentAttribute:
     pub value: list[VocabFragmentNode]
 
 
-@derive(json)
+@derive(RustSerialize, RustDeserialize)
 pub enum VocabFragmentValue:
     """Literal values from the style and selector grammars; the enclosing node supplies the span."""
 
@@ -152,7 +154,7 @@ pub enum VocabFragmentValue:
     Selector(str)
 
 
-@derive(json)
+@derive(RustSerialize, RustDeserialize)
 pub model VocabFragmentType:
     """A type-position production anchored to its finest retained source range."""
 
@@ -160,7 +162,7 @@ pub model VocabFragmentType:
     pub kind: VocabFragmentTypeKind
 
 
-@derive(json)
+@derive(RustSerialize, RustDeserialize)
 pub enum VocabFragmentTypeKind:
     """Type-position grammar shapes; a generic's first child is its constructor."""
 
@@ -171,7 +173,7 @@ pub enum VocabFragmentTypeKind:
     Union(list[VocabFragmentType])
 
 
-@derive(json)
+@derive(RustSerialize, RustDeserialize)
 pub model IncanStatement:
     """Structured host statement syntax carrying its original-source span."""
 
@@ -179,7 +181,7 @@ pub model IncanStatement:
     pub kind: IncanStatementKind
 
 
-@derive(json)
+@derive(RustSerialize, RustDeserialize)
 pub enum IncanStatementKind:
     """Statement payloads with spanned expression and statement children."""
 
@@ -195,7 +197,7 @@ pub enum IncanStatementKind:
     Unsafe(list[IncanStatement])
 
 
-@derive(json)
+@derive(RustSerialize, RustDeserialize)
 pub model VocabTypeExpr:
     """A structured type position with the source range it came from."""
 
@@ -204,7 +206,7 @@ pub model VocabTypeExpr:
     pub arguments: list[VocabTypeExpr] = []
 
 
-@derive(json)
+@derive(RustSerialize, RustDeserialize)
 pub model VocabParameter:
     """A declaration parameter with its own source location."""
 
@@ -214,7 +216,7 @@ pub model VocabParameter:
     pub default_value: Option[IncanExpr] = None
 
 
-@derive(json)
+@derive(RustSerialize, RustDeserialize)
 pub model VocabDeclarationHead:
     """The structured head of a vocabulary declaration and its source location."""
 
@@ -225,7 +227,7 @@ pub model VocabDeclarationHead:
     pub return_type: Option[VocabTypeExpr] = None
 
 
-@derive(json)
+@derive(RustSerialize, RustDeserialize)
 pub model VocabFieldSpec:
     """A field-set entry preserving the field's source span."""
 
@@ -235,7 +237,7 @@ pub model VocabFieldSpec:
     pub default_value: Option[IncanExpr] = None
 
 
-@derive(json)
+@derive(RustSerialize, RustDeserialize)
 pub model VocabExpressionItemModifier:
     """A trailing expression-item modifier with its original-source location."""
 
@@ -244,7 +246,7 @@ pub model VocabExpressionItemModifier:
     pub value: IncanExpr
 
 
-@derive(json)
+@derive(RustSerialize, RustDeserialize)
 pub model VocabExpressionItem:
     """An expression-list item with its alias, modifiers and source location."""
 
@@ -254,7 +256,7 @@ pub model VocabExpressionItem:
     pub modifiers: list[VocabExpressionItemModifier] = []
 
 
-@derive(json)
+@derive(RustSerialize, RustDeserialize)
 pub model VocabClause:
     """A parsed vocabulary clause whose head and body retain their source spans."""
 
@@ -278,7 +280,7 @@ pub model VocabClause:
             _ => return self.head
 
 
-@derive(json)
+@derive(RustSerialize, RustDeserialize)
 pub enum VocabClauseBody:
     """Structured clause payloads; enclosing clauses also carry their own spans."""
 
@@ -290,7 +292,7 @@ pub enum VocabClauseBody:
     Items(list[VocabBodyItem])
 
 
-@derive(json)
+@derive(RustSerialize, RustDeserialize)
 pub model VocabDeclaration:
     """A parsed vocabulary declaration retaining its head, children and original-source span."""
 
@@ -319,7 +321,7 @@ pub model VocabDeclaration:
         return Err(DesugarError.at(self.span, "expected an owned embedded fragment"))
 
 
-@derive(json)
+@derive(RustSerialize, RustDeserialize)
 pub enum VocabBodyItem:
     """A body item whose contained node always has an original-source span."""
 
@@ -328,7 +330,7 @@ pub enum VocabBodyItem:
     Statement(IncanStatement)
 
 
-@derive(json)
+@derive(RustSerialize, RustDeserialize)
 pub enum VocabSyntaxNode:
     """A parsed syntax node; every alternative carries a spanned structured value."""
 
@@ -346,7 +348,7 @@ pub enum VocabSyntaxNode:
             VocabSyntaxNode.Expression(node) => return node.span
 
 
-@derive(json)
+@derive(RustSerialize, RustDeserialize)
 pub model DesugarRequest:
     """A requesting module and its structured vocabulary syntax node."""
 
@@ -354,16 +356,32 @@ pub model DesugarRequest:
     pub module_path: str
     pub schema_version: int = VOCAB_SYNTAX_VERSION
 
+    pub def to_json(self) -> str:
+        """Encode one structured vocabulary request through the stable worker representation."""
+        return encode_vocab(self)
 
-@derive(json)
+    pub def from_json(source: str) -> Result[DesugarRequest, str]:
+        """Decode one structured vocabulary request through the stable worker representation."""
+        return decode_vocab[DesugarRequest](source)
+
+
+@derive(RustSerialize, RustDeserialize)
 pub model DesugarResponse:
     """Canonical structured syntax output retaining every node's source location."""
 
     pub output: DesugarOutput
     pub schema_version: int = VOCAB_SYNTAX_VERSION
 
+    pub def to_json(self) -> str:
+        """Encode one structured vocabulary response through the stable worker representation."""
+        return encode_vocab(self)
 
-@derive(json)
+    pub def from_json(source: str) -> Result[DesugarResponse, str]:
+        """Decode one structured vocabulary response through the stable worker representation."""
+        return decode_vocab[DesugarResponse](source)
+
+
+@derive(RustSerialize, RustDeserialize)
 pub enum DesugarOutput:
     """The structured output position selected by a registered surface."""
 
@@ -372,7 +390,7 @@ pub enum DesugarOutput:
     Declarations(list[IncanDeclaration])
 
 
-@derive(json)
+@derive(RustSerialize, RustDeserialize)
 pub model IncanDeclaration:
     """A compilation-unit declaration with its original source range and explicit visibility."""
 
@@ -382,7 +400,7 @@ pub model IncanDeclaration:
     pub is_public: bool = false
 
 
-@derive(json)
+@derive(RustSerialize, RustDeserialize)
 pub enum IncanDeclarationKind:
     """Function signatures and bodies, model fields, and optionally annotated constant initializers."""
 
@@ -391,7 +409,7 @@ pub enum IncanDeclarationKind:
     Const(Option[VocabTypeExpr], IncanExpr)
 
 
-@derive(json)
+@derive(RustSerialize, RustDeserialize)
 pub model DesugarError:
     """A provider diagnostic anchored within its requesting vocabulary node."""
 
@@ -403,15 +421,23 @@ pub model DesugarError:
         return DesugarError(span=span, message=message)
 
 
-@derive(json)
+@derive(RustSerialize, RustDeserialize)
 pub model DesugarBatchRequest:
     """One framed worker invocation containing requests from a single module, numbered by its host."""
 
     pub batch: int
     pub requests: list[DesugarRequest]
 
+    pub def to_json(self) -> str:
+        """Encode one compiler-owned request frame through the stable worker representation."""
+        return encode_vocab(self)
 
-@derive(json)
+    pub def from_json(source: str) -> Result[DesugarBatchRequest, str]:
+        """Decode one compiler-owned request frame through the stable worker representation."""
+        return decode_vocab[DesugarBatchRequest](source)
+
+
+@derive(RustSerialize, RustDeserialize)
 pub enum DesugarReply:
     """The structured success or provider diagnostic for one requested node."""
 
@@ -419,12 +445,20 @@ pub enum DesugarReply:
     Err(DesugarError)
 
 
-@derive(json)
+@derive(RustSerialize, RustDeserialize)
 pub model DesugarBatchResponse:
     """Replies in the same order as the module's requested vocabulary nodes, under the number of the batch they answer."""
 
     pub batch: int
     pub responses: list[DesugarReply]
+
+    pub def to_json(self) -> str:
+        """Encode one compiler-owned response frame through the stable worker representation."""
+        return encode_vocab(self)
+
+    pub def from_json(source: str) -> Result[DesugarBatchResponse, str]:
+        """Decode one compiler-owned response frame through the stable worker representation."""
+        return decode_vocab[DesugarBatchResponse](source)
 
 
 def body_item_fragment(item: VocabBodyItem) -> Option[VocabFragment]:

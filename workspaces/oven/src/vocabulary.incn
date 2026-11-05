@@ -213,7 +213,11 @@ def valid_module_name(name: str) -> bool:
 
 def registration_main(entry: str) -> str:
     """Generate only a native entry adapter; registration semantics remain in the authored Incan module."""
-    return ("\"\"\"Run the producer vocabulary registration.\"\"\"\n\n" + f"from {entry} import library_vocab\n\n\n" + "from std.vocab import VocabRegistration\n\n\n" + "def main() -> Result[None, str]:\n" + "    \"\"\"Write the existing versioned vocabulary metadata.\"\"\"\n" + "    registration: VocabRegistration = library_vocab()\n" + "    text = registration.metadata().to_json().map_err((error) => error.message())?\n" + "    println(text)\n" + "    return Ok(None)\n")
+    header = "\"\"\"Run the producer vocabulary registration.\"\"\"\n\n"
+    producer = f"from {entry} import library_vocab\n\n\n"
+    contract = "from std.vocab import VocabRegistration, registration_metadata\n\n\n"
+    body = ("def main() -> Result[None, str]:\n" + "    \"\"\"Write the existing versioned vocabulary metadata.\"\"\"\n" + "    registration: VocabRegistration = library_vocab()\n" + "    text = registration_metadata(registration).to_json().map_err((error) => error.message())?\n" + "    println(text)\n" + "    return Ok(None)\n")
+    return header + producer + contract + body
 
 
 def run_registration(output: Path) -> Result[JsonValue, str]:
