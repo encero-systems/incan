@@ -141,21 +141,35 @@ pub(super) fn supports_function(
     profile
         && original.len() == replacement.len()
         && (preserves_inputs || changes_closed_inputs)
-        && !function.is_async()
         && function.decorators.iter().all(
             |decorator| match decorators::from_segments(&decorator.node.path.segments) {
                 Some(decorators::DecoratorId::RustExtern) => false,
                 Some(_) => true,
-                None => {
-                    decorator.node.path.segments.len() == 1
-                        || facts
-                            .type_info
-                            .declarations
-                            .body_ir_decorator_static_receivers
-                            .contains_key(&decorator.span)
-                }
+                None => facts
+                    .type_info
+                    .declarations
+                    .body_ir_decorator_applications
+                    .contains_key(&decorator.span),
             },
         )
+}
+
+/// Convert an async declaration's logical callable type to the runtime constructor type decorators receive.
+///
+/// Source checking keeps `async def f() -> T` as a logical `() -> T` plus its async declaration fact. Decorator
+/// initialization executes against the actual callable value, whose synchronous invocation constructs
+/// `Awaitable[T]`; only this Body IR boundary exposes that carrier.
+fn runtime_decorator_callable_type(ty: &ResolvedType, is_async: bool) -> ResolvedType {
+    if !is_async {
+        return ty.clone();
+    }
+    let ResolvedType::Function(params, result) = ty else {
+        return ty.clone();
+    };
+    ResolvedType::Function(
+        params.clone(),
+        Box::new(ResolvedType::Generic("Awaitable".to_string(), vec![(**result).clone()])),
+    )
 }
 
 /// Retain originals and replacement initializers in source order, replacing their visible bodies with wrappers.
@@ -218,9 +232,11 @@ pub(super) fn collect(
         let Some(body) = bodies.iter_mut().find(|body| body.span == hir_span(declaration.span)) else {
             continue;
         };
-        let ty = parameter_types::checked_parameter_type(&binding.ty, facts.type_info, &body.type_parameters);
+        let runtime_ty = runtime_decorator_callable_type(&binding.ty, binding.is_async);
+        let runtime_original_ty = runtime_decorator_callable_type(&binding.original_ty, binding.is_async);
+        let ty = parameter_types::checked_parameter_type(&runtime_ty, facts.type_info, &body.type_parameters);
         let original_ty =
-            parameter_types::checked_parameter_type(&binding.original_ty, facts.type_info, &body.type_parameters);
+            parameter_types::checked_parameter_type(&runtime_original_ty, facts.type_info, &body.type_parameters);
         retain_binding(
             &function.decorators,
             declaration.span,
@@ -361,6 +377,9 @@ fn initializer(
     });
     let mut body = original.clone();
     body.return_type = replacement_ty.clone();
+    // Applying decorators initializes a callable value synchronously even when the original callable constructs a
+    // future. Async-ness belongs only to the separately retained original body.
+    body.is_async = false;
     body.locals = builder.locals;
     body.params.clear();
     body.param_locals.clear();
@@ -445,13 +464,7 @@ fn lower_application(
 /// Recreate only the expression the checker already evaluated at this decorator's own span. Its recorded identities,
 /// argument bindings and result type remain authoritative; this helper does not resolve or recheck a factory.
 fn decorator_expression(decorator: &ast::Spanned<ast::Decorator>) -> Option<ast::Spanned<ast::Expr>> {
-    if decorator.node.path.segments.len() > 2 {
-        return None;
-    }
-    let path = ast::Spanned::new(
-        ast::Expr::Ident(decorator.node.path.segments.first()?.clone()),
-        decorator.span,
-    );
+    let path = decorator_path_expression(&decorator.node.path.segments, decorator.span)?;
     if !decorator.node.is_call {
         return Some(path);
     }
@@ -466,17 +479,31 @@ fn decorator_expression(decorator: &ast::Spanned<ast::Decorator>) -> Option<ast:
             ast::DecoratorArg::Named(_, ast::DecoratorArgValue::Type(_)) => return None,
         }
     }
-    let expression = match decorator.node.path.segments.as_slice() {
-        [_, method] => ast::Expr::MethodCall(
-            Box::new(path),
-            method.clone(),
+    let expression = if decorator.node.path.segments.len() > 1 {
+        let receiver = decorator_path_expression(
+            &decorator.node.path.segments[..decorator.node.path.segments.len() - 1],
+            decorator.span,
+        )?;
+        ast::Expr::MethodCall(
+            Box::new(receiver),
+            decorator.node.path.segments.last()?.clone(),
             decorator.node.type_args.clone(),
             arguments,
-        ),
-        [_] => ast::Expr::Call(Box::new(path), decorator.node.type_args.clone(), arguments),
-        _ => return None,
+        )
+    } else {
+        ast::Expr::Call(Box::new(path), decorator.node.type_args.clone(), arguments)
     };
     Some(ast::Spanned::new(expression, decorator.span))
+}
+
+/// Rebuild the exact checked identifier/field path of a decorator without resolving any segment from its spelling.
+fn decorator_path_expression(segments: &[String], span: ast::Span) -> Option<ast::Spanned<ast::Expr>> {
+    let mut segments = segments.iter();
+    let mut expression = ast::Spanned::new(ast::Expr::Ident(segments.next()?.clone()), span);
+    for segment in segments {
+        expression = ast::Spanned::new(ast::Expr::Field(Box::new(expression), segment.clone()), span);
+    }
+    Some(expression)
 }
 
 /// Forward each wrapper input once under its existing checked receiver and ownership contract.
@@ -506,6 +533,9 @@ fn wrapper(original: &bir::Body, replacement: &bir::StaticDeclaration) -> Option
     }
     let mut body = original.clone();
     body.return_type = *return_type.clone();
+    // The source binding remains async to the checker, but its replacement wrapper is the synchronous future
+    // constructor returned by decoration. The separately retained original remains the coroutine producer.
+    body.is_async = false;
     body.locals.truncate(body.params.len());
     for (parameter, ty) in body.params.iter_mut().zip(params) {
         if matches!(

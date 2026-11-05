@@ -1,6 +1,7 @@
 //! Field access on nominal, imported-module and Rust receivers, including properties.
 
 use super::*;
+use crate::typechecker::ResolvedNamespaceMemberKind;
 
 impl TypeChecker {
     /// Resolve a declared field on a nominal user-defined type, applying generic substitutions when available.
@@ -316,98 +317,124 @@ impl TypeChecker {
         field: &str,
         span: Span,
     ) -> Option<ResolvedType> {
-        // Imported modules use symbol-driven metadata resolution.
-        if let Some((module_name, module_path)) = self.imported_module_for_expr(base) {
-            if let Some((info, identity)) = self.resolve_imported_module_constant_member(&module_path, field) {
-                if let Some(identity) = identity {
-                    self.type_info.record_resolved_identity(span, identity);
-                }
-                return Some(info.ty);
-            }
-            let is_public_library_module =
-                module_path.len() >= 2 && module_path.first().is_some_and(|segment| segment == "pub");
-            let resolved = if is_public_library_module {
-                match self.resolve_pub_library_module_symbol_member(&module_path[1], &module_path[2..], field) {
-                    Ok(resolved) => resolved.map(|resolved| {
-                        (
-                            resolved.kind,
-                            resolved.canonical,
-                            resolved.source_module_path,
-                            resolved.source_name,
-                            Some(module_path[1].clone()),
-                        )
-                    }),
-                    Err(source_modules) => {
-                        self.errors.push(errors::pub_library_module_member_ambiguous(
-                            &module_path[1],
-                            &module_path[2..],
-                            field,
-                            &source_modules,
-                            span,
-                        ));
-                        return Some(ResolvedType::Unknown);
-                    }
-                }
+        let (module_name, module_path, resolved) =
+            if let Some((module_name, module_path)) = self.imported_module_for_expr(base) {
+                let resolved = self.resolve_module_namespace_member(&module_path, field);
+                (module_name, module_path, resolved)
             } else {
-                self.resolve_imported_module_function_member_with_source(&module_path, field)
-                    .map(|(kind, source_module_path)| {
-                        let canonical =
-                            self.dependency_member_identity(&ImportPath::simple(module_path.clone()), field);
-                        (kind, canonical, source_module_path, field.to_string(), None)
-                    })
+                let mut segments = crate::typechecker::collect::dotted_path_segments(&base.node)?;
+                let module_path = self.module_namespace_path(segments.first()?)?;
+                let module_name = segments.join(".");
+                segments.push(field.to_string());
+                let resolved = self.resolve_qualified_name(&segments);
+                (module_name, module_path, resolved)
             };
-            if let Some((kind, canonical, source_module_path, source_name, public_library)) = resolved {
-                let callable = format!("{module_name}.{field}");
-                if let Some(identity) = canonical {
-                    self.type_info.record_resolved_identity(span, identity);
+        self.record_module_namespace_reference(base.span, &module_path);
+        if let Some((head, head_span)) = Self::dotted_namespace_head(base) {
+            let _ = self.check_ident(head, head_span);
+        }
+        let resolved = match resolved {
+            Ok(resolved) => resolved,
+            Err(failure) => {
+                self.report_namespace_resolution_failure(failure, span);
+                return Some(ResolvedType::Unknown);
+            }
+        };
+        let callable = format!("{module_name}.{field}");
+        if let Some(identity) = resolved.canonical.clone() {
+            self.type_info.record_resolved_identity(span, identity);
+        }
+        match resolved.kind {
+            ResolvedNamespaceMemberKind::SurfaceType(surface) => {
+                self.type_info.expressions.ident_kinds.insert(span, IdentKind::TypeName);
+                Some(ResolvedType::Named(surface_types::as_str(surface).to_string()))
+            }
+            ResolvedNamespaceMemberKind::Symbol(SymbolKind::Variable(info)) => Some(info.ty),
+            ResolvedNamespaceMemberKind::Symbol(SymbolKind::Static(info)) => Some(info.ty),
+            ResolvedNamespaceMemberKind::Symbol(SymbolKind::Field(info)) => Some(info.ty),
+            ResolvedNamespaceMemberKind::Symbol(SymbolKind::Property(info)) => Some(info.return_type),
+            ResolvedNamespaceMemberKind::Symbol(SymbolKind::Variant(info)) => {
+                let result = ResolvedType::Named(info.enum_name);
+                if info.fields.is_empty() {
+                    Some(result)
+                } else {
+                    Some(ResolvedType::Function(
+                        info.fields.into_iter().map(CallableParam::positional).collect(),
+                        Box::new(result),
+                    ))
                 }
-                match (kind, public_library) {
-                    (
-                        SymbolKind::Type(
-                            type_info @ (TypeInfo::Model(_)
-                            | TypeInfo::Class(_)
-                            | TypeInfo::Enum(_)
-                            | TypeInfo::Newtype(_)),
-                        ),
-                        Some(library),
-                    ) => {
-                        let mut source_type_path = source_module_path.iter().skip(2).cloned().collect::<Vec<_>>();
-                        source_type_path.push(source_name.clone());
-                        let canonical_name = canonical_public_library_type_name(&library, &source_type_path.join("::"));
-                        self.type_info.expressions.ident_kinds.insert(span, IdentKind::TypeName);
-                        let source_kind = Self::source_target_kind_for_type_info(&type_info).unwrap_or("type");
-                        self.record_source_target(span, source_module_path, source_name, source_kind);
-                        return Some(ResolvedType::Named(canonical_name));
-                    }
-                    (SymbolKind::Function(info), _) => {
-                        self.record_source_target(span, source_module_path, source_name, "function");
-                        if !info.type_params.is_empty() {
-                            // A local partial instantiates the generic function it names (RFC 084).
-                            if !self.is_generic_partial_target_span(span) {
-                                self.errors
-                                    .push(errors::generic_function_reference(callable.as_str(), span));
-                                return Some(ResolvedType::Unknown);
-                            }
-                            self.generic_partial_target = Some(GenericPartialTarget::of_function(&callable, &info));
-                        }
-                        return Some(Self::function_info_to_resolved_function_type(&info));
-                    }
-                    (SymbolKind::FunctionOverloads(_), _) => {
-                        self.record_source_target(span, source_module_path, source_name, "function");
-                        self.errors.push(CompileError::type_error(
-                            format!(
-                                "Cannot use overloaded function '{callable}' as a value; call it directly so an overload can be selected"
-                            ),
-                            span,
-                        ));
+            }
+            ResolvedNamespaceMemberKind::Symbol(SymbolKind::Type(type_info)) => {
+                let canonical_name = if let Some(library) = resolved.public_library.as_deref() {
+                    let root_len = self.loaf_binding_root(library).len();
+                    let mut source_type_path = resolved
+                        .source_module_path
+                        .as_deref()
+                        .unwrap_or_default()
+                        .iter()
+                        .skip(root_len)
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    source_type_path.push(resolved.source_name.clone());
+                    canonical_public_library_type_name(library, &source_type_path.join("::"))
+                } else {
+                    resolved.source_name.clone()
+                };
+                self.type_info.expressions.ident_kinds.insert(span, IdentKind::TypeName);
+                if let (Some(source), Some(source_kind)) = (
+                    resolved.source_module_path,
+                    Self::source_target_kind_for_type_info(&type_info),
+                ) {
+                    self.record_source_target(span, source, resolved.source_name, source_kind);
+                }
+                Some(ResolvedType::Named(canonical_name))
+            }
+            ResolvedNamespaceMemberKind::Symbol(SymbolKind::Function(info)) => {
+                if self.decorator_callable_span == Some(span) {
+                    self.decorator_callable_type_params = info.type_params.clone();
+                }
+                if let Some(source) = resolved.source_module_path {
+                    self.record_source_target(span, source, resolved.source_name, "function");
+                }
+                if !info.type_params.is_empty() {
+                    if !self.is_generic_partial_target_span(span) && self.decorator_callable_span != Some(span) {
+                        self.errors
+                            .push(errors::generic_function_reference(callable.as_str(), span));
                         return Some(ResolvedType::Unknown);
                     }
-                    _ => {}
+                    if self.is_generic_partial_target_span(span) {
+                        self.generic_partial_target = Some(GenericPartialTarget::of_function(&callable, &info));
+                    }
                 }
+                Some(Self::function_info_to_resolved_function_type(&info))
+            }
+            ResolvedNamespaceMemberKind::Symbol(SymbolKind::FunctionOverloads(_)) => {
+                if let Some(source) = resolved.source_module_path {
+                    self.record_source_target(span, source, resolved.source_name, "function");
+                }
+                self.errors.push(CompileError::type_error(
+                    format!(
+                        "Cannot use overloaded function '{callable}' as a value; call it directly so an overload can be selected"
+                    ),
+                    span,
+                ));
+                Some(ResolvedType::Unknown)
+            }
+            ResolvedNamespaceMemberKind::Symbol(SymbolKind::Module(_)) => {
+                self.type_info.expressions.ident_kinds.insert(span, IdentKind::Module);
+                Some(ResolvedType::Unknown)
+            }
+            ResolvedNamespaceMemberKind::Method(info) => {
+                Some(ResolvedType::Function(info.params, Box::new(info.return_type)))
+            }
+            ResolvedNamespaceMemberKind::Symbol(_) => {
+                self.errors.push(CompileError::type_error(
+                    format!("Qualified member '{callable}' is not a value"),
+                    span,
+                ));
+                Some(ResolvedType::Unknown)
             }
         }
-
-        None
     }
 
     /// Prove a native namespace from checked import/type roles along a name or field path, excluding runtime receiver

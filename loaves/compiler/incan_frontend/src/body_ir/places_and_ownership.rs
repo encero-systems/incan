@@ -20,7 +20,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .declarations
             .body_ir_decorator_static_receivers
             .get(&span)
-            .filter(|receiver| receiver.binding_name == name)
+            .filter(|receiver| {
+                receiver.binding_name == name && receiver.identity.kind != SemanticSourceTargetKind::Module
+            })
         {
             return self
                 .global_place(receiver.identity.clone(), self.checked_type(&receiver.ty))
@@ -68,16 +70,35 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         base: &ast::Spanned<ast::Expr>,
         access_span: ast::Span,
     ) -> Option<bir::Place> {
-        if !self
-            .type_info
-            .resolved_identity(base.span)
-            .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Module)
-        {
+        if !self.is_module_namespace_span(base.span) {
             return None;
         }
         let identity = self.type_info.resolved_identity(access_span)?.clone();
         self.global_place(identity, self.resolve_ty(access_span))
             .map(bir::Place::from_global)
+    }
+
+    /// Return whether one checked expression span denotes a module namespace, including a qualified decorator's
+    /// synthetic receiver span whose ordinary identity slot belongs to the selected member.
+    pub(super) fn is_module_namespace_span(&self, span: ast::Span) -> bool {
+        self.type_info
+            .resolved_identity(span)
+            .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Module)
+            || self
+                .type_info
+                .declarations
+                .body_ir_decorator_static_receivers
+                .get(&span)
+                .is_some_and(|receiver| receiver.identity.kind == SemanticSourceTargetKind::Module)
+            || (self
+                .type_info
+                .declarations
+                .body_ir_decorator_applications
+                .contains_key(&span)
+                && self
+                    .type_info
+                    .resolved_identity(span)
+                    .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Function))
     }
 
     /// Select a canonical module-storage root when `identity` denotes a `const` or `static`. Only a declaration in

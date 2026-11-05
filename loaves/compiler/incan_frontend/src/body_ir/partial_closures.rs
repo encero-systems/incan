@@ -45,11 +45,7 @@ impl BodyBuilder<'_, '_> {
         let ast::Expr::Field(base, name) = &partial.target.node else {
             return Err("partial callable with a non-function-name target".to_owned());
         };
-        if !self
-            .type_info
-            .resolved_identity(base.span)
-            .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Module)
-        {
+        if !self.is_module_namespace_span(base.span) {
             return Err("partial callable without a checked module receiver".to_owned());
         }
         let identity = self
@@ -57,7 +53,19 @@ impl BodyBuilder<'_, '_> {
             .resolved_identity(partial.target.span)
             .filter(|identity| identity.kind == SemanticSourceTargetKind::Function)
             .ok_or("module function value without a checked canonical function")?;
-        let Some(ResolvedType::Function(params, result)) = self.type_info.expr_type(partial.target.span) else {
+        let callable = self
+            .type_info
+            .declarations
+            .body_ir_decorator_applications
+            .get(&partial.target.span)
+            .map(|application| {
+                crate::resolved_type_subst::substitute_resolved_type(
+                    &application.callable_type,
+                    &application.type_bindings,
+                )
+            })
+            .or_else(|| self.type_info.expr_type(partial.target.span).cloned());
+        let Some(ResolvedType::Function(params, result)) = callable else {
             return Err("module function value without a checked callable signature".to_owned());
         };
         if params.iter().any(|parameter| {
@@ -69,8 +77,8 @@ impl BodyBuilder<'_, '_> {
             name: name.clone(),
             binding: FunctionBindingInfo {
                 is_async: false,
-                params: params.clone(),
-                return_type: (**result).clone(),
+                params,
+                return_type: *result,
                 identity: Some(identity.clone()),
             },
             constructor: None,

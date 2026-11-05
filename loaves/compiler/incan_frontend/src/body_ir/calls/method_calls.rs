@@ -94,6 +94,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> Option<bir::Operand> {
         let (type_args, args, span, scope) = (call.type_args, call.args, call.span, call.scope);
+        if let Some(owner) = self.type_info.body_ir_native_constructor_identity(span)
+            && incan_semantics_core::body_ir::native_nominal_item(owner)
+                .is_some_and(|path| self.type_info.rust.checked_layouts.contains_key(&path))
+        {
+            let owner_name = owner.declaration_name.clone();
+            return Some(self.lower_nominal_construction(&owner_name, args, span, span, scope, out));
+        }
         if let Some(value) = self.lower_checked_foreign_call(args, span, scope, out) {
             return Some(value);
         }

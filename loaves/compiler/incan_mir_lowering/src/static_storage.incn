@@ -123,7 +123,7 @@ pub def lower_computed_statics(
                     DecoratorFrame.Normal,
                 )?
                 mut original_function = original
-                original_function.name = f"{function_name(module, binding.original_body)}__incan_original"
+                original_function.name = f"{original_function.name}__incan_original"
                 if len(named_functions(names, functions, original_function.name)) != 0:
                     return Err("unsupported Body IR original callable name collision")
                 functions.append(original_function)

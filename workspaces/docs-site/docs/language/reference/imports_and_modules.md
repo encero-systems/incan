@@ -59,9 +59,11 @@ from ...db.schema import Database         # accepted
 
 ### Module bindings
 
-`import models` binds the module. Its public functions are called through the binding, `models.parse(path)`, and its public types and traits are named through it in any annotation: `models.Config` is the declaration `from models import Config` binds.
+`import models` binds the module. A qualified name first resolves its head in the current scope and then resolves each following segment in that binding's namespace. A module namespace contains its visible functions, types, traits, constants, submodules and reexports. A type namespace contains its associated members, including static methods and enum variants; a value namespace contains its fields and methods.
 
-Refused (`INCAN-T0001`): a qualified annotation whose root is not a module binding, or whose member is not a type or trait the module declares. The name `c` bound by `from std.interop import c` is not a module binding; its members, such as `c.i32`, are specified in [`std.interop`](stdlib/interop.md).
+The source position applies its operation after resolution. A call calls a function, constructs a type or invokes another callable member; an annotation uses a type or trait; a value reference reads the selected declaration; and a decorator applies the selected callable. `models.parse(path)` therefore calls the same declaration as `from models import parse`, and `models.Config` names the same declaration as `from models import Config` in annotations and constructor calls.
+
+Refused (`INCAN-T0001`): a namespace does not expose the requested member, including when that member is private, or the head does not provide a namespace for the remaining path. The diagnostic names the namespace and member once. The name `c` bound by `from std.interop import c` is not a module binding; its members, such as `c.i32`, are specified in [`std.interop`](stdlib/interop.md).
 
 ```incan
 import models

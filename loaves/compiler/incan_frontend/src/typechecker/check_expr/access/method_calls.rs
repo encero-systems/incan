@@ -433,6 +433,9 @@ impl TypeChecker {
         if let Some(result) = self.check_compiler_known_method_call(&call) {
             return result;
         }
+        if let Some(result) = self.check_module_method_call(&call) {
+            return result;
+        }
         let (base_ty, receiver_surface) = self.check_method_receiver(&call);
 
         // If the receiver type is Unknown, be permissive and do not error on methods.
@@ -450,10 +453,6 @@ impl TypeChecker {
             && let ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) = base_ty
         {
             return *inner;
-        }
-
-        if let Some(result) = self.check_module_method_call(&call) {
-            return result;
         }
 
         if let Some(result) = self.resolve_source_method_before_arguments(&call, &base_ty, receiver_surface) {

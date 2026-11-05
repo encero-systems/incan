@@ -83,6 +83,8 @@ mod native_call_state;
 mod native_newtype_facts;
 mod native_storage;
 pub(crate) use native_storage::native_frozen_constructor;
+mod namespace_resolution;
+pub(crate) use namespace_resolution::ResolvedNamespaceMemberKind;
 mod nominal_identities;
 mod nominal_scope;
 mod nominal_type_param_bounds;
@@ -597,6 +599,9 @@ pub struct TypeChecker {
     /// The target span of the local partial expression being checked, where a generic function may be named as a value
     /// so the partial can instantiate it (RFC 084).
     pub(in crate::typechecker) generic_partial_target_span: Option<crate::ast::Span>,
+    /// The path span currently being checked as a user-defined decorator value. A generic function is a value only at
+    /// this boundary, where the decorated callable supplies the function's type arguments (RFC 036).
+    pub(in crate::typechecker) decorator_callable_span: Option<crate::ast::Span>,
     /// The generic function a local partial's target named at [`Self::generic_partial_target_span`], taken by the
     /// partial expression check to instantiate it.
     pub(in crate::typechecker) generic_partial_target: Option<check_expr::GenericPartialTarget>,
@@ -641,6 +646,11 @@ pub struct TypeChecker {
     /// Exact factory call currently collecting partial type arguments for Body IR. Ordinary calls and synthesized
     /// probes never publish into the decorator snapshot; the enclosing value is restored after factory checking.
     body_ir_decorator_factory_span: Option<Span>,
+    /// Declared type-parameter order of the decorator callable currently selected as a value.
+    ///
+    /// The checker fills this from the same symbol or module-member resolution that produced the callable type. The
+    /// subsequent decorator application consumes it once to retain ordered native instance arguments.
+    decorator_callable_type_params: Vec<String>,
     /// Function symbols collected in the current module pass, keyed by source name.
     ///
     /// The checker imports dependency modules into one ambient symbol table. Same-name overload grouping is

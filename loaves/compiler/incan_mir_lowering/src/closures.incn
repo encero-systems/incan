@@ -44,7 +44,7 @@ from pub::incan_mir_plan import (
 from pub::incan_mir_plan import block as plan_block, place as plan_place, assign as plan_assign
 from types import primitive_type
 from classes import receiver_mode, parameter_local_index
-from async_ import evaluator_name
+from async_ import evaluator_name, boxed_future_constructor
 from collections import is_collection, is_owned_collection
 from layout_types import (
     native_source_type,
@@ -58,7 +58,7 @@ from lists import is_list, parameter_storage_type, is_exclusive_borrow
 from numerics import numeric_carrier
 from generators import generator_type, is_generator_type
 from frame import Builder
-from type_parameters import Instance, instantiate, instantiate_parameter
+from type_parameters import Instance, instantiate, instantiate_parameter, request_instance, substitute
 from call_arguments import call_parameter_type
 from explicit_arguments import direct_view_access
 
@@ -648,7 +648,7 @@ pub def source_function_item(
                         return Err("invalid Body IR original callable computation")
                     for binding in module.decorated_bindings:
                         if binding.original_body.canonical == closure.original_callable:
-                            item = original_function_item(module, builder, inputs, binding)?
+                            item = original_function_item(module, builder, inputs, binding, span)?
                             return Ok(Some((item[0], item[1], str(identity.declaration_name))))
                     return Err("unsupported Body IR unretained original callable")
                 None => pass
@@ -750,9 +750,7 @@ def function_item_identity(
     target: &RustNamedTarget,
     span: SourceSpan,
 ) -> Result[tuple[str, PlanType], str]:
-    """A diagnostic source name becomes a plan item only after its canonical and physical identities agree."""
-    if len(target.type_args) != 0:
-        return Err("unsupported Body IR generic function item")
+    """A diagnostic source name becomes a plan item only after its canonical, instance and physical identities agree."""
     match target.canonical:
         None => return Err("unsupported Body IR unproven function item")
         Some(identity) =>
@@ -760,13 +758,35 @@ def function_item_identity(
                 None =>
                     for declaration in module.loaf_callables:
                         if declaration.canonical == identity:
+                            if len(target.type_args) != 0:
+                                return Err("unsupported Body IR generic Loaf function item")
                             return loaf_item_signature(builder, parameters, declaration, span)
                     index = imported_item_body(module, builder.program.body_indices, target)?
-                    return item_signature(module, builder, parameters, module.bodies[index])
+                    return instantiated_item_signature(module, builder, parameters, module.bodies[index], target, span)
                 Some(body) =>
                     if target.direct_call_id != Some(body.direct_call_id) or str(target.name) != str(body.name):
                         return Err("invalid Body IR function-item identity")
-                    return item_signature(module, builder, parameters, body)
+                    return instantiated_item_signature(module, builder, parameters, body, target, span)
+
+
+def instantiated_item_signature(
+    module: &RustModule,
+    mut builder: Builder,
+    parameters: &list[RustParameter],
+    body: &RustBody,
+    target: &RustNamedTarget,
+    span: SourceSpan,
+) -> Result[tuple[str, PlanType], str]:
+    """Close and schedule a generic item from its checked ordered arguments before admitting its callable signature."""
+    if len(target.type_args) == 0:
+        return item_signature(module, builder, parameters, body, span, None)
+    mut arguments: list[RustType] = []
+    for argument in target.type_args:
+        closed: RustType = substitute(argument, builder.type_parameters, builder.type_arguments)?
+        arguments.append(closed.clone())
+    closed = instantiate(body, arguments, [])?
+    request_instance(builder.instances, body, arguments, [], false)
+    return item_signature(module, builder, parameters, closed, span, None)
 
 
 def loaf_item_signature(
@@ -851,10 +871,15 @@ def item_signature(
     mut builder: Builder,
     parameters: &list[RustParameter],
     body: &RustBody,
+    span: SourceSpan,
+    selected_name: Option[str],
 ) -> Result[tuple[str, PlanType], str]:
-    """Select a checked function's callable item; a generator names its lazy constructor, never its producer frame."""
-    if body.is_async:
-        return Err("unsupported Body IR async function item")
+    """
+    Select a checked function's callable item; deferred callables name their lazy constructor, never their producer.
+
+    An async item reifies a synchronous future constructor over the same checked inputs. `selected_name` authenticates
+    an original decorator frame whose coroutine evaluator has a distinct hidden symbol.
+    """
     if len(parameters) != len(body.params):
         return Err("invalid Body IR function-item parameter count")
     mut signature: list[PlanType] = []
@@ -889,9 +914,26 @@ def item_signature(
         if body.is_generator() and input != component:
             return Err("unsupported Body IR generator function item with borrowed parameters")
         signature.append(input)
-    signature.append(item_result(builder, body.return_type)?)
+    result = item_result(builder, body.return_type)?
+    mut name = evaluator_name(module, body)
+    match selected_name:
+        Some(selected) => name = selected
+        None => pass
+    if body.is_async:
+        constructor = f"{name}__incan_future"
+        builder.synthesized.append(
+            boxed_future_constructor(
+                constructor,
+                CalleeKind.Planned(name),
+                signature.clone(),
+                result,
+                span,
+            ),
+        )
+        signature.append(PlanType.Future([result]))
+        return Ok((constructor, PlanType.FunctionItem(constructor, signature)))
+    signature.append(result)
     # Generator entrypoints retain their ordinary constructor symbol beside the separately named producer.
-    name = evaluator_name(module, body)
     return Ok((name, PlanType.FunctionItem(name, signature)))
 
 
@@ -905,21 +947,18 @@ def original_function_item(
     mut builder: Builder,
     parameters: &list[RustParameter],
     binding: &DecoratedBinding,
+    span: SourceSpan,
 ) -> Result[tuple[str, PlanType], str]:
     """Select the original through its checked initializer policy, never through operand inference."""
     if binding.initialization == DecoratedInitialization.PerInstantiation:
-        return initialized_original_function_item(module, builder, parameters, binding)
+        return initialized_original_function_item(module, builder, parameters, binding, span)
     if binding.initialization != DecoratedInitialization.ModuleStorage or binding.initializer != None:
         return Err("unsupported Body IR module decorator initialization policy")
     body = binding.original_body
     if len(body.type_parameters) != 0:
         return Err("unsupported Body IR module decorator with type parameters")
-    name, ty = item_signature(module, builder, parameters, body)?
-    match ty:
-        PlanType.FunctionItem(_item, signature) =>
-            original_name = f"{name}__incan_original"
-            return Ok((original_name, PlanType.FunctionItem(original_name, signature)))
-        _ => return Err("invalid Body IR original callable signature")
+    original_name = f"{evaluator_name(module, body)}__incan_original"
+    return item_signature(module, builder, parameters, body, span, Some(original_name))
 
 
 def initialized_original_function_item(
@@ -927,6 +966,7 @@ def initialized_original_function_item(
     mut builder: Builder,
     parameters: &list[RustParameter],
     binding: &DecoratedBinding,
+    span: SourceSpan,
 ) -> Result[tuple[str, PlanType], str]:
     """Select a cached instantiation's original only inside its authenticated closed initializer frame."""
     mut original = binding.original_body.clone()
@@ -938,9 +978,5 @@ def initialized_original_function_item(
     ):
         return Err("unsupported Body IR original callable outside its closed decorator initializer")
     original = instantiate(original, builder.type_arguments, [])?
-    name, ty = item_signature(module, builder, parameters, original)?
-    match ty:
-        PlanType.FunctionItem(_item, signature) =>
-            original_name = f"{name}__incan_original"
-            return Ok((original_name, PlanType.FunctionItem(original_name, signature)))
-        _ => return Err("invalid Body IR original callable signature")
+    original_name = f"{evaluator_name(module, original)}__incan_original"
+    return item_signature(module, builder, parameters, original, span, Some(original_name))

@@ -1,0 +1,3 @@
+"""Provide the parent namespace for a nested source module."""
+
+import pkg.sub

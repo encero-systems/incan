@@ -1,6 +1,7 @@
 //! Compiler-known, registry, module, native, trait-self, reflection and enum method call targets.
 
 use super::*;
+use crate::typechecker::ResolvedNamespaceMemberKind;
 
 impl TypeChecker {
     /// Check compiler-known receiver forms before the general receiver and argument passes.
@@ -341,56 +342,53 @@ impl TypeChecker {
     /// it.
     pub(super) fn check_module_method_call(&mut self, call: &MethodCallSite<'_>) -> Option<ResolvedType> {
         let (module_name, module_path) = self.imported_module_for_expr(call.base)?;
-        let public = module_path.len() >= 2 && module_path.first().is_some_and(|segment| segment == "pub");
-        let resolved = if public {
-            match self.resolve_pub_library_module_symbol_member(&module_path[1], &module_path[2..], call.method) {
-                Ok(resolved) => resolved.map(|resolved| {
-                    (
-                        resolved.kind,
-                        resolved.canonical,
-                        resolved.source_module_path,
-                        resolved.source_name,
-                        Some(module_path[1].clone()),
-                    )
-                }),
-                Err(source_modules) => {
-                    self.errors.push(errors::pub_library_module_member_ambiguous(
-                        &module_path[1],
-                        &module_path[2..],
-                        call.method,
-                        &source_modules,
-                        call.span,
-                    ));
-                    return Some(ResolvedType::Unknown);
-                }
+        self.record_module_namespace_reference(call.base.span, &module_path);
+        if let Some((head, head_span)) = Self::dotted_namespace_head(call.base) {
+            let _ = self.check_ident(head, head_span);
+        }
+        let resolved = match self.resolve_module_namespace_member(&module_path, call.method) {
+            Ok(resolved) => resolved,
+            Err(failure) => {
+                self.report_namespace_resolution_failure(failure, call.span);
+                return Some(ResolvedType::Unknown);
             }
-        } else {
-            self.resolve_imported_module_function_member_with_source(&module_path, call.method)
-                .map(|(kind, source)| {
-                    let canonical = self.imported_module_callable_identity(&module_path, call.method);
-                    (kind, canonical, source, call.method.to_string(), None)
-                })
         };
-        let Some((kind, canonical, source_module_path, source_name, public_library)) = resolved else {
-            self.errors
-                .push(errors::missing_method(&module_name, call.method, call.span));
-            return Some(ResolvedType::Unknown);
+        let identity = resolved.canonical.clone();
+        let surface_rust_item = resolved.surface_rust_item.clone();
+        let kind = match resolved.kind {
+            ResolvedNamespaceMemberKind::Symbol(kind) => kind,
+            ResolvedNamespaceMemberKind::SurfaceType(surface) => {
+                return Some(self.check_module_surface_constructor(
+                    surface,
+                    identity,
+                    surface_rust_item,
+                    call.type_args,
+                    call.args,
+                    call.span,
+                    call.span,
+                ));
+            }
+            ResolvedNamespaceMemberKind::Method(_) => return Some(ResolvedType::Unknown),
         };
         let callable = format!("{module_name}.{}", call.method);
-        if public
-            && let Some(projection) = self.lookup_pub_library_module_partial_projection(
-                &module_path[1],
-                &module_path[2..],
-                call.method,
-                &callable,
-            )
+        if let Some(library) = resolved.public_library.as_deref()
+            && let Some((_, rest)) = self.loaf_module(&module_path)
+            && let Some(projection) =
+                self.lookup_pub_library_module_partial_projection(library, &rest, call.method, &callable)
         {
             self.type_info.record_partial_projection(projection);
         }
-        if let Some(identity) = canonical {
+        if let Some(identity) = resolved.canonical {
             self.type_info.record_resolved_identity(call.span, identity);
         }
-        Some(self.check_module_method_target(call, &callable, kind, source_module_path, source_name, public_library))
+        Some(self.check_module_method_target(
+            call,
+            &callable,
+            kind,
+            resolved.source_module_path.unwrap_or_default(),
+            resolved.source_name,
+            resolved.public_library,
+        ))
     }
 
     /// Validate the selected imported callable and retain its declared binding signature for downstream Body IR.
@@ -443,13 +441,15 @@ impl TypeChecker {
                     call.expected_return_ty,
                 )
             }
-            (
-                SymbolKind::Type(info @ (TypeInfo::Model(_) | TypeInfo::Class(_) | TypeInfo::Newtype(_))),
-                Some(library),
-            ) => {
-                let mut source_type_path = source_module_path.iter().skip(2).cloned().collect::<Vec<_>>();
-                source_type_path.push(source_name.clone());
-                let canonical = canonical_public_library_type_name(&library, &source_type_path.join("::"));
+            (SymbolKind::Type(info @ (TypeInfo::Model(_) | TypeInfo::Class(_) | TypeInfo::Newtype(_))), library) => {
+                let canonical = if let Some(library) = library {
+                    let root_len = self.loaf_binding_root(&library).len();
+                    let mut source_type_path = source_module_path.iter().skip(root_len).cloned().collect::<Vec<_>>();
+                    source_type_path.push(source_name.clone());
+                    canonical_public_library_type_name(&library, &source_type_path.join("::"))
+                } else {
+                    source_name.clone()
+                };
                 let source_kind = Self::source_target_kind_for_type_info(&info).unwrap_or("type");
                 self.record_source_target(call.span, source_module_path, source_name, source_kind);
                 self.check_public_module_type_constructor_call(
@@ -662,7 +662,7 @@ impl TypeChecker {
             self.record_compiler_generated_member_identity(enum_name, call.method, Some(call.base.span), call.span);
             return Some(result);
         }
-        if let (ResolvedType::Named(enum_name) | ResolvedType::Generic(enum_name, _)) = base_ty
+        if let ResolvedType::Named(enum_name) | ResolvedType::Generic(enum_name, _) = base_ty
             && let Some(TypeInfo::Enum(info)) = self.lookup_semantic_type_info(enum_name)
             && (info.variants.iter().any(|variant| variant == call.method)
                 || info.variant_aliases.contains_key(call.method))

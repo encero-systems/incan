@@ -213,15 +213,8 @@ impl TypeChecker {
         item_name: &str,
     ) -> Option<CanonicalSymbolId> {
         let (root, nested) = module_segments.split_first()?;
-        let module_path = {
-            let symbol = self.lookup_symbol(root)?;
-            let SymbolKind::Module(info) = &symbol.kind else {
-                return None;
-            };
-            let mut path = info.path.clone();
-            path.extend(nested.iter().cloned());
-            path
-        };
+        let mut module_path = self.module_namespace_path(root)?;
+        module_path.extend(nested.iter().cloned());
         self.loaf_member_identity(&module_path, item_name)
     }
 
