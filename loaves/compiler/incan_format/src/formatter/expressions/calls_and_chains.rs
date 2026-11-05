@@ -3,6 +3,28 @@
 use super::*;
 
 impl Formatter {
+    /// Write bracketed content, inside which the lexer ignores line breaks, so any layout there may wrap.
+    pub(in crate::formatter) fn in_brackets(&mut self, write: impl FnOnce(&mut Self)) {
+        self.bracket_depth += 1;
+        write(self);
+        self.bracket_depth -= 1;
+    }
+
+    /// Write an expression that ends its statement's line, where an indented fluent continuation is also accepted.
+    pub(in crate::formatter) fn format_tail_expr(&mut self, expr: &Spanned<Expr>) {
+        self.fluent_tail = true;
+        self.format_spanned_expr(expr);
+        self.fluent_tail = false;
+    }
+
+    /// Return whether a method chain may break before its `.method()` segments.
+    ///
+    /// The parser accepts an indented leading-dot continuation only inside brackets or where the chain ends its
+    /// statement's line: anything else after the chain's last line would close the continuation early (#2589).
+    fn fluent_continuation_allowed(&self, tail: bool) -> bool {
+        self.bracket_depth > 0 || tail
+    }
+
     /// Return whether a binary operator is a logical chain breakpoint.
     pub(super) fn is_logical_binary_op(op: &BinaryOp) -> bool {
         matches!(op, BinaryOp::And | BinaryOp::Or)
@@ -15,6 +37,11 @@ impl Formatter {
 
     /// Write one formatted call argument.
     pub(super) fn write_call_arg(&mut self, arg: &CallArg) {
+        self.in_brackets(|formatter| formatter.write_bracketed_call_arg(arg));
+    }
+
+    /// Write one call argument's spelling inside its call's parentheses.
+    fn write_bracketed_call_arg(&mut self, arg: &CallArg) {
         match arg {
             CallArg::Positional(expr) => self.format_spanned_expr(expr),
             CallArg::Named(name, expr) => {
@@ -37,7 +64,7 @@ impl Formatter {
     pub(super) fn write_partial_arg(&mut self, arg: &PartialArg) {
         self.writer.write(&arg.name);
         self.writer.write("=");
-        self.format_spanned_expr(&arg.value);
+        self.in_brackets(|formatter| formatter.format_spanned_expr(&arg.value));
     }
 
     /// Keep list elements together when they fit, otherwise start each element on its own line.
@@ -73,13 +100,13 @@ impl Formatter {
 
     /// Format a list element or its spread prefix identically in inline and multiline layouts.
     pub(super) fn format_list_entry(&mut self, item: &ListEntry) {
-        match item {
-            ListEntry::Element(value) => self.format_spanned_expr(value),
+        self.in_brackets(|formatter| match item {
+            ListEntry::Element(value) => formatter.format_spanned_expr(value),
             ListEntry::Spread(value) => {
-                self.writer.write("*");
-                self.format_spanned_expr(value);
+                formatter.writer.write("*");
+                formatter.format_spanned_expr(value);
             }
-        }
+        });
     }
 
     /// Format the comma-separated keyword preset list in a partial callable template.
@@ -125,7 +152,7 @@ impl Formatter {
     pub(in crate::formatter) fn format_parenthesized_logical_chain(&mut self, inner: &Spanned<Expr>) {
         let checkpoint = self.writer.checkpoint();
         self.writer.write("(");
-        self.format_spanned_expr(inner);
+        self.in_brackets(|formatter| formatter.format_spanned_expr(inner));
         self.writer.write(")");
         if !self.writer.output_since_contains_newline(checkpoint) && !self.writer.line_length_exceeded() {
             return;
@@ -136,7 +163,7 @@ impl Formatter {
         self.writer.newline();
         self.writer.indent();
         let mut wrote_line = false;
-        self.format_logical_chain_lines(inner, None, &mut wrote_line);
+        self.in_brackets(|formatter| formatter.format_logical_chain_lines(inner, None, &mut wrote_line));
         self.writer.newline();
         self.writer.dedent();
         self.writer.write(")");
@@ -191,8 +218,9 @@ impl Formatter {
         )
     }
 
-    /// Try inline method-chain formatting first, then fall back to a leading-dot fluent layout when it overflows.
-    pub(super) fn format_fluent_method_chain_if_needed(&mut self, expr: &Expr) -> bool {
+    /// Try inline method-chain formatting first, then fall back to a leading-dot fluent layout when it overflows and
+    /// the parser accepts the continuation there; `tail` says whether the chain ends its statement's line.
+    pub(super) fn format_fluent_method_chain_if_needed(&mut self, expr: &Expr, tail: bool) -> bool {
         let mut segments = Vec::new();
         let root = Self::collect_method_chain(expr, &mut segments);
         if segments.len() < 2 || !Self::fluent_chain_root_is_simple(root) {
@@ -201,7 +229,9 @@ impl Formatter {
 
         let checkpoint = self.writer.checkpoint();
         self.format_method_chain_inline(root, &segments);
-        if !self.writer.output_since_contains_newline(checkpoint) && !self.writer.line_length_exceeded() {
+        if !self.fluent_continuation_allowed(tail)
+            || (!self.writer.output_since_contains_newline(checkpoint) && !self.writer.line_length_exceeded())
+        {
             return true;
         }
 
@@ -242,6 +272,7 @@ impl Formatter {
     /// Spans distinguish equal-valued literals with different spellings and remain stable during speculative layout.
     pub(in crate::formatter) fn format_spanned_expr(&mut self, expr: &Spanned<Expr>) {
         if matches!(expr.node, Expr::Literal(Literal::String(_))) && self.write_source_string(expr.span) {
+            self.fluent_tail = false;
             return;
         }
         self.format_expr(&expr.node);

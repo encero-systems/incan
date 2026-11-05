@@ -27,6 +27,12 @@ pub(super) const RFC053_METHOD_BLANK_LINES: usize = 1;
 pub struct Formatter {
     writer: FormatWriter,
     source: Option<String>,
+    /// How many brackets enclose the expression being written. The lexer ignores line breaks inside brackets, so a
+    /// layout may break a line anywhere while this is nonzero.
+    bracket_depth: usize,
+    /// Whether the expression about to be written ends its statement's line, the one other place the parser accepts
+    /// an indented fluent `.method()` continuation. Each expression consumes it; only its trailing parts inherit it.
+    fluent_tail: bool,
 }
 
 impl Formatter {
@@ -35,6 +41,8 @@ impl Formatter {
         Self {
             writer: FormatWriter::new(config),
             source: None,
+            bracket_depth: 0,
+            fluent_tail: false,
         }
     }
 

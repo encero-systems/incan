@@ -5,6 +5,7 @@ use incan_semantics_core::SurfaceFeatureKey;
 use incan_syntax::ast::*;
 
 use super::Formatter;
+use crate::writer::WriterCheckpoint;
 
 impl Formatter {
     /// Format one statement and preserve its leading blank-line intent.
@@ -12,7 +13,7 @@ impl Formatter {
         self.writer.blank_lines(stmt.leading_blank_lines as usize);
         match &stmt.node {
             Statement::Expr(expr) => {
-                self.format_spanned_expr(expr);
+                self.format_statement_value(expr);
                 if !self.writer.is_at_line_start() {
                     self.writer.newline();
                 }
@@ -33,7 +34,7 @@ impl Formatter {
                 self.writer.write("return");
                 if let Some(e) = expr {
                     self.writer.write(" ");
-                    self.format_spanned_expr(e);
+                    self.format_statement_value(e);
                 }
                 self.writer.newline();
             }
@@ -77,7 +78,7 @@ impl Formatter {
                 self.writer.write("break");
                 if let Some(value) = value {
                     self.writer.write(" ");
-                    self.format_spanned_expr(value);
+                    self.format_statement_value(value);
                 }
                 self.writer.newline();
             }
@@ -97,7 +98,7 @@ impl Formatter {
                     self.writer.write(target);
                 }
                 self.writer.write(" = ");
-                self.format_spanned_expr(&ca.value);
+                self.format_statement_value(&ca.value);
                 self.writer.newline();
             }
         }
@@ -112,12 +113,12 @@ impl Formatter {
             self.writer.write(" ");
             self.writer.write(op.source_spelling());
             self.writer.write(" ");
-            self.format_spanned_expr(rhs);
+            self.format_statement_value(rhs);
             return;
         }
 
         self.writer.write(" = ");
-        self.format_spanned_expr(value);
+        self.format_statement_value(value);
     }
 
     /// Write a binding, reassignment, field, index or compound assignment without ending the line, so a statement line
@@ -136,7 +137,7 @@ impl Formatter {
                     self.format_type(&ty.node);
                 }
                 self.writer.write(" = ");
-                self.format_spanned_expr(&assign.value);
+                self.format_statement_value(&assign.value);
             }
             Statement::FieldAssignment(assign) => {
                 self.format_spanned_expr(&assign.object);
@@ -147,7 +148,7 @@ impl Formatter {
             Statement::IndexAssignment(assign) => {
                 self.format_spanned_expr(&assign.object);
                 self.writer.write("[");
-                self.format_spanned_expr(&assign.index);
+                self.in_brackets(|formatter| formatter.format_spanned_expr(&assign.index));
                 self.writer.write("]");
                 self.format_assignment_value(&assign.value, assign.compound_op);
             }
@@ -156,7 +157,7 @@ impl Formatter {
                 self.writer.write(" ");
                 self.writer.write(assign.op.source_spelling());
                 self.writer.write(" ");
-                self.format_spanned_expr(&assign.value);
+                self.format_statement_value(&assign.value);
             }
             _ => return false,
         }
@@ -319,18 +320,36 @@ impl Formatter {
     pub(super) fn format_suite_header_expr(&mut self, expr: &Spanned<Expr>) {
         let checkpoint = self.writer.checkpoint();
         self.format_spanned_expr(expr);
-        let wrapped = self.writer.output_since_contains_newline(checkpoint);
-        if Self::is_logical_binary_chain(&expr.node) && (wrapped || self.writer.line_length_exceeded()) {
-            // A long `and`/`or` header reads one operand per line, inside parentheses that close before the colon.
-            self.writer.restore(checkpoint);
-            self.format_parenthesized_logical_chain(expr);
+        if self.group_long_logical_chain(expr, checkpoint) {
             return;
         }
-        if !wrapped || !Self::has_fluent_header_chain(&expr.node) {
+        // A header is no fluent tail, so its chain stays inline until the parentheses added here enclose it.
+        let overflowed = self.writer.output_since_contains_newline(checkpoint) || self.writer.line_length_exceeded();
+        if !overflowed || !Self::has_fluent_header_chain(&expr.node) {
             return;
         }
         self.writer.restore(checkpoint);
         self.format_parenthesized_expr(expr);
+    }
+
+    /// Write a statement's value, which ends its line, grouping a long `and`/`or` chain the way a header does.
+    pub(super) fn format_statement_value(&mut self, expr: &Spanned<Expr>) {
+        let checkpoint = self.writer.checkpoint();
+        self.format_tail_expr(expr);
+        self.group_long_logical_chain(expr, checkpoint);
+    }
+
+    /// Re-lay an `and`/`or` chain written since `checkpoint` that wrapped or overflowed its line, one operand per line
+    /// inside added parentheses, and return whether it did. Only brackets let the chain break between its operands.
+    fn group_long_logical_chain(&mut self, expr: &Spanned<Expr>, checkpoint: WriterCheckpoint) -> bool {
+        if !Self::is_logical_binary_chain(&expr.node)
+            || !(self.writer.output_since_contains_newline(checkpoint) || self.writer.line_length_exceeded())
+        {
+            return false;
+        }
+        self.writer.restore(checkpoint);
+        self.format_parenthesized_logical_chain(expr);
+        true
     }
 
     /// Identify an ungrouped chain with at least two method segments, including a trailing propagation operator.
@@ -346,7 +365,7 @@ impl Formatter {
     pub(super) fn format_parenthesized_expr(&mut self, expr: &Spanned<Expr>) {
         let checkpoint = self.writer.checkpoint();
         self.writer.write("(");
-        self.format_spanned_expr(expr);
+        self.in_brackets(|formatter| formatter.format_spanned_expr(expr));
         self.writer.write(")");
         if !self.writer.output_since_contains_newline(checkpoint) {
             return;
@@ -354,7 +373,7 @@ impl Formatter {
         self.writer.restore(checkpoint);
         self.writer.writeln("(");
         self.writer.indent();
-        self.format_spanned_expr(expr);
+        self.in_brackets(|formatter| formatter.format_spanned_expr(expr));
         self.writer.newline();
         self.writer.dedent();
         self.writer.write(")");
