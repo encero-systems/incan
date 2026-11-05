@@ -1,4 +1,4 @@
-# behavior: importing an ordinary function preserves the provider's source-only trait alias metadata
+# behavior: importing an ordinary function preserves the provider's source-only trait alias metadata, including a docstring Example after Args (#2414)
 # expect-stdout:
 #   42
 from pub::provider import ping

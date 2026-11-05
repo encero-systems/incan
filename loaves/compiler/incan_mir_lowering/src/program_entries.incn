@@ -81,7 +81,7 @@ pub def lower_ordinary_bodies(
             None => pass
         for position in positions:
             body = body_at(context.bodies, position)
-            if not ordinary_body(context, body, emitted_frames):
+            if not ordinary_body(context, body, emitted_frames, kind):
                 continue
             if trace:
                 println(f"lowering: body {body_module_identity(body)?} {body.name} {body.span.start}")
@@ -365,18 +365,21 @@ pub def no_emitted_frames() -> EmittedFrames:
     return EmittedFrames(body_positions=[], positions=positions)
 
 
-pub def ordinary_body(context: &BodyIrModule, body: &RustBody, emitted_frames: &EmittedFrames) -> bool:
+pub def ordinary_body(context: &BodyIrModule, body: &RustBody, emitted_frames: &EmittedFrames, kind: str) -> bool:
     """
     Whether a checked module's body lowers as an ordinary function, for compilation and the census alike.
 
     A body with type parameters lowers per instance, a lazy method body only when a call or bridge selects it, a frame
-    already emitted once is not emitted again, and a unit that selects program entries reaches `main` through them.
+    already emitted once is not emitted again, a test unit omits its authored program entry, and a unit that selects
+    program entries reaches `main` through them.
     """
     if len(body.type_parameters) != 0:
         return false
     if is_lazy_method_body(context, body):
         return false
     if emitted_frames.contains(context, body):
+        return false
+    if kind == "test" and function_name(context, body) == "main":
         return false
     return len(context.program_entrypoints) == 0 or function_name(context, body) != "main"
 

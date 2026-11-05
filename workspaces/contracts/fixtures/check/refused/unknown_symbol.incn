@@ -1,5 +1,10 @@
-# behavior: a name that is never declared is refused
+# behavior: a name that is never declared and an unknown method on the closed ValidationError surface are refused (#2078)
 # expect-diagnostic: INCAN-T0001
 
 def foo() -> int:
     return undefined_variable
+
+
+def invalid_validation_error_method() -> None:
+    error = ValidationError("bad input")
+    println(error.message())

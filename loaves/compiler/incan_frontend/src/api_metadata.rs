@@ -550,6 +550,7 @@ struct ApiAliasProjectionRequest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DocstringSection {
     Summary,
+    Unstructured,
     Params,
     Returns,
     Fields,
@@ -562,6 +563,7 @@ impl DocstringSection {
     fn from_heading(line: &str) -> Option<Self> {
         match line {
             "Args:" | "Parameters:" => Some(Self::Params),
+            "Example:" => Some(Self::Unstructured),
             "Returns:" => Some(Self::Returns),
             "Fields:" => Some(Self::Fields),
             "Aliases:" => Some(Self::Aliases),
@@ -586,6 +588,7 @@ impl DocstringBuilder {
     fn push_line(&mut self, section: DocstringSection, line: &str) {
         match section {
             DocstringSection::Summary => push_prose_line(&mut self.summary_lines, line),
+            DocstringSection::Unstructured => {}
             DocstringSection::Params => push_entry_line(&mut self.params, line),
             DocstringSection::Returns => push_prose_line(&mut self.returns, line),
             DocstringSection::Fields => push_entry_line(&mut self.fields, line),
