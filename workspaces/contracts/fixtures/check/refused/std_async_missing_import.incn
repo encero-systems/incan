@@ -3,5 +3,7 @@
 
 """Invalid fixture: std.async import missing"""
 
+from std.primitives import hexlify
+
 async def work() -> None:
     await sleep(0.1)
