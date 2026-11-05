@@ -720,6 +720,28 @@ impl TypeChecker {
     }
 }
 
+/// Whether a storage constructor is one of the internal native frozen constructors `rust_storage_constructor` selects,
+/// which keep the element storage their Rust owner holds rather than the source frozen view's static text and bytes.
+pub(crate) fn native_frozen_constructor(name: &str) -> bool {
+    matches!(name, "$FrozenList" | "$FrozenSet" | "$FrozenDict")
+}
+
+/// Read native frozen storage as the source frozen view expression checking uses. Body IR keeps the storage itself.
+pub(super) fn source_frozen_view(ty: &ResolvedType) -> ResolvedType {
+    map_resolved_type_leaves(ty, &|node| {
+        let ResolvedType::Generic(base, arguments) = node else {
+            return None;
+        };
+        let view = |argument: &ResolvedType| Box::new(source_frozen_view(argument));
+        match (base.as_str(), arguments.as_slice()) {
+            ("$FrozenList", [element]) => Some(ResolvedType::FrozenList(view(element))),
+            ("$FrozenSet", [element]) => Some(ResolvedType::FrozenSet(view(element))),
+            ("$FrozenDict", [key, value]) => Some(ResolvedType::FrozenDict(view(key), view(value))),
+            _ => None,
+        }
+    })
+}
+
 /// Recognize only the source frame's declared binders before any nominal or native storage projection.
 fn source_binder(ty: &ResolvedType, parameters: &[String]) -> Option<ResolvedType> {
     match ty {

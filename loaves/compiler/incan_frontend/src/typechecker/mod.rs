@@ -82,6 +82,7 @@ mod mut_marker;
 mod native_call_state;
 mod native_newtype_facts;
 mod native_storage;
+pub(crate) use native_storage::native_frozen_constructor;
 mod nominal_identities;
 mod nominal_scope;
 mod nominal_type_param_bounds;

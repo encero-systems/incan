@@ -103,7 +103,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
         // Future construction is a distinct Body IR value even when the surface checker exposes its output type.
         // Preserve that carrier through a binding or alias instead of silently turning it into a scalar copy.
-        // An inferred SDK task binding also keeps the individual checked call's concrete output argument.
+        // An inferred SDK task binding also keeps the individual checked call's concrete output argument, and an
+        // inferred binding of native frozen storage keeps its native element storage rather than the source view's.
         if let bir::Operand::Place(read) = &value
             && read.place.projection.is_empty()
             && let Some(local) = read.place.local_id()
@@ -112,7 +113,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             let future = matches!(storage, IncanType::Generic { base, .. } if base == "Awaitable");
             let inferred_task =
                 assignment.ty.is_none() && super::runtime_nominals::retains_task_storage(self.type_info, storage);
-            if future || inferred_task {
+            let native_frozen = assignment.ty.is_none() && super::rust_values::native_frozen_storage(storage);
+            if future || inferred_task || native_frozen {
                 *ty = storage.clone();
             }
         }
