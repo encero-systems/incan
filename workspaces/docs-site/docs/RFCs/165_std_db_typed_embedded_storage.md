@@ -330,7 +330,7 @@ The record contract must also enumerate retained typed revision and payload refe
 
 Retaining references and historical observations must be distinct types. `ObservedRevision[T]` and `PayloadIdentity` preserve evidence without registering immortal retention roots; using either requires an availability check and acquisition of a live lease before reading. Removing that payload does not rewrite the historical observation. Conversely, the store must not expire an active `RevisionRef[T]` or `PayloadRef` as if it were only an observation.
 
-Changing a schema or codec requires an explicit versioned migration or an explicitly compatible descriptor. Migration must stage and validate a successor selection before publication; old leased snapshots must remain readable using their declared profiles, or the operation must refuse. Unsupported versions must never be treated as absent records.
+Changing a schema or codec requires an explicit versioned migration or an explicitly compatible descriptor. A field renamed with RFC 085's `renamed_from` is such a descriptor, so its stored records need no migration. Migration must stage and validate a successor selection before publication; old leased snapshots must remain readable using their declared profiles, or the operation must refuse. Unsupported versions must never be treated as absent records.
 
 ### Indexes and relationships
 
