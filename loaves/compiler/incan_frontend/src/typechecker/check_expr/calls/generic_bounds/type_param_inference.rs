@@ -226,8 +226,9 @@ impl TypeChecker {
     /// Infer concrete type bindings for generic type parameters from a parameter/argument type pair.
     ///
     /// This walks matching container structure recursively so constructor field checks and function calls can recover
-    /// bindings such as `T -> String` from shapes like `Boxed[T]` versus `Boxed[String]`. Public-package aliases and
-    /// provider-qualified spellings of the same generic declaration share that structure even when their names differ.
+    /// bindings such as `T -> String` from shapes like `Boxed[T]` versus `Boxed[String]`. Public-package aliases,
+    /// provider-qualified spellings and the declaration carrier an imported module's signature names (`Box[T]` from
+    /// `helpers`, against the caller's `Box[int]`) share that structure even when their names differ.
     /// Native re-exports compare by their shared identity; a source collection expands only when the native template
     /// needs its metadata-defaulted owner slots. Whole type parameters still bind the source argument unchanged.
     pub(in crate::typechecker) fn infer_type_param_bindings(
@@ -249,16 +250,11 @@ impl TypeChecker {
             }
             ResolvedType::Generic(name, expected_args) => {
                 if let ResolvedType::Generic(actual_name, actual_args) = actual
-                    && (name == actual_name
+                    && (self.source_type_names_same_declaration(name, actual_name)
                         || (name.contains("::")
                             && actual_name.contains("::")
                             && self.rust_native_type_identity_path(name)
                                 == self.rust_native_type_identity_path(actual_name))
-                        || self
-                            .public_library_type_identities
-                            .get(name)
-                            .zip(self.public_library_type_identities.get(actual_name))
-                            .is_some_and(|(expected_identity, actual_identity)| expected_identity == actual_identity)
                         || self
                             .module_qualified_nominals_compatible(
                                 &ResolvedType::Named(name.clone()),

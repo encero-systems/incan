@@ -87,3 +87,10 @@ pub(super) fn project(display: &str, facts: &TypeCheckInfo) -> Option<IncanType>
     let name = bir::native_opaque_name(&identity)?;
     Some(IncanType::Named(name))
 }
+
+/// Whether checked storage is a native frozen collection, whose internal constructor keeps the element storage its
+/// Rust owner holds (`FrozenList<String>` for a leaked `list[str]`). The checker's source frozen view of the same
+/// collection freezes text and bytes instead, so that view cannot type a place holding this storage.
+pub(super) fn native_frozen_storage(ty: &IncanType) -> bool {
+    matches!(ty, IncanType::Generic { base, .. } if crate::typechecker::native_frozen_constructor(base))
+}

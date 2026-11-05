@@ -102,7 +102,8 @@ impl TypeChecker {
     /// Legacy preserves its own bindings and Rust inference. Body IR additionally normalizes the checked tuple
     /// spellings and declaration-bound named placeholders, then uses the same unifier. Unchecked spreads, conflicting
     /// bindings and open arguments publish no fact. This runs only after the selected ordinary or surface call checks
-    /// have succeeded.
+    /// have succeeded. A call with written type arguments publishes these facts only when its signature names a
+    /// native template that plain substitution cannot close, and never an inferred result: its arguments were written.
     pub(super) fn retain_body_ir_call_arguments(
         &mut self,
         info: &FunctionInfo,
@@ -110,6 +111,7 @@ impl TypeChecker {
         legacy_bindings: &HashMap<String, ResolvedType>,
         span: Span,
         identity: Option<&CanonicalSymbolId>,
+        written_type_arguments: bool,
     ) {
         let names = crate::body_ir_parameter_names::parameter_names(info.type_params.iter().map(|name| {
             let bounds = info.type_param_bound_details.get(name);
@@ -123,6 +125,16 @@ impl TypeChecker {
             || args
                 .iter()
                 .any(|argument| matches!(argument, CallArg::PositionalUnpack(_) | CallArg::KeywordUnpack(_)))
+        {
+            return;
+        }
+        // Written type arguments already close a signature that plain substitution reaches, and Body IR reads those
+        // checked facts. Only a signature naming a native template, such as `FrozenList<T>`, needs the closed facts
+        // below (#2447).
+        if written_type_arguments
+            && std::iter::once(&info.return_type)
+                .chain(info.params.iter().map(|parameter| &parameter.ty))
+                .all(|ty| normalized(ty, &names, self) == *ty)
         {
             return;
         }
@@ -188,6 +200,10 @@ impl TypeChecker {
                 }
             }
             self.retain_body_ir_argument_bindings(&expected, &actual, &mut bindings);
+            // An argument holding native frozen storage binds through the parameter's own storage form (#2447).
+            if let Some(storage) = self.native_frozen_storage_template(&parameter.ty, &names) {
+                self.retain_body_ir_argument_bindings(&storage, &actual, &mut bindings);
+            }
         }
         self.retain_body_ir_runtime_outputs(info, &names, &mut bindings);
         let arguments: Option<Vec<_>> = names
@@ -200,12 +216,13 @@ impl TypeChecker {
             self.retain_body_ir_call_parameters(info, &names, &bindings, span);
             tracing::debug!(target: "incan::invocation", identity = ?identity, declared = ?info.return_type, names = ?names, bindings = ?bindings, result = ?result, "direct-route checked call result");
             if concrete(&result) {
-                self.type_info
-                    .calls
-                    .body_ir_call_result_types
-                    .insert(span, result.clone());
+                // The callee's frame returns native frozen storage where the checker reads its source view (#2447).
+                let executable = self
+                    .native_frozen_call_storage(&info.return_type, &names, &bindings)
+                    .unwrap_or_else(|| result.clone());
+                self.type_info.calls.body_ir_call_result_types.insert(span, executable);
             }
-            if concrete(&result) {
+            if concrete(&result) && !written_type_arguments {
                 // Keep a settled source spelling in the semantic checker; canonical owner keys belong to Body IR.
                 let result = if concrete(&logical_result) {
                     logical_result
@@ -249,7 +266,9 @@ impl TypeChecker {
             .params
             .iter()
             .map(|parameter| crate::symbols::CallableParam {
-                ty: substitute_resolved_type(&normalized(&parameter.ty, names, self), bindings),
+                ty: self
+                    .native_frozen_call_storage(&parameter.ty, names, bindings)
+                    .unwrap_or_else(|| substitute_resolved_type(&normalized(&parameter.ty, names, self), bindings)),
                 ..parameter.clone()
             })
             .collect::<Vec<_>>();
@@ -259,6 +278,34 @@ impl TypeChecker {
                 .body_ir_call_parameter_types
                 .insert(span, parameters);
         }
+    }
+
+    /// Close a declared type that holds native frozen storage by the call's bindings, as the callee's frame stores it.
+    /// Native frozen storage keeps the element storage its Rust owner holds (`FrozenList<String>` for a `list[str]`);
+    /// the inference view is the source frozen view, which freezes text and bytes. Other types keep that view.
+    fn native_frozen_call_storage(
+        &self,
+        declared: &ResolvedType,
+        names: &[String],
+        bindings: &HashMap<String, ResolvedType>,
+    ) -> Option<ResolvedType> {
+        let closed = substitute_resolved_type(&self.native_frozen_storage_template(declared, names)?, bindings);
+        concrete(&closed).then_some(closed)
+    }
+
+    /// The storage form of a declared type, with its binders open, when it holds native frozen storage.
+    fn native_frozen_storage_template(&self, declared: &ResolvedType, names: &[String]) -> Option<ResolvedType> {
+        let storage = self.rust_storage_resolved(declared, names);
+        let holds_native_frozen = std::cell::Cell::new(false);
+        crate::resolved_type_subst::map_resolved_type_leaves(&storage, &|node| {
+            if let ResolvedType::Generic(base, _) = node
+                && crate::typechecker::native_frozen_constructor(base)
+            {
+                holds_native_frozen.set(true);
+            }
+            None
+        });
+        holds_native_frozen.get().then_some(storage)
     }
 
     /// Retain only canonical testing helpers' syntactically absent channels as Unit, matching legacy emission.

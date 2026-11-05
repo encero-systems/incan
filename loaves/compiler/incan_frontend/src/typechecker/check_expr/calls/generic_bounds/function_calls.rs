@@ -323,8 +323,17 @@ impl TypeChecker {
             }
         }
 
-        if explicit_type_args.is_empty() && self.errors.len() == errors_before_call {
-            self.retain_body_ir_call_arguments(info, args, &type_bindings, call_span, callee_identity.as_ref());
+        // Written type arguments seed the same bindings inference closes, and their call publishes the same closed
+        // executable result: a native template such as `FrozenList<T>` is substituted only here (#2447).
+        if explicit_arity_ok && self.errors.len() == errors_before_call {
+            self.retain_body_ir_call_arguments(
+                info,
+                args,
+                &type_bindings,
+                call_span,
+                callee_identity.as_ref(),
+                !explicit_type_args.is_empty(),
+            );
         }
         if explicit_arity_ok && self.errors.len() == errors_before_call {
             self.retain_body_ir_parameter_requirements(&resolved_params, args, callee_identity.as_ref());
@@ -339,12 +348,13 @@ impl TypeChecker {
             self.retain_declared_nominal_result(call_span, &info.return_type, &type_bindings, callee_identity.as_ref());
             self.record_explicit_input_call(callee_identity.as_ref(), &resolved_params, None, call_span);
         }
+        // Expression checking reads a closed native frozen result through its source frozen view.
         self.type_info
             .calls
             .body_ir_call_result_types
             .get(&call_span)
             .or_else(|| self.type_info.calls.inferred_call_result_types.get(&call_span))
-            .cloned()
+            .map(crate::typechecker::native_storage::source_frozen_view)
             .unwrap_or_else(|| substitute_resolved_type(&info.return_type, &type_bindings))
     }
 }
