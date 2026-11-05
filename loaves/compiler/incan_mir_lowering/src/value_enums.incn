@@ -75,16 +75,17 @@ pub def value_method_owner(
     constructors: &ConstructorIndex,
     module: &BodyIrModule,
     target: &MethodTarget,
-    locals: list[Local],
+    locals: &list[Local],
+    offset: int,
     argument: &ArgumentElement,
     span: SourceSpan,
-    unions: list[RustType],
-    intrinsics: list[NativeEnumDeclaration],
+    unions: &list[RustType],
+    intrinsics: &list[NativeEnumDeclaration],
 ) -> Result[Option[int], str]:
     """Admit the getter under its owner's span; declared methods and authenticated SDK trait calls retain their own paths."""
     if target.loaf_trait != None:
         return Ok(None)
-    index = receiver_layout(constructors, module, locals, argument, span, unions, intrinsics)?
+    index = receiver_layout(constructors, module, locals, offset, argument, span, unions, intrinsics)?
     if index < 0 or index >= len(module.enum_declarations):
         return Ok(None)
     for owner in range(len(module.value_enum_declarations)):
@@ -130,11 +131,12 @@ pub def enum_message_layout(
     constructors: &ConstructorIndex,
     module: &BodyIrModule,
     target: &MethodTarget,
-    locals: list[Local],
+    locals: &list[Local],
+    offset: int,
     argument: &ArgumentElement,
     span: SourceSpan,
-    unions: list[RustType],
-    intrinsics: list[NativeEnumDeclaration],
+    unions: &list[RustType],
+    intrinsics: &list[NativeEnumDeclaration],
 ) -> Result[Option[int], str]:
     """
     Admit the checker-generated `message()` member only for its exact source enum owner, value enums included.
@@ -150,7 +152,7 @@ pub def enum_message_layout(
                 or identity.kind != SemanticSourceTargetKind.Method
             ):
                 return Ok(None)
-            index = receiver_layout(constructors, module, locals, argument, span, unions, intrinsics)?
+            index = receiver_layout(constructors, module, locals, offset, argument, span, unions, intrinsics)?
             if index < 0 or index >= len(module.enum_declarations):
                 return Ok(None)
             owner = borrowed_at(module.enum_declarations, index).canonical
@@ -169,28 +171,32 @@ pub def enum_message_layout(
 def receiver_layout(
     constructors: &ConstructorIndex,
     module: &BodyIrModule,
-    locals: list[Local],
+    locals: &list[Local],
+    offset: int,
     argument: &ArgumentElement,
     span: SourceSpan,
-    unions: list[RustType],
-    intrinsics: list[NativeEnumDeclaration],
+    unions: &list[RustType],
+    intrinsics: &list[NativeEnumDeclaration],
 ) -> Result[int, str]:
-    """Read the enum carrier from the receiver place; other carriers keep their ordinary method path."""
+    """
+    Read the enum carrier from the receiver place; other carriers keep their ordinary method path.
+
+    The frame's slots start at `offset` in the shared locals table, which is borrowed rather than copied per call.
+    """
     match argument.as_one():
         Some(RustOperand.Place(read)) =>
-            mut frame_locals = locals
-            mut union_layouts = unions
-            mut intrinsic_layouts = intrinsics
-            source = model_place(
+            mut source = model_place(
                 constructors,
                 module.nominal_declarations,
-                frame_locals,
+                locals,
                 read.place,
                 span,
                 module.enum_declarations,
-                union_layouts,
-                intrinsic_layouts,
+                unions,
+                intrinsics,
+                offset,
             )?
+            source.local += offset
             match place_type(locals, source):
                 PlanType.Enum(index, _name) => return Ok(index)
                 _ => pass

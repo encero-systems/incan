@@ -28,7 +28,7 @@ from rust::incan_semantics_core::body_ir import (
 )
 from classes import function_name, method_receiver
 from program_context import body_at
-from table_views import borrowed_at
+from table_views import borrowed_at, borrowed_table
 from comparison_methods import source_equality_value
 from traits import (
     is_lazy_method_body,
@@ -139,7 +139,8 @@ def lower_checked_method_call(
         builder.constructors,
         module,
         target,
-        builder.locals[builder.local_offset:],
+        borrowed_table(builder.locals),
+        builder.local_offset,
         arguments[0],
         span,
         builder.unions,
@@ -151,7 +152,8 @@ def lower_checked_method_call(
         builder.constructors,
         module,
         target,
-        builder.locals[builder.local_offset:],
+        borrowed_table(builder.locals),
+        builder.local_offset,
         arguments[0],
         span,
         builder.unions,
@@ -299,7 +301,7 @@ def lower_retained_method_call(
     receiver_type, borrow = method_receiver(
         constructors,
         module,
-        builder.locals[builder.local_offset:],
+        borrowed_table(builder.locals),
         builder.local_offset,
         index,
         arguments[0],
