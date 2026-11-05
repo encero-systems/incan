@@ -9,7 +9,7 @@
     - RFC 045 (scoped DSL symbol surfaces)
     - RFC 081 (language-shaped DSL embeddings; Incan-authored desugarers)
     - RFC 104 (ambient runtime capabilities and receipts)
-    - RFC 108 (import-scoped extension properties; `pub vocab` blocks)
+    - RFC 108 (import-scoped extensions, which add members rather than syntax)
     - RFC 117 (`loaf.toml` and Oven's language-neutral project model)
     - RFC 124 (Oven store unit identity and cross-plan artifact sharing)
     - RFC 125 (`incan.pub` Loaf registry and baked asset distribution)
@@ -68,7 +68,7 @@ A desugarer written in Incan and compiled like any other Incan program removes t
 ## Non-Goals
 
 - Changing the vocabulary surface model of RFC 027, RFC 040, RFC 045 or RFC 081: declarations, clauses, activation on import and embedded fragments keep their meaning.
-- Changing RFC 108's `pub vocab` extension properties. Registration is the typed `library_vocab()` function, not a declaration of that kind.
+- Changing RFC 108's extensions, which add typed members and no syntax. Registration is the typed `library_vocab()` function.
 - File-scoped surface activation (a header that selects a surface for a whole file), project-level surface defaults, alternate grammars with Incan semantics, and foreign-language frontends. RFC 162 specifies them; see "Relationship to source surfaces".
 - An operating-system sandbox for desugarers. Provider admission, enforced RFC 104 capabilities, and execution evidence are this RFC's controls; see "Trust and evidence".
 - Loading previously published WebAssembly desugarers.
@@ -275,7 +275,7 @@ RFC 160 and RFC 162 exist for RFC 161's single-authority rule. Every surface nor
 
 - RFC 040 and RFC 045 surfaces register exactly as before; only the authoring language and the execution artifact change.
 - RFC 081 embedded fragments keep their RFC 081 contract; only their lowering hook runs under this RFC, as "Embedded fragments (RFC 081)" states.
-- RFC 108 extension properties are unaffected.
+- RFC 108 extensions are unaffected.
 - Formatter and syntax highlighting continue to use the published descriptors and do not run desugarers.
 
 ### Compatibility and migration

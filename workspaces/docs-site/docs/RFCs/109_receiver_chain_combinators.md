@@ -10,7 +10,7 @@
     - RFC 068 (protocol hooks for core language syntax)
     - RFC 070 (result combinators for `Result[T, E]`)
     - RFC 088 (iterator adapter surface)
-    - RFC 108 (import-scoped vocabularies)
+    - RFC 108 (import-scoped extensions)
     - RFC 110 (`Ordering.then`)
     - RFC 128 (callable types)
     - RFC 129 (binding and `mut` parameters)
@@ -22,7 +22,7 @@
 
 ## Summary
 
-`value.then(f)` passes a value to a function and returns the result, and `value.tap(f)` lets a function look at or change a value and then hands the same value on. Both are available on every value with no import, so a value can flow left to right through small steps without temporary variables. They are ordinary library code: a vocabulary in `std.chain` that the standard prelude activates, with no compiler knowledge of the names. A member a type authors itself always takes precedence.
+`value.then(f)` passes a value to a function and returns the result, and `value.tap(f)` lets a function look at or change a value and then hands the same value on. Both are available on every value with no import, so a value can flow left to right through small steps without temporary variables. They are ordinary library code: an extension in `std.chain` that the standard prelude activates, with no compiler knowledge of the names. A member a type authors itself always takes precedence.
 
 ## Core model
 
@@ -122,9 +122,9 @@ A type's own member takes precedence, so `cmp(a, b).then(cmp(c, d))` calls RFC 1
 
 ### Availability
 
-1. `std.chain` must provide `then` and `tap` as an RFC 108 vocabulary, and as plain functions `then(value, transform)` and `tap(value, observer)`.
-2. The standard prelude must activate the vocabulary in every module. It must not need an import, and the compiler must have no knowledge of the names beyond vocabularies and the prelude.
-3. A member a type defines, including through an adopted trait, must take precedence over the vocabulary, under RFC 108. A shadowed call must not be reported as a conflict.
+1. `std.chain` must provide `then` and `tap` as an RFC 108 extension, and as plain functions `then(value, transform)` and `tap(value, observer)`.
+2. The standard prelude must activate the extension in every module. It must not need an import, and the compiler must have no knowledge of the names beyond extensions and the prelude.
+3. A member a type defines, including through an adopted trait, must take precedence over the extension, under RFC 108. A shadowed call must not be reported as a conflict.
 
 ### `then`
 
@@ -163,23 +163,23 @@ A type's own member takes precedence, so `cmp(a, b).then(cmp(c, d))` calls RFC 1
 
 ### Why they are always available
 
-An import to use something as small as `tap` is friction at the moment it would help, and these names are meant as a general way of writing code rather than a specialized library. The prelude is how Incan makes such things available. Activating an ordinary vocabulary there gives that with no compiler knowledge of the names.
+An import to use something as small as `tap` is friction at the moment it would help, and these names are meant as a general way of writing code rather than a specialized library. The prelude is how Incan makes such things available. Activating an ordinary extension there gives that with no compiler knowledge of the names.
 
 ### A possible implementation
 
-Non-normatively, the vocabulary could read:
+Non-normatively, the extension could read:
 
 ```incan
 # std/chain.incn
-pub vocab chain:
-    method then[T, U] on T (transform: Callable[(T) -> U]) -> U:
+pub extension chain:
+    def then[T, U](self: T, transform: Callable[(T) -> U]) -> U:
         return transform(self)
 
-    method tap[T] on T (observer: Callable[(T) -> None]) -> T:
+    def tap[T](self: T, observer: Callable[(T) -> None]) -> T:
         observer(self)
         return self
 
-    method tap[T] on mut T (observer: Callable[(mut T) -> None]) -> T:
+    def tap[T](mut self: T, observer: Callable[(mut T) -> None]) -> T:
         observer(self)
         return self
 ```
@@ -200,7 +200,7 @@ This RFC is additive. A type with its own `tap` or `then` keeps it.
 
 - **Temporary variables only:** explicit and already works, but noisy for small steps.
 - **An explicit import:** hides a general-purpose feature behind a line that has to be remembered.
-- **Compiler-recognized methods:** would need special handling for two library names, when a vocabulary activated by the prelude needs none.
+- **Compiler-recognized methods:** would need special handling for two library names, when an extension activated by the prelude needs none.
 - **Only a pipe operator:** threads values through functions but has no answer for keeping the value.
 - **Separate `tap` and `tap_mut`:** duplicates what `mut` on the parameter already says.
 - **`inspect` as the universal name:** already means branch-local and item-local observation.
@@ -210,12 +210,12 @@ This RFC is additive. A type with its own `tap` or `then` keeps it.
 
 ## Drawbacks
 
-Every type gains two names in completion lists, and short names like these are plausible for a type to define with another meaning, as `Ordering.then` does. `tap` can encourage long side-effecting chains if style guidance is weak. The vocabulary depends on RFC 108 supporting methods and receivers of any type.
+Every type gains two names in completion lists, and short names like these are plausible for a type to define with another meaning, as `Ordering.then` does. `tap` can encourage long side-effecting chains if style guidance is weak. The extension depends on RFC 108 supporting methods and receivers of any type.
 
 ## Layers affected
 
 - **Standard library:** `std.chain` and activation in the prelude.
-- **Vocabularies:** RFC 108's methods, generic receivers and prelude activation.
+- **Extensions:** RFC 108's methods, generic receivers and prelude activation.
 - **Ownership:** borrowing for read-only observers and access for mutating ones, under RFC 129.
 - **Formatter:** ordinary method-chain layout.
 - **Language server:** completion and hover.
