@@ -239,7 +239,7 @@ RFC 118 does not require every canonical Oven operation to have an Incan alias. 
 
 Inside a discovered Loaf, `incan run`, `incan test`, and `incan build` are required shallow aliases; `incan check` is a required read-only extension of its existing direct-source behavior. `run`, `test`, and `build` must produce the same Oven plan identity, scheduler decision, selected target/carrier/profile, build artifact where applicable, and receipt as the canonical Oven operation. `incan build` follows `oven build`'s own carrier restriction: it is a terminal-carrier-only alias and must fail with a diagnostic, not silently package a `*.loaf`, if the selected project has no terminal carrier. A direct `incan run` in that directory requires `--direct`; the explicit flag makes the absence of Oven planning visible. There is no `incan bake` alias (see "`oven build` and `oven bake` are not the same operation"): packaging a `*.loaf` for downstream reuse is a deliberate project-publishing action, not a direct-language convenience, so it stays `oven`-only.
 
-The remaining alias set is intentionally deferred until the first native Incan CLI vertical slice proves which conveniences improve direct language use rather than making the ownership boundary less legible.
+These four are the whole alias set. Every other project operation is spelled with `oven`, because each further alias would make the ownership boundary less legible. A new alias is a change to this RFC.
 
 ### Distribution and versioning
 
