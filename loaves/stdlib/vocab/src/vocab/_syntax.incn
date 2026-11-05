@@ -20,15 +20,15 @@ pub model IncanExpr:
     pub span: Span
     pub kind: IncanExprKind
 
-    def path(name: str, span: Span) -> Self:
+    pub def path(name: str, span: Span) -> Self:
         """Construct a path at an explicit source location."""
         return IncanExpr(span=span, kind=IncanExprKind.Path(name.split(".")))
 
-    def call(callee: IncanExpr, arguments: list[IncanExpr]) -> Self:
+    pub def call(callee: IncanExpr, arguments: list[IncanExpr]) -> Self:
         """Construct a call inheriting the callee's source location."""
         return IncanExpr(span=callee.span, kind=IncanExprKind.Call([callee] + arguments))
 
-    def list(items: list[IncanExpr], span: Span) -> Self:
+    pub def list(items: list[IncanExpr], span: Span) -> Self:
         """Construct a list with its enclosing original-source span, including for an empty list."""
         return IncanExpr(span=span, kind=IncanExprKind.List(items))
 
@@ -264,13 +264,13 @@ pub model VocabClause:
     pub compound_tokens: list[str] = []
     pub head: list[IncanExpr] = []
 
-    def expression(self) -> Result[IncanExpr, DesugarError]:
+    pub def expression(self) -> Result[IncanExpr, DesugarError]:
         """Return an expression clause's value with its original source range, or a clause-local diagnostic."""
         match self.body:
             VocabClauseBody.Expression(value) => return Ok(value)
             _ => return Err(DesugarError.at(self.span, f"{self.keyword} requires an expression"))
 
-    def head_list(self) -> list[IncanExpr]:
+    pub def head_list(self) -> list[IncanExpr]:
         """Return expression-list clause values in source order, preserving each item's range."""
         match self.body:
             VocabClauseBody.ExpressionList(items) => return [item.expr for item in items]
@@ -300,7 +300,7 @@ pub model VocabDeclaration:
     pub compound_tokens: list[str] = []
     pub body: list[VocabBodyItem] = []
 
-    def clause(self, keyword: str) -> Result[VocabClause, DesugarError]:
+    pub def clause(self, keyword: str) -> Result[VocabClause, DesugarError]:
         """Find the first owned clause with this keyword, or report its absence at the declaration."""
         for item in self.body:
             match item:
@@ -310,7 +310,7 @@ pub model VocabDeclaration:
                 _ => pass
         return Err(DesugarError.at(self.span, f"missing {keyword} clause"))
 
-    def fragment(self) -> Result[VocabFragment, DesugarError]:
+    pub def fragment(self) -> Result[VocabFragment, DesugarError]:
         """Return this declaration's owned embedded fragment without interpreting its lexical contents."""
         for item in self.body:
             match body_item_fragment(item):
@@ -337,7 +337,7 @@ pub enum VocabSyntaxNode:
     Statement(IncanStatement)
     Expression(IncanExpr)
 
-    def span(self) -> Span:
+    pub def span(self) -> Span:
         """Return the original-source location of this syntax node."""
         match self:
             VocabSyntaxNode.Declaration(node) => return node.span
@@ -398,7 +398,7 @@ pub model DesugarError:
     pub span: Span
     pub message: str
 
-    def at(span: Span, message: str) -> Self:
+    pub def at(span: Span, message: str) -> Self:
         """Construct a diagnostic at an original-source location."""
         return DesugarError(span=span, message=message)
 

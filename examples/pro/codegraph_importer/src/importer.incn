@@ -54,7 +54,7 @@ pub model GraphSummary:
     pub unknown_record_count: int
 
     @staticmethod
-    def empty() -> Self:
+    pub def empty() -> Self:
         """Create an empty summary before the snapshot metadata and facts are visited."""
         return GraphSummary(
             schema_version=0,
@@ -79,7 +79,7 @@ pub model GraphSummary:
             unknown_record_count=0,
         )
 
-    def add_fact(mut self, record: str, degraded: bool) -> None:
+    pub def add_fact(mut self, record: str, degraded: bool) -> None:
         """Count one fact record while preserving unknown future kinds as opaque facts."""
         self.fact_count += 1
         if degraded:

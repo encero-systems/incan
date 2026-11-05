@@ -42,7 +42,7 @@ pub model _OrdinalTextKey with OrdinalKey:
             Err(error) => return Err(OrdinalMapError.invalid_key_record(str(error)))
 
     @staticmethod
-    def decoded_value(data: bytes) -> Result[str, OrdinalMapError]:
+    pub def decoded_value(data: bytes) -> Result[str, OrdinalMapError]:
         """Return the primitive payload of a successfully decoded source adapter.
 
         1. Decode through the same source-owned OrdinalKey implementation.
@@ -115,7 +115,7 @@ pub model _OrdinalI32Key with OrdinalKey:
         return Ok(_OrdinalI32Key(value=value))
 
     @staticmethod
-    def decoded_value(data: bytes) -> Result[i32, OrdinalMapError]:
+    pub def decoded_value(data: bytes) -> Result[i32, OrdinalMapError]:
         """Project the decoded primitive through the same checked decoder.
 
         1. Decode and project the wrapped value.
@@ -162,7 +162,7 @@ pub model _OrdinalIntKey with OrdinalKey:
         return Ok(_OrdinalIntKey(value=value))
 
     @staticmethod
-    def decoded_value(data: bytes) -> Result[int, OrdinalMapError]:
+    pub def decoded_value(data: bytes) -> Result[int, OrdinalMapError]:
         """Project the decoded primitive through the same checked decoder.
 
         1. Decode and project the wrapped value.
@@ -214,7 +214,7 @@ pub model _OrdinalBoolKey with OrdinalKey:
         return Err(OrdinalMapError.invalid_key_record("boolean key must be zero or one"))
 
     @staticmethod
-    def decoded_value(data: bytes) -> Result[bool, OrdinalMapError]:
+    pub def decoded_value(data: bytes) -> Result[bool, OrdinalMapError]:
         """Project the decoded primitive through the same checked decoder.
 
         1. Decode and project the wrapped value.
@@ -263,7 +263,7 @@ pub model _OrdinalDecimalKey with OrdinalKey:
         return Ok(_OrdinalDecimalKey(value=value))
 
     @staticmethod
-    def decoded_value(data: bytes) -> Result[decimal[38, 0], OrdinalMapError]:
+    pub def decoded_value(data: bytes) -> Result[decimal[38, 0], OrdinalMapError]:
         """Project the decoded primitive through the same checked decoder.
 
         1. Decode and project the wrapped value.

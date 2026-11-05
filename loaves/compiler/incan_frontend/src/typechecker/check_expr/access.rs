@@ -64,6 +64,7 @@ mod field_access;
 mod generated_members;
 mod indexing;
 mod iterator_calls;
+mod member_access;
 mod method_call_targets;
 mod method_calls;
 mod method_resolution;

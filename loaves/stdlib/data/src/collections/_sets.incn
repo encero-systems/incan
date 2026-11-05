@@ -25,7 +25,7 @@ pub model OrderedSet[T with (Clone, Eq)]:
         return OrderedSet(items=[])
 
     @staticmethod
-    def from_iter(items: list[T]) -> Self:
+    pub def from_iter(items: list[T]) -> Self:
         """
         Create an ordered set from a list.
 
@@ -70,7 +70,7 @@ pub model OrderedSet[T with (Clone, Eq)]:
         """
         return self.contains(value)
 
-    def add(mut self, value: T) -> None:
+    pub def add(mut self, value: T) -> None:
         """
         Insert a value if it is absent.
 
@@ -80,7 +80,7 @@ pub model OrderedSet[T with (Clone, Eq)]:
         if not self.contains(value):
             self.items.append(value)
 
-    def remove(mut self, value: T) -> None:
+    pub def remove(mut self, value: T) -> None:
         """
         Remove a value when present.
 
@@ -91,7 +91,7 @@ pub model OrderedSet[T with (Clone, Eq)]:
         if index >= 0:
             self.items.remove(index)
 
-    def contains(self, value: T) -> bool:
+    pub def contains(self, value: T) -> bool:
         """
         Check whether a value is present.
 
@@ -103,7 +103,7 @@ pub model OrderedSet[T with (Clone, Eq)]:
         """
         return self.index_of(value) >= 0
 
-    def to_list(self) -> list[T]:
+    pub def to_list(self) -> list[T]:
         """
         Return the set as a list.
 
@@ -112,7 +112,7 @@ pub model OrderedSet[T with (Clone, Eq)]:
         """
         return self.items
 
-    def index_of(self, value: T) -> int:
+    pub def index_of(self, value: T) -> int:
         return _value_index(self.items, value)
 
 
@@ -137,7 +137,7 @@ pub model SortedSet[T with (Clone, Ord)]:
         return SortedSet(items=[])
 
     @staticmethod
-    def from_iter(items: list[T]) -> Self:
+    pub def from_iter(items: list[T]) -> Self:
         """
         Create a sorted set from a list.
 
@@ -182,7 +182,7 @@ pub model SortedSet[T with (Clone, Ord)]:
         """
         return self.contains(value)
 
-    def add(mut self, value: T) -> None:
+    pub def add(mut self, value: T) -> None:
         """
         Insert a value if it is absent.
 
@@ -194,7 +194,7 @@ pub model SortedSet[T with (Clone, Ord)]:
         self.items.append(value)
         self.bubble_value_left(len(self.items) - 1)
 
-    def remove(mut self, value: T) -> None:
+    pub def remove(mut self, value: T) -> None:
         """
         Remove a value when present.
 
@@ -205,7 +205,7 @@ pub model SortedSet[T with (Clone, Ord)]:
         if index >= 0:
             self.items.remove(index)
 
-    def contains(self, value: T) -> bool:
+    pub def contains(self, value: T) -> bool:
         """
         Check whether a value is present.
 
@@ -217,7 +217,7 @@ pub model SortedSet[T with (Clone, Ord)]:
         """
         return self.index_of(value) >= 0
 
-    def range(self, start: T, end: T) -> list[T]:
+    pub def range(self, start: T, end: T) -> list[T]:
         """
         Return values in a half-open range.
 
@@ -230,7 +230,7 @@ pub model SortedSet[T with (Clone, Ord)]:
         """
         return _value_range(self.items, start, end)
 
-    def to_list(self) -> list[T]:
+    pub def to_list(self) -> list[T]:
         """
         Return the set as a list.
 
@@ -239,10 +239,10 @@ pub model SortedSet[T with (Clone, Ord)]:
         """
         return self.items
 
-    def index_of(self, value: T) -> int:
+    pub def index_of(self, value: T) -> int:
         return _value_index(self.items, value)
 
-    def bubble_value_left(mut self, start: int) -> None:
+    pub def bubble_value_left(mut self, start: int) -> None:
         mut index = start
         while index > 0 and self.items[index] < self.items[index - 1]:
             self.items.swap(index, index - 1)

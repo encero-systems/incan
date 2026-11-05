@@ -76,7 +76,7 @@ pub model Held:
     pub watched: Watched
     pub ledger: Ledger
 
-    def key(mut self, compiler: str) -> Result[Key, str]:
+    pub def key(mut self, compiler: str) -> Result[Key, str]:
         """Reconcile the unit's inputs against what earlier requests observed."""
         return reconciled_key(self.unit, compiler, self.described, self.ledger)
 
@@ -93,7 +93,7 @@ pub model Owner:
     held: Dict[str, Held] = {}
     unsupported: Dict[str, Watched] = {}
 
-    def handle(mut self, request: Request, idle_seconds: int) -> Reply:
+    pub def handle(mut self, request: Request, idle_seconds: int) -> Reply:
         """
         Answer one request.
 
@@ -125,7 +125,7 @@ pub model Owner:
         """A reply of this owner's generation."""
         return Reply(status=status, generation=self.generation, reason=reason)
 
-    def answer_idle(self, idle_seconds: int) -> Reply:
+    pub def answer_idle(self, idle_seconds: int) -> Reply:
         """`retiring` once the owner has served nothing for `idle_seconds`, else `done`."""
         if now_seconds() - self.last_served >= idle_seconds:
             return self.respond("retiring")

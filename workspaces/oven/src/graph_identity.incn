@@ -35,7 +35,7 @@ class KeyIndex:
     by_id: Dict[str, str] = {}
     by_identity: Dict[str, str] = {}
 
-    def add(mut self, record: JsonValue) -> Result[None, str]:
+    pub def add(mut self, record: JsonValue) -> Result[None, str]:
         """Index only signature-bearing declaration keys; repeated logical identities become explicitly ambiguous."""
         if text(record, "record") != "declaration" or text(record, "stable_key") == "":
             return Ok(None)
@@ -48,7 +48,7 @@ class KeyIndex:
             self.by_identity[logical] = key
         return Ok(None)
 
-    def linked(self, record: JsonValue) -> Result[JsonValue, str]:
+    pub def linked(self, record: JsonValue) -> Result[JsonValue, str]:
         """Propagate keys through exact links or unique identities, preserving malformed records as a refusal."""
         mut fields = record.expect_object().map_err((error) => error.message())?
         if text(record, "record") != "declaration":

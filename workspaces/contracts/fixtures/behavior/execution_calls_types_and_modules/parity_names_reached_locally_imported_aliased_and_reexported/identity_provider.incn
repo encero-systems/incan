@@ -15,7 +15,7 @@ pub model ImportedMember:
     """Hold the values used by this fixture."""
     pub value: int
 
-    def read(self) -> int:
+    pub def read(self) -> int:
         """Return `self.value` for this fixture."""
         return self.value
 
@@ -23,7 +23,7 @@ pub model AliasedMember:
     """Hold the values used by this fixture."""
     pub value: int
 
-    def read(self) -> int:
+    pub def read(self) -> int:
         """Return `self.value` for this fixture."""
         return self.value
 
@@ -31,7 +31,7 @@ pub model RelayedMember:
     """Hold the values used by this fixture."""
     pub value: int
 
-    def read(self) -> int:
+    pub def read(self) -> int:
         """Return `self.value` for this fixture."""
         return self.value
 

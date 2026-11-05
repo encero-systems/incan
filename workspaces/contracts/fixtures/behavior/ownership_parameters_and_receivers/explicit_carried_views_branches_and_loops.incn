@@ -14,7 +14,7 @@ class Counter:
     pub value: int
     pub open: bool
 
-    def bump(mut self) -> Result[Reference[Self], str] from self:
+    pub def bump(mut self) -> Result[Reference[Self], str] from self:
         if not self.open:
             return Err("closed")
         self.value += 1

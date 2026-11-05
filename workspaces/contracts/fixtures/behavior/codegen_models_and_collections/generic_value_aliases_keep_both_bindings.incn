@@ -36,7 +36,7 @@ model Adapter[F with (Clone, Callable1[int, int])]:
 class Factory:
     """Construct generic owners through a method with a callable type parameter."""
 
-    def keep[F with (Clone, Callable1[int, int])](self, callback: F) -> Adapter[F]:
+    pub def keep[F with (Clone, Callable1[int, int])](self, callback: F) -> Adapter[F]:
         """Transfer the callback and its environment into the returned owner."""
         return Adapter(callback=callback)
 

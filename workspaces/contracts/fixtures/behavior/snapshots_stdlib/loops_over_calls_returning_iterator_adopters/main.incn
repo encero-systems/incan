@@ -30,19 +30,19 @@ class Source:
     pub base: int
     pub numbers: Numbers
 
-    def counted(self, count: int = 2) -> Numbers:
+    pub def counted(self, count: int = 2) -> Numbers:
         mut items: list[int] = []
         for i in range(count):
             items.append(self.base + i)
         return Numbers(items=items, index=0)
 
-    def spread(self, *offsets: int) -> Numbers:
+    pub def spread(self, *offsets: int) -> Numbers:
         mut items: list[int] = []
         for offset in offsets:
             items.append(self.base + offset)
         return Numbers(items=items, index=0)
 
-    def tagged[T](self, tag: T) -> Numbers:
+    pub def tagged[T](self, tag: T) -> Numbers:
         return Numbers(items=[self.base], index=0)
 
 

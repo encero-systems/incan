@@ -16,13 +16,13 @@ class Account:
     pub name: str
     pub balance: int
 
-    def withdraw(mut self, amount: int) -> Result[int, Borrowed[str]] from self.name:
+    pub def withdraw(mut self, amount: int) -> Result[int, Borrowed[str]] from self.name:
         if amount > self.balance:
             return Err(self.name)
         self.balance -= amount
         return Ok(self.balance)
 
-    def charge(mut self, amount: int) -> Result[int, Reference[Self]] from self:
+    pub def charge(mut self, amount: int) -> Result[int, Reference[Self]] from self:
         if amount > self.balance:
             return Err(self)
         self.balance -= amount

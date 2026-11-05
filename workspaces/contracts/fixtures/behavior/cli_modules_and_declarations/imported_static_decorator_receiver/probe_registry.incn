@@ -1,10 +1,10 @@
 @derive(Clone)
 pub class ProbeRegistry:
     @staticmethod
-    def new() -> Self:
+    pub def new() -> Self:
         return ProbeRegistry()
 
-    def add[F](mut self, name: str, value: int) -> (F) -> F:
+    pub def add[F](mut self, name: str, value: int) -> (F) -> F:
         return (func) => func
 
 

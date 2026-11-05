@@ -4,7 +4,7 @@
 class Counter:
     pub value: int
 
-    def bump(mut self) -> Result[Reference[Self], str] from self:
+    pub def bump(mut self) -> Result[Reference[Self], str] from self:
         self.value += 1
         return Ok(self)
 

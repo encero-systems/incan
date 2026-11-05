@@ -6,7 +6,7 @@
 class Counter:
     pub value: int
 
-    def bump(mut self, mut amount: BorrowedMut[int]) -> None:
+    pub def bump(mut self, mut amount: BorrowedMut[int]) -> None:
         self.value = self.value + amount
         amount = 0
 

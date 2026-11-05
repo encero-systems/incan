@@ -5,10 +5,11 @@ use super::*;
 impl TypeChecker {
     /// Register a trait declaration with its method signatures, supertraits, and requirements.
     pub(super) fn collect_trait(&mut self, tr: &TraitDecl, span: Span) {
-        let mut method_overloads = collect_method_overloads(&tr.methods, self, None, &tr.type_params);
-        // A method declared in a trait takes the trait's visibility (#2570).
+        let mut method_overloads = collect_method_overloads(&tr.methods, self, None, &tr.type_params, false);
+        // A method declared in a trait takes the trait's visibility: public for a `pub` trait, and otherwise the
+        // trait's module, the only one that can name it (#2570).
         for method in method_overloads.values_mut().flatten() {
-            method.visibility = tr.visibility;
+            method.scope = super::method_visibility::trait_method_scope(tr.visibility);
         }
         let mut methods = collect_methods_from_overloads(&method_overloads);
         let properties = collect_properties(&tr.properties, self, None, &tr.type_params);

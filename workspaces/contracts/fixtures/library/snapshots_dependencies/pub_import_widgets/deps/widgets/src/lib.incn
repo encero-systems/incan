@@ -4,20 +4,20 @@ from std.derives.collection import FallibleIterator
 pub model Widget:
     pub name: str
 
-    def record(mut self, accepted: bool) -> Result[None, str]:
+    pub def record(mut self, accepted: bool) -> Result[None, str]:
         """Keep the updated name in static storage and return an owned status."""
         if not accepted:
             return Err("refused")
         self.name = "recorded"
         return Ok(None)
 
-    def optional(self, present: bool) -> Option[Widget]:
+    pub def optional(self, present: bool) -> Option[Widget]:
         """Return an optional owned snapshot across the package boundary."""
         if present:
             return Some(Widget(name=self.name))
         return None
 
-    def snapshot(self) -> Widget:
+    pub def snapshot(self) -> Widget:
         """Return an owned model across the package boundary."""
         return Widget(name=self.name)
 

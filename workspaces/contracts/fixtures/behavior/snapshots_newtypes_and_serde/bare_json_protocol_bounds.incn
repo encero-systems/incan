@@ -35,7 +35,7 @@ model Envelope[T with Serialize]:
 class Recorder[T with Serialize]:
     items: list[T]
 
-    def dump(self) -> str:
+    pub def dump(self) -> str:
         return json_stringify(self.items)
 
 

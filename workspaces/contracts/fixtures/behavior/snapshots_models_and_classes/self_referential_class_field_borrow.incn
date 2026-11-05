@@ -8,7 +8,7 @@ class Node:
     pub value: int
     pub next: Option[Node]
 
-    def describe(self) -> str:
+    pub def describe(self) -> str:
         return describe_link(self.next)
 
 

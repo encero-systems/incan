@@ -29,6 +29,21 @@ pub fn private_property(type_name: &str, property: &str, span: Span) -> CompileE
         .with_hint("Access this property from a method on the declaring class, or mark the property `pub`")
 }
 
+/// Report a call to an unmarked method from outside the methods of its declaring type (#2570).
+pub fn private_method(type_name: &str, method: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("Method '{method}' on '{type_name}' is private"), span)
+        .with_hint("Call this method from a method on the declaring type, or mark the method `pub`")
+}
+
+/// Report a call, from another module, to a method that takes the visibility of a trait that is not `pub` (#2570).
+pub fn module_private_method(type_name: &str, method: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Method '{method}' on '{type_name}' is private to the module of its trait"),
+        span,
+    )
+    .with_hint("Call this method from the module that declares its trait, or mark the trait `pub`")
+}
+
 /// Report a computed property selected with method-call syntax.
 pub fn property_called_as_method(property: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("Computed property '{}' is not callable", property), span)

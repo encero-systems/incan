@@ -18,13 +18,13 @@ pub class Crc32:
 
     handle: Crc32Hasher
 
-    def update(mut self, chunk: bytes) -> None:
+    pub def update(mut self, chunk: bytes) -> None:
         """
         Feed one byte chunk into the checksum state.
         """
         self.handle.update(chunk.as_slice())
 
-    def finalize_u32(self) -> u32:
+    pub def finalize_u32(self) -> u32:
         """
         Return the CRC32 value for all chunks fed so far.
 
@@ -33,7 +33,7 @@ pub class Crc32:
         """
         return self.handle.clone().finalize()
 
-    def finalize_bytes(self) -> bytes:
+    pub def finalize_bytes(self) -> bytes:
         """
         Return the CRC32 value as four big-endian bytes.
         """
@@ -47,21 +47,21 @@ pub class crc32:
     """
 
     @staticmethod
-    def value(data: bytes) -> u32:
+    pub def value(data: bytes) -> u32:
         """
         Compute the CRC32 value for `data`.
         """
         return crc32_hash(data.as_slice())
 
     @staticmethod
-    def digest(data: bytes) -> bytes:
+    pub def digest(data: bytes) -> bytes:
         """
         Compute the CRC32 digest bytes for `data` in big-endian/network byte order.
         """
         return _u32_to_be_bytes(crc32.value(data))
 
     @staticmethod
-    def new() -> Crc32:
+    pub def new() -> Crc32:
         """
         Create a fresh incremental CRC32 hasher.
         """

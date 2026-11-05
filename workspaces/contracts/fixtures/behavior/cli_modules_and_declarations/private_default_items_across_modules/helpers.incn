@@ -40,7 +40,7 @@ pub def speed(mode: _Mode = _Mode.Fast) -> str:
 pub model Greeter:
     pub name: str
 
-    def greet(self, greeting: str) -> str:
+    pub def greet(self, greeting: str) -> str:
         return f"{greeting} {self.name}"
 
     hello = partial greet(greeting=GREETING)

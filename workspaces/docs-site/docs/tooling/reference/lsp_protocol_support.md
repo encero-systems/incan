@@ -30,7 +30,7 @@ Definition, references and incoming/outgoing call hierarchy project the portable
 
 After a document type-checks, hover shows:
 
-- for a public declaration, a public partial callable preset, a checked public method, a field of a public model or class, or a public enum variant: the [checked API metadata](checked_api_metadata.md) preview, with its checked signature, raw docstring, field visibility, alias and description metadata, value-enum backing type and raw value, derives, trait adoptions and safe const values. A private field's preview labels it private.
+- for a public declaration, a public partial callable preset, a checked method of a public type, a field of a public model or class, or a public enum variant: the [checked API metadata](checked_api_metadata.md) preview, with its checked signature, raw docstring, field visibility, alias and description metadata, value-enum backing type and raw value, derives, trait adoptions and safe const values. A private field's or method's preview labels it private.
 - for a partial: the projected callable signature, with presets shown as default parameters, and the target and preset provenance.
 - for a decorated function whose checked binding is callable-valued: the callable signature the checked API metadata exposes.
 - for a computed property, in hover and completion: its owner and return type, such as `property Account.total -> int`.

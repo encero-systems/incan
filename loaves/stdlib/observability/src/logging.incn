@@ -49,7 +49,7 @@ pub enum Level(str):
     WARNING = alias WARN
     CRITICAL = alias FATAL
 
-    def rank(self) -> int:
+    pub def rank(self) -> int:
         """Return the ordering rank used by source-level threshold filtering."""
         match self:
             Level.TRACE => return 10
@@ -59,7 +59,7 @@ pub enum Level(str):
             Level.ERROR => return 50
             Level.FATAL => return 60
 
-    def severity_number(self) -> int:
+    pub def severity_number(self) -> int:
         """Return the OpenTelemetry `SeverityNumber` for this level."""
         match self:
             Level.TRACE => return 1
@@ -69,7 +69,7 @@ pub enum Level(str):
             Level.ERROR => return 17
             Level.FATAL => return 21
 
-    def display_name(self) -> str:
+    pub def display_name(self) -> str:
         """Return the human-facing level name."""
         match self:
             Level.WARN => return "WARNING"
@@ -129,7 +129,7 @@ pub type OutputTarget = newtype str:
             return Err(ValidationError("std.logging target must be 'stdout' or 'stderr'"))
         return Ok(OutputTarget(target))
 
-    def write_line(self, line: str) -> None:
+    pub def write_line(self, line: str) -> None:
         """Write one rendered log line to the configured stream."""
         data = RustString.from(line + "\n").into_bytes()
         if self.0 == "stderr":
@@ -182,11 +182,11 @@ pub model LogRecord with Serialize:
     )
     pub event_name [alias="EventName", description="Optional event class or type name."]: Option[str] = None
 
-    def emit(self, config: LoggingConfig) -> None:
+    pub def emit(self, config: LoggingConfig) -> None:
         """Render and write this record using the supplied logging policy."""
         config.target.write_line(self._render_with(config.format, config.style))
 
-    def render(self, config: LoggingConfig) -> str:
+    pub def render(self, config: LoggingConfig) -> str:
         """Render this record using the configured output format."""
         return self._render_with(config.format, config.style)
 
@@ -196,7 +196,7 @@ pub model LogRecord with Serialize:
             return self.to_json()
         return self.render_human(style)
 
-    def render_human(self, style: LogStyle) -> str:
+    pub def render_human(self, style: LogStyle) -> str:
         """Render this record with the configured human output style."""
         rendered_level = self._level_display_name()
         rendered_fields = self._attributes_human()
@@ -260,7 +260,7 @@ pub model Logger:
     pub name: LoggerName
     pub fields: Dict[str, TelemetryValue | str | bool | int | float | None] = {}
 
-    def child(self, suffix: str) -> Logger:
+    pub def child(self, suffix: str) -> Logger:
         """
         Return a descendant logger.
 
@@ -272,7 +272,7 @@ pub model Logger:
         """
         return Logger(name=f"{self.name.0}.{suffix}", fields=self.fields)
 
-    def bind(self, fields: Dict[str, TelemetryValue | str | bool | int | float | None]) -> Logger:
+    pub def bind(self, fields: Dict[str, TelemetryValue | str | bool | int | float | None]) -> Logger:
         """
         Return a logger with additional bound context.
 
@@ -284,7 +284,7 @@ pub model Logger:
         """
         return Logger(name=self.name, fields=self._fields_with(fields))
 
-    def is_enabled(self, level: Level) -> bool:
+    pub def is_enabled(self, level: Level) -> bool:
         """
         Check whether `level` passes the current source-level threshold.
 
@@ -293,7 +293,7 @@ pub model Logger:
         """
         return level.rank() >= _config.level.rank()
 
-    def trace(self, message: str, fields: Dict[str, TelemetryValue | str | bool | int | float | None] = {}) -> None:
+    pub def trace(self, message: str, fields: Dict[str, TelemetryValue | str | bool | int | float | None] = {}) -> None:
         """
         Emit a trace event.
 
@@ -303,7 +303,7 @@ pub model Logger:
         """
         self._event(Level.TRACE, message, fields)
 
-    def debug(self, message: str, fields: Dict[str, TelemetryValue | str | bool | int | float | None] = {}) -> None:
+    pub def debug(self, message: str, fields: Dict[str, TelemetryValue | str | bool | int | float | None] = {}) -> None:
         """
         Emit a debug event.
 
@@ -313,7 +313,7 @@ pub model Logger:
         """
         self._event(Level.DEBUG, message, fields)
 
-    def info(self, message: str, fields: Dict[str, TelemetryValue | str | bool | int | float | None] = {}) -> None:
+    pub def info(self, message: str, fields: Dict[str, TelemetryValue | str | bool | int | float | None] = {}) -> None:
         """
         Emit an info event.
 
@@ -323,7 +323,7 @@ pub model Logger:
         """
         self._event(Level.INFO, message, fields)
 
-    def warning(self, message: str, fields: Dict[str, TelemetryValue | str | bool | int | float | None] = {}) -> None:
+    pub def warning(self, message: str, fields: Dict[str, TelemetryValue | str | bool | int | float | None] = {}) -> None:
         """
         Emit a warning event.
 
@@ -333,7 +333,7 @@ pub model Logger:
         """
         self._event(Level.WARN, message, fields)
 
-    def error(self, message: str, fields: Dict[str, TelemetryValue | str | bool | int | float | None] = {}) -> None:
+    pub def error(self, message: str, fields: Dict[str, TelemetryValue | str | bool | int | float | None] = {}) -> None:
         """
         Emit an error event.
 
@@ -343,7 +343,7 @@ pub model Logger:
         """
         self._event(Level.ERROR, message, fields)
 
-    def critical(self, message: str, fields: Dict[str, TelemetryValue | str | bool | int | float | None] = {}) -> None:
+    pub def critical(self, message: str, fields: Dict[str, TelemetryValue | str | bool | int | float | None] = {}) -> None:
         """
         Emit a critical event.
 

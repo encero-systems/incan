@@ -7,6 +7,6 @@ pub model DefaultPayload with Serialize:
     """Keep the standard Serialize default inside a compiled provider method."""
     pub value: int
 
-    def encoded(self) -> str:
+    pub def encoded(self) -> str:
         """Invoke the checked protocol default through this shared receiver."""
         return self.to_json()

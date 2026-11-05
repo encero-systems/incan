@@ -44,7 +44,7 @@ pub model Tally:
     pub failed: int
     pub pending: int
 
-    def line(self, label: str) -> str:
+    pub def line(self, label: str) -> str:
         """The summary line for `label`."""
         return f"{label}: {self.passed} passed, {self.failed} failed, {self.pending} pending"
 

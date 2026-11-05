@@ -5,7 +5,7 @@ pub model Basket:
     pub product: Product
     pub quantity: int
 
-    def total(self) -> int:
+    pub def total(self) -> int:
         return self.product.cents * self.quantity
 
 

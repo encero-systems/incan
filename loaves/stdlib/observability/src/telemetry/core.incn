@@ -50,7 +50,7 @@ pub model TelemetryValue with Serialize:
     pub map_value [alias="MapValue", description="Nested map values when kind is map."]: Dict[str, TelemetryValue]
 
     @classmethod
-    def none(cls) -> Self:
+    pub def none(cls) -> Self:
         """Return a telemetry null value."""
         return cls(
             kind=TelemetryValueKind.NONE,
@@ -64,7 +64,7 @@ pub model TelemetryValue with Serialize:
         )
 
     @classmethod
-    def string(cls, value: str) -> Self:
+    pub def string(cls, value: str) -> Self:
         """Return a telemetry string value."""
         return cls(
             kind=TelemetryValueKind.STRING,
@@ -78,7 +78,7 @@ pub model TelemetryValue with Serialize:
         )
 
     @classmethod
-    def bool(cls, value: bool) -> Self:
+    pub def bool(cls, value: bool) -> Self:
         """Return a telemetry boolean value."""
         return cls(
             kind=TelemetryValueKind.BOOL,
@@ -92,7 +92,7 @@ pub model TelemetryValue with Serialize:
         )
 
     @classmethod
-    def int(cls, value: int) -> Self:
+    pub def int(cls, value: int) -> Self:
         """Return a telemetry integer value."""
         return cls(
             kind=TelemetryValueKind.INT,
@@ -106,7 +106,7 @@ pub model TelemetryValue with Serialize:
         )
 
     @classmethod
-    def float(cls, value: float) -> Self:
+    pub def float(cls, value: float) -> Self:
         """Return a telemetry floating-point value."""
         return cls(
             kind=TelemetryValueKind.FLOAT,
@@ -120,7 +120,7 @@ pub model TelemetryValue with Serialize:
         )
 
     @classmethod
-    def bytes(cls, value: str) -> Self:
+    pub def bytes(cls, value: str) -> Self:
         """
         Return a telemetry bytes value from an encoded string.
 
@@ -138,7 +138,7 @@ pub model TelemetryValue with Serialize:
         )
 
     @classmethod
-    def array(cls, values: list[TelemetryValue]) -> Self:
+    pub def array(cls, values: list[TelemetryValue]) -> Self:
         """Return a telemetry array value."""
         return cls(
             kind=TelemetryValueKind.ARRAY,
@@ -152,7 +152,7 @@ pub model TelemetryValue with Serialize:
         )
 
     @classmethod
-    def map(cls, values: Dict[str, TelemetryValue]) -> Self:
+    pub def map(cls, values: Dict[str, TelemetryValue]) -> Self:
         """Return a telemetry map value."""
         return cls(
             kind=TelemetryValueKind.MAP,
@@ -165,7 +165,7 @@ pub model TelemetryValue with Serialize:
             map_value=values,
         )
 
-    def display_text(self) -> str:
+    pub def display_text(self) -> str:
         """
         Return a concise text representation for human-oriented output.
 
@@ -186,7 +186,7 @@ pub type Attributes = newtype Dict[str, TelemetryValue] with Serialize:
     `gen_ai.request.model`. Values remain structured through the telemetry data-model boundary.
     """
 
-    def from_string_fields(fields: Dict[str, str]) -> Attributes:
+    pub def from_string_fields(fields: Dict[str, str]) -> Attributes:
         """
         Convert string fields into structured telemetry attributes.
 

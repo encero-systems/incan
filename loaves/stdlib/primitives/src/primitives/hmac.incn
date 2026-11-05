@@ -51,13 +51,13 @@ pub class HmacSha256Signer:
 
     handle: _HmacSha256
 
-    def update(mut self, chunk: bytes) -> None:
+    pub def update(mut self, chunk: bytes) -> None:
         """
         Add `chunk` to the authenticated byte stream.
         """
         self.handle.update(chunk.as_slice())
 
-    def finalize_bytes(mut self) -> bytes:
+    pub def finalize_bytes(mut self) -> bytes:
         """
         Return the tag for the bytes supplied so far, resetting the handle for the next stream.
         """
@@ -71,7 +71,7 @@ pub class hmac_sha256:
     """
 
     @staticmethod
-    def digest(key: bytes, data: bytes) -> bytes:
+    pub def digest(key: bytes, data: bytes) -> bytes:
         """
         Return the HMAC-SHA256 tag for `data` under `key`.
         """
@@ -80,14 +80,14 @@ pub class hmac_sha256:
         return signer.finalize_bytes()
 
     @staticmethod
-    def new(key: bytes) -> HmacSha256Signer:
+    pub def new(key: bytes) -> HmacSha256Signer:
         """
         Create an incremental signer keyed with `key`.
         """
         return HmacSha256Signer(handle=_must_keyed(key))
 
     @staticmethod
-    def verify(key: bytes, data: bytes, tag: bytes) -> bool:
+    pub def verify(key: bytes, data: bytes, tag: bytes) -> bool:
         """
         Return whether `tag` authenticates `data` under `key`, comparing in constant time.
 

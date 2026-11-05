@@ -21,7 +21,7 @@ class Box:
     base: int
 
     @preserve()
-    def total(self, extra: int) -> int:
+    pub def total(self, extra: int) -> int:
         return self.base + extra
 
 

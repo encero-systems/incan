@@ -30,7 +30,7 @@ pub model Card:
     size: int = 4
     pub label: str = "card"
 
-    def describe(self) -> str:
+    pub def describe(self) -> str:
         return f"{self.label} of size {self.size}"
 
 

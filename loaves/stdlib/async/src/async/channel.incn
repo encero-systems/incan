@@ -99,7 +99,7 @@ pub type Sender[T] = newtype RawSender[T]:
     producers to feed one receiver.
     """
 
-    async def send(self, value: T) -> Result[None, SendError[T]]:
+    pub async def send(self, value: T) -> Result[None, SendError[T]]:
         """
         Send a value through the channel.
 
@@ -114,7 +114,7 @@ pub type Sender[T] = newtype RawSender[T]:
             Ok(_) => return Ok(None)
             Err(err) => return Err(SendError(value=err.into_value()))
 
-    async def reserve(self) -> Result[SenderPermit[T], SendError[None]]:
+    pub async def reserve(self) -> Result[SenderPermit[T], SendError[None]]:
         """
         Reserve capacity for one future send.
 
@@ -129,7 +129,7 @@ pub type Sender[T] = newtype RawSender[T]:
             Ok(permit) => return Ok(SenderPermit(permit))
             Err(err) => return Err(SendError(value=err.into_value()))
 
-    def try_send(self, value: T) -> Result[None, SendError[T]]:
+    pub def try_send(self, value: T) -> Result[None, SendError[T]]:
         """
         Try to send without blocking.
 
@@ -140,11 +140,11 @@ pub type Sender[T] = newtype RawSender[T]:
             Ok(_) => return Ok(None)
             Err(err) => return Err(SendError(value=err.into_value()))
 
-    def is_closed(self) -> bool:
+    pub def is_closed(self) -> bool:
         """Check whether the receiver side has been closed."""
         return rust_sender_is_closed(self.0)
 
-    def clone(self) -> Self:
+    pub def clone(self) -> Self:
         """Create another sending handle for the same channel."""
         return Sender(self.0.clone())
 
@@ -157,7 +157,7 @@ pub type SenderPermit[T] = newtype RawSenderPermit[T]:
     and can still fail if the receiver closes after reservation.
     """
 
-    def send(self, value: T) -> Result[None, SendError[T]]:
+    pub def send(self, value: T) -> Result[None, SendError[T]]:
         """
         Send a value using this permit.
 
@@ -177,7 +177,7 @@ pub type Receiver[T] = newtype RawReceiver[T]:
     A channel has exactly one receiver, which pulls values in send order.
     """
     
-    async def recv(self) -> Option[T]:
+    pub async def recv(self) -> Option[T]:
         """
         Receive the next value.
 
@@ -188,7 +188,7 @@ pub type Receiver[T] = newtype RawReceiver[T]:
         """
         return await rust_receiver_recv(self.0)
 
-    def try_recv(self) -> Option[T]:
+    pub def try_recv(self) -> Option[T]:
         """
         Try to receive without blocking.
 
@@ -196,7 +196,7 @@ pub type Receiver[T] = newtype RawReceiver[T]:
         """
         return rust_receiver_try_recv(self.0)
 
-    def close(self) -> bool:
+    pub def close(self) -> bool:
         """
         Try to close the channel, preventing further sends.
 
@@ -268,7 +268,7 @@ pub type OneshotSender[T] = newtype RawOneshotSender[T]:
     It carries exactly one value from one sender to one receiver.
     This is useful for returning a single result from a background task.
     """
-    def send(self, value: T) -> Result[None, T]:
+    pub def send(self, value: T) -> Result[None, T]:
         """
         Send the single value carried by this one-shot sender.
         Returns the value back if the receiver is already gone.
@@ -287,7 +287,7 @@ pub type OneshotReceiver[T] = newtype RawOneshotReceiver[T]:
     This is useful for returning a single result from a background task.
     """
 
-    async def recv(self) -> Result[T, RecvError]:
+    pub async def recv(self) -> Result[T, RecvError]:
         """
         Wait for the one-shot value or return `RecvError` if the sender was dropped.
 

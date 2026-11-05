@@ -8,7 +8,7 @@
 class Counter:
     pub count: int
 
-    def bump(mut self) -> None:
+    pub def bump(mut self) -> None:
         self.count += 1
 
 

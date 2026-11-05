@@ -11,7 +11,7 @@
 class Cursor:
     pub name: str
 
-    def join(self, other: Self, on: bool) -> Self:
+    pub def join(self, other: Self, on: bool) -> Self:
         return Cursor(name=f"{self.name}+{other.name}")
 
 
@@ -19,10 +19,10 @@ class Cursor:
 class Wrapper:
     _cursor: Cursor
 
-    def merge(self, other: Self) -> Self:
+    pub def merge(self, other: Self) -> Self:
         return Wrapper(_cursor=self._cursor.join(other._cursor, true))
 
-    def label(self) -> str:
+    pub def label(self) -> str:
         return self._cursor.name
 
 

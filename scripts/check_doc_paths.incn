@@ -32,7 +32,7 @@ pub model ExceptionRule:
     pub token: str
     pub reason: str
 
-    def matches(self, document: str, token: str) -> bool:
+    pub def matches(self, document: str, token: str) -> bool:
         """Match subtree exceptions only beneath their slash boundary."""
         if self.document != "*" and self.document != document:
             return False

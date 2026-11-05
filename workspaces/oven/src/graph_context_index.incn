@@ -66,7 +66,7 @@ pub class ContextIndex:
     pub read_bytes: int = 0
     extra: Dict[str, JsonValue] = {}
 
-    def add(mut self, unit: GraphUnit, toolchain: Toolchain, owner: Path) -> Result[None, str]:
+    pub def add(mut self, unit: GraphUnit, toolchain: Toolchain, owner: Path) -> Result[None, str]:
         """Load one identity-bound package index; only its header needs JSON decoding."""
         path = prepare(unit, toolchain, owner)?
         data = f"{path.0}.records"
@@ -99,7 +99,7 @@ pub class ContextIndex:
             return
         self.links.append(ContextLink(source=source, target=target, kind=kind, position=position))
 
-    def join(mut self) -> Result[None, str]:
+    pub def join(mut self) -> Result[None, str]:
         """Join package-scoped declaration keys exactly once, retaining ambiguity and conflicting-meaning refusals."""
         mut by_id: Dict[str, str] = {}
         mut by_identity: Dict[str, str] = {}
@@ -133,14 +133,14 @@ pub class ContextIndex:
                 self.nodes[identifier] = row
         return Ok(None)
 
-    def stable(self, identifier: str) -> str:
+    pub def stable(self, identifier: str) -> str:
         """Use the joined key or the original structured identity, in the same order as graph queries."""
         row = self.nodes[identifier]
         if row.key != "":
             return row.key
         return row.original_identity
 
-    def add_process(mut self, records: list[JsonValue], root: str) -> Result[None, str]:
+    pub def add_process(mut self, records: list[JsonValue], root: str) -> Result[None, str]:
         """Attach current process observations after graph joins, just as ordinary context append did."""
         for record in records:
             if not eligible(record):
@@ -151,7 +151,7 @@ pub class ContextIndex:
             self.extra[identifier] = record
         return Ok(None)
 
-    def rank(self, task: str, preferences: Dict[str, int]) -> Result[tuple[Dict[str, int], Dict[str, str]], str]:
+    pub def rank(self, task: str, preferences: Dict[str, int]) -> Result[tuple[Dict[str, int], Dict[str, str]], str]:
         """
         Preserve task scores and both propagation waves without reading a graph payload.
 
@@ -227,7 +227,7 @@ pub class ContextIndex:
                     scores[identifier] = scores.get(identifier).unwrap_or(0) + 100
         return Ok(scores)
 
-    def node(mut self, identifier: str) -> Result[JsonValue, str]:
+    pub def node(mut self, identifier: str) -> Result[JsonValue, str]:
         """Decode one ranked node and attach its globally joined identity, leaving unrelated payloads unread."""
         if identifier in self.extra:
             return Ok(self.extra[identifier])
@@ -238,7 +238,7 @@ pub class ContextIndex:
             fields["stable_key"] = JsonValue.string(row.key)
         return Ok(JsonValue.object(fields))
 
-    def minimum_tokens(self, identifier: str, format: str) -> Result[int, str]:
+    pub def minimum_tokens(self, identifier: str, format: str) -> Result[int, str]:
         """
         Bound a node's serialized bytes from below without opening its payload.
 
@@ -253,7 +253,7 @@ pub class ContextIndex:
         stable = tokens(json_text(JsonValue.string(self.stable(identifier)))?)
         return Ok(number(row.structured_minimum)? + named + stable - 4)
 
-    def contribution(self, identifier: str, format: str, local: str, score: int, reason: str) -> Result[int, str]:
+    pub def contribution(self, identifier: str, format: str, local: str, score: int, reason: str) -> Result[int, str]:
         """Measure the exact rendered contribution from prepared fixed fields and current ranking fields."""
         size = self.minimum_tokens(identifier, format)?
         reason_size = tokens(json_text(JsonValue.string(reason))?)
@@ -263,7 +263,7 @@ pub class ContextIndex:
             added += tokens(str(score)) - 1
         return Ok(added)
 
-    def edges(mut self, local: Dict[str, str]) -> Result[list[JsonValue], str]:
+    pub def edges(mut self, local: Dict[str, str]) -> Result[list[JsonValue], str]:
         """Decode relationships only when both endpoints reached the answer."""
         mut records: list[JsonValue] = []
         mut selected: list[RecordRange] = []

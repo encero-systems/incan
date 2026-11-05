@@ -7,11 +7,11 @@ class Address:
     pub city: str
     pub postcode: str
 
-    def set_city(mut self, city: str) -> Reference[Self] from self:
+    pub def set_city(mut self, city: str) -> Reference[Self] from self:
         self.city = city
         return self
 
-    def set_postcode(mut self, postcode: str) -> Reference[Self] from self:
+    pub def set_postcode(mut self, postcode: str) -> Reference[Self] from self:
         self.postcode = postcode
         return self
 

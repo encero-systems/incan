@@ -24,7 +24,7 @@ mod forward_references;
 mod functions;
 mod imports;
 pub(in crate::typechecker) mod loaf_imports;
-mod method_visibility;
+pub(in crate::typechecker) mod method_visibility;
 mod nominal_declarations;
 mod rust_imports;
 mod std_root_imports;

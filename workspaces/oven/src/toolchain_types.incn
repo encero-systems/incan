@@ -10,7 +10,7 @@ pub model NativeCrate:
     pub name: str
     pub path: str
 
-    def to_json(self) -> JsonValue:
+    pub def to_json(self) -> JsonValue:
         """The crate as the unit description spells it."""
         return JsonValue.object({"name": JsonValue.string(self.name), "path": JsonValue.string(self.path)})
 
@@ -39,7 +39,7 @@ pub model Toolchain:
     # A unit-record activation cannot retain the bulk compiler's decoded caches while idle (#2481, S3).
     pub retire_worker: bool = false
 
-    def installed(self) -> InstalledCompiler:
+    pub def installed(self) -> InstalledCompiler:
         """Project frozen compiler facts without retaining any request-local readers or console selection."""
         return InstalledCompiler(
             driver=self.driver,
@@ -67,7 +67,7 @@ pub model InstalledCompiler:
     pub c_compiler: str
     pub target: str
 
-    def select(self) -> Toolchain:
+    pub def select(self) -> Toolchain:
         """Create fresh request-local state around this admitted compiler description."""
         return Toolchain(
             driver=self.driver,

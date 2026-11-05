@@ -32,7 +32,7 @@ pub class File with BinaryReader:
     pub errors: Option[str]
     pub newline: Option[str]
 
-    def read(self, size: int) -> Result[str, IoError]:
+    pub def read(self, size: int) -> Result[str, IoError]:
         """
         Read text from the current cursor.
 
@@ -67,7 +67,7 @@ pub class File with BinaryReader:
             Ok(_) => return Ok(buf)
             Err(err) => return Err(_io_error(self.path, err))
 
-    def read_exact(self, size: int) -> Result[bytes, IoError]:
+    pub def read_exact(self, size: int) -> Result[bytes, IoError]:
         """
         Read exactly `size` bytes.
 
@@ -82,7 +82,7 @@ pub class File with BinaryReader:
             return Err(_fs_error(self.path, "unexpected_eof", "file ended before read_exact size"))
         return Ok(chunk)
 
-    def write(self, data: str) -> Result[int, IoError]:
+    pub def write(self, data: str) -> Result[int, IoError]:
         """
         Write text at the current cursor.
 
@@ -103,7 +103,7 @@ pub class File with BinaryReader:
             Ok(_) => return Ok(len(out))
             Err(err) => return Err(_io_error(self.path, err))
 
-    def write_bytes(self, data: bytes) -> Result[int, IoError]:
+    pub def write_bytes(self, data: bytes) -> Result[int, IoError]:
         """
         Write bytes at the current cursor.
 
@@ -118,7 +118,7 @@ pub class File with BinaryReader:
             Ok(_) => return Ok(len(data))
             Err(err) => return Err(_io_error(self.path, err))
 
-    def tell(self) -> Result[int, IoError]:
+    pub def tell(self) -> Result[int, IoError]:
         """
         Return the current byte offset.
 
@@ -130,7 +130,7 @@ pub class File with BinaryReader:
             Ok(pos) => return Ok(int(pos))
             Err(err) => return Err(_io_error(self.path, err))
 
-    def seek(self, offset: int, whence: int) -> Result[int, IoError]:
+    pub def seek(self, offset: int, whence: int) -> Result[int, IoError]:
         """
         Move the file cursor and return the new byte offset.
 
@@ -166,7 +166,7 @@ pub class File with BinaryReader:
                 Ok(new_pos) => return Ok(int(new_pos))
                 Err(err) => return Err(_io_error(self.path, err))
 
-    def flush(self) -> Result[None, IoError]:
+    pub def flush(self) -> Result[None, IoError]:
         """
         Flush buffered writes from the handle.
 
@@ -178,7 +178,7 @@ pub class File with BinaryReader:
             Ok(_) => return Ok(None)
             Err(err) => return Err(_io_error(self.path, err))
 
-    def sync(self) -> Result[None, IoError]:
+    pub def sync(self) -> Result[None, IoError]:
         """
         Synchronize file data and metadata to durable storage.
 
@@ -190,7 +190,7 @@ pub class File with BinaryReader:
             Ok(_) => return Ok(None)
             Err(err) => return Err(_io_error(self.path, err))
 
-    def fsync(self) -> Result[None, IoError]:
+    pub def fsync(self) -> Result[None, IoError]:
         """
         Synchronize file data and metadata to durable storage.
 
@@ -199,7 +199,7 @@ pub class File with BinaryReader:
         """
         return self.sync()
 
-    def sync_data(self) -> Result[None, IoError]:
+    pub def sync_data(self) -> Result[None, IoError]:
         """
         Synchronize file data without requiring all metadata.
 
@@ -234,7 +234,7 @@ pub class OpenOptions:
     pub creating: bool = false
     pub creating_new: bool = false
 
-    def read(mut self, value: bool) -> OpenOptions:
+    pub def read(mut self, value: bool) -> OpenOptions:
         """
         Set read access.
 
@@ -247,7 +247,7 @@ pub class OpenOptions:
         self.readable = value
         return self
 
-    def write(mut self, value: bool) -> OpenOptions:
+    pub def write(mut self, value: bool) -> OpenOptions:
         """
         Set write access.
 
@@ -260,7 +260,7 @@ pub class OpenOptions:
         self.writable = value
         return self
 
-    def append(mut self, value: bool) -> OpenOptions:
+    pub def append(mut self, value: bool) -> OpenOptions:
         """
         Set append mode.
 
@@ -273,7 +273,7 @@ pub class OpenOptions:
         self.appendable = value
         return self
 
-    def truncate(mut self, value: bool) -> OpenOptions:
+    pub def truncate(mut self, value: bool) -> OpenOptions:
         """
         Set truncate-on-open behavior.
 
@@ -286,7 +286,7 @@ pub class OpenOptions:
         self.truncating = value
         return self
 
-    def create(mut self, value: bool) -> OpenOptions:
+    pub def create(mut self, value: bool) -> OpenOptions:
         """
         Set create-if-missing behavior.
 
@@ -299,7 +299,7 @@ pub class OpenOptions:
         self.creating = value
         return self
 
-    def create_new(mut self, value: bool) -> OpenOptions:
+    pub def create_new(mut self, value: bool) -> OpenOptions:
         """
         Set exclusive creation behavior.
 
@@ -312,7 +312,7 @@ pub class OpenOptions:
         self.creating_new = value
         return self
 
-    def open(self, path: Union[Path, str]) -> Result[File, IoError]:
+    pub def open(self, path: Union[Path, str]) -> Result[File, IoError]:
         """
         Open a path with these flags.
 

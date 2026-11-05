@@ -29,7 +29,7 @@ model Wrapper[T]:
 class Counter:
     pub count: int
 
-    def bump(mut self, by: int) -> None:
+    pub def bump(mut self, by: int) -> None:
         self.count += by
 
     bump_one = partial bump(by=1)

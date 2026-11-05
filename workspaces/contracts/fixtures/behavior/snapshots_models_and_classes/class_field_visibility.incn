@@ -10,7 +10,7 @@ pub class LazyFrame:
     _cursor: int
     pub schema: str
 
-    def cursor(self) -> int:
+    pub def cursor(self) -> int:
         return self._cursor
 
 

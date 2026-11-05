@@ -51,7 +51,7 @@ pub model InstanceQueue:
     pub pending: VecDeque[Instance]
     pub seen: BTreeMap[InstanceKey, list[list[LocalDecl]]]
 
-    def add(mut self, request: Instance) -> None:
+    pub def add(mut self, request: Instance) -> None:
         """Preserve the first request with the same canonical arguments, local declarations, storage and role."""
         key = (request.body.canonical, request.arguments, request.owned_callable_slots, request.original_callable)
         match self.seen.get(key):

@@ -7,6 +7,6 @@ pub model Account:
     _secret: int
 
     @staticmethod
-    def create(kind: str, tier: int, secret: int) -> Account:
+    pub def create(kind: str, tier: int, secret: int) -> Account:
         """Build an account; only the model's own methods may set its private field."""
         return Account(kind=kind, tier=tier, _secret=secret)

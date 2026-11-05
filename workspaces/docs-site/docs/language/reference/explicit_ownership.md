@@ -27,7 +27,7 @@ def replace(mut value: BorrowedMut[int]) -> None:
 def main() -> int:
     mut value = 3
     replace(value)
-    return value  # 9
+    return value  # accepted: returns 9
 ```
 
 A call borrows each borrowed argument from existing storage for the invocation. A fresh expression supplies temporary storage for that call. Borrowing a variable through parentheses preserves that variable's permissions; it does not create a fresh writable owner. Assigning to a writable borrowed parameter replaces the caller's value; assigning to a mutable owned parameter replaces the callee's own value. Immutable, static and interop access restrictions still apply: an annotation cannot grant permission to change a source that is otherwise read-only.
@@ -125,8 +125,8 @@ A call that returns a view borrows the source argument for as long as the view i
 def main() -> None:
     mut customer = Customer(name="Sam", address=Address(city="Utrecht"))
     mut address = customer.edit_address()
-    customer.name = "Samuel"  # a disjoint sibling field
-    address.city = "Rotterdam"  # writes customer.address.city
+    customer.name = "Samuel"  # accepted: a disjoint sibling field
+    address.city = "Rotterdam"  # accepted: writes customer.address.city
 ```
 
 A returned view can itself be the source of a further view or a fluent call; every derived view keeps the original source dependency. A view placed in a `Result`, an `Option`, a tuple or another value keeps its dependency through that value.
@@ -188,7 +188,7 @@ def add_or_grow(mut buffer: BorrowedMut[SampleBuffer], sample: int) -> int:
     match buffer.append(sample):
         Ok(view) => return len(view.samples)
         Err(_) =>
-            buffer.capacity += 1  # the error arm holds no view
+            buffer.capacity += 1  # accepted: the error arm holds no view
             return 0
 ```
 
@@ -199,7 +199,7 @@ class Tag:
     pub name: str
     pub hits: int
 
-    def label(self) -> Tuple[int, Borrowed[str]] from self.name:
+    pub def label(self) -> Tuple[int, Borrowed[str]] from self.name:
         return (self.hits, self.name)
 
 
@@ -226,12 +226,12 @@ def after_last_call(start: int) -> int:
     view: Borrowed[int] = owned
     read: () -> int = () => view + 1
     seen = read()
-    owned += 10  # after the closure's last call
+    owned += 10  # accepted: after the closure's last call
     return seen + owned
 
 
 def label_width(name: Borrowed[str], pad: int) -> int:
-    width: (int) -> int = (extra) => len(name) + pad + extra  # holds a reference to name
+    width: (int) -> int = (extra) => len(name) + pad + extra  # accepted: holds a reference to name
     return width(1) + width(2)
 ```
 
@@ -246,7 +246,7 @@ from rust::std::collections import HashMap
 
 
 def add(mut counts: BorrowedMut[HashMap[str, int]], key: str) -> bool:
-    counts.insert(key, 1)  # moves key into the map
+    counts.insert(key, 1)  # accepted: moves key into the map
     return counts.contains_key("b")
 
 

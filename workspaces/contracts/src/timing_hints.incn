@@ -10,21 +10,21 @@ pub model Costs:
 
     values: dict[str, int] = {}
 
-    def load(mut self, table: Path) -> None:
+    pub def load(mut self, table: Path) -> None:
         """Replace scheduling evidence with the bounded optional table; absent storage means no hints."""
         self.values = read_costs(table)
 
-    def duration(self, project: Path) -> int:
+    pub def duration(self, project: Path) -> int:
         """Use a project's corpus-local name solely as a scheduling hint, never as an artifact identity."""
         if project.name() in self.values:
             return self.values[project.name()]
         return 0
 
-    def include(mut self, project: Path) -> None:
+    pub def include(mut self, project: Path) -> None:
         """Merge a project's bounded elapsed observation while retaining the larger known cost."""
         self.values[project.name()] = max([self.duration(project), elapsed_hint(project)])
 
-    def rows(self) -> list[str]:
+    pub def rows(self) -> list[str]:
         """Render the optional duration table in stable project-name order."""
         return [f"{name}\t{self.values[name]}" for name in sorted([name for name in self.values.keys()])]
 

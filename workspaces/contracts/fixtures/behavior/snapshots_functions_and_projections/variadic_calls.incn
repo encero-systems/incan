@@ -18,7 +18,7 @@ def collect_via_callable(xs: list[int], kw: dict[str, str]) -> int:
 
 
 class Collector:
-    def collect(self, *items: int, **labels: str) -> int:
+    pub def collect(self, *items: int, **labels: str) -> int:
         mut total: int = 0
         for item in items:
             total += item

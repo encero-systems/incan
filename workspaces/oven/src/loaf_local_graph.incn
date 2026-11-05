@@ -425,7 +425,7 @@ pub model LocalEdge:
     pub project: str
     pub domain: DependencyDomain
 
-    def key(self) -> str:
+    pub def key(self) -> str:
         """The key of the facet this edge reaches, as `LocalFacet.key` gives it."""
         return f"{self.project}@{self.domain.value()}"
 
@@ -446,7 +446,7 @@ pub model LocalFacet:
     pub package: str = ""
     pub version: str = ""
 
-    def key(self) -> str:
+    pub def key(self) -> str:
         """What names the facet in a build: its project and compilation domain."""
         return f"{self.project}@{self.domain.value()}"
 
@@ -475,7 +475,7 @@ pub class LocalFacetSession:
     selections: list[FacetSelection] = []
     by_owner: Dict[str, int] = {}
 
-    def facets(mut self, root: LocalDemand, additional_roots: list[LocalDemand] = []) -> Result[list[LocalFacet], str]:
+    pub def facets(mut self, root: LocalDemand, additional_roots: list[LocalDemand] = []) -> Result[list[LocalFacet], str]:
         """
         Select an explicit root set without inheriting a previous invocation's feature demands.
 

@@ -15,13 +15,13 @@ class Counter:
     pub value: int
     pub open: bool
 
-    def bump(mut self) -> Result[Reference[Self], str] from self:
+    pub def bump(mut self) -> Result[Reference[Self], str] from self:
         if not self.open:
             return Err("closed")
         self.value += 1
         return Ok(self)
 
-    def peek(self, wanted: int) -> Option[Borrowed[Self]] from self:
+    pub def peek(self, wanted: int) -> Option[Borrowed[Self]] from self:
         if self.value == wanted:
             return Some(self)
         return None

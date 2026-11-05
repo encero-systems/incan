@@ -8,5 +8,5 @@ pub model HyperquantIndex:
 pub class IndexBuilder:
     pub size: int = 3
 
-    def build(self) -> HyperquantIndex:
+    pub def build(self) -> HyperquantIndex:
         return HyperquantIndex(size=self.size)

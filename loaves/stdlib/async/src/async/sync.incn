@@ -86,11 +86,11 @@ pub type Mutex[T with Clone] = newtype RawMutex[T]:
     """
 
     @staticmethod
-    def new(value: T) -> Self:
+    pub def new(value: T) -> Self:
         """Create a new mutex wrapping the given value"""
         return Mutex(rust_mutex_new(value))
 
-    async def lock(self) -> MutexGuard[T]:
+    pub async def lock(self) -> MutexGuard[T]:
         """
         Acquire the lock, blocking until available.
 
@@ -102,7 +102,7 @@ pub type Mutex[T with Clone] = newtype RawMutex[T]:
         """
         return MutexGuard(await rust_mutex_lock(self.0))
 
-    def try_lock(self) -> Option[MutexGuard[T]]:
+    pub def try_lock(self) -> Option[MutexGuard[T]]:
         """
         Try to acquire the lock without blocking.
 
@@ -127,11 +127,11 @@ pub type MutexGuard[T with Clone] = newtype RawMutexGuard[T]:
         guard.set(guard.get() + 1)
     """
 
-    def get(self) -> T:
+    pub def get(self) -> T:
         """Get the current value (by reference)"""
         return rust_mutex_guard_get(self.0)
 
-    def set(self, value: T) -> None:
+    pub def set(self, value: T) -> None:
         """Set a new value"""
         return rust_mutex_guard_set(self.0, value)
 
@@ -160,11 +160,11 @@ pub type RwLock[T with Clone] = newtype RawRwLock[T]:
     """
 
     @staticmethod
-    def new(value: T) -> Self:
+    pub def new(value: T) -> Self:
         """Create a new RwLock wrapping the given value"""
         return RwLock(rust_rwlock_new(value))
 
-    async def read(self) -> RwLockReadGuard[T]:
+    pub async def read(self) -> RwLockReadGuard[T]:
         """
         Acquire a read lock.
 
@@ -176,7 +176,7 @@ pub type RwLock[T with Clone] = newtype RawRwLock[T]:
         """
         return RwLockReadGuard(await rust_rwlock_read(self.0))
 
-    async def write(self) -> RwLockWriteGuard[T]:
+    pub async def write(self) -> RwLockWriteGuard[T]:
         """
         Acquire a write lock.
 
@@ -187,14 +187,14 @@ pub type RwLock[T with Clone] = newtype RawRwLock[T]:
         """
         return RwLockWriteGuard(await rust_rwlock_write(self.0))
 
-    def try_read(self) -> Option[RwLockReadGuard[T]]:
+    pub def try_read(self) -> Option[RwLockReadGuard[T]]:
         """Try to acquire a read lock without blocking"""
         match rust_rwlock_try_read(self.0):
             Some(guard) => return Some(RwLockReadGuard(guard))
             None => return None
 
 
-    def try_write(self) -> Option[RwLockWriteGuard[T]]:
+    pub def try_write(self) -> Option[RwLockWriteGuard[T]]:
         """Try to acquire a write lock without blocking"""
         match rust_rwlock_try_write(self.0):
             Some(guard) => return Some(RwLockWriteGuard(guard))
@@ -205,7 +205,7 @@ pub type RwLock[T with Clone] = newtype RawRwLock[T]:
 pub type RwLockReadGuard[T with Clone] = newtype RawRwLockReadGuard[T]:
     """Guard for read access to RwLock-protected data"""
 
-    def get(self) -> T:
+    pub def get(self) -> T:
         """Get the current value (read-only)"""
         return rust_rwlock_read_guard_get(self.0)
 
@@ -213,11 +213,11 @@ pub type RwLockReadGuard[T with Clone] = newtype RawRwLockReadGuard[T]:
 pub type RwLockWriteGuard[T with Clone] = newtype RawRwLockWriteGuard[T]:
     """Guard for write access to RwLock-protected data"""
 
-    def get(self) -> T:
+    pub def get(self) -> T:
         """Get the current value (read-only)"""
         return rust_rwlock_write_guard_get(self.0)
 
-    def set(self, value: T) -> None:
+    pub def set(self, value: T) -> None:
         """Set a new value"""
         return rust_rwlock_write_guard_set(self.0, value)
 
@@ -245,11 +245,11 @@ pub type Semaphore = newtype RawSemaphore:
     """
 
     @staticmethod
-    def new(permits: int) -> Self:
+    pub def new(permits: int) -> Self:
         """Create a new semaphore with the given number of permits"""
         return Semaphore(rust_semaphore_new(permits))
 
-    async def acquire(self) -> Result[SemaphorePermit, SemaphoreAcquireError]:
+    pub async def acquire(self) -> Result[SemaphorePermit, SemaphoreAcquireError]:
         """
         Acquire a permit, blocking until one is available.
 
@@ -263,14 +263,14 @@ pub type Semaphore = newtype RawSemaphore:
             Ok(permit) => return Ok(SemaphorePermit(permit))
             Err(_err) => return Err(SemaphoreAcquireError())
 
-    def try_acquire(self) -> Option[SemaphorePermit]:
+    pub def try_acquire(self) -> Option[SemaphorePermit]:
         """Try to acquire a permit without blocking"""
         match rust_semaphore_try_acquire(self.0):
             Some(permit) => return Some(SemaphorePermit(permit))
             None => return None
 
 
-    def available_permits(self) -> int:
+    pub def available_permits(self) -> int:
         """Get the number of available permits"""
         return rust_semaphore_available_permits(self.0)
 
@@ -303,11 +303,11 @@ pub type Barrier = newtype RawBarrier:
     """
 
     @staticmethod
-    def new(count: int) -> Self:
+    pub def new(count: int) -> Self:
         """Create a barrier that waits for `count` tasks"""
         return Barrier(rust_barrier_new(count))
 
-    async def wait(self) -> int:
+    pub async def wait(self) -> int:
         """
         Wait at the barrier until all tasks arrive.
 

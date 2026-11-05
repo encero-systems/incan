@@ -4,7 +4,7 @@
 class Address:
     pub city: str
 
-    def set_city(mut self, city: str) -> Reference[Self] from self:
+    pub def set_city(mut self, city: str) -> Reference[Self] from self:
         self.city = city
         return self
 
@@ -13,7 +13,7 @@ class Customer:
     pub name: str
     pub address: Address
 
-    def edit_address(mut self) -> Reference[Address] from self.address:
+    pub def edit_address(mut self) -> Reference[Address] from self.address:
         return self.address
 
 

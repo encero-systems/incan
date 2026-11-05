@@ -14,13 +14,13 @@ class Counter:
     pub value: int
     pub open: bool
 
-    def bump(mut self) -> Result[Reference[Self], str] from self:
+    pub def bump(mut self) -> Result[Reference[Self], str] from self:
         if not self.open:
             return Err("closed")
         self.value += 1
         return Ok(self)
 
-    def expect(self, wanted: int) -> Result[Borrowed[Self], str] from self:
+    pub def expect(self, wanted: int) -> Result[Borrowed[Self], str] from self:
         if self.value != wanted:
             return Err("mismatch")
         return Ok(self)
