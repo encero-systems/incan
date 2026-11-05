@@ -11,7 +11,7 @@
     - RFC 082 (checked API documentation generation)
     - RFC 085 (field metadata and type-shaped constraints)
     - RFC 086 (schema descriptors and adapters)
-    - RFC 091 (constrained integer newtype storage carriers)
+    - RFC 091 (integer storage carriers)
 - **Issue:** [#667](https://github.com/encero-systems/incan/issues/667)
 - **RFC PR:** —
 - **Written against:** v0.3

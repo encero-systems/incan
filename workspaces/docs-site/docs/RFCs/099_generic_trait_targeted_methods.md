@@ -10,7 +10,7 @@
     - RFC 042 (traits are always abstract)
     - RFC 043 (Rust trait implementation from Incan)
     - RFC 056 (`std.io`)
-    - RFC 091 (constrained integer newtype storage carriers)
+    - RFC 091 (integer storage carriers)
     - RFC 098 (native associated types for traits)
     - RFC 101 (`std.collections.OrdinalMap`)
     - RFC 131 (typed error umbrellas and retained validation failures)
