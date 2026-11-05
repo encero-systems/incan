@@ -137,8 +137,8 @@ pub enum KeywordActivation {
     Hard,
     /// Contextual keyword: always available in a parser-owned syntactic position without being reserved elsewhere.
     Contextual,
-    /// Soft keyword: reserved only after importing the activating stdlib namespace.
-    Soft { namespace: &'static str },
+    /// Soft keyword: reserved only after importing an activating stdlib namespace.
+    Soft { namespaces: &'static [&'static str] },
 }
 
 /// Parser handoff shape for registry-driven surface keywords.
@@ -326,7 +326,7 @@ pub const KEYWORDS: &[KeywordDescriptor] = &[
     info_soft(
         KeywordId::Async,
         "async",
-        "async",
+        &["async", "primitives.async"],
         KeywordSurfaceKind::DeclarationModifier,
         KeywordCategory::Definition,
         &[KeywordUsage::Modifier],
@@ -337,7 +337,7 @@ pub const KEYWORDS: &[KeywordDescriptor] = &[
     info_soft(
         KeywordId::Await,
         "await",
-        "async",
+        &["async", "primitives.async"],
         KeywordSurfaceKind::PrefixExpression,
         KeywordCategory::Definition,
         &[KeywordUsage::Expression],
@@ -693,16 +693,26 @@ pub fn supports_surface_kind(id: KeywordId, kind: KeywordSurfaceKind) -> bool {
     surface_kind(id) == Some(kind)
 }
 
-/// Activation namespace for soft keywords.
+/// Primary activation namespace for soft keywords.
 ///
 /// ## Returns
-/// - `Some("namespace")` if this keyword is import-activated.
+/// - The first configured namespace if this keyword is import-activated.
 /// - `None` if this keyword is hard or contextual.
 pub fn activation(id: KeywordId) -> Option<&'static str> {
     match info_for(id).activation {
         KeywordActivation::Hard => None,
         KeywordActivation::Contextual => None,
-        KeywordActivation::Soft { namespace } => Some(namespace),
+        KeywordActivation::Soft { namespaces } => namespaces.first().copied(),
+    }
+}
+
+/// All activation namespaces for a soft keyword.
+///
+/// Hard and contextual keywords return an empty slice.
+pub fn activations(id: KeywordId) -> &'static [&'static str] {
+    match info_for(id).activation {
+        KeywordActivation::Soft { namespaces } => namespaces,
+        KeywordActivation::Hard | KeywordActivation::Contextual => &[],
     }
 }
 
@@ -775,17 +785,29 @@ pub fn from_str_hard_only(s: &str) -> Option<KeywordId> {
     from_str(s).filter(|id| is_hard(*id))
 }
 
-/// Resolve soft keywords activated by a stdlib namespace.
+/// Resolve soft keywords activated by a stdlib namespace or one of its submodules.
 pub fn soft_keywords_for_namespace(namespace: &str) -> Vec<KeywordId> {
     KEYWORDS
         .iter()
         .filter_map(|k| match k.activation {
-            KeywordActivation::Soft {
-                namespace: activation_namespace,
-            } if activation_namespace == namespace => Some(k.id),
+            KeywordActivation::Soft { namespaces }
+                if namespaces
+                    .iter()
+                    .any(|activation_namespace| namespace_matches(activation_namespace, namespace)) =>
+            {
+                Some(k.id)
+            }
             _ => None,
         })
         .collect()
+}
+
+/// Return whether an imported namespace is an activation namespace or one of its submodules.
+fn namespace_matches(activation_namespace: &str, imported_namespace: &str) -> bool {
+    activation_namespace == imported_namespace
+        || imported_namespace
+            .strip_prefix(activation_namespace)
+            .is_some_and(|suffix| suffix.starts_with('.'))
 }
 
 // --- helpers -----------------------------------------------------------------
@@ -833,7 +855,7 @@ const fn info_with_aliases(
 const fn info_soft(
     id: KeywordId,
     canonical: &'static str,
-    activation_namespace: &'static str,
+    activation_namespaces: &'static [&'static str],
     surface_kind: KeywordSurfaceKind,
     category: KeywordCategory,
     usage: &'static [KeywordUsage],
@@ -846,7 +868,7 @@ const fn info_soft(
         canonical,
         aliases: &[],
         activation: KeywordActivation::Soft {
-            namespace: activation_namespace,
+            namespaces: activation_namespaces,
         },
         surface_kind: Some(surface_kind),
         category,
@@ -919,8 +941,19 @@ mod tests {
     fn assert_keyword_is_contextual_and_not_import_activated() {
         assert_eq!(activation_kind(KeywordId::Assert), KeywordActivation::Contextual);
         assert_eq!(activation(KeywordId::Assert), None);
+        assert!(activations(KeywordId::Assert).is_empty());
         assert!(is_soft(KeywordId::Assert));
         assert!(!soft_keywords_for_namespace("testing").contains(&KeywordId::Assert));
+    }
+
+    /// Async syntax activates through both compatible standard-library entry points.
+    #[test]
+    fn async_keywords_use_both_activation_namespaces() {
+        assert_eq!(activations(KeywordId::Async), &["async", "primitives.async"]);
+        assert_eq!(activations(KeywordId::Await), &["async", "primitives.async"]);
+        assert!(soft_keywords_for_namespace("async.time").contains(&KeywordId::Async));
+        assert!(soft_keywords_for_namespace("primitives.async.task").contains(&KeywordId::Await));
+        assert!(!soft_keywords_for_namespace("primitives").contains(&KeywordId::Async));
     }
 
     #[test]

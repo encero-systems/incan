@@ -1,4 +1,5 @@
 use super::*;
+use crate::lang::keywords::KeywordId;
 
 fn segs(parts: &[&str]) -> Vec<String> {
     parts.iter().map(|s| s.to_string()).collect()
@@ -8,6 +9,8 @@ fn segs(parts: &[&str]) -> Vec<String> {
 /// Ordinary package admission and publication ownership share the module catalog.
 fn known_stdlib_modules_cover_existing_surface_paths() {
     assert!(is_known_stdlib_module(&segs(&["std", "primitives"])));
+    assert!(is_known_stdlib_module(&segs(&["std", "primitives", "async"])));
+    assert!(is_known_stdlib_module(&segs(&["std", "primitives", "async", "task"])));
     assert!(is_known_stdlib_module(&segs(&["std", "primitives", "vocab"])));
     let policy = crate::lang::standard_packages::standard_package_namespace_policy("incan_stdlib_primitives");
     assert_eq!(
@@ -70,6 +73,21 @@ fn known_stdlib_modules_cover_existing_surface_paths() {
     assert!(is_known_stdlib_module(&segs(&["std", "collections"])));
     assert!(is_known_stdlib_module(&segs(&["std", "rust"])));
     assert!(is_known_stdlib_module(&segs(&["std", "builtins"])));
+}
+
+/// Both async entry points activate the same keywords while unrelated primitives do not.
+#[test]
+fn async_imports_activate_keywords_from_both_entry_points() {
+    let std_async = soft_keywords_for_import(&segs(&["std", "async", "time"]));
+    let primitive_async = soft_keywords_for_import(&segs(&["std", "primitives", "async", "time"]));
+    let unrelated_primitive = soft_keywords_for_import(&segs(&["std", "primitives", "vocab"]));
+
+    assert!(std_async.contains(&KeywordId::Async));
+    assert!(std_async.contains(&KeywordId::Await));
+    assert!(primitive_async.contains(&KeywordId::Async));
+    assert!(primitive_async.contains(&KeywordId::Await));
+    assert!(!unrelated_primitive.contains(&KeywordId::Async));
+    assert!(!unrelated_primitive.contains(&KeywordId::Await));
 }
 
 #[test]

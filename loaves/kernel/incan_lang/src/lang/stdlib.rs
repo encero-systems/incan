@@ -425,7 +425,7 @@ pub fn soft_keywords_for_import(path: &[String]) -> Vec<keywords::KeywordId> {
     if path.len() < 2 || path[0] != STDLIB_ROOT {
         return Vec::new();
     }
-    keywords::soft_keywords_for_namespace(&path[1])
+    keywords::soft_keywords_for_namespace(&path[1..].join("."))
 }
 
 /// Check if a module path matches a known Incan stdlib module.

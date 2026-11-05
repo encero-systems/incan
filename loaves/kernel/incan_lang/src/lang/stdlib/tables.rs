@@ -504,7 +504,14 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         package: Some("incan_stdlib_primitives"),
         facet: None,
         extra_crate_deps: &[],
-        submodules: &["vocab"],
+        submodules: &[
+            "async",
+            "async.channel",
+            "async.sync",
+            "async.task",
+            "async.time",
+            "vocab",
+        ],
         typechecker_only: false,
     },
 ];

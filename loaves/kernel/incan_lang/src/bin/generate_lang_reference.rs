@@ -181,9 +181,15 @@ fn render_keywords_section(out: &mut String) {
                 .collect::<Vec<_>>()
                 .join(", ")
         };
-        let activation = keywords::activation(k.id)
-            .map(|ns| format!("`std.{}`", ns))
-            .unwrap_or_else(|| "-".to_string());
+        let activation = if keywords::activations(k.id).is_empty() {
+            "-".to_string()
+        } else {
+            keywords::activations(k.id)
+                .iter()
+                .map(|namespace| format!("`std.{namespace}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
         let reservation = match k.activation {
             keywords::KeywordActivation::Hard => "Hard",
             keywords::KeywordActivation::Contextual => "Contextual",
@@ -233,21 +239,22 @@ fn render_keywords_section(out: &mut String) {
 /// Render import-activated soft keywords.
 fn render_soft_keywords_section(out: &mut String) {
     start_section(out, "## Soft keywords");
-    out.push_str("Soft keywords are only reserved when their activating `std.*` namespace is imported.\n\n");
+    out.push_str("Soft keywords are only reserved when one of their activating `std.*` namespaces is imported.\n\n");
 
     out.push_str("| Id | Canonical | Activated by | Category | Usage | RFC | Since | Stability |\n");
     out.push_str("|---|---|---|---|---|---|---|---|\n");
 
     for k in keywords::KEYWORDS
         .iter()
-        .filter(|k| keywords::activation(k.id).is_some())
+        .filter(|k| !keywords::activations(k.id).is_empty())
     {
-        let Some(activation_ns) = keywords::activation(k.id) else {
-            continue;
-        };
         let id = format!("{:?}", k.id);
         let canonical = format!("`{}`", k.canonical);
-        let activated_by = format!("`std.{activation_ns}`");
+        let activated_by = keywords::activations(k.id)
+            .iter()
+            .map(|namespace| format!("`std.{namespace}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
         let category = format!("{:?}", k.category);
         let usage = if k.usage.is_empty() {
             String::new()
