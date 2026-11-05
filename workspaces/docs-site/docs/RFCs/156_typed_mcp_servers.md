@@ -219,7 +219,7 @@ def build_app(server: Server) -> Result[App, McpError]:
     return Ok(App(groups=[server.mount(path="/mcp")?]))
 ```
 
-Over HTTP, `ToolContext.current().principal` comes from the application's `AuthProvider`. Over stdio it is `None`, because the protocol says stdio servers take credentials from the environment.
+Over HTTP, `ToolContext.current().principal` comes from the application's RFC 037 `Authenticated` type. Over stdio it is `None`, because the protocol says stdio servers take credentials from the environment.
 
 ### Print statements and stdio
 
@@ -287,7 +287,7 @@ In stdio mode the AI client starts your program and reads its messages from stan
 ### Authority and evidence
 
 24. Serving `tools/call` is not `host.tool.invoke`. It must emit a receipt under a `std.mcp` capability, identifying the declaration, the authorized scope, the outcome and the available provenance, without protected plaintext.
-25. `caps=` must declare what a call requires under RFC 104. It must never grant anything, and the runtime must check it on each call. A refused call must be a tool execution error with a receipt.
+25. `caps=` must declare what a call requires under RFC 104, and is also a ceiling on what the call may use while it runs. It must never grant anything, and the runtime must check it on each call. A refused call must be a tool execution error with a receipt.
 26. An application state handle must not become an authorization grant.
 27. Each request must run in one RFC 095 span that continues the `traceparent` in `_meta`.
 
@@ -306,7 +306,7 @@ In stdio mode the AI client starts your program and reads its messages from stan
 35. In-flight requests must run through RFC 142's `for_each_concurrent` with `limit=max_concurrent`, with no scheduler of its own.
 36. While `serve_stdio` runs, everything the process and its children write to standard output, including through native libraries, must reach stderr, and only the server must write to the protocol stream.
 37. `std.io` must provide `stdin()` as a `BinaryReader` with an async form, and `stdout()`.
-38. `server.mount(path, ...)` must return a group that serves Streamable HTTP on an RFC 037 `App`, taking the same limits. Authentication must come from the application's `AuthProvider` and `Guard` into `ToolContext.current().principal`, and must not be reimplemented by `std.mcp`.
+38. `server.mount(path, ...)` must return a group that serves Streamable HTTP on an RFC 037 `App`, taking the same limits. Authentication must come from the application's RFC 037 `Authenticated` types and guards into `ToolContext.current().principal`, and must not be reimplemented by `std.mcp`.
 39. `mount` and its `std.web` dependency must be separately selectable, so a server that only uses stdio, such as `incan mcp`, does not carry the web stack.
 
 ### Conformance workloads
