@@ -195,6 +195,10 @@ impl TypeChecker {
     ///
     /// These keys are what the declaration scopes map spellings to, so a field whose type only a submodule publishes
     /// resolves to that declaration's fields and methods. A key another path registered first keeps its entry.
+    ///
+    /// Every member lookup through a public module calls this for the whole library. A registered key is therefore
+    /// skipped before its identity is read: that read scans the library's identity graph several times, and repeating
+    /// it per lookup made this most of a large unit's typecheck.
     pub(super) fn register_pub_library_declarations(
         &mut self,
         library: &str,
@@ -206,8 +210,7 @@ impl TypeChecker {
         };
         let graph = &manifest.contract_metadata.identity_graph;
         for module in &api.modules {
-            let mut scope = root_remapping.clone();
-            scope.extend(self.pub_library_declaration_scope(library, manifest, &module.module_path));
+            let mut scope = None;
             for declaration in &module.declarations {
                 if !matches!(
                     declaration,
@@ -227,26 +230,31 @@ impl TypeChecker {
                 }
                 let name = Self::api_declaration_name(declaration);
                 let key = Self::declaration_type_key(library, &module.module_path, name);
-                let mut source_path = module.module_path.clone();
-                source_path.push(name.to_string());
-                let public_path = std::iter::once(manifest.name.clone())
-                    .chain(source_path.iter().cloned())
-                    .collect::<Vec<_>>();
-                let identity = self.admitted_public_type_identity(
-                    library,
-                    &source_path,
-                    graph.canonical_for_public_path(&public_path),
-                );
-                self.public_library_type_identities
-                    .entry(key.clone())
-                    .or_insert(identity);
+                if !self.public_library_type_identities.contains_key(&key) {
+                    let mut source_path = module.module_path.clone();
+                    source_path.push(name.to_string());
+                    let public_path = std::iter::once(manifest.name.clone())
+                        .chain(source_path.iter().cloned())
+                        .collect::<Vec<_>>();
+                    let identity = self.admitted_public_type_identity(
+                        library,
+                        &source_path,
+                        graph.canonical_for_public_path(&public_path),
+                    );
+                    self.public_library_type_identities.insert(key.clone(), identity);
+                }
                 if self.transitive_pub_types.contains_key(&key)
                     || self.transitive_pub_traits.contains_key(&key)
                     || self.type_aliases.contains_key(&key)
                 {
                     continue;
                 }
-                self.cache_declared_library_type(library, manifest, key, declaration, &scope);
+                let scope = scope.get_or_insert_with(|| {
+                    let mut module_scope = root_remapping.clone();
+                    module_scope.extend(self.pub_library_declaration_scope(library, manifest, &module.module_path));
+                    module_scope
+                });
+                self.cache_declared_library_type(library, manifest, key, declaration, scope);
             }
         }
     }
