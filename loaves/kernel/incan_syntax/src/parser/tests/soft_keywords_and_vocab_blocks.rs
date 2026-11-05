@@ -162,7 +162,7 @@ trait Worker:
 
 #[test]
 fn test_library_import_activates_soft_keywords() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "import pub::mylib\n\nasync def my_func() -> None:\n    pass\n";
+    let source = "import pub::mylib\n\nasync def my_func() -> None:\n    await ready()\n";
     let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
 
     // Without context, async should fail
@@ -180,12 +180,20 @@ fn test_library_import_activates_soft_keywords() -> Result<(), Box<dyn std::erro
             activation: incan_vocab::KeywordActivation::OnImport {
                 namespace: "mylib.dsl".to_string(),
             },
-            keywords: vec![incan_vocab::KeywordSpec {
-                name: "async".to_string(),
-                surface_kind: incan_vocab::KeywordSurfaceKind::FunctionDecl,
-                compound_tokens: Vec::new(),
-                placement: incan_vocab::KeywordPlacement::TopLevel,
-            }],
+            keywords: vec![
+                incan_vocab::KeywordSpec {
+                    name: "async".to_string(),
+                    surface_kind: incan_vocab::KeywordSurfaceKind::FunctionDecl,
+                    compound_tokens: Vec::new(),
+                    placement: incan_vocab::KeywordPlacement::TopLevel,
+                },
+                incan_vocab::KeywordSpec {
+                    name: "await".to_string(),
+                    surface_kind: incan_vocab::KeywordSurfaceKind::PrefixExpression,
+                    compound_tokens: Vec::new(),
+                    placement: incan_vocab::KeywordPlacement::TopLevel,
+                },
+            ],
             valid_decorators: Vec::new(),
         }],
     );

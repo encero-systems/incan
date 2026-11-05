@@ -3,8 +3,8 @@
 from rust::serde import Deserialize as RustDeserialize, Serialize as RustSerialize
 from rust::serde_json import Error as JsonError, from_str, to_string
 from rust::std::panic import panic_any
-from scoped import ScopedSurfaceDescriptor, ScopedSurfaceEligibility
-from crate.primitives.vocab._versions import VOCAB_METADATA_VERSION
+from crate.vocab_contracts.scoped import ScopedSurfaceDescriptor, ScopedSurfaceEligibility
+from crate.vocab_contracts._versions import VOCAB_METADATA_VERSION
 
 
 pub enum KeywordActivation:
@@ -32,6 +32,7 @@ pub enum KeywordPlacement:
 pub enum KeywordSurfaceKind(str):
     """Parser constructs selected by low-level keyword registrations."""
 
+    PrefixExpression = "PrefixExpression"
     FunctionDecl = "FunctionDecl"
     TypeDecl = "TypeDecl"
     ConditionalChain = "ConditionalChain"

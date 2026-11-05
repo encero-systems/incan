@@ -4,7 +4,7 @@
 # expect-stdout-contains:
 #   program `closure_of_a_vocab_descriptor` reaches 2 packages
 #   incan_native_runtime
-#   incan_stdlib_primitives
+#   incan_stdlib_vocab_contracts
 # expect-exit: 0
 
 from std.primitives.vocab import DeclarationSurface

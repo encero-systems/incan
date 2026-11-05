@@ -160,6 +160,8 @@ fn split_spelling(spelling: &str) -> (String, Vec<String>) {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[non_exhaustive]
 pub enum KeywordSurfaceKind {
+    /// A prefix expression such as `await value`.
+    PrefixExpression,
     /// `def name(...):`
     #[default]
     FunctionDecl,

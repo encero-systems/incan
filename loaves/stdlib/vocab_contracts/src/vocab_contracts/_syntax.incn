@@ -1,10 +1,10 @@
 """Foundational structured syntax exchanged with vocabulary transformations."""
 
 from rust::serde import Deserialize as RustDeserialize, Serialize as RustSerialize
-from scoped import ScopedSurfaceReceiver
-from crate.primitives.vocab._descriptors import EmbeddedFragmentSubmode
-from crate.primitives.vocab._versions import VOCAB_SYNTAX_VERSION
-from crate.primitives.vocab.transport import decode_vocab, encode_vocab
+from crate.vocab_contracts.scoped import ScopedSurfaceReceiver
+from crate.vocab_contracts._descriptors import EmbeddedFragmentSubmode
+from crate.vocab_contracts._versions import VOCAB_SYNTAX_VERSION
+from crate.vocab_contracts.transport import decode_vocab, encode_vocab
 
 
 @derive(RustSerialize, RustDeserialize)

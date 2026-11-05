@@ -18,13 +18,12 @@ interfaces=$home_dir/source-interfaces
 mkdir -p "$interfaces"
 print '[]' > "$interfaces/loaves.json"
 
-# Core reexports foundational contracts, so its checking interface requires primitives first.
-for package in primitives core async; do
+# Dependency order.
+for package in vocab_contracts primitives core async; do
     project=$repo/loaves/stdlib/$package
     name=$(sed -nE 's/^name = "([^"]+)"/\1/p' "$project/loaf.toml" | head -1)
     directory=$(mktemp -d "$interfaces/$package.XXXXXX")
     unit=$directory/unit.json
-    # Bind the installed support generation before injecting checking-only source interfaces.
     SELFBUILD_LIBRARY_OUTPUT= "$builder" "$repo" "$package" release > "$unit.prepared"
     jq --slurpfile interfaces "$interfaces/loaves.json" \
         '.kind = "library" | .loaves += $interfaces[0]' "$unit.prepared" > "$unit"
@@ -36,7 +35,8 @@ for package in primitives core async; do
     fi
     SELFBUILD_METADATA_ONLY=1 "$builder" "$repo" publish "$unit" "$directory"
     jq --arg name "$name" --arg directory "$directory" \
-        '. + [{key:$name, name:$name, dir:$directory, standard:true}]' \
+        '. + [{key:$name, name:$name, dir:$directory,
+               standard:($name != "incan_stdlib_vocab_contracts")}]' \
         "$interfaces/loaves.json" > "$interfaces/loaves.json.next"
     mv "$interfaces/loaves.json.next" "$interfaces/loaves.json"
     shasum -a 256 "$directory/$name.incnlib"

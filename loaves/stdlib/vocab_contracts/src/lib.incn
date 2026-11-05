@@ -1,0 +1,3 @@
+"""Bootstrap-safe vocabulary-definition contracts used by standard authoring surfaces."""
+
+import vocab_contracts

@@ -1,7 +1,7 @@
 """Describe import-owned glyphs and leading-dot paths without assigning them host-language semantics."""
 
 from rust::serde import Deserialize as RustDeserialize, Serialize as RustSerialize
-from crate.primitives.vocab.transport import decode_vocab, encode_vocab
+from crate.vocab_contracts.transport import decode_vocab, encode_vocab
 
 
 pub model ScopedSurfaceEligibility:

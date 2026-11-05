@@ -278,8 +278,8 @@ def members(values: list[str]) -> set[str]:
 
 
 def standard_available(loaf: UnitLoaf) -> bool:
-    """Keep source dependencies and published standard providers; an unbuilt standard package grants no interface."""
-    if not loaf.standard:
+    """Keep source dependencies and published toolchain providers; an unbuilt ambient package grants no interface."""
+    if not loaf.standard and not loaf.toolchain_provided:
         return true
     interface = Path(loaf.dir).joinpath(f"{loaf.name}.incnlib")
     return loaf_library(loaf).is_file() and interface.is_file()

@@ -32,11 +32,6 @@ pub from primitives.collections import (
     replace_list_at,
 )
 import primitives.vocab
-import primitives.vocab._descriptors
-import primitives.vocab._syntax
-import primitives.vocab._versions
-import primitives.vocab.scoped
-import primitives.vocab.transport
 pub from primitives.io import Endian, IoError, WriteBuffer
 pub from primitives.native_strings import nul_terminated_utf8
 pub from primitives.output import write_stderr_line, write_stdout_line

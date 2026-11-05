@@ -31,14 +31,14 @@ driver=$(jq -er '.driver' "$manifest")
 sysroot=$(jq -er '.sysroot' "$manifest")
 [[ $sysroot == /* ]] || sysroot=$toolchain/$sysroot
 
-# The helper binds the installed support generation instead of rebuilding local Rust facets.
+# Bind installed support instead of rebuilding it.
 "$builder" "$repo" runtime "$profile" > "$unit.prepared"
 jq --slurpfile interfaces "${SELFBUILD_SOURCE_INTERFACES:-/dev/null}" '
     .kind = "library" | .externs |= map(select(.name != "incan_native_runtime"
         and (.name | startswith("incan_stdlib_") | not)))
     | .loaves |= map(select(.name != "incan_native_runtime"))
     | if ($interfaces | length) > 0 then
-        .loaves |= map(select(.standard | not))
+        .loaves |= map(select((.standard or .toolchain_provided) | not))
         | .search = ([.externs[].path | sub("/[^/]+$"; "")] | unique)
       else . end
     | .loaves += ($interfaces[0] // [])' "$unit.prepared" > "$unit"

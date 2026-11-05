@@ -431,6 +431,9 @@ fn keyword_surface_supports_usage(surface_kind: incan_vocab::KeywordSurfaceKind,
     matches!(
         (surface_kind, usage),
         (
+            incan_vocab::KeywordSurfaceKind::PrefixExpression,
+            KeywordSurfaceKind::PrefixExpression
+        ) | (
             incan_vocab::KeywordSurfaceKind::ControlFlow | incan_vocab::KeywordSurfaceKind::BlockContextKeyword,
             KeywordSurfaceKind::StatementKeywordArgs
         ) | (

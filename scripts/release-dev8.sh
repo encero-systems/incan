@@ -154,8 +154,8 @@ build_standard_packages() {
         export SELFBUILD_PROFILE=$profile
         export SELFBUILD_ADMITTED_STDLIB=$out/${prefix}standards/$profile-admitted.txt
         : > "$SELFBUILD_ADMITTED_STDLIB"
-        # Core contracts, system observations and codec/data facades import primitive declarations.
-        for package in primitives core testing async system codecs compression web data observability vocab interop; do
+        # Build lower vocabulary contracts before their reexports.
+        for package in vocab_contracts primitives core testing async system codecs compression web data observability vocab interop; do
             native "${prefix}std-$package-$profile" build-native-stdlib.sh "$package"
         done
     done

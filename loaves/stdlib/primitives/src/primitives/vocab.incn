@@ -1,14 +1,14 @@
-"""Foundational vocabulary descriptors and structured transformation contracts."""
+"""Re-export foundational vocabulary-definition contracts through `std.primitives`."""
 
-pub from crate.primitives.vocab.scoped import (
+pub const VOCAB_METADATA_VERSION: int = 1
+pub const VOCAB_SYNTAX_VERSION: int = 3
+
+pub from pub::incan_stdlib_vocab_contracts.vocab_contracts import (
     ScopedSurfaceDescriptor,
     ScopedSurfaceEligibility,
     ScopedSurfaceFamily,
     ScopedSurfaceReceiver,
     ScopedSurfaceSyntax,
-)
-pub from crate.primitives.vocab._versions import VOCAB_METADATA_VERSION, VOCAB_SYNTAX_VERSION
-pub from crate.primitives.vocab._descriptors import (
     KeywordActivation,
     KeywordPlacement,
     KeywordSurfaceKind,
@@ -35,8 +35,6 @@ pub from crate.primitives.vocab._descriptors import (
     TypeExport,
     ModuleExport,
     VocabRegistration,
-)
-pub from crate.primitives.vocab._syntax import (
     Span,
     IncanExpr,
     IncanExprKind,

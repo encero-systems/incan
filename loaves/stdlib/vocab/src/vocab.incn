@@ -2,7 +2,7 @@
 
 from rust::std::io import Write, stdin, stdout
 from std.json import JsonValue
-pub from std.primitives.vocab import (
+pub from pub::incan_stdlib_vocab_contracts.vocab_contracts import (
     ScopedSurfaceDescriptor,
     ScopedSurfaceEligibility,
     ScopedSurfaceFamily,

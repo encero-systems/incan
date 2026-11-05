@@ -15,6 +15,7 @@ from pub::incan_platform.trace import Operation
 from jec import begin, record
 
 pub const UNIT_DESCRIPTION_SCHEMA: str = "incan.unit/1"
+const VOCAB_CONTRACTS_PACKAGE: str = "incan_stdlib_vocab_contracts"
 
 
 pub model UnitLoaf:
@@ -154,7 +155,18 @@ def standard_loaves(package: str, profile: str, reader: ManifestReader) -> Resul
     for found in standard_packages(reader)?:
         if found.name != package:
             directory = standard_artifact_dir(found.name, profile)?
-            loaves.append(UnitLoaf(key=found.name, name=found.name, dir=directory.0, standard=true))
+            if found.name == VOCAB_CONTRACTS_PACKAGE:
+                loaves.append(
+                    UnitLoaf(
+                        key=found.name,
+                        name=found.name,
+                        dir=directory.0,
+                        standard=false,
+                        toolchain_provided=true,
+                    ),
+                )
+            else:
+                loaves.append(UnitLoaf(key=found.name, name=found.name, dir=directory.0, standard=true))
     return Ok(loaves)
 
 
