@@ -222,11 +222,13 @@ model Customer:
             since = "2.3"
             retire_in = "3.0"
             message = "Matches the billing API"
+            by = "cloud audit finding"
+            issue = "#1042"
         }
     }
 ```
 
-The field keeps its identity. `std.db` reads records stored under the old name with no migration, an API diff reports a rename rather than a removal and an addition, and generated documentation shows the history. The nested block uses RFC 150's vocabulary, so `since`, `retire_in` and `message` mean what they mean on `deprecated`. `retire_in` is a plan rather than a deadline: once the package reaches that version, a lint suggests removing the key, and nothing changes on its own. Enum variants take the same key.
+The field keeps its identity. `std.db` reads records stored under the old name with no migration, an API diff reports a rename rather than a removal and an addition, and generated documentation shows the history. The nested block shares RFC 150's lifecycle facts, so `since`, `retire_in`, `message`, `by` and `issue` mean what they mean on `deprecated`, and all of them are optional. `by` says who or what decided, whether a person, a team or a tool's finding. `retire_in` is a plan rather than a deadline: once the package reaches that version, a lint suggests removing the key, and nothing changes on its own. Enum variants take the same key.
 
 `renamed_from` is separate from `as`, which sets a wire name. `email_address [renamed_from="email"] as "email": str` keeps JSON using `email`.
 
@@ -266,7 +268,7 @@ variant_decl = IDENT field_meta? variant_payload? variant_value? ;
 
 ### Rename continuity
 
-`renamed_from` must accept an earlier name, a list of earlier names, or a nested block under RFC 096, on a field or an enum variant. The block must contain `name`, a string or list of strings, and may contain `since`, `retire_in` and `message`, each at most once, with RFC 150's meanings.
+`renamed_from` must accept an earlier name, a list of earlier names, or a nested block under RFC 096, on a field or an enum variant. The block must contain `name`, a string or list of strings, and may contain RFC 150's shared lifecycle facts, `since`, `retire_in`, `message`, `by` and `issue`, each at most once and using the same descriptor as `deprecated`. `by` and `issue` are unverified descriptive text and grant nothing.
 
 - The field or variant must keep its stable anchor across a declared rename. Without `renamed_from`, a rename is a new source identity.
 - An earlier name that still exists on the same model or enum must be refused, and so must one name claimed twice.
@@ -581,5 +583,5 @@ Artifact metadata should preserve field metadata losslessly for packages that cl
 - Include lists and dictionaries in the safe metadata value set. Descriptor serialization must support them.
 - Allow `examples` to contain safe metadata values assignable to the field type, with string examples allowed when typed examples are not available.
 - Keep `primary_key` and `primary_key_position` as field metadata. Composite key order is represented by field-level positions; richer model-level identity constraints are not part of this design.
-- Treat stable field anchors as source-field and model-field metadata identities, not as external alias identities. A rename is a new source identity unless `renamed_from` declares continuity, and that key can carry `since`, `retire_in` and `message` with RFC 150's meanings. External aliases and adapter mappings do not by themselves preserve the Incan field anchor.
+- Treat stable field anchors as source-field and model-field metadata identities, not as external alias identities. A rename is a new source identity unless `renamed_from` declares continuity, and that key carries RFC 150's shared lifecycle facts: `since`, `retire_in`, `message`, `by` and `issue`. External aliases and adapter mappings do not by themselves preserve the Incan field anchor.
 - Enum variants take the same metadata as fields, with the same `name [metadata]` shape and RFC 096 blocks. `__variants__()` exposes it, as `__fields__()` does for models, and `T.__doc__()` exposes a type's parsed docstring. A key meaningful only for a stored field is refused on a variant.
