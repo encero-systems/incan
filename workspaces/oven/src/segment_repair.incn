@@ -1,0 +1,141 @@
+"""Explicit repair of a segment store: restore a damaged selection, quarantine damage and re-admit verified payloads."""
+
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.hash import file_digest
+from store_index import entries as index_entries, find as index_find
+from segment_files import StoreError, failure, index_failure, io_failure, place_synced, sync_directory, sync_file
+from segment_payloads import payload_intact, payload_path, put_payload
+from segment_store import (
+    PreparedPayload,
+    Snapshot,
+    check_format,
+    check_retained,
+    keys,
+    lookup,
+    quarantine_path,
+    read_frame,
+    read_manifest,
+    snapshot,
+    sync_durable,
+)
+
+
+pub def repair_current(committed: Snapshot) -> Result[Snapshot, StoreError]:
+    """
+    Explicitly select a previously committed snapshot after verifying all its selected index paths and frames.
+
+    The caller supplies a snapshot retained from a successful commit or open, never a discovered staging manifest.
+    This maintenance operation does not infer a root from generation order and never recomputes frozen records.
+    A damaged candidate refuses repair. Existing payload admission remains the owning adapter's responsibility.
+
+    1. Lock publication and validate the supplied committed manifest.
+    2. Verify every selected view's index and frame contents.
+    3. Durably select that exact root and reopen it.
+    """
+    # 1. The caller's retained root is authority; generation order never chooses a candidate.
+    root = committed.root
+    if committed.generation == 0 or committed.digest == "":
+        return Err(failure("conflict", root.0, "repair requires a previously committed root"))
+    held = root.joinpath("locks").joinpath("publication").lock_exclusive().map_err((error) => io_failure(root, error))?
+    check_format(root)?
+    check_retained(committed)?
+    candidate = read_manifest(root, committed.generation, committed.digest, committed.view)?
+    # 2. No selected view may hide a damaged index path or frame.
+    for selected in candidate.views:
+        for entry in index_entries(root, selected.root).map_err(index_failure)?:
+            match entry.location:
+                None => return Err(failure("integrity", entry.key, "leaf has no frame location"))
+                Some(location) => read_frame(root, entry.key, location)?
+    # 3. Publish only after the candidate is complete and verified.
+    pointer = root.joinpath("CURRENT")
+    place_synced(pointer, f"{candidate.generation} {candidate.digest}\n".encode("utf-8"))?
+    sync_directory(root)?
+    sync_durable(pointer)?
+    return snapshot(root, committed.view)
+
+
+pub def quarantine_record(view: Snapshot, key: str, codec_damage: bool = false) -> Result[None, StoreError]:
+    """
+    Preserve a damaged frame's segment as evidence before an owner recomputes the derived record.
+
+    The shared segment remains in place for other keys and older snapshots; repair publishes a new frame through
+    an explicit transaction. Index damage cannot be repaired one record at a time and is returned to the owner.
+
+    1. Require selected frame damage, or an explicit diagnosis by the owning codec, and resolve its object.
+    2. Preserve and synchronize evidence without removing shared contents.
+    """
+    # 1. An intact frame needs its owning codec to diagnose semantic damage explicitly.
+    match lookup(view, key):
+        Ok(_) =>
+            if not codec_damage:
+                return Err(failure("conflict", key, "only diagnosed damage can be quarantined"))
+        Err(error) =>
+            if error.kind != "integrity":
+                return Err(error)
+    match index_find(view.root, view.index, key).map_err(index_failure)?:
+        None => return Err(failure("conflict", key, "no selected frame to quarantine"))
+        Some(location) =>
+            # 2. Keep the source segment available to every other key and retained snapshot.
+            source = view.root.joinpath("segments").joinpath(f"{location.segment}.seg")
+            target = quarantine_path(view.root, location.segment)?
+            if source.is_file():
+                source.copy(target, true, true).map_err((error) => io_failure(target, error))?
+            else:
+                target
+                    .write_bytes(f"missing {source.0}\n".encode("utf-8"))
+                    .map_err((error) => io_failure(target, error))?
+            sync_file(target)?
+            sync_directory(target.parent())?
+            sync_directory(view.root)?
+            sync_durable(target)?
+    return Ok(None)
+
+
+pub def quarantine_payload(root: Path, digest: str) -> Result[None, StoreError]:
+    """
+    Move damaged content out of its canonical name before explicit recomputation or verified re-admission.
+
+    This never edits frozen bytes in place. The caller must have already verified complete authoritative replacement
+    inputs; normal lookup and verification never call it. Intact content remains untouched.
+
+    1. Lock publication and keep intact or already absent content unchanged.
+    2. Move damaged content into quarantine and synchronize both directories.
+    """
+    # 1. Recheck under publication so an intact canonical object is never displaced.
+    held = root.joinpath("locks").joinpath("publication").lock_exclusive().map_err((error) => io_failure(root, error))?
+    source = payload_path(root, digest)
+    if not source.exists() and not source.is_symlink():
+        return Ok(None)
+    if not source.is_symlink() and payload_intact(root, digest):
+        return Ok(None)
+    # 2. Preserve the damaged inode instead of editing or deleting its bytes.
+    target = quarantine_path(root, digest)?
+    source.replace(target).map_err((error) => io_failure(source, error))?
+    sync_directory(source.parent())?
+    sync_directory(target.parent())?
+    sync_directory(root)?
+    sync_durable(target)?
+    return Ok(None)
+
+
+pub def readmit_payload(root: Path, source: Path, expected: str) -> Result[PreparedPayload, StoreError]:
+    """
+    Explicitly re-admit exact frozen bytes from a trusted replacement without editing the damaged inode.
+
+    The committed reference already pins the complete digest. Verify the replacement before quarantining anything;
+    an invalid replacement leaves every retained object unchanged. Admission cannot change a namespace or revision.
+
+    1. Verify replacement bytes against the exact committed identity.
+    2. Quarantine damage, then admit through the ordinary payload installer.
+    """
+    # 1. A proposed replacement cannot authorize its own new identity.
+    actual = hexlify(file_digest(source, "sha256").map_err((error) => failure("io", source.0, error.message()))?)
+    if actual != expected:
+        return Err(failure("integrity", source.0, "replacement differs from the committed payload digest"))
+    # 2. The ordinary installer retains the same canonical identity without an in-place edit.
+    quarantine_payload(root, expected)?
+    prepared = put_payload(root, source)?
+    if prepared.digest != expected:
+        return Err(failure("integrity", source.0, "replacement changed during re-admission"))
+    return Ok(prepared)

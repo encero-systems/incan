@@ -1,0 +1,128 @@
+"""Shared fixtures of the unit freshness contracts: a scratch project, its toolchain, and one reconciliation pass."""
+
+from rust::std::process import Command
+from std.fs import Path
+from std.json import JsonValue
+from files import make_directory, write as write_file
+from observation import load_ledger
+from toolchain import NativeCrate, Toolchain, admit_compiler_facts
+from compiler_facts import admit_fact
+from unit import UnitDescription, UnitLoaf
+from unit_publication import record_payload
+from unit_freshness import (
+    Key,
+    artifact_files,
+    compiler_fingerprint as selected_compiler_fingerprint,
+    description_digest,
+    unit_key_with,
+    unit_key as selected_unit_key,
+    fingerprint,
+)
+
+
+pub model Fixture:
+    """A project with one dependency Loaf, one standard Loaf and a toolchain, all under one scratch directory."""
+
+    pub unit: UnitDescription
+    pub toolchain: Toolchain
+    pub root: Path
+
+
+pub model Pass:
+    """One reconciliation of a unit: its key and the work it could not avoid."""
+
+    pub key: str
+    pub hashed: int
+    pub listed: int
+
+
+pub def compiler_fingerprint(toolchain: Toolchain) -> Result[str, str]:
+    """Admit this fixture's freshly written compiler facts before asking for their identities."""
+    admit_compiler_facts(toolchain)?
+    return selected_compiler_fingerprint(toolchain)
+
+
+pub def unit_key(unit: UnitDescription, toolchain: Toolchain) -> Result[Key, str]:
+    """Admit this fixture's current compiler generation before identifying its prepared unit."""
+    admit_compiler_facts(toolchain)?
+    return selected_unit_key(unit, toolchain)
+
+
+pub def write(path: Path, text: str) -> Result[None, str]:
+    """Create or replace a file, making its directory first."""
+    make_directory(path.parent())?
+    write_file(path, text)?
+    if path.name() == "driver":
+        admit_fact(path)?
+    return Ok(None)
+
+
+pub def make_executable(path: Path) -> Result[None, str]:
+    """Complete a synthetic compiler publication, including the executable mode in its admission guard."""
+    mut chmod = Command.new("/bin/chmod")
+    assert chmod.arg("+x").arg(path.0).status().map_err((error) => str(error))?.success()
+    return admit_fact(path)
+
+
+def publish_loaf(directory: Path, name: str, text: str) -> Result[None, str]:
+    """Write the complete artifact set of a Loaf."""
+    for artifact in artifact_files(directory, name)?:
+        mut content = f"{text} {artifact.name()}"
+        if artifact.name().endswith(".incnlib"):
+            content = JsonValue.object({"fixture": JsonValue.string(text)}).to_json().unwrap_or("{}")
+        write(artifact, content)?
+        record_payload(artifact, fingerprint([text])?)?
+    return Ok(None)
+
+
+pub def fixture(scratch: Path) -> Result[Fixture, str]:
+    """Lay out `project/` with a manifest and one source, a dependency under its target, and the toolchain's files."""
+    root = scratch.joinpath("project")
+    write(root.joinpath("loaf.toml"), "[project]\nname = \"app\"\nversion = \"0.1.0\"\n")?
+    write(root.joinpath("src").joinpath("main.incn"), "def main() -> None:\n    println(\"one\")\n")?
+    dependency = root.joinpath("target").joinpath("incan").joinpath("loaves").joinpath("dep").joinpath("debug")
+    standard = scratch.joinpath("home").joinpath("loaves").joinpath("std").joinpath("debug")
+    publish_loaf(dependency, "dep", "dependency")?
+    publish_loaf(standard, "std", "standard")?
+    write(scratch.joinpath("toolchain").joinpath("driver"), "driver one")?
+    write(scratch.joinpath("toolchain").joinpath("libruntime.rlib"), "runtime one")?
+    record_payload(scratch.joinpath("toolchain/libruntime.rlib"), fingerprint(["runtime one"])?)?
+    write(scratch.joinpath("toolchain").joinpath("std.rustabi"), "abi one")?
+    toolchain = Toolchain(
+        driver=scratch.joinpath("toolchain").joinpath("driver").0,
+        sysroot="/rust/1.98.0-aarch64-apple-darwin",
+        rust_abi=[scratch.joinpath("toolchain").joinpath("std.rustabi").0],
+        externs=[NativeCrate(name="runtime", path=scratch.joinpath("toolchain").joinpath("libruntime.rlib").0)],
+        search=[],
+        registry_units="",
+        target="aarch64-apple-darwin",
+    )
+    unit = UnitDescription(
+        source=root.joinpath("src").joinpath("main.incn").0,
+        project_root=root.0,
+        source_root=root.joinpath("src").0,
+        package="app",
+        version="0.1.0",
+        profile="debug",
+        declared_features=[],
+        active_features=[],
+        loaves=[
+            UnitLoaf(key="dep", name="dep", dir=dependency.0, standard=false),
+            UnitLoaf(key="std", name="std", dir=standard.0, standard=true),
+        ],
+        rust_crates=[],
+        contract_models=[],
+        c_headers=[],
+        externs=toolchain.externs,
+        rust_abi=toolchain.rust_abi,
+    )
+    admit_compiler_facts(toolchain)?
+    return Ok(Fixture(unit=unit, toolchain=toolchain, root=root))
+
+
+pub def reconcile(scratch: Path, setup: Fixture) -> Result[Pass, str]:
+    """Key the unit as a new process would: load its ledger, reconcile, save it. Settling is immediate."""
+    mut project = load_ledger(scratch.joinpath("ledgers").joinpath("project.json"), 0)
+    key = unit_key_with(setup.unit, compiler_fingerprint(setup.toolchain)?, description_digest(setup.unit)?, project)?.digest
+    project.save()?
+    return Ok(Pass(key=key, hashed=project.hashed, listed=project.listed))
