@@ -1,5 +1,5 @@
 """
-`incan bakery status`: where the bakery's bytes are and why they remain (RFC 145).
+`oven bakery status`: where the bakery's bytes are and why they remain (RFC 145).
 
 The report names the bakery's location and what selected it, the effective storage policy, the free space admission
 observes and the reservations of live operations. It attributes unit payloads to the project registrations that
@@ -31,7 +31,7 @@ from storage_admission import (
 from storage_policy import StoragePolicy
 
 pub const STATUS_SCHEMA: str = "incan.oven.store-status/1"
-pub const STATUS_USAGE: str = "incan bakery status [--format text|json]"
+pub const STATUS_USAGE: str = "oven bakery status [--format text|json]"
 const ACCOUNTING: str = "logical bytes; a payload counts once per total that reaches it; filesystem allocation and copy-on-write sharing are not measured"
 
 
@@ -53,7 +53,7 @@ pub model Retained:
 
 
 pub model StoreStatus:
-    """The facts `incan bakery status` reports, observed at one time."""
+    """The facts `oven bakery status` reports, observed at one time."""
 
     pub store: Path
     # What selected the store: `INCAN_BAKERY`, the configuration file, or `default`.
@@ -306,7 +306,7 @@ pub def status_text(status: StoreStatus) -> str:
     lines.append(f"  unregistered: {status.unregistered.units} units, {unregistered}; no registration reaches them")
     collectable = status.collectable
     payloads = byte_text(collectable.payload_bytes)
-    lines.append(f"  collectable by `incan bakery gc`: {collectable.units} units, {payloads} of payloads")
+    lines.append(f"  collectable by `oven bakery gc`: {collectable.units} units, {payloads} of payloads")
     lines.append(f"    {collectable.projects} orphaned projects, {collectable.staging} ended staging directories")
     unrecorded = byte_text(status.unrecorded_bytes)
     lines.append(f"  staging: {len(status.active)} active, {len(status.ended)} ended")
@@ -354,7 +354,7 @@ def relative(seconds: int) -> str:
 
 
 pub def parse_status(arguments: list[str]) -> Result[str, str]:
-    """The report format `incan bakery status [--format text|json]` selects; text by default."""
+    """The report format `oven bakery status [--format text|json]` selects; text by default."""
     if len(arguments) == 0:
         return Ok("text")
     if arguments[0] != "--format":

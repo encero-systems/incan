@@ -1,6 +1,6 @@
 # behavior: an integer identity reaches only the runtime operations its program performs, and no standard package
 # cli-commands:
-#   inspect dependencies src/main.incn
+#   oven inspect dependencies src/main.incn
 # expect-stdout:
 #   program `closure_of_an_integer_identity` reaches 1 package
 #   incan_native_runtime

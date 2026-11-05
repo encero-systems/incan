@@ -1,6 +1,6 @@
 # Oven
 
-Oven is the Incan-authored `incan` command line in dev.8. It reads projects, describes units and invokes the installed native compiler.
+Oven is the Incan-authored project command, `oven`. The same installed program answers as `incan`, the language command. Oven reads projects, describes units and invokes the installed native compiler.
 
 <div class="inc-oven-route__grid">
 <a href="../tutorials/getting_started/">Run a project</a>

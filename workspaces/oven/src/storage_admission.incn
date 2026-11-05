@@ -71,7 +71,7 @@ pub model Reservation:
 
 
 pub model Collectable:
-    """What explicit collection (`incan bakery gc`) would reclaim now, estimated from the current store."""
+    """What explicit collection (`oven bakery gc`) would reclaim now, estimated from the current store."""
 
     pub units: int = 0
     pub projects: int = 0
@@ -487,7 +487,7 @@ def sourced(value: int, source: str) -> JsonValue:
 
 
 pub def collectable_document(collectable: Collectable) -> JsonValue:
-    """What `incan bakery gc` would reclaim, marked as an estimate that excludes superseded layout files."""
+    """What `oven bakery gc` would reclaim, marked as an estimate that excludes superseded layout files."""
     mut fields: dict[str, JsonValue] = {}
     fields["units"] = JsonValue.int(collectable.units)
     fields["projects"] = JsonValue.int(collectable.projects)
@@ -505,7 +505,7 @@ def actions(pressure: Pressure, collectable: Collectable, shortfall: int) -> lis
     if collectable.bytes() > 0:
         mut collect: dict[str, JsonValue] = {}
         collect["action"] = JsonValue.string("collect")
-        collect["command"] = JsonValue.string("incan bakery gc")
+        collect["command"] = JsonValue.string("oven bakery gc")
         collect["reclaims_bytes"] = JsonValue.int(collectable.bytes())
         collect["resolves"] = JsonValue.bool(collectable.bytes() >= shortfall)
         collect["consequence"] = JsonValue.string(COLLECT_CONSEQUENCE)
@@ -555,7 +555,7 @@ def decision_text(summary: str, pressure: Pressure, collectable: Collectable) ->
     units = collectable.units
     if collectable.bytes() > 0:
         lines.append(
-            f"  run `incan bakery gc`: reclaims about {reclaims} ({units} units, {collectable.staging} ended attempts)",
+            f"  run `oven bakery gc`: reclaims about {reclaims} ({units} units, {collectable.staging} ended attempts)",
         )
     if pressure.reserved() > 0:
         lines.append(f"  wait for concurrent operations to release {byte_text(pressure.reserved())}")

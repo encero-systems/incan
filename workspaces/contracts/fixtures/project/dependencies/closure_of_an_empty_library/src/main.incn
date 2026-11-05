@@ -1,6 +1,6 @@
 # behavior: an empty library reaches no package
 # cli-commands:
-#   inspect dependencies src/lib.incn
+#   oven inspect dependencies src/lib.incn
 # expect-stdout:
 #   library `closure_of_an_empty_library` reaches 0 packages
 # expect-exit: 0

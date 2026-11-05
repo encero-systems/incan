@@ -1,12 +1,16 @@
 """Render command help and recognize help flags without reading a project or installed toolchain."""
 
 pub const REFERENCE: str = "Reference: https://incan.io/latest/tooling/reference/cli_reference/"
-pub const HELP_HINT: str = "Run `incan --help` for usage."
 
 
-pub def overview(synopses: list[str]) -> str:
-    """List each public command's own synopsis and the full CLI reference."""
-    return "\n".join(["usage: incan COMMAND [OPTIONS]", ""] + synopses + ["", REFERENCE])
+pub def help_hint(surface: str) -> str:
+    """The pointer a syntax error gives to the overview of the surface it was invoked as."""
+    return f"Run `{surface} --help` for usage."
+
+
+pub def overview(surface: str, synopses: list[str]) -> str:
+    """List each public command's own synopsis on `surface` and the full CLI reference."""
+    return "\n".join([f"usage: {surface} COMMAND [OPTIONS]", ""] + synopses + ["", REFERENCE])
 
 
 pub def render(synopsis: str, options: list[str], example: str) -> str:

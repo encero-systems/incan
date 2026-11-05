@@ -684,7 +684,7 @@ def verify_record(store: Path, key: str, value: bytes) -> list[str]:
 
 pub def parse_bakery(arguments: list[str]) -> Result[int, str]:
     """
-    Parse `incan bakery verify` or `incan bakery gc [--keep-days N]`: `VERIFY`, or the compatibility `--keep-days`
+    Parse `oven bakery verify` or `oven bakery gc [--keep-days N]`: `VERIFY`, or the compatibility `--keep-days`
     argument (-1 when omitted). Collection follows registrations and never expires a record by age.
     """
     if len(arguments) == 0:
@@ -808,7 +808,7 @@ pub def repair_derived(
 pub def repair_payload_command(arguments: list[str]) -> Result[i32, str]:
     """Re-admit a payload only from an explicit replacement whose full digest matches its committed name."""
     if len(arguments) != 3:
-        return Err("usage: incan bakery repair-payload SHA256 FILE")
+        return Err("usage: oven bakery repair-payload SHA256 FILE")
     readmit_payload(bakery()?, Path(arguments[2]), arguments[1]).map_err(store_failure)?
     forget_verified()
     println(f"re-admitted payload {arguments[1]}")

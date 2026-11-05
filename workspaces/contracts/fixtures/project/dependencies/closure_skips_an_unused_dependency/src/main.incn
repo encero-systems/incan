@@ -1,6 +1,6 @@
 # behavior: a declared dependency that nothing calls is available but not reached
 # cli-commands:
-#   inspect dependencies src/main.incn
+#   oven inspect dependencies src/main.incn
 # expect-stdout-contains:
 #   program `closure_skips_an_unused_dependency` reaches 2 packages
 #   alpha

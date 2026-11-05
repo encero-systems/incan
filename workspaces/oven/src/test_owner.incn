@@ -2,6 +2,7 @@
 
 from std.fs import Path
 from std.environ import get_or
+from rust::std::os::unix::process import CommandExt
 from rust::std::process import Command
 from rust::std::string import String as RustString
 from std.json import JsonValue
@@ -216,8 +217,10 @@ def hello_through_parent(scratch: Path) -> Result[None, str]:
     installed = home()?
     binary = get_or("OVEN_ENGINE_BINARY", f"{installed.0}/bin/incan")
     missing = scratch.joinpath("new-home/nested")
+    # Resident owners belong to `oven`: the same program, started under that name (RFC 118).
     stopped = Command
         .new(binary)
+        .arg0("oven")
         .arg("owner")
         .arg("stop")
         .env("INCAN_HOME", missing.0)

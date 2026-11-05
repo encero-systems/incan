@@ -2,7 +2,6 @@
 # cli-commands:
 #   nonexistent
 #   inspect nonexistent
-#   owner nonexistent
 #   toolchain nonexistent
 #   _run-built target/incan/debug/bin/unknown_command
 # expect-stdout:

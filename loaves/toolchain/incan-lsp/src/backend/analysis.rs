@@ -481,14 +481,17 @@ fn package_source_path(root: &Path, module_path: &[String]) -> Option<PathBuf> {
     .map(|path| path.canonicalize().unwrap_or(path))
 }
 
-/// The description of the unit that owns `path`, from Oven (`incan describe-unit PATH`), which is the only reader
-/// of project manifests (DD-0008). The `incan` beside this server answers it; the search index it names is merged.
+/// The description of the unit that owns `path`, from Oven (`oven describe-unit PATH`), which is the only reader
+/// of project manifests (DD-0008). The `incan` beside this server answers it, started under the name `oven` that
+/// selects its project surface (RFC 118); the search index it names is merged.
 pub(super) fn unit_description(path: &Path) -> incan_driver::error::CliResult<UnitDescription> {
     use incan_driver::error::CliError;
+    use std::os::unix::process::CommandExt;
     let incan = std::env::current_exe()
         .map_err(|error| CliError::failure(format!("cannot locate the language server: {error}")))?
         .with_file_name("incan");
     let output = std::process::Command::new(&incan)
+        .arg0("oven")
         .arg("describe-unit")
         .arg(path)
         .output()

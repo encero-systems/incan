@@ -19,7 +19,7 @@ The whole test suite stays under about 3,000 tests (#2255).
 | `library` | as `behavior`, for a project with path dependencies; Oven bakes them | as `behavior` |
 | `interop` | as `behavior`, for programs that import through `rust::` | as `behavior` |
 | `testing` | `incan test tests/<name>.incn` | the per-test outcome lines, stderr, exit code |
-| `project` | `incan describe-unit src/main.incn`, or each `cli-commands:` entry | the unit description's dependencies, standard packages and active features, or each CLI invocation's stdout, stderr and exit code |
+| `project` | `oven describe-unit src/main.incn`, or each `cli-commands:` entry | the unit description's dependencies, standard packages and active features, or each CLI invocation's stdout, stderr and exit code |
 | `format` | `incan fmt [--check] src/main.incn` | exact formatted text, check exit codes, check immutability and repeated-format stability |
 | `graph` | `incan inspect codegraph` for each `graph-commands:` entry | query output, repeated-query equality, JSON/JSONL agreement, edit-stable declaration identities and invalidation after source changes |
 
@@ -75,10 +75,10 @@ The header is the unbroken run of `#` comment lines at the top of the program.
 | `# expect-formatted:` | Exact formatted source, indented as a block. Required for a `format` file or project case. The header and its separating blank line are removed from the entry source before formatting; the expected text has one final newline. |
 | `# pending: <reason>` | The case does not hold yet, and why. A pending case that holds fails: its line is stale. |
 | `# graph-commands:` | Inspection arguments, one invocation per indented line, without `incan inspect codegraph`. Only the `graph` family admits this directive. Paths are relative to the fixture project. |
-| `# cli-commands:` | Complete CLI arguments, one whitespace-separated invocation per indented line, without `incan`. Only the `project` family admits this directive. Every invocation independently meets the same stream and exit expectations; unit-description expectations are refused. |
+| `# cli-commands:` | Complete CLI arguments, one whitespace-separated invocation per indented line, without `incan`. A line that starts with `oven` starts the same `incan` under the name `oven`, its project surface. Only the `project` family admits this directive. Every invocation independently meets the same stream and exit expectations; unit-description expectations are refused. |
 | `# environment:` | `NAME=value` settings, one per indented line, added to the inherited environment of every `cli-commands:` invocation. Only a case with `cli-commands:` admits this directive. |
 | `# expect-trace-contains:` | Substrings that must each appear in the Oven trace lines every `cli-commands:` invocation adds. Only a case with `cli-commands:` admits this directive. |
-| `# cli-concurrent:` | Complete CLI arguments, one invocation per indented line, launched together after the `cli-commands:` entries. Only a case with `cli-commands:` admits this directive. Every invocation meets the same stream and exit expectations. |
+| `# cli-concurrent:` | Complete CLI arguments, one invocation per indented line, launched together after the `cli-commands:` entries, selecting `oven` the same way. Only a case with `cli-commands:` admits this directive. Every invocation meets the same stream and exit expectations. |
 | `# expect-trace-at-most-once:` | Substrings that may each appear at most once in all the Oven trace lines the case's `cli-commands:` and `cli-concurrent:` invocations add. Only a case with `cli-commands:` admits this directive. |
 | `# check-edits:` | Files of the case project, one relative path per indented line. Only the `check` family admits this directive. The check runs again unchanged: it must show the same stdout, stderr and exit code, and Oven must trace it as replayed. A copy of the case project in a new directory is checked next: Oven must trace it as replayed, and it must show the same stdout, stderr and exit code as a fresh check of the copy with a bakery of its own, so a replay names the copy's paths. Then a comment unique to this run is appended to each file in turn: its first check must show the same output and be traced as checked; its unchanged repeat must replay. The new content identity makes this independent of earlier bakery contents. Each file's original text is restored. |
 
@@ -94,7 +94,7 @@ For `format`, the initial `--check` must exit 1 when the input differs from the 
 incan run workspaces/contracts/src/main.incn -- INCAN workspaces/contracts/fixtures [--scratch DIR] [--isolated] [--serial-families] [--jobs N] [--timeout SECONDS] [SELECTOR...]
 ```
 
-A selector is `<family>`, `<family>/<area>` or `<family>/<area>/<name>`. The runner prints `PASS`, `FAIL` with each broken expectation, or `PEND` with its reason for every case, a summary per area and a total, and exits 1 when a case fails or a family cannot be read.
+`INCAN` names an installed `incan`; the `project` family and `oven` command lines start it under the name `oven`. A selector is `<family>`, `<family>/<area>` or `<family>/<area>/<name>`. The runner prints `PASS`, `FAIL` with each broken expectation, or `PEND` with its reason for every case, a summary per area and a total, and exits 1 when a case fails or a family cannot be read.
 
 Graph exports are captured to scratch files and decoded one record at a time. The runner retains the declaration identities, generated helper sites, Rust call links, files and optional process observations that its assertions use. A streaming canonical digest covers every record, including discarded payloads, so JSON/JSONL parity and source-edit checks still compare complete exports. The graph cases also reject copied dependency records and exercise chunk boundaries, split UTF-8, escaped delimiters and malformed framing.
 
