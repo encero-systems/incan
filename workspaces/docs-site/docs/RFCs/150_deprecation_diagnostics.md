@@ -48,7 +48,7 @@ pub def checked_limit(value: int) -> Result[int, str]:
     return Ok(value)
 
 
-@deprecated(since="0.7", replacement=checked_limit, message="use checked_limit and handle its Result")
+@deprecated(since="0.7", replacement=checked_limit, message="use checked_limit and handle its Result", by="cloud audit finding", issue="#1042")
 pub def unchecked_limit(value: int) -> int:
     return value
 ```
@@ -83,7 +83,7 @@ def greet(customer: Customer) -> str:
 
 ## Reference-level explanation
 
-- Optional since, retire_in and message must be compile-time strings. Optional replacement must be a checked declaration reference, retained as canonical identity rather than a string-dispatch key. retire_in is an advisory plan, not an automatic removal trigger.
+- Optional since, retire_in, message, by and issue must be compile-time strings, and are the shared lifecycle facts that RFC 085's `renamed_from` also uses. `by` names who or what made the decision, such as a person, a team or a tool's finding, and `issue` points at where the decision is recorded. Both are unverified descriptive text and grant nothing. Optional replacement must be a checked declaration reference, retained as canonical identity rather than a string-dispatch key. retire_in is an advisory plan, not an automatic removal trigger.
 - Editor hover and explicit deprecated imports/references must expose guidance, including a squiggle. Compiler diagnostics apply to authored consuming uses; an unused import does not by itself imply runtime execution.
 - External consuming references must warn by default. Optional severity uses the compiler-recognized std.diagnostics.DeprecationSeverity cases Warning and Error. An author-declared Error rejects the use before execution. Project warning-as-error policy may strengthen Warning and must not silently weaken an author Error.
 - The first executed deprecated canonical declaration/member use in one process must produce one runtime warning; later executed uses deduplicate by canonical identity. Import alone, dead code and compile-time-only metadata must not produce runtime warnings. Warnings identify symbols and safe guidance, never argument values or secrets.
@@ -93,7 +93,7 @@ def greet(customer: Customer) -> str:
 - Diagnostics and generated documentation must consume the same checked facts.
 - An automatic replacement must not be offered solely because a message contains another symbol's spelling. A checked replacement reference must identify the target in diagnostics alongside the supplied migration message. It must not be treated as proof of equal arguments, effects or result types, and must not authorize a tool to invent error recovery.
 - Field warnings must distinguish authored field access from unrelated runtime mapping keys and wire names.
-- A field's `deprecated` metadata must accept `true`, a message string, or a nested `deprecated { ... }` block under RFC 096. The nested block may contain only `message`, `since`, `retire_in`, `replacement` and `severity`, each at most once, with the same types and rules as the decorator's arguments. `replacement` must be a checked reference to a field of the same declaration or to another declaration. `deprecated=true` and `deprecated="text"` must be equivalent to a nested block with no entries and with `message = "text"`, respectively. A field must not combine spellings: `deprecated` remains one metadata key under RFC 096's duplicate-key rule.
+- A field's `deprecated` metadata must accept `true`, a message string, or a nested `deprecated { ... }` block under RFC 096. The nested block may contain only `message`, `since`, `retire_in`, `by`, `issue`, `replacement` and `severity`, each at most once, with the same types and rules as the decorator's arguments. `replacement` must be a checked reference to a field of the same declaration or to another declaration. `deprecated=true` and `deprecated="text"` must be equivalent to a nested block with no entries and with `message = "text"`, respectively. A field must not combine spellings: `deprecated` remains one metadata key under RFC 096's duplicate-key rule.
 
 ## Design details
 
@@ -120,7 +120,7 @@ Warnings can become noisy across heavily used compatibility APIs. Defining-modul
 
 ## Design Decisions
 
-- Optional since, retire_in, message and checked replacement metadata share one descriptor. Version guidance is advisory; neither a retirement version nor a replacement identity automatically changes or removes code.
+- Optional since, retire_in, message, by, issue and checked replacement metadata share one descriptor, and its lifecycle facts are shared with RFC 085's `renamed_from`, so parsing, checks, the `retire_in` lint and rendering exist once. Version guidance is advisory; neither a retirement version nor a replacement identity automatically changes or removes code.
 - Existing field deprecated bool/text metadata drives authored source-use guidance and documentation. The descriptor carries richer facts without a second metadata authority.
 - A field's full deprecation facts use a nested `deprecated { ... }` block with the decorator's names. `deprecated=true` and `deprecated="message"` remain as compact spellings of the same descriptor, so one key accepts three value shapes and every consumer reads the same facts.
 - Editor import/reference guidance, compiler consuming-use warnings and one runtime warning per executed canonical identity per process are distinct. Imports alone, dead code and compile-time-only metadata do not execute deprecated code. Diagnostics must preserve secrecy.
