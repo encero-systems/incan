@@ -213,7 +213,7 @@ Incan `Result[T, E]` crossing into Rust must map to Rust `Result<T, E>` when bot
 
 Incan `Option[T]` must map to Rust `Option<T>` when `T` is representable.
 
-Incan `None`, `bool`, `int`, `float`, `str`, list, dict, tuple-like fixed records, models, enums, value enums, newtypes, and constrained newtypes must have deterministic caller conversion rules. Integer width, constrained storage carriers, and validation failures must not rely on unchecked Rust casts.
+Incan `None`, `bool`, `int`, `float`, `str`, list, dict, tuple-like fixed records, models, enums, value enums, newtypes, and constrained newtypes must reach Rust callers as the types RFC 121 defines, with no conversion step. Integer width, constrained storage carriers, and validation failures must not rely on unchecked Rust casts.
 
 Incan models exposed to Rust callers should generate Rust structs with stable field names and derive surfaces appropriate for Rust host use when those derives are requested or safe by default. Wire aliases remain data-contract metadata and must not silently rename Rust struct fields unless the caller export explicitly chooses that projection.
 
@@ -293,27 +293,30 @@ A separate, explicitly-authored declaration remains relevant only for non-defaul
 
 ### Type projection
 
-The table below describes projection in conversion terms. RFC 121 owns the unified type substrate, under which primitives and stdlib types need no conversion at all, because the Incan type and its Rust representation are the same thing. That substrate is compiler-owned type-system work, not a prerequisite for this RFC.
+RFC 121 owns the rule that an Incan type and its Rust type are the same type, so nothing is converted at the caller boundary. This table lists what a Rust caller sees:
 
-Caller type projection should prefer ordinary Rust types where doing so preserves semantics:
-
-| Incan surface | Rust caller projection |
-| ------------- | ---------------------- |
+| Incan surface | Rust caller type |
+| ------------- | ---------------- |
 | `bool` | `bool` |
-| `int` | checked `i64` boundary unless a narrower constrained carrier is explicitly exposed |
+| `int` | `i64` |
+| `int[...]` with an RFC 091 carrier | that carrier, narrower or wider than `i64` |
+| exact-width types such as `i8` and `u128` | the Rust type of the same name |
 | `float` | `f64` |
-| `str` | `String` or borrowed input forms where explicitly generated |
+| `str` | `String`, or `&str` for `Borrowed[str]` |
+| `bytes` | `Vec<u8>`, or `&[u8]` for `Borrowed[bytes]` |
 | `Option[T]` | `Option<T>` |
 | `Result[T, E]` | `Result<T, E>` for domain result values |
 | `List[T]` | `Vec<T>` |
-| `Dict[K, V]` | map type with documented ordering/hash requirements |
-| `model` | Rust caller struct |
-| `enum` | Rust caller enum |
-| `newtype` | Rust caller newtype with checked construction |
+| `Dict[K, V]` | `HashMap<K, V>` |
+| `Set[T]` | `HashSet<T>` |
+| other standard-library types | the one type the declaring Loaf defines |
+| `model` | Rust struct |
+| `enum` | Rust enum |
+| `newtype` | Rust struct holding its carrier, with checked construction |
 
 Borrowed Rust signatures may be generated as an optimization, but the semantic contract must first be expressible with owned values. Borrowed projections must not expose Incan lifetime or ownership details as user-authored Incan concepts.
 
-Caller artifact metadata must also declare, per export, the ownership/conversion policy (owned vs. borrowed projection) and any runtime or native-linkage requirements needed to call it, such as an async runtime, a specific allocator, or host-provided native linkage. Where this contract does not establish behavior — no-std compatibility, C-ABI stability, dynamic-plugin loading, or a specific allocator/panic policy — the metadata must state that status explicitly as unsupported or unknown rather than implying an unstated guarantee.
+Caller artifact metadata must also declare, per export, the ownership policy (owned vs. borrowed projection) and any runtime or native-linkage requirements needed to call it, such as an async runtime, a specific allocator, or host-provided native linkage. Where this contract does not establish behavior — no-std compatibility, C-ABI stability, dynamic-plugin loading, or a specific allocator/panic policy — the metadata must state that status explicitly as unsupported or unknown rather than implying an unstated guarantee.
 
 ### Errors
 

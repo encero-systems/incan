@@ -72,6 +72,7 @@ incan fmt src/ tests/
 incan repl
 incan lsp
 incan inspect symbols src/main.incn
+incan inspect types shop.readings.Reading
 incan inspect codegraph --format json
 incan architect src/
 ```
