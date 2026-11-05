@@ -376,9 +376,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     ) -> bir::Operand {
         let module_function = match &partial.target.node {
             ast::Expr::Field(receiver, _) => {
-                self.type_info
-                    .resolved_identity(receiver.span)
-                    .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Module)
+                self.is_module_namespace_span(receiver.span)
                     && self
                         .type_info
                         .resolved_identity(partial.target.span)

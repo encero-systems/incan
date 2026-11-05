@@ -1,0 +1,6 @@
+"""Provide a declaration through a nested module path."""
+
+
+pub def bump(value: int) -> int:
+    """Return the nested fixture expression `value + 1`."""
+    return value + 1

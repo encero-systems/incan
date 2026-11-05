@@ -185,18 +185,26 @@ impl TypeChecker {
             self.errors.push(errors::unknown_symbol(name, span));
             return ResolvedType::Unknown;
         };
+        if let Some((kind, ty)) = self.module_identifier_facts(name) {
+            return self.finish_identifier_read(span, kind, ty, source_target);
+        }
         let (kind, ty) = match &sym.kind {
             SymbolKind::Variable(info) => (IdentKind::Value, info.ty.clone()),
             SymbolKind::Static(info) => (IdentKind::Static, info.ty.clone()),
             SymbolKind::Function(info) => {
+                if self.decorator_callable_span == Some(span) {
+                    self.decorator_callable_type_params = info.type_params.clone();
+                }
                 if !info.type_params.is_empty() {
                     // A local partial instantiates the generic function it names (RFC 084); anywhere else a generic
                     // function is not a value.
-                    if !self.is_generic_partial_target_span(span) {
+                    if !self.is_generic_partial_target_span(span) && self.decorator_callable_span != Some(span) {
                         self.errors.push(errors::generic_function_reference(name, span));
                         return ResolvedType::Unknown;
                     }
-                    self.generic_partial_target = Some(GenericPartialTarget::of_function(name, info));
+                    if self.is_generic_partial_target_span(span) {
+                        self.generic_partial_target = Some(GenericPartialTarget::of_function(name, info));
+                    }
                 }
                 (
                     IdentKind::Value,
@@ -218,16 +226,6 @@ impl TypeChecker {
             SymbolKind::Variant(info) => (IdentKind::Variant, ResolvedType::Named(info.enum_name.clone())),
             SymbolKind::Field(info) => (IdentKind::Value, info.ty.clone()),
             SymbolKind::Property(info) => (IdentKind::Value, info.return_type.clone()),
-            SymbolKind::Module(info) => {
-                // Some `from rust::... import ...` forms are represented as module symbols instead of dedicated
-                // Rust-module placeholders. Keep them on the external-Rust path, but do not guess a concrete type from
-                // the identifier spelling alone.
-                if info.path.first().is_some_and(|seg| seg == "rust") {
-                    (IdentKind::RustImport, ResolvedType::Unknown)
-                } else {
-                    (IdentKind::Module, ResolvedType::Named(name.to_string()))
-                }
-            }
             SymbolKind::Capability(_) => {
                 // RFC 104 capabilities name an authority to perform an operation. Nothing in the language holds one as
                 // a value, so a bare reference is always a mistake rather than a use this stage should type.
@@ -262,6 +260,7 @@ impl TypeChecker {
             SymbolKind::RustItem(_) => {
                 return self.check_rust_identifier(name, sym_id, span, source_target);
             }
+            _ => unreachable!("module bindings are classified before ordinary expression symbols"),
         };
         self.finish_identifier_read(span, kind, ty, source_target)
     }

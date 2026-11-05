@@ -23,10 +23,10 @@ use incan_lang::lang::c_abi;
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::keywords::{self, KeywordId};
 use incan_lang::lang::stdlib;
-use incan_lang::lang::surface::types::SurfaceTypeId;
+use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
 use incan_lang::lang::traits::{self, TraitId};
-use incan_semantics_core::SemanticSourceTargetKind;
 use incan_semantics_core::body_ir::CheckedBridgeOperation;
+use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 use std::collections::{HashMap, HashSet};
 
 use super::TypeChecker;

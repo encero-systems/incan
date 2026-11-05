@@ -52,7 +52,7 @@ impl TypeChecker {
     ///
     /// Qualified module access has no local `from` import whose alias can carry identity, so every nominal manifest
     /// spelling is mapped to its checker-owned canonical key before the member's signature enters expression checking.
-    pub(in crate::typechecker::collect) fn public_library_canonical_type_remapping(
+    pub(in crate::typechecker) fn public_library_canonical_type_remapping(
         &mut self,
         library: &str,
         manifest: &LibraryManifest,
@@ -340,7 +340,7 @@ impl TypeChecker {
     }
 
     /// Resolve one public spelling to nominal model/class/enum/newtype metadata.
-    pub(in crate::typechecker::collect) fn manifest_nominal_type_info(
+    pub(in crate::typechecker) fn manifest_nominal_type_info(
         &self,
         manifest: &LibraryManifest,
         public_name: &str,

@@ -257,11 +257,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> Option<bir::Operand> {
-        if !self
-            .type_info
-            .resolved_identity(recv.span)
-            .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Module)
-        {
+        if !self.is_module_namespace_span(recv.span) {
             return None;
         }
         let hir_span_value = hir_span(span);

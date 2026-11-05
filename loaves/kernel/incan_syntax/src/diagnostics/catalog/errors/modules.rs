@@ -100,6 +100,18 @@ pub fn std_root_member_not_exported(name: &str, declaring_module: Option<&str>, 
     }
 }
 
+/// A resolved namespace exposes no visible declaration under the requested member name.
+pub fn namespace_member_not_found(namespace: &str, member: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("`{namespace}` has no member `{member}`",), span)
+        .with_hint("Check the member spelling and the namespace's public declarations")
+}
+
+/// A qualified path continues through a binding that does not expose a namespace.
+pub fn qualified_name_head_not_namespace(head: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("`{head}` does not expose a namespace"), span)
+        .with_hint("Qualify a module, type, or value whose members are visible here")
+}
+
 /// A module-qualified type annotation (`mod.Type`) named a member the module does not declare as a type.
 ///
 /// The root resolved to a module binding, so the spelling was a real module walk; it is the tail that fails. Naming

@@ -597,10 +597,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 out,
             );
         }
-        if self
-            .type_info
-            .resolved_identity(base.span)
-            .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Module)
+        if self.is_module_namespace_span(base.span)
             && self
                 .type_info
                 .resolved_identity(expr.span)

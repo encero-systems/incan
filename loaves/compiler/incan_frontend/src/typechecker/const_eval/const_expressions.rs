@@ -1,6 +1,7 @@
 //! Const declaration checking, numeric expectations, and const names, expressions, identifiers and tuples.
 
 use super::*;
+use crate::typechecker::ResolvedNamespaceMemberKind;
 
 impl TypeChecker {
     /// Resolve a `const` declaration's written annotation to the frozen type the const will carry, rejecting the one
@@ -200,6 +201,7 @@ impl TypeChecker {
         match &expr.node {
             Expr::Literal(lit) => Some(self.eval_const_literal(lit, expected, expr.span, decl_span)),
             Expr::Ident(name) => self.eval_const_ident(name, expected, stack, expr.span),
+            Expr::Field(_, _) => self.eval_const_qualified_name(expr, expected),
             Expr::Tuple(items) => self.eval_const_tuple(items, stack, decl_span),
             Expr::Unary(op, inner) => self.eval_const_unary(op, inner, expected, stack, decl_span, expr.span),
             Expr::Binary(left, op, right) => self.eval_const_binary(left, op, right, stack, decl_span, expr.span),
@@ -229,7 +231,6 @@ impl TypeChecker {
             | Expr::Closure(_, _)
             | Expr::Yield(_)
             | Expr::Range { .. }
-            | Expr::Field(_, _)
             | Expr::Surface(_)
             | Expr::VocabBlock(_)
             | Expr::Embedded(_)
@@ -247,6 +248,43 @@ impl TypeChecker {
         }
     }
 
+    /// Resolve a module-qualified const through the shared namespace authority.
+    fn eval_const_qualified_name(
+        &mut self,
+        expr: &Spanned<Expr>,
+        expected: Option<&ResolvedType>,
+    ) -> Option<ConstEvalResult> {
+        let segments = crate::typechecker::collect::dotted_path_segments(&expr.node)?;
+        let resolved = match self.resolve_qualified_name(&segments) {
+            Ok(resolved) => resolved,
+            Err(failure) => {
+                self.report_namespace_resolution_failure(failure, expr.span);
+                return None;
+            }
+        };
+        let identity = resolved.canonical?;
+        if identity.kind != incan_semantics_core::SemanticSourceTargetKind::Const {
+            self.errors
+                .push(errors::const_non_const_name(&segments.join("."), expr.span));
+            return None;
+        }
+        let ty = match resolved.kind {
+            ResolvedNamespaceMemberKind::Symbol(SymbolKind::Variable(info)) => info.ty,
+            ResolvedNamespaceMemberKind::Symbol(SymbolKind::Static(info)) => info.ty,
+            _ => {
+                self.errors
+                    .push(errors::const_non_const_name(&segments.join("."), expr.span));
+                return None;
+            }
+        };
+        self.type_info.record_resolved_identity(expr.span, identity);
+        Some(ConstEvalResult {
+            ty: expected.cloned().unwrap_or(ty),
+            kind: ConstKind::RustNative,
+            value: None,
+        })
+    }
+
     /// Resolve an Incan constant or retain an imported Rust constant as an opaque native value.
     ///
     /// An enclosing annotation supplies an opaque value's type when available; rustc remains responsible for its
@@ -261,13 +299,7 @@ impl TypeChecker {
         if self.const_decls.contains_key(name) {
             return self.eval_const_by_name(name, stack);
         }
-        if let Some(symbol) = self.lookup_symbol(name)
-            && match &symbol.kind {
-                SymbolKind::RustItem(_) => true,
-                SymbolKind::Module(info) => info.path.first().is_some_and(|segment| segment == "rust"),
-                _ => false,
-            }
-        {
+        if self.is_rust_namespace_binding(name) {
             return Some(ConstEvalResult {
                 ty: expected.cloned().unwrap_or(ResolvedType::Unknown),
                 kind: ConstKind::RustNative,

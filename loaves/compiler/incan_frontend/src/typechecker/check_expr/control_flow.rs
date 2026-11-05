@@ -114,12 +114,20 @@ impl TypeChecker {
     /// Return whether a call callee resolves to an async function.
     fn call_expr_is_async(&mut self, callee: &Spanned<Expr>) -> bool {
         match &callee.node {
-            Expr::Ident(name) => self.lookup_symbol(name).is_some_and(|sym| match &sym.kind {
-                SymbolKind::Function(info) => info.is_async,
-                SymbolKind::RustItem(info) => {
-                    matches!(&info.metadata, Some(metadata) if matches!(&metadata.kind, RustItemKind::Function(sig) if sig.is_async))
+            Expr::Ident(name) => self.lookup_symbol(name).is_some_and(|sym| {
+                match &sym.kind {
+                    SymbolKind::Function(info) => info.is_async,
+                    SymbolKind::RustItem(info) => {
+                        matches!(&info.metadata, Some(metadata) if matches!(&metadata.kind, RustItemKind::Function(sig) if sig.is_async))
+                    }
+                    SymbolKind::Variable(_) => self
+                        .type_info
+                        .declarations
+                        .decorated_function_bindings_by_span
+                        .get(&sym.span)
+                        .is_some_and(|binding| binding.is_async),
+                    _ => false,
                 }
-                _ => false,
             }),
             Expr::Field(base, member) => self.module_function_member_is_async(base, member),
             _ => false,

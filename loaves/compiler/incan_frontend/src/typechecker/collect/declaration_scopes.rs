@@ -167,7 +167,7 @@ impl TypeChecker {
     ///
     /// The identity graph's direct entry for the declaration names its declaring module. Names the scope does not
     /// cover are left for the caller's root and import remapping.
-    pub(super) fn remap_symbol_kind_through_declaring_module(
+    pub(in crate::typechecker) fn remap_symbol_kind_through_declaring_module(
         &mut self,
         library: &str,
         manifest: &LibraryManifest,

@@ -212,7 +212,7 @@ impl TypeChecker {
     /// This mirrors member-resolution candidate order and refuses ambiguous suffix recovery. The path written by the
     /// user is not necessarily the declaration owner for a sibling-relative import, so it cannot itself be identity
     /// evidence.
-    pub(super) fn resolved_source_module_path(&self, path: &ImportPath) -> Option<Vec<String>> {
+    pub(in crate::typechecker) fn resolved_source_module_path(&self, path: &ImportPath) -> Option<Vec<String>> {
         let base = self.current_module_path.as_deref().unwrap_or_default();
         for candidate in self.dependency_source_import_candidates(base, path) {
             let key = candidate.join("_");
@@ -258,6 +258,9 @@ impl TypeChecker {
                 .push(errors::unknown_stdlib_module(&module.segments.join("."), span));
         }
         for item in items {
+            if self.materialize_source_submodule_import(module, item, span) {
+                continue;
+            }
             if self.materialize_own_standard_import(module, item, span) {
                 continue;
             }
@@ -269,6 +272,38 @@ impl TypeChecker {
             }
             self.define_from_import_placeholder(module, item, span);
         }
+    }
+
+    /// Bind `from parent import child` as the source submodule `parent.child` when that exact module exists.
+    ///
+    /// A submodule is a declaration in its parent's namespace for qualified-name resolution, but it is not an
+    /// ordinary exported value in the parent's declaration table. Resolve it through the same canonical source graph
+    /// as a direct module import and retain a module binding rather than a placeholder value.
+    pub(super) fn materialize_source_submodule_import(
+        &mut self,
+        module: &ImportPath,
+        item: &ImportItem,
+        span: Span,
+    ) -> bool {
+        let Some(path) = self.source_submodule_path(module, &item.name) else {
+            return false;
+        };
+        let local_name = Self::import_item_local_name(item);
+        self.validate_module_import_binding(&local_name, path.first().map(String::as_str), span);
+        let identity = SymbolTable::module_path_identity(&path);
+        self.define_import_symbol(local_name, path, false, identity, span);
+        true
+    }
+
+    /// Return the canonical child module selected by `from parent import child`, if the source graph contains it.
+    pub(super) fn source_submodule_path(&self, module: &ImportPath, child: &str) -> Option<Vec<String>> {
+        let mut segments = module.segments.clone();
+        segments.push(child.to_string());
+        self.resolved_source_module_path(&ImportPath {
+            segments,
+            is_absolute: module.is_absolute,
+            parent_levels: module.parent_levels,
+        })
     }
 
     /// Bind one item of `from std import …`: the standard-library root exports its namespaces and nothing else, so the
@@ -666,6 +701,9 @@ impl TypeChecker {
         let exported_list: Vec<String> = exported_names.iter().cloned().collect();
 
         for item_name in &item_names {
+            if self.source_submodule_path(module, item_name).is_some() {
+                continue;
+            }
             if !exported_names.contains(item_name)
                 && self.dependency_member_symbol_for_path(module, item_name).is_none()
             {

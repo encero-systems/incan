@@ -1,6 +1,7 @@
 //! Declaration collection dispatch, aliases and their targets, function bindings, and partials.
 
 use super::*;
+use crate::typechecker::ResolvedNamespaceMemberKind;
 
 impl TypeChecker {
     // ========================================================================
@@ -118,11 +119,17 @@ impl TypeChecker {
         };
         let symbol_id = if let Some(binding_path) = target_binding_path {
             self.symbols
-                .define_alias_binding_at_path(symbol, target_identity, binding_path)
+                .define_alias_binding_at_path(symbol, target_identity.clone(), binding_path)
         } else {
-            self.symbols.define_alias_binding(symbol, target_identity)
+            self.symbols.define_alias_binding(symbol, target_identity.clone())
         };
         if self.symbols.is_active_lookup_binding(symbol_id) {
+            if let Some(identity) = target_identity {
+                self.type_info
+                    .declarations
+                    .resolved_import_identities
+                    .insert(alias.name.clone(), identity);
+            }
             match &kind {
                 SymbolKind::Function(_) => self.record_imported_function_binding(&alias.name, &kind),
                 SymbolKind::FunctionOverloads(overloads) => {
@@ -145,23 +152,7 @@ impl TypeChecker {
                 let id = self.symbols.lookup(name)?;
                 self.symbols.identity_of(id).cloned()
             }
-            [module_name, rest @ ..] => {
-                let member = rest.last()?;
-                let module_path = {
-                    let symbol = self.lookup_symbol(module_name)?;
-                    let SymbolKind::Module(info) = &symbol.kind else {
-                        return None;
-                    };
-                    if info.is_python {
-                        return None;
-                    }
-                    let mut module_path = info.path.clone();
-                    module_path.extend_from_slice(&rest[..rest.len().saturating_sub(1)]);
-                    module_path
-                };
-                self.dependency_member_identity(&ImportPath::simple(module_path.clone()), member)
-                    .or_else(|| self.loaf_member_identity(&module_path, member))
-            }
+            [_, _, ..] => self.resolve_qualified_name(segments).ok()?.canonical,
             [] => None,
         }
     }
@@ -224,27 +215,10 @@ impl TypeChecker {
     pub(in crate::typechecker) fn alias_target_symbol_kind(&mut self, segments: &[String]) -> Option<SymbolKind> {
         match segments {
             [name] => self.lookup_symbol(name).map(|symbol| symbol.kind.clone()),
-            [module_name, rest @ ..] => {
-                let member = rest.last()?;
-                let module_path = {
-                    let symbol = self.lookup_symbol(module_name)?;
-                    let SymbolKind::Module(info) = &symbol.kind else {
-                        return None;
-                    };
-                    if info.is_python {
-                        return None;
-                    }
-                    let mut module_path = info.path.clone();
-                    module_path.extend_from_slice(&rest[..rest.len().saturating_sub(1)]);
-                    module_path
-                };
-                if let Some(kind) = self.source_dependency_member_symbol_kind(&module_path, member) {
-                    return Some(kind);
-                }
-                let (library, rest) = self.loaf_module(&module_path)?;
-                self.lookup_pub_library_module_symbol_member(&library, &rest, member)
-                    .map(|(kind, _)| kind)
-            }
+            [_, _, ..] => match self.resolve_qualified_name(segments).ok()?.kind {
+                ResolvedNamespaceMemberKind::Symbol(kind) => Some(kind),
+                ResolvedNamespaceMemberKind::SurfaceType(_) | ResolvedNamespaceMemberKind::Method(_) => None,
+            },
             [] => None,
         }
     }

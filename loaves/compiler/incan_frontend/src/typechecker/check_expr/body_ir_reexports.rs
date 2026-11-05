@@ -104,13 +104,8 @@ impl TypeChecker {
 
     /// Follow a source import only while its active binding is the unresolved module selected by collection.
     fn source_reexport_target(&self, name: &str) -> Option<PublishedReexport> {
-        let SymbolKind::Module(module) = &self.lookup_symbol(name)?.kind else {
-            return None;
-        };
-        let path = self.import_binding_path(name).filter(|path| *path == module.path)?;
-        if module.is_python {
-            return None;
-        }
+        let module_path = self.module_namespace_path(name)?;
+        let path = self.import_binding_path(name).filter(|path| **path == module_path)?;
         let (member, segments) = path.split_last()?;
         let import = ImportPath::simple(segments.to_vec());
         let base = self.current_module_path.as_deref().unwrap_or_default();

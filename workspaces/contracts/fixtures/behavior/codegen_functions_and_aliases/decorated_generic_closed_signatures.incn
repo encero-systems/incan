@@ -12,10 +12,18 @@
 #   hello
 #   again
 #   2
+#   0
+#   direct
+#   direct again
+#   1
+#   7
+#   8
+#   2
 
 """Count decoration of generic signatures alongside schema-keyed generic declarations."""
 
 static decorations: int = 0
+static direct_decorations: int = 0
 
 
 def traced[F](label: str) -> (F) -> F:
@@ -51,9 +59,21 @@ def counted[F]() -> (F) -> F:
     return (func) => func
 
 
+def count_direct[F](func: F) -> F:
+    """Count a plain generic decorator once for each closed decorated instance."""
+    direct_decorations += 1
+    return func
+
+
 @counted()
 def echo[T](value: T) -> T:
     """Return the value with the instance's checked parameter and result types."""
+    return value
+
+
+@count_direct
+def direct_echo[T](value: T) -> T:
+    """Return values through a plain generic decorator rather than a factory."""
     return value
 
 
@@ -76,3 +96,11 @@ def main() -> None:
     println(echo[str]("hello"))
     println(echo[str]("again"))
     println(decorations)
+    # 3. A plain generic decorator uses the same per-closed-instance lifetime.
+    println(direct_decorations)
+    println(direct_echo[str]("direct"))
+    println(direct_echo[str]("direct again"))
+    println(direct_decorations)
+    println(direct_echo[int](7))
+    println(direct_echo[int](8))
+    println(direct_decorations)

@@ -31,7 +31,7 @@ impl TypeChecker {
     }
 
     /// Return whether the checked API artifact contains this public module namespace.
-    pub(in crate::typechecker::collect) fn manifest_public_module_exists(
+    pub(in crate::typechecker) fn manifest_public_module_exists(
         manifest: &LibraryManifest,
         module_path: &[String],
     ) -> bool {

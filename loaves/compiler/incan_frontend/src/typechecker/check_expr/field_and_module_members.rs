@@ -1,6 +1,7 @@
 //! F-string parts, field visibility, and imported module function and constant members.
 
 use super::*;
+use crate::typechecker::ResolvedNamespaceMemberKind;
 
 impl TypeChecker {
     /// Type-check every interpolated expression of an f-string and refuse a `{value}` part with no printed form
@@ -71,26 +72,39 @@ impl TypeChecker {
         errors::private_field(field.owner.as_deref().unwrap_or(type_name), name, span)
     }
 
-    /// Resolve an expression receiver like `math` to an imported module binding path.
-    ///
-    /// This is intentionally module-kind driven (`SymbolKind::Module`) instead of name-driven so member access does not
-    /// require per-module hardcoded registries.
+    /// Resolve an expression receiver like `math` to the module namespace its checked binding exposes.
     pub(in crate::typechecker) fn imported_module_for_expr(
         &self,
         expr: &Spanned<Expr>,
     ) -> Option<(String, Vec<String>)> {
-        let Expr::Ident(name) = &expr.node else {
-            return None;
-        };
-        let sym = self.lookup_symbol(name)?;
-        let SymbolKind::Module(info) = &sym.kind else {
-            return None;
-        };
-        // Rust imports keep their dedicated metadata path and Python modules remain dynamic.
-        if info.path.first().is_some_and(|seg| seg == "rust") || info.is_python {
-            return None;
+        let segments = crate::typechecker::collect::dotted_path_segments(&expr.node)?;
+        let (head, tail) = segments.split_first()?;
+        let mut module_path = self.module_namespace_path(head)?;
+        for child in tail {
+            let mut candidate = module_path.clone();
+            candidate.push(child.clone());
+            if let Some(resolved) = self.resolved_source_module_path(&ImportPath::simple(candidate.clone())) {
+                module_path = resolved;
+            } else if self.loaf_module(&candidate).is_some_and(|(library, public_path)| {
+                self.loaves
+                    .manifest(&library)
+                    .is_some_and(|manifest| Self::manifest_public_module_exists(manifest, &public_path))
+            }) {
+                module_path = candidate;
+            } else {
+                return None;
+            }
         }
-        Some((name.clone(), info.path.clone()))
+        Some((segments.join("."), module_path))
+    }
+
+    /// Return the lexical head and its source span from an identifier/field namespace path.
+    pub(super) fn dotted_namespace_head(expr: &Spanned<Expr>) -> Option<(&str, Span)> {
+        match &expr.node {
+            Expr::Ident(name) => Some((name, expr.span)),
+            Expr::Field(base, _) => Self::dotted_namespace_head(base),
+            _ => None,
+        }
     }
 
     /// The declaring identity of a callable reached through a module binding (`math.sqrt`), from the Loaf that owns
@@ -103,14 +117,9 @@ impl TypeChecker {
         module_path: &[String],
         member: &str,
     ) -> Option<incan_semantics_core::CanonicalSymbolId> {
-        if let Some((library, rest)) = self.loaf_module(module_path) {
-            return self
-                .resolve_pub_library_module_symbol_member(&library, &rest, member)
-                .ok()
-                .flatten()?
-                .canonical;
-        }
-        self.dependency_member_identity(&ImportPath::simple(module_path.to_vec()), member)
+        self.resolve_module_namespace_member(module_path, member)
+            .ok()
+            .and_then(|resolved| resolved.canonical)
     }
 
     /// Resolve a function member from a Loaf or source module binding.
@@ -133,27 +142,28 @@ impl TypeChecker {
         module_path: &[String],
         member: &str,
     ) -> Option<(SymbolKind, Vec<String>)> {
-        if let Some((library, rest)) = self.loaf_module(module_path) {
-            let (kind, source_module_path) = self.lookup_pub_library_module_symbol_member(&library, &rest, member)?;
-            return matches!(kind, SymbolKind::Function(_) | SymbolKind::FunctionOverloads(_))
-                .then_some((kind, source_module_path));
-        }
-        let import_path = ImportPath::simple(module_path.to_vec());
-        let kind = self.dependency_member_symbol_for_path(&import_path, member)?;
-        if !matches!(kind, SymbolKind::Function(_) | SymbolKind::FunctionOverloads(_)) {
+        let resolved = self.resolve_module_namespace_member(module_path, member).ok()?;
+        let ResolvedNamespaceMemberKind::Symbol(kind) = resolved.kind else {
             return None;
-        }
-        let identity = self.dependency_member_identity(&import_path, member)?;
-        let source_module_path = match identity.origin {
-            incan_semantics_core::SymbolOrigin::Module(path) => path,
-            incan_semantics_core::SymbolOrigin::Package { library, module_path }
-                if self.symbols.package_identity() == Some(library.as_str()) =>
-            {
-                module_path
-            }
-            _ => return None,
         };
-        Some((kind, source_module_path))
+        let source = resolved.source_module_path?;
+        matches!(kind, SymbolKind::Function(_) | SymbolKind::FunctionOverloads(_)).then_some((kind, source))
+    }
+
+    /// Resolve any published member through the same Loaf or source-module registry used by an import by name.
+    ///
+    /// The caller decides which declaration kinds its expression form accepts. Keeping publication and canonical
+    /// source-path selection here prevents qualified calls and values from maintaining a function-only namespace.
+    pub(super) fn resolve_imported_module_member_with_source(
+        &mut self,
+        module_path: &[String],
+        member: &str,
+    ) -> Option<(SymbolKind, Vec<String>)> {
+        let resolved = self.resolve_module_namespace_member(module_path, member).ok()?;
+        let ResolvedNamespaceMemberKind::Symbol(kind) = resolved.kind else {
+            return None;
+        };
+        Some((kind, resolved.source_module_path?))
     }
 
     /// Resolve a constant reached through an imported Loaf or source module.
@@ -162,19 +172,11 @@ impl TypeChecker {
         module_path: &[String],
         member: &str,
     ) -> Option<(VariableInfo, Option<incan_semantics_core::CanonicalSymbolId>)> {
-        let (kind, identity) = if let Some((library, rest)) = self.loaf_module(module_path) {
-            let resolved = self
-                .resolve_pub_library_module_symbol_member(&library, &rest, member)
-                .ok()
-                .flatten()?;
-            (resolved.kind, resolved.canonical)
-        } else {
-            let path = ImportPath::simple(module_path.to_vec());
-            (
-                self.dependency_member_symbol_for_path(&path, member)?,
-                self.dependency_member_identity(&path, member),
-            )
+        let resolved = self.resolve_module_namespace_member(module_path, member).ok()?;
+        let ResolvedNamespaceMemberKind::Symbol(kind) = resolved.kind else {
+            return None;
         };
+        let identity = resolved.canonical;
         match kind {
             SymbolKind::Variable(info) => Some((info, identity)),
             SymbolKind::Static(info) => Some((
