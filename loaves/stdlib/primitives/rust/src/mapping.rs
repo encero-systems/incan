@@ -1,4 +1,4 @@
-//! Bounded, read-only views that retain their mapping without copying mapped bytes.
+//! Bounded, read-only primitive views that retain their mapping without copying mapped bytes.
 //!
 //! The owner anchor is explicit: dropping a mapping handle cannot unmap bytes still held by a view. This is not a
 //! lexical borrow, and a caller retaining a view also retains the whole virtual mapping. The backing file must remain
@@ -22,8 +22,8 @@ impl MappedFile {
     /// Map an immutable file without reading its contents into an owned byte buffer.
     ///
     /// The backing inode must not be modified or truncated until this mapping and every view derived from it have been
-    /// dropped; `std.fs` states this as the contract of `map_read`. Replacing the path with another inode does not
-    /// change this mapping.
+    /// dropped; `std.primitives.fs` states this as the contract of `map_read`. Replacing the path with another inode
+    /// does not change this mapping.
     pub fn open(path: &str) -> Result<Self, String> {
         let file = File::open(path).map_err(|error| error.to_string())?;
         // SAFETY: the inode is not modified or truncated while any handle or view of this mapping lives. That is the

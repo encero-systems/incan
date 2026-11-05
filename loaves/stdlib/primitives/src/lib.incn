@@ -3,5 +3,10 @@
 import primitives
 import primitives.checksum
 import primitives.environ
+import primitives.fs
+import primitives.fs.file
+import primitives.fs.locking
+import primitives.fs.mapping
+import primitives.fs.path
 import primitives.hmac
 import primitives.errors

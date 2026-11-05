@@ -4,7 +4,18 @@ version = "0.5.0"
 license = "Apache-2.0"
 private = true
 
+[rust]
+name = "incan_std_primitives"
+type = "lib"
+edition = "2024"
+
+[rust.source]
+root = "rust"
+
 [dependencies]
 crc32fast = { loaf = "crates-io/crc32fast", version = "1", features = [], default-features = true }
 hmac = { loaf = "crates-io/hmac", version = "0.12", features = ["reset"], default-features = true }
+memmap2 = { loaf = "crates-io/memmap2", version = "=0.9.11", features = [], default-features = true }
+rustix = { loaf = "crates-io/rustix", version = "1.1", features = ["fs"], default-features = true }
 sha2 = { loaf = "crates-io/sha2", version = "0.10", features = [], default-features = true }
+tempfile = { loaf = "crates-io/tempfile", version = "3", features = [], default-features = true }

@@ -1,0 +1,136 @@
+# behavior: primitive filesystem resources read bounded chunks, retain views and release owned handles and locks (#2501)
+# expect-stdout:
+#   0
+#   3 3 3 1
+#   7
+#   97 97
+#   true
+#   true
+#   true
+#   true
+#   true
+#   true
+#   true
+
+"""Exercise source reading and retained filesystem resources without importing the std.fs facade."""
+
+from std.primitives.fs import MappedView, Path, map_read, open_read, open_write, read_chunk, try_exclusive, write_all
+
+
+def read_source_chunks(path: Path, chunk_size: int) -> Result[list[bytes], str]:
+    """Open one owned source handle and return every non-empty bounded chunk."""
+    file = open_read(path)?
+    mut chunks: list[bytes] = []
+
+    loop:
+        chunk = read_chunk(file, chunk_size)?
+        if len(chunk) == 0:
+            break
+        chunks.append(chunk)
+
+    return Ok(chunks)
+
+
+def write_source(path: Path, data: bytes) -> Result[None, str]:
+    """Replace one source file through an owned primitive handle."""
+    file = open_write(path)?
+    _ = write_all(file, data)?
+    return Ok(None)
+
+
+def first_byte(path: Path) -> Result[int, str]:
+    """Read one byte and return while the owned handle is still in scope."""
+    file = open_read(path)?
+    chunk = read_chunk(file, 1)?
+    return Ok(int(chunk[0]))
+
+
+def retained_view(path: Path) -> Result[MappedView, str]:
+    """Return a mapped view after the local mapping handle leaves scope."""
+    mapping = map_read(path)?
+    match mapping.view(1, 3):
+        Some(view) => return Ok(view)
+        None => return Err("expected a valid mapped view")
+
+
+def lock_conflicts(path: Path) -> Result[bool, str]:
+    """Hold one exclusive lock and report whether a second acquisition conflicts."""
+    first = try_exclusive(path)?
+    match first:
+        Some(held) =>
+            second = try_exclusive(path)?
+            match second:
+                Some(_) => return Ok(false)
+                None => return Ok(true)
+        None => return Err("the first lock acquisition was unexpectedly contended")
+
+
+def lock_released(path: Path) -> Result[bool, str]:
+    """Report whether a lock can be reacquired after the prior guard leaves scope."""
+    match try_exclusive(path)?:
+        Some(_) => return Ok(true)
+        None => return Ok(false)
+
+
+def open_failed() -> bool:
+    """Report whether opening an absent source returns an error."""
+    match open_read(Path(value="primitive-source-absent")):
+        Ok(_) => return false
+        Err(_) => return true
+
+
+def read_failed() -> Result[bool, str]:
+    """Report whether reading a directory handle returns an error."""
+    directory = open_read(Path(value="."))?
+    match read_chunk(directory, 1):
+        Ok(_) => return Ok(false)
+        Err(_) => return Ok(true)
+
+
+def main() -> Result[None, str]:
+    """
+    Exercise primitive filesystem resources.
+
+    1. Read empty, multi-chunk and short final reads.
+    2. Keep two owned readers at independent cursor positions.
+    3. Report open and read failures and release a handle on early return.
+    4. Retain a mapped view and release exclusive lock guards.
+    """
+    empty_path = Path(value="primitive-source-empty")
+    source_path = Path(value="primitive-source-data")
+    write_source(empty_path, b"")?
+    write_source(source_path, b"abcdefg")?
+
+    # 1. Read empty, multi-chunk and short final reads.
+    empty = read_source_chunks(empty_path, 4)?
+    chunks = read_source_chunks(source_path, 3)?
+    short = read_source_chunks(source_path, 64)?
+    println(len(empty))
+    println(f"{len(chunks)} {len(chunks[0])} {len(chunks[1])} {len(chunks[2])}")
+    println(len(short[0]))
+
+    # 2. Keep two owned readers at independent cursor positions.
+    first = open_read(source_path)?
+    second = open_read(source_path)?
+    first_value = read_chunk(first, 1)?
+    second_value = read_chunk(second, 1)?
+    println(f"{int(first_value[0])} {int(second_value[0])}")
+
+    # 3. Report failures and observe that an early-return handle no longer prevents removal.
+    println(open_failed())
+    println(read_failed()?)
+    early_path = Path(value="primitive-source-early-return")
+    write_source(early_path, b"x")?
+    println(first_byte(early_path)? == 120)
+    early_path.remove()?
+    match open_read(early_path):
+        Ok(_) => println(false)
+        Err(_) => println(true)
+
+    # 4. Keep mapped bytes after their mapping handle leaves scope, then release and reacquire one lock.
+    view = retained_view(source_path)?
+    println(view.to_bytes() == b"bcd")
+    lock_path = Path(value="primitive-source-lock")
+    println(lock_conflicts(lock_path)?)
+    println(lock_released(lock_path)?)
+    return Ok(None)

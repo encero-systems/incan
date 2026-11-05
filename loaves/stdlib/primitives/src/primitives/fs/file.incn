@@ -1,0 +1,87 @@
+"""Owned file handles with bounded byte operations and no dependency on std.fs."""
+
+from rust::incan_std_primitives::file import File as NativeFile
+from rust::std::cell import RefCell
+from rust::std::rc import Rc
+from crate.primitives.fs.path import PrimitivePath
+
+
+pub class FileHandle:
+    """A retained host file handle released after its last shared handle leaves scope."""
+
+    pub handle: Rc[RefCell[NativeFile]]
+
+
+pub def open_read(path: PrimitivePath) -> Result[FileHandle, str]:
+    """Open an owned read-only handle for a primitive path."""
+    return NativeFile.open_read(path.value).map((file) => FileHandle(handle=Rc.new(RefCell.new(file))))
+
+
+pub def open_write(path: PrimitivePath) -> Result[FileHandle, str]:
+    """Open an owned write handle, creating the file and truncating an existing file."""
+    return NativeFile
+        .open_options(path.value, false, true, false, true, true, false)
+        .map((file) => FileHandle(handle=Rc.new(RefCell.new(file))))
+
+
+pub def open_options(
+    path: PrimitivePath,
+    readable: bool,
+    writable: bool,
+    appendable: bool,
+    truncating: bool,
+    creating: bool,
+    creating_new: bool,
+) -> Result[FileHandle, str]:
+    """Open an owned handle with explicit host flags and no higher-level mode policy."""
+    return NativeFile
+        .open_options(path.value, readable, writable, appendable, truncating, creating, creating_new)
+        .map((file) => FileHandle(handle=Rc.new(RefCell.new(file))))
+
+
+pub def read_chunk(file: FileHandle, max_bytes: int) -> Result[bytes, str]:
+    """Read at most a positive byte count, permitting a short read and using an empty result for EOF."""
+    mut handle = file.handle.borrow_mut()
+    return handle.read_chunk(max_bytes)
+
+
+pub def read_remaining(file: FileHandle) -> Result[bytes, str]:
+    """Read every remaining byte from the current cursor."""
+    mut handle = file.handle.borrow_mut()
+    return handle.read_remaining()
+
+
+pub def write_all(file: FileHandle, data: bytes) -> Result[int, str]:
+    """Write every byte at the current cursor and return the accepted byte count."""
+    mut handle = file.handle.borrow_mut()
+    return handle.write_all(data)
+
+
+pub def tell(file: FileHandle) -> Result[int, str]:
+    """Return the current byte cursor position."""
+    mut handle = file.handle.borrow_mut()
+    return handle.tell()
+
+
+pub def seek(file: FileHandle, offset: int, whence: int) -> Result[int, str]:
+    """Move the cursor relative to the start, current position or end and return its new position."""
+    mut handle = file.handle.borrow_mut()
+    return handle.seek(offset, whence)
+
+
+pub def flush(file: FileHandle) -> Result[None, str]:
+    """Flush buffered writes to the host handle."""
+    mut handle = file.handle.borrow_mut()
+    return handle.flush()
+
+
+pub def sync(file: FileHandle) -> Result[None, str]:
+    """Ask the host to synchronize file data and metadata to durable storage."""
+    mut handle = file.handle.borrow_mut()
+    return handle.sync()
+
+
+pub def sync_data(file: FileHandle) -> Result[None, str]:
+    """Ask the host to synchronize file data without requiring all metadata."""
+    mut handle = file.handle.borrow_mut()
+    return handle.sync_data()
