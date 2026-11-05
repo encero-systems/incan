@@ -47,8 +47,8 @@ Reservation describes how a spelling is reserved: `Hard` keywords are always res
 | Assert | `assert` |  | Contextual | - | ControlFlow | Statement | RFC 018 | 0.3 | Draft |
 | When | `when` |  | Contextual | - | ControlFlow | Statement | RFC 114 | 0.5 | Stable |
 | Def | `def` | `fn` | Hard | - | Definition | Statement | RFC 000 | 0.1 | Stable |
-| Async | `async` |  | Soft | `std.async` | Definition | Modifier | RFC 000 | 0.1 | Stable |
-| Await | `await` |  | Soft | `std.async` | Definition | Expression | RFC 000 | 0.1 | Stable |
+| Async | `async` |  | Soft | `std.async`, `std.primitives.async` | Definition | Modifier | RFC 000 | 0.1 | Stable |
+| Await | `await` |  | Soft | `std.async`, `std.primitives.async` | Definition | Expression | RFC 000 | 0.1 | Stable |
 | Capability | `capability` |  | Contextual | - | Definition | Statement | RFC 104 | 0.6 | Draft |
 | Class | `class` |  | Hard | - | Definition | Statement | RFC 000 | 0.1 | Stable |
 | Model | `model` |  | Hard | - | Definition | Statement | RFC 000 | 0.1 | Stable |
@@ -84,12 +84,12 @@ Reservation describes how a spelling is reserved: `Hard` keywords are always res
 
 ## Soft keywords
 
-Soft keywords are only reserved when their activating `std.*` namespace is imported.
+Soft keywords are only reserved when one of their activating `std.*` namespaces is imported.
 
 | Id | Canonical | Activated by | Category | Usage | RFC | Since | Stability |
 |---|---|---|---|---|---|---|---|
-| Async | `async` | `std.async` | Definition | Modifier | RFC 000 | 0.1 | Stable |
-| Await | `await` | `std.async` | Definition | Expression | RFC 000 | 0.1 | Stable |
+| Async | `async` | `std.async`, `std.primitives.async` | Definition | Modifier | RFC 000 | 0.1 | Stable |
+| Await | `await` | `std.async`, `std.primitives.async` | Definition | Expression | RFC 000 | 0.1 | Stable |
 
 ## Standard library namespaces
 
@@ -130,7 +130,7 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 | `std.prelude` | - | - | - |
 | `std.this` | - | - | - |
 | `std.vocab` | - | - | - |
-| `std.primitives` | - | - | - |
+| `std.primitives` | - | `std.primitives.async`, `std.primitives.async.channel`, `std.primitives.async.sync`, `std.primitives.async.task`, `std.primitives.async.time`, `std.primitives.vocab` | - |
 
 ## Builtin exceptions
 
