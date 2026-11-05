@@ -1,6 +1,6 @@
 # RFC 121: Unified Incan/Rust type substrate
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-08-19
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
