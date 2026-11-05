@@ -26,7 +26,7 @@ incan test PATH [UNIT OPTIONS]
 incan build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
 incan fmt [--check] PATH...
 incan inspect codegraph PATH [GRAPH OPTIONS]
-incan mcp PATH
+incan mcp PATH [--profile NAME]
 incan toolchain pack OUT
 incan toolchain install ARCHIVE
 ```

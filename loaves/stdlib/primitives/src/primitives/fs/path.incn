@@ -15,6 +15,26 @@ from rust::std::fs import (
     write,
 )
 from rust::std::path import Path as RustPath
+from rust::rustix::fs import statvfs
+
+
+pub model FilesystemCapacity:
+    """Fundamental-block byte counts reported for the filesystem containing a path."""
+
+    pub total: int
+    pub used: int
+    pub free: int
+
+
+pub def filesystem_capacity(path: PrimitivePath) -> Result[FilesystemCapacity, str]:
+    """Return filesystem capacity in bytes, using the fundamental block size that measures the host counts."""
+    stats = statvfs(RustPath.new(path.value)).map_err((error) => f"{error}")?
+    block_size = int(stats.f_frsize)
+    return Ok(FilesystemCapacity(
+        total=int(stats.f_blocks) * block_size,
+        used=(int(stats.f_blocks) - int(stats.f_bfree)) * block_size,
+        free=int(stats.f_bavail) * block_size,
+    ))
 
 
 @derive(Clone)

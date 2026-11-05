@@ -46,6 +46,7 @@ pub(super) fn path_from_lsp_uri_or_path(value: &str) -> std::result::Result<Path
 /// Load model bundles for the LSP command from a project, source path, bundle JSON file, or library artifact.
 pub(super) fn collect_lsp_contract_model_bundles(
     path: &Path,
+    profile: &str,
 ) -> std::result::Result<Vec<CanonicalModelBundle>, String> {
     let absolute = if path.is_absolute() {
         path.to_path_buf()
@@ -87,7 +88,7 @@ pub(super) fn collect_lsp_contract_model_bundles(
     } else {
         absolute
     };
-    let unit = analysis::unit_description(&anchor).map_err(|error| error.message)?;
+    let unit = analysis::unit_description(&anchor, profile).map_err(|error| error.message)?;
     read_project_model_bundles(&unit.project_root, &unit.contract_models).map_err(|error| error.to_string())
 }
 
@@ -95,8 +96,9 @@ pub(super) fn collect_lsp_contract_model_bundles(
 pub(super) fn find_lsp_contract_model_bundle(
     path: &Path,
     model: &str,
+    profile: &str,
 ) -> std::result::Result<CanonicalModelBundle, String> {
-    let bundles = collect_lsp_contract_model_bundles(path)?;
+    let bundles = collect_lsp_contract_model_bundles(path, profile)?;
     bundles
         .into_iter()
         .find(|bundle| bundle.logical_type_name == model || bundle.stable_model_id.as_deref() == Some(model))
@@ -113,8 +115,9 @@ pub(super) fn emit_contract_model_command_payload(
     path: &Path,
     model: &str,
     format: ContractModelCommandFormat,
+    profile: &str,
 ) -> std::result::Result<serde_json::Value, String> {
-    let bundle = find_lsp_contract_model_bundle(path, model)?;
+    let bundle = find_lsp_contract_model_bundle(path, model, profile)?;
     match format {
         ContractModelCommandFormat::Incan => {
             let source = bundle.emit_incan_model_source().map_err(|error| error.to_string())?;
