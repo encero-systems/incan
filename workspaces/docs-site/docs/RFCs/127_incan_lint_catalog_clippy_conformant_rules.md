@@ -756,7 +756,7 @@ The tables below are the seed catalog. Each row is one clippy lint and fills exa
 | `match_bool` | `match flag:` with `true =>` and `false =>` arms, where `if` is meant (syntax) | | |
 | `match_same_arms` | arms with identical bodies (syntax) | | |
 | `match_wildcard_for_single_variants` | a `_` arm that covers exactly one remaining variant (semantic) | | |
-| `missing_errors_doc` | | `missing_errors_docstring`: a `pub def` returning `Result` whose docstring has no errors section; the recognized docstring sections are `Args`, `Parameters`, `Returns`, `Fields`, `Aliases`, and `Decorators`, so this entry needs an errors-section convention from RFC 082 before it ships (syntax) | |
+| `missing_errors_doc` | | `missing_errors_docstring`: a `pub def` returning `Result` whose docstring has no `Errors:` section under RFC 082 (syntax) | |
 | `needless_continue` | `continue` as the last statement of a loop body, or an `if ... continue` that an `else` avoids (syntax) | | |
 | `needless_for_each` | `.for_each(f)` where a `for` loop reads better; `for_each` is a method name on a receiver the tree does not fix (semantic) | | |
 | `needless_pass_by_value` | | | parameters are values in source, and the compiler decides the Rust shape |

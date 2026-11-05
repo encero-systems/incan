@@ -179,7 +179,9 @@ Search ranking, search UI, navigation, theming, and site layout are not part of 
 
 Docs generation must support a validation-only mode. Validation compares mechanically checkable docstring sections against RFC 048 metadata.
 
-Validation must detect documented parameters that do not exist, public parameters missing required documentation under strict policy, documented return sections that contradict the checked return type, documented fields that do not exist, and exposed decorator or alias claims that contradict checked metadata.
+The recognized sections are `Args:` (or `Parameters:`), `Returns:`, `Errors:`, `Fields:`, `Aliases:` and `Decorators:`. `Errors:` lists the error cases a `Result`-returning function can produce, by name.
+
+Validation must detect documented parameters that do not exist, public parameters missing required documentation under strict policy, documented return sections that contradict the checked return type, documented errors the checked return type cannot produce, documented fields that do not exist, and exposed decorator or alias claims that contradict checked metadata.
 
 Validation must not execute user code. It may rely on parsed docstrings, checked declarations, compiler-known safe constants, and safe metadata values exposed by RFC 048.
 
