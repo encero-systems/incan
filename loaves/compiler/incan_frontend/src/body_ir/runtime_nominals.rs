@@ -2,7 +2,6 @@
 
 use std::collections::BTreeSet;
 
-use incan_lang::lang::stdlib::facets;
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeCategory, SurfaceTypeKind};
 use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId, HirSourceSpan, SemanticSourceTargetKind, SymbolOrigin};
@@ -162,8 +161,7 @@ fn nominal(type_info: &TypeCheckInfo, name: &str) -> Option<bir::NominalDeclarat
         .split('.')
         .map(str::to_owned)
         .collect::<Vec<_>>();
-    let namespace = path.get(1)?;
-    let library = facets::for_namespace(namespace).to_owned();
+    let library = surface_types::runtime_facet(id)?.to_owned();
     // Runtime vocabulary has no Incan declaration span. Its registry position is a stable synthetic declaration
     // address, never a consumer source location.
     let offset = surface_types::SURFACE_TYPES

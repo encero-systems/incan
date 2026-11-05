@@ -280,7 +280,7 @@ impl TypeChecker {
         // ownership is nevertheless the same proof a direct `from std.web import Html` uses, so retain that stable
         // builtin identity and canonical resolved spelling for a qualified annotation as well (#1824).
         if let Some(surface_type) = surface_types::from_str(name)
-            && surface_types::stdlib_module_path(surface_type).is_some_and(|owner| owner == module_path.join("."))
+            && surface_types::is_exported_from_module(surface_type, &module_path.join("."))
         {
             let canonical = surface_types::as_str(surface_type).to_string();
             return Some(QualifiedTypeReferenceInfo {

@@ -1,0 +1,46 @@
+# behavior: std.primitives.async alone activates async syntax, completes and cancels tasks, reports a timeout, and keeps guard access clone-based across suspension
+# expect-stdout:
+#   completed 7
+#   cancelled
+#   operation timed out
+#   snapshot ready
+#   guarded done
+
+import std.primitives.async
+from std.primitives.async.sync import Mutex
+from std.primitives.async.task import spawn, yield_now
+from std.primitives.async.time import sleep_ms, timeout_ms
+
+
+async def completed() -> int:
+    await yield_now()
+    return 7
+
+
+async def pending() -> int:
+    await sleep_ms(500)
+    return 9
+
+
+async def main() -> None:
+    match await spawn(completed()):
+        Ok(value) => println(f"completed {value}")
+        Err(error) => println(error.message())
+
+    cancelled = spawn(pending())
+    cancelled.abort()
+    match await cancelled:
+        Ok(value) => println(f"unexpected {value}")
+        Err(_) => println("cancelled")
+
+    match await timeout_ms(5, pending()):
+        Ok(value) => println(f"unexpected {value}")
+        Err(error) => println(error.message())
+
+    guarded = Mutex.new("ready")
+    guard = await guarded.lock()
+    snapshot = guard.get()
+    await yield_now()
+    println(f"snapshot {snapshot}")
+    guard.set("done")
+    println(f"guarded {guard.get()}")

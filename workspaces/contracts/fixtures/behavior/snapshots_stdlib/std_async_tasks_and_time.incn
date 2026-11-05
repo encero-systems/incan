@@ -8,7 +8,8 @@
 #   still running
 #   3
 
-import std.async
+import std.async as async_library
+import std.primitives.async as async_primitives
 from std.async.task import spawn, spawn_blocking, yield_now, JoinHandle
 from std.async.time import sleep, sleep_ms, timeout, timeout_ms, timeout_join_ms, TimeoutError, TimeoutJoinOutcome
 
