@@ -103,6 +103,7 @@ For this example, the positive bound limits each read, short reads are permitted
 | File handles and byte operations | Text reading, recursive traversal, globbing and staging workflows |
 | Borrowed read cursor and owned write buffer | Combined reading, writing and seeking through `BytesIO` |
 | Byte-level hashing and encoding algorithms | Algorithm selection, whole-file hashing and source/sink conveniences |
+| Secure random bytes and byte-level password-hashing algorithms | Token generation, password policy, verification and upgrades |
 | Crumb typed value encoding and reconstruction | Database records, field indexes, sharing policy, transactions and retention |
 | Precise environment observations | Defaults, typed configuration conversion and configuration policy |
 | Async mechanisms and vocabulary, iteration protocols with their consumers, `ErrorPolicy`, cancellation tokens, timers and the monotonic clock | Task groups, policy-aware joins, deadline conveniences and preludes |
