@@ -5,10 +5,18 @@ Raw deflate has no reliable framing signature, so this module supports explicit 
 from autodetection.
 """
 
-from rust::std::io import Cursor, Read
+from rust::std::io import BufReader, Cursor, Read
 from rust::flate2 import Compression as FlateCompression
-from rust::flate2::read import DeflateDecoder, DeflateEncoder
-from std.compression._core import Codec, CompressionError, _codec_error, _level_or_default, _validate_chunk_size, _write_sink_bytes
+from rust::flate2::bufread import DeflateDecoder
+from rust::flate2::read import DeflateEncoder
+from std.compression._core import (
+    Codec,
+    CompressionError,
+    _codec_error,
+    _level_or_default,
+    _validate_chunk_size,
+    _write_sink_bytes,
+)
 from std.fs import File
 from std.io import _BytesIO
 
@@ -44,7 +52,16 @@ pub def decompress(data: bytes) -> Result[bytes, CompressionError]:
     mut reader = DeflateDecoder.new(Cursor.new(data))
     mut out: bytes = b""
     match reader.read_to_end(out):
-        Ok(_) => return Ok(out)
+        Ok(_) =>
+            mut trailing: bytes = b""
+            match reader.get_mut().read_to_end(trailing):
+                Ok(_) =>
+                    if len(trailing) != 0:
+                        return Err(
+                            _codec_error(Codec.Deflate, "decompress", "invalid trailing bytes after deflate stream"),
+                        )
+                    return Ok(out)
+                Err(err) => return Err(_codec_error(Codec.Deflate, "decompress", err.to_string()))
         Err(err) => return Err(_codec_error(Codec.Deflate, "decompress", err.to_string()))
 
 
@@ -98,9 +115,7 @@ pub def decompress_stream(
 
 
 def _flate_level(level: Option[int]) -> Result[FlateCompression, CompressionError]:
-    """
-    Convert a portable deflate level into the `flate2` compression type.
-    """
+    """Convert a portable deflate level into the `flate2` compression type."""
     selected = _level_or_default(Codec.Deflate, level, 6, 0, 9)?
     maybe: Option[u32] = selected.try_resize()
     match maybe:
@@ -114,9 +129,7 @@ def _compress_bytesio_stream(
     compression: FlateCompression,
     chunk_size: int,
 ) -> Result[None, CompressionError]:
-    """
-    Compress bytes from an in-memory stream into a binary sink.
-    """
+    """Compress bytes from an in-memory stream into a binary sink."""
     mut handle = source.handle.borrow_mut()
     mut reader = DeflateEncoder.new(Read.by_ref(handle), compression)
     while true:
@@ -135,9 +148,7 @@ def _compress_file_stream(
     compression: FlateCompression,
     chunk_size: int,
 ) -> Result[None, CompressionError]:
-    """
-    Compress bytes from a file stream into a binary sink.
-    """
+    """Compress bytes from a file stream into a binary sink."""
     mut handle = source.handle.handle.borrow_mut()
     mut reader = DeflateEncoder.new(Read.by_ref(handle), compression)
     while true:
@@ -155,17 +166,27 @@ def _decompress_bytesio_stream(
     target: Union[_BytesIO, File],
     chunk_size: int,
 ) -> Result[None, CompressionError]:
-    """
-    Decompress raw deflate bytes from an in-memory stream into a binary sink.
-    """
+    """Decompress raw deflate bytes from an in-memory stream into a binary sink."""
     mut handle = source.handle.borrow_mut()
-    mut reader = DeflateDecoder.new(Read.by_ref(handle))
+    mut reader = DeflateDecoder.new(BufReader.new(Read.by_ref(handle)))
     while true:
         mut chunk: bytes = b""
         match reader.by_ref().take(chunk_size.saturating_resize[u64]()).read_to_end(chunk):
             Ok(_) =>
                 if len(chunk) == 0:
-                    return Ok(None)
+                    mut trailing: bytes = b""
+                    match reader.get_mut().read_to_end(trailing):
+                        Ok(_) =>
+                            if len(trailing) != 0:
+                                return Err(
+                                    _codec_error(
+                                        Codec.Deflate,
+                                        "decompress_stream",
+                                        "invalid trailing bytes after deflate stream",
+                                    ),
+                                )
+                            return Ok(None)
+                        Err(err) => return Err(_codec_error(Codec.Deflate, "decompress_stream", err.to_string()))
                 _write_sink_bytes(Some(Codec.Deflate), "decompress_stream", target, chunk)?
             Err(err) => return Err(_codec_error(Codec.Deflate, "decompress_stream", err.to_string()))
 
@@ -175,16 +196,26 @@ def _decompress_file_stream(
     target: Union[_BytesIO, File],
     chunk_size: int,
 ) -> Result[None, CompressionError]:
-    """
-    Decompress raw deflate bytes from a file stream into a binary sink.
-    """
+    """Decompress raw deflate bytes from a file stream into a binary sink."""
     mut handle = source.handle.handle.borrow_mut()
-    mut reader = DeflateDecoder.new(Read.by_ref(handle))
+    mut reader = DeflateDecoder.new(BufReader.new(Read.by_ref(handle)))
     while true:
         mut chunk: bytes = b""
         match reader.by_ref().take(chunk_size.saturating_resize[u64]()).read_to_end(chunk):
             Ok(_) =>
                 if len(chunk) == 0:
-                    return Ok(None)
+                    mut trailing: bytes = b""
+                    match reader.get_mut().read_to_end(trailing):
+                        Ok(_) =>
+                            if len(trailing) != 0:
+                                return Err(
+                                    _codec_error(
+                                        Codec.Deflate,
+                                        "decompress_stream",
+                                        "invalid trailing bytes after deflate stream",
+                                    ),
+                                )
+                            return Ok(None)
+                        Err(err) => return Err(_codec_error(Codec.Deflate, "decompress_stream", err.to_string()))
                 _write_sink_bytes(Some(Codec.Deflate), "decompress_stream", target, chunk)?
             Err(err) => return Err(_codec_error(Codec.Deflate, "decompress_stream", err.to_string()))

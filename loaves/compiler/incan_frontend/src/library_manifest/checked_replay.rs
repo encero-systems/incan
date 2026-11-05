@@ -460,6 +460,11 @@ fn validate_default(value: &CheckedParamDefault) -> Result<(), LibraryManifestEr
                 }
             }
         }
+        CheckedParamDefault::MethodCall { args, .. } => {
+            for argument in args {
+                validate_default(&argument.value)?;
+            }
+        }
         CheckedParamDefault::Unsupported => {
             return Err(invalid("unsupported checked default cannot be replayed losslessly"));
         }
@@ -626,6 +631,23 @@ fn default_value(value: &ParamDefaultExport) -> Result<CheckedParamDefault, Libr
                 params: params(&signature.params),
                 return_type: resolved_type_from_manifest_type_ref(&signature.return_type),
             }),
+        },
+        ParamDefaultExport::MethodCall {
+            receiver_path,
+            method,
+            args,
+        } => CheckedParamDefault::MethodCall {
+            receiver_path: receiver_path.clone(),
+            method: method.clone(),
+            args: args
+                .iter()
+                .map(|arg| {
+                    Ok(CheckedParamDefaultArg {
+                        name: arg.name.clone(),
+                        value: default_value(&arg.value)?,
+                    })
+                })
+                .collect::<Result<_, LibraryManifestError>>()?,
         },
         ParamDefaultExport::Unsupported => CheckedParamDefault::Unsupported,
     })
