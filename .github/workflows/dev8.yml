@@ -1,12 +1,15 @@
 name: dev.8 installed toolchain
 
+# Full CI runs on main, on release branches and on the development line's pull request into main. Stacked PRs get
+# stack_checks.yml instead.
+
 # Set BUILD_TOOLCHAIN only after the real release passes its self-hosting gate.
 # Its JSON maps each target triple to a GHCR tag@sha256:digest (publisher output).
 on:
   push:
-    branches: [main, '*.*.*-dev.*', release/**]
+    branches: [main, release/**]
   pull_request:
-    branches: [main, '*.*.*-dev.*', release/**]
+    branches: [main, release/**]
   workflow_dispatch:
 
 permissions:
