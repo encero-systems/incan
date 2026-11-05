@@ -167,32 +167,13 @@ fn primitive_observers_keep_checked_reads() -> Result<(), Box<dyn std::error::Er
         "def replace(mut value: BorrowedMut[str]) -> str:\n    value = \"changed\"\n    return \"changed\"\ndef inspect(mut other: BorrowedMut[str], flag: bool) -> None:\n    assert flag, replace(other)\n    print(other)\n",
         "def inspect(flag: bool) -> None:\n    assert flag, consume(\"fresh\")\ndef consume(value: Owned[str]) -> str:\n    return \"failed\"\n",
         "def inspect(value: Owned[int], flag: bool) -> None:\n    assert flag, consume(value)\n    print(value)\ndef consume(value: Owned[int]) -> str:\n    return \"failed\"\n",
+        "def inspect(flag: bool) -> None:\n    value = \"stored\"\n    assert flag, consume(value)\ndef consume(value: Owned[str]) -> str:\n    return \"failed\"\n",
+        "def inspect(flag: bool) -> None:\n    let value: Owned[str] = \"stored\"\n    assert flag, consume(value)\ndef consume(value: Owned[str]) -> str:\n    return \"failed\"\n",
+        "def inspect(value: Owned[str], flag: bool) -> None:\n    assert flag, consume(value)\ndef consume(value: Owned[str]) -> str:\n    return \"failed\"\n",
     ] {
         let checker = checked(source)?;
         assert!(checker.errors.is_empty(), "{source}\n{:?}", checker.errors);
     }
-    for binding in ["value = \"stored\"", "let value: Owned[str] = \"stored\""] {
-        let source = format!(
-            "def inspect(flag: bool) -> None:\n    {binding}\n    assert flag, consume(value)\ndef consume(value: Owned[str]) -> str:\n    return \"failed\"\n"
-        );
-        let checker = checked(&source)?;
-        assert!(
-            checker
-                .errors
-                .iter()
-                .any(|error| error.stable_code() == Some("INCAN-T0123")),
-            "conditional stored transfer admitted: {source}"
-        );
-    }
-    let source = "def inspect(value: Owned[str], flag: bool) -> None:\n    assert flag, consume(value)\ndef consume(value: Owned[str]) -> str:\n    return \"failed\"\n";
-    let checker = checked(source)?;
-    assert!(
-        checker
-            .errors
-            .iter()
-            .any(|error| error.stable_code() == Some("INCAN-T0123")),
-        "conditional parameter transfer admitted"
-    );
     let source = "def inspect(value: Borrowed[str]) -> None:\n    print(value)\n    assert len(value) > 0, \"empty\"\n";
     let graph = source_graph(source)?.map_err(|error| format!("{error:?}"))?;
     assert!(

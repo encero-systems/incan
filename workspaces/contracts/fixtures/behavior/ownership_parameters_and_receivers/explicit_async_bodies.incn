@@ -1,7 +1,9 @@
-# behavior: an async body can declare explicit inputs and await calls that borrow them; a borrowed input stays borrowed across each suspension, and an exclusive input's edits reach the caller (#2500).
+# behavior: an async body can declare explicit inputs, await calls that borrow them and return a view whose source stays borrowed until the view's last use; an exclusive input's edits reach the caller (#2500).
 # expect-stdout:
 #   16
 #   4
+#   ab
+#   changed
 
 """Async bodies with explicit inputs."""
 
@@ -14,6 +16,9 @@ class Buffer:
 
     async def size_plus(self, extra: Borrowed[int]) -> int:
         return len(self.items) + extra
+
+    async def label_view(self) -> Borrowed[str] from self.label:
+        return self.label
 
 
 async def measure(buffer: Borrowed[Buffer]) -> int:
@@ -41,3 +46,8 @@ async def main() -> None:
     mut buffer = Buffer(items=[1, 2, 3], label="ab")
     println(await total(buffer))
     println(len(buffer.items))
+    label = await buffer.label_view()
+    buffer.items.append(5)
+    println(label)
+    buffer.label = "changed"
+    println(buffer.label)

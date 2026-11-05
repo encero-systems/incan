@@ -364,6 +364,9 @@ struct BodyBuilder<'type_info, 'source> {
     /// Each lowered call carrying a view in its `Result` or `Option`, by call span: its substituted place, access and
     /// the payload carrying the view.
     carried_view_places: HashMap<ast::Span, (bir::Place, incan_semantics_core::IncanInputAccess, usize)>,
+    /// Each lowered async call returning a direct view, by call span: the source place the awaited expression aliases
+    /// after its physical reference result has resumed.
+    awaited_view_places: HashMap<ast::Span, (bir::Place, incan_semantics_core::IncanInputAccess)>,
     /// Each local bound to such a call, by identity: the call's span, whose substituted place a match takes out.
     carried_view_locals: HashMap<incan_semantics_core::CanonicalSymbolId, ast::Span>,
     /// Statement-if scopes whose branch states are independently joined for authenticated whole owners.

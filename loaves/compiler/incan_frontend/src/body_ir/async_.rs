@@ -28,7 +28,35 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             let operand = self.emit_await(inner, result_type.clone(), inner.span, scope, out);
             return self.emit_try(operand, result_type, span, scope, out);
         }
+        if let Some((call_span, access)) = self.awaited_direct_view(awaited) {
+            let output = super::returned_views::reference_value(self.resolve_ty(call_span), access);
+            let _physical_reference = self.emit_await(awaited, output, span, scope, out);
+            return match self.awaited_view_places.remove(&call_span) {
+                Some((place, retained_access)) if retained_access == access => {
+                    bir::Operand::place(place, super::returned_views::view_fact(access), false)
+                }
+                _ => self.unsupported_operand(
+                    "awaited returned view has no substituted source place".into(),
+                    scope,
+                    hir_span(span),
+                    out,
+                ),
+            };
+        }
         self.emit_await(awaited, self.resolve_ty(span), span, scope, out)
+    }
+
+    /// Find the direct view selected for an awaited call through redundant grouping. The source-level call result is
+    /// value typed; only this suspension boundary asks for its physical reference carrier.
+    fn awaited_direct_view(
+        &self,
+        expression: &ast::Spanned<ast::Expr>,
+    ) -> Option<(ast::Span, incan_semantics_core::IncanInputAccess)> {
+        if let ast::Expr::Paren(inner) = &expression.node {
+            return self.awaited_direct_view(inner);
+        }
+        let (access, ..) = self.type_info.selected_call_view(expression.span)?;
+        Some((expression.span, access))
     }
 
     /// Read the checker's async-call selection through grouping, without resolving a callable or guessing from its

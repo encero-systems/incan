@@ -25,6 +25,7 @@ from pub::incan_mir_plan import (
     Unwind,
     Callee,
     CalleeKind,
+    Projection,
 )
 from pub::incan_mir_plan import place as plan_place, block as plan_block
 from classes import function_name, frame_type, is_program_entry
@@ -42,6 +43,7 @@ from frame import (
 )
 from models import place_type
 from table_views import borrowed_table, borrowed_at
+from explicit_arguments import direct_view_access
 
 
 pub def is_future(ty: PlanType) -> bool:
@@ -210,11 +212,11 @@ pub def construct_future(
     destination: Place,
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Capture evaluated arguments by value and return a native coroutine without polling its body."""
+    """Capture evaluated arguments by value and return a native coroutine with its physical output ABI."""
     if is_program_entry(module, body):
         return Err("unsupported Body IR calling async main")
     fields = capture_types(builder.program.constructors.as_ref(), module, body, builder.intrinsics)?
-    output = native_source_type(
+    mut output = native_source_type(
         builder.constructors,
         borrowed_table(module.nominal_declarations),
         borrowed_table(module.enum_declarations),
@@ -222,6 +224,16 @@ pub def construct_future(
         body.return_type,
         builder.intrinsics,
     )?
+    match direct_view_access(body):
+        Some(access) =>
+            match access:
+                IncanInputAccess.Shared => output = shared_receiver_type(output)?
+                IncanInputAccess.Exclusive => output = mutable_receiver_type(output)?
+                _ => return Err("invalid Body IR returned view access")
+            if destination.projection != Projection.Whole:
+                return Err("unsupported Body IR projected async returned view carrier")
+            builder.locals[destination.local].ty = PlanType.Future([output])
+        None => pass
     return construct_boxed_future(
         builder,
         CalleeKind.Planned(evaluator_name(module, body)),

@@ -153,6 +153,9 @@ pub(super) fn build_reporting_views(
     (graph, view_errors)
 }
 
+/// Project one callable into its ownership graph while retaining returned-view diagnostics separately from structural
+/// unavailability. Async callables use the same source relation: suspension changes the physical carrier, not which
+/// declared input place the result views.
 fn build_graph(
     checker: &TypeChecker,
     callable: CallableSource<'_>,
@@ -160,11 +163,10 @@ fn build_graph(
     identity: &CanonicalSymbolId,
     view_errors: &mut Vec<crate::diagnostics::CompileError>,
 ) -> Result<Graph, Unavailable> {
-    let (parameters, body, is_async, receiver, name, kind) = match callable {
+    let (parameters, body, receiver, name, kind) = match callable {
         CallableSource::Function(function) => (
             &function.params,
             &function.body,
-            function.is_async(),
             None,
             &function.name,
             SemanticSourceTargetKind::Function,
@@ -175,7 +177,6 @@ fn build_graph(
                 span,
                 reason: "abstract method has no body".into(),
             })?,
-            method.is_async(),
             method.receiver_binding.as_ref().zip(method.receiver),
             &method.name,
             SemanticSourceTargetKind::Method,
@@ -193,13 +194,6 @@ fn build_graph(
         span,
         reason: reason.into(),
     })?;
-    // An async body is checked like a synchronous one; its future returns no view, which would outlive a suspension.
-    if is_async && view.is_some() {
-        return Err(Unavailable {
-            span,
-            reason: "a returned view of an async body".into(),
-        });
-    }
     if contract.is_some_and(|contract| {
         contract.modes.iter().any(|mode| {
             mode.component.parameter.is_some()

@@ -154,8 +154,8 @@ pub def lower_function(
         initializing_decorator,
         span,
     )?
-    if body.returned_view.is_some() and (body.is_async or body.is_generator()):
-        return Err("unsupported Body IR returned view in an async or generator frame")
+    if body.returned_view.is_some() and body.is_generator():
+        return Err("unsupported Body IR returned view in a generator frame")
     # A carried view's carrier is an ordinary owned result whose carrying payload already holds the borrow.
     match direct_view_access(body):
         Some(access) => builder.returned_view = access

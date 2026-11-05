@@ -124,6 +124,8 @@ pub(crate) fn borrowed_alias(output: &PlanType, span: Span) -> Box<ast::Item> {
 
 /// Construct the same pinned representation with either an owned or explicitly borrowed object lifetime.
 fn alias_with_lifetime(output: &PlanType, borrowed: bool, span: Span) -> Box<ast::Item> {
+    let mut output_type = declarations::ty(output, span);
+    bind_output_references(&mut output_type, if borrowed { "'future" } else { "'static" }, span);
     let mut future = path(&["std", "future", "Future"], span);
     if let Some(segment) = future.segments.last_mut() {
         segment.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
@@ -133,7 +135,7 @@ fn alias_with_lifetime(output: &PlanType, borrowed: bool, span: Span) -> Box<ast
                 ident: Ident::new(Symbol::intern("Output"), span),
                 gen_args: None,
                 kind: ast::AssocItemConstraintKind::Equality {
-                    term: ast::Term::Ty(declarations::ty(output, span))
+                    term: ast::Term::Ty(output_type)
                 },
                 span,
             })],
@@ -177,6 +179,43 @@ fn alias_with_lifetime(output: &PlanType, borrowed: bool, span: Span) -> Box<ast
         })),
         span,
     )
+}
+
+/// Give every unbound reference in a future output the alias's object lifetime. A future that captures loans uses
+/// `'future`; an owned future can expose a reference only when it is static.
+fn bind_output_references(ty: &mut ast::Ty, name: &str, span: Span) {
+    match &mut ty.kind {
+        ast::TyKind::Ref(region, referent) => {
+            if region.is_none() {
+                *region = Some(lifetime(name, span));
+            }
+            bind_output_references(&mut referent.ty, name, span);
+        }
+        ast::TyKind::Tup(elements) => {
+            for element in elements {
+                bind_output_references(element, name, span);
+            }
+        }
+        ast::TyKind::Slice(element) | ast::TyKind::Paren(element) => {
+            bind_output_references(element, name, span);
+        }
+        ast::TyKind::Path(_, path) => {
+            for segment in &mut path.segments {
+                let Some(arguments) = &mut segment.args else {
+                    continue;
+                };
+                let ast::GenericArgs::AngleBracketed(arguments) = arguments.as_mut() else {
+                    continue;
+                };
+                for argument in &mut arguments.args {
+                    if let ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty)) = argument {
+                        bind_output_references(ty, name, span);
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Identify an explicit input loan from its exact AST carrier, including text, slices and nominal references.
