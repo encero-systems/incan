@@ -26,17 +26,18 @@ from bakery import (
     view_directory,
     lookup,
     reached,
-    register_root,
     seal,
     prepare_seal,
+    prior_size,
     staging,
     unit_identity,
     unit_name,
     view,
-    Fact,
     fact_file,
     has_files_under,
 )
+from bakery_records import Fact
+from bakery_roots import register_root
 from compiler_refusals import check_or_replay
 from observation import trace, trace_launch
 from toolchain import Toolchain
@@ -201,7 +202,7 @@ pub def obtain_executable(
         trace(f"{label}: reused (built meanwhile by another command)")
         return Ok(made)
     # 4. A failed bake publishes nothing; its staging directory goes with it.
-    staged = staging(store, identity)?
+    staged = staging(store, identity, prior_size(store, unit_name(unit)))?
     code = compile_staged(unit, toolchain, staged.joinpath(output.name()), key, bake_reason(store, unit), shared)?
     if code != 0:
         _ = staged.remove_tree()

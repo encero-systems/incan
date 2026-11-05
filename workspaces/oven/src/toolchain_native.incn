@@ -10,21 +10,12 @@ from home import home, standard_artifact_dir, standard_packages
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets, local_facet_session, unique
 from publication import publish
 from rust_activation import DependencyDomain
-from rust_units import (
-    BuiltUnit,
-    RegistryUnits,
-    RustBuild,
-    compile_library,
-    facet_bindings,
-    artifact_context,
-    ordered,
-    native_artifacts,
-    prepared_build,
-    read_registry_units,
-    selected_registry,
-    rust_facet,
-    target_configuration,
-)
+from rust_units import compile_library
+from rust_build import BuiltUnit, RustBuild, artifact_context, facet_bindings, native_artifacts, ordered, prepared_build
+from rust_registry import read_registry_units, selected_registry
+from rust_manifest import rust_facet
+from registry_units import RegistryUnits
+from rust_target import target_configuration
 from toolchain import NativeCrate, Toolchain, load_toolchain, rust_compiler, toolchain_file
 from unit import UnitDescription, UnitLoaf, describe
 from unit_rust import add_extern, add_rust_root, prepare_linked

@@ -13,7 +13,7 @@ from owner_state import Owner, unchanged, watch
 from scratch import scratch_directory
 from intake import ManifestReader
 from rust_target import deployment_configuration
-from rust_units import registry_record_path
+from rust_registry import registry_record_path
 from home import home
 
 

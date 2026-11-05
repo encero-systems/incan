@@ -1,0 +1,487 @@
+"""
+Storage lifecycle contracts (RFC 145): writes admitted against free space with a reserve, concurrent reservations
+counted once, ended attempts kept only for their window, and a status that attributes the store to its roots.
+"""
+
+from rust::std::fs import remove_dir_all
+from std.fs import Path
+from std.json import JsonValue
+from bakery import claim, find, prior_size, seal, staging
+from bakery_records import staging_root
+from bakery_roots import register_root
+from files import make_directory, parse_json, read, write as write_file
+from scratch import scratch_directory
+from storage_admission import (
+    DECISION_SCHEMA,
+    available_space,
+    maintain,
+    observe_free_space,
+    read_reservations,
+    take_decision,
+)
+from home_paths import BakeryLocation, select_bakery
+from storage_policy import StoragePolicy, read_policy
+from store_status import STATUS_SCHEMA, status_document, status_text, store_status
+
+const RESERVE: int = 6442450944
+const DAY: int = 86400
+
+
+def write(path: Path, text: str) -> Result[None, str]:
+    """Create or replace a file, creating its directory."""
+    make_directory(path.parent())?
+    return write_file(path, text)
+
+
+def digest_of(prefix: str) -> str:
+    """A 64-character identity that starts with `prefix`."""
+    mut text = prefix
+    while len(text) < 64:
+        text += "0"
+    return text
+
+
+def bake(store: Path, identity: str, content: str, reaches: list[str] = [], name: str = "") -> Result[None, str]:
+    """Bake one unit holding `content`, the way Oven asks for it."""
+    held = claim(store, identity)?
+    staged = staging(store, identity)?
+    write(staged.joinpath("payload"), content)?
+    mut label = name
+    if label == "":
+        label = f"dep\t{identity}"
+    _ = seal(store, identity, staged, "library", label, reaches, "test")?
+    return Ok(None)
+
+
+def abandoned(store: Path, identity: str, content: str) -> Result[Path, str]:
+    """Stage part of a bake and return without sealing it, as a killed baker does: its claim is released."""
+    held = claim(store, identity)?
+    staged = staging(store, identity)?
+    write(staged.joinpath("partial"), content)?
+    return Ok(staged)
+
+
+def decision() -> Result[JsonValue, str]:
+    """The decision-required document the last refused admission recorded."""
+    match take_decision():
+        None => return Err("a refused admission recorded no decision-required outcome")
+        Some(decided) =>
+            assert "storage admission refused" in decided.summary, decided.summary
+            assert decided.summary in decided.text, decided.text
+            return parse_json(decided.document)
+
+
+def decided() -> bool:
+    """Whether an admission in this process recorded a decision-required outcome nobody took yet."""
+    match take_decision():
+        None => return false
+        Some(_) => return true
+
+
+def baked(store: Path, identity: str) -> Result[bool, str]:
+    """Whether the bakery holds an intact unit of `identity`."""
+    match find(store, identity)?:
+        None => return Ok(false)
+        Some(_) => return Ok(true)
+
+
+def number(document: JsonValue, path: list[str]) -> int:
+    """The integer at `path` in `document`, or -1 when it is absent."""
+    mut value = document
+    for key in path:
+        match value.get(key):
+            None => return -1
+            Some(found) => value = found
+    match value.as_int():
+        Some(found) => return found
+        None => return -1
+
+
+def text(document: JsonValue, path: list[str]) -> str:
+    """The string at `path` in `document`, or empty when it is absent."""
+    mut value = document
+    for key in path:
+        match value.get(key):
+            None => return ""
+            Some(found) => value = found
+    match value.as_str():
+        Some(found) => return found
+        None => return ""
+
+
+def action_names(document: JsonValue) -> list[str]:
+    """The actions a decision-required document advertises."""
+    mut names: list[str] = []
+    match document.get("actions"):
+        None => return names
+        Some(found) =>
+            match found.as_array():
+                None => return names
+                Some(items) =>
+                    for item in items:
+                        names.append(text(item, ["action"]))
+    return names
+
+
+def entries(directory: Path) -> Result[list[str], str]:
+    """
+    Every path below `directory`, sorted, to compare a store before and after a read. Lock entries, which existing
+    synchronization creates beside the paths it coordinates, are not store content.
+    """
+    mut found: list[str] = []
+    if not directory.is_dir():
+        return Ok(found)
+    for entry in directory.iterdir().map_err((error) => error.message())?:
+        if entry.name().startswith("."):
+            continue
+        found.append(entry.0)
+        if entry.is_dir() and not entry.is_symlink():
+            found = found + entries(entry)?
+    return Ok(sorted(found))
+
+
+pub def test_a_write_past_the_reserve_stops_with_a_decision_and_removes_nothing() -> Result[None, str]:
+    """
+    A bake whose estimate does not fit between observed free space and the reserve stops before it stages, with a
+    structured decision that reports the shortfall and what collection would reclaim. Nothing is removed to make room.
+
+    1. A unit only a removed project used is what collection would reclaim.
+    2. A bake estimated past the reserve is refused before anything is staged; the decision states its facts.
+    3. The collectable unit and every registration remain; a bake that fits is admitted.
+    """
+    scratch = scratch_directory()?
+    store = scratch.path().joinpath("bakery")
+    observe_free_space(store, RESERVE + 100000)
+    # 1. A record that only an orphaned project's registration used.
+    tool = digest_of("a1")
+    bake(store, tool, "orphaned tool")?
+    assert prior_size(store, f"dep\t{tool}") == len("orphaned tool"), "the prior size of a name is its payload bytes"
+    removed = scratch.path().joinpath("removed")
+    make_directory(removed)?
+    register_root(store, removed.0, "program\ttool", [tool])?
+    remove_dir_all(removed.0).map_err((error) => str(error))?
+    # 2. Refused before staging, with the reserve, shortfall and collectable bytes stated.
+    observe_free_space(store, RESERVE + 1000)
+    identity = digest_of("a2")
+    held = claim(store, identity)?
+    match staging(store, identity, 4000):
+        Ok(_) =>
+            assert false, "a bake past the free-space reserve was admitted"
+        Err(reason) =>
+            assert "storage admission refused" in reason, reason
+    staged = staging_root(store).iterdir().map_err((error) => error.message())?
+    assert len(staged) == 0, "a refused bake staged a directory"
+    document = decision()?
+    assert text(document, ["schema"]) == DECISION_SCHEMA
+    assert text(document, ["outcome"]) == "decision-required"
+    assert number(document, ["operation", "required_bytes"]) == 4000
+    assert text(document, ["operation", "basis"]) == "estimate"
+    assert number(document, ["available_bytes"]) == RESERVE + 1000
+    assert number(document, ["policy", "min_free_bytes", "value"]) == RESERVE
+    assert text(document, ["policy", "min_free_bytes", "source"]) == "default"
+    assert number(document, ["admissible_bytes"]) == 1000
+    assert number(document, ["shortfall_bytes"]) == 3000
+    assert number(document, ["collectable", "units"]) == 1
+    assert number(document, ["collectable", "projects"]) == 1
+    assert number(document, ["collectable", "payload_bytes"]) == len("orphaned tool")
+    assert "collect" in action_names(document) and "lower-reserve" in action_names(document)
+    assert "wait" not in action_names(document), "a wait was advertised with no concurrent reservation"
+    # 3. A refusal never removes reusable content or retires a registration.
+    assert baked(store, tool)?, "admission pressure removed a reusable unit"
+    assert len(store.joinpath("roots").iterdir().map_err((error) => error.message())?) == 1
+    observe_free_space(store, RESERVE + 5000)
+    admitted = staging(store, identity, 4000)?
+    assert admitted.is_dir()
+    assert not decided(), "an admitted bake recorded a decision"
+    return Ok(None)
+
+
+def refused_beside(store: Path, first: str, second: str) -> Result[None, str]:
+    """Hold an admitted reservation for `first` while `second` asks for the same free bytes."""
+    held = claim(store, first)?
+    _ = staging(store, first, 600)?
+    other = claim(store, second)?
+    match staging(store, second, 600):
+        Ok(_) =>
+            assert false, "two bakes were admitted for the same free bytes"
+        Err(reason) =>
+            assert "storage admission refused" in reason, reason
+    document = decision()?
+    assert number(document, ["reserved_bytes"]) == 600
+    assert "wait" in action_names(document)
+    match document.get("reservations"):
+        None =>
+            assert false, "the decision named no concurrent reservation"
+        Some(found) =>
+            match found.as_array():
+                None =>
+                    assert false, "reservations is not an array"
+                Some(items) =>
+                    assert len(items) == 1 and first in text(items[0], ["work"]), "the wrong reservation was named"
+    return Ok(None)
+
+
+pub def test_concurrent_admissions_never_spend_the_same_free_space_twice() -> Result[None, str]:
+    """
+    Two bakes that each fit, but not together, are not both admitted; a reservation stops holding space once its
+    owner's claim is released.
+
+    1. While the first owner holds its claim, the second bake is refused and the decision names the reservation.
+    2. Once the first owner ended, its staging is an ended attempt and the second bake is admitted.
+    """
+    scratch = scratch_directory()?
+    store = scratch.path().joinpath("bakery")
+    observe_free_space(store, RESERVE + 1000)
+    first = digest_of("b1")
+    second = digest_of("b2")
+    # 1. The admission lock and the first reservation make the second bake wait for space.
+    refused_beside(store, first, second)?
+    # 2. The kernel released the first claim when its owner returned.
+    held = claim(store, second)?
+    admitted = staging(store, second, 600)?
+    assert admitted.is_dir()
+    mut phases: list[str] = []
+    for reservation in read_reservations(store)?:
+        if first in reservation.work:
+            phases.append(reservation.phase)
+            assert not reservation.live, "an ended owner's reservation is live"
+    assert phases == ["ended"], f"the first attempt's end was not observed: {phases}"
+    return Ok(None)
+
+
+pub def test_storing_staged_bytes_is_admitted_and_a_refusal_releases_the_staging() -> Result[None, str]:
+    """
+    Copying a bake into the store is admitted against its exact staged bytes. A refusal publishes nothing, removes the
+    staging directory and leaves no reservation; with room the bake seals and releases its reservation.
+    """
+    scratch = scratch_directory()?
+    store = scratch.path().joinpath("bakery")
+    identity = digest_of("c1")
+    held = claim(store, identity)?
+    observe_free_space(store, RESERVE + 100000)
+    staged = staging(store, identity)?
+    mut content = ""
+    for _turn in range(500):
+        content += "0123456789"
+    write(staged.joinpath("payload"), content)?
+    observe_free_space(store, RESERVE + 1000)
+    match seal(store, identity, staged, "library", "dep", [], "test"):
+        Ok(_) =>
+            assert false, "storing past the reserve was admitted"
+        Err(reason) =>
+            assert "storage admission refused" in reason, reason
+    assert not staged.exists(), "a refused seal kept its staging"
+    assert not baked(store, identity)?, "a refused seal published its unit"
+    assert len(read_reservations(store)?) == 0, "a refused seal kept its reservation"
+    document = decision()?
+    assert number(document, ["operation", "required_bytes"]) == 5000
+    assert text(document, ["operation", "basis"]) == "exact"
+    observe_free_space(store, RESERVE + 100000)
+    again = staging(store, identity)?
+    write(again.joinpath("payload"), content)?
+    _ = seal(store, identity, again, "library", "dep", [], "test")?
+    assert baked(store, identity)?
+    assert len(read_reservations(store)?) == 0, "a sealed bake kept its reservation"
+    return Ok(None)
+
+
+pub def test_an_ended_attempt_is_kept_for_its_window_and_then_reclaimed() -> Result[None, str]:
+    """
+    An attempt whose owner released its claim keeps its staging for the failed-attempt window after its end was first
+    observed, then loses it. A live owner's staging and every reusable unit stay, whatever the time.
+
+    1. The first observation records the end; the staging stays until the window has passed.
+    2. A clock that reads earlier restarts the window rather than manufacturing age.
+    3. At the end of the window the staging and its reservation go; a live attempt and baked units stay.
+    4. A zero window reclaims an ended attempt at its first observation.
+    """
+    scratch = scratch_directory()?
+    store = scratch.path().joinpath("bakery")
+    observe_free_space(store, RESERVE + 1000000)
+    policy = StoragePolicy()
+    unit = digest_of("d0")
+    bake(store, unit, "reusable")?
+    project = scratch.path().joinpath("project")
+    make_directory(project)?
+    register_root(store, project.0, "library\tdep", [unit])?
+    live_identity = digest_of("d2")
+    held = claim(store, live_identity)?
+    live = staging(store, live_identity)?
+    # No admission runs after this attempt ends, so the explicit clock below is the first to observe its end.
+    ended = abandoned(store, digest_of("d1"), "half written")?
+    start = 1800000000
+    # 1. The end is confirmed at the first observation, not at a file's modification time.
+    assert maintain(store, policy, start)? == 0 and ended.is_dir()
+    assert maintain(store, policy, start + DAY - 1)? == 0 and ended.is_dir(), "an attempt expired early"
+    # 2. A backwards clock change restarts the window at the earlier reading.
+    assert maintain(store, policy, start - 3600)? == 0 and ended.is_dir()
+    assert maintain(store, policy, start - 3600 + DAY - 1)? == 0 and ended.is_dir(), "a clock change aged an attempt"
+    # 3. The window has passed since the confirmed end.
+    assert maintain(store, policy, start - 3600 + DAY)? == 1 and not ended.exists(), "an ended attempt was kept"
+    assert maintain(store, policy, start + 30 * DAY)? == 0 and live.is_dir(), "a live attempt was reclaimed"
+    assert baked(store, unit)?, "maintenance removed a reusable unit"
+    names = [reservation.name for reservation in read_reservations(store)?]
+    assert names == [live.name()], f"reservations after maintenance: {names}"
+    # 4. Zero makes an ended attempt immediately reclaimable.
+    other = abandoned(store, digest_of("d3"), "half written")?
+    mut immediate = StoragePolicy()
+    immediate.failed_attempt_ttl = 0
+    assert maintain(store, immediate, start)? == 1 and not other.exists()
+    return Ok(None)
+
+
+pub def test_status_attributes_the_store_to_its_roots_and_changes_nothing() -> Result[None, str]:
+    """
+    Status attributes payloads to the registrations that reach them, counting a shared payload once in the live total,
+    names what collection would reclaim and what staging holds, and leaves the store exactly as it was.
+    """
+    scratch = scratch_directory()?
+    store = scratch.path().joinpath("bakery")
+    observe_free_space(store, RESERVE + 5000)
+    shared = digest_of("e0")
+    one = digest_of("e1")
+    two = digest_of("e2")
+    tool = digest_of("e3")
+    unrooted = digest_of("e4")
+    bake(store, shared, "shared!")?
+    bake(store, one, "first app", [shared], "app-one")?
+    bake(store, two, "second app", [shared], "app-two")?
+    bake(store, tool, "tool", [], "tool")?
+    bake(store, unrooted, "toolchain unit")?
+    first = scratch.path().joinpath("one")
+    second = scratch.path().joinpath("two")
+    removed = scratch.path().joinpath("removed")
+    for directory in [first, second, removed]:
+        make_directory(directory)?
+    register_root(store, first.0, "program\tapp", [one])?
+    register_root(store, second.0, "program\tapp", [two])?
+    register_root(store, removed.0, "program\ttool", [tool])?
+    remove_dir_all(removed.0).map_err((error) => str(error))?
+    _ = abandoned(store, digest_of("e5"), "partial")?
+    before = entries(store)?
+    status = store_status(BakeryLocation(path=store, source="default"))?
+    document = status_document(status)
+    assert entries(store)? == before, "reading the status changed the store"
+    assert text(document, ["schema"]) == STATUS_SCHEMA
+    assert number(document, ["admission", "available_bytes"]) == RESERVE + 5000
+    assert number(document, ["admission", "reserve_bytes"]) == RESERVE
+    assert number(document, ["units", "units"]) == 5
+    assert number(document, ["live", "projects"]) == 2
+    assert number(document, ["live", "units"]) == 3
+    assert number(document, ["live", "payload_bytes"]) == len("shared!") + len("first app") + len("second app")
+    assert number(document, ["unregistered", "units"]) == 1
+    assert number(document, ["unregistered", "payload_bytes"]) == len("toolchain unit")
+    assert number(document, ["collectable", "units"]) == 1
+    assert number(document, ["collectable", "payload_bytes"]) == len("tool")
+    assert number(document, ["collectable", "staging_directories"]) == 1
+    mut reached: dict[str, int] = {}
+    for root in status.roots:
+        reached[root.project] = root.payload_bytes
+        assert root.orphaned == (root.project == removed.0), f"{root.project} orphaned {root.orphaned}"
+    assert reached[first.0] == len("shared!") + len("first app")
+    assert reached[second.0] == len("shared!") + len("second app")
+    assert len(status.ended) == 1 and len(status.active) == 0
+    assert text(document, ["store_source"]) == "default"
+    readable = status_text(status)
+    assert "incan bakery gc" in readable and first.0 in readable and "orphaned" in readable, readable
+    assert "location: default" in readable, readable
+    return Ok(None)
+
+
+pub def test_the_storage_policy_reads_only_the_storage_table() -> Result[None, str]:
+    """
+    A home without configuration has the defaults. `[storage]` sets the reserve and the windows and names its file as
+    their source; an unknown key, a negative reserve, a malformed duration or a root that is not a nonempty string is
+    refused with the file and key named.
+    """
+    scratch = scratch_directory()?
+    file = scratch.path().joinpath("config.toml")
+    defaults = read_policy(file)?
+    assert defaults.min_free_bytes == RESERVE and defaults.failed_attempt_ttl == DAY and defaults.history_ttl == DAY
+    assert defaults.min_free_source == "default" and defaults.file == ""
+    assert defaults.root == scratch.path().joinpath("bakery").0 and defaults.root_source == "default", defaults.root
+    write(
+        file,
+        "[storage]\nmin-free-bytes = 0\nfailed-attempt-ttl = \"90m\"\nhistory-ttl = \"2d\"\n\n[other]\nkept = 1\n",
+    )?
+    chosen = read_policy(file)?
+    assert chosen.min_free_bytes == 0 and chosen.failed_attempt_ttl == 5400 and chosen.history_ttl == 2 * DAY
+    assert chosen.min_free_source == file.0 and chosen.attempt_source == file.0 and chosen.file == file.0
+    refusals: list[tuple[str, str]] = [
+        ("[storage]\nsize = 1\n", "storage.size"),
+        ("[storage]\nmin-free-bytes = -1\n", "storage.min-free-bytes"),
+        ("[storage]\nmin-free-bytes = \"6GiB\"\n", "storage.min-free-bytes"),
+        ("[storage]\nfailed-attempt-ttl = \"1 day\"\n", "storage.failed-attempt-ttl"),
+        ("[storage]\nhistory-ttl = \"24\"\n", "storage.history-ttl"),
+        ("[storage]\nhistory-ttl = \"9999999999999d\"\n", "storage.history-ttl"),
+        ("[storage]\nroot = \"\"\n", "storage.root"),
+        ("[storage]\nroot = 3\n", "storage.root"),
+        ("storage = 3\n", "storage"),
+    ]
+    for source, key in refusals:
+        write(file, source)?
+        match read_policy(file):
+            Ok(_) =>
+                assert false, f"accepted {source}"
+            Err(reason) =>
+                assert file.0 in reason and key in reason, reason
+    return Ok(None)
+
+
+pub def test_the_storage_root_selects_the_bakery_and_incan_bakery_overrides_it() -> Result[None, str]:
+    """
+    `[storage] root` selects the bakery, relative to the configuration file's directory or absolute, and names its
+    file as the source; without it the bakery is `bakery` in the home. `INCAN_BAKERY` overrides it for one invocation,
+    needs no home and leaves the file unchanged, and status names it as the location's source. An empty or non-string
+    root is refused with the file, the key and the accepted form, never replaced by the default.
+    """
+    scratch = scratch_directory()?
+    home = scratch.path().joinpath("home")
+    make_directory(home)?
+    file = home.joinpath("config.toml")
+    implicit = select_bakery("", Ok(home))?
+    assert implicit.path.0 == home.joinpath("bakery").0 and implicit.source == "default", implicit.path.0
+    write(file, "[storage]\nroot = \"work/bakery\"\n")?
+    relative = select_bakery("", Ok(home))?
+    assert relative.path.0 == home.joinpath("work").joinpath("bakery").0, relative.path.0
+    assert relative.source == file.0, relative.source
+    elsewhere = scratch.path().joinpath("elsewhere")
+    write(file, f"[storage]\nroot = \"{elsewhere.0}\"\n")?
+    absolute = select_bakery("", Ok(home))?
+    assert absolute.path.0 == elsewhere.0 and absolute.source == file.0, absolute.path.0
+    # The override selects its own directory for this invocation; the configuration stays as it was.
+    configured = read(file)?
+    chosen = scratch.path().joinpath("chosen")
+    make_directory(chosen)?
+    selected = select_bakery(chosen.0, Ok(home))?
+    assert selected.path.0 == chosen.0 and selected.source == "INCAN_BAKERY", selected.path.0
+    assert read(file)? == configured, "the override rewrote the configuration file"
+    unhomed = select_bakery(chosen.0, Err("no home directory"))?
+    assert unhomed.path.0 == chosen.0 and unhomed.source == "INCAN_BAKERY"
+    status = store_status(selected)?
+    document = status_document(status)
+    assert text(document, ["store"]) == chosen.0 and text(document, ["store_source"]) == "INCAN_BAKERY"
+    readable = status_text(status)
+    assert f"bakery {chosen.0}:" in readable and "location: INCAN_BAKERY" in readable, readable
+    for source in ["[storage]\nroot = \"\"\n", "[storage]\nroot = [\"bakery\"]\n"]:
+        write(file, source)?
+        match select_bakery("", Ok(home)):
+            Ok(location) =>
+                assert false, f"accepted {source} as {location.path.0}"
+            Err(reason) =>
+                assert file.0 in reason and "storage.root" in reason and "nonempty path string" in reason, reason
+    return Ok(None)
+
+
+pub def test_free_space_is_read_from_the_filesystem_holding_the_store() -> Result[None, str]:
+    """Without an observation set for it, a store not created yet is admitted against its nearest existing directory."""
+    scratch = scratch_directory()?
+    free = available_space(scratch.path().joinpath("not").joinpath("created"))?
+    beside = available_space(scratch.path())?
+    assert free > 0, "the filesystem reported no free space"
+    mut drift = free - beside
+    if drift < 0:
+        drift = -drift
+    assert drift < 67108864, f"two observations of one filesystem differ by {drift} bytes"
+    println(f"observed free space: {free} bytes")
+    return Ok(None)

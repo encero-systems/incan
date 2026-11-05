@@ -1,0 +1,162 @@
+"""Read a Loaf's Rust facet declaration: its library crate, its binaries and what they ask of the toolchain."""
+
+from std.toml import TomlValue
+from std.fs import Path
+from json_fields import field
+from intake import library_source, read_project, ManifestReader
+from toml_fields import optional_string, required_string
+from toolchain_access import BINARY_SEPARATOR, read_access
+
+
+pub model RustFacet:
+    """What a local Loaf's manifest says about its Rust crate."""
+
+    pub crate_name: str
+    # `lib`, `proc-macro`, or an `incan` provider; empty when the Loaf has no library crate.
+    pub kind: str
+    pub edition: str
+    # The library crate's Rust or Incan root file, when there is one.
+    pub library: str
+    # The `[[rust.bin]]` crates: name and root file.
+    pub binaries: list[Tuple[str, str]]
+    # The package name and version the unit is compiled as.
+    pub package: str
+    pub version: str
+    # Whether a binary needs the toolchain's unstable features (`unstable_features`).
+    pub unstable: bool
+    # Whether a binary links the toolchain's own libraries (`sysroot_dependencies`) and finds them at run time.
+    pub sysroot: bool
+
+
+model RustBinaries:
+    """The `[[rust.bin]]` crates of a manifest, and what they ask of the toolchain."""
+
+    crates: list[Tuple[str, str]]
+    unstable: bool
+    sysroot: bool
+
+
+pub def rust_facet(
+    project: str,
+    required: bool = true,
+    reader: ManifestReader = ManifestReader(),
+) -> Result[RustFacet, str]:
+    """
+    The Rust crate a local Loaf's manifest declares; an Incan consumer may have no Rust facet of its own.
+
+    1. Read the manifest and name the package, the crate and its edition.
+    2. Find the library crate and its type.
+    3. Read the `[[rust.bin]]` crates and what they ask of the toolchain.
+    4. A Loaf that must declare a Rust crate and declares none is refused.
+    """
+    root = Path(project)
+    # 1. The package, its crate name and its edition come from the manifest, with the documented fallbacks.
+    project_intent = read_project(root, reader).map_err((error) => error.message())?
+    document = project_intent.parsed
+    package = required_string(document, "project.name")?
+    crate_name = crate_name_of(document, package)?
+    edition = project_intent.intent.rust_edition
+    # 2. A library crate is the `src/lib.rs` of the source root, and the manifest may type it a procedural macro.
+    mut library = library_root(document, root)?.joinpath("src").joinpath("lib.rs")
+    mut kind = library_type(document, library)?
+    # 3. Each `[[rust.bin]]` is a crate of its own, and may need unstable features or the toolchain's libraries.
+    binaries = read_binaries(document, root)?
+    # 4. An Incan library supplies its compiled Rust crate; a project with neither language's crate is refused.
+    if required and kind == "":
+        source = library_source(root, reader)?
+        if source.is_file():
+            kind = "incan"
+            library = source
+        elif len(binaries.crates) == 0:
+            return Err(f"{project} declares no Rust crate: no {library.0} and no [[rust.bin]]")
+    version = required_string(document, "project.version")?
+    mut library_path = ""
+    if library.is_file():
+        library_path = library.0
+    return Ok(
+        RustFacet(
+            crate_name=crate_name,
+            kind=kind,
+            edition=edition,
+            library=library_path,
+            binaries=binaries.crates,
+            package=package,
+            version=version,
+            unstable=binaries.unstable,
+            sysroot=binaries.sysroot,
+        ),
+    )
+
+
+def crate_name_of(document: TomlValue, package: str) -> Result[str, str]:
+    """The crate's name: `rust.name` when declared, else the package's, with underscores for hyphens."""
+    match optional_string(document, "rust.name")?:
+        Some(declared) => return Ok(declared.replace("-", "_"))
+        None => return Ok(package.replace("-", "_"))
+
+
+def library_root(document: TomlValue, root: Path) -> Result[Path, str]:
+    """The directory whose `src/lib.rs` is the library crate: `rust.source.root` under the project, else the project."""
+    match optional_string(document, "rust.source.root")?:
+        Some(declared) => return Ok(root.joinpath(declared))
+        None => return Ok(root)
+
+
+def library_type(document: TomlValue, library: Path) -> Result[str, str]:
+    """The library crate's type (`lib` unless `rust.type` says otherwise), or empty when there is no library file."""
+    if not library.is_file():
+        return Ok("")
+    match optional_string(document, "rust.type")?:
+        Some(declared) => return Ok(declared)
+        None => return Ok("lib")
+
+
+def read_binaries(document: TomlValue, root: Path) -> Result[RustBinaries, str]:
+    """The `[[rust.bin]]` crates, and whether any declares unstable features or links the toolchain's own libraries."""
+    manifest = root.joinpath("loaf.toml").0
+    mut crates: list[Tuple[str, str]] = []
+    mut unstable = false
+    mut sysroot = false
+    binaries = declared_binaries(document)?
+    for index in range(len(binaries)):
+        binary = binaries[index]
+        name = required_string(binary, "name")?
+        path = required_string(binary, "path")?
+        crates.append((name, root.joinpath(path).0))
+        values = binary.as_table().map_err((error) => error.message())?
+        field = ["rust", "bin", str(index)]
+        access = read_access(values, BINARY_SEPARATOR, manifest, field).map_err((error) => error.message())?
+        if len(access.unstable_features) > 0:
+            unstable = true
+        if len(access.sysroot_dependencies) > 0:
+            sysroot = true
+    return Ok(RustBinaries(crates=crates, unstable=unstable, sysroot=sysroot))
+
+
+def declared_binaries(document: TomlValue) -> Result[list[TomlValue], str]:
+    """The `[[rust.bin]]` tables of a manifest."""
+    root = document.as_table().map_err((error) => error.message())?
+    if "rust" not in root:
+        return Ok([])
+    facet = root["rust"].as_table().map_err((error) => error.message())?
+    if "bin" not in facet:
+        return Ok([])
+    return facet["bin"].as_array().map_err((error) => error.message())
+
+
+pub def package_environment(project: str, declared: RustFacet, crate_name: str) -> Dict[str, str]:
+    """The package environment Rust code reads at compile time (`env!`), under the names the Rust ecosystem uses."""
+    mut environment: Dict[str, str] = {"CARGO_PKG_NAME": declared.package, "CARGO_PKG_VERSION": declared.version, "CARGO_MANIFEST_DIR": project, "CARGO_CRATE_NAME": crate_name, "CARGO_PKG_AUTHORS": "", "CARGO_PKG_DESCRIPTION": ""}
+    release = declared.version.split("-")
+    mut pre = ""
+    if len(release) > 1:
+        pre = "-".join(release[1:])
+    numbers = release[0].split(".")
+    names = ["CARGO_PKG_VERSION_MAJOR", "CARGO_PKG_VERSION_MINOR", "CARGO_PKG_VERSION_PATCH"]
+    for index in range(3):
+        mut number = "0"
+        if index < len(numbers):
+            number = numbers[index]
+        environment[names[index]] = number
+    environment["CARGO_PKG_VERSION_PRE"] = pre
+    return environment

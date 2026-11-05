@@ -21,6 +21,7 @@ pub def test_help_uses_each_commands_synopsis_and_respects_operands() -> None:
         ("build", "incan build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"),
         ("fmt", "incan fmt [--check] PATH..."),
         ("owner stop", "incan owner stop"),
+        ("bakery status", "incan bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE"),
         ("inspect codegraph", "incan inspect codegraph PATH [GRAPH OPTIONS]"),
         ("inspect dependencies", "incan inspect dependencies PATH [UNIT OPTIONS]"),
         ("mcp", "incan mcp PATH"),
@@ -52,3 +53,4 @@ pub def test_help_uses_each_commands_synopsis_and_respects_operands() -> None:
     assert command_help("inspect", ["codegraph", ".", "--query", "defs", "--help"]) == None
     assert command_help("nonexistent", ["--help"]) == None
     assert command_help("owner", ["nonexistent", "--help"]) == None
+    assert command_help("bakery", ["status", "--format", "--help"]) == None

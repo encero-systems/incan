@@ -43,22 +43,13 @@ from rust_freshness import (
     reconciled_rust_key,
     relocate_dependencies,
 )
-from rust_units import (
-    BuiltUnit,
-    decoded,
-    RegistryUnits,
-    RustBuild,
-    RustFacet,
-    compile_rust_library,
-    artifact_context,
-    library_compile_arguments,
-    linking,
-    native_artifacts,
-    package_environment,
-    read_registry_units,
-    rust_library_producer_key,
-    rust_library_graph_key,
-)
+from rust_units import compile_rust_library, library_compile_arguments, rust_library_graph_key
+from rust_units import rust_library_producer_key
+from rust_build import BuiltUnit, RustBuild, artifact_context, linking, native_artifacts
+from rust_registry import read_registry_units
+from rust_manifest import RustFacet, package_environment
+from registry_units import RegistryUnits
+from rust_target import decoded
 from loaf_local_graph import LocalEdge, LocalFacet
 from rust_activation import DependencyDomain
 from rust_target import compiler_version, deployment_target

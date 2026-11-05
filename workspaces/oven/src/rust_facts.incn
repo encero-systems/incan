@@ -19,7 +19,8 @@ uses leaves the bakery at the next `incan bakery gc`, unless another current reg
 
 from rust::std::fs import copy as copy_file
 from std.fs import Path
-from bakery import claim, fact_file, find, register_root, seal, staging as bakery_staging
+from bakery import claim, fact_file, find, seal, staging as bakery_staging
+from bakery_roots import register_root
 from publication import publish
 
 # The one payload of an extraction record.

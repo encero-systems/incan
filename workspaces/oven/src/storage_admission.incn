@@ -1,0 +1,580 @@
+"""
+Admission of bakery writes against observed free space, and the lifecycle of the reservations it grants (RFC 145).
+
+A write is admitted when the filesystem's observed free space, minus what concurrent operations reserved and have not
+yet allocated, minus the policy's free-space reserve, covers it. Admission runs under one exclusive lock per store,
+so two operations never count the same free bytes. An admitted attempt leaves a reservation record under
+`reservations/`, named like the staging directory it covers: its work, the claim whose lock proves its owner is
+alive, the bytes it was admitted for, how that number was obtained, and its phase. Bytes the staging directory already
+holds are part of the observed free space, so they are not counted twice.
+
+A write that does not fit stops its operation with a decision-required outcome: the pressure facts, what explicit
+collection would reclaim and the actions that can change the outcome. Nothing is removed to make room.
+
+An attempt whose owner released its claim has ended. Its staging directory is kept for the policy's failed-attempt
+window, counted from when the end was first observed, and is then reclaimed by the next admission. Nothing reusable
+is ever removed here.
+"""
+
+from std.fs import Path
+from std.json import JsonValue
+from files import discard_file, json_text, make_directory, parse_json, read
+from json_fields import required_text
+from observation import now_seconds
+from publication import publish
+from storage_policy import StoragePolicy, policy_file
+from home_paths import home, storage_policy
+from pub::incan_platform.capacity import available_bytes
+
+const RESERVATION_SCHEMA: str = "incan.oven.reservation/1"
+pub const DECISION_SCHEMA: str = "incan.oven.storage-decision/1"
+const RECORD_SUFFIX: str = ".json"
+const KIB: int = 1024
+const COLLECT_CONSEQUENCE: str = "removes unit records only replaced results or removed projects used, their payloads and ended staging; current registrations, records no registration names and live operations keep their content, and a later build of a removed unit bakes it again"
+const RESERVE_CONSEQUENCE: str = "admitted writes may then use space kept free for the operating system and other programs; this changes persistent policy and reclaims nothing"
+# Free space observed in place of the filesystem's, by store; set only by contracts that cannot fill a disk.
+static observed_free: dict[str, int] = {}
+# The decision-required outcome of the latest refused admission in this process: summary, text and document.
+static decided: dict[str, str] = {}
+
+
+pub model Reservation:
+    """One admitted attempt's reservation, as its record states it and as its owner and staging are observed now."""
+
+    # The staging directory the reservation covers, under the store's `staging/`.
+    pub name: str
+    pub work: str
+    # The path whose lock the attempt's owner holds; empty when the owner is not known.
+    pub claim: str
+    pub reserved: int
+    # `estimate` (the size the work is expected to stage), `exact` (bytes already staged) or `unknown`.
+    pub basis: str
+    # `staging` while the owner writes its staging directory, `sealing` while it copies it into the store, and
+    # `ended` once admission observed that its owner released the claim.
+    pub phase: str
+    pub created: int
+    # When the owner's end was first observed.
+    pub ended: int = 0
+    # Observed when the record is read, never recorded.
+    pub live: bool = false
+    pub allocated: int = 0
+
+    def outstanding(self) -> int:
+        """The bytes this reservation still holds back from other admissions."""
+        if not self.live:
+            return 0
+        if self.phase == "sealing":
+            return self.reserved
+        if self.reserved > self.allocated:
+            return self.reserved - self.allocated
+        return 0
+
+
+pub model Collectable:
+    """What explicit collection (`incan bakery gc`) would reclaim now, estimated from the current store."""
+
+    pub units: int = 0
+    pub projects: int = 0
+    pub payload_bytes: int = 0
+    pub staging: int = 0
+    pub staging_bytes: int = 0
+
+    def bytes(self) -> int:
+        """The logical bytes collection would remove; superseded layout files are not estimated."""
+        return self.payload_bytes + self.staging_bytes
+
+
+pub model Decided:
+    """A refused admission's outcome: the error summary, the readable explanation and the versioned document."""
+
+    pub summary: str
+    pub text: str
+    pub document: str
+
+
+model Pressure:
+    """The facts one admission is decided on, observed under the admission lock."""
+
+    store: Path
+    work: str
+    need: int
+    basis: str
+    available: int
+    policy: StoragePolicy
+    others: list[Reservation]
+    observed: int
+
+    def reserved(self) -> int:
+        """The bytes live concurrent reservations hold back."""
+        mut total = 0
+        for reservation in self.others:
+            total += reservation.outstanding()
+        return total
+
+    def admissible(self) -> int:
+        """Observed free space, minus concurrent reservations, minus the reserve; negative inside the reserve."""
+        return self.available - self.reserved() - self.policy.min_free_bytes
+
+
+# ---- Observation ----
+
+
+pub def observe_free_space(store: Path, bytes: int) -> None:
+    """Make admission in `store` observe `bytes` of free space instead of asking its filesystem."""
+    observed_free[store.0] = bytes
+
+
+pub def available_space(store: Path) -> Result[int, str]:
+    """The free bytes admission observes for `store`: those of the filesystem holding its nearest existing directory."""
+    if store.0 in observed_free:
+        return Ok(observed_free[store.0])
+    mut directory = store
+    while not directory.exists() and directory.parent().0 != directory.0:
+        directory = directory.parent()
+    return available_bytes(directory.0)
+
+
+pub def tree_bytes(directory: Path) -> int:
+    """The logical bytes of the regular files below `directory`; an unreadable entry counts as none."""
+    if not directory.is_dir() or directory.is_symlink():
+        return 0
+    mut total = 0
+    match directory.iterdir():
+        Err(_) => return 0
+        Ok(entries) =>
+            for entry in entries:
+                if entry.is_dir() and not entry.is_symlink():
+                    total += tree_bytes(entry)
+                elif entry.is_file() and not entry.is_symlink():
+                    match entry.stat():
+                        Ok(info) =>
+                            match info.size():
+                                Ok(size) => total += size
+                                Err(_) => pass
+                        Err(_) => pass
+    return total
+
+
+# ---- Reservations ----
+
+
+pub def reservations_root(store: Path) -> Path:
+    """Where a store's reservation records and its admission lock live."""
+    return store.joinpath("reservations")
+
+
+def record_file(store: Path, name: str) -> Path:
+    """The record of the reservation covering the staging directory `name`."""
+    return reservations_root(store).joinpath(name + RECORD_SUFFIX)
+
+
+pub def reserve(
+    store: Path,
+    name: str,
+    work: str,
+    claim: str,
+    bytes: int,
+    basis: str,
+    collectable: (Path) -> Result[Collectable, str],
+) -> Result[None, str]:
+    """Admit a new attempt's expected `bytes` before it writes the staging directory `name`; see `admit`."""
+    record = Reservation(
+        name=name,
+        work=work,
+        claim=claim,
+        reserved=bytes,
+        basis=basis,
+        phase="staging",
+        created=now_seconds(),
+    )
+    return admit(store, record, bytes, collectable)
+
+
+pub def extend(
+    store: Path,
+    name: str,
+    work: str,
+    bytes: int,
+    collectable: (Path) -> Result[Collectable, str],
+) -> Result[None, str]:
+    """
+    Admit the `bytes` an attempt copies from its staging directory `name` into the store; see `admit`.
+
+    The staged bytes are already allocated, so the copy's need is admitted on top of them. Nothing to copy needs no
+    admission.
+    """
+    if bytes <= 0:
+        return Ok(None)
+    mut record = Reservation(name=name, work=work, claim="", reserved=bytes, basis="exact", phase="sealing", created=0)
+    match read_record(record_file(store, name)):
+        Some(found) =>
+            record.claim = found.claim
+            record.created = found.created
+        None => record.created = now_seconds()
+    return admit(store, record, bytes, collectable)
+
+
+pub def release(store: Path, name: str) -> None:
+    """Withdraw the reservation covering `name` once its owner's work has ended; a missing record is already gone."""
+    discard_file(record_file(store, name))
+
+
+def admit(
+    store: Path,
+    record: Reservation,
+    need: int,
+    collectable: (Path) -> Result[Collectable, str],
+) -> Result[None, str]:
+    """
+    Admit `need` bytes for the attempt `record` describes, or stop it with a decision-required outcome.
+
+    1. Take the store's admission lock: no other admission observes free space until this one is recorded.
+    2. Reclaim ended attempts whose window has passed, then read every other reservation.
+    3. Admit when observed free space, minus live reservations, minus the reserve, covers `need`, and record it.
+    4. Otherwise record the decision and stop; nothing is removed to make room.
+    """
+    # 1. One admission at a time per store, so concurrent operations never spend the same free bytes.
+    policy = storage_policy()?
+    directory = reservations_root(store)
+    make_directory(directory)?
+    gate = directory.joinpath("admission").lock_exclusive().map_err((error) => f"{directory.0}: {error.message()}")?
+    # 2. Maintenance runs at this lifecycle boundary only; warm selections never reach it.
+    now = now_seconds()
+    maintain_held(store, policy, now)?
+    others = [reservation for reservation in read_reservations(store)? if reservation.name != record.name]
+    pressure = Pressure(
+        store=store,
+        work=record.work,
+        need=need,
+        basis=record.basis,
+        available=available_space(store)?,
+        policy=policy,
+        others=[reservation for reservation in others if reservation.outstanding() > 0],
+        observed=now,
+    )
+    # 3. The record is published before the lock is released, so the next admission counts it.
+    if need <= pressure.admissible():
+        publish(record_file(store, record.name), json_text(record_document(record))?)?
+        return Ok(None)
+    # 4. The caller reports the outcome; the store keeps everything it holds.
+    return Err(decide(pressure, collectable(store)?))
+
+
+pub def read_reservations(store: Path) -> Result[list[Reservation], str]:
+    """Every readable reservation record of `store`, with its owner's liveness and its staging bytes observed now."""
+    directory = reservations_root(store)
+    mut found: list[Reservation] = []
+    if not directory.is_dir():
+        return Ok(found)
+    for entry in directory.iterdir().map_err((error) => f"{directory.0}: {error.message()}")?:
+        if not entry.name().endswith(RECORD_SUFFIX) or entry.name().startswith("."):
+            continue
+        # An unreadable record names no owner, so it neither holds space nor authorizes removing anything.
+        match read_record(entry):
+            None => pass
+            Some(record) =>
+                mut observed = record
+                staged = store.joinpath("staging").joinpath(record.name)
+                observed.allocated = tree_bytes(staged)
+                observed.live = owner_live(record.claim, staged)
+                found.append(observed)
+    return Ok(found)
+
+
+def owner_live(claim: str, staged: Path) -> bool:
+    """
+    Whether an attempt's owner still holds its claim. A claim nobody holds proves the owner ended; an unknown owner
+    or an unreadable lock is taken as live while its staging directory exists.
+    """
+    if claim == "":
+        return staged.is_dir()
+    match Path(claim).try_lock_exclusive():
+        Ok(free) => return free is None
+        Err(_) => return staged.is_dir()
+
+
+def read_record(path: Path) -> Option[Reservation]:
+    """A reservation record, when `path` holds a readable one."""
+    match read(path):
+        Err(_) => return None
+        Ok(text) =>
+            match parse_json(text):
+                Err(_) => return None
+                Ok(document) =>
+                    match record_of(document):
+                        Ok(record) => return Some(record)
+                        Err(_) => return None
+
+
+def record_of(document: JsonValue) -> Result[Reservation, str]:
+    """Decode a reservation record; any missing field refuses it."""
+    if required_text(document, "schema")? != RESERVATION_SCHEMA:
+        return Err("another record schema")
+    return Ok(
+        Reservation(
+            name=required_text(document, "staging")?,
+            work=required_text(document, "work")?,
+            claim=required_text(document, "claim")?,
+            reserved=required_int(document, "reserved_bytes")?,
+            basis=required_text(document, "basis")?,
+            phase=required_text(document, "phase")?,
+            created=required_int(document, "created")?,
+            ended=required_int(document, "ended")?,
+        ),
+    )
+
+
+def required_int(document: JsonValue, key: str) -> Result[int, str]:
+    """The required integer field `key`."""
+    match document.get(key):
+        None => return Err(key)
+        Some(value) =>
+            match value.as_int():
+                Some(number) => return Ok(number)
+                None => return Err(key)
+
+
+def record_document(record: Reservation) -> JsonValue:
+    """The persisted form of a reservation; liveness and allocation are observed, not recorded."""
+    mut fields: dict[str, JsonValue] = {}
+    fields["schema"] = JsonValue.string(RESERVATION_SCHEMA)
+    fields["staging"] = JsonValue.string(record.name)
+    fields["work"] = JsonValue.string(record.work)
+    fields["claim"] = JsonValue.string(record.claim)
+    fields["reserved_bytes"] = JsonValue.int(record.reserved)
+    fields["basis"] = JsonValue.string(record.basis)
+    fields["phase"] = JsonValue.string(record.phase)
+    fields["created"] = JsonValue.int(record.created)
+    fields["ended"] = JsonValue.int(record.ended)
+    return JsonValue.object(fields)
+
+
+pub def reservation_document(record: Reservation) -> JsonValue:
+    """A reservation as inspection reports it: its record, its owner's liveness, allocation and outstanding bytes."""
+    mut fields: dict[str, JsonValue] = {}
+    fields["staging"] = JsonValue.string(record.name)
+    fields["work"] = JsonValue.string(record.work)
+    fields["reserved_bytes"] = JsonValue.int(record.reserved)
+    fields["basis"] = JsonValue.string(record.basis)
+    fields["phase"] = JsonValue.string(record.phase)
+    fields["live"] = JsonValue.bool(record.live)
+    fields["allocated_bytes"] = JsonValue.int(record.allocated)
+    fields["outstanding_bytes"] = JsonValue.int(record.outstanding())
+    fields["created"] = JsonValue.int(record.created)
+    return JsonValue.object(fields)
+
+
+# ---- Ended attempts ----
+
+
+pub def maintain(store: Path, policy: StoragePolicy, now: int) -> Result[int, str]:
+    """Reclaim ended attempts whose window has passed by `now`, under the admission lock; see `maintain_held`."""
+    directory = reservations_root(store)
+    if not directory.is_dir():
+        return Ok(0)
+    gate = directory.joinpath("admission").lock_exclusive().map_err((error) => f"{directory.0}: {error.message()}")?
+    return maintain_held(store, policy, now)
+
+
+def maintain_held(store: Path, policy: StoragePolicy, now: int) -> Result[int, str]:
+    """
+    Reclaim the private state of attempts that ended at least the policy's failed-attempt window ago; the caller
+    holds the admission lock. Returns how many staging directories were reclaimed.
+
+    1. An attempt whose owner holds its claim is left alone, however old it is.
+    2. An ended attempt whose staging directory is gone leaves nothing to keep, so its record goes.
+    3. The first observation of an ended owner records when its end was confirmed. A clock that reads earlier than
+       that restarts the window at the earlier reading, so a backwards change never manufactures age.
+    4. Once the window has passed since that confirmation, the staging directory and its record are removed.
+    """
+    mut reclaimed = 0
+    for record in read_reservations(store)?:
+        # 1. A live owner's attempt is never private state of an ended operation.
+        if record.live:
+            continue
+        # 2. Nothing remains to inspect.
+        staged = store.joinpath("staging").joinpath(record.name)
+        if not staged.is_dir():
+            release(store, record.name)
+            continue
+        # 3. The window starts when the end is confirmed, never at a file's modification time.
+        mut ended = record
+        if record.phase != "ended" or now < record.ended:
+            ended.phase = "ended"
+            ended.ended = now
+            publish(record_file(store, record.name), json_text(record_document(ended))?)?
+        # 4. A zero window makes an ended attempt reclaimable at its first observation.
+        if now - ended.ended >= policy.failed_attempt_ttl:
+            staged.remove_tree().map_err((error) => f"{staged.0}: {error.message()}")?
+            release(store, record.name)
+            reclaimed += 1
+    return Ok(reclaimed)
+
+
+# ---- Decisions ----
+
+
+def decide(pressure: Pressure, collectable: Collectable) -> str:
+    """Record the decision-required outcome of a refused admission and return its one-line summary."""
+    admissible = pressure.admissible()
+    need = byte_text(pressure.need)
+    mut summary = f"storage admission refused: {pressure.work} needs {need}, {byte_text(admissible)} is admissible"
+    if admissible < 0:
+        below = byte_text(0 - admissible)
+        summary = f"storage admission refused: {pressure.work} needs {need}, free space is {below} inside the reserve"
+    document = decision_document(pressure, collectable)
+    match json_text(document):
+        Ok(text) => decided["document"] = text
+        Err(_) => decided["document"] = ""
+    decided["summary"] = summary
+    decided["text"] = decision_text(summary, pressure, collectable)
+    return summary
+
+
+pub def take_decision() -> Option[Decided]:
+    """The decision-required outcome a refused admission recorded in this process, which is then forgotten."""
+    if "summary" not in decided:
+        return None
+    taken = Decided(summary=decided["summary"], text=decided["text"], document=decided["document"])
+    decided = {}
+    return Some(taken)
+
+
+def decision_document(pressure: Pressure, collectable: Collectable) -> JsonValue:
+    """The versioned decision-required document: the operation, the pressure facts and the supported actions."""
+    shortfall = pressure.need - pressure.admissible()
+    mut operation: dict[str, JsonValue] = {}
+    operation["work"] = JsonValue.string(pressure.work)
+    operation["required_bytes"] = JsonValue.int(pressure.need)
+    operation["basis"] = JsonValue.string(pressure.basis)
+    mut fields: dict[str, JsonValue] = {}
+    fields["schema"] = JsonValue.string(DECISION_SCHEMA)
+    fields["outcome"] = JsonValue.string("decision-required")
+    fields["store"] = JsonValue.string(pressure.store.0)
+    fields["observed_at"] = JsonValue.int(pressure.observed)
+    fields["operation"] = JsonValue.object(operation)
+    fields["policy"] = policy_document(pressure.policy)
+    fields["available_bytes"] = JsonValue.int(pressure.available)
+    fields["reserved_bytes"] = JsonValue.int(pressure.reserved())
+    fields["reservations"] = JsonValue.array([reservation_document(item) for item in pressure.others])
+    fields["admissible_bytes"] = JsonValue.int(pressure.admissible())
+    fields["shortfall_bytes"] = JsonValue.int(shortfall)
+    fields["collectable"] = collectable_document(collectable)
+    fields["actions"] = JsonValue.array(actions(pressure, collectable, shortfall))
+    return JsonValue.object(fields)
+
+
+pub def policy_document(policy: StoragePolicy) -> JsonValue:
+    """The effective storage policy with the source of each value and the configuration file it was read from."""
+    mut fields: dict[str, JsonValue] = {}
+    fields["file"] = JsonValue.string(policy.file)
+    mut root: dict[str, JsonValue] = {}
+    root["value"] = JsonValue.string(policy.root)
+    root["source"] = JsonValue.string(policy.root_source)
+    fields["root"] = JsonValue.object(root)
+    fields["min_free_bytes"] = sourced(policy.min_free_bytes, policy.min_free_source)
+    fields["failed_attempt_ttl_seconds"] = sourced(policy.failed_attempt_ttl, policy.attempt_source)
+    fields["history_ttl_seconds"] = sourced(policy.history_ttl, policy.history_source)
+    return JsonValue.object(fields)
+
+
+def sourced(value: int, source: str) -> JsonValue:
+    """One policy value and where it came from."""
+    mut fields: dict[str, JsonValue] = {}
+    fields["value"] = JsonValue.int(value)
+    fields["source"] = JsonValue.string(source)
+    return JsonValue.object(fields)
+
+
+pub def collectable_document(collectable: Collectable) -> JsonValue:
+    """What `incan bakery gc` would reclaim, marked as an estimate that excludes superseded layout files."""
+    mut fields: dict[str, JsonValue] = {}
+    fields["units"] = JsonValue.int(collectable.units)
+    fields["projects"] = JsonValue.int(collectable.projects)
+    fields["payload_bytes"] = JsonValue.int(collectable.payload_bytes)
+    fields["staging_directories"] = JsonValue.int(collectable.staging)
+    fields["staging_bytes"] = JsonValue.int(collectable.staging_bytes)
+    fields["bytes"] = JsonValue.int(collectable.bytes())
+    fields["estimate"] = JsonValue.string("logical bytes; superseded layout files are not estimated")
+    return JsonValue.object(fields)
+
+
+def actions(pressure: Pressure, collectable: Collectable, shortfall: int) -> list[JsonValue]:
+    """The actions that can change the outcome under the current policy and observations, with their consequences."""
+    mut found: list[JsonValue] = []
+    if collectable.bytes() > 0:
+        mut collect: dict[str, JsonValue] = {}
+        collect["action"] = JsonValue.string("collect")
+        collect["command"] = JsonValue.string("incan bakery gc")
+        collect["reclaims_bytes"] = JsonValue.int(collectable.bytes())
+        collect["resolves"] = JsonValue.bool(collectable.bytes() >= shortfall)
+        collect["consequence"] = JsonValue.string(COLLECT_CONSEQUENCE)
+        found.append(JsonValue.object(collect))
+    if pressure.reserved() > 0:
+        mut wait: dict[str, JsonValue] = {}
+        wait["action"] = JsonValue.string("wait")
+        wait["reserved_bytes"] = JsonValue.int(pressure.reserved())
+        wait["resolves"] = JsonValue.bool(pressure.reserved() >= shortfall)
+        wait["consequence"] = JsonValue.string("concurrent operations release their reservations when they end")
+        found.append(JsonValue.object(wait))
+    if pressure.policy.min_free_bytes > 0:
+        mut lower: dict[str, JsonValue] = {}
+        lower["action"] = JsonValue.string("lower-reserve")
+        lower["key"] = JsonValue.string("storage.min-free-bytes")
+        lower["file"] = JsonValue.string(configuration_file())
+        lower["current_bytes"] = JsonValue.int(pressure.policy.min_free_bytes)
+        lower["resolves"] = JsonValue.bool(pressure.policy.min_free_bytes >= shortfall)
+        lower["consequence"] = JsonValue.string(RESERVE_CONSEQUENCE)
+        found.append(JsonValue.object(lower))
+    mut free: dict[str, JsonValue] = {}
+    free["action"] = JsonValue.string("free-space")
+    free["consequence"] = JsonValue.string("space freed outside Oven is observed by the next admission")
+    found.append(JsonValue.object(free))
+    return found
+
+
+def configuration_file() -> str:
+    """The configuration file whose `[storage]` table sets the reserve, whether or not it exists yet."""
+    match home():
+        Ok(directory) => return policy_file(directory).0
+        Err(_) => return "config.toml in the Incan home"
+
+
+def decision_text(summary: str, pressure: Pressure, collectable: Collectable) -> str:
+    """The readable explanation of a decision-required outcome, stating the same facts and actions as its document."""
+    policy = pressure.policy
+    mut lines = [
+        summary,
+        f"  available {byte_text(pressure.available)} on the bakery's filesystem ({pressure.store.0})",
+        f"  reserve {byte_text(policy.min_free_bytes)} (storage.min-free-bytes, {policy.min_free_source})",
+        f"  reserved {byte_text(pressure.reserved())} by {len(pressure.others)} concurrent operations",
+        f"  shortfall {byte_text(pressure.need - pressure.admissible())} ({pressure.basis} requirement)",
+        "nothing was removed to make room; to proceed:",
+    ]
+    reclaims = byte_text(collectable.bytes())
+    units = collectable.units
+    if collectable.bytes() > 0:
+        lines.append(
+            f"  run `incan bakery gc`: reclaims about {reclaims} ({units} units, {collectable.staging} ended attempts)",
+        )
+    if pressure.reserved() > 0:
+        lines.append(f"  wait for concurrent operations to release {byte_text(pressure.reserved())}")
+    if policy.min_free_bytes > 0:
+        lines.append(f"  lower storage.min-free-bytes in {configuration_file()}")
+    lines.append("  free space outside Oven")
+    return "\n".join(lines)
+
+
+pub def byte_text(bytes: int) -> str:
+    """A byte count in the largest binary unit that keeps it at least one, with one decimal; small counts in bytes."""
+    if bytes < KIB:
+        return f"{bytes} B"
+    mut unit = KIB
+    mut name = "KiB"
+    for next in ["MiB", "GiB", "TiB"]:
+        if bytes < unit * KIB:
+            break
+        unit = unit * KIB
+        name = next
+    tenths = bytes * 10 // unit
+    return f"{tenths // 10}.{tenths % 10} {name}"

@@ -9,7 +9,9 @@ from json_fields import array, field, required_items, required_text, strings
 from loaf_local_graph import unique
 from observation import trace
 from publication import publish
-from rust_units import RegistrySelection, decoded, read_registry_units
+from rust_registry import read_registry_units
+from registry_units import RegistrySelection
+from rust_target import decoded
 from registry_units import RegistryDemand, RegistryUnits
 from registry_metadata import bound_entries
 from native_closure_input import native_bindings
