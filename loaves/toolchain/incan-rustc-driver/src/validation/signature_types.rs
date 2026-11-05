@@ -60,10 +60,7 @@ pub(super) fn source_signature_type(ty: &Scalar) -> bool {
         return *length >= 0 && matches!(elements.as_slice(), [element] if source_signature_type(element));
     }
     if let Scalar::TypeToken(elements) = ty {
-        return matches!(
-            elements.as_slice(),
-            [Scalar::Int | Scalar::Float | Scalar::Bool | Scalar::String]
-        );
+        return matches!(elements.as_slice(), [element] if source_signature_type(element));
     }
     if let Scalar::SliceRef(elements) | Scalar::SliceMutRef(elements) = ty {
         return matches!(elements.as_slice(), [element] if source_signature_type(element));
@@ -226,7 +223,7 @@ pub(super) fn scalar_referent(ty: &Scalar) -> bool {
     {
         return true;
     }
-    if matches!(ty, Scalar::FunctionPointer(_) | Scalar::Tuple(_)) {
+    if matches!(ty, Scalar::FunctionPointer(_) | Scalar::Tuple(_) | Scalar::TypeToken(_)) {
         return source_signature_type(ty);
     }
     sized_numeric(ty).is_some()

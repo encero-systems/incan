@@ -280,7 +280,7 @@ impl TypeChecker {
             let ty = if matches!(info, TypeInfo::Builtin) && sym.scope > 0 {
                 ResolvedType::TypeVar(name.to_string())
             } else {
-                resolve_type(&Type::Simple(name.to_string()), &self.symbols)
+                self.expand_type_aliases(resolve_type(&Type::Simple(name.to_string()), &self.symbols))
             };
             return self.finish_identifier_read(
                 span,

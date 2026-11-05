@@ -58,7 +58,7 @@ pub model Place:
 
 @derive(Clone, PartialEq)
 pub enum Constant:
-    """A scalar literal or borrowed static text. Numeric retains exact integer digits or IEEE bit digits with its carrier, never a host-width approximation."""
+    """A scalar, zero-sized type token, or borrowed static text literal. Numeric retains exact integer digits or IEEE bit digits with its carrier, never a host-width approximation."""
 
     Numeric(str, PlanType)
     RustItem(str, PlanType)
@@ -66,6 +66,7 @@ pub enum Constant:
     Float(float)
     Bool(bool)
     Unit
+    TypeToken(list[PlanType])
     Text(str)
 
 

@@ -505,15 +505,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
         if !self.bindings.contains_key(name)
             && let IncanType::TypeToken(represented) = &ty
-            && matches!(
-                **represented,
-                IncanType::Primitive(
-                    IncanPrimitiveType::Int
-                        | IncanPrimitiveType::Float
-                        | IncanPrimitiveType::Bool
-                        | IncanPrimitiveType::Str
-                )
-            )
         {
             return bir::Operand::Constant(bir::Constant::TypeToken(*represented.clone()));
         }

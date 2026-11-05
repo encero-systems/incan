@@ -73,10 +73,7 @@ pub def model_type(
             return Err(f"unsupported Body IR nominal type {source_name}")
         RustType.Primitive(primitive) => return primitive_type(primitive)
         RustType.TypeToken(represented) =>
-            match model_type(constructors, declarations, represented)?:
-                (PlanType.Int | PlanType.Float | PlanType.Bool | PlanType.String) =>
-                    return Ok(PlanType.TypeToken([model_type(constructors, declarations, represented)?]))
-                _ => return Err("unsupported Body IR nonprimitive TypeToken carrier")
+            return Ok(PlanType.TypeToken([model_type(constructors, declarations, represented)?]))
         RustType.Function(params=parameters, return_type=result) => return function_pointer_type(parameters, result)
         RustType.Tuple(_elements) => return retained_model_type(constructors, declarations, ty)
         RustType.Decimal(precision=_precision, scale=_scale) => return Ok(PlanType.Decimal)

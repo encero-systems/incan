@@ -540,8 +540,8 @@ impl TypeChecker {
 
     /// Type-check a set literal, refusing an element type that does not implement `Eq` and `Hash` (#1758).
     ///
-    /// A destination `set[T]` annotation whose element type lacks `Eq` or `Hash` was refused where it is written, so
-    /// the literal is not refused a second time for it. The element type still comes from the first element.
+    /// A destination `set[T]` annotation gives every literal member its expected type. When `T` lacks `Eq` or `Hash`,
+    /// the annotation was refused where it is written, so the literal is not refused a second time for it.
     pub(in crate::typechecker::check_expr) fn check_set_with_expected(
         &mut self,
         elems: &[Spanned<Expr>],
@@ -557,7 +557,7 @@ impl TypeChecker {
         };
         let annotation_reported = self.annotation_reports_unhashable_member(expected_elem);
         let elem_ty = if let Some(first) = elems.first() {
-            let elem_ty = self.check_expr(first);
+            let elem_ty = self.check_expr_with_expected(first, expected_elem);
             if !annotation_reported {
                 self.refuse_unhashable_collection_member(HashedCollectionRole::SetElement, &elem_ty, first.span);
             }
@@ -567,7 +567,7 @@ impl TypeChecker {
         };
 
         for elem in elems.iter().skip(1) {
-            self.check_expr(elem);
+            self.check_expr_with_expected(elem, expected_elem);
         }
 
         set_ty(elem_ty)

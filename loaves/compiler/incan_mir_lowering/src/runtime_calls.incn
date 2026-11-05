@@ -744,6 +744,10 @@ def runtime_argument(
             return Ok(RustType.Ref(runtime_argument(module, PlanType.Tuple(elements), intrinsics, unions)?))
         PlanType.FunctionPointer(signature) => return runtime_callable_argument(module, signature, intrinsics, unions)
         PlanType.Closure(signature) => return runtime_callable_argument(module, signature, intrinsics, unions)
+        PlanType.TypeToken(represented) =>
+            if len(represented) != 1:
+                return Err("invalid governed runtime type token arity")
+            return Ok(RustType.TypeToken(runtime_argument(module, represented[0], intrinsics, unions)?))
         PlanType.Generator(leaf, depth) =>
             mut element = runtime_argument(module, list_leaf_type(leaf), intrinsics, unions)?
             for _level in range(depth):

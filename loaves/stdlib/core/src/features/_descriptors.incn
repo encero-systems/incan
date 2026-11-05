@@ -159,6 +159,7 @@ pub const model_field_metadata_references: FrozenList[CapabilityReference] = [
 pub const type_tokens_reflection_forms: FrozenList[str] = [
     "T.__class_name__()",
     "def cast(expr: ColumnExpr, target: Type[int]) -> IntColumnExpr:",
+    "def cast[T with Int](expr: ColumnExpr) -> IntColumnExpr:",
     "def accepts_schema(value: Type[MySchema]) -> str:",
     "cast(col(\"amount\"), int)",
 ]
@@ -167,6 +168,7 @@ pub const type_tokens_reflection_references: FrozenList[CapabilityReference] = [
     CapabilityReference(label="std.reflection", path="stdlib/reflection.md"),
     CapabilityReference(label="RFC 107 north star", path="../../RFCs/107_type_directed_library_apis.md"),
     CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+    CapabilityReference(label="Release 0.6", path="../../release_notes/0_6.md"),
 ]
 pub const value_enums_forms: FrozenList[str] = ["enum Level(str):", "WARN = \"WARN\"", "Level.from_value(raw)"]
 pub const value_enums_references: FrozenList[CapabilityReference] = [

@@ -792,10 +792,11 @@ fn zip_type<'tcx>(
     enum_type(tcx, &crate::zip_carriers::alias_name(left, right))
 }
 
-/// Resolve the bound core dependency's TypeToken carrier with its exact represented native type. A same-named
-/// transitive core artifact cannot supply the carrier for the explicit SDK declaration.
+/// Resolve the bound core dependency's zero-sized `TypeToken` carrier after plan validation retained its represented
+/// type. Erasing the physical marker argument avoids making local nominal declarations generic SDK dependencies; the
+/// checked plan remains the semantic authority. A same-named transitive core artifact cannot supply the carrier.
 pub fn type_token_type<'tcx>(tcx: TyCtxt<'tcx>, elements: &[PlanType]) -> Result<Ty<'tcx>, PlanError> {
-    let [element] = elements else {
+    let [_element] = elements else {
         return Err(PlanError::UnknownCallee("unsupported TypeToken arity".into()));
     };
     let mut definition = crate::native_crates::root(tcx, "incan_std_core")
@@ -811,6 +812,6 @@ pub fn type_token_type<'tcx>(tcx: TyCtxt<'tcx>, elements: &[PlanType]) -> Result
     Ok(Ty::new_adt(
         tcx,
         tcx.adt_def(definition),
-        tcx.mk_args(&[native_type(tcx, element)?.into()]),
+        tcx.mk_args(&[tcx.types.unit.into()]),
     ))
 }

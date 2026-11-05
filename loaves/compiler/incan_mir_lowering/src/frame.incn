@@ -368,6 +368,7 @@ pub def value_type(mut builder: Builder, operand: Operand) -> Result[PlanType, s
                 Constant.Float(_value) => return Ok(PlanType.Float)
                 Constant.Bool(_value) => return Ok(PlanType.Bool)
                 Constant.Unit => return Ok(PlanType.Unit)
+                Constant.TypeToken(represented) => return Ok(PlanType.TypeToken(represented))
                 Constant.Text(_value) => return Ok(PlanType.StrRef)
 
 

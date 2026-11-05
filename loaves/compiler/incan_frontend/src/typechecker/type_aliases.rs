@@ -127,6 +127,9 @@ impl TypeChecker {
             ResolvedType::RefMut(inner) => {
                 ResolvedType::RefMut(Box::new(self.expand_type_aliases_inner(*inner, expanding)))
             }
+            ResolvedType::TypeToken(inner) => {
+                ResolvedType::TypeToken(Box::new(self.expand_type_aliases_inner(*inner, expanding)))
+            }
             other => other,
         }
     }

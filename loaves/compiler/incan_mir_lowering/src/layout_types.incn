@@ -8,7 +8,11 @@ from rust::incan_semantics_core import (
     SemanticSourceTargetKind,
 )
 from rust::incan_semantics_core::body_ir import NominalDeclaration, EnumDeclaration as RustEnumDeclaration
-from rust::incan_lang::lang::types::collections import from_str as collection_type, as_str as collection_name, CollectionTypeId
+from rust::incan_lang::lang::types::collections import (
+    from_str as collection_type,
+    as_str as collection_name,
+    CollectionTypeId,
+)
 from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import PlanType, ListLeaf, EnumDeclaration, TupleElement, tuple_element_type
 from numerics import sized_numeric
@@ -134,6 +138,10 @@ pub def native_source_type(
             return shared_receiver_type(native_source_type(constructors, nominals, enums, unions, inner, intrinsics)?)
         RustType.RefMut(inner) =>
             return mutable_receiver_type(native_source_type(constructors, nominals, enums, unions, inner, intrinsics)?)
+        RustType.TypeToken(represented) =>
+            return Ok(
+                PlanType.TypeToken([native_source_type(constructors, nominals, enums, unions, represented, intrinsics)?]),
+            )
         RustType.Unsupported(description) => return Err(f"unsupported Body IR type {description}")
         RustType.NativeBuiltin(RuntimeBuiltinType.ValidationError) => return Ok(PlanType.ValidationError)
         RustType.Function(params=parameters, return_type=result) =>
@@ -338,6 +346,7 @@ pub def shared_receiver_type(ty: PlanType) -> Result[PlanType, str]:
         PlanType.NativeSlice(elements) => return Ok(PlanType.SliceRef(elements))
         PlanType.FunctionPointer(_signature) => return Ok(PlanType.ScalarRef([ty]))
         PlanType.NativeTraitObject(_path, _send, _sync) => return Ok(PlanType.ScalarRef([ty]))
+        PlanType.TypeToken(_represented) => return Ok(PlanType.ScalarRef([ty]))
         PlanType.Model(index, name) => return Ok(PlanType.ModelRef(index, name))
         PlanType.Enum(index, name) => return Ok(PlanType.EnumRef(index, name))
         PlanType.ValidationError => return Ok(PlanType.ValidationErrorRef)
@@ -581,18 +590,11 @@ pub def collection_leaf(ty: PlanType) -> Result[ListLeaf, str]:
         PlanType.Model(owner, name) => return Ok(ListLeaf.Model(owner, name))
         PlanType.Enum(owner, name) => return Ok(ListLeaf.Enum(owner, name))
         (PlanType.StringRef | PlanType.StringMutRef | PlanType.StrRef) => return Ok(ListLeaf.Reference([ty]))
-        (
-            PlanType.ScalarRef(_)
-            | PlanType.ScalarMutRef(_)
-            | PlanType.SliceRef(_)
-        ) => return Ok(ListLeaf.Reference([ty]))
-        (
-            PlanType.EnumRef(_, _)
-            | PlanType.EnumMutRef(_, _)
-            | PlanType.ModelRef(_, _)
-            | PlanType.ModelMutRef(_, _)
-        ) => return Ok(ListLeaf.Reference([ty]))
+        (PlanType.ScalarRef(_) | PlanType.ScalarMutRef(_) | PlanType.SliceRef(_)) => return Ok(ListLeaf.Reference([ty]))
+        (PlanType.EnumRef(_, _) | PlanType.EnumMutRef(_, _) | PlanType.ModelRef(_, _) | PlanType.ModelMutRef(_, _)) =>
+            return Ok(ListLeaf.Reference([ty]))
         PlanType.FunctionPointer(signature) => return Ok(ListLeaf.FunctionPointer(signature))
+        PlanType.TypeToken(represented) => return Ok(ListLeaf.TypeToken(represented))
         PlanType.List(leaf, depth) => return Ok(ListLeaf.List([leaf], depth))
         PlanType.Dict(key, value) => return Ok(ListLeaf.Dict([key, value]))
         PlanType.Set(element) => return Ok(ListLeaf.Set([element]))

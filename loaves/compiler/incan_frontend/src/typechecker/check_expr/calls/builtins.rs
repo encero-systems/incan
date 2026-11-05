@@ -743,6 +743,13 @@ impl TypeChecker {
         };
         // The value is written as JSON, so its type needs a `Serialize` form.
         let arg_ty = self.check_expr(arg_expr);
+        if matches!(arg_ty, ResolvedType::TypeToken(_)) {
+            self.errors.push(errors::type_token_operation_not_supported(
+                "serialization",
+                arg_expr.span,
+            ));
+            return ResolvedType::Str;
+        }
         if let Some(holder) = self.value_type_without_serialize_form(&arg_ty) {
             self.errors.push(errors::json_stringify_value_lacks_serialize(
                 &arg_ty.to_string(),

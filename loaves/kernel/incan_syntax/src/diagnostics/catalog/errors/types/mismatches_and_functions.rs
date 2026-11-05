@@ -288,6 +288,21 @@ pub fn type_name_used_as_value(name: &str, span: Span) -> CompileError {
         .with_note("Type tokens are explicit API values, not general runtime type objects")
 }
 
+/// Type error for applying an ordinary runtime operation to a compile-time type token.
+pub fn type_token_operation_not_supported(operation: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("Type tokens do not support {operation}"), span)
+        .with_note("A `Type[T]` value carries checked type evidence for dispatch; it is not a runtime type object")
+}
+
+/// Type error for declarations whose alias-normalized token parameter surfaces are identical.
+pub fn duplicate_type_token_overload(name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Overload '{name}' duplicates an existing alias-normalized type-token signature"),
+        span,
+    )
+    .with_hint("Use a newtype when two type tokens need distinct overload identity")
+}
+
 pub fn missing_return_type(span: Span) -> CompileError {
     CompileError::type_error("Function is missing a return type".to_string(), span)
         .with_hint("Add a return type annotation: def name(...) -> Type:")
