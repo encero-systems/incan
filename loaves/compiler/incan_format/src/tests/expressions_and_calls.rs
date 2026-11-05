@@ -70,6 +70,34 @@ fn format_source_with_query_vocab(source: &str) -> Result<String, FormatError> {
     format_parsed_source_with_config(source, &ast, FormatConfig::default())
 }
 
+/// Format source with the descriptor-owned async vocabulary that a project-aware formatter receives from its
+/// compilation session.
+fn format_source_with_async_vocab(source: &str) -> Result<String, FormatError> {
+    let tokens = lexer::lex(source).map_err(|errs| {
+        FormatError::SyntaxError(
+            errs.iter()
+                .map(|error| error.message.clone())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+    })?;
+    let registration = incan_vocab::KeywordRegistration::on_import("std.async").with_keywords([
+        incan_vocab::KeywordSpec::new("async", incan_vocab::KeywordSurfaceKind::FunctionDecl),
+        incan_vocab::KeywordSpec::new("await", incan_vocab::KeywordSurfaceKind::PrefixExpression),
+    ]);
+    let mut keyword_map = std::collections::HashMap::new();
+    keyword_map.insert("vocab_contracts".to_string(), vec![registration]);
+    let ast = parser::parse_with_context(&tokens, None, Some(&keyword_map)).map_err(|errs| {
+        let mut message = String::new();
+        for error in &errs {
+            message.push_str(&diagnostics::format_error("<input>", source, error));
+        }
+        FormatError::SyntaxError(message)
+    })?;
+
+    format_parsed_source_with_config(source, &ast, FormatConfig::default())
+}
+
 fn assert_comment_line_immediately_before(
     lines: &[&str],
     stmt_label: &str,
@@ -420,7 +448,9 @@ async def run() -> int:
         await slow() =>
             return value
 "#;
-    let formatted = assert_format_round_trip_lex_parse(source)?;
+    let formatted = format_source_with_async_vocab(source)?;
+    let reformatted = format_source_with_async_vocab(&formatted)?;
+    assert_eq!(formatted, reformatted);
     assert!(
         formatted.contains("race for value:"),
         "expected formatter to preserve race header; got: {formatted}"

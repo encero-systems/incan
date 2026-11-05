@@ -305,8 +305,7 @@ impl TypeChecker {
             .collect::<Vec<_>>()
             .join(".");
         if let Some(surface_type) = surface_types::from_str(&item.name)
-            && surface_types::stdlib_module_path(surface_type)
-                .is_some_and(|owner| owner == dotted || (dotted == "std.async" && owner.starts_with("std.async.")))
+            && surface_types::is_exported_from_module(surface_type, &dotted)
         {
             self.surface_type_import_bindings
                 .insert(local_name.to_string(), (surface_type, symbol_id));

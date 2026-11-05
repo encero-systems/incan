@@ -1,6 +1,11 @@
 """Low-level standard primitives shared by standard packages and platform code."""
 
 import primitives
+import primitives.async
+import primitives.async.channel
+import primitives.async.sync
+import primitives.async.task
+import primitives.async.time
 import primitives.checksum
 import primitives.collections
 import primitives.environ

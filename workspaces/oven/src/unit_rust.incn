@@ -1,6 +1,7 @@
 """Bind the shared local graph's exact artifacts to a compiler unit description (DD-0008)."""
 
 from std.fs import Path
+from std.environ import get_or
 from std.json import JsonValue
 from std.toml import TomlValue
 from bakery import (
@@ -30,10 +31,12 @@ from registry_units import RegistryUnits
 from rust_target import target_configuration
 from search_index import search_index
 from sysroot_access import declared_libraries, runtime_sysroot
-from toolchain import NativeCrate, Toolchain, load_toolchain, located, rust_compiler
+from toolchain import NativeCrate, Toolchain, installation, load_toolchain, load_toolchain_at, located, rust_compiler
+from installation_codec import StandardManifest
 from standalone_rust import bind_published, standalone_crates
 from registry_metadata import bound_entries
 from unit import UnitDescription, UnitLoaf, describe
+from home_paths import TOOLCHAIN
 from observation import trace
 from intake import ManifestReader
 from native_closure_input import NativeClosureInput
@@ -41,7 +44,15 @@ from unit_compiler import compile_prepared_unit
 from unit_freshness import Key, artifact_files, unit_key
 from unit_publication import record_payload
 from compiler_facts import admit_fact
-from vocabulary import prepare_vocabulary, published_workers, stage_vocabulary
+from vocabulary import (
+    describe_vocabulary,
+    prepare_registered_vocabulary,
+    prepare_vocabulary,
+    published_workers,
+    stage_vocabulary,
+)
+
+const VOCAB_CONTRACTS_PACKAGE: str = "incan_stdlib_vocab_contracts"
 
 
 pub def describe_native(source: Path, profile: str, request: FeatureRequest) -> Result[UnitDescription, str]:
@@ -241,6 +252,20 @@ pub def prepare_linked(
     2. Link each Loaf, collecting the directories beyond the toolchain's that its closure searches.
     3. Keep each such directory once and register a producer vocabulary.
     """
+    linked = prepare_linked_inputs(described, toolchain, checking_interfaces, registry)?
+    builder_home = get_or("SELFBUILD_BUILDER_HOME", "")
+    if linked.package == VOCAB_CONTRACTS_PACKAGE and builder_home != "" and linked.vocab_entry != None:
+        return prepare_seeded_vocabulary(linked, Path(builder_home))
+    return prepare_vocabulary(linked, toolchain)
+
+
+def prepare_linked_inputs(
+    described: UnitDescription,
+    toolchain: Toolchain,
+    checking_interfaces: list[str] = [],
+    registry: Option[RegistryUnits] = None,
+) -> Result[UnitDescription, str]:
+    """Bind exact native inputs without compiling a producer vocabulary registration."""
     # 1. Every unit of the toolchain generation names the same index.
     mut unit = described
     unit.search_index = Some(search_index(toolchain, registry)?)
@@ -266,7 +291,61 @@ pub def prepare_linked(
     unit.search = unique(directories)
     for cache in unit.rust_abi:
         admit_fact(Path(cache))?
-    return prepare_vocabulary(unit, toolchain)
+    return Ok(unit)
+
+
+def prepare_seeded_vocabulary(described: UnitDescription, builder_home: Path) -> Result[UnitDescription, str]:
+    """
+    Prepare a foundational vocabulary registration against the previous generation's compiled standard packages.
+
+    The source generation cannot execute `std.vocab.registration_metadata` until its runtime closure exists. The seed
+    already carries that executable body, so only the generated adapter is compiled with seed inputs; the contracts
+    library itself remains bound to the generation under construction.
+    """
+    unit, described_registration = describe_vocabulary(described)?
+    match described_registration:
+        None => return Ok(unit)
+        Some(found) =>
+            directory = builder_home.joinpath("toolchains").joinpath(TOOLCHAIN)
+            seed = load_toolchain_at(directory)?
+            registration = reset_registration_inputs(found, directory, installation(directory)?.manifests)
+            prepared = prepare_linked_inputs(registration, seed)?
+            return prepare_registered_vocabulary(unit, prepared, seed)
+
+
+def reset_registration_inputs(
+    described: UnitDescription,
+    seed: Path,
+    manifests: list[StandardManifest],
+) -> UnitDescription:
+    """
+    Replace candidate native bindings with every same-profile compiled standard package admitted by the seed.
+
+    The seed copy of the producer stays in the list: compiled `std.vocab` may expose declarations owned by that Loaf,
+    while the generated adapter still imports the current producer entry from source.
+    """
+    mut registration = described
+    registration.externs = []
+    registration.search = []
+    registration.search_index = None
+    registration.rust_abi = []
+    registration.runtime_sysroot = ""
+    mut loaves: list[UnitLoaf] = [loaf for loaf in registration.loaves if loaf.is_dependency()]
+    for manifest in manifests:
+        name = manifest.intent.name
+        contracts = name == VOCAB_CONTRACTS_PACKAGE
+        directory = seed.joinpath("loaves").joinpath(name).joinpath(registration.profile).0
+        loaves.append(
+            UnitLoaf(
+                key=name,
+                name=name,
+                dir=directory,
+                standard=not contracts,
+                toolchain_provided=contracts,
+            ),
+        )
+    registration.loaves = loaves
+    return registration
 
 
 def members(values: list[str]) -> set[str]:

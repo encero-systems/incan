@@ -1,7 +1,6 @@
 //! Canonical stdlib module names.
 use super::{
     derives::{self, DeriveId},
-    keywords,
     traits::{self, TraitId},
 };
 
@@ -415,17 +414,6 @@ pub fn trait_method_module_segments(trait_name: &str) -> Option<Vec<String>> {
                 .map(|segment| (*segment).to_string())
                 .collect()
         })
-}
-
-/// Resolve soft keywords activated by a stdlib import path.
-///
-/// `path` is expected in canonical segmented form (e.g. `["std", "async", "time"]`). Returns an empty vector for
-/// non-stdlib paths or namespaces without soft keywords.
-pub fn soft_keywords_for_import(path: &[String]) -> Vec<keywords::KeywordId> {
-    if path.len() < 2 || path[0] != STDLIB_ROOT {
-        return Vec::new();
-    }
-    keywords::soft_keywords_for_namespace(&path[1])
 }
 
 /// Check if a module path matches a known Incan stdlib module.

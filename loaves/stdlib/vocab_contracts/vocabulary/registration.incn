@@ -1,0 +1,41 @@
+"""Register the canonical async vocabulary for primitive and compatibility imports."""
+
+from std.vocab import (
+    KeywordActivation,
+    KeywordRegistration,
+    KeywordSpec,
+    KeywordSurfaceKind,
+    LibraryManifest,
+    VocabRegistration,
+)
+
+
+pub def library_vocab() -> VocabRegistration:
+    """
+    Activate one async vocabulary through both supported public entry points.
+
+    1. Register the primitive namespace that owns the vocabulary.
+    2. Register the higher-level compatibility namespace with the same descriptors.
+    """
+    # 1. Primitive consumers activate the canonical definitions directly.
+    primitive = KeywordRegistration(
+        activation=KeywordActivation.OnImport("std.primitives.async"),
+        keywords=async_keywords(),
+    )
+    # 2. Compatibility consumers activate descriptors with the same spelling and parser surfaces.
+    compatibility = KeywordRegistration(
+        activation=KeywordActivation.OnImport("std.async"),
+        keywords=async_keywords(),
+    )
+    return VocabRegistration(
+        keyword_registrations=[primitive, compatibility],
+        library_manifest=LibraryManifest(modules=[]),
+    )
+
+
+def async_keywords() -> list[KeywordSpec]:
+    """Describe the async declaration modifier and await prefix expression once per activation namespace."""
+    return [
+        KeywordSpec(name="async", surface_kind=KeywordSurfaceKind.FunctionDecl),
+        KeywordSpec(name="await", surface_kind=KeywordSurfaceKind.PrefixExpression),
+    ]

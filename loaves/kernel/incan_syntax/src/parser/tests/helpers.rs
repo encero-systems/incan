@@ -5,7 +5,21 @@ use super::*;
 
 pub(super) fn parse_str(source: &str) -> Result<Program, Vec<CompileError>> {
     let tokens = lexer::lex(source).map_err(|_| vec![])?;
-    parse(&tokens)
+    let async_registration = |namespace| {
+        incan_vocab::KeywordRegistration::on_import(namespace).with_keywords([
+            incan_vocab::KeywordSpec::new("async", incan_vocab::KeywordSurfaceKind::FunctionDecl),
+            incan_vocab::KeywordSpec::new("await", incan_vocab::KeywordSurfaceKind::PrefixExpression),
+        ])
+    };
+    let mut keyword_map = std::collections::HashMap::new();
+    keyword_map.insert(
+        "vocab_contracts".to_string(),
+        vec![
+            async_registration("std.primitives.async"),
+            async_registration("std.async"),
+        ],
+    );
+    parse_with_context(&tokens, None, Some(&keyword_map))
 }
 
 pub(super) fn parse_str_err(source: &str, context: &str) -> Vec<CompileError> {

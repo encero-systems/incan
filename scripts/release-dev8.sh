@@ -126,7 +126,6 @@ native() {
 build_source_closure() {
     export SELFBUILD_BUILDER_HOME=$seed_home
     native support-tool-build build-native-support.sh --tool-only
-    unset SELFBUILD_BUILDER_HOME
     [[ -L "$toolchain/loaves" ]] || fail 'expected the disposable seed Loaf link'
     rm -- "$toolchain/loaves"
     jq '.externs=[] | .search=[]' "$toolchain/toolchain.json" > "$toolchain/toolchain.json.next"
@@ -277,6 +276,7 @@ step driver-build env DEV8_LANE="$lane" SELFBUILD_HOME="$INCAN_HOME" SELFBUILD_O
 # The seed's driver compiled the closure the lowering links. The shipped runtime and standard packages are compiled
 # again by the candidate, so they carry this tree's lowering rather than the seed's.
 build_runtime_closure candidate-
+unset SELFBUILD_BUILDER_HOME
 native oven-build build-native-tools.sh oven --rebuild
 cp "$lane/oven-bin/incan" "$out/bundle/incan"
 oven=$out/bundle/incan

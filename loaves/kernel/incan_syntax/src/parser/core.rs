@@ -428,17 +428,11 @@ impl<'a> Parser<'a> {
                     if import_path_activates_std_async(&path.segments) {
                         self.std_async_vocab_active = true;
                     }
-                    for kw in incan_lang::lang::stdlib::soft_keywords_for_import(&path.segments) {
-                        self.active_soft_keywords.insert(kw);
-                    }
                     self.activate_imported_keywords_for_import_path(&path.segments);
                 }
                 ImportKind::From { module, .. } => {
                     if import_path_activates_std_async(&module.segments) {
                         self.std_async_vocab_active = true;
-                    }
-                    for kw in incan_lang::lang::stdlib::soft_keywords_for_import(&module.segments) {
-                        self.active_soft_keywords.insert(kw);
                     }
                     self.activate_imported_keywords_for_import_path(&module.segments);
                 }
@@ -688,10 +682,20 @@ fn activation_applies(activation: &incan_vocab::KeywordActivation, import_path: 
 }
 
 /// Return whether an `OnImport` namespace is activated by an import path.
+///
+/// Standard namespaces activate on an exact import or a child import so importing `std.primitives` cannot enable its
+/// async child. Public Loaf namespaces retain provider-root activation, where importing `words` enables a descriptor
+/// registered for `words.query`.
 fn import_path_activates_namespace(import_path: &[String], namespace: &str) -> bool {
     let imported = import_path.join(".");
     let trimmed = namespace.trim();
-    !trimmed.is_empty() && (trimmed == imported || trimmed.starts_with(&format!("{imported}.")))
+    if trimmed.is_empty() {
+        return false;
+    }
+    if trimmed.starts_with("std.") {
+        return trimmed == imported || imported.starts_with(&format!("{trimmed}."));
+    }
+    trimmed == imported || trimmed.starts_with(&format!("{imported}."))
 }
 
 /// Return whether an import path activates `std.async` vocabulary in this file.

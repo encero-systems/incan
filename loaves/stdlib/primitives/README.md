@@ -2,7 +2,7 @@
 
 `std.primitives` is an ordinary ambient standard package. Its authored source imports no higher-level standard package. Required language/runtime support remains explicit in provider dependencies; source imports do not themselves prove an empty native closure.
 
-`std.primitives.vocab` owns vocabulary descriptors and the structured request, response and error contracts used by authored transformations. Its transport derives use the package's declared native `serde` dependencies directly; naming a descriptor does not import `std.vocab`, the data standard package or compiler implementation. `std.vocab` reexports these declarations with the same nominal identity and adds metadata publication plus the executable worker loop.
+`std.primitives.vocab` reexports vocabulary descriptors and the structured request, response and error contracts used by authored transformations from the bootstrap-safe `incan_stdlib_vocab_contracts` Loaf. That lower Loaf owns the transport's native `serde` dependencies; naming a descriptor does not import `std.vocab`, the data standard package or compiler implementation. `std.vocab` reexports the same declarations with the same nominal identity and adds metadata publication plus the executable worker loop.
 
 The root `hexlify(data: bytes) -> str` operation returns lowercase hexadecimal text. `std.primitives.checksum` owns the `Crc32` class and `crc32` namespace for IEEE CRC-32, backed by the existing `crc32fast` native dependency. `std.checksum` reexports these declarations with the same type identity. Finalizers snapshot the checksum; subsequent updates continue the stream. CRC-32 detects accidental corruption and is not a security or typed-value identity mechanism.
 

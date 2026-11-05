@@ -29,11 +29,21 @@ pub def prepare_vocabulary(described: UnitDescription, toolchain: Toolchain) -> 
     2. Reuse descriptors while that unit's complete input identity is unchanged.
     3. Otherwise run registration and retain its versioned payload for ordinary library publication.
     """
+    unit, registration = describe_vocabulary(described)?
+    match registration:
+        None => return Ok(unit)
+        Some(prepared) => return prepare_registered_vocabulary(unit, prepared, toolchain)
+
+
+pub def describe_vocabulary(
+    described: UnitDescription,
+) -> Result[tuple[UnitDescription, Option[UnitDescription]], str]:
+    """Admit vocabulary policy and describe its generated registration unit without compiling that unit."""
     admitted = admit_vocabulary(described)?
     if admitted.vocabulary or admitted.vocab_entry == None:
-        return Ok(admitted)
-    # 1. The wrapper imports the authored entry, so the compiler checks its export and complete import closure.
-    mut unit = admitted
+        return Ok((admitted, None))
+    # The wrapper imports the authored entry, so the compiler checks its export and complete import closure.
+    unit = admitted
     directory = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath("vocabulary")
     directory.mkdir(true, true).map_err((error) => error.message())?
     entry = entry_module(unit)?
@@ -47,6 +57,23 @@ pub def prepare_vocabulary(described: UnitDescription, toolchain: Toolchain) -> 
     registration.program_entries = []
     registration.vocabulary = true
     registration.vocab = None
+    return Ok((unit, Some(registration)))
+
+
+pub def prepare_registered_vocabulary(
+    described: UnitDescription,
+    registration: UnitDescription,
+    toolchain: Toolchain,
+) -> Result[UnitDescription, str]:
+    """
+    Compile and execute one already-linked registration unit, then attach its retained metadata to the producer.
+
+    Separating description from execution lets bootstrap bind the adapter to a seed's compiled standard packages while
+    the producer itself remains a source unit of the generation under construction.
+    """
+    mut unit = described
+    directory = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath("vocabulary")
+    entry = entry_module(unit)?
     key = unit_key(registration, toolchain)?
     output = directory.joinpath("register")
     metadata = directory.joinpath("registration.json")

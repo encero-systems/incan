@@ -7,8 +7,6 @@ use std::collections::HashSet;
 
 use crate::ast::{Declaration, Expr, ImportKind, Program};
 use crate::ast_walk;
-use incan_lang::lang::keywords::KeywordId;
-use incan_lang::lang::stdlib;
 use incan_semantics_core::SurfaceFeatureKey;
 
 use crate::semantics_registry::semantics_registry;
@@ -16,7 +14,6 @@ use crate::semantics_registry::semantics_registry;
 /// Shared context for import-driven surface semantics.
 #[derive(Debug, Clone, Default)]
 pub struct SurfaceContext {
-    active_soft_keywords: HashSet<KeywordId>,
     /// Normalized module imports (`std.testing`, `std.async`, ...).
     imported_modules: HashSet<String>,
 }
@@ -24,7 +21,6 @@ pub struct SurfaceContext {
 impl SurfaceContext {
     /// Build surface context from a parsed program.
     pub fn from_program(program: &Program) -> Self {
-        let mut active_soft_keywords = HashSet::new();
         let mut imported_modules = HashSet::new();
 
         for decl in &program.declarations {
@@ -34,40 +30,19 @@ impl SurfaceContext {
             match &import_decl.kind {
                 ImportKind::Module(path) => {
                     imported_modules.insert(path.segments.join("."));
-                    for kw in stdlib::soft_keywords_for_import(&path.segments) {
-                        active_soft_keywords.insert(kw);
-                    }
                 }
                 ImportKind::From { module, .. } => {
                     imported_modules.insert(module.segments.join("."));
-                    for kw in stdlib::soft_keywords_for_import(&module.segments) {
-                        active_soft_keywords.insert(kw);
-                    }
                 }
                 _ => {}
             }
         }
 
-        Self {
-            active_soft_keywords,
-            imported_modules,
-        }
-    }
-
-    pub fn is_soft_keyword_active(&self, keyword: KeywordId) -> bool {
-        self.active_soft_keywords.contains(&keyword)
+        Self { imported_modules }
     }
 
     pub fn has_imported_module(&self, module_path: &[String]) -> bool {
         self.imported_modules.contains(&module_path.join("."))
-    }
-
-    pub fn soft_keyword_feature(&self, keyword: KeywordId) -> Option<SurfaceFeatureKey> {
-        let registry = semantics_registry();
-        registry
-            .statement_feature_for_soft_keyword(keyword)
-            .or_else(|| registry.expression_feature_for_soft_keyword(keyword))
-            .or_else(|| registry.modifier_feature_for_soft_keyword(keyword))
     }
 
     pub fn decorator_feature_for_path(&self, resolved_path: &[String]) -> Option<SurfaceFeatureKey> {
@@ -91,24 +66,16 @@ pub fn uses_ambient_log_surface(program: &Program) -> bool {
 mod tests {
     use super::SurfaceContext;
     use crate::{lexer, parser};
-    use incan_lang::lang::keywords::KeywordId;
     use incan_semantics_core::{DecoratorFeature, SurfaceFeatureKey};
 
     #[test]
-    fn activates_async_soft_keywords_from_imports() -> Result<(), String> {
+    fn records_async_module_imports() -> Result<(), String> {
         let source = "import std.async\n";
         let tokens = lexer::lex(source).map_err(|e| format!("{e:?}"))?;
         let program = parser::parse(&tokens).map_err(|e| format!("{e:?}"))?;
         let context = SurfaceContext::from_program(&program);
-        if !context.is_soft_keyword_active(KeywordId::Async) {
-            return Err("expected `async` to be activated by `import std.async`".to_string());
-        }
-        if !context.is_soft_keyword_active(KeywordId::Await) {
-            return Err("expected `await` to be activated by `import std.async`".to_string());
-        }
-        let async_feature = context.soft_keyword_feature(KeywordId::Async);
-        if async_feature != Some(SurfaceFeatureKey::SoftKeyword(KeywordId::Async)) {
-            return Err("expected async soft-keyword feature key to be registered".to_string());
+        if !context.has_imported_module(&["std".to_string(), "async".to_string()]) {
+            return Err("expected `std.async` to be recorded as an imported module".to_string());
         }
         Ok(())
     }
