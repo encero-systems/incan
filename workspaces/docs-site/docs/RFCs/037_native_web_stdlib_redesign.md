@@ -370,7 +370,8 @@ async def reset_theme() -> web.Response:
 trait CookiePolicy:
     def allows(self, rules: CookieRules, request: web.Request) -> bool
 
-app = web.App(routes=routes, cookie_policy=my_policy)
+def build_app() -> web.App:
+    return web.App(routes=[home, choose_theme], cookie_policy=MyPolicy())
 ```
 
 ### Turning errors into responses
@@ -422,7 +423,8 @@ A guard may instead return an RFC 104 `Restriction`, which limits what the rest 
 def only_own_account(member: Member) -> Restriction:
     return Restriction(manage_members, member_id=member.id)
 
-account = web.Group("/account", guards=[only_own_account], routes=[delete_account])
+def account_group() -> web.Group:
+    return web.Group("/account", guards=[only_own_account], routes=[delete_account])
 ```
 
 `std.web` has no idea what a role is. `member.roles` above is your own field.
@@ -458,15 +460,19 @@ A browser attaches your cookie to any request to your site, even when another si
 No forms carry a token. For the cases that need something different:
 
 ```incan
-app = web.App(routes=routes, trusted_origins=["https://docs.example.com"], public_origin="https://example.com")
-
 # A login provider that posts back from its own site
 @web.post("/login/callback", cross_site=True)
 async def callback(form: web.Form[ProviderReply]) -> web.Response:
     return await finish_login(form)
 
-# A token API called from browser code on other sites
-api = web.Group("/api", cross_site=True, routes=[star_preview])
+def build_app() -> web.App:
+    return web.App(
+        routes=[callback],
+        # A token API called from browser code on other sites
+        groups=[web.Group("/api", cross_site=True, routes=[star_preview])],
+        trusted_origins=["https://docs.example.com"],
+        public_origin="https://example.com",
+    )
 ```
 
 A route that accepts a session cookie cannot be `cross_site=True`. That combination reopens the hole, so the application refuses to start. A token API gets its own identity type, such as `ApiCaller with Authenticated[Bearer]`.
