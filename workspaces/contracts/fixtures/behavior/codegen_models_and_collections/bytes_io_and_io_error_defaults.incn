@@ -20,10 +20,12 @@
 #   true
 #   invalid_input
 #   invalid_input
+#   2
+#   3
 
 from std.io import BytesIO, Endian as StreamEndian
 from std.hash import reader_digest
-from std.primitives.io import Endian as PrimitiveEndian, IoError as PrimitiveIoError, WriteBuffer
+from std.primitives.io import Endian as PrimitiveEndian, IoError as PrimitiveIoError, WriteBuffer, advance_cursor, read_cursor, read_slice_len, remaining_bytes
 from std.traits.error import Error
 
 
@@ -73,6 +75,20 @@ def show_write_buffer() -> Result[None, PrimitiveIoError]:
     return Ok(None)
 
 
+def show_independent_read_cursors() -> None:
+    """Advance two cursors independently while their unread byte slices borrow the same source."""
+    data = b"abcd"
+    mut first = read_cursor(data)
+    mut second = read_cursor(data)
+    advance_cursor(first)
+    advance_cursor(first)
+    advance_cursor(second)
+    mut first_remaining = remaining_bytes(first)
+    mut second_remaining = remaining_bytes(second)
+    println(read_slice_len(first_remaining))
+    println(read_slice_len(second_remaining))
+
+
 def main() -> None:
     println(len(oven_bytes()))
     println(oven_bytes() == b"oven")
@@ -93,3 +109,4 @@ def main() -> None:
     match show_write_buffer():
         Ok(_) => pass
         Err(error) => println(error.message())
+    show_independent_read_cursors()

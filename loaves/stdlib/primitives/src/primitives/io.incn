@@ -156,3 +156,42 @@ def _host_error(operation: str, position: int, detail: str) -> IoError:
     elif detail.contains("failed to fill whole buffer") or detail.contains("early eof"):
         return IoError(operation=operation, kind="unexpected_eof", detail=detail, position=position)
     return IoError(operation=operation, kind="other", detail=detail, position=position)
+
+
+from rust::std::slice import Iter
+
+
+pub type ReadCursor = rusttype Iter[u8]:
+    """
+    An independently positioned cursor over borrowed bytes.
+
+    `as_slice()` returns the unread borrowed byte slice. The cursor owns only its position, so its source bytes stay
+    borrowed through the cursor's last use.
+    """
+
+
+pub type ReadSlice = rusttype Iter[u8]:
+    """A read-only view over unread bytes that keeps its cursor's borrowed byte source live."""
+
+
+pub def read_cursor(data: Borrowed[bytes]) -> Owned[ReadCursor] from data:
+    """Borrow `data` into a cursor whose position can advance independently of every other cursor."""
+    return data.as_slice().iter()
+
+
+pub def advance_cursor(mut cursor: BorrowedMut[ReadCursor]) -> bool:
+    """Advance `cursor` by one byte and report whether a byte was available."""
+    return cursor.next().is_some()
+
+
+pub def remaining_bytes(cursor: Borrowed[ReadCursor]) -> Owned[ReadSlice] from cursor:
+    """Return the unread byte slice borrowed through `cursor`."""
+    return cursor.as_slice().iter()
+
+
+pub def read_slice_len(mut view: BorrowedMut[ReadSlice]) -> int:
+    """Return the number of bytes in a borrowed read slice."""
+    mut count = 0
+    while view.next().is_some():
+        count += 1
+    return count
