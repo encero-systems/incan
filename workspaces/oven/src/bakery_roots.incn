@@ -10,8 +10,7 @@ from publication import publish
 from sealed_set import payload_references as sealed_payload_references
 from pub::incan_platform.store import Snapshot, begin, commit, delete, get, keys
 from pub::incan_platform.store.files import StoreError
-from segment_store import snapshot
-from segment_collection import collect_records
+from store_path_conversion import collect_records, snapshot
 from storage_admission import Collectable, read_reservations, release, tree_bytes
 from unit_freshness import fingerprint
 

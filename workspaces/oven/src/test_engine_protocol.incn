@@ -12,7 +12,7 @@ from engine_programs import read_program, select_program, program_handle, Native
 from engine_epochs import prepare_submit
 from engine_client import service_identity
 from pub::incan_platform.store import Transaction, durable_commits, begin, put, commit, commit_group
-from segment_store import snapshot, compact
+from store_path_conversion import compact, snapshot
 from engine_proofs import report
 from std.json import JsonValue, parse
 from rust::std::process import Child, Command

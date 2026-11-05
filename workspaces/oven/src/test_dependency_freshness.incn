@@ -18,7 +18,7 @@ from trace_adapter import count_work, finish_counting
 from page_codec import Reader, put_texts
 from files import json_text, make_directory, read, read_json, remove
 from json_fields import required_items
-from segment_payloads import payload_path
+from store_path_conversion import payload_path
 from bakery import bakery, library_directory
 from observation import file_digest
 from vocabulary import published_workers, stage_vocabulary

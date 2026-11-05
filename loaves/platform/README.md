@@ -34,7 +34,7 @@ from pub::incan_platform.ipc import Connection, dial, listen
 
 `incan_platform.store` owns the storage mechanism: canonical segment and manifest bytes, mapped reads, immutable payload files, snapshot and transaction state, claim and lease publication, collection primitives and repair. Its on-disk identifiers remain `incan.segment-store/3` and `incan.segment-manifest/3`; moving the owner does not migrate or reinterpret an existing store.
 
-The platform does not decide which records to build, retain or collect. Oven keeps build orchestration, typed bakery families, sealed-set JSON policy, scheduling and observation destination selection. Its compatibility modules convert application-facing `std.fs.Path` values to the store-private path type and otherwise delegate to this Loaf. The store reports publication work only through `WorkObserver`, so the platform never imports or calls Oven.
+The platform does not decide which records to build, retain or collect. Oven keeps build orchestration, typed bakery families, sealed-set JSON policy, scheduling and observation destination selection. Oven's single `store_path_conversion.incn` adapter converts application-facing `std.fs.Path` values to the store-private path type and otherwise delegates to this Loaf. The store reports publication work only through `WorkObserver`, so the platform never imports or calls Oven.
 
 ## Observations
 
