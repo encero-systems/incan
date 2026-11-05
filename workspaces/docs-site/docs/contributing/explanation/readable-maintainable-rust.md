@@ -49,7 +49,7 @@ Readable Rust is code that a competent Rustacean can **scan and understand quick
 
 5. **Consistent naming & layout**
    - Follow conventions: `snake_case` (functions/vars), `CamelCase` (types/traits), `SCREAMING_SNAKE_CASE` (consts).
-   - Spell in US English everywhere -- identifiers, comments, rustdoc and docs (`color`, `behavior`, `initialize`, `catalog`); `make us-english-check` enforces it, and `scripts/check_us_english.allow` lists the upstream names and quoted text that keep their own spelling.
+   - Spell in US English everywhere -- identifiers, comments, rustdoc and docs (`color`, `behavior`, `initialize`, `catalog`); `incan run scripts/check_us_english.incn` enforces it, and `scripts/check_us_english.allow` lists the upstream names and quoted text that keep their own spelling.
    - Module/file sizes are reasonable; split by responsibility, not arbitrary layers.
 
 6. **Local reasoning**
@@ -100,7 +100,7 @@ Maintainable Rust withstands change with **minimal risk and effort**—thanks to
 
 **If these are true, your Rust is both readable and maintainable:**
 
-- ✅ **Formatting & lints**: `make fmt-check` passes; compiler lint levels match the package's requirements.
+- ✅ **Formatting & lints**: `make pre-commit` passes; compiler lint levels match the package's requirements.
 - ✅ **Boundaries**: Modules align with responsibilities; public surface area small and documented.
 - ✅ **Errors**: Clear `Result<T, E>` with actionable messages; categorized `E`.
 - ✅ **Ownership**: Minimal clones; predictable lifetimes; borrowing favored.
@@ -238,9 +238,8 @@ thiserror = "1"
 ### Typical CI Steps
 
 ```bash
-make pre-commit-fast
-make reference-contract-check
-make docs-build
+make pre-commit
+make docs
 ```
 
 Incan uses pinned Rust 1.98.0 for native compilation. Oven builds the compiler; contract families prove observable behavior. The repository has no Cargo project.

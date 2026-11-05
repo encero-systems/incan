@@ -11,7 +11,7 @@ You validate compiler changes through the installed Incan toolchain and the repo
 2. Select the smallest existing contract case that proves the behavior. Extend it before adding a case, preserving its original expectations.
 3. Establish the failing behavior, rebuild only the affected compiler components, and run that selector again.
 4. At commit points, run the affected whole families with the same toolchain and worker budget used for the parent comparison.
-5. Run `make pre-commit-fast` and `make us-english-check`. Run `make docs-build` from `workspaces/docs-site` for docs changes.
+5. Run `make pre-commit` and `incan run scripts/check_us_english.incn`. Run `make docs` from `workspaces/docs-site` for docs changes.
 6. Report exact commands, compiler identity, counts and case movements. Distinguish a passing focused case from a completed family replay.
 
 ## Path-to-contract mapping

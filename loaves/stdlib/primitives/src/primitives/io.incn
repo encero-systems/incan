@@ -20,7 +20,9 @@ pub model IoError with Error:
     pub path: Option[str] = None
 
     def message(self) -> str:
-        """Return the human-readable error detail."""
+        """Return the host detail, naming the operation and path when the failure has a path."""
+        if let Some(path) = self.path:
+            return f"{self.operation} {path}: {self.detail}"
         return self.detail
 
 

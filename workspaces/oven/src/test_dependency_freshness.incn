@@ -10,7 +10,7 @@ from std.json import JsonValue
 from pub::incan_platform.trace import flush as flush_trace
 from std.environ import get_or
 from installation_check import verify_runtime
-from toolchain_archive import stage_loaves
+from toolchain_archive import require_rust_components, stage_loaves
 from installation_page import recall as recall_installation, begin_command, end_command
 from home_paths import installation_catalog
 from installation_codec import decode as decode_installation, encode as encode_installation
@@ -190,6 +190,7 @@ def verify_toolchain_interface_admission(scratch: Path, toolchain: Toolchain) ->
     """A selected toolchain admits transported native, standard and registry payloads and refuses changed bytes."""
     verify_archive_members(scratch)?
     verify_staged_loaf_artifacts(scratch)?
+    verify_rust_prerequisites(scratch)?
     original = scratch.joinpath("producer/runtime.incnlib")
     write(original, "runtime interface")?
     record_payload(original, "runtime producer")?
@@ -543,4 +544,19 @@ def verify_staged_loaf_artifacts(scratch: Path) -> Result[None, str]:
         assert not packed.joinpath("build.log").exists()
         assert not packed.joinpath("example.unit.json").exists()
         assert original.joinpath("build.log").is_file()
+    return Ok(None)
+
+
+def verify_rust_prerequisites(scratch: Path) -> Result[None, str]:
+    """Toolchain admission accepts Rust with its compiler libraries and gives one exact repair command without them."""
+    sysroot = scratch.joinpath("rust-prerequisites")
+    components = sysroot.joinpath("lib/rustlib/components")
+    write(components, "rustc-dev-aarch64-apple-darwin\n")?
+    require_rust_components(sysroot)?
+    write(components, "rustc-aarch64-apple-darwin\n")?
+    match require_rust_components(sysroot):
+        Ok(_) => assert false, "a sysroot without rustc-dev must be refused before compiler verification"
+        Err(reason) =>
+            assert "missing required component rustc-dev" in reason, reason
+            assert "rustup component add --toolchain 1.98.0 rustc-dev" in reason, reason
     return Ok(None)

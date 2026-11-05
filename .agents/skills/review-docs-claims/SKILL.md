@@ -53,7 +53,7 @@ Two rules apply to every change that touches a reference page, and each break is
 - **Move, don't delete.** A true sentence taken off a reference page moves, in the same change, to the page it belongs on: advice and task steps to the matching how-to, rationale and mechanics to the matching explanation. Check every removed line of the diff for a new home.
 - **The whole page.** A change that touches a reference page brings the whole page to contract, not only the changed lines. Read the page end to end, not the diff.
 
-`make reference-contract-check` catches the lexical part of the list above on every reference page a change touches; it is a separate Makefile target, not part of `make pre-commit-fast`. It cannot judge meaning, so this review still reads each page.
+`incan run scripts/check_reference_contract.incn` catches the lexical part of the list above on every reference page a change touches; it is a separate Makefile target, not part of `make pre-commit`. It cannot judge meaning, so this review still reads each page.
 
 ## Workflow
 
@@ -71,7 +71,7 @@ Two rules apply to every change that touches a reference page, and each break is
    - stale release-note inventory for implemented user-facing work
 5. If behavior is out of scope, prefer correcting the docs rather than inventing implementation in the report.
 6. If design records are touched, check that they state decisions, boundaries, consequences, and non-goals in under about 1,000 words. Change a record only when a decision changes, in a sentence or two; mechanisms belong in commit messages and rustdoc, never a paragraph per commit.
-7. Verify behavior claims with the smallest relevant contract selector from `workspaces/contracts/README.md`; affected whole families run at commit points. Use `make docs-build` for docs-site changes and `make reference-contract-check` for reference pages. The fast local gate is `make pre-commit-fast` (formatting, spelling, rustdoc, and skill-table checks); it does not run contracts or build docs.
+7. Verify behavior claims with the smallest relevant contract selector from `workspaces/contracts/README.md`; affected whole families run at commit points. Use `make docs` for docs-site changes and `incan run scripts/check_reference_contract.incn` for reference pages. The fast local gate is `make pre-commit` (formatting, spelling, rustdoc, and skill-table checks); it does not run contracts or build docs.
 
 ## Slice report shape
 

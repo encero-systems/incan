@@ -79,7 +79,7 @@ jobs:
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.docs_version == 'dev')
         run: |
           export INCAN_DOCS_BASE_PREFIX="dev"
-          make docs-build
+          make docs
           mike deploy --push dev
           mike set-default --push dev
 
@@ -103,5 +103,5 @@ jobs:
           fi
 
           export INCAN_DOCS_BASE_PREFIX="${MINOR}"
-          make docs-build
+          make docs
           mike deploy --push --update-aliases --alias-type redirect "${MINOR}" latest

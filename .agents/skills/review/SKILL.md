@@ -35,7 +35,7 @@ The report must use this exact top-level shape:
 - [21:55] scope derived from issue 73 / RFC 015 / dirty worktree
 - [21:57] found 2 warnings in workspaces/oven/src/semver_req.incn
 - [22:01] running make fmt
-- [22:04] make pre-commit-fast passed
+- [22:04] make pre-commit passed
 
 ## Files
 
@@ -226,7 +226,7 @@ Only applies when the diff touches a language feature (not a pure refactor or do
 - [ ] **Touched Incan declarations have descriptive docstrings** — use the Python-quality rule: every touched `.incn` module, class, model, enum, trait, function, and method needs a descriptive docstring, including private/internal helpers. This is stricter than Rust prose rules and mirrors the expected ruff/pylint/mypy-style Python documentation discipline.
 - [ ] **Touched non-trivial Rust functions/methods are documented** — not just public APIs. Private Rust helpers may skip rustdoc only when they are genuinely tiny and self-evident.
 - [ ] **Docs explain intent and constraints** — especially for public types, traits, derives, runtime adapters, and non-obvious lowering/emission behavior.
-- [ ] **Docs-site changes follow repo rules** — no hard wrap under `workspaces/docs-site/`; if docs are touched, run `make docs-build`.
+- [ ] **Docs-site changes follow repo rules** — no hard wrap under `workspaces/docs-site/`; if docs are touched, run `make docs`.
 - [ ] **Docs follow Divio intent** — apply the `AGENTS.md` docs rules to the actual content. Reference pages must provide a complete factual lookup for their stated public surface, including signatures and error contracts; a truthful walkthrough or overview in `reference/` is still a finding. Check page intent and completeness independently of MkDocs, and link to how-to or explanation material when needed. A reference page also states nothing beyond the contract: read every changed sentence against the list in *Reference pages state the contract only* in `.agents/skills/review-docs-claims/SKILL.md`; each hit is a blocker.
 - [ ] **User-facing docs do not lean on RFC references** — pages under user docs (tutorials, how-to, reference, release notes, tooling/language guides) should explain behavior directly. Flag direct RFC references in user-facing prose unless the page is itself an RFC/contributor-facing document or the RFC link is part of an explicit release-note inventory.
 - [ ] **Boy Scout Rule** — did the author leave touched code at least as clean as they found it? Flag stale TODOs, misleading variable names, missing doc comments, or unused imports that could have been fixed in-scope.
@@ -283,7 +283,7 @@ Only applies when the diff touches a language feature (not a pure refactor or do
 - [ ] **Release-note inventories stay complete** — when the branch implements or materially completes an RFC/user-facing feature, verify the current release notes mention it in the implemented/features inventory where this repo expects that summary to live.
 - [ ] **Generated language reference is current** — if language registries, the reference generator, or `workspaces/docs-site/docs/language/reference/language.md` change, inspect the generator and its current entry point. Check the Makefile and Oven CLI before naming a regeneration command; report a missing supported entry point explicitly rather than inventing one. Review any resulting generated diff.
 - [ ] **Design records state decisions only** — change a record only when a decision changes, in a sentence or two. Keep the decision, boundaries, consequences, and non-goals under about 1,000 words; mechanism detail belongs in commit messages and rustdoc, never a paragraph per commit.
-- [ ] **Commits check US English** — `make us-english-check` runs before every commit.
+- [ ] **Commits check US English** — `incan run scripts/check_us_english.incn` runs before every commit.
 - [ ] **Compiler bugs discovered during review are surfaced explicitly** — if you find a likely compiler defect that should not be fixed inside the current change, invoke `flag-compiler-bug` instead of burying it in review notes.
 - [ ] **Repo learnings are captured when warranted** — if the change taught a durable lesson about architecture, testing, or pitfalls, consider whether `AGENTS.md` should be updated.
 
@@ -342,7 +342,7 @@ Before you write "no blockers", "no warnings", or equivalent clean-review langua
 - [ ] If language registries or generated language-reference inputs changed, regeneration used a verified supported entry point and resulting output was reviewed, or the missing entry point is reported explicitly.
 - [ ] `make fmt` was run after fixes.
 - [ ] Relevant contract selectors were run, including affected whole families at commit points.
-- [ ] `make pre-commit-fast` was run after the final fix pass, or you explicitly report why it was not run.
+- [ ] `make pre-commit` was run after the final fix pass, or you explicitly report why it was not run.
 
 If any item is unchecked, do not claim the review is clean. Report the remaining gap explicitly.
 
@@ -350,7 +350,7 @@ If any item is unchecked, do not claim the review is clean. Report the remaining
 
 A failed broad verification command does **not** invalidate the review.
 
-If `make fmt`, `make pre-commit-fast`, `make docs-build`, or another broad check fails for reasons unrelated to the
+If `make fmt`, `make pre-commit`, `make docs`, or another broad check fails for reasons unrelated to the
 current local findings, you must still:
 
 1. keep reviewing the worktree,
@@ -394,7 +394,7 @@ The default verification bar for a strong review is:
 
 - `make fmt`
 - the relevant contracts: `incan run workspaces/contracts/src/main.incn -- INCAN workspaces/contracts/fixtures SELECTOR` (substitute the compiler under test and a case/area selector during development or affected whole families at commit points)
-- `make pre-commit-fast` (`make fmt-check`, `make us-english-check`, `make rustdoc-gate`, and `make agents-doc-sync`)
+- `make pre-commit` (`make pre-commit`, `incan run scripts/check_us_english.incn`, `incan run scripts/check_changed_rustdocs.incn`, and `incan run scripts/check_agents_doc_sync.incn`)
 
 Oven owns builds and execution. Verify commands against the Makefile and `workspaces/oven/src/main.incn`. If applicable verification was not run, say so explicitly in the final review report and treat that as residual risk rather than silently claiming the branch is clean.
 
