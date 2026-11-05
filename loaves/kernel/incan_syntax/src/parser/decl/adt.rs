@@ -32,7 +32,7 @@ impl<'a> Parser<'a> {
                 return Err(err);
             }
 
-            if self.starts_surface_function_decl() {
+            if self.starts_method_decl() {
                 parsing_methods = true;
                 methods.push(self.method_decl(method_decorators, false)?);
             } else {

@@ -133,19 +133,9 @@ impl TypeChecker {
     /// Used when validating field `@alias` metadata so aliases cannot collide with callable members surfaced through
     /// trait adoption.
     pub(super) fn collect_trait_method_names(&self, traits: &[Spanned<TraitBound>]) -> HashSet<String> {
-        let mut names = HashSet::new();
-        for trait_ref in traits {
-            let trait_name = trait_ref.node.name.as_str();
-            if let Some(trait_info) = self.lookup_semantic_trait_info(trait_name) {
-                names.extend(trait_info.methods.keys().cloned());
-            }
-            for (supertrait_name, _) in self.semantic_supertrait_closure(trait_name) {
-                if let Some(supertrait_info) = self.lookup_semantic_trait_info(supertrait_name.as_str()) {
-                    names.extend(supertrait_info.methods.keys().cloned());
-                }
-            }
-        }
-        names
+        self.trait_method_origins(traits.iter().map(|trait_ref| trait_ref.node.name.as_str()))
+            .into_keys()
+            .collect()
     }
 
     /// Validate per-field metadata (`@alias`, etc.) on a model-like type against canonical field names and trait method

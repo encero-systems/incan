@@ -466,6 +466,7 @@ impl TypeChecker {
         self.validate_source_type_names = false;
         self.collect_declarations_for_check(&test_module.body);
         self.resolve_forward_type_references(&test_module.body);
+        self.settle_trait_implementation_visibility(&test_module.body);
         self.record_local_nominal_type_param_bounds(&test_module.body);
         self.infer_hash_key_type_params(&test_module.body, false);
         self.validate_source_type_names = previous_validation_state;

@@ -262,6 +262,7 @@ pub(super) fn checked_method_from_info(name: &str, info: &MethodInfo) -> Checked
         ownership: None,
         name: name.to_string(),
         canonical: info.identity.clone(),
+        visibility: info.visibility,
         alias_of: info.alias_of.clone(),
         type_params: info
             .type_params

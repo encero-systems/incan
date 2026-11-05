@@ -14,9 +14,9 @@ use super::wire::{RawLibraryExports, RawLibraryManifest};
 use super::{
     COMPILED_PROVIDER_METADATA_SCHEMA_VERSION, CanonicalIdentityExport, CanonicalIdentityNamespaceExport,
     CanonicalIdentityOriginExport, CompiledProviderMetadata, EnumExport, EnumValueExport, EnumValueTypeExport,
-    ExportIdentityKind, ExportIdentityProjection, FieldVisibilityExport, LEGACY_LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION,
-    LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION, LIBRARY_MANIFEST_FORMAT, LibraryManifestError, ParamExport, ParamKindExport,
-    PartialExport, RUST_ABI_SCHEMA_VERSION,
+    ExportIdentityKind, ExportIdentityProjection, LEGACY_LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION,
+    LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION, LIBRARY_MANIFEST_FORMAT, LibraryManifestError, MemberVisibilityExport,
+    ParamExport, ParamKindExport, PartialExport, RUST_ABI_SCHEMA_VERSION,
 };
 use crate::api_metadata::{
     ApiDeclaration, ApiProjectedFunction, CHECKED_API_METADATA_SCHEMA_VERSION, resolve_api_alias_target,

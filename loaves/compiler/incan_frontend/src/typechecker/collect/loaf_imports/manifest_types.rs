@@ -37,7 +37,7 @@ impl TypeChecker {
                 export.fields.iter().any(|field| {
                     matches!(
                         field.visibility,
-                        crate::library_manifest::FieldVisibilityExport::Private
+                        crate::library_manifest::MemberVisibilityExport::Private
                     )
                 }),
             ),
@@ -452,12 +452,12 @@ impl TypeChecker {
                         ty: resolved_type_from_manifest_type_ref(&field.ty),
                         surface_type_name: field.surface_type_name.clone(),
                         visibility: match field.visibility {
-                            crate::library_manifest::FieldVisibilityExport::Private => crate::ast::Visibility::Private,
-                            crate::library_manifest::FieldVisibilityExport::Public => crate::ast::Visibility::Public,
+                            crate::library_manifest::MemberVisibilityExport::Private => crate::ast::Visibility::Private,
+                            crate::library_manifest::MemberVisibilityExport::Public => crate::ast::Visibility::Public,
                         },
                         is_type_private: matches!(
                             field.visibility,
-                            crate::library_manifest::FieldVisibilityExport::Private
+                            crate::library_manifest::MemberVisibilityExport::Private
                         ),
                         owner: Some(owner.to_string()),
                         has_default: if uses_provider_constructor_bridge {
@@ -544,6 +544,7 @@ impl TypeChecker {
     pub(in crate::typechecker::collect) fn method_info_from_manifest(&self, method: &MethodExport) -> MethodInfo {
         MethodInfo {
             identity: method.canonical.as_ref().and_then(|identity| identity.hydrate()),
+            visibility: method.visibility.into(),
             type_params: method.type_params.iter().map(|tp| tp.name.clone()).collect(),
             type_param_bounds: method
                 .type_params

@@ -369,6 +369,8 @@ impl FunctionDecl {
 /// A method declaration within a model, class, or trait.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct MethodDecl {
+    /// Written visibility: `pub def` is public, and an unmarked method is private to its type (#2570).
+    pub visibility: Visibility,
     pub decorators: Vec<Spanned<Decorator>>,
     pub surface_modifiers: Vec<SurfaceModifier>,
     pub name: Ident,

@@ -270,6 +270,8 @@ pub struct CheckedMethod {
     pub ownership: Option<crate::ownership_metadata::CheckedOwnershipContract>,
     pub name: String,
     pub canonical: Option<CanonicalSymbolId>,
+    /// Source-level method visibility (#2570); see `MethodInfo::visibility`.
+    pub visibility: crate::ast::Visibility,
     pub alias_of: Option<String>,
     pub type_params: Vec<CheckedTypeParam>,
     pub receiver: Option<crate::ast::Receiver>,

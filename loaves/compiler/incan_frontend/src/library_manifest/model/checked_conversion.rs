@@ -375,6 +375,7 @@ pub(super) fn method_from_checked(package_name: &str, method: &crate::library_ex
             .canonical
             .as_ref()
             .and_then(|identity| CanonicalIdentityExport::from_canonical(package_name, identity)),
+        visibility: method.visibility.into(),
         alias_of: method.alias_of.clone(),
         type_params: method.type_params.iter().map(type_param_from_checked).collect(),
         receiver: receiver_from_checked(method.receiver),
@@ -403,8 +404,8 @@ pub(super) fn field_from_checked(package_name: &str, field: &crate::library_expo
         ty: type_ref_from_resolved(&field.ty),
         surface_type_name: field.surface_type_name.clone(),
         visibility: match field.visibility {
-            crate::ast::Visibility::Private => FieldVisibilityExport::Private,
-            crate::ast::Visibility::Public => FieldVisibilityExport::Public,
+            crate::ast::Visibility::Private => MemberVisibilityExport::Private,
+            crate::ast::Visibility::Public => MemberVisibilityExport::Public,
         },
         has_default: field.has_default,
         default,
