@@ -255,6 +255,20 @@ impl TypeChecker {
     pub(in crate::typechecker) fn retain_body_ir_assignment_value(&mut self, assignment: &AssignmentStmt) {
         self.bind_open_value(assignment.value.span, assignment.name_span, &assignment.name);
         self.retain_body_ir_empty_list_initializer(assignment);
+        if let Some(native_slice) = self.body_ir_native_slice_argument(&assignment.value) {
+            // An inferred local keeps a native returned slice as a loan. Suppress the direct-expression conversion to
+            // owned bytes before Body IR records either the initializer or the binding's executable carrier.
+            self.type_info
+                .rust
+                .native_return_consumers
+                .insert(assignment.value.span);
+            self.type_info.rust.return_coercions.remove(&assignment.value.span);
+            self.retain_rust_value_binding(&assignment.name, &assignment.value);
+            self.type_info
+                .expressions
+                .body_ir_expr_types
+                .insert(assignment.value.span, native_slice);
+        }
         let Some(actual) = self.body_ir_checked_value_type(assignment.value.span).cloned() else {
             return;
         };

@@ -1,5 +1,6 @@
-# behavior: native paths keep borrowed carriers; defaults, sizes, iterators and Rust platform text work (#2256)
+# behavior: native paths keep borrowed carriers; defaults, sizes, iterators and Rust platform text work, including owned concatenation with a native text constant (#2256, #2435)
 # expect-stdout:
+#   true
 #   a/b
 #   file.txt
 #   folder/file.txt
@@ -11,7 +12,7 @@
 
 """Observe native path values through borrowed, owned and defaulted carriers."""
 
-from rust::std::env::consts import OS
+from rust::std::env::consts import EXE_SUFFIX, OS
 from rust::std::fs import read_dir
 from rust::std::mem import size_of_val
 from rust::std::path import Path, PathBuf
@@ -32,6 +33,7 @@ def check_platform_text() -> None:
     """Compare and format the platform constant without imposing one operating system on the case."""
     assert OS != ""
     assert len(f"{OS}") > 0
+    println("program" + EXE_SUFFIX == f"program{EXE_SUFFIX}")
 
 
 def show_owned_text() -> None:

@@ -399,6 +399,10 @@ def loop_variable_copy(mut builder: Builder, value: &RustOperand, span: SourceSp
             match read.place.global():
                 Some(_global) => return Ok(None)
                 None => pass
+            # A slice or indexed projection is an argument value, not the binding of a copied loop item. Its ordinary
+            # projected-argument path materializes the fresh owner or reaches the checked element storage.
+            if is_element_place(builder, read.place)?:
+                return Ok(None)
             root = list_root_place(builder, read.place, span)?
             if not is_list(place_type(builder.locals, root)):
                 return Ok(None)

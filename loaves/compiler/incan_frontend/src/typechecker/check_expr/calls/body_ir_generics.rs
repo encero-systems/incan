@@ -417,7 +417,10 @@ impl TypeChecker {
 
     /// Read an exact native slice before source byte-buffer projection. The selected call result takes priority over
     /// legacy return coercions, matching the carrier Body IR emits; canonical locals use their retained provenance.
-    fn body_ir_native_slice_argument(&self, expression: &Spanned<Expr>) -> Option<ResolvedType> {
+    pub(in crate::typechecker) fn body_ir_native_slice_argument(
+        &self,
+        expression: &Spanned<Expr>,
+    ) -> Option<ResolvedType> {
         self.type_info
             .rust
             .checked_calls

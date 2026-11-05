@@ -35,11 +35,15 @@ pub(super) fn result_variant_kind(name: &str) -> Option<bir::ResultVariantKind> 
     }
 }
 /// Whether a type routes binary operators through the compiler-owned string helpers.
+///
+/// Imported Rust text constants retain their native `&str` carrier, so this recognizes that checked shared reference
+/// beside the two source text primitives. Other native references remain foreign values and cannot enter text helpers.
 pub(super) fn is_string_like(ty: &IncanType) -> bool {
-    matches!(
-        ty,
-        IncanType::Primitive(IncanPrimitiveType::Str | IncanPrimitiveType::FrozenStr)
-    )
+    match ty {
+        IncanType::Primitive(IncanPrimitiveType::Str | IncanPrimitiveType::FrozenStr) => true,
+        IncanType::Ref(inner) => matches!(inner.as_ref(), IncanType::RustInteropPath(path) if path == "str"),
+        _ => false,
+    }
 }
 /// Map a string-typed binary operator to its compiler-owned helper operation, or `None` for operators that have no
 /// string-specific helper (arithmetic-only operators never reach here because `lower_binary` only checks this for
