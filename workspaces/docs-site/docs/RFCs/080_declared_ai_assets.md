@@ -1,6 +1,6 @@
 # RFC 080: Declared AI assets
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-04-26
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
