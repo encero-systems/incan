@@ -8,8 +8,7 @@ from engine_messages import BindingOutcome, Complete, CompletionStatus
 from engine_programs import obtain, prepare_selection
 from engine_epochs import CapturedRequest, after_projection
 from engine_proofs import retain, prepare_report
-from segment_store import begin as begin_selection
-from segment_store import Transaction, commit_pinned
+from pub::incan_platform.store import Transaction, begin as begin_selection, commit_pinned
 from observation import trace
 from jec import begin, record
 from pub::incan_platform.trace import Operation

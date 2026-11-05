@@ -6,7 +6,8 @@ from engine_capture import CaptureCounters
 from engine_epochs import record_text
 from engine_programs import ProgramOutcome
 from files import json_text
-from segment_store import Transaction, begin, commit, put, snapshot
+from pub::incan_platform.store import Transaction, begin, commit, put
+from segment_store import snapshot
 
 
 pub def retain(store: Path, run: str, capture: CaptureCounters, produced: ProgramOutcome) -> Result[str, str]:

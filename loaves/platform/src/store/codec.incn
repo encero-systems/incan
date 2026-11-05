@@ -1,10 +1,10 @@
 """Encode a segment's frames and the index entries that locate them."""
 
-from std.encoding.hex import hexlify
-from std.hash import sha256
-from std.io import BytesIO, Endian, _BytesIO
-from store_index import Entry, Location
-from segment_files import StoreError, failure
+from std.primitives import hexlify
+from crate.store.bytes import append_bytes, append_u64
+from crate.store.hash import sha256
+from crate.store.index import Entry, Location
+from crate.store.files import StoreError, failure
 
 const LOCATOR_BYTES: int = 32
 const DIGEST_BYTES: int = 32
@@ -61,18 +61,18 @@ pub def encoded_frames(writes: list[Write]) -> Result[Encoded, StoreError]:
         kinds[order] = write.kind
         owners[order] = write.key
     ordered = sorted([order for order in frames.keys()])
-    buffer = BytesIO(segment_magic())
-    buffer.seek(0, 2).map_err((error) => failure("io", "segment", error.message()))?
+    mut buffer: list[u8] = []
+    append(buffer, segment_magic())
     write_u64(buffer, len(ordered))?
     mut offset = HEADER_BYTES + len(ordered) * ENTRY_BYTES
     mut result = Encoded(data=b"", keys=[], offsets=[], lengths=[], digests=[], tombstones=[])
     for order in ordered:
         frame = frames[order]
-        append(buffer, order[:LOCATOR_BYTES].encode("utf-8"))?
+        append(buffer, order[:LOCATOR_BYTES].encode("utf-8"))
         write_u64(buffer, offset)?
         write_u64(buffer, len(frame))?
-        append(buffer, sha256.digest(frame))?
-        append(buffer, entry_tail(kinds[order]))?
+        append(buffer, sha256.digest(frame))
+        append(buffer, entry_tail(kinds[order]))
         result.keys.append(owners[order])
         result.offsets.append(offset)
         result.lengths.append(len(frame))
@@ -80,43 +80,37 @@ pub def encoded_frames(writes: list[Write]) -> Result[Encoded, StoreError]:
         result.tombstones.append(kinds[order] == KIND_TOMBSTONE)
         offset += len(frame)
     for order in ordered:
-        append(buffer, frames[order])?
-    result.data = buffer.getvalue()
+        append(buffer, frames[order])
+    result.data = buffer
     return Ok(result)
 
 
 def encode_frame(write: Write) -> Result[bytes, StoreError]:
     """A frame: the full key's length and bytes, then the value; a tombstone has no value."""
     key = write.key.encode("utf-8")
-    buffer = BytesIO()
+    mut buffer: list[u8] = []
     write_u64(buffer, len(key))?
-    append(buffer, key)?
+    append(buffer, key)
     if write.kind == KIND_VALUE:
-        append(buffer, write.value)?
-    return Ok(buffer.getvalue())
+        append(buffer, write.value)
+    return Ok(buffer)
 
 
 def entry_tail(kind: int) -> bytes:
     """The kind byte and the padding that end a directory entry."""
     if kind == KIND_TOMBSTONE:
-        return BytesIO(b"\x01\x00\x00\x00\x00\x00\x00\x00").getvalue()
-    return BytesIO(b"\x00\x00\x00\x00\x00\x00\x00\x00").getvalue()
+        return b"\x01\x00\x00\x00\x00\x00\x00\x00"
+    return b"\x00\x00\x00\x00\x00\x00\x00\x00"
 
 
-def append(buffer: _BytesIO, data: bytes) -> Result[None, StoreError]:
+def append(mut buffer: list[u8], data: bytes) -> None:
     """Append bytes to an encoding buffer."""
-    buffer.write_bytes(data).map_err((error) => failure("io", "segment", error.message()))?
-    return Ok(None)
+    append_bytes(buffer, data)
 
 
-def write_u64(buffer: _BytesIO, value: int) -> Result[None, StoreError]:
+def write_u64(mut buffer: list[u8], value: int) -> Result[None, StoreError]:
     """Append one little-endian u64."""
-    maybe: Option[u64] = value.try_resize()
-    match maybe:
-        None => return Err(failure("format", "segment", f"{value} does not fit a segment counter"))
-        Some(encoded) =>
-            buffer.write(encoded, Endian.Little).map_err((error) => failure("io", "segment", error.message()))?
-            return Ok(None)
+    return append_u64(buffer, value, "segment").map_err((detail) => failure("format", "segment", detail))
 
 
 pub def leaf_entries(encoded: Encoded, segment: str) -> list[Entry]:
@@ -139,4 +133,4 @@ pub def leaf_entries(encoded: Encoded, segment: str) -> list[Entry]:
 
 def segment_magic() -> bytes:
     """The header every segment starts with."""
-    return BytesIO(b"INCSEG\x00\x03").getvalue()
+    return b"INCSEG\x00\x03"

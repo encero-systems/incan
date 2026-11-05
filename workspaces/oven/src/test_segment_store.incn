@@ -9,13 +9,15 @@ from std.environ import get_or
 from std.encoding.hex import hexlify
 from std.hash import file_digest, sha256
 from std.io import BytesIO
-from store_index import Entry, Location, build, entries as index_entries
+from pub::incan_platform.store.index import Entry, Location
+from store_index import build, entries as index_entries
 from std.fs import Path
 from pub::incan_platform.durability import sync_ordered
 from pub::incan_platform.trace import Clock, Operation, WorkObserver, begin as begin_span
-from segment_files import observe_work
+from pub::incan_platform.store.files import StoreError, observe_work
+from pub::incan_platform.store.repair import quarantine_record, repair_current
 from scratch import scratch_directory
-from segment_store import (
+from pub::incan_platform.store import (
     EXPECT_ABSENT,
     EXPECT_ABSENT_OR_DAMAGED,
     Lookup,
@@ -24,24 +26,21 @@ from segment_store import (
     commit,
     commit_group,
     commit_pinned,
-    compact,
     delete,
     get,
     keys,
     lookup,
     owned,
     put,
-    snapshot,
     fork,
     read_counts,
     lease,
     view_snapshot,
     durable_syncs,
 )
-from segment_files import StoreError
+from segment_store import compact, snapshot
 from segment_payloads import payload_intact, payload_path, put_payload
 from segment_collection import collect_layouts
-from segment_repair import quarantine_record, repair_current
 
 static observed_work: dict[str, int] = {}
 

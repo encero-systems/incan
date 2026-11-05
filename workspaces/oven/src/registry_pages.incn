@@ -12,7 +12,8 @@ from observation import Observation, SETTLE_SECONDS, now_seconds, observe
 from registry_codec import Catalog, decode, encode
 from registry_units import RegistryUnit, sole_library
 from sealed_set import Profile, Record, SetSpec, admit, export_set, mapped_value
-from segment_store import begin, commit, get, lease, put, snapshot
+from pub::incan_platform.store import begin, commit, get, lease, put
+from segment_store import snapshot
 from unit_freshness import fingerprint
 
 const PROFILE: str = "incan.registry-page/1"
@@ -133,5 +134,10 @@ def specification(key: str, digest: str) -> SetSpec:
     record = Record(key=key, revision=digest, payloads=[], references=[])
     return SetSpec(
         profile=Profile(identity=PROFILE, schema=PROFILE, codec="little-endian/1"),
-        origin="oven.registry", producer=PROFILE, receipt=key, records=[record], namespaces=[], dependencies=[],
+        origin="oven.registry",
+        producer=PROFILE,
+        receipt=key,
+        records=[record],
+        namespaces=[],
+        dependencies=[],
     )

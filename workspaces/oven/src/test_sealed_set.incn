@@ -5,9 +5,22 @@ from std.fs import Path
 from std.hash import file_digest, sha256
 from std.io import BytesIO, Endian, IoError
 from scratch import scratch_directory
-from segment_store import EXPECT_ABSENT, Snapshot, begin, commit, get, put, snapshot, read_counts
+from pub::incan_platform.store import EXPECT_ABSENT, Snapshot, begin, commit, get, put, read_counts
+from segment_store import snapshot
 from segment_payloads import payload_path, put_payload
-from sealed_set import ExternalReference, Profile, Record, SetSpec, admit, export_set, mapped_value, record_key, readmit, verify
+from platform_store_path import oven_path
+from sealed_set import (
+    ExternalReference,
+    Profile,
+    Record,
+    SetSpec,
+    admit,
+    export_set,
+    mapped_value,
+    record_key,
+    readmit,
+    verify,
+)
 
 
 pub def test_sealed_sets_are_canonical_shared_idempotent_and_checked() -> Result[None, str]:
@@ -99,7 +112,8 @@ def prove_mapped_value(view: Snapshot, spec: SetSpec, other_digest: str) -> Resu
     assert read_counts().decoded - before == len(envelope)
     assert mapped.to_bytes() == b"shared value"
     match mapped_value(view, spec, spec.records[0], other_digest):
-        Ok(_) => assert false, "a different value digest was accepted for an admitted revision"
+        Ok(_) =>
+            assert false, "a different value digest was accepted for an admitted revision"
         Err(_) => pass
     return Ok(None)
 
@@ -314,7 +328,7 @@ def inventory(directory: Path, prefix: str = "") -> Result[list[str], str]:
 
 def segment_count(view: Snapshot, digest: str) -> Result[int, str]:
     """Count retained frames from the segment header, independently of the snapshot's descriptor representation."""
-    path = view.root.joinpath("segments").joinpath(f"{digest}.seg")
+    path = oven_path(view.root).joinpath("segments").joinpath(f"{digest}.seg")
     reader = BytesIO(path.read_bytes().map_err((error) => error.message())?)
     reader.seek(8, 0).map_err((error) => error.message())?
     count: Result[u64, IoError] = reader.read(Endian.Little)
@@ -438,8 +452,10 @@ def prove_frozen_readmission(
     value_file.chmod(false).map_err((error) => error.message())?
     value_file.write_bytes(b"damaged value").map_err((error) => error.message())?
     match mapped_value(restored, spec, spec.records[0], digest):
-        Ok(_) => assert false, "a damaged mapped value was accepted"
-        Err(error) => assert error.kind == "integrity", error.message()
+        Ok(_) =>
+            assert false, "a damaged mapped value was accepted"
+        Err(error) =>
+            assert error.kind == "integrity", error.message()
     readmit(home, directory, root, profile).map_err((error) => error.message())?
     segment = home.joinpath("segments").joinpath(f"{restored.segments[len(restored.segments) - 1]}.seg")
     bytes = segment.read_bytes().map_err((error) => error.message())?

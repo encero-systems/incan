@@ -504,7 +504,7 @@ The platform is one Loaf, `incan_platform` in `loaves/platform`, below `std`. Ov
 
 | Component | One home | State | API contract | Two-home flags |
 | --- | --- | --- | --- | --- |
-| Store substrate (`incan_platform.store`, RFC 165) | Platform store module; first implementation `workspaces/oven/src/segment_store.incn` | Reused: 65c314587 (`ab0fbc970` typed outcomes, validated transactions, synced publication) | `snapshot`, `lookup → Present / Deleted / Absent / DbError`, `begin`, `put`, `delete`, `commit` | Lives in Oven while its home is the platform; moves under S2. Read and lookup paths `get` (`Option[bytes]`) and `lookup` coexist; `get` goes. The reused code still names the outcomes `Found` and `StoreError`; S1 renames them to RFC 165's `RecordState` and `DbError` |
+| Store substrate (`incan_platform.store`, RFC 165) | `loaves/platform/src/store.incn` and `loaves/platform/src/store/` | Moved under the platform in S2; canonical segment and manifest formats remain version 3 | `snapshot`, `lookup → Found / Deleted / Absent / StoreError`, `begin`, `put`, `delete`, `commit`, claims, leases, payloads, collection and repair | Oven retains path-conversion adapters and store policy only; RFC 165 surface renaming and the removal of the compatibility `get` path remain later contract work |
 | Bakery families and claims | `workspaces/oven/src/bakery.incn`, `unit_publication.incn` | Reused: 65c314587 | Unit records, claim-once, views | Claim locks belong to the substrate, the claim protocol to the engine; the reused code keeps both here until E1 |
 | Sealed record sets | `workspaces/oven/src/sealed_set.incn` | Reused: two versions, f00035a66 and 0b1899ede | Seal, verify, admit once | **Two implementations of one mechanism**; one is kept in S2 |
 | Memory mapping | Platform mapping primitive with lifetime-safe views: the shape of `loaves/stdlib/system/src/fs/mapping.incn` and `loaves/stdlib/system/rust/src/mapping.rs` at 296b28e4b | Reused | Map read-only, borrow bounded views, scalar reads, owner-anchored lifetime | `std.fs` mapping becomes a thin wrapper over the platform primitive; the copying `MappedFile.read()` of c9d9d70fa / 65c314587 is a second mapping API and goes |
@@ -1169,7 +1169,7 @@ During coexistence, legacy stores/ledgers remain legacy authority only for legac
 | `compiler_worker.incn` / driver worker loop | Bounded correlated record protocol and request-lifetime workers; retain proven endpoint/console fixes |
 | `unit*.incn` / `rust_units.incn` | Keep project/provider semantics; replace whole-descriptor freshness/compilation orchestration with typed selection/native descriptor records |
 | Per-project observations/stamps | Immutable evaluation/read evidence and result bindings in the shared store |
-| `bakery.incn` / `segment_store.incn` | The engine calls the agreed substrate and admission API; additions to the store go through that API |
+| `bakery.incn` / the `segment_*` compatibility adapters | The engine calls `incan_platform.store`; additions to the substrate go through the platform API, while admission and collection policy remain in Oven |
 | `jec.incn` / timing sinks | Adapter over built-in structured observation, not a competing logger |
 | `testing.incn` / contract batch runner | Typed case/harness requests and one resource scheduler; unchanged expected semantics |
 | Driver `frontend.rs` / `adapter.rs` | Retain language/native authority; expose record-scoped inputs and audited native query tracking |

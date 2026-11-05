@@ -13,7 +13,8 @@ from engine_capture import (
     decoded_epoch,
 )
 from engine_messages import Submit
-from segment_store import Lookup, Snapshot, Transaction, begin, commit, lookup, owned, put, snapshot
+from pub::incan_platform.store import Lookup, Snapshot, Transaction, begin, commit, lookup, owned, put
+from segment_store import snapshot
 from unit_freshness import fingerprint
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
