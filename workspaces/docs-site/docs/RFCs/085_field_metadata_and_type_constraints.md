@@ -18,6 +18,7 @@
     - RFC 131 (typed errors and validation umbrellas)
     - RFC 132 (frozen classes)
     - RFC 137 (named enum payload fields)
+    - RFC 150 (deprecation facts, whose vocabulary `renamed_from` shares)
     - RFC 142 (shared failure-policy vocabulary)
     - RFC 143 (cloning with field overrides)
 - **Issue:** [#472](https://github.com/encero-systems/incan/issues/472)
@@ -206,6 +207,29 @@ enum BuildOutcome:
 
 Generated documentation shows these descriptions, and `Environment.__variants__()` gives a library the same facts `__fields__()` gives it for a model. RFC 090 uses this for command descriptions, and a namespaced key such as `Card [json.name="card"]` is available to whichever library consumes it. Metadata does not change how an enum is built or matched, and an RFC 032 value stays the enum's backing value.
 
+### Rename a field without losing its history
+
+A rename usually changes nothing about what a field means. `renamed_from` says so, and can carry when, why and until when:
+
+```incan
+@derive(Record)
+model Customer:
+    email_address [renamed_from="email"]: str
+
+    phone: str {
+        renamed_from {
+            name = "telephone"
+            since = "2.3"
+            retire_in = "3.0"
+            message = "Matches the billing API"
+        }
+    }
+```
+
+The field keeps its identity. `std.db` reads records stored under the old name with no migration, an API diff reports a rename rather than a removal and an addition, and generated documentation shows the history. The nested block uses RFC 150's vocabulary, so `since`, `retire_in` and `message` mean what they mean on `deprecated`. `retire_in` is a plan rather than a deadline: once the package reaches that version, a lint suggests removing the key, and nothing changes on its own. Enum variants take the same key.
+
+`renamed_from` is separate from `as`, which sets a wire name. `email_address as "email" [renamed_from="email"]: str` keeps JSON using `email`.
+
 ## Reference-level explanation
 
 ### Field metadata syntax
@@ -234,11 +258,21 @@ Enum variants accept the same metadata syntax as fields:
 variant_decl = IDENT field_meta? variant_payload? variant_value? ;
 ```
 
-- Variant metadata must accept the standard descriptive keys `description`, `title`, `deprecated`, `tags` and `classification`, and namespaced keys, with the same safe values as field metadata. A key that only makes sense for a stored field, such as `alias`, `default_factory`, `validate`, `primary_key`, `read_only` or `write_only`, must be refused with a diagnostic naming the key.
+- Variant metadata must accept the standard descriptive keys `description`, `title`, `deprecated`, `tags` and `classification`, the key `renamed_from`, and namespaced keys, with the same safe values as field metadata. A key that only makes sense for a stored field, such as `alias`, `default_factory`, `validate`, `primary_key`, `read_only` or `write_only`, must be refused with a diagnostic naming the key.
 - Variant metadata must not change construction, matching, exhaustiveness, identity or an RFC 032 value.
 - `Enum.__variants__()` must return a `FrozenList[VariantInfo]` without needing a value of the enum. Each `VariantInfo` must carry the variant's `name`, `description`, payload `fields` as `FieldInfo` records, and `extra` for its other metadata. Checked metadata must preserve the same facts across package boundaries.
 - `error` cases are not variants for this purpose, because RFC 131 gives each case its own declaration body.
 - `T.__doc__()` on a model, class or enum must return an `Option[DocInfo]`, RFC 128's parsed form of a docstring, so that a library reads a type's documentation the same way it reads a function's.
+
+### Rename continuity
+
+`renamed_from` must accept an earlier name, a list of earlier names, or a nested block under RFC 096, on a field or an enum variant. The block must contain `name`, a string or list of strings, and may contain `since`, `retire_in` and `message`, each at most once, with RFC 150's meanings.
+
+- The field or variant must keep its stable anchor across a declared rename. Without `renamed_from`, a rename is a new source identity.
+- An earlier name that still exists on the same model or enum must be refused, and so must one name claimed twice.
+- `retire_in` must not change behavior. Once the package's version reaches it, a lint must suggest removing the key.
+- Checked metadata must preserve every rename fact, so that API diffs, generated documentation, RFC 106's graph and RFC 165's stored records can use them.
+- A rename must not change a wire name or make a decoder accept the old one. Wire names follow `alias` and `as`.
 
 ### Safe metadata values
 
@@ -547,5 +581,5 @@ Artifact metadata should preserve field metadata losslessly for packages that cl
 - Include lists and dictionaries in the safe metadata value set. Descriptor serialization must support them.
 - Allow `examples` to contain safe metadata values assignable to the field type, with string examples allowed when typed examples are not available.
 - Keep `primary_key` and `primary_key_position` as field metadata. Composite key order is represented by field-level positions; richer model-level identity constraints are not part of this design.
-- Treat stable field anchors as source-field and model-field metadata identities, not as external alias identities. A canonical field rename is a new source identity unless a future migration or rename-marker feature explicitly preserves continuity. External aliases and adapter mappings do not by themselves preserve the Incan field anchor.
+- Treat stable field anchors as source-field and model-field metadata identities, not as external alias identities. A rename is a new source identity unless `renamed_from` declares continuity, and that key can carry `since`, `retire_in` and `message` with RFC 150's meanings. External aliases and adapter mappings do not by themselves preserve the Incan field anchor.
 - Enum variants take the same metadata as fields, with the same `name [metadata]` shape and RFC 096 blocks. `__variants__()` exposes it, as `__fields__()` does for models, and `T.__doc__()` exposes a type's parsed docstring. A key meaningful only for a stored field is refused on a variant.
