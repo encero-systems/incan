@@ -55,6 +55,35 @@ impl TypeChecker {
         }
     }
 
+    /// Retain a successful call through a callable parameter. Its canonical binding identifies the value read by
+    /// the call; a local closure keeps the existing capture-aware route instead of replacing it with this frame.
+    pub(in crate::typechecker) fn record_indirect_input_call(
+        &mut self,
+        callee_span: Span,
+        parameters: &[CallableParam],
+        span: Span,
+    ) {
+        let Some(owner) = self.current_body_identity().cloned() else {
+            return;
+        };
+        let Some(callee) = self.type_info.resolved_identity(callee_span).cloned() else {
+            return;
+        };
+        if callee.kind != SemanticSourceTargetKind::Parameter {
+            return;
+        }
+        self.type_info.protocols.explicit_input_calls.insert(
+            span,
+            super::InputCall {
+                kind: super::InputCallKind::Indirect,
+                owner: Some(owner),
+                callee,
+                parameters: parameters.to_vec(),
+                receiver: None,
+            },
+        );
+    }
+
     /// Capture successful selection once. Plain free calls stay provisional until the isolated body writer has
     /// independently established an explicit obligation; ordinary methods and noncanonical headers stay staged.
     fn explicit_input_call_fact(

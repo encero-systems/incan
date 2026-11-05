@@ -9,27 +9,24 @@ use crate::ast_walk::any_expr_in_body;
 use crate::typechecker::{CheckedInputBody, TypeCheckInfo};
 use incan_semantics_core::{CanonicalSymbolId, IncanInputAccess};
 
-/// Direct fixed-arity source functions, synchronous or async, are the first executable frame boundary. Decorated,
-/// generic, deferred and escaping signatures retain their existing stage refusals until their native boundary is
-/// proven.
+/// Source functions with statically bound parameters are executable under explicit ownership. Generic binders and
+/// ordinary defaults retain the same frame and declaration-owned contract; decorators remain outside this boundary
+/// because they can replace the visible signature.
 pub(in crate::typechecker) fn direct_function_boundary(function: &FunctionDecl) -> bool {
-    function.type_params.is_empty() && function.decorators.is_empty() && fixed_parameters(&function.params)
+    function.decorators.is_empty() && statically_bound_parameters(&function.params)
 }
 
-/// Concrete methods share the function frame boundary; the receiver is a borrowed slot of its own, checked with
-/// the method's receiver mode.
+/// Concrete methods share the function frame boundary; generic binders and defaults preserve it, while the receiver
+/// remains a borrowed slot of its own checked with the method's receiver mode.
 pub(in crate::typechecker) fn direct_method_boundary(method: &MethodDecl) -> bool {
-    method.body.is_some()
-        && method.type_params.is_empty()
-        && method.decorators.is_empty()
-        && fixed_parameters(&method.params)
+    method.body.is_some() && method.decorators.is_empty() && statically_bound_parameters(&method.params)
 }
 
-/// Every parameter is a required positional-or-named slot.
-fn fixed_parameters(parameters: &[Spanned<Param>]) -> bool {
+/// Every parameter has one statically known slot; omission through a default does not change that slot identity.
+fn statically_bound_parameters(parameters: &[Spanned<Param>]) -> bool {
     parameters
         .iter()
-        .all(|parameter| parameter.node.kind == ParamKind::Normal && parameter.node.default.is_none())
+        .all(|parameter| parameter.node.kind == ParamKind::Normal)
 }
 
 /// The frame boundary of either callable form.

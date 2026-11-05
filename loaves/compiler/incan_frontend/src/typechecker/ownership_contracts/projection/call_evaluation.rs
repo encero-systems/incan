@@ -15,6 +15,7 @@ pub(super) fn validate_invocation_events(
     span: HirSourceSpan,
     invocation: &flow::Invocation,
     parameters: &[CallableParam],
+    declaration_order: bool,
 ) -> Result<(), &'static str> {
     let mut end = None;
     let mut loans = Vec::new();
@@ -28,15 +29,16 @@ pub(super) fn validate_invocation_events(
         (None, None) => {}
         _ => return Err("receiver evaluation and loan must be retained together"),
     }
+    let mut previous_slot = None;
     for (position, argument) in invocation.arguments.iter().enumerate() {
-        let expected_position = if invocation.receiver.is_some() {
-            argument.written_position
-        } else {
-            argument.slot
-        };
-        if position != expected_position {
+        if !declaration_order {
+            if position != argument.written_position {
+                return Err("invocation arguments differ from their selected evaluation order");
+            }
+        } else if previous_slot.is_some_and(|slot| slot >= argument.slot) {
             return Err("invocation arguments differ from their selected evaluation order");
         }
+        previous_slot = Some(argument.slot);
         let parameter = parameters.get(argument.slot).ok_or("input slot is absent")?;
         let expected = if argument.access == IncanInputAccess::Owned
             && !facts.checked_input_copy_value(&graph.owner, &parameter.ty)?
@@ -177,7 +179,7 @@ impl CheckedInputBody<'_> {
             .into_iter()
             .enumerate()
             .collect::<Vec<_>>();
-        if invocation.receiver.is_none() {
+        if call.kind != super::super::InputCallKind::Indirect && invocation.receiver.is_none() {
             paired.sort_by_key(|(_, (_, slot))| *slot);
         }
         if paired.len() != invocation.arguments.len() {

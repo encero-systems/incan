@@ -39,6 +39,8 @@ pub(crate) struct CheckedInputInvocation<'a> {
     pub parameters: &'a [CallableParam],
     pub arguments: Vec<CheckedInputArgument>,
     pub receiver: Option<CheckedInputReceiver>,
+    /// Direct functions evaluate selected slots in declaration order; callable values and methods keep written order.
+    pub declaration_order: bool,
 }
 
 impl<'a> CheckedInputBody<'a> {
@@ -92,6 +94,7 @@ impl<'a> CheckedInputBody<'a> {
             parameters: &call.parameters,
             arguments,
             receiver,
+            declaration_order: call.kind != super::super::InputCallKind::Indirect && call.receiver.is_none(),
         })
     }
 }

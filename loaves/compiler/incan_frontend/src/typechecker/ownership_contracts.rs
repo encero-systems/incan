@@ -69,6 +69,8 @@ pub(super) enum InputCallKind {
     Explicit,
     /// A synchronous plain declaration retains its existing inferred ABI.
     Ordinary,
+    /// A checked callable value uses the parameter surface retained at this call site.
+    Indirect,
     /// A native item, whose selected Rust signature gives each slot its access.
     Native,
 }

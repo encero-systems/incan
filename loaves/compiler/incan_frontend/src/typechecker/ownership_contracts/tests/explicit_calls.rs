@@ -254,7 +254,7 @@ fn explicit_call_arguments_use_selected_value_types() -> Result<(), Box<dyn std:
         ),
         (
             "def use(value: str) -> str:\n    return take(value)\ndef take[T](value: Owned[T]) -> T:\n    return value\n",
-            false,
+            true,
         ),
         (
             "type View = Borrowed[int]\ndef use(value: int) -> int:\n    return read(value)\ndef read(value: View) -> int:\n    return value\n",

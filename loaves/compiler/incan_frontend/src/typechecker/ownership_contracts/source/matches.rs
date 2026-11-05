@@ -1,6 +1,5 @@
-//! Access projection for builtin carriers: `Ok`, `Err` and `Some` construction and statement `match` arms on a fresh
-//! carrier or on a local still holding a carried view. Other place scrutinees, guards and other patterns need their
-//! own checked binding access.
+//! Access projection for builtin carriers and statement `match` arms. A stored scrutinee is consumed under its
+//! checked Copy or move semantics; guards evaluate after their arm's bindings and before its body.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -115,11 +114,11 @@ impl Builder<'_> {
         self.expression(payload, incoming, false)
     }
 
-    /// A statement `match` evaluates its fresh scrutinee once. Every arm starts from that evaluation and binds its
-    /// payload as a fresh owner, and the arms that continue join after the match. On a call carrying a view, the
-    /// call's result loan covers the arms: the binding of the variant holding the view (`Ok` or `Some`, or `Err` for
-    /// a view carried in the error) aliases the caller's place under it, while the other arms hold no view, so the
-    /// loan ends there unless a later use keeps it.
+    /// A statement `match` evaluates its scrutinee once. Every arm starts from that evaluation and binds its payload
+    /// as a fresh owner, and the arms that continue join after the match. A guard evaluates with that arm's binding;
+    /// its false path continues to the next arm without retaining the binding. On a call carrying a view, the call's
+    /// result loan covers the arms: the binding of the variant holding the view (`Ok` or `Some`, or `Err` for a view
+    /// carried in the error) aliases the caller's place under it, while the other arms hold no view.
     pub(super) fn match_statement(
         &mut self,
         scrutinee: &Spanned<Expr>,
@@ -139,23 +138,15 @@ impl Builder<'_> {
         } else if fresh_scrutinee(scrutinee) {
             (self.expression(scrutinee, incoming, false)?, None)
         } else {
-            return Err(Unavailable {
-                span: scrutinee.span,
-                reason: "match on a stored place needs checked binding access".into(),
-            });
+            (self.expression(scrutinee, incoming, true)?, None)
         };
         let mut outgoing = Vec::new();
+        let mut remaining = evaluated;
         // Each arm starts from the carriers as the scrutinee left them; the arms that continue join after the match.
         let entry = self.carrier_state();
         let mut ends = Vec::new();
         for arm in arms {
             self.restore_carrier_state(&entry);
-            if let Some(guard) = &arm.node.guard {
-                return Err(Unavailable {
-                    span: guard.span,
-                    reason: "match guard needs checked binding access".into(),
-                });
-            }
             let binding = view.as_ref().and_then(|(path, payload)| {
                 super::super::builtins::carried_view_binding(&arm.node.pattern, *payload).map(|binding| (path, binding))
             });
@@ -163,9 +154,16 @@ impl Builder<'_> {
                 Some((path, (name, span))) => self.view_arm_binding(name, span, path)?,
                 None => self.arm_binding(&arm.node.pattern)?,
             }
+            let arm_input = if let Some(guard) = &arm.node.guard {
+                let guarded = self.expression(guard, remaining, false)?;
+                remaining = guarded.clone();
+                guarded
+            } else {
+                remaining.clone()
+            };
             let continuing = match &arm.node.body {
-                MatchBody::Expr(value) => self.expression(value, evaluated.clone(), false)?,
-                MatchBody::Block(body) => self.block(body, evaluated.clone())?,
+                MatchBody::Expr(value) => self.expression(value, arm_input, false)?,
+                MatchBody::Block(body) => self.block(body, arm_input)?,
             };
             if !continuing.is_empty() {
                 ends.push(self.carrier_state());
@@ -416,7 +414,7 @@ impl Builder<'_> {
             reason: "match pattern needs checked binding access".into(),
         };
         let arguments = match &pattern.node {
-            Pattern::Wildcard | Pattern::Literal(Literal::None) => return Ok(()),
+            Pattern::Wildcard | Pattern::Literal(_) => return Ok(()),
             Pattern::Constructor(name, arguments) => match constructors::from_str(&name.node) {
                 Some(ConstructorId::None) if arguments.is_empty() => return Ok(()),
                 Some(ConstructorId::Ok | ConstructorId::Err | ConstructorId::Some) => arguments,

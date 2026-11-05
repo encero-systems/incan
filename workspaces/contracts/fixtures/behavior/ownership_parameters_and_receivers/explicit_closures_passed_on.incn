@@ -4,6 +4,7 @@
 #   12
 #   9
 #   3
+#   10
 
 """Closures passed on to parameters that only call them."""
 
@@ -48,6 +49,10 @@ def passed_reference(counter: Borrowed[Counter]) -> int:
     return apply_zero(read)
 
 
+def indirect(read: (int) -> int, value: Borrowed[int]) -> int:
+    return read(value)
+
+
 def main() -> None:
     amount = 3
     println(total(amount, 4))
@@ -55,3 +60,5 @@ def main() -> None:
     println(nested(amount))
     counter = Counter(value=1, name="abc")
     println(passed_reference(counter))
+    double: (int) -> int = (value) => value * 2
+    println(indirect(double, 5))
