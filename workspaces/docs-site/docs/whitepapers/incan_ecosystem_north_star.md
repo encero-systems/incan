@@ -531,7 +531,7 @@ The whitepaper stands on its own as the ecosystem direction. The concrete branch
 - [RFC 077: workspace and multi-package projects](../RFCs/closed/implemented/077_workspace_and_multi_package_projects.md) defines workspace topology, member selection, shared lock and policy state, and workspace-scoped mutations.
 - [RFC 078: tool execution and typed workflow actions](../RFCs/078_tool_execution_and_typed_workflow_actions.md) defines typed actions, tool sources, execution modes, dry-run behavior, and policy-gated workflow execution.
 - [RFC 079: incan.pub artifact graph](../RFCs/079_incan_pub_artifact_graph.md) defines the registry as an artifact graph across packages, templates, capabilities, actions, policies, examples, advisories, and AI assets.
-- [RFC 080: AI assets, models, prompts, evals, and agent metadata](../RFCs/080_ai_assets_models_prompts_evals_and_agent_metadata.md) defines AI-native artifacts, local versus remote execution metadata, prompts, evals, datasets, model provenance, and agent guidance.
+- [RFC 080: Declared AI assets](../RFCs/080_declared_ai_assets.md) defines AI-native artifacts, local versus remote execution metadata, prompts, evals, datasets, model provenance, and agent guidance.
 
 ## Proposed incremental path
 
