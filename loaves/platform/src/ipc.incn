@@ -295,23 +295,25 @@ pub def stale(path: str) -> bool:
 
 pub model SocketFile:
     """
-    The socket file a listener bound, and the directory it belongs to: its path, the file identity it had then, and
-    the private directory of the home whose clients reach it.
+    The socket file a listener bound, and the directory it belongs to: its path, owner, file identity at bind time,
+    and the private directory of the home whose clients reach it.
 
     A resident process retires once nothing can reach it any more: when its path no longer leads to this file, or the
     directory it belongs to is gone. It removes only this file, so a replacement's socket at the same path survives.
     """
 
     pub path: str
+    pub uid: u32
     pub device: u64
     pub inode: u64
     pub directory: str
 
 
 pub def socket_file(path: str, directory: str) -> Result[SocketFile, str]:
-    """The identity of the socket file just bound at `path`, belonging to `directory`."""
+    """The owner and identity of the socket file just bound at `path`, belonging to `directory`."""
     match symlink_metadata(path):
-        Ok(found) => return Ok(SocketFile(path=path, device=found.dev(), inode=found.ino(), directory=directory))
+        Ok(found) =>
+            return Ok(SocketFile(path=path, uid=found.uid(), device=found.dev(), inode=found.ino(), directory=directory))
         Err(error) => return Err(f"cannot read the socket {path}: {error}")
 
 
