@@ -15,10 +15,10 @@ from rust::std::env import set_current_dir
 from rust::std::process import id
 from rust::std::thread import sleep
 from rust::std::time import Duration
-from std.environ import get_or
+from std.primitives.environ import read as read_environment
 from pub::incan_platform.trace import Clock, Emitter, Operation, begin as trace_begin, flush as flush_trace
 from pub::incan_platform.ipc import Connection, Listener, SocketFile, dial, listen, reachable, socket_file, withdraw
-from endpoint import CallerWatch, owner_uid
+from endpoint import CallerWatch
 from lifecycle import (
     ActivationOutcome,
     Bounds,
@@ -276,17 +276,13 @@ pub def host_for(settings: HostSettings) -> Result[WorkerHost, str]:
     # 1. Only this exact file is withdrawn later, never a replacement at the same path.
     listener = listen(settings.socket, false)?
     bound = socket_file(settings.socket, settings.home)?
-    mut owner = owner_uid(settings.socket)?
-    match settings.owner:
-        Some(selected) => owner = selected
-        None => pass
     host = WorkerHost(
         observer=worker_observer(),
         generation=settings.generation,
         phase=Phase.Serving,
+        owner=served_owner(bound.uid, settings.owner),
         socket=bound,
         listener=listener,
-        owner=owner,
         policy=lifecycle(settings.baseline, settings.bounds),
     )
     # 2. A worker that cannot announce itself is never sent a request.
@@ -295,6 +291,13 @@ pub def host_for(settings: HostSettings) -> Result[WorkerHost, str]:
         announcing.send(encode_ready(settings.generation, int(id())))?
         hang_up(announcing)
     return Ok(host)
+
+
+def served_owner(socket_owner: u32, selected: Option[u32]) -> u32:
+    """The configured test peer when present, otherwise the user that owns the bound socket."""
+    match selected:
+        Some(owner) => return owner
+        None => return socket_owner
 
 
 pub def next_request(mut host: WorkerHost) -> Option[CompileRequest]:
@@ -317,14 +320,14 @@ pub def caller_watch(mut host: WorkerHost) -> Option[CallerWatch]:
 
 def worker_observer() -> Option[Emitter]:
     """Open the requested canonical worker channel once; absent tracing never starts a clock or writer."""
-    directory = get_or("INCAN_ENGINE_TRACE", "")
+    directory = environment_or("INCAN_ENGINE_TRACE", "")
     if directory == "":
         return None
     match Emitter.open(
         f"{directory}/engine-worker-{id()}.jsonl",
         "compiler-worker",
-        get_or("INCAN_ENGINE_RUN", ""),
-        get_or("INCAN_ENGINE_REQUEST", ""),
+        environment_or("INCAN_ENGINE_RUN", ""),
+        environment_or("INCAN_ENGINE_REQUEST", ""),
     ):
         Ok(emitter) => return Some(emitter)
         Err(_) => return None
@@ -332,10 +335,17 @@ def worker_observer() -> Option[Emitter]:
 
 def footprint_ceiling() -> int:
     """The footprint ceiling, lowered by the test-only setting when it is a smaller number of bytes."""
-    text = get_or(FOOTPRINT_SETTING, "")
+    text = environment_or(FOOTPRINT_SETTING, "")
     if text != "" and decimal(text) and int(text) < FOOTPRINT_CEILING:
         return int(text)
     return FOOTPRINT_CEILING
+
+
+def environment_or(key: str, default: str) -> str:
+    """A primitive environment observation, with this host's deliberately lossy string default policy."""
+    match read_environment(key):
+        Ok(value) => return value
+        Err(_) => return default
 
 
 def decimal(text: str) -> bool:
