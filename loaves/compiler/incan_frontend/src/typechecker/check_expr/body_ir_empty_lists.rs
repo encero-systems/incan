@@ -128,6 +128,41 @@ impl TypeChecker {
         }
     }
 
+    /// Authorize a direct return of one tracked empty-list binding when its declared result closes the same element.
+    ///
+    /// The append calls remain the element-type authority. A function result only permits the otherwise escaping read;
+    /// it cannot supply a missing element, widen a disagreement, or authorize an alias or projected expression.
+    pub(in crate::typechecker) fn allow_body_ir_empty_list_return(
+        &mut self,
+        value: &Spanned<Expr>,
+        expected: &ResolvedType,
+    ) {
+        if !matches!(value.node, Expr::Ident(_)) {
+            return;
+        }
+        let ResolvedType::Generic(name, elements) = expected else {
+            return;
+        };
+        if collection_type_id(name) != Some(CollectionTypeId::List) || elements.len() != 1 {
+            return;
+        }
+        let key = value.span;
+        let Some(identity) = self.type_info.references.resolved_identities.get(&key) else {
+            return;
+        };
+        let Some(candidate) = self
+            .type_info
+            .expressions
+            .body_ir_empty_list_requirements
+            .get_mut(identity)
+        else {
+            return;
+        };
+        if candidate.element.as_ref() == elements.first() {
+            candidate.permitted_reads.insert(key);
+        }
+    }
+
     /// Publish each agreed element once, after the complete program succeeds and every lexical read has a validated
     /// bounded use and the declaration remains its only write. No earlier initializer or read receives a speculative
     /// grant that a later conflict could leave stale.
