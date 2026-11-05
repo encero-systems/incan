@@ -1,4 +1,4 @@
-# behavior: BytesIO round-trips bytes through getvalue and read, an IoError carries its kind and a source of None through the Error trait's default, and a BytesIO reader streams into a sha256 digest
+# behavior: WriteBuffer owns mutable bytes and snapshots, std.io reexports the primitive Endian and IoError declarations, BytesIO retains its byte-stream behavior, and a BytesIO reader streams into a sha256 digest
 # expect-stdout:
 #   4
 #   true
@@ -7,9 +7,23 @@
 #   no source
 #   32
 #   true
+#   true
+#   true
+#   2
+#   true
+#   1
+#   3
+#   true
+#   true
+#   true
+#   5
+#   true
+#   invalid_input
+#   invalid_input
 
-from std.io import BytesIO
+from std.io import BytesIO, Endian as StreamEndian
 from std.hash import reader_digest
+from std.primitives.io import Endian as PrimitiveEndian, IoError as PrimitiveIoError, WriteBuffer
 from std.traits.error import Error
 
 
@@ -27,6 +41,38 @@ def show_error_kind() -> None:
                 None => println("no source")
 
 
+def is_little_endian(value: PrimitiveEndian) -> bool:
+    return value == PrimitiveEndian.Little
+
+
+def error_kind(error: PrimitiveIoError) -> str:
+    return error.kind
+
+
+def show_write_buffer() -> Result[None, PrimitiveIoError]:
+    mut buffer = WriteBuffer.from_bytes(b"abcd")
+    println(buffer.read(2)? == b"ab")
+    println(buffer.write(b"XY")?)
+    println(buffer.snapshot() == b"abXY")
+    println(buffer.seek(1)?)
+    println(buffer.truncate(3)?)
+    snapshot = buffer.snapshot()
+    buffer.seek(0)?
+    buffer.write(b"Z")?
+    println(snapshot == b"abX")
+    println(buffer.snapshot() == b"ZbX")
+    println(is_little_endian(StreamEndian.Little))
+    println(buffer.truncate(5)?)
+    println(buffer.snapshot() == b"ZbX\x00\x00")
+    match buffer.seek(0, 3):
+        Ok(position) => println(position)
+        Err(error) => println(error.kind)
+    match buffer.truncate(Some(-1)):
+        Ok(size) => println(size)
+        Err(error) => println(error.kind)
+    return Ok(None)
+
+
 def main() -> None:
     println(len(oven_bytes()))
     println(oven_bytes() == b"oven")
@@ -40,4 +86,10 @@ def main() -> None:
             match reader_digest(BytesIO(b"oven"), "sha256", chunk_size=1):
                 Ok(again) => println(digest == again)
                 Err(error) => println(error.message())
+        Err(error) => println(error.message())
+    match BytesIO(b"A").read_exact(2):
+        Ok(value) => println(len(value))
+        Err(error) => println(error_kind(error) == "unexpected_eof")
+    match show_write_buffer():
+        Ok(_) => pass
         Err(error) => println(error.message())
