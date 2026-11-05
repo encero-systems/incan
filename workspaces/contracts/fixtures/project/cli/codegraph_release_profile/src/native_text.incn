@@ -1,0 +1,6 @@
+from std.primitives import hexlify
+
+
+pub def helper() -> str:
+    """Return text through a standard declaration so the graph retains a proved call edge."""
+    return hexlify(b"release")
