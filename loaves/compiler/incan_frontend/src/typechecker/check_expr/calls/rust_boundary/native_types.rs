@@ -1,8 +1,40 @@
 //! Native Rust object and result types, callable parameter displays, and metadata prewarming.
 
 use super::*;
+use incan_lang::lang::types::collections;
 
 impl TypeChecker {
+    /// Project a signature-proven native reference result onto Incan's ordinary borrowed-value surface while the
+    /// checked call keeps its physical Rust carrier for Body IR. Native owner types remain nominal dependency holders.
+    pub(in crate::typechecker::check_expr) fn native_borrowed_source_result(
+        &self,
+        span: Span,
+        source: ResolvedType,
+    ) -> ResolvedType {
+        let explicit_body = self.current_body_identity().is_some_and(|owner| {
+            self.type_info.declarations.ownership_contracts.contains_key(owner)
+                || self
+                    .type_info
+                    .protocols
+                    .explicit_local_modes
+                    .values()
+                    .any(|mode| &mode.owner == owner)
+        });
+        if !explicit_body {
+            return source;
+        }
+        let Some(call) = self.type_info.rust.checked_calls.get(&span) else {
+            return source;
+        };
+        let carries_result_loan = call.signature_loans.len() == call.parameters.len() + 1
+            && self.type_holds_native_signature_loan(&call.return_type);
+        if carries_result_loan {
+            native_borrowed_surface_type(source)
+        } else {
+            source
+        }
+    }
+
     /// Preserve the ordinary source scalar/collection projection while restoring source owners from structural
     /// native substitution. Rendering an inferred source model to a Rust display must not turn it into a foreign
     /// item; native references and collection views keep the source projection already selected for this call.
@@ -336,5 +368,33 @@ impl TypeChecker {
         } else {
             return_ty
         }
+    }
+}
+
+/// Project native references only inside builtin Option and Result payloads. A direct reference remains a borrowed
+/// value, and other generic owners, including `Take` and `RefMut`, keep their imported nominal source type.
+fn native_borrowed_surface_type(ty: ResolvedType) -> ResolvedType {
+    match ty {
+        ResolvedType::Generic(name, arguments)
+            if collections::from_str(&name)
+                .is_some_and(|id| matches!(id, CollectionTypeId::Option | CollectionTypeId::Result)) =>
+        {
+            ResolvedType::Generic(
+                name,
+                arguments
+                    .into_iter()
+                    .map(native_borrowed_carrier_payload_type)
+                    .collect(),
+            )
+        }
+        other => other,
+    }
+}
+
+/// Read through a reference payload while preserving any nested builtin carrier shape.
+fn native_borrowed_carrier_payload_type(ty: ResolvedType) -> ResolvedType {
+    match ty {
+        ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => native_borrowed_carrier_payload_type(*inner),
+        other => native_borrowed_surface_type(other),
     }
 }

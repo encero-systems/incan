@@ -256,7 +256,7 @@ def hits(counts: Borrowed[HashMap[str, int]], key: str) -> int:
         None => return 0
 ```
 
-A native result that borrows its receiver or an input, such as the `Option<&V>` that `HashMap.get` returns, is a returned view of that source: the source stays borrowed while the result is used. The native lifetime relationship is preserved as declared; it is not reconstructed from parameter names. A native lifetime relationship that one source cannot express, and a native string or slice representation that differs from the Incan type it would be read as, are refused with `INCAN-T0123`. An Incan callable called from native code keeps the same access and source contract.
+A native result that borrows its receiver or an input is expressed with the same Incan modes as any other borrowed result: a shared result is `Borrowed[T]` and an exclusive result is `BorrowedMut[T]`. `HashMap.get`, for example, carries a shared view in its `Option` result. The Rust signature supplies the relationship: receiver lifetime elision selects the receiver, otherwise ordinary elision selects the sole reference input, and a named result lifetime retains every input carrying that lifetime. `Option` and `Result` payloads and native owner types with lifetime parameters keep those loans until their last dependent use. A static result retains no caller-owned source. If the signature gives no admitted Incan owner, the call is refused with `INCAN-T0123`; the compiler never guesses an owner or clones the value. An Incan callable called from native code keeps the same access and source contract.
 
 ## Async bodies
 
