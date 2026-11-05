@@ -4,8 +4,6 @@
 #   20
 #   30
 #   40
-# pending: #2500: an explicit Owned result contract cannot yet be proved at a return boundary
-
 """Exercise independently retained storage handles once Owned collection results are admitted."""
 
 

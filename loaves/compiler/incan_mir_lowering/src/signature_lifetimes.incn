@@ -1,6 +1,6 @@
 """Preserve generic reference binders before specialization erases their relationship in concrete frame types."""
 
-from rust::incan_semantics_core import IncanType as RustType
+from rust::incan_semantics_core import IncanInputAccess, IncanType as RustType
 from rust::incan_semantics_core::body_ir import Body
 from pub::incan_mir_plan import GenericLoan, PlanType
 
@@ -70,17 +70,18 @@ pub def signature_lifetimes(body: &Body, arguments: list[RustType]) -> Result[li
     # reference is the result itself; a carried view's is the first reference of its carrying payload.
     match body.returned_view:
         Some(view) =>
-            slot = int(view.slot)
-            signature[slot] = ["view"] + signature[slot]
-            result = signature[len(signature) - 1]
-            match view.carried:
-                Some(payload) =>
-                    position = payload_reference(body.return_type, int(payload), body.type_parameters, arguments)
-                    if position >= len(result):
-                        return Err("carried returned view has no payload reference")
-                    signature[len(signature) - 1] = result[:position] + ["view"] + result[position + 1:]
-                None => signature[len(signature) - 1] = ["view"] + result
-            return Ok(signature)
+            if view.access != IncanInputAccess.Owned:
+                slot = int(view.slot)
+                signature[slot] = ["view"] + signature[slot]
+                result = signature[len(signature) - 1]
+                match view.carried:
+                    Some(payload) =>
+                        position = payload_reference(body.return_type, int(payload), body.type_parameters, arguments)
+                        if position >= len(result):
+                            return Err("carried returned view has no payload reference")
+                        signature[len(signature) - 1] = result[:position] + ["view"] + result[position + 1:]
+                    None => signature[len(signature) - 1] = ["view"] + result
+                return Ok(signature)
         None => pass
     # 4. A generic source signature with one elided input loan ties an elided output to it. If substituting a
     # reference type adds another loan, retain that original relationship explicitly instead of asking rustc to

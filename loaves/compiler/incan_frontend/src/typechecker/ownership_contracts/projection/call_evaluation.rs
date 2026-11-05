@@ -323,6 +323,35 @@ impl CheckedInputBody<'_> {
                 place.projection.push(flow::Projection::Element(index.span));
                 Ok(Some((place, through)))
             }
+            Expr::MethodCall(..) if super::super::builtins::byte_slice_view(self.facts, expression).is_some() => self
+                .call_place(
+                    super::super::builtins::byte_slice_view(self.facts, expression)
+                        .ok_or("byte slice view has no checked receiver")?,
+                ),
+            Expr::Call(..) | Expr::MethodCall(..) => {
+                let inner = super::super::builtins::view_call(expression);
+                if !self.graph.invocations.contains_key(&inner.span) {
+                    return Ok(None);
+                }
+                let Some(call) = self.facts.protocols.explicit_input_calls.get(&inner.span) else {
+                    return Ok(None);
+                };
+                if crate::ownership_metadata::returned_view(self.facts.selected_input_contract(call)?)?.is_none() {
+                    return Ok(None);
+                }
+                let mut loans = self.graph.loans.iter().enumerate().filter(|(_, loan)| {
+                    loan.span == inner.span
+                        && loan
+                            .parent
+                            .and_then(|parent| self.graph.loans.get(parent.0))
+                            .is_none_or(|parent| parent.span != inner.span)
+                });
+                let (index, loan) = loans.next().ok_or("returned view call has no checked result loan")?;
+                if loans.next().is_some() {
+                    return Err("returned view call has ambiguous checked result loans");
+                }
+                Ok(Some((loan.source.clone(), Some(flow::LoanId(index)))))
+            }
             _ => Ok(None),
         }
     }

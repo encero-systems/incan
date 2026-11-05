@@ -11,6 +11,8 @@ use crate::ast::{CallArg, Expr, ParamKind, Receiver, Span, Spanned};
 use crate::symbols::CallableParam;
 use crate::typechecker::TypeChecker;
 use incan_lang::lang::builtins::BuiltinFnId;
+use incan_lang::lang::trait_bounds;
+use incan_lang::lang::traits::{self as core_traits, TraitId};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_semantics_core::IncanInputAccess;
 
@@ -249,6 +251,20 @@ impl Builder<'_> {
         };
         let native_independent_result =
             call.kind == super::super::InputCallKind::Native && self.checker.native_result_is_independent(span);
+        let owned_independent_result = crate::ownership_metadata::owned_result(contract)
+            .map_err(|reason| Unavailable {
+                span,
+                reason: reason.into(),
+            })?
+            .is_some()
+            && contract.is_some_and(|contract| contract.result_source.is_none());
+        let owned_dependent_result = crate::ownership_metadata::owned_result_source(contract)
+            .map_err(|reason| Unavailable {
+                span,
+                reason: reason.into(),
+            })?
+            .is_some();
+        let clone_result = self.checked_clone_call(span);
         // A native call that lends nothing returns a value that cannot keep a borrow of the caller's storage.
         let lends_nothing = call.kind == super::super::InputCallKind::Native
             && (call.receiver.is_none() || self.checker.type_info.native_value_receiver(span))
@@ -261,6 +277,9 @@ impl Builder<'_> {
         if view.is_none()
             && native_dependencies.is_none()
             && !native_independent_result
+            && !owned_independent_result
+            && !owned_dependent_result
+            && !clone_result
             && !plain_result(result)
             && !lends_nothing
         {
@@ -443,6 +462,32 @@ impl Builder<'_> {
             });
         }
         Ok(incoming)
+    }
+
+    /// Return whether semantic method resolution selected the standard `Clone.clone` slot for this call. A source
+    /// method that merely uses the spelling `clone` does not gain independent-result semantics.
+    pub(super) fn checked_clone_call(&self, span: Span) -> bool {
+        let builtin = crate::symbols::canonical_builtin_member_identity(
+            core_traits::as_str(TraitId::Clone),
+            trait_bounds::rust::CLONE_METHOD,
+        );
+        let list = crate::symbols::canonical_builtin_member_identity(
+            collections::as_str(CollectionTypeId::List),
+            trait_bounds::rust::CLONE_METHOD,
+        );
+        if matches!(self.checker.type_info.resolved_identity(span), Some(identity) if identity == &builtin || identity == &list)
+            || self.checker.type_info.traits.inferred_method_identities.get(&span) == Some(&builtin)
+        {
+            return true;
+        }
+        self.checker.type_info.resolved_method_call(span).is_some_and(|call| {
+            call.method == trait_bounds::rust::CLONE_METHOD
+                && matches!(
+                    &call.dispatch,
+                    crate::typechecker::ResolvedMethodDispatch::Trait { trait_name, .. }
+                        if core_traits::from_str(trait_name) == Some(TraitId::Clone)
+                )
+        })
     }
 
     /// Evaluate one argument according to its selected slot. A borrowed place is evaluated once before taking its

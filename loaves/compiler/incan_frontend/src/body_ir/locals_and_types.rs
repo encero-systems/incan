@@ -21,6 +21,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             input_owned_initializers: Vec::new(),
             input_local_bindings: Vec::new(),
             returned_view: None,
+            retained_result_source: None,
             carried_view_places: HashMap::new(),
             awaited_view_places: HashMap::new(),
             carried_view_locals: HashMap::new(),

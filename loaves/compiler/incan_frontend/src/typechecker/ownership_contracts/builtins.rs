@@ -104,6 +104,19 @@ pub(super) fn list_method_writes(
     }
 }
 
+/// Return the receiver of the compiler-selected `bytes.as_slice()` view. The retained Body IR result fact proves this
+/// is the builtin native slice projection rather than a source method with the same spelling.
+pub(super) fn byte_slice_view<'a>(facts: &TypeCheckInfo, expression: &'a Spanned<Expr>) -> Option<&'a Spanned<Expr>> {
+    let Expr::MethodCall(receiver, method, _, arguments) = &expression.node else {
+        return None;
+    };
+    (method == "as_slice"
+        && arguments.is_empty()
+        && facts.expr_type(receiver.span) == Some(&ResolvedType::Bytes)
+        && facts.calls.body_ir_call_result_types.contains_key(&expression.span))
+    .then_some(receiver)
+}
+
 /// The expression an `await` suspends on, when a surface expression is `await expression`.
 pub(super) fn awaited(surface: &SurfaceExpr) -> Option<&Spanned<Expr>> {
     match (&surface.key, &surface.payload) {

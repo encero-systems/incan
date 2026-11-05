@@ -184,9 +184,9 @@ impl Builder<'_> {
         Ok(incoming)
     }
 
-    /// Copy values need no transfer; literal, formatted, list-literal and nested constructed values own their fresh
-    /// storage (a list literal's elements are Copy scalars, which its own evaluation checks). A source place with a
-    /// non-Copy type is never reclassified as fresh merely because its last use is here.
+    /// Copy values need no transfer; literal, formatted, list-literal, explicitly cloned and nested constructed
+    /// values own their fresh storage (a list literal's elements are Copy scalars, which its own evaluation checks).
+    /// A source place with a non-Copy type is never reclassified as fresh merely because its last use is here.
     pub(super) fn fresh_or_copy_field(&self, value: &Spanned<Expr>) -> bool {
         if self
             .checker
@@ -199,7 +199,21 @@ impl Builder<'_> {
         match &value.node {
             Expr::Literal(_) | Expr::FString(_) | Expr::List(_) => true,
             Expr::Paren(inner) => self.fresh_or_copy_field(inner),
-            Expr::Call(_, _, _) => self.checker.type_info.constructor_field_binding(value.span).is_some(),
+            Expr::Call(_, _, _) => {
+                self.checker.type_info.constructor_field_binding(value.span).is_some()
+                    || self
+                        .checker
+                        .type_info
+                        .protocols
+                        .explicit_input_calls
+                        .get(&value.span)
+                        .and_then(|call| self.checker.type_info.selected_input_contract(call).ok())
+                        .is_some_and(|contract| {
+                            crate::ownership_metadata::owned_result(contract).is_ok_and(|result| result.is_some())
+                                && contract.is_some_and(|contract| contract.result_source.is_none())
+                        })
+            }
+            Expr::MethodCall(..) => self.checked_clone_call(value.span),
             _ => false,
         }
     }

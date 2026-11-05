@@ -46,8 +46,8 @@ pub struct Body {
     /// of the parameter inventory, so a body whose profile is lost still exposes its explicit-input obligation.
     #[serde(default)]
     pub explicit_input_bindings: Vec<ExplicitInputBinding>,
-    /// The result is a view of one source place, returned as a reference that borrows a parameter slot. Callers
-    /// alias the substituted place rather than holding the reference; the field path is in the ownership contract.
+    /// The result depends on one source place. Shared or exclusive access returns a view whose callers alias the
+    /// substituted place; owned access retains the parameter loan inside an ordinary owned native result.
     #[serde(default)]
     pub returned_view: Option<ReturnedView>,
     /// Checked nominal bindings used by this body's retained type positions. Publication prunes unused bindings,
@@ -391,7 +391,7 @@ impl Body {
                 return Some("explicit input access lacks a checked body profile");
             }
             if self.returned_view.is_some() {
-                return Some("returned view lacks a checked body profile");
+                return Some("result dependency lacks a checked body profile");
             }
             return (!self.explicit_input_bindings.is_empty())
                 .then_some("explicit local binding lacks a checked body profile");
@@ -403,7 +403,11 @@ impl Body {
         }
         if let Some(view) = &self.returned_view {
             let source = self.params.get(view.slot);
-            if !matches!(
+            if view.access == crate::IncanInputAccess::Owned {
+                if view.carried.is_some() || source.is_none_or(|source| source.input_access.is_inferred()) {
+                    return Some("owned result dependency must retain one explicit parameter slot");
+                }
+            } else if !matches!(
                 view.access,
                 crate::IncanInputAccess::Shared | crate::IncanInputAccess::Exclusive
             ) || source.is_none_or(|source| source.input_access == crate::IncanInputAccess::Owned)

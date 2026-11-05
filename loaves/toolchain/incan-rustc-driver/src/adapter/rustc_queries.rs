@@ -149,6 +149,15 @@ pub(super) fn native_function_signature<'tcx>(
             Ok(signature) => signature,
             Err(error) => refuse(tcx, error),
         };
+        let retained = match planned_function(tcx, def, &plan) {
+            Some(function) => {
+                match crate::retained_result_loans::signature(tcx, retained, function.retained_result_source) {
+                    Ok(signature) => signature,
+                    Err(error) => refuse(tcx, error),
+                }
+            }
+            None => retained,
+        };
         crate::native_loans::signature(tcx, retained)
     })
 }

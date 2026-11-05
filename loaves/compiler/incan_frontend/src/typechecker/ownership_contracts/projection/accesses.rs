@@ -180,6 +180,50 @@ impl SourceAccesses<'_, '_> {
             .checked_input_copy_value(self.proof.canonical_owner(), ty)
     }
 
+    /// Evaluate the index operands of one stored place without reading the place itself. Field and grouping
+    /// projections add no runtime value evaluation, while every index expression runs once from left to right.
+    fn place_evaluation(&mut self, expression: &Spanned<Expr>) -> Result<(), &'static str> {
+        match &expression.node {
+            Expr::Ident(_) | Expr::SelfExpr => Ok(()),
+            Expr::Paren(base) | Expr::Field(base, _) => self.place_evaluation(base),
+            Expr::Index(base, index) => {
+                self.place_evaluation(base)?;
+                self.expression(index, false)
+            }
+            Expr::MethodCall(..) if super::super::builtins::byte_slice_view(self.proof.facts, expression).is_some() => {
+                self.place_evaluation(
+                    super::super::builtins::byte_slice_view(self.proof.facts, expression)
+                        .ok_or("byte slice view has no checked receiver")?,
+                )
+            }
+            Expr::Call(..) | Expr::MethodCall(..) if self.place(expression)?.is_some() => {
+                self.expression(expression, false)
+            }
+            _ => Err("source access place has an unsupported evaluation"),
+        }
+    }
+
+    /// Match one stored-place read or move, including dependencies held by an owned aggregate local.
+    fn stored_place_access(&mut self, expression: &Spanned<Expr>, consume: bool) -> Result<(), &'static str> {
+        self.place_evaluation(expression)?;
+        let (place, through) = self.place(expression)?.ok_or("source access has no stored place")?;
+        if let flow::Root::Binding(root) = &place.root
+            && let Some(loans) = self.proof.graph.dependent_locals.get(root)
+        {
+            let loans = loans.clone();
+            self.closure_capture_accesses(expression.span, &loans)?;
+        }
+        let access = if consume
+            && (through.is_some() || self.constrained.contains(&place.root))
+            && !self.copy_value(expression)?
+        {
+            flow::Access::Move
+        } else {
+            flow::Access::Read
+        };
+        self.access(expression.span, &place, through, access)
+    }
+
     /// Visit a checked invocation's arguments in its retained order. A borrowed stored place evaluates its address;
     /// an owned argument constrains its root and is consumed.
     fn invocation_arguments(
@@ -222,23 +266,8 @@ impl SourceAccesses<'_, '_> {
     /// evaluates its address, not its value; fresh borrowed arguments still evaluate their nested value normally.
     fn expression(&mut self, expression: &Spanned<Expr>, consume: bool) -> Result<(), &'static str> {
         match &expression.node {
-            Expr::Ident(_) | Expr::SelfExpr | Expr::Field(_, _) => {
-                let (place, through) = self.place(expression)?.ok_or("source access has no stored place")?;
-                if let flow::Root::Binding(root) = &place.root
-                    && let Some(loans) = self.proof.graph.dependent_locals.get(root)
-                {
-                    let loans = loans.clone();
-                    self.closure_capture_accesses(expression.span, &loans)?;
-                }
-                let access = if consume
-                    && (through.is_some() || self.constrained.contains(&place.root))
-                    && !self.copy_value(expression)?
-                {
-                    flow::Access::Move
-                } else {
-                    flow::Access::Read
-                };
-                self.access(expression.span, &place, through, access)?;
+            Expr::Ident(_) | Expr::SelfExpr | Expr::Field(_, _) | Expr::Index(_, _) => {
+                self.stored_place_access(expression, consume)?
             }
             Expr::Literal(_) => {}
             Expr::Paren(inner) | Expr::Unary(_, inner) => self.expression(inner, consume)?,

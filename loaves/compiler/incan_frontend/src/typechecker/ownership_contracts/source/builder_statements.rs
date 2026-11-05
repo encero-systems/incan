@@ -508,21 +508,36 @@ impl Builder<'_> {
                 Ok(incoming)
             }
             Statement::Return(value) => {
-                match (value, self.view.clone()) {
-                    (Some(value), Some((exclusive, source))) => match self.view_carried {
+                match (value, self.view.clone(), self.owned_source.clone()) {
+                    (Some(value), Some((exclusive, source)), None) => match self.view_carried {
                         Some(payload) => self.carried_return(value, payload, exclusive, &source, incoming)?,
                         None => {
                             self.view_return(value, exclusive, &source, incoming)?;
                         }
                     },
-                    (None, Some(_)) => self.view_errors.push(view_error(
+                    (None, Some(_), None) => self.view_errors.push(view_error(
                         "A returned view must return its declared source place",
                         statement.span,
                     )),
-                    (Some(value), None) => {
+                    (Some(value), None, Some(source)) => {
+                        self.owned_return(value, &source, incoming)?;
+                    }
+                    (None, None, Some(_)) => {
+                        return Err(Unavailable {
+                            span: statement.span,
+                            reason: "owned result dependency requires a returned value".into(),
+                        });
+                    }
+                    (Some(value), None, None) => {
                         self.expression(value, incoming, true)?;
                     }
-                    (None, None) => {}
+                    (None, None, None) => {}
+                    (_, Some(_), Some(_)) => {
+                        return Err(Unavailable {
+                            span: statement.span,
+                            reason: "result cannot be both a returned view and owned dependency".into(),
+                        });
+                    }
                 }
                 Ok(Vec::new())
             }
