@@ -1,6 +1,6 @@
 # RFC 076: project mutation policy and recovery
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-04-26
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
