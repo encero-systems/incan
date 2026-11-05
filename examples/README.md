@@ -56,9 +56,9 @@ incan run examples/simple/hello.incn
 incan build examples/advanced/async_await.incn
 ```
 
-Oven prepares dependencies automatically. There is no bake or prewarm step. The runner reads `check-only.txt`: the markform, scriptkit and styleforge consumers check their descriptor syntax without a runtime lowering hook, and the declaration-only rusttype example checks without an entry point. Other entry points run, including async functions. Supporting modules and producer libraries are compiled through their entry points' dependency graphs.
+Oven prepares dependencies automatically. There is no bake or prewarm step. The runner reads `check-only.txt`: the markform, scriptkit and styleforge consumers check their descriptor syntax without a runtime lowering hook, the declaration-only rusttype example checks without an entry point, and the web server checks without starting a long-lived process. Other entry points run, including async functions. Supporting modules and producer libraries are compiled through their entry points' dependency graphs.
 
-`INCAN_BIN` selects an installed command. `INCAN_EXAMPLES_ONLY` selects colon-separated repository-relative entry paths. `INCAN_EXAMPLES_OUT` selects the log directory (default `target/examples`), containing `examples.tsv` and one log per command. GNU `timeout` from coreutils bounds each command to `INCAN_EXAMPLES_TIMEOUT` seconds (default 120); timeouts and compiler errors fail the gate. Project examples run from their nearest manifest directory so bundled data files resolve.
+`INCAN_BIN` selects an installed command. `INCAN_EXAMPLES_ONLY` selects colon-separated repository-relative entry paths. `INCAN_EXAMPLES_OUT` selects the log directory (default `target/examples`), containing `examples.tsv` and one log per command. GNU `timeout` from coreutils bounds each command to `INCAN_EXAMPLES_TIMEOUT` seconds (default 120); `INCAN_EXAMPLES_TIMEOUT_BIN` selects its executable when it is not available as `timeout` or `gtimeout`. Timeouts and compiler errors fail the gate. Project examples run from their nearest manifest directory so bundled data files resolve.
 
 ## Adding examples
 
