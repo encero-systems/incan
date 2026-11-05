@@ -386,11 +386,9 @@ def has_ordinary_lending_route(ty: PlanType) -> bool:
     if is_list(ty) or is_collection(ty):
         return true
     match ty:
-        PlanType.StringRef => return true
         PlanType.ValidationErrorRef => return true
         PlanType.SliceRef(_elements) => return true
         PlanType.ScalarRef(_elements) => return true
-        PlanType.FrozenCollectionRef(_name, _elements) => return true
         _ => return false
 
 

@@ -411,6 +411,25 @@ def static_place_receiver(
         None => return Ok(None)
 
 
+def frozen_length(
+    mut builder: Builder,
+    name: str,
+    elements: list[PlanType],
+    reference: PlanType,
+    value: Operand,
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Ask the runtime for one frozen collection's length through a shared reference to it."""
+    output = call_destination(builder, destination, PlanType.Int, span)?
+    mut path = "incan_native_runtime::frozen_list_length_ref"
+    if name == "FrozenSet":
+        path = "incan_native_runtime::frozen_set_length_ref"
+    elif name == "FrozenDict":
+        path = "incan_native_runtime::frozen_dict_length_ref"
+    return instantiated_external_call(builder, path, elements, [reference], PlanType.Int, [value], output, span)
+
+
 pub def lower_list_builtin(
     mut builder: Builder,
     arguments: &list[RustArgumentElement],
@@ -432,22 +451,14 @@ pub def lower_list_builtin(
             return Ok(None)
         PlanType.FrozenCollection(name, elements) =>
             value = borrow_frozen_argument(builder, arguments[0], span)?
-            output = call_destination(builder, destination, PlanType.Int, span)?
-            mut path = "incan_native_runtime::frozen_list_length_ref"
-            if name == "FrozenSet":
-                path = "incan_native_runtime::frozen_set_length_ref"
-            elif name == "FrozenDict":
-                path = "incan_native_runtime::frozen_dict_length_ref"
-            return instantiated_external_call(
-                builder,
-                path,
-                elements,
-                [frozen_reference_type(ty)?],
-                PlanType.Int,
-                [value],
-                output,
-                span,
-            )
+            return frozen_length(builder, name, elements, frozen_reference_type(ty)?, value, destination, span)
+        PlanType.FrozenCollectionRef(name, elements) =>
+            # A lent frozen parameter is already the reference the runtime reads.
+            match arguments[0].as_one():
+                Some(RustOperand.Place(read)) =>
+                    value = read_place(scalar_place(builder, read.place, span)?, false, span)
+                    return frozen_length(builder, name, elements, ty, value, destination, span)
+                _ => return Err("unsupported Body IR frozen reference length")
         _ => pass
     if ty == PlanType.FrozenBytes:
         match arguments[0].as_one():

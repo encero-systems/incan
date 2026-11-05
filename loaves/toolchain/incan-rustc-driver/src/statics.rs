@@ -63,7 +63,7 @@ fn guard_owned_result(
     visiting: &mut BTreeSet<(bool, i64)>,
     tcx: Option<TyCtxt<'_>>,
 ) -> bool {
-    if incan_mir_lowering::numeric_carrier(ty.clone()) {
+    if incan_mir_lowering::numeric_carrier(ty) {
         return true;
     }
     match ty {
