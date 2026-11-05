@@ -260,6 +260,23 @@ A live reader keeps what it is reading, past the policy if it has to. A saved po
 
 Ordinary writes reclaim released history a little at a time, so a store nobody maintains still stays within its policy. `store.compact()` is the vacuum: it reclaims all released history that no live reader holds, rewrites what remains in bounded memory, and reports what it did. Compression happens inside that rewrite; it is not a separate operation and it never changes a record's identity.
 
+### Let records age out
+
+History expires revisions that were replaced, but an event or a login session is often never replaced, so it would stay forever. A family can say how long its records last:
+
+```incan
+from std import db
+from std.datetime import Duration
+
+def keep_a_day_of_events(store: db.Store) -> Result[None, db.DbError]:
+    """Let each event age out a day after it was written."""
+    events = store.family[Event]("events", schema_version=1)?
+    events.set_retention(db.RecordRetention(expire_after=Some(Duration.days(1))))?
+    return Ok(None)
+```
+
+A write may set a different age for one record, such as `transaction.insert(sessions, session, expire_after=Duration.days(30))`. Writing a record again starts its age over. An expired record reads as deleted, and a consumer following changes sees its deletion, so nothing disappears silently.
+
 ### Connect typed families
 
 A publisher can declare a relationship from `Document` records to `Asset` records with an `AssetUse` payload. The relationship descriptor names both endpoint families, its payload schema and uniqueness constraints. Creating an edge with reversed or incompatible endpoints is rejected. Relationships have their own identities, so two different uses of one asset need not collapse into one edge.
@@ -306,6 +323,7 @@ The following are required concepts and proposed public names. Generic family an
 | `CommitReceipt`       | Transaction identity, prior and successor view revisions, changed roots and achieved durability.                     |
 | `Reservation`         | A coordinated, bounded allocation allowance for staging, admission or compaction, released when the operation ends.  |
 | `HistoryPolicy`       | How long a view keeps superseded revisions: `expire_after` and `keep_last`; either rule keeps a revision.            |
+| `RecordRetention`     | How long a family keeps its records: `expire_after`, counted from the current revision's write, and adjustable per write. |
 | `HistoryReport`       | A view's effective policy, oldest readable revision, readable revisions, history bytes and holders of released revisions. |
 | `CompactionReport`    | The revisions `compact()` removed, the bytes it reclaimed and each released revision it could not remove, with its holder. |
 | `RecordBatch[P]`      | RFC 169's batch type: here a bounded typed field projection from one pinned family snapshot, with explicit buffer ownership and continuation. |
@@ -422,11 +440,15 @@ Released means unavailable to new reads at once, whether or not its bytes have b
 
 Writes must reclaim released history incrementally, each within a bounded amount of work, so a store whose application never calls `compact()` holds no more than its policies keep and its live readers hold. `store.compact()` must reclaim all released history that no live reader holds and rewrite the remaining contents under the compaction rules below. It must return a `CompactionReport` with the revisions removed, the bytes reclaimed and each released revision it could not remove with its holder. A holder must never fail or block compaction. Compaction may compress what it rewrites under the store's storage profile. Compression is a storage encoding: it must not change a record or revision identity.
 
+### Record retention
+
+A family may declare `RecordRetention(expire_after)`, and a family without one must keep its records until they are deleted. `expire_after` must count from when a record's current revision was written, and a write may set a different value for that one record. Expiry must behave as a deletion: a tombstone appears, the record reads as `RecordState.Deleted`, and RFC 169's change streams deliver it as a deletion marked as an expiry. The replaced revision then follows the view's `HistoryPolicy`. Restarts and clock changes must not expire a record early, and a family's effective retention must be inspectable. Expiring records must take a bounded amount of work per write, so a store nobody maintains still stays within its policy.
+
 ### Retention, collection and compaction
 
 Reachability roots include published views, explicitly retained snapshots, live reader and mapped-view leases, the history each view's policy keeps, retained sealed sets and protected in-flight publication results. Root registration, publication and collection must share a race-free coordination protocol. Releasing a view must not collect bytes still reachable through another view, exact revision reference or live lease.
 
-Collection must derive eligibility from reachability and the view's history policy. Size caps, memory pressure or age outside that policy must not authorize deletion of reachable records. A resource limit may suspend work or return a typed resource error; it must not weaken integrity or retention silently.
+Collection must derive eligibility from reachability, the view's history policy and a family's record retention. Size caps, memory pressure or age outside those policies must not authorize deletion of reachable records. A resource limit may suspend work or return a typed resource error; it must not weaken integrity or retention silently.
 
 Operations that stage significant data must reserve their temporary allocation through shared store coordination. Reservations must identify their owner and ceiling, account for actual use, and be released or recovered after the owner ends. They are admission controls, not permission to evict protected data. A reservation does not promise that a filesystem cannot subsequently return an I/O or space error.
 
@@ -459,6 +481,7 @@ Inspection must expose capabilities, schemas, view and snapshot identities, inde
 | Concurrent preparation   | Competing writers serialize or conflict correctly; readers remain snapshot-consistent; retries do not duplicate a transaction.                                                                                                                  |
 | Scope and integrity      | Wrong-store handles, incompatible schemas, damaged pages and forced digest collisions fail distinctly without exposing unrelated data.                                                                                                          |
 | Fork and retention       | Forks share contents; edits remain isolated; leases protect selected roots during concurrent collection and compaction.                                                                                                                         |
+| Record retention | Records expire by family and per-write age, read as deleted, reach change streams as expiries, and survive restarts and clock changes without expiring early. |
 | History policy | Default, age-only, count-only, combined, current-only and never-expiring policies keep exactly the revisions they promise across restart. A released revision is unavailable before and after compaction and stays so when the policy is lengthened. A live reader keeps its revision and is reported as its holder; a saved position does not hold history and resumes with a gap. Memory and spooled-memory stores hold only the current revision by default. A store whose application never calls `compact()` stays within its policy under a sustained write load. |
 | Incremental publication  | Body, title, include, template, route, rename and deletion changes produce the same outputs as a clean recomputation, including one source rendered under multiple profiles and routes.                                                         |
 | Interactive experience   | A render reads one state snapshot; a draft fork cannot mutate the published view; stale cursors and absent-selection changes are detected; no callback or effect executes inside storage operations.                                            |
@@ -526,6 +549,7 @@ The standard library would acquire a long-lived storage-format and recovery comm
 - **Storage modes:** disk, temporary spooled-memory and memory modes preserve the same logical data contract. Spilling is not committing, and memory mode never silently spills.
 - **History:** retained historical snapshots remain coherent and readable; results can be stored against their original input snapshot. Reuse for newer inputs is a separate validation decision.
 - **History policy:** each view declares how long superseded revisions stay readable through `HistoryPolicy(expire_after, keep_last)`, where either rule keeps a revision. A disk store defaults to 24 hours; memory and spooled-memory stores default to the current revision only. Live readers hold what they read; saved positions hold nothing. Release is final and takes effect before reclamation.
+- **Record retention:** `RecordRetention(expire_after)` lets a family's records age out, because history only expires what was replaced, and an event or a session may never be replaced. A family has no retention unless it declares one.
 - **Pruning and vacuuming:** shortening the policy prunes. Writes reclaim released history incrementally, and `store.compact()` reclaims the rest and rewrites what remains in bounded memory, reporting what it removed and what live readers still hold. Compression is a storage encoding inside that rewrite.
 - **Crumb:** `std.primitives.crumb` owns typed encoding and reconstruction. `.crumble()` and `Model.from_crumb(...)` are the model-facing pair. The database owns indexing, transactions, physical sharing and retention.
 - **Representation freedom:** typed sharing in memory, inline scalar values and encoded field contents are valid physical choices. No raw native struct dump, compulsory eager serialization or universal zero-copy promise is adopted.
