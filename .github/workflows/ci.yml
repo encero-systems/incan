@@ -1,13 +1,16 @@
 name: CI
 
+# Full CI runs on main, on release branches and on the development line's pull request into main. Stacked PRs get
+# stack_checks.yml instead.
+
 # Steps that run `incan` install the pinned dev.8 release bundle (BUILD_TOOLCHAIN) with Rust 1.98.0 and rustc-dev
 # through .github/actions/install-build-toolchain (DD-0010); the job fails while no bundle is pinned for its host.
 
 on:
   push:
-    branches: [ main, '*.*.*-dev.*', release/** ]
+    branches: [main, release/**]
   pull_request:
-    branches: [ main, '*.*.*-dev.*', release/** ]
+    branches: [main, release/**]
   workflow_dispatch:
 
 concurrency:
