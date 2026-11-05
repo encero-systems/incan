@@ -9,7 +9,7 @@ incan inspect codegraph PATH [--profile NAME] [--format json|jsonl] [--strict] [
 incan inspect codegraph PATH --query KIND TERM [--profile NAME] [--limit N] [--format json|jsonl] [--strict] [--substitute NAME=DIR]...
 incan inspect codegraph PATH --task TASK [--profile NAME] [--budget N] [--format compact|json|jsonl] [--strict] [--risk] [--substitute NAME=DIR]...
 incan inspect codegraph PATH --stale SNAPSHOT [--profile NAME] [--strict] [--risk] [--substitute NAME=DIR]...
-incan mcp PATH
+incan mcp PATH [--profile NAME]
 ```
 
 | Argument | Type and default | Contract |
@@ -77,7 +77,7 @@ JSON is an array whose first element is the header, followed by nodes and then e
 
 ## MCP transport
 
-`incan mcp PATH` serves newline-delimited JSON-RPC 2.0 on stdin/stdout. Stdout contains protocol messages only; stderr carries inspection warnings. Requests run serially. The server advertises protocol version `2025-11-25`, tools and resources. Clients send `initialize`, then `notifications/initialized`, before using tools/resources. `ping` returns `{}`. Notifications receive no response. Closing stdin ends the session and discards its memory.
+`incan mcp PATH [--profile NAME]` serves newline-delimited JSON-RPC 2.0 on stdin/stdout. The profile defaults to `debug` and fixes the artifact profile for every request in the session. Stdout contains protocol messages only; stderr carries inspection warnings. Requests run serially. The server advertises protocol version `2025-11-25`, tools and resources. Clients send `initialize`, then `notifications/initialized`, before using tools/resources. `ping` returns `{}`. Notifications receive no response. Closing stdin ends the session and discards its memory.
 
 Malformed JSON returns `-32700`; an invalid envelope returns `-32600`; unknown methods return `-32601`; unknown tools return `-32602`; use before initialization returns `-32002`. Tool argument or execution errors return a successful JSON-RPC envelope containing `isError: true`. Successful calls contain one text content block and `isError: false`.
 

@@ -22,7 +22,7 @@ The dependency contract is declared in `loaves/toolchain/incan-lsp/loaf.toml`. T
 
 ```bash
 incan build loaves/toolchain/incan-lsp --profile release
-incan-lsp --version
+incan-lsp --profile release
 ```
 
-The executable is named `incan-lsp` in the Rust facet's release `bin` directory under the Loaf's `target` tree. Configure the editor to launch that binary over stdio.
+The executable is named `incan-lsp` in the Rust facet's release `bin` directory under the Loaf's `target` tree. Configure the editor to launch that binary over stdio. It selects debug-profile artifacts by default; pass `--profile release` for an installation that ships release-profile standard packages and native support only.

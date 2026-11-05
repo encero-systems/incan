@@ -4,37 +4,57 @@ from rust::std::io import Write, stdin, stdout
 from rust::std::string import String as RustString
 from std.fs import Path
 from std.json import JsonValue, parse
-from graph_inspection import graph_response, options, prepare_inspection
+from graph_inspection import graph_response, options as graph_options, prepare_inspection
 from graph_queries import display, nested, text
 from graph_memory import TaskMemory
 from home import TOOLCHAIN
-from cli_help import render, unknown_option
+from cli_help import render
 
-pub const USAGE: str = "incan mcp PATH"
+pub const USAGE: str = "incan mcp PATH [--profile NAME]"
+
+
+pub model McpOptions:
+    """One fixed project and artifact profile for an MCP server session."""
+
+    pub path: Path
+    pub profile: str = "debug"
 
 
 pub def help_text() -> str:
     """Describe the stdio graph server before opening its project or transport."""
-    return render(USAGE, [], "incan mcp .")
+    return render(USAGE, ["  --profile NAME  Select the artifact profile (default debug)."], "incan mcp .")
 
 
-pub def parse_path(arguments: list[str]) -> Result[Path, str]:
-    """Require one path and refuse every option before reading the project."""
-    match unknown_option(arguments):
-        Some(reason) => return Err(reason)
-        None => pass
-    if len(arguments) != 1:
+pub def options(arguments: list[str]) -> Result[McpOptions, str]:
+    """Require one path and accept one artifact profile before reading the project."""
+    mut selected = McpOptions(path=Path(""))
+    mut index = 0
+    while index < len(arguments):
+        value = arguments[index]
+        if value == "--profile":
+            if index + 1 >= len(arguments):
+                return Err("--profile needs a value")
+            selected.profile = arguments[index + 1]
+            index += 2
+        elif value.startswith("-"):
+            return Err(f"unknown option `{value}`")
+        elif selected.path.0 != "":
+            return Err(f"unexpected argument `{value}`")
+        else:
+            selected.path = Path(value)
+            index += 1
+    if selected.path.0 == "":
         return Err("one PATH is required")
-    return Ok(Path(arguments[0]))
+    return Ok(selected)
 
 
-pub def serve_graph(selected: Path) -> Result[i32, str]:
+pub def serve_graph(selected: McpOptions) -> Result[i32, str]:
     """Serve one project: 1. Validate selection. 2. Read requests. 3. Flush protocol-only replies."""
     # 1. Validate the fixed project selection.
-    root = selected.resolve().map_err((error) => error.message())?
+    root = selected.path.resolve().map_err((error) => error.message())?
     if not root.is_file() and not root.is_dir():
         return Err("MCP PATH does not exist")
-    mut server = GraphServer(root=root.0)
+    mut server = GraphServer(root=root.0, profile=selected.profile)
     # 2. Read requests serially.
     # Explicit reads avoid the native Lines iterator's ownership refusal tracked under #2256.
     input = stdin()
@@ -64,6 +84,7 @@ model GraphServer:
     """Session protocol state; graph truth always comes from a current inspection, never retained request output."""
 
     root: str
+    profile: str
     initialized: bool = false
     ready: bool = false
     memory: TaskMemory = TaskMemory()
@@ -115,7 +136,7 @@ model GraphServer:
     def call(mut self, name: str, arguments: JsonValue) -> Result[str, str]:
         """Share CLI retrieval, ranking and freshness; arguments cannot change this server's selected project."""
         validate_arguments(name, arguments)?
-        mut command = ["codegraph", self.root]
+        mut command = self.graph_command()
         if name in ["context_for_task", "context_for_declaration"]:
             mut task = text(arguments, "task")
             if name == "context_for_declaration":
@@ -123,7 +144,7 @@ model GraphServer:
             if task.strip() == "":
                 return Err("a nonempty task or declaration is required")
             budget = nested(arguments, "budget").expect_int().map_err((_) => "budget must be an integer")?
-            prepared = prepare_inspection(options(
+            prepared = prepare_inspection(graph_options(
                 command + ["--task", task, "--budget", str(budget), "--format", "compact"],
             )?)?
             return prepared.respond(self.memory.preferences(task, prepared.snapshot()?))
@@ -149,12 +170,12 @@ model GraphServer:
 
     def current_snapshot(self) -> Result[str, str]:
         """Refresh current source inputs without decoding the full graph just to compare a retained snapshot."""
-        status = graph_response(["codegraph", self.root, "--stale", "snapshot:probe"])?
+        status = graph_response(self.graph_command() + ["--stale", "snapshot:probe"])?
         return Ok(text(parse(status).map_err((error) => error.message())?, "snapshot_id"))
 
     def record_feedback(mut self, arguments: JsonValue) -> Result[str, str]:
         """Accept explicit feedback only for a declaration proved in the client's still-current graph snapshot."""
-        prepared = prepare_inspection(options(["codegraph", self.root, "--format", "json"])?)?
+        prepared = prepare_inspection(graph_options(self.graph_command() + ["--format", "json"])?)?
         snapshot = prepared.snapshot()?
         if text(arguments, "snapshot") != snapshot:
             return Err("feedback snapshot is stale; read the current graph summary")
@@ -176,7 +197,7 @@ model GraphServer:
 
     def summary(self) -> Result[str, str]:
         """Expose record counts, language/package context, degraded state and the current snapshot."""
-        document = graph_response(["codegraph", self.root, "--format", "json"])?
+        document = graph_response(self.graph_command() + ["--format", "json"])?
         records = parse_records(document)?
         mut counts: Dict[str, JsonValue] = {}
         for record in records:
@@ -194,6 +215,10 @@ model GraphServer:
             },
         )
         return summary.to_json().map_err((error) => error.message())
+
+    def graph_command(self) -> list[str]:
+        """Return the fixed source and profile selection shared by every request in this session."""
+        return ["codegraph", self.root, "--profile", self.profile]
 
     def read_resource(self, identifier: JsonValue, uri: str) -> JsonValue:
         """Read orientation resources without granting feedback, reindexing or execution authority."""

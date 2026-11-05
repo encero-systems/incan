@@ -19,7 +19,7 @@ pub def repository_above(start: Path) -> Result[Path, str]:
     """Find a checkout above an absolute directory, refusing a root without one instead of cycling path spellings."""
     if not RustPath.new(start.0).is_absolute():
         return Err(f"cannot find repository above a relative path: {start.0}")
-    mut directory = start
+    mut directory = start.clone()
     while true:
         if directory.joinpath("AGENTS.md").is_file() and directory.joinpath("scripts/check_support.incn").is_file():
             return Ok(directory)

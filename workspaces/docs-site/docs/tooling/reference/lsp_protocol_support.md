@@ -1,6 +1,6 @@
 # LSP protocol support
 
-This page lists the Language Server Protocol methods `incan-lsp` serves and what each returns. The server communicates over stdio and identifies itself as `incan-lsp` with its version.
+This page lists the Language Server Protocol methods `incan-lsp` serves and what each returns. `incan-lsp [--profile NAME]` communicates over stdio and identifies itself as `incan-lsp` with its version. The profile is a string, defaults to `debug`, and selects the standard-package and native-support artifacts for every document analyzed during that server process.
 
 ## Methods
 
