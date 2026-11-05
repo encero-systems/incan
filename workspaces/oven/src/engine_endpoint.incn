@@ -16,8 +16,8 @@ from owner_endpoint import bindable, prepare_directory, socket_prefix
 from unit_freshness import fingerprint
 
 const STARTUP_POLLS: int = 2500
-# A loaded host can hold either side of the handshake for seconds. The bound only delays refusing a stuck peer.
-pub const HANDSHAKE_SECONDS: u64 = 30
+# A handshake that has not completed in five seconds is a stuck peer, not engine work to wait for.
+pub const HANDSHAKE_SECONDS: u64 = 5
 
 
 pub model ServiceEndpoint:

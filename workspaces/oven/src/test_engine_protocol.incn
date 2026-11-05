@@ -16,7 +16,7 @@ from segment_store import snapshot, compact
 from engine_proofs import report
 from std.json import JsonValue, parse
 from rust::std::process import Child, Command
-from pub::incan_platform.ipc import dial, listen
+from pub::incan_platform.ipc import Connection, dial, listen
 from engine_endpoint import endpoint, handshake, owner_uid, connect_with
 from observation import observe
 from toolchain import load_toolchain, toolchain_directory
@@ -671,7 +671,9 @@ def process_lifecycle() -> Result[None, str]:
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
     mut first = launch_service(binary, root, identity)?
     mut second = launch_service(binary, root, identity)?
+    mut silent = await_connection(root, identity)?
     mut channel = await_service(root, identity)?
+    silent.close()?
     peer = channel.transport.peer()?
     assert peer.pid == Some(first.pid()) or peer.pid == Some(second.pid())
     mut first_done = false
@@ -891,10 +893,15 @@ def launch_service(binary: str, root: Path, identity: Identity) -> Result[Proces
 
 def await_service(root: Path, identity: Identity) -> Result[Channel, str]:
     """Wait for one of the two starters' endpoints, without starting a third process."""
+    return handshake(Channel(transport=await_connection(root, identity)?), identity).map_err(detail)
+
+
+def await_connection(root: Path, identity: Identity) -> Result[Connection, str]:
+    """Wait for a transport to one of the two starters, without beginning its engine handshake."""
     selected = endpoint(root, identity).map_err(detail)?
     for _poll in range(2500):
         match dial(selected.socket):
-            Ok(transport) => return handshake(Channel(transport=transport), identity).map_err(detail)
+            Ok(transport) => return Ok(transport)
             Err(_) => sleep(Duration.from_millis(2))
     return Err("test engine did not start")
 
