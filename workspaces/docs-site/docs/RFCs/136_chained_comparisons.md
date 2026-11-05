@@ -7,7 +7,7 @@
     - RFC 000 (expressions and comparison operators)
     - RFC 028 (operator overloading)
     - RFC 068 (membership and identity syntax)
-    - RFC 110 (proposed comparison traits)
+    - RFC 110 (three-way comparison)
     - RFC 111 (proof-aware contracts)
     - RFC 135 (Option defaults using existing `or` precedence)
 - **Issue:** [#2465](https://github.com/encero-systems/incan/issues/2465)
@@ -215,7 +215,7 @@ For pure values, `a < b < c` has the truth condition of `a < b and b < c`. For a
 
 ### Comparison traits remain independent
 
-RFC 028 and any accepted comparison-trait extensions determine how a pair is compared. This RFC controls how multiple pairwise comparisons compose. It does not require RFC 110's proposed `Comparable` trait and must not bypass existing overload resolution.
+RFC 028 and any accepted comparison-trait extensions determine how a pair is compared. This RFC controls how multiple pairwise comparisons compose. It relies on RFC 110 only through the operators a type provides, and must not bypass existing overload resolution.
 
 Refactoring `value >= start` into `start <= value` assumes those two operators express inverse relationships for the selected types. That holds for ordinary consistent ordering, but chaining does not establish it for arbitrary user-defined hooks. Tooling must not reverse an overloaded comparison merely to produce a visually ascending chain unless the equivalence is known.
 
