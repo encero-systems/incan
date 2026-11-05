@@ -3,6 +3,7 @@
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::surface::constructors::{self, ConstructorId};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
+use incan_semantics_core::CanonicalSymbolId;
 use std::collections::BTreeSet;
 
 use crate::error::PlanError;
@@ -117,6 +118,8 @@ enum Scalar {
     FrozenCollection(String, Vec<Scalar>),
     FrozenCollectionRef(String, Vec<Scalar>),
     TypeToken(Vec<Scalar>),
+    /// Canonical source trait identity carried only inside a type token.
+    Trait(CanonicalSymbolId),
     StaticText,
     StaticBytes,
     ValidationError,
@@ -316,6 +319,7 @@ fn scalar(ty: &PlanType) -> Scalar {
             Scalar::FrozenCollectionRef(name.clone(), elements.iter().map(scalar).collect())
         }
         PlanType::TypeToken(elements) => Scalar::TypeToken(elements.iter().map(scalar).collect()),
+        PlanType::Trait(identity) => Scalar::Trait(identity.clone()),
         PlanType::StaticBytes => Scalar::StaticBytes,
         PlanType::StaticText => Scalar::StaticText,
         PlanType::StringRef => Scalar::StringRef,

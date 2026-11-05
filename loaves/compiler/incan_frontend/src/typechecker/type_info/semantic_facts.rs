@@ -497,6 +497,7 @@ pub fn semantic_type_from_resolved(ty: &ResolvedType) -> IncanType {
         },
         ResolvedType::Unit => IncanType::Primitive(IncanPrimitiveType::Unit),
         ResolvedType::Named(name) => IncanType::Named(name.clone()),
+        ResolvedType::Trait(identity) => IncanType::Trait(identity.clone()),
         ResolvedType::Generic(base, args) if collection_types::from_str(base) == Some(CollectionTypeId::Tuple) => {
             IncanType::Tuple(args.iter().map(semantic_type_from_resolved).collect())
         }

@@ -656,9 +656,9 @@ impl TypeChecker {
             }
             ResolvedType::FrozenList(inner)
             | ResolvedType::FrozenSet(inner)
-            | ResolvedType::TypeToken(inner)
             | ResolvedType::Ref(inner)
             | ResolvedType::RefMut(inner) => self.stored_trait_annotation(inner),
+            ResolvedType::TypeToken(_) => None,
             ResolvedType::FrozenDict(key, value) => self
                 .stored_trait_annotation(key)
                 .or_else(|| self.stored_trait_annotation(value)),
@@ -678,6 +678,7 @@ impl TypeChecker {
             | ResolvedType::FrozenBytes
             | ResolvedType::Unit
             | ResolvedType::Named(_)
+            | ResolvedType::Trait(_)
             | ResolvedType::TypeVar(_)
             | ResolvedType::SelfType
             | ResolvedType::RustPath(_)

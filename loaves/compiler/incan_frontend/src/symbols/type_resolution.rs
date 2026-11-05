@@ -173,9 +173,17 @@ where
         return ResolvedType::RustPath(format!("{}<{rendered_args}>", info.path));
     }
     if name == "Type" {
-        return ResolvedType::TypeToken(Box::new(
-            resolved_args.first().cloned().unwrap_or(ResolvedType::Unknown),
-        ));
+        let represented = resolved_args.first().cloned().unwrap_or(ResolvedType::Unknown);
+        let represented = match &represented {
+            ResolvedType::Named(name) => symbols
+                .module_type_identity(name)
+                .filter(|identity| identity.kind == SemanticSourceTargetKind::Trait)
+                .cloned()
+                .map(ResolvedType::Trait)
+                .unwrap_or(represented),
+            _ => represented,
+        };
+        return ResolvedType::TypeToken(Box::new(represented));
     }
     if let Some(id) = collections::from_str(name) {
         return ResolvedType::builtin_generic(id, resolved_args);
@@ -285,6 +293,7 @@ pub fn render_resolved_type_as_rust_arg(ty: &ResolvedType) -> String {
         ResolvedType::Named(name) => name
             .strip_prefix("pub::")
             .map_or_else(|| name.clone(), ToString::to_string),
+        ResolvedType::Trait(identity) => identity.declaration_name.clone(),
         ResolvedType::TypeVar(name) => name.clone(),
         ResolvedType::Generic(name, args) => {
             if collections::from_str(name.as_str()) == Some(CollectionTypeId::Tuple) {

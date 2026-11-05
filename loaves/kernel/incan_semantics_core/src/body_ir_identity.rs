@@ -266,6 +266,7 @@ fn is_owner_bound_type(ty: &IncanType, parameters: &[String]) -> bool {
         IncanType::Never
         | IncanType::Primitive(_)
         | IncanType::Named(_)
+        | IncanType::Trait(_)
         | IncanType::Decimal { .. }
         | IncanType::RustInteropPath(_)
         | IncanType::NativeTraitObject { .. }

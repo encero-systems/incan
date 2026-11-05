@@ -129,6 +129,11 @@ pub enum ResolvedType {
     Unit,
     /// Named type (class, model, newtype, enum)
     Named(String),
+    /// Canonical checked trait identity retained only as the represented type of a [`Self::TypeToken`].
+    ///
+    /// A trait has no standalone value or storage representation. Keeping its declaration identity here prevents
+    /// aliases, facades and compiled-package imports from being re-resolved by their local spelling after checking.
+    Trait(incan_semantics_core::CanonicalSymbolId),
     /// Generic type with arguments
     Generic(String, Vec<ResolvedType>),
     /// Function type, including rest-parameter shape when known.
@@ -399,6 +404,7 @@ impl std::fmt::Display for DisplayType<'_> {
             }
             ResolvedType::Unit => write!(f, "Unit"),
             ResolvedType::Named(name) => write_type_name(f, name, self.style),
+            ResolvedType::Trait(identity) => write_type_name(f, &identity.declaration_name, self.style),
             ResolvedType::Generic(name, args) => {
                 write_type_name(f, name, self.style)?;
                 write!(f, "[")?;

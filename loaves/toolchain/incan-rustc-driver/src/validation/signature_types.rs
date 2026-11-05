@@ -60,7 +60,8 @@ pub(super) fn source_signature_type(ty: &Scalar) -> bool {
         return *length >= 0 && matches!(elements.as_slice(), [element] if source_signature_type(element));
     }
     if let Scalar::TypeToken(elements) = ty {
-        return matches!(elements.as_slice(), [element] if source_signature_type(element));
+        return matches!(elements.as_slice(), [Scalar::Trait(_)])
+            || matches!(elements.as_slice(), [element] if source_signature_type(element));
     }
     if let Scalar::SliceRef(elements) | Scalar::SliceMutRef(elements) = ty {
         return matches!(elements.as_slice(), [element] if source_signature_type(element));

@@ -252,6 +252,7 @@ impl TypeChecker {
             | ResolvedType::FrozenStr
             | ResolvedType::FrozenBytes
             | ResolvedType::Unit
+            | ResolvedType::Trait(_)
             | ResolvedType::TypeVar(_)
             | ResolvedType::SelfType
             | ResolvedType::RustPath(_)

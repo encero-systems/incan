@@ -1,10 +1,14 @@
-# behavior: type tokens refuse comparison, hashing, serialization, pattern matching, field and method access, and overloads whose transparent aliases normalize to one token key are duplicate declarations (#1033)
+# behavior: primitive and trait type tokens refuse comparison, hashing, serialization, pattern matching, field and method access; bare traits remain compile-time names; and overloads whose transparent aliases normalize to one token key are duplicate declarations (#1033)
 # expect-diagnostic: INCAN-T0001
 
 type Count = int
 
 
 type Total = Count
+
+
+trait Renderable:
+    def render(self) -> str: ...
 
 
 def choose(value: Type[Count]) -> str:
@@ -26,6 +30,18 @@ def refuse_operations(token: Type[int]) -> None:
     println(token.__class_name__())
 
 
+def refuse_trait_operations(token: Type[Renderable]) -> None:
+    println(token == token)
+    traits: set[Type[Renderable]] = {Renderable}
+    println(json_stringify(token))
+    match token:
+        _ => pass
+    println(token.value)
+    println(token.render())
+
+
 def main() -> None:
     refuse_operations(int)
+    refuse_trait_operations(Renderable)
+    println(Renderable)
     println(choose(int))

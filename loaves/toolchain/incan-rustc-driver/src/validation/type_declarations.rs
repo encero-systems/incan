@@ -157,6 +157,21 @@ pub(super) fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), Plan
             reason: "a TypeToken must retain exactly one represented type".into(),
         });
     }
+    if let PlanType::Trait(identity) = ty
+        && (identity.kind != incan_semantics_core::SemanticSourceTargetKind::Trait
+            || identity.namespace != incan_semantics_core::SymbolNamespace::OrdinaryLexical
+            || identity.scope_discriminant.is_some()
+            || identity.declaration_name.is_empty()
+            || !matches!(
+                &identity.origin,
+                incan_semantics_core::SymbolOrigin::Module(_) | incan_semantics_core::SymbolOrigin::Package { .. }
+            ))
+    {
+        return Err(PlanError::Invalid {
+            function: "trait token".into(),
+            reason: "invalid canonical source trait identity".into(),
+        });
+    }
 
     validate_nested_carrier_components(plan, ty)?;
     validate_retained_type_declaration(plan, ty)

@@ -90,6 +90,7 @@ impl TypeChecker {
             ResolvedType::Ref(_)
             | ResolvedType::RefMut(_)
             | ResolvedType::TypeToken(_)
+            | ResolvedType::Trait(_)
             | ResolvedType::Function(_, _)
             | ResolvedType::SelfType => true,
             ResolvedType::TypeVar(name) => self.active_type_param_has_builtin_bound(name, TraitId::Clone),

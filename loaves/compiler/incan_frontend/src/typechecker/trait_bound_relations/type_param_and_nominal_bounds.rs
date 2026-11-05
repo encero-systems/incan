@@ -263,6 +263,7 @@ impl TypeChecker {
             | ResolvedType::Unknown
             | ResolvedType::TypeVar(_)
             | ResolvedType::RustPath(_)
+            | ResolvedType::Trait(_)
             | ResolvedType::CallSiteInfer => true,
             ResolvedType::Named(type_name) => {
                 if self.lookup_semantic_trait_info(type_name).is_some() {
@@ -313,6 +314,7 @@ impl TypeChecker {
             | ResolvedType::Unknown
             | ResolvedType::TypeVar(_)
             | ResolvedType::RustPath(_)
+            | ResolvedType::Trait(_)
             | ResolvedType::CallSiteInfer => true,
             ResolvedType::Named(type_name) => {
                 self.type_implements_trait_with_args(type_name, &[], bound_trait, expected_args)

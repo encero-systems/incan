@@ -44,6 +44,9 @@ pub fn type_ref_from_resolved(ty: &ResolvedType) -> TypeRef {
         // A module-qualified union member publishes under its declaration name, the name the publication binds to its
         // checked declaration (#1796).
         ResolvedType::Named(name) => named_type_ref(published_nominal_name(name)),
+        ResolvedType::Trait(identity) => TypeRef::Trait {
+            identity: identity.clone(),
+        },
         ResolvedType::Generic(name, args) => TypeRef::Applied {
             origin: None,
             name: published_nominal_name(name),
@@ -128,6 +131,7 @@ pub fn resolved_type_from_manifest_type_ref(ty: &TypeRef) -> ResolvedType {
             Box::new(resolved_type_from_manifest_type_ref(return_type)),
         ),
         TypeRef::TypeToken { inner } => ResolvedType::TypeToken(Box::new(resolved_type_from_manifest_type_ref(inner))),
+        TypeRef::Trait { identity } => ResolvedType::Trait(identity.clone()),
         TypeRef::Tuple { elements } => {
             ResolvedType::Tuple(elements.iter().map(resolved_type_from_manifest_type_ref).collect())
         }

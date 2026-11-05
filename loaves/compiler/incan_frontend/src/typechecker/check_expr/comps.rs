@@ -43,6 +43,7 @@ impl TypeChecker {
             | ResolvedType::FrozenBytes
             | ResolvedType::Unit
             | ResolvedType::Named(_)
+            | ResolvedType::Trait(_)
             | ResolvedType::SelfType
             | ResolvedType::RustPath(_)
             | ResolvedType::CallSiteInfer

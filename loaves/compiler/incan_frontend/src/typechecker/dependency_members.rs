@@ -340,7 +340,12 @@ impl TypeChecker {
                 _ => None,
             })
             .filter_map(|import| match &import.kind {
-                ImportKind::From { module, items } => Some((module, items.as_slice())),
+                ImportKind::From { module, items } => Some((module.clone(), items.as_slice())),
+                ImportKind::PubFrom { library, path, items } => {
+                    let mut segments = vec![PUBLIC_LIBRARY_NAMESPACE.to_owned(), library.clone()];
+                    segments.extend(path.iter().cloned());
+                    Some((ImportPath::simple(segments), items.as_slice()))
+                }
                 _ => None,
             })
             .flat_map(|(module, items)| {

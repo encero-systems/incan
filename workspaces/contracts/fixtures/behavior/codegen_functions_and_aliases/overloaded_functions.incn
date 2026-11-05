@@ -1,4 +1,4 @@
-# behavior: overloads select by ordinary values, explicit constrained type arguments and value-position type tokens; selected return types stay precise through aliases, and primitive, model, enum, transparent-alias, constrained-scalar and newtype tokens can be passed, returned and collected under explicit Type[T] context (#1033)
+# behavior: overloads select by ordinary values, explicit constrained type arguments and value-position type tokens; selected return types stay precise through aliases, and primitive, model, enum, trait, transparent-alias, constrained-scalar and newtype tokens can be passed, returned and collected under explicit Type[T] context (#1033)
 # expect-stdout:
 #   2
 #   a!
@@ -13,6 +13,8 @@
 #   count
 #   positive
 #   user id
+#   trait
+#   trait token
 
 pub def convert(value: int) -> int:
     return value + 1
@@ -41,6 +43,10 @@ model Schema:
 enum Flavor:
     Vanilla
     Chocolate
+
+
+trait Renderable:
+    def render(self) -> str: ...
 
 
 type Count = int
@@ -106,6 +112,21 @@ def user_id_token(value: Type[UserId]) -> str:
     return "user id"
 
 
+def source_kind(value: Type[Schema]) -> str:
+    return "model"
+
+
+def source_kind(value: Type[Renderable]) -> str:
+    return "trait"
+
+
+safe_source_kind = alias source_kind
+
+
+def return_renderable_token() -> Type[Renderable]:
+    return Renderable
+
+
 def main() -> None:
     println(convert(1))
     println(convert("a"))
@@ -121,3 +142,6 @@ def main() -> None:
     println(count_token(int))
     println(positive_token(Positive))
     println(user_id_token(UserId))
+    println(source_kind(Renderable))
+    traits: list[Type[Renderable]] = [Renderable, return_renderable_token()]
+    println(safe_source_kind(traits[1]) + " token")

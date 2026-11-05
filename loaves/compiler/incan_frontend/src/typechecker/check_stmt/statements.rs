@@ -124,9 +124,8 @@ impl TypeChecker {
             ResolvedType::FrozenDict(key, value) => self
                 .find_trait_type(key, true)
                 .or_else(|| self.find_trait_type(value, true)),
-            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) | ResolvedType::TypeToken(inner) => {
-                self.find_trait_type(inner, nested)
-            }
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.find_trait_type(inner, nested),
+            ResolvedType::TypeToken(inner) => self.find_trait_type(inner, false),
             _ => None,
         }
     }

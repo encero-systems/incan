@@ -63,6 +63,7 @@ fn transform_resolved_type(
     type_params: &[String],
 ) -> Result<(), String> {
     match ty {
+        ResolvedType::Trait(_) => Ok(()),
         ResolvedType::FrozenList(inner)
         | ResolvedType::FrozenSet(inner)
         | ResolvedType::TypeToken(inner)
@@ -310,6 +311,7 @@ fn collect_resolved_type_roots(
     roots: &mut BTreeSet<String>,
 ) -> Result<(), String> {
     match ty {
+        ResolvedType::Trait(_) => Ok(()),
         ResolvedType::FrozenList(inner)
         | ResolvedType::FrozenSet(inner)
         | ResolvedType::TypeToken(inner)
