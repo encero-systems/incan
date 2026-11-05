@@ -63,7 +63,7 @@ This feature also matters for agent workflows. Agents can already make broad ref
 - Support text output for humans and stable JSON output for tools, agents, editors, and CI.
 - Make suppression and baselining part of the product model so mature codebases can adopt the command incrementally.
 - Define a metadata and fact-model path for project-specific peer context, including peer-group hierarchy, declared boundary constraints, exceptions, and membership provenance.
-- Reserve an explicit experimental profile for explainable peer-baseline outliers once the required facts, calibration fixtures, and versioned baseline contract exist.
+- Provide an explicit experimental profile for explainable peer-baseline outliers, built on the same facts and the same reviewed baseline artifact.
 
 ## Non-Goals
 
@@ -459,7 +459,7 @@ The report layer should be shared by all rules. Sorting, de-duplication, JSON se
 
 The rule set should be small and calibrated rather than a large catalog. New rules should be added only when they have clear positive fixtures, negative fixtures, and calibration evidence from real source.
 
-Experimental peer-baseline analysis is a consumer of the same fact and query layers. It may construct explainable signatures and compare declared or derived peer groups, but it must remain outside the deterministic rule path until its calibration, storage, and user-facing contract are independently settled.
+Experimental peer-baseline analysis is a consumer of the same fact and query layers. It may construct explainable signatures and compare declared or derived peer groups, and it stays outside the deterministic rule path.
 
 ## Layers affected
 
@@ -481,6 +481,7 @@ Experimental peer-baseline analysis is a consumer of the same fact and query lay
 - Clippy information and capabilities may support Rust analysis through the selected frontend path, preserving tool/source provenance, configuration and honest coverage. This neither duplicates local lint ownership nor introduces Cargo mode.
 - Accepted baselines are separate versioned review artifacts carrying scope, source/graph identity, reasons and retirement records. Ordinary scans never approve or rewrite them. Authored peer intent belongs in checked metadata; observations and caches do not redefine it.
 - Peer signatures expose versioned components with explicit evidence tiers. Checked declaration/type/call/body/ownership facts, declared roles and weak naming/path hints remain distinguishable; unknown resolution and similarity do not become semantic authority.
+- Peer-baseline outliers run only under `--profile experimental`, are advisory and never fail CI by default. Snapshots use the same reviewed baseline artifact as other findings. Calibrating what counts as an outlier is implementation work, as it is for risk rules.
 - Rule applicability names required languages and frontend fact capabilities. Missing required facts disable the affected evaluation with a coverage diagnostic rather than a low-confidence guess.
 - RFC 118's no-Cargo boundary applies. Direct-source analysis and the Oven-selected Loaf graph remain the supported authorities; no separate Cargo project discovery mode is introduced.
 - Selecting and calibrating concrete risk rules is implementation work. The evidence and coverage requirements remain binding; missing inputs are not zero risk.
