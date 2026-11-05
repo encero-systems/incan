@@ -244,6 +244,8 @@ def input_protocol_controls() -> Result[None, str]:
         ("def fresh() -> int:\n    value: Owned[int] = 3\n    return value\n", "fresh"),
         ("def copy(value: Owned[int]) -> int:\n    first: Owned[int] = value\n    second: Owned[int] = first\n    return second\n", "copy"),
         ("def transfer(value: Owned[str]) -> int:\n    retained: Owned[str] = value\n    return len(retained)\n", "transfer"),
+        ("def view(value: Borrowed[str]) -> Borrowed[str] from value:\n    return value\ndef use(value: Borrowed[str]) -> int:\n    retained = view(value)\n    values = [retained]\n    return len(values)\n", "use"),
+        ("def width(value: Borrowed[str]) -> Owned[int] from value:\n    return len(value)\ndef use(value: Borrowed[str]) -> int:\n    retained = width(value)\n    return retained\n", "use"),
     ]
     for source, owner in cases:
         moved = "# ownership anchors moved\n" + source
@@ -410,7 +412,7 @@ def input_field_refusals(record: CheckedRecord, field: CanonicalField) -> Result
 
 def owned_initializer_grammar(record: CheckedRecord) -> Result[None, str]:
     """Owned destinations keep exact initializer links; malformed checked links cannot cross the codec."""
-    prefix = ["1", "checked", "owner", "0", "0", "0", "0"]
+    prefix = ["1", "checked", "owner", "0", "0", "0", "0", "0", "0"]
     suffix = ["0", "0", "0", "1", "nothing", "0", "node"]
     first = ["a", "initializer-a", "none", "none"]
     second = ["b", "initializer-b", "none", "none"]
@@ -454,7 +456,7 @@ def operation_dependency_grammar(record: CheckedRecord) -> Result[None, str]:
     # One shared loan; its borrower remains live through the operation's completion and final read.
     place = ["binding", "source", "0"]
     mut prefix = ["1", "checked", "owner", "0", "1", "binding", "source", "false", "false", "false"]
-    prefix += ["1"] + place + ["shared", "false", "none", "loan-anchor", "1", "alias", "0", "0"]
+    prefix += ["1"] + place + ["shared", "false", "none", "loan-anchor", "1", "alias", "0", "0", "0", "0"]
     operand = ["operand-anchor"] + place + ["0", "2"]
     operation = ["operation-anchor", "1", "1"] + operand
     mut suffix = ["0", "0", "3", "borrow", "0", "1", "1", "loan-anchor"]
@@ -502,11 +504,11 @@ def operation_dependency_grammar(record: CheckedRecord) -> Result[None, str]:
 def input_graph_refusals(record: CheckedRecord) -> Result[None, str]:
     """Checked indices are bounded; an explicitly invalid graph retains its fault instead of acquiring authority."""
     # One no-op node, no storage permissions, loans, local destinations, operations, invocations or closures.
-    graph = ["owner", "0", "0", "0", "0", "0", "0", "0", "0", "1", "nothing", "0", "node"]
+    graph = ["owner", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "1", "nothing", "0", "node"]
     malformed = [
         ["1", "checked", "owner", "1"] + graph[2:],
-        ["1", "checked"] + graph[:10] + ["borrow", "0", "0", "node"],
-        ["1", "checked"] + graph[:11] + ["1", "1", "node"],
+        ["1", "checked"] + graph[:12] + ["borrow", "0", "0", "node"],
+        ["1", "checked"] + graph[:13] + ["1", "1", "node"],
         ["1", "checked", "owner", "00"] + graph[2:],
     ]
     for values in malformed:
@@ -573,9 +575,9 @@ def input_record(rows: list[list[str]], owner: str) -> Result[CheckedRecord, str
 def invocation_evaluation_grammar(record: CheckedRecord) -> Result[None, str]:
     """Keep exact argument evaluation, source access, completion and final loan-use indices."""
     place = ["binding", "source", "0"]
-    prefix = ["1", "checked", "owner", "0", "1", "binding", "source", "true", "true", "true", "0", "0", "0", "0", "1"]
+    prefix = ["1", "checked", "owner", "0", "1", "binding", "source", "true", "true", "true", "0", "0", "0", "0", "0", "0", "1"]
     argument = ["argument", "0", "0", "owned", "none", "some"] + place
-    call = ["call", "callee", "none", "1"] + argument
+    call = ["call", "callee", "none", "false", "none", "1"] + argument
     mut nodes = ["0", "5", "nothing", "1", "1", "owner", "nothing", "1", "2", "argument", "access"]
     nodes += place + ["move", "none", "1", "3", "argument", "nothing", "1", "4", "argument", "nothing", "0", "call"]
     valid = prefix + call + ["1", "3", "some", "2", "none", "4", "0"] + nodes
@@ -636,8 +638,8 @@ def invocation_receiver_grammar(record: CheckedRecord) -> Result[None, str]:
     # Canonical map framing sorts the six-byte source key before the eight-byte receiver key.
     values += ["binding", "source", "false", "false", "false", "binding", "receiver", "false", "false", "false"]
     values += ["2"] + receiver + ["shared", "false", "none", "receiver"]
-    values += source + ["shared", "false", "none", "argument", "0", "0", "0", "1"]
-    values += ["call", "callee", "some", "0", "1", "argument", "0", "0", "shared", "some", "1", "some"] + source
+    values += source + ["shared", "false", "none", "argument", "0", "0", "0", "0", "0", "1"]
+    values += ["call", "callee", "some", "0", "false", "none", "1", "argument", "0", "0", "shared", "some", "1", "some"] + source
     values += ["4", "6", "some", "5", "some", "1", "3", "some", "2", "7", "2", "8", "9", "0", "10"]
     values += ["nothing", "1", "1", "owner", "nothing", "1", "2", "receiver", "borrow", "0", "1", "3", "receiver"]
     values += ["nothing", "1", "4", "receiver", "nothing", "1", "5", "argument", "borrow", "1", "1", "6", "argument"]
@@ -662,7 +664,7 @@ def closure_capture_grammar(record: CheckedRecord) -> Result[None, str]:
     """A closure bound to a local keeps its captures, its loan and the bounded nodes reading its Copy captures."""
     # One permission, no loans or other inventories, and one closure whose one Copy capture node 1 reads.
     mut prefix = ["1", "checked", "owner", "0", "1", "binding", "source", "false", "false", "false"]
-    prefix += ["0", "0", "0", "0", "0"]
+    prefix += ["0", "0", "0", "0", "0", "0", "0"]
     closure = ["closure-anchor", "add", "1", "source", "none", "1", "1"]
     mut nodes = ["2", "nothing", "1", "1", "owner", "access", "binding", "source", "0", "read", "none"]
     nodes += ["0", "closure-anchor"]

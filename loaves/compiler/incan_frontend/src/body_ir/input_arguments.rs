@@ -65,18 +65,48 @@ impl BodyBuilder<'_, '_> {
                 .receiver
                 .take()
                 .ok_or("explicit method call has no checked receiver")?;
-            let CheckedInputSource::Place { root, fields } = checked.source else {
-                return Err("explicit method receiver requires existing owner storage".into());
-            };
-            let place = self.lower_expr_to_place(receiver, scope, out);
-            self.authenticate_input_place(&place, &root, &fields)?;
-            self.consume_input_source_read(receiver, &place);
-            let fact = if checked.exclusive {
-                bir::OwnershipFact::MutBorrow
+            let access = if checked.owned {
+                IncanInputAccess::Owned
+            } else if checked.exclusive {
+                IncanInputAccess::Exclusive
             } else {
-                bir::OwnershipFact::Borrow
+                IncanInputAccess::Shared
             };
-            let receiver = bir::Operand::place(place, fact, false);
+            let receiver = match (checked.source, checked.owned) {
+                (Some(CheckedInputSource::Place { root, fields }), false) => {
+                    let place = self.lower_expr_to_place(receiver, scope, out);
+                    self.authenticate_input_place(&place, &root, &fields)?;
+                    self.consume_input_source_read(receiver, &place);
+                    let fact = if checked.exclusive {
+                        bir::OwnershipFact::MutBorrow
+                    } else {
+                        bir::OwnershipFact::Borrow
+                    };
+                    bir::Operand::place(place, fact, false)
+                }
+                (Some(CheckedInputSource::Place { root, fields }), true) => {
+                    let ty = self
+                        .type_info
+                        .expr_type(receiver.span)
+                        .map(|ty| self.checked_type(ty))
+                        .ok_or("explicit method receiver has no checked type")?;
+                    let place = self.lower_expr_to_place(receiver, scope, out);
+                    self.authenticate_input_place(&place, &root, &fields)?;
+                    self.explicit_place_operand(place, &ty, access, receiver)?
+                }
+                (Some(CheckedInputSource::Temporary) | None, _) => {
+                    let ty = self
+                        .type_info
+                        .expr_type(receiver.span)
+                        .map(|ty| self.checked_type(ty))
+                        .ok_or("explicit method receiver has no checked type")?;
+                    let value = self.lower_boundary_value(receiver, Some(&ty), scope, out);
+                    self.explicit_temporary_operand(value, ty, access, receiver.span, scope, out)?
+                }
+                (Some(CheckedInputSource::CarriedLocal), _) => {
+                    return Err("explicit method receiver cannot use a retained carrier local proof".into());
+                }
+            };
             let (operands, binding) = self.lower_explicit_input_args(invocation, arguments, scope, out)?;
             Ok((receiver, operands, binding))
         })())

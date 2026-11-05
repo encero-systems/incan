@@ -436,6 +436,48 @@ impl TypeChecker {
         signature: &Signature<'_>,
     ) -> Result<(), CompileError> {
         let Some(source) = signature.source else { return Ok(()) };
+        if let Some((_, dependency)) =
+            crate::ownership_metadata::owned_result_source(Some(contract)).map_err(|reason| {
+                CompileError::type_error(
+                    format!("Returned dependency cannot be proved: {reason}"),
+                    signature.result.span,
+                )
+                .with_stable_code("INCAN-T0123")
+            })?
+        {
+            let source_type = match dependency.slot {
+                SourceSlot::Receiver => signature
+                    .receiver
+                    .map(|(_, receiver)| receiver.clone())
+                    .ok_or_else(|| {
+                        Self::ownership_source_error("Result source receiver is absent", source.node.binding.span)
+                    })?,
+                SourceSlot::Parameter(slot) => {
+                    let input = contract
+                        .modes
+                        .iter()
+                        .find(|mode| mode.component.parameter == Some(slot) && mode.component.children.is_empty());
+                    match input.map(|mode| mode.mode) {
+                        Some(ownership::OwnershipMode::Borrowed | ownership::OwnershipMode::BorrowedMut) => {
+                            input.map(|mode| mode.underlying.clone()).ok_or_else(|| {
+                                Self::ownership_source_error(
+                                    "An owned result's source must be a borrowed input",
+                                    source.node.binding.span,
+                                )
+                            })?
+                        }
+                        _ => {
+                            return Err(Self::ownership_source_error(
+                                "An owned result's source must be a Borrowed[T] or BorrowedMut[T] input",
+                                source.node.binding.span,
+                            ));
+                        }
+                    }
+                }
+            };
+            self.resolve_ownership_source_fields(&source_type, source)?;
+            return Ok(());
+        }
         let view = crate::ownership_metadata::returned_view(Some(contract))
             .map_err(|reason| {
                 CompileError::type_error(
@@ -549,6 +591,9 @@ impl TypeChecker {
         if crate::ownership_metadata::returned_view(Some(contract))
             .map_err(refusal)?
             .is_none()
+            && crate::ownership_metadata::owned_result_source(Some(contract))
+                .map_err(refusal)?
+                .is_none()
         {
             return Ok(None);
         }

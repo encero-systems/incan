@@ -221,6 +221,12 @@ impl SourceAccesses<'_, '_> {
         match &expression.node {
             Expr::Ident(_) | Expr::SelfExpr | Expr::Field(_, _) => {
                 let (place, through) = self.place(expression)?.ok_or("source access has no stored place")?;
+                if let flow::Root::Binding(root) = &place.root
+                    && let Some(loans) = self.proof.graph.dependent_locals.get(root)
+                {
+                    let loans = loans.clone();
+                    self.closure_capture_accesses(expression.span, &loans)?;
+                }
                 let access = if consume
                     && (through.is_some() || self.constrained.contains(&place.root))
                     && !self.copy_value(expression)?
@@ -297,19 +303,34 @@ impl SourceAccesses<'_, '_> {
                     .invocations
                     .get(&expression.span)
                     .ok_or("source access method call has no checked invocation")?;
+                if invocation.receiver_owned {
+                    self.expression(receiver, true)?;
+                    self.invocation_arguments(invocation, arguments)?;
+                    return Ok(());
+                }
                 if invocation.receiver.is_none() {
                     return Err("source access method receiver has no stored place");
                 }
                 // A chained receiver is an inner checked view call, whose own arguments are evaluated first, or `?` on
-                // a local still holding one.
+                // a local still holding one. A fresh receiver evaluates into the invocation-bounded temporary that
+                // the producer recorded before borrowing it.
                 if self.place(receiver)?.is_none() {
-                    let inner = super::super::builtins::view_call(receiver);
-                    if !self.proof.graph.invocations.contains_key(&inner.span)
-                        && self.proof.carrier_loan(inner).is_none()
-                    {
-                        return Err("source access method receiver has no stored place");
+                    let loan = invocation
+                        .receiver
+                        .and_then(|loan| self.proof.graph.loans.get(loan.0))
+                        .ok_or("source access method receiver has no checked loan")?;
+                    match &loan.source.root {
+                        flow::Root::Temporary { .. } => self.expression(receiver, true)?,
+                        flow::Root::Binding(_) => {
+                            let inner = super::super::builtins::view_call(receiver);
+                            if !self.proof.graph.invocations.contains_key(&inner.span)
+                                && self.proof.carrier_loan(inner).is_none()
+                            {
+                                return Err("source access method receiver has no stored place");
+                            }
+                            self.expression(receiver, false)?;
+                        }
                     }
-                    self.expression(receiver, false)?;
                 }
                 self.invocation_arguments(invocation, arguments)?;
             }
@@ -419,6 +440,31 @@ impl SourceAccesses<'_, '_> {
         }
         // A new unannotated local whose loan is its initializer call's result aliases a returned view: the call is
         // evaluated, and the binding takes a borrow rather than a value. `?` takes a carried view out of its call.
+        if mode.is_none()
+            && root.declaration_span == assignment.name_span
+            && let Some(loans) = self.proof.graph.dependent_locals.get(&root)
+        {
+            let sources = match &assignment.value.node {
+                Expr::List(entries) => entries
+                    .iter()
+                    .filter_map(|entry| match entry {
+                        ListEntry::Element(value) => Some(self.proof.view_call_span(value)),
+                        ListEntry::Spread(_) => None,
+                    })
+                    .collect::<Vec<_>>(),
+                _ => vec![self.proof.view_call_span(&assignment.value)],
+            };
+            if loans.iter().any(|id| {
+                self.proof
+                    .graph
+                    .loans
+                    .get(id.0)
+                    .is_none_or(|loan| !sources.contains(&loan.span))
+            }) {
+                return Err("dependent local differs from its initializer call");
+            }
+            return self.expression(&assignment.value, false);
+        }
         if mode.is_none()
             && root.declaration_span == assignment.name_span
             && let Some(id) = self.proof.graph.local_loans.get(&root)

@@ -1,4 +1,4 @@
-# behavior: editing a field through its owner while a returned exclusive view of that field is still used is refused (#2500).
+# behavior: editing a field through its owner while a direct view, a collection storing that view, an exclusive view or an owned result dependency of that field is still used is refused (#2500).
 # expect-diagnostic: INCAN-T0126
 
 class Address:
@@ -16,9 +16,22 @@ class Customer:
     pub def edit_address(mut self) -> Reference[Address] from self.address:
         return self.address
 
+    pub def view_name(self) -> Borrowed[str] from self.name:
+        return self.name
+
+
+def retained_name_size(customer: Borrowed[Customer]) -> Owned[int] from customer.name:
+    return len(customer.name)
+
 
 def main() -> None:
     mut customer = Customer(name="Sam", address=Address(city="Utrecht"))
+    names = [customer.view_name()]
+    customer.name = "Alex"
+    println(len(names))
+    size = retained_name_size(customer)
+    customer.name = "Alex"
+    println(size)
     mut address = customer.edit_address()
     customer.address.city = "Amsterdam"
     address.set_city("Rotterdam")

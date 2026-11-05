@@ -306,7 +306,7 @@ impl TypeCheckInfo {
                 .ok_or("invocation has no selected call facts")?;
             if call.owner.as_ref() != Some(owner)
                 || call.callee != invocation.callee
-                || call.receiver.is_some() != invocation.receiver.is_some()
+                || call.receiver.is_some() != invocation.receiver_evaluation.is_some()
             {
                 return Err("invocation differs from its checked caller or signature");
             }
@@ -394,6 +394,12 @@ impl TypeCheckInfo {
                 if loan.kind != expected || loan.writable != mutable {
                     return Err("invocation receiver access differs from the selected method");
                 }
+            } else if invocation.receiver_owned {
+                if !self.native_value_receiver(*span) {
+                    return Err("owned receiver is not selected by a native value signature");
+                }
+            } else if call.receiver.is_some() {
+                return Err("invocation receiver has no access proof");
             }
         }
         Ok(())

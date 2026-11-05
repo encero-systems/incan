@@ -26,6 +26,36 @@ pub(super) fn validate_invocation_events(
             end = Some(evaluation.end_node);
             loans.push(loan);
         }
+        (None, Some(evaluation)) if invocation.receiver_owned => {
+            let receiver_span = graph
+                .nodes
+                .get(evaluation.start_node)
+                .map(|node| node.span)
+                .ok_or("owned receiver evaluation starts outside the body")?;
+            let access = invocation
+                .receiver_source
+                .as_ref()
+                .map(|_| {
+                    let ty = facts
+                        .expr_type(receiver_span)
+                        .ok_or("owned receiver has no checked value type")?;
+                    Ok::<_, &'static str>(if facts.checked_input_copy_value(&graph.owner, ty)? {
+                        flow::Access::Read
+                    } else {
+                        flow::Access::Move
+                    })
+                })
+                .transpose()?;
+            validate_evaluation(
+                graph,
+                receiver_span,
+                evaluation,
+                invocation.receiver_source.as_ref(),
+                None,
+                access,
+            )?;
+            end = Some(evaluation.end_node);
+        }
         (None, None) => {}
         _ => return Err("receiver evaluation and loan must be retained together"),
     }
@@ -179,7 +209,7 @@ impl CheckedInputBody<'_> {
             .into_iter()
             .enumerate()
             .collect::<Vec<_>>();
-        if call.kind != super::super::InputCallKind::Indirect && invocation.receiver.is_none() {
+        if call.kind != super::super::InputCallKind::Indirect && invocation.receiver_evaluation.is_none() {
             paired.sort_by_key(|(_, (_, slot))| *slot);
         }
         if paired.len() != invocation.arguments.len() {
@@ -222,6 +252,25 @@ impl CheckedInputBody<'_> {
                     && *actual_expression == expression.span
                     && *actual_invocation == span
                     && projection.is_empty() => {}
+                (None, Some(actual_source)) if actual.loan.is_some() => {
+                    let loan = self
+                        .graph
+                        .loans
+                        .get(actual.loan.ok_or("returned view input has no borrow")?.0)
+                        .ok_or("returned view input borrow is absent")?;
+                    let parent = loan
+                        .parent
+                        .and_then(|parent| self.graph.loans.get(parent.0))
+                        .ok_or("returned view input has no result loan")?;
+                    let inner = super::super::builtins::view_call(expression);
+                    if &loan.source != actual_source
+                        || parent.source != *actual_source
+                        || parent.span != self.view_call_span(expression)
+                        || !self.graph.invocations.contains_key(&inner.span)
+                    {
+                        return Err("returned view input differs from its checked result loan");
+                    }
+                }
                 _ => return Err("input source differs from its canonical source expression"),
             }
         }

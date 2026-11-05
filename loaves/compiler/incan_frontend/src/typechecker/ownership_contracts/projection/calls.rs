@@ -30,8 +30,9 @@ pub(crate) struct CheckedInputArgument {
 
 /// A method receiver borrowed for one invocation: shared for `self`, exclusive for `mut self`.
 pub(crate) struct CheckedInputReceiver {
-    pub source: CheckedInputSource,
+    pub source: Option<CheckedInputSource>,
     pub exclusive: bool,
+    pub owned: bool,
 }
 
 /// Instantiated value parameters and authenticated source access belong to one selected invocation.
@@ -76,20 +77,29 @@ impl<'a> CheckedInputBody<'a> {
                 source,
             });
         }
-        let receiver = invocation
-            .receiver
-            .map(|loan| {
-                let loan = self
-                    .graph
-                    .loans
-                    .get(loan.0)
-                    .ok_or("explicit method receiver has no checked loan")?;
-                Ok::<_, &'static str>(CheckedInputReceiver {
-                    source: project_source(&loan.source)?,
-                    exclusive: loan.kind == flow::LoanKind::Exclusive,
-                })
+        let receiver = if invocation.receiver_owned {
+            Some(CheckedInputReceiver {
+                source: invocation.receiver_source.as_ref().map(project_source).transpose()?,
+                exclusive: false,
+                owned: true,
             })
-            .transpose()?;
+        } else {
+            invocation
+                .receiver
+                .map(|loan| {
+                    let loan = self
+                        .graph
+                        .loans
+                        .get(loan.0)
+                        .ok_or("explicit method receiver has no checked loan")?;
+                    Ok::<_, &'static str>(CheckedInputReceiver {
+                        source: Some(project_source(&loan.source)?),
+                        exclusive: loan.kind == flow::LoanKind::Exclusive,
+                        owned: false,
+                    })
+                })
+                .transpose()?
+        };
         Ok(CheckedInputInvocation {
             parameters: &call.parameters,
             arguments,

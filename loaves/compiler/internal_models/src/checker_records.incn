@@ -663,6 +663,20 @@ class InputFields:
             self.handle()?
             previous = self.ordered(previous, start)?
             self.index(loans)?
+        # Dependent locals: each local in canonical order, followed by every retained source loan.
+        dependent_locals = self.count()?
+        previous = ""
+        for _ in range(dependent_locals):
+            start = self.offset
+            self.handle()?
+            previous = self.ordered(previous, start)?
+            dependencies = self.count()?
+            for _ in range(dependencies):
+                self.index(loans)?
+        # Aggregate expressions whose physical storage retains those dependencies.
+        dependent_values = self.count()?
+        for _ in range(dependent_values):
+            self.handle()?
         # Owned locals: each one's initializer, the place it was transferred from and the node that reads it; with
         # strict indices a local has both or neither.
         owned = self.count()?
@@ -707,6 +721,9 @@ class InputFields:
             previous = self.ordered(previous, start)?
             self.handle()?
             self.optional_index(loans)?
+            self.tag(["true", "false"])?
+            if self.tag(["none", "some"])? == "some":
+                self.place()?
             arguments = self.count()?
             for _ in range(arguments):
                 self.handle()?

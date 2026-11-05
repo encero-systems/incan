@@ -150,6 +150,33 @@ impl Builder<'_> {
             self.retain_local_loan(assignment, root, loan, path)?;
             return Ok((incoming, true));
         }
+        // A top-level owned result keeps its declared source dependency while remaining independent value storage.
+        if let Some(relation) = self.owned_relation(&assignment.value)? {
+            let (incoming, path) = self.evaluate_view_call(&assignment.value, relation, incoming)?;
+            let loan = path.through.ok_or(Unavailable {
+                span: assignment.value.span,
+                reason: "owned result has no retained source loan".into(),
+            })?;
+            if self.graph.dependent_locals.insert(root.clone(), vec![loan]).is_some() {
+                return Err(Unavailable {
+                    span: assignment.name_span,
+                    reason: "owned result local has more than one dependency destination".into(),
+                });
+            }
+            return Ok((incoming, true));
+        }
+        if let Expr::List(entries) = &assignment.value.node
+            && let Some((incoming, loans)) = self.dependent_list(entries, &incoming)?
+        {
+            if self.graph.dependent_locals.insert(root.clone(), loans).is_some() {
+                return Err(Unavailable {
+                    span: assignment.name_span,
+                    reason: "reference-carrying list has more than one dependency destination".into(),
+                });
+            }
+            self.graph.dependent_values.insert(assignment.value.span);
+            return Ok((incoming, true));
+        }
         // A Result or Option local keeps the source alias until `?` or a match consumes it; a tuple local keeps the
         // whole carrier through its last use without making its borrowed element directly nameable.
         let Some(relation) = self.call_relation(&assignment.value)? else {
