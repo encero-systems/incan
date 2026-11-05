@@ -10,6 +10,8 @@ from pub::incan_mir_plan import (
     Projection,
     RvalueKind,
     SourceSpan,
+    TerminatorKind,
+    TupleElement,
     assign as plan_assign,
     place as plan_place,
 )
@@ -26,11 +28,13 @@ from rust::incan_semantics_core import SymbolOrigin
 from generator_adapters import generator_adapter
 from generator_consumers import is_generator_consumer, consumer_result, generator_consumer
 from element_places import is_element_place
-from options import carrier_layout
+from options import assign_carrier, carrier_layout, replace_owned_destination
+from tuples import tuple_fields
+from text_primitives import copy_frozen_bytes, decode_utf8 as primitive_decode_utf8, encode_utf8 as primitive_encode_utf8
 from numerics import numeric_name, numeric_carrier, integer_carrier
 from strings import emit_text_helper, text_method
 from resize import resize_policy, emit_resize
-from frame import place_type, Builder, temporary, drop_owned, external_call, read_place
+from frame import place_type, Builder, temporary, drop_owned, external_call, forget_owned, read_place
 from lists import require_list_shape
 from checked_values import scalar_operand, scalar_place
 from operators import operand_type
@@ -45,6 +49,7 @@ from list_methods import (
     lower_list_method,
 )
 from list_iteration import frozen_dictionary_contains, list_root_place
+from list_values import list_borrow
 from hashed_collections import collection_contains
 from sequence_builtins import argument_type, text_argument
 
@@ -254,32 +259,21 @@ def lower_text_codec_method(
         return Err("unsupported Body IR incomplete builtin codec arguments")
     incoming = builder.owned
     receiver_type = argument_type(builder, arguments, 0, span)?
-    mut parameters: list[PlanType] = []
     mut operands: list[Operand] = []
-    mut name = ""
     if member == "str.encode" and receiver_type in [PlanType.String, PlanType.StringRef]:
-        name = "encode_text"
-        parameters.append(PlanType.StringRef)
         operands.append(text_argument(builder, arguments, 0, span)?)
     elif member == "frozenstr.encode" and receiver_type == PlanType.FrozenStr:
-        name = "encode_frozen_text"
-        parameters.append(PlanType.FrozenStr)
         operands.append(argument_value(builder, arguments, 0, span)?)
     elif member == "bytes.decode":
         leaf, depth = require_list_shape(receiver_type, "unsupported Body IR nonbytes codec receiver")?
         if leaf != ListLeaf.U8 or depth != 1:
             return Err("unsupported Body IR nonbytes codec receiver")
-        name = "decode_bytes"
-        parameters.append(PlanType.ListRef(ListLeaf.U8, 1))
         operands.append(borrowed_list_argument(builder, arguments, 0, false, span)?)
     elif member == "frozenbytes.decode" and receiver_type == PlanType.FrozenBytes:
-        name = "decode_frozen_bytes"
-        parameters.append(PlanType.FrozenBytes)
         operands.append(argument_value(builder, arguments, 0, span)?)
     else:
         return Err("unsupported Body IR builtin codec identity with a different receiver")
     for index in range(1, arity):
-        parameters.append(PlanType.StringRef)
         operands.append(text_argument(builder, arguments, index, span)?)
     mut result = PlanType.List(ListLeaf.U8, 1)
     mut output = plan_place(0, span)
@@ -304,11 +298,143 @@ def lower_text_codec_method(
         output = call_destination(builder, destination, result, span)?
         if place_type(builder.locals, output) != result:
             return Err("unsupported Body IR encode result carrier")
-    drop_owned(builder, output.local, span)
-    external_call(builder, f"incan_native_runtime::{name}", parameters, result, operands, output, span)
-    builder.owned.append(output.local)
+    if decoding:
+        lower_primitive_decode(builder, member, operands, output, result, span)?
+    else:
+        lower_primitive_encode(builder, member == "frozenstr.encode", operands, output, span)
     drop_borrowed_text_temporaries(builder, incoming, output.local, span)
     return Ok(true)
+
+
+def lower_primitive_encode(
+    mut builder: Builder,
+    frozen: bool,
+    operands: list[Operand],
+    output: Place,
+    span: SourceSpan,
+) -> None:
+    """Preserve the codec's label error in its owner, then transfer primitive-owned bytes to the checked result."""
+    validated = temporary(builder, PlanType.Unit, span)
+    external_call(
+        builder,
+        "incan_native_runtime::validate_encoder_label",
+        [PlanType.StringRef],
+        PlanType.Unit,
+        [operands[1]],
+        validated,
+        span,
+    )
+    encoded = primitive_encode_utf8(builder, operands[0], frozen, span)
+    replace_owned_destination(builder, output, RvalueKind.Use(read_place(encoded, true, span)), span)
+
+
+def lower_primitive_decode(
+    mut builder: Builder,
+    member: str,
+    operands: list[Operand],
+    output: Place,
+    result: PlanType,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Validate surface options before primitive decoding, then adapt only malformed UTF-8 to the public error carrier.
+
+    The frozen receiver first becomes an owned byte buffer. Both receivers then use the same primitive decoder and
+    explicit `(accepted, payload)` result, so the primitive never owns codec labels or ValidationError construction.
+    """
+    policy_type = PlanType.Tuple([TupleElement.Bool, TupleElement.Bool])
+    policy = temporary(builder, policy_type, span)
+    external_call(
+        builder,
+        "incan_native_runtime::decode_replacement_policy",
+        [PlanType.StringRef, PlanType.StringRef],
+        policy_type,
+        [operands[1], operands[2]],
+        policy,
+        span,
+    )
+    policy_fields = tuple_fields(policy, policy_type, span)?
+    rejected = builder.new_block(span)
+    accepted = builder.new_block(span)
+    after = builder.new_block(span)
+    builder.finish(TerminatorKind.SwitchBool(read_place(policy_fields[0], false, span), rejected, accepted), span)
+
+    # Rejected options construct the legacy error without reading the receiver.
+    policy_owners = builder.owned
+    builder.current = rejected
+    error = temporary(builder, PlanType.ValidationError, span)
+    external_call(
+        builder,
+        "incan_native_runtime::invalid_decoder_options",
+        [PlanType.StringRef, PlanType.StringRef],
+        PlanType.ValidationError,
+        [operands[1], operands[2]],
+        error,
+        span,
+    )
+    owner, _declaration = carrier_layout(builder, result)?
+    assign_carrier(builder, output, owner, 1, [read_place(error, true, span)], span)
+    builder.finish(TerminatorKind.Goto(after), span)
+    retained = builder.owned
+
+    # Accepted options decode through one byte-level implementation, then adapt only its strict failure detail.
+    builder.current = accepted
+    builder.owned = policy_owners
+    mut decoded = plan_place(0, span)
+    if member == "frozenbytes.decode":
+        copied = copy_frozen_bytes(builder, operands[0], span)
+        encoded = list_borrow(builder, copied, false, span)?
+        decoded = primitive_decode_utf8(
+            builder,
+            encoded,
+            PlanType.ListRef(ListLeaf.U8, 1),
+            read_place(policy_fields[1], false, span),
+            span,
+        )
+        drop_owned(builder, copied.local, span)
+    else:
+        decoded = primitive_decode_utf8(
+            builder,
+            operands[0],
+            PlanType.ListRef(ListLeaf.U8, 1),
+            read_place(policy_fields[1], false, span),
+            span,
+        )
+    decoded_type = PlanType.Tuple([TupleElement.Bool, TupleElement.String])
+    decoded_fields = tuple_fields(decoded, decoded_type, span)?
+    invalid = builder.new_block(span)
+    valid = builder.new_block(span)
+    decoded_after = builder.new_block(span)
+    builder.finish(TerminatorKind.SwitchBool(read_place(decoded_fields[0], false, span), invalid, valid), span)
+    forget_owned(builder, decoded.local)
+    decoded_owners = builder.owned
+
+    builder.current = invalid
+    adapted = temporary(builder, PlanType.ValidationError, span)
+    external_call(
+        builder,
+        "incan_native_runtime::invalid_utf8_error",
+        [PlanType.String],
+        PlanType.ValidationError,
+        [read_place(decoded_fields[1], true, span)],
+        adapted,
+        span,
+    )
+    assign_carrier(builder, output, owner, 1, [read_place(adapted, true, span)], span)
+    builder.finish(TerminatorKind.Goto(decoded_after), span)
+    decoded_retained = builder.owned
+
+    builder.current = valid
+    builder.owned = decoded_owners
+    assign_carrier(builder, output, owner, 0, [read_place(decoded_fields[1], true, span)], span)
+    builder.finish(TerminatorKind.Goto(decoded_after), span)
+    builder.current = decoded_after
+    builder.owned = decoded_retained
+    builder.finish(TerminatorKind.Goto(after), span)
+
+    builder.current = after
+    builder.owned = retained
+    return Ok(None)
 
 
 def lower_float_square_root(

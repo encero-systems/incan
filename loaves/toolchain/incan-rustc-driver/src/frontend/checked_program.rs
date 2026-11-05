@@ -24,39 +24,44 @@ pub(super) fn retain_native_type_identities(modules: &mut [BodyIrModule], native
     }
 }
 
-/// Retain the runtime facade's canonical declarations for calls introduced by native lowering.
+/// Retain canonical declarations for calls introduced by native lowering.
 ///
 /// A bootstrap Rust runtime has no Loaf entry and contributes no governed bodies. A native runtime enters through
 /// Oven's ordinary artifact index; its checked public identities select the same `.incnbody` records as source imports.
-/// A runtime producer uses its own checked export map, so specializing its source needs no external runtime artifact.
+/// A lowering-provider producer uses its own checked export map, so specializing its source needs no external artifact.
 pub(super) fn runtime_declarations(
     session: &CompilationSession,
     local: Option<&LibraryManifest>,
 ) -> Vec<incan_semantics_core::body_ir::RuntimeCallableBinding> {
-    let manifest = local
-        .filter(|manifest| manifest.name == "incan_native_runtime")
-        .or_else(|| session.loaves().manifest("incan_native_runtime"));
-    let Some(manifest) = manifest else {
-        return Vec::new();
-    };
-    manifest
-        .contract_metadata
-        .identity_graph
-        .exports
-        .iter()
-        .filter(|export| export.public_path.len() == 2)
-        .filter(|export| {
-            manifest
-                .exports
-                .functions
-                .iter()
-                .any(|function| function.name == export.public_name)
+    ["incan_native_runtime", "incan_stdlib_primitives"]
+        .into_iter()
+        .filter_map(|package| {
+            local
+                .filter(|manifest| manifest.name == package)
+                .or_else(|| session.loaves().manifest(package))
         })
-        .filter_map(|export| Some(incan_semantics_core::body_ir::RuntimeCallableBinding {
-            path: format!("incan_native_runtime::{}", export.public_name),
-            canonical: export.canonical.as_ref()?.hydrate()?,
-        }))
-        .filter(|binding| matches!(&binding.canonical.origin, SymbolOrigin::Package { library, .. } if library == "incan_native_runtime"))
+        .flat_map(|manifest| {
+            manifest
+                .contract_metadata
+                .identity_graph
+                .exports
+                .iter()
+                .filter(|export| export.public_path.len() == 2)
+                .filter(|export| {
+                    manifest
+                        .exports
+                        .functions
+                        .iter()
+                        .any(|function| function.name == export.public_name)
+                })
+                .filter_map(|export| Some(incan_semantics_core::body_ir::RuntimeCallableBinding {
+                    path: export.public_path.join("::"),
+                    canonical: export.canonical.as_ref()?.hydrate()?,
+                }))
+                .filter(|binding| {
+                    matches!(&binding.canonical.origin, SymbolOrigin::Package { library, .. } if library == &manifest.name)
+                })
+        })
         .collect()
 }
 
