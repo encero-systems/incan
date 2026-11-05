@@ -368,7 +368,7 @@ def launch(toolchain: Toolchain, endpoint: Endpoint) -> Result[None, str]:
     mut listener = listen(f"{endpoint.ready}", false)?
     mut command = driver_command(toolchain)?
     command.arg("--resident").arg(f"{endpoint.socket}").arg(f"{endpoint.generation}")
-    command.arg(f"{endpoint.ready}")
+    command.arg(f"{endpoint.ready}").arg(f"{endpoint.directory}")
     command.stdin(Stdio.null()).stdout(Stdio.null()).stderr(Stdio.null())
     command.process_group(0)
     clock = begin()

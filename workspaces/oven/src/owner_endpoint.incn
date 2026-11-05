@@ -37,7 +37,7 @@ from unit_freshness import artifact_identity, fingerprint
 const READINESS_POLLS: int = 7500
 # The seconds an owner may be idle before it retires, unless OVEN_OWNER_IDLE says otherwise.
 const DEFAULT_IDLE: int = 600
-# An owner idle for less than this would retire before its own watchdog could ask.
+# The shortest idle limit, so a started owner never retires before the command that started it connects.
 const MINIMUM_IDLE: int = 4
 # The longest socket path the system accepts, with room to spare.
 const MAX_SOCKET_PATH: int = 100

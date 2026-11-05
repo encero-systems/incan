@@ -5,14 +5,20 @@ compiler entry, answers it with the entry's outcome and applies the worker's lif
 A retiring worker withdraws its socket before it sends its last reply, so no later request dials it; it then answers
 every request that connected before the withdrawal, each reply marked retired, unless the process is unsafe or its
 caller required teardown after one activation.
+
+Between requests the worker polls its socket and decides for itself: it retires once it has been idle for its idle
+period, or once nothing can reach it any more (the platform's `reachable`, which resident owners apply too). Nothing
+dials the worker to wake it, so a removed socket path or home cannot keep it alive.
 """
 
 from rust::std::env import set_current_dir
 from rust::std::process import id
+from rust::std::thread import sleep
+from rust::std::time import Duration
 from std.environ import get_or
 from pub::incan_platform.trace import Clock, Emitter, Operation, begin as trace_begin, flush as flush_trace
-from pub::incan_platform.ipc import Connection, Listener, dial, listen
-from endpoint import CallerWatch, SocketFile, owner_uid, socket_file, start_watchdog, withdraw
+from pub::incan_platform.ipc import Connection, Listener, SocketFile, dial, listen, reachable, socket_file, withdraw
+from endpoint import CallerWatch, owner_uid
 from lifecycle import (
     ActivationOutcome,
     Bounds,
@@ -31,8 +37,10 @@ const WRITE_SECONDS: u64 = 10
 # A test-only setting that lowers, and never raises, the footprint ceiling, so a case can retire a worker after every
 # request without a heavy compile.
 const FOOTPRINT_SETTING: str = "INCAN_WORKER_FOOTPRINT_BOUND"
-# The longest the idle watchdog sleeps between wake-ups, in milliseconds.
-const WATCHDOG_MILLIS: int = 1000
+# How long a waiting worker sleeps before it looks for a caller again, which bounds the delay a caller sees.
+const POLL_MILLIS: u64 = 2
+# How many empty polls pass between checks that the worker is still reachable: about a second.
+const CHECK_POLLS: int = 500
 
 
 pub model HostSettings:
@@ -42,6 +50,8 @@ pub model HostSettings:
     pub generation: str
     # The socket of the process that started the worker, told when it listens; empty tells nobody.
     pub ready: str
+    # The private directory of the home the worker serves; once it is gone, the worker retires.
+    pub home: str
     # The physical footprint after process start, in bytes; negative when it cannot be read.
     pub baseline: int
     pub bounds: Bounds
@@ -77,22 +87,20 @@ pub class WorkerHost:
         The next request for the compiler entry, or `None` once the worker has retired.
 
         1. An activation the entry did not complete leaves the process in an unknown state, which ends the worker.
-        2. Each caller is admitted or answered in turn; a wake-up without a request checks the idle period.
+        2. Each caller is admitted or answered in turn; waiting for one decides the worker's own retirement.
         """
         # 1. One activation at a time: asking again without completing the open one is a broken entry.
         if self.active is not None:
             self.settle(ActivationOutcome.UnsafeCleanup("the compiler entry did not complete its activation"), -1)
             return None
-        # 2. The watchdog's wake-ups arrive as callers that send an empty frame, which is refused.
+        # 2. A caller that is refused or answered leaves the worker serving the next one.
         while self.phase != Phase.Ended:
             match self.connection():
                 None => self.phase = Phase.Ended
                 Some(caller) =>
                     match self.receive(caller):
                         Some(request) => return Some(request)
-                        None =>
-                            if self.phase == Phase.Serving and self.policy.idle():
-                                self.retire(Retirement.Idle)
+                        None => pass
         return None
 
     def complete(mut self, outcome: ActivationOutcome, footprint: int) -> None:
@@ -136,20 +144,36 @@ pub class WorkerHost:
             None => return None
 
     def connection(mut self) -> Option[Connection]:
-        """The next caller: wait for one while serving, take only those already queued while draining."""
-        match self.phase:
-            Phase.Serving =>
-                match self.listener.accept():
-                    Ok(found) => return Some(found)
-                    Err(_) =>
-                        # A listener that cannot accept serves nobody; retiring lets the next request start a worker.
-                        self.retire(Retirement.Unsafe)
-                        return None
-            Phase.Draining =>
-                match self.listener.poll():
-                    Ok(found) => return found
-                    Err(_) => return None
-            Phase.Ended => return None
+        """
+        The next caller: wait for one while serving, take only those already queued while draining.
+
+        1. While serving, poll; between polls the worker retires once it is idle or nothing can reach it any more.
+        2. A retirement that drains still answers the callers that connected before it.
+        """
+        # 1. The worker's own clock and file checks decide; nothing has to dial the socket for that.
+        mut polls = 0
+        while self.phase == Phase.Serving:
+            match self.listener.poll():
+                Ok(Some(found)) => return Some(found)
+                Ok(None) => pass
+                Err(_) =>
+                    # A listener that cannot accept serves nobody; retiring lets the next request start a worker.
+                    self.retire(Retirement.Unsafe)
+                    return None
+            sleep(Duration.from_millis(POLL_MILLIS))
+            polls += 1
+            if self.policy.idle():
+                self.retire(Retirement.Idle)
+            elif polls >= CHECK_POLLS:
+                polls = 0
+                if not reachable(self.socket):
+                    self.retire(Retirement.Unreachable)
+        # 2. Only callers already queued are taken once the socket is withdrawn.
+        if self.phase == Phase.Draining:
+            match self.listener.poll():
+                Ok(found) => return found
+                Err(_) => return None
+        return None
 
     def receive(mut self, connection: Connection) -> Option[CompileRequest]:
         """
@@ -208,26 +232,24 @@ pub class WorkerHost:
         if reason == Retirement.Unsafe or reason == Retirement.ActivationComplete:
             self.phase = Phase.Ended
             return
+        # The listener is polled, so draining takes only the callers already queued.
         self.phase = Phase.Draining
-        match self.listener.stop_blocking(self.socket.path):
-            Ok(_) => pass
-            Err(_) => self.phase = Phase.Ended
 
 
 pub def start(arguments: list[str], baseline: int) -> Result[WorkerHost, str]:
     """
-    Start the worker host of `--resident SOCKET GENERATION READY`, whose physical footprint after process start was
-    `baseline` bytes (negative when unknown).
+    Start the worker host of `--resident SOCKET GENERATION READY HOME`, whose physical footprint after process start
+    was `baseline` bytes (negative when unknown). HOME is the private directory of the home the worker serves.
 
-    1. Both endpoints are absolute, because the worker leaves its caller's directory.
+    1. The endpoints and the home are absolute, because the worker leaves its caller's directory.
     2. A worker can outlive the project that started it, so its own directory is the root.
-    3. Listen, tell the starting process, and start the idle watchdog.
+    3. Listen and tell the starting process.
     """
-    if len(arguments) != 3:
-        return Err("usage: --resident SOCKET GENERATION READY")
-    # 1. Relative endpoints would resolve against a directory the worker leaves.
-    if not arguments[0].startswith("/") or not arguments[2].startswith("/"):
-        return Err("compiler worker endpoints must be absolute")
+    if len(arguments) != 4:
+        return Err("usage: --resident SOCKET GENERATION READY HOME")
+    # 1. Relative paths would resolve against a directory the worker leaves.
+    if not arguments[0].startswith("/") or not arguments[2].startswith("/") or not arguments[3].startswith("/"):
+        return Err("compiler worker endpoints and home must be absolute")
     # 2. Each request installs its caller's directory only for its own activation.
     set_current_dir("/").map_err((error) => f"cannot leave the starting directory: {error}")?
     # 3. The worker serves its own user and keeps the standard bounds, its ceiling lowered only by the test setting.
@@ -236,6 +258,7 @@ pub def start(arguments: list[str], baseline: int) -> Result[WorkerHost, str]:
             socket=arguments[0],
             generation=arguments[1],
             ready=arguments[2],
+            home=arguments[3],
             baseline=baseline,
             bounds=Bounds(idle_millis=IDLE_SECONDS * 1000, margin=FOOTPRINT_MARGIN, ceiling=footprint_ceiling()),
             owner=None,
@@ -247,13 +270,12 @@ pub def host_for(settings: HostSettings) -> Result[WorkerHost, str]:
     """
     A listening worker host.
 
-    1. Bind the private socket and remember the file it created.
+    1. Bind the private socket, polled, and remember the file it created and the home it belongs to.
     2. Tell the starting process the worker listens, with its protocol, generation and process id.
-    3. Start the watchdog that wakes the worker to check its idle period.
     """
     # 1. Only this exact file is withdrawn later, never a replacement at the same path.
-    listener = listen(settings.socket, true)?
-    bound = socket_file(settings.socket)?
+    listener = listen(settings.socket, false)?
+    bound = socket_file(settings.socket, settings.home)?
     mut owner = owner_uid(settings.socket)?
     match settings.owner:
         Some(selected) => owner = selected
@@ -272,8 +294,6 @@ pub def host_for(settings: HostSettings) -> Result[WorkerHost, str]:
         mut announcing = dial(settings.ready)?
         announcing.send(encode_ready(settings.generation, int(id())))?
         hang_up(announcing)
-    # 3. The watchdog wakes the worker several times per idle period, until the worker withdraws this socket file.
-    start_watchdog(bound, watchdog_millis(settings.bounds.idle_millis))
     return Ok(host)
 
 
@@ -324,16 +344,6 @@ def decimal(text: str) -> bool:
         if text[index] not in "0123456789":
             return false
     return true
-
-
-def watchdog_millis(idle_millis: int) -> int:
-    """Wake at least four times per idle period, and at least once a second."""
-    mut every = idle_millis // 4
-    if every > WATCHDOG_MILLIS:
-        every = WATCHDOG_MILLIS
-    if every < 10:
-        return 10
-    return every
 
 
 def delivered(sent: Result[None, str]) -> None:
