@@ -137,7 +137,7 @@ pub(super) fn source_function_return_type(function: &FunctionDecl, checker: &Typ
     ))
 }
 
-/// Resolve the source-declared callable parameters used by API documentation metadata.
+/// Resolve source-declared callable parameters, including caller-visible mutation, for checked API metadata.
 pub(super) fn source_function_params(
     function: &FunctionDecl,
     checker: &TypeChecker,
@@ -152,6 +152,7 @@ pub(super) fn source_function_params(
                 param.node.kind,
                 param.node.default.is_some(),
             )
+            .with_mut(param.node.is_mut)
         })
         .collect()
 }

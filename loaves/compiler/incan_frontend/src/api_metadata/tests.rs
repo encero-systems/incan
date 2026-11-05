@@ -119,7 +119,7 @@ pub class Buffer:
 fn checked_api_metadata_extracts_function_decorator_and_docstring() -> Result<(), String> {
     let source = r#"
 @rust.allow("dead_code")
-pub def avg(values: List[float]) -> float:
+pub def avg(mut values: List[float]) -> float:
     """
     Return the arithmetic mean.
 
@@ -146,6 +146,7 @@ pub def avg(values: List[float]) -> float:
 
     assert_eq!(function.name, "avg");
     assert_eq!(function.anchor.id, "demo::avg");
+    assert!(function.params[0].is_mut);
     assert_eq!(
         function.docstring.as_deref().map(str::trim),
         Some(
