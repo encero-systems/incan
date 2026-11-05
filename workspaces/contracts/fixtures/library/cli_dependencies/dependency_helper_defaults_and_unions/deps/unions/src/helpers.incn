@@ -21,6 +21,15 @@ pub const DEFAULT_LABEL: str = "orders"
 pub const COUNT_SENTINEL: str = "__querykit_count_no_argument__"
 
 
+pub enum DefaultCodec(str):
+    Gzip = "gzip"
+    Zstd = "zstd"
+
+    @staticmethod
+    pub def all() -> list[DefaultCodec]:
+        return [DefaultCodec.Gzip, DefaultCodec.Zstd]
+
+
 pub def lit(value: LiteralValue) -> ColumnExpr:
     match value:
         int(number) => return IntLiteralExpr(value=number)
@@ -41,6 +50,10 @@ pub def aggregate_as(expr: ColumnExpr, output_name: str) -> AggregateMeasure:
 
 pub def aggregate_default(expr: ColumnExpr, output_name: str = DEFAULT_LABEL) -> AggregateMeasure:
     return AggregateMeasure(expr=expr, label=output_name)
+
+
+pub def default_codec_count(allowed: list[DefaultCodec] = DefaultCodec.all()) -> int:
+    return len(allowed)
 
 
 pub def describe(measure: AggregateMeasure) -> str:

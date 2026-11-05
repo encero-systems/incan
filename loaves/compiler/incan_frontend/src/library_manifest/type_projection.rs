@@ -170,6 +170,7 @@ impl VisitTypeRefs for ParamDefaultExport {
                 args.visit_type_refs(visit);
                 signature.visit_type_refs(visit);
             }
+            Self::MethodCall { args, .. } => args.visit_type_refs(visit),
             Self::Int(_)
             | Self::Float(_)
             | Self::Bool(_)

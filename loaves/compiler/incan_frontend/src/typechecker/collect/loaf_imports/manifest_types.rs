@@ -125,6 +125,21 @@ impl TypeChecker {
                     return_type: resolved_type_from_manifest_type_ref(&signature.return_type),
                 }),
             },
+            ParamDefaultExport::MethodCall {
+                receiver_path,
+                method,
+                args,
+            } => CheckedParamDefault::MethodCall {
+                receiver_path: receiver_path.clone(),
+                method: method.clone(),
+                args: args
+                    .iter()
+                    .map(|arg| CheckedParamDefaultArg {
+                        name: arg.name.clone(),
+                        value: self.checked_param_default_from_manifest(&arg.value),
+                    })
+                    .collect(),
+            },
             ParamDefaultExport::Unsupported => CheckedParamDefault::Unsupported,
         }
     }
@@ -165,6 +180,24 @@ impl TypeChecker {
             ParamDefaultExport::ConstRef(path) => Self::manifest_const_ref_expr(path, span)?.node,
             ParamDefaultExport::Call { path, args, .. } => Expr::Call(
                 Box::new(Self::manifest_const_ref_expr(path, span)?),
+                Vec::new(),
+                args.iter()
+                    .map(|arg| {
+                        let value = Self::manifest_param_default_expr(&arg.value, span)?;
+                        Some(match &arg.name {
+                            Some(name) => CallArg::Named(Spanned::new(name.clone(), span), value),
+                            None => CallArg::Positional(value),
+                        })
+                    })
+                    .collect::<Option<Vec<_>>>()?,
+            ),
+            ParamDefaultExport::MethodCall {
+                receiver_path,
+                method,
+                args,
+            } => Expr::MethodCall(
+                Box::new(Self::manifest_const_ref_expr(receiver_path, span)?),
+                method.clone(),
                 Vec::new(),
                 args.iter()
                     .map(|arg| {
