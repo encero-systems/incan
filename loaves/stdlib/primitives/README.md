@@ -10,6 +10,8 @@ The root `hexlify(data: bytes) -> str` operation returns lowercase hexadecimal t
 
 `std.primitives.hmac` owns the existing `HmacSha256Signer` class and `hmac_sha256` namespace. The old `std.hash` imports reexport those same declarations. Finalizing a signer resets its message state while retaining its key; verification uses the existing native verifier. The implementation depends on the `hmac` and `sha2` crates and the explicitly supplied native error runtime, without importing higher standard-package declarations.
 
+`std.primitives.io` owns the shared `IoError` and `Endian` declarations and a growable `WriteBuffer`. The buffer owns its storage and exposes copying only through `snapshot()`. `std.io` reexports the two declarations so existing imports retain one error and byte-order identity.
+
 `std.primitives.fs` owns simple paths, file handles, advisory lock guards and retained mapped views. Bounded and remaining-byte reads report host failures directly; higher-level filesystem mode policy and text-file conveniences stay in `std.fs`.
 
 `std.primitives.text` copies borrowed UTF-8 text into owned bytes and decodes borrowed bytes into owned text with strict or replacement behavior. `std.primitives.native_strings` builds independently owned NUL-terminated UTF-8 storage only after rejecting every interior NUL. Builtin codecs retain their label ordering and structured error adaptation, while checked C lowering retains foreign-call admission and the buffer for the complete native call.
