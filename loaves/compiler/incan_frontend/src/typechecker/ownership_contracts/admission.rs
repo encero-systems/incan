@@ -265,8 +265,21 @@ impl CheckedInputBody<'_> {
                     .loans
                     .get(receiver.0)
                     .ok_or("explicit method receiver has no checked loan")?;
-                if !matches!(loan.source.root, super::flow::Root::Binding(_)) {
-                    return Err("explicit method receiver requires existing owner storage");
+                let valid = match &loan.source.root {
+                    super::flow::Root::Binding(_) => true,
+                    super::flow::Root::Temporary {
+                        owner,
+                        expression,
+                        invocation,
+                    } => {
+                        owner == self.canonical_owner()
+                            && *expression == loan.span
+                            && invocation == span
+                            && loan.source.projection.is_empty()
+                    }
+                };
+                if !valid {
+                    return Err("explicit method receiver has no bounded owner storage");
                 }
             }
             let call = self

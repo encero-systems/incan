@@ -305,11 +305,20 @@ impl CheckedInputBody<'_> {
                     self.visit_operation_expression(value, parameters, execution, seen)?;
                 }
                 // Only checked invocations reach this profile; the receiver loan must name the written receiver.
-                let loan = self
+                let invocation = self
                     .graph
                     .invocations
                     .get(&expression.span)
-                    .and_then(|invocation| invocation.receiver)
+                    .ok_or("method call has no checked invocation")?;
+                if invocation.receiver_owned {
+                    self.validate_call_expression(expression.span, arguments)?;
+                    if !seen.invocations.insert(expression.span) {
+                        return Err("source call has duplicate retained evaluation");
+                    }
+                    return Ok(());
+                }
+                let loan = invocation
+                    .receiver
                     .and_then(|loan| self.graph.loans.get(loan.0))
                     .ok_or("method call has no checked receiver loan")?;
                 // A chained receiver reborrows its inner call's result loan on the same substituted place, including
@@ -318,17 +327,29 @@ impl CheckedInputBody<'_> {
                 let inner = super::super::builtins::view_call(receiver);
                 let authenticated = match self.call_place(receiver)? {
                     Some((source, _)) => source == loan.source,
-                    None => loan
-                        .parent
-                        .and_then(|parent| self.graph.loans.get(parent.0))
-                        .is_some_and(|parent| {
-                            parent.span == self.view_call_span(receiver)
-                                && parent.source == loan.source
-                                && (self.graph.invocations.contains_key(&inner.span)
-                                    || self
-                                        .carrier_loan(inner)
-                                        .is_some_and(|(carrier, _)| parent.parent == Some(carrier)))
-                        }),
+                    None => match &loan.source.root {
+                        flow::Root::Temporary {
+                            owner,
+                            expression: actual_expression,
+                            invocation,
+                        } => {
+                            owner == self.canonical_owner()
+                                && *actual_expression == receiver.span
+                                && *invocation == expression.span
+                                && loan.source.projection.is_empty()
+                        }
+                        flow::Root::Binding(_) => loan
+                            .parent
+                            .and_then(|parent| self.graph.loans.get(parent.0))
+                            .is_some_and(|parent| {
+                                parent.span == self.view_call_span(receiver)
+                                    && parent.source == loan.source
+                                    && (self.graph.invocations.contains_key(&inner.span)
+                                        || self
+                                            .carrier_loan(inner)
+                                            .is_some_and(|(carrier, _)| parent.parent == Some(carrier)))
+                            }),
+                    },
                 };
                 if !authenticated {
                     return Err("method receiver differs from its checked source loan");

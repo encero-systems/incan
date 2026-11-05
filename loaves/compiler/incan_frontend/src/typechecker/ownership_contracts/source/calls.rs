@@ -242,7 +242,7 @@ impl Builder<'_> {
         })?;
         // A native call that lends nothing returns a value that cannot keep a borrow of the caller's storage.
         let lends_nothing = call.kind == super::super::InputCallKind::Native
-            && call.receiver.is_none()
+            && (call.receiver.is_none() || self.checker.type_info.native_value_receiver(span))
             && contract.is_some_and(|contract| {
                 contract
                     .modes
@@ -275,6 +275,8 @@ impl Builder<'_> {
         let mut invocation = Invocation {
             callee: call.callee.clone(),
             receiver: None,
+            receiver_owned: false,
+            receiver_source: None,
             arguments: Vec::with_capacity(paired.len()),
             receiver_evaluation: None,
             completion_node: 0,
@@ -283,32 +285,40 @@ impl Builder<'_> {
         if let Some(receiver) = receiver {
             let start_node = self.graph.nodes.len();
             incoming = self.event(incoming, Event::Nothing, receiver.span);
-            // A chained receiver continues on the place its inner call's returned view substituted.
-            let source = match self.view_source(receiver)? {
-                Some(view) => {
-                    let (evaluated, path) = self.evaluate_view_source(receiver, view, incoming)?;
-                    incoming = evaluated;
-                    path
+            if self.checker.type_info.native_value_receiver(span) {
+                let source = self.optional_place(receiver)?.map(|path| path.place);
+                if let Some(source) = &source {
+                    self.constrained.insert(source.root.clone());
                 }
-                None => {
-                    let source = self.place(receiver)?;
-                    incoming = self.evaluate_place(receiver, incoming)?;
-                    source
-                }
-            };
-            let mutable = call.receiver == Some(Receiver::Mutable);
-            let loan = self.call_loan(source, mutable, mutable, receiver.span);
-            let source_node = self.graph.nodes.len();
-            incoming = self.event(incoming, Event::Borrow(loan), receiver.span);
-            let end_node = self.graph.nodes.len();
-            incoming = self.event(incoming, Event::Nothing, receiver.span);
-            loans.push(loan);
-            invocation.receiver = Some(loan);
-            invocation.receiver_evaluation = Some(InputEvaluation {
-                start_node,
-                end_node,
-                source_node: Some(source_node),
-            });
+                incoming = self.expression(receiver, incoming, true)?;
+                let source_node = source.as_ref().map(|_| self.graph.nodes.len() - 1);
+                let end_node = self.graph.nodes.len();
+                incoming = self.event(incoming, Event::Nothing, receiver.span);
+                invocation.receiver_owned = true;
+                invocation.receiver_source = source;
+                invocation.receiver_evaluation = Some(InputEvaluation {
+                    start_node,
+                    end_node,
+                    source_node,
+                });
+            } else {
+                // A chained receiver continues on the place its inner call's returned view substituted.
+                let (source, evaluated) = self.borrowed_input_source(receiver, span, incoming)?;
+                incoming = evaluated;
+                let mutable = call.receiver == Some(Receiver::Mutable);
+                let loan = self.call_loan(source, mutable, mutable, receiver.span);
+                let source_node = self.graph.nodes.len();
+                incoming = self.event(incoming, Event::Borrow(loan), receiver.span);
+                let end_node = self.graph.nodes.len();
+                incoming = self.event(incoming, Event::Nothing, receiver.span);
+                loans.push(loan);
+                invocation.receiver = Some(loan);
+                invocation.receiver_evaluation = Some(InputEvaluation {
+                    start_node,
+                    end_node,
+                    source_node: Some(source_node),
+                });
+            }
         }
         for (written_position, (expression, slot)) in paired {
             let slot = slot.ok_or(Unavailable {
@@ -418,7 +428,7 @@ impl Builder<'_> {
     ) -> Result<(Vec<usize>, Option<LoanId>), Unavailable> {
         match mode {
             Some(OwnershipMode::Borrowed | OwnershipMode::BorrowedMut) => {
-                let (source, incoming) = self.borrowed_argument_source(expression, invocation, incoming)?;
+                let (source, incoming) = self.borrowed_input_source(expression, invocation, incoming)?;
                 let loan = self.call_loan(
                     source,
                     mode == Some(OwnershipMode::BorrowedMut),
@@ -461,12 +471,16 @@ impl Builder<'_> {
     /// A fresh scalar or owned byte-string expression, or a list literal of Copy scalars, may be borrowed for this
     /// call. Existing places keep their original permissions even through parentheses; evaluating a temporary
     /// preserves nested moves and loans.
-    fn borrowed_argument_source(
+    fn borrowed_input_source(
         &mut self,
         expression: &Spanned<Expr>,
         invocation: Span,
         incoming: Vec<usize>,
     ) -> Result<(Path, Vec<usize>), Unavailable> {
+        if let Some(view) = self.view_source(expression)? {
+            let (outgoing, source) = self.evaluate_view_source(expression, view, incoming)?;
+            return Ok((source, outgoing));
+        }
         if let Some(source) = self.optional_place(expression)? {
             return Ok((source, self.evaluate_place(expression, incoming)?));
         }
@@ -474,8 +488,14 @@ impl Builder<'_> {
             span: expression.span,
             reason: "temporary argument has no checked type".into(),
         })?;
-        // A list literal's own evaluation admits only Copy scalar elements, so it retains no dependency either.
-        if !plain_result(ty) && !matches!(expression.node, Expr::List(_)) {
+        // A list literal's own evaluation admits only Copy scalar elements, so it retains no dependency either. A
+        // complete model or class constructor likewise produces fresh storage after its checked fields evaluate.
+        let fresh_constructor = self
+            .checker
+            .type_info
+            .constructor_field_binding(expression.span)
+            .is_some();
+        if !plain_result(ty) && !matches!(expression.node, Expr::List(_)) && !fresh_constructor {
             return Err(Unavailable {
                 span: expression.span,
                 reason: "temporary argument needs retained dependency facts".into(),
@@ -620,6 +640,45 @@ impl Builder<'_> {
                 fields: view.source.fields.clone(),
                 carried: view.carried,
             }))
+    }
+
+    /// The retained dependency declared by a selected top-level `Owned[T] from source` result. Its source input
+    /// determines whether the result keeps shared or exclusive access; the owned result itself is ordinary value
+    /// storage, not an alias of that source.
+    pub(super) fn owned_relation(&self, expression: &Spanned<Expr>) -> Result<Option<ViewRelation>, Unavailable> {
+        let expression = super::super::builtins::view_call(expression);
+        if !matches!(expression.node, Expr::Call(..) | Expr::MethodCall(..)) {
+            return Ok(None);
+        }
+        let span = expression.span;
+        let Some(call) = self.checker.type_info.protocols.explicit_input_calls.get(&span) else {
+            return Ok(None);
+        };
+        let refusal = |reason: &'static str| Unavailable {
+            span,
+            reason: reason.into(),
+        };
+        let contract = self.checker.type_info.selected_input_contract(call).map_err(refusal)?;
+        let Some((_, source)) = crate::ownership_metadata::owned_result_source(contract).map_err(refusal)? else {
+            return Ok(None);
+        };
+        let exclusive = match source.slot {
+            SourceSlot::Receiver => call.receiver == Some(Receiver::Mutable),
+            SourceSlot::Parameter(slot) => contract
+                .and_then(|contract| {
+                    contract
+                        .modes
+                        .iter()
+                        .find(|mode| mode.component.parameter == Some(slot) && mode.component.children.is_empty())
+                })
+                .is_some_and(|mode| mode.mode == OwnershipMode::BorrowedMut),
+        };
+        Ok(Some(ViewRelation {
+            exclusive,
+            slot: source.slot.clone(),
+            fields: source.fields.clone(),
+            carried: None,
+        }))
     }
 
     /// Evaluate a call that returns a view, then borrow the substituted place: the invocation's receiver or

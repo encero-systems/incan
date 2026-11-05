@@ -145,7 +145,12 @@ impl BodyBuilder<'_, '_> {
     }
 
     /// Preserve homogeneous evaluated task elements; empty or mixed literals keep their checked contextual type.
-    pub(super) fn retained_list_type(&self, checked: &IncanType, elements: &[bir::ArgumentElement]) -> IncanType {
+    pub(super) fn retained_list_type(
+        &self,
+        checked: &IncanType,
+        elements: &[bir::ArgumentElement],
+        retain_references: bool,
+    ) -> IncanType {
         let types: Option<Vec<_>> = elements
             .iter()
             .map(|element| {
@@ -155,9 +160,23 @@ impl BodyBuilder<'_, '_> {
                 self.retained_operand_type(operand)
             })
             .collect();
-        types
-            .and_then(|types| Self::homogeneous_list_type(&types))
-            .map_or_else(|| checked.clone(), |actual| self.refine_task_storage(checked, &actual))
+        types.and_then(|types| Self::homogeneous_list_type(&types)).map_or_else(
+            || checked.clone(),
+            |actual| {
+                if retain_references
+                    && matches!(
+                        &actual,
+                    IncanType::Generic { base, args }
+                        if base == "List"
+                            && matches!(args.as_slice(), [IncanType::Ref(_) | IncanType::RefMut(_)])
+                    )
+                {
+                    actual
+                } else {
+                    self.refine_task_storage(checked, &actual)
+                }
+            },
+        )
     }
 
     /// Form a list only when every retained element has exactly the same checked storage.
