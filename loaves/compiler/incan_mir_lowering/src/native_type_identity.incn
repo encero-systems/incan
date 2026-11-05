@@ -32,7 +32,7 @@ pub model ConstructorIndex:
     pub count: int
 
 
-pub def constructor_index(declarations: &list[NominalDeclaration]) -> ConstructorIndex:
+pub def constructor_index(declarations: list[NominalDeclaration]) -> ConstructorIndex:
     """Index each retained constructor once, preserving independent all-row and generic-row first-match order."""
     named: BTreeMap[str, list[int]] = BTreeMap.new()
     # The new index is built through the same mutable borrow that extends a shared one, so one path indexes rows.
@@ -71,7 +71,7 @@ pub def named_positions(constructors: &ConstructorIndex, name: str) -> list[int]
     return positions
 
 
-pub def native_owner(declaration: &NominalDeclaration) -> bool:
+pub def native_owner(declaration: NominalDeclaration) -> bool:
     """Authenticate Rust-owned layouts independently of source Loaf artifacts that also have a native item."""
     match declaration.canonical.origin:
         SymbolOrigin.RustCrate(_path) => return true

@@ -136,7 +136,7 @@ def published_default(module: &BodyIrModule, identity: &CanonicalSymbolId) -> bo
     return false
 
 
-pub def standard_protocol(identity: &CanonicalSymbolId) -> bool:
+pub def standard_protocol(identity: CanonicalSymbolId) -> bool:
     """Authenticate the declaring standard trait, including its enclosing span, rather than a matching member name."""
     if (
         identity.kind != SemanticSourceTargetKind.Trait

@@ -202,7 +202,7 @@ pub def lower_computed_statics(
     return Ok(cells)
 
 
-def static_source_position(owners: &list[str], owner: str, missing: str) -> Result[int, str]:
+def static_source_position(owners: list[str], owner: str, missing: str) -> Result[int, str]:
     """Keep the last matching checked source owner and retain the caller's precise missing-provenance refusal."""
     mut selected = -1
     for index in range(len(owners)):
@@ -280,8 +280,8 @@ def lower_literal_static(
 pub def read_static(
     mut builder: Builder,
     value: &RustPlace,
-    global: &RustGlobalPlace,
-    fact: &OwnershipFact,
+    global: RustGlobalPlace,
+    fact: OwnershipFact,
     span: SourceSpan,
 ) -> Result[Operand, str]:
     """Read persistent storage without consuming it; literal reads leave computed initialization untouched."""
@@ -322,10 +322,10 @@ pub def read_static(
 
 def read_computed_static(
     mut builder: Builder,
-    value: &RustPlace,
-    global: &RustGlobalPlace,
+    value: RustPlace,
+    global: RustGlobalPlace,
     slot: int,
-    fact: &OwnershipFact,
+    fact: OwnershipFact,
     span: SourceSpan,
 ) -> Result[Operand, str]:
     """
@@ -514,7 +514,7 @@ pub def computed_static_root(mut builder: Builder, value: &RustPlace, span: Sour
 pub def computed_static_type(
     mut builder: Builder,
     value: &RustPlace,
-    global: &RustGlobalPlace,
+    global: RustGlobalPlace,
 ) -> Result[PlanType, str]:
     """The checked carrier a static place selects, without reading the static."""
     mut ty = native_source_type(
@@ -556,7 +556,7 @@ pub def computed_static_type(
 
 def snapshot_projection(
     mut builder: Builder,
-    value: &RustPlace,
+    value: RustPlace,
     snapshot: Place,
     span: SourceSpan,
 ) -> Result[Place, str]:
@@ -642,7 +642,7 @@ def static_hashed_initial(
     return Ok(read_place(target, true, span))
 
 
-def static_literal_element(value: &RustConstant) -> RustArgumentElement:
+def static_literal_element(value: RustConstant) -> RustArgumentElement:
     """Return a fresh owned foreign element; legacy append conservatively copies constructors containing name reads."""
     return RustArgumentElement.One(RustOperand.Constant(value.clone()))
 
@@ -775,8 +775,8 @@ def static_field_writer(
 
 def write_static_entry(
     mut builder: Builder,
-    destination: &RustPlace,
-    global: &RustGlobalPlace,
+    destination: RustPlace,
+    global: RustGlobalPlace,
     value: &RustRvalue,
     span: SourceSpan,
 ) -> Result[None, str]:
@@ -816,7 +816,7 @@ def write_static_entry(
 
 pub def persist_static_value(
     mut builder: Builder,
-    global: &RustGlobalPlace,
+    global: RustGlobalPlace,
     target: Place,
     span: SourceSpan,
 ) -> Result[None, str]:
@@ -844,7 +844,7 @@ pub def persist_static_value(
 
 def store_computed_static(
     mut builder: Builder,
-    global: &RustGlobalPlace,
+    global: RustGlobalPlace,
     slot: int,
     target: Place,
     span: SourceSpan,

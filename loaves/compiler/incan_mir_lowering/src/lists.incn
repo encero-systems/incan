@@ -94,7 +94,7 @@ pub def is_owned_list(ty: PlanType) -> bool:
         _ => return false
 
 
-pub def is_builtin_iteration(protocol: &IterProtocol) -> bool:
+pub def is_builtin_iteration(protocol: IterProtocol) -> bool:
     """Match a borrowed protocol tag without treating a pattern binding as an owned enum value."""
     match protocol:
         IterProtocol.Builtin => return true
@@ -173,7 +173,7 @@ pub def is_exclusive_borrow(ty: PlanType) -> bool:
         _ => return false
 
 
-pub def taking_iterator_locals(block: &RustBlock) -> list[int]:
+pub def taking_iterator_locals(block: RustBlock) -> list[int]:
     """Read consuming materializations against this whole frame's polls, including same-frame nested blocks."""
     return taking_block_locals(block, list_iterator_locals(block))
 
@@ -220,7 +220,7 @@ def taking_statement_locals(kind: &RustStatementKind, iterators: list[int]) -> l
     return result
 
 
-def collect_arm_iterator_locals(arm: &RustMatchArm, mut result: list[int]) -> None:
+def collect_arm_iterator_locals(arm: RustMatchArm, mut result: list[int]) -> None:
     """Borrow a same-frame match arm through its declared Rust type while finding cursor slots."""
     for statement in arm.guard_stmts:
         result.extend(statement_iterator_locals(statement.kind))
@@ -228,7 +228,7 @@ def collect_arm_iterator_locals(arm: &RustMatchArm, mut result: list[int]) -> No
         result.extend(statement_iterator_locals(statement.kind))
 
 
-def collect_arm_taking_locals(arm: &RustMatchArm, iterators: list[int], mut result: list[int]) -> None:
+def collect_arm_taking_locals(arm: RustMatchArm, iterators: list[int], mut result: list[int]) -> None:
     """Retain the enclosing frame's cursor set while borrowing a match arm's initializer statements."""
     for statement in arm.guard_stmts:
         result.extend(taking_statement_locals(statement.kind, iterators))

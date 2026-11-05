@@ -79,7 +79,7 @@ pub def lower_try_propagation(
 pub def lower_result_construction(
     mut builder: Builder,
     target: Place,
-    variant: &RustResultVariant,
+    variant: RustResultVariant,
     span: SourceSpan,
 ) -> Result[None, str]:
     """Construct the checker-selected Result variant in its concrete standard carrier."""
@@ -123,7 +123,7 @@ pub def lower_option_construction(
 pub def lower_none_assignment(
     mut builder: Builder,
     target: Place,
-    _value: &RustRvalue,
+    _value: RustRvalue,
     span: SourceSpan,
 ) -> Result[None, str]:
     """Assign the typed None value through the standard carrier ownership path."""
@@ -272,7 +272,7 @@ pub def retained_reference_value(
         _ => return Ok(None)
 
 
-def retained_reference_place(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Option[Place], str]:
+def retained_reference_place(mut builder: Builder, source: RustPlace, span: SourceSpan) -> Result[Option[Place], str]:
     """Keep local and structural field storage addressable; collection indexing retains its own borrow path."""
     match source.local_id():
         None => return Ok(None)

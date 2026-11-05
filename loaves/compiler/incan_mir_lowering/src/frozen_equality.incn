@@ -41,7 +41,7 @@ pub def frozen_place(mut builder: Builder, value: &RustOperand, span: SourceSpan
 
 def frozen_storage_place(
     mut builder: Builder,
-    value: &RustPlace,
+    value: RustPlace,
     span: SourceSpan,
 ) -> Result[Place, str]:
     """Read a computed static's exact field through its snapshot; ordinary local places retain their checked projection."""
@@ -59,7 +59,7 @@ pub def frozen_reference_type(ty: PlanType) -> Result[PlanType, str]:
 
 pub def borrow_frozen_argument(
     mut builder: Builder,
-    argument: &RustArgumentElement,
+    argument: RustArgumentElement,
     span: SourceSpan,
 ) -> Result[Operand, str]:
     """Borrow one checked frozen argument without inventing a value for a spread or missing carrier."""

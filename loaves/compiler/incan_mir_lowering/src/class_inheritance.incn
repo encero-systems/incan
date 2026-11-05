@@ -35,7 +35,7 @@ pub def specialize_classes(module: &BodyIrModule) -> Result[list[Body], str]:
     return Ok(result)
 
 
-def already_instantiated(retained: list[CanonicalSymbolId], identity: &CanonicalSymbolId) -> bool:
+def already_instantiated(retained: list[CanonicalSymbolId], identity: CanonicalSymbolId) -> bool:
     """Several ancestor slots can select one override; retain one receiver frame for that implementation."""
     for previous in retained:
         if previous == identity:
@@ -61,7 +61,7 @@ def instantiate_body(body: &Body, owner: &NominalDeclaration) -> Result[Body, st
     return Ok(result)
 
 
-def instance_receiver(origin: &LocalOrigin) -> bool:
+def instance_receiver(origin: LocalOrigin) -> bool:
     """Keep the foreign enum in a typed boundary while its pattern-only import emission is tracked by #459."""
     match origin:
         LocalOrigin.Receiver(mutable=_mutable) => return true

@@ -256,10 +256,10 @@ def emit_local_call(
 
 pub def emit_selected_body_call(
     mut builder: Builder,
-    body: &RustBody,
+    body: RustBody,
     callee: CalleeKind,
     operands: list[Operand],
-    destination: &Option[RustPlace],
+    destination: Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Preserve the selected body's result carrier and unwind cleanup for direct and guarded static calls."""

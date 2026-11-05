@@ -15,7 +15,7 @@ from reflection import emit_field_metadata
 
 pub def lower_type_metadata(
     mut builder: Builder,
-    target: &TypeMetadataTarget,
+    target: TypeMetadataTarget,
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:

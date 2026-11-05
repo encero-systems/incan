@@ -7,7 +7,7 @@ from frame import Builder, temporary, external_call
 from lists import is_list
 
 
-pub def text_helper(helper: &HelperOp) -> Option[tuple[str, PlanType]]:
+pub def text_helper(helper: HelperOp) -> Option[tuple[str, PlanType]]:
     """Select text-only helpers whose parameters borrow strings and whose runtime semantics match legacy."""
     match helper:
         HelperOp.StrConcat => return Some(("concat_text", PlanType.String))

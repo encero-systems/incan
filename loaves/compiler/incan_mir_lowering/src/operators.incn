@@ -64,7 +64,7 @@ pub def operand_type(mut builder: Builder, operand: Operand) -> Result[PlanType,
     return value_type(builder, operand)
 
 
-pub def binary_operator(operator: &BinOp) -> Result[BinaryOp, str]:
+pub def binary_operator(operator: BinOp) -> Result[BinaryOp, str]:
     """Translate only native scalar operations; operators with runtime semantics are separate calls."""
     match operator:
         BinOp.Add => return Ok(BinaryOp.Add)
@@ -91,7 +91,7 @@ pub def binary_operator(operator: &BinOp) -> Result[BinaryOp, str]:
         BinOp.Or => return Err("unsupported Body IR Or")
 
 
-def is_bit_operator(operator: &BinOp) -> bool:
+def is_bit_operator(operator: BinOp) -> bool:
     """Select the integer bit operations legacy emits as Rust infix operators."""
     match operator:
         BinOp.BitAnd => return true
@@ -102,7 +102,7 @@ def is_bit_operator(operator: &BinOp) -> bool:
         _ => return false
 
 
-def is_ordering(operator: &BinOp) -> bool:
+def is_ordering(operator: BinOp) -> bool:
     """Select the four ordering comparisons."""
     match operator:
         BinOp.Lt => return true
@@ -113,7 +113,7 @@ def is_ordering(operator: &BinOp) -> bool:
 
 
 def bit_operation(
-    operator: &BinOp,
+    operator: BinOp,
     left: Operand,
     left_type: PlanType,
     right: Operand,

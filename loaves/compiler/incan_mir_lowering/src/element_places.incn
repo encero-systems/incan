@@ -15,7 +15,7 @@ from model_lists import structural_prefix
 from table_views import borrowed_at
 
 
-pub def is_element_place(mut builder: Builder, source: &RustPlace) -> Result[bool, str]:
+pub def is_element_place(mut builder: Builder, source: RustPlace) -> Result[bool, str]:
     """
     Whether a local place selects a collection element or text slice rather than storage a native place can name.
 
@@ -49,7 +49,7 @@ pub def is_element_place(mut builder: Builder, source: &RustPlace) -> Result[boo
         None => return Ok(false)
 
 
-pub def element_place_type(mut builder: Builder, source: &RustPlace) -> Result[PlanType, str]:
+pub def element_place_type(mut builder: Builder, source: RustPlace) -> Result[PlanType, str]:
     """Follow an element place's projections to the type of the value its read materializes, emitting nothing."""
     return element_prefix_type(builder, source, len(source.projection))
 

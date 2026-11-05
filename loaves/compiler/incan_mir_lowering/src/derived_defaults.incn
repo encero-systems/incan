@@ -29,7 +29,7 @@ from checked_values import scalar_place
 from numerics import numeric_carrier, numeric_zero
 
 
-pub def is_derived_default(target: &NamedCallableTarget) -> bool:
+pub def is_derived_default(target: NamedCallableTarget) -> bool:
     """Recognize the std `Default` trait's `default` in source and compiled SDK identities, never a same-name method."""
     match target.canonical:
         Some(identity) =>

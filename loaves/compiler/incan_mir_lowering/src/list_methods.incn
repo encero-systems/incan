@@ -511,7 +511,7 @@ def indexes_nested_list(mut builder: Builder, arguments: &list[RustArgumentEleme
 def list_length(
     mut builder: Builder,
     reference: Operand,
-    destination: &Option[RustPlace],
+    destination: Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Read a borrowed list's length through the runtime."""
@@ -592,8 +592,8 @@ def admit_membership_equality(builder: &Builder, leaf: ListLeaf) -> Result[None,
 
 pub def indexed_assignment(
     mut builder: Builder,
-    destination: &RustPlace,
-    value: &RustRvalue,
+    destination: RustPlace,
+    value: RustRvalue,
     span: SourceSpan,
 ) -> Result[None, str]:
     """Write one checked list element through the legacy mutable indexing helper."""
@@ -602,9 +602,9 @@ pub def indexed_assignment(
 
 pub def indexed_assignment_at(
     mut builder: Builder,
-    destination: &RustPlace,
+    destination: RustPlace,
     start: int,
-    value: &RustRvalue,
+    value: RustRvalue,
     span: SourceSpan,
 ) -> Result[None, str]:
     """Write one checked list element whose list is reached after `start` structural steps (zero for a bare list)."""

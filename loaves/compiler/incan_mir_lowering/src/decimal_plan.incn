@@ -5,14 +5,14 @@ from pub::incan_mir_plan import Constant, Operand, PlanType, SourceSpan
 from frame import Builder, temporary, literal, read_place, external_call
 
 
-pub def is_decimal_literal(value: &TypedNumericConstant) -> bool:
+pub def is_decimal_literal(value: TypedNumericConstant) -> bool:
     """Retain the Rust enum import through a typed boundary; legacy drops pattern-only imports until dev.8."""
     match value:
         TypedNumericConstant.Decimal(precision=_p, scale=_s, coefficient=_c, literal_scale=_l) => return true
         _ => return false
 
 
-pub def decimal_literal(mut builder: Builder, value: &TypedNumericConstant, span: SourceSpan) -> Result[Operand, str]:
+pub def decimal_literal(mut builder: Builder, value: TypedNumericConstant, span: SourceSpan) -> Result[Operand, str]:
     """Materialize the existing legacy carrier from the checker-owned exact payload."""
     match value:
         TypedNumericConstant.Decimal(precision=_precision, scale=_scale, coefficient=coefficient, literal_scale=scale) =>
@@ -35,7 +35,7 @@ pub def decimal_literal(mut builder: Builder, value: &TypedNumericConstant, span
 
 pub def decimal_comparison(
     mut builder: Builder,
-    operator: &BinOp,
+    operator: BinOp,
     left: Operand,
     right: Operand,
     span: SourceSpan,

@@ -29,27 +29,27 @@ from decls import library_enum_item
 from table_views import borrowed_at
 
 
-pub def is_derived_clone(target: &MethodTarget) -> bool:
+pub def is_derived_clone(target: MethodTarget) -> bool:
     """Recognize `clone` of the standard library's Clone in source and compiled SDK identities, never a same-name method."""
     return is_std_derive_method(target, "copying", "clone")
 
 
-pub def is_derived_display(target: &MethodTarget) -> bool:
+pub def is_derived_display(target: MethodTarget) -> bool:
     """Recognize `__str__` of the standard library's Display, never a same-name method."""
     return is_std_derive_method(target, "string", "__str__")
 
 
-pub def is_std_callable_call(target: &MethodTarget) -> bool:
+pub def is_std_callable_call(target: MethodTarget) -> bool:
     """Recognize `__call__` of the standard library's callable traits, through which a callable bound is called."""
     return is_std_core_method(target, "traits", "callable", "__call__")
 
 
-def is_std_derive_method(target: &MethodTarget, module: str, name: str) -> bool:
+def is_std_derive_method(target: MethodTarget, module: str, name: str) -> bool:
     """Whether the checker selected `name` of a trait declared by the standard library's `std.derives.<module>`."""
     return is_std_core_method(target, "derives", module, name)
 
 
-def is_std_core_method(target: &MethodTarget, section: str, module: str, name: str) -> bool:
+def is_std_core_method(target: MethodTarget, section: str, module: str, name: str) -> bool:
     """Whether the checker selected `name` of `std.<section>.<module>`, in source or compiled SDK identities."""
     match target.canonical:
         Some(identity) =>
@@ -150,7 +150,7 @@ def clone_place(
 
 
 def clone_referent(
-    mut builder: Builder, source: Place, ty: PlanType, destination: &Option[RustPlace], span: SourceSpan,
+    mut builder: Builder, source: Place, ty: PlanType, destination: Option[RustPlace], span: SourceSpan,
 ) -> Result[None, str]:
     """Clone a selected shared receiver's referent, including a stored reference projected from a carrier.
 
@@ -257,7 +257,7 @@ def clone_into(
     return lower_callable_result(builder, callee, [read_place(reference, false, span)], output, ty, span)
 
 
-pub def comparison_dunder(target: &MethodTarget) -> Option[BinOp]:
+pub def comparison_dunder(target: MethodTarget) -> Option[BinOp]:
     """Select the operator a dunder of the standard library's Eq or Ord names, never a same-name method."""
     if is_std_derive_method(target, "comparison", "__eq__"):
         return Some(BinOp.Eq)
@@ -361,7 +361,7 @@ def compare_scalars(
         _ => return Ok(false)
 
 
-def single_operand(argument: &RustArgumentElement) -> Result[RustOperand, str]:
+def single_operand(argument: RustArgumentElement) -> Result[RustOperand, str]:
     """Read one positional argument's checked operand, refusing a spread."""
     match argument.as_one():
         Some(value) => return Ok(value.clone())

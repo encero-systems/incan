@@ -25,7 +25,7 @@ pub def static_method_result_type(ty: PlanType) -> bool:
         _ => return false
 
 
-pub def primitive_type(primitive: &Primitive) -> Result[PlanType, str]:
+pub def primitive_type(primitive: Primitive) -> Result[PlanType, str]:
     """Map the admitted primitive vocabulary once, including exact sized numeric carriers, and name every other primitive refusal."""
     match primitive:
         Primitive.Numeric(kind) => return numeric_type(kind)

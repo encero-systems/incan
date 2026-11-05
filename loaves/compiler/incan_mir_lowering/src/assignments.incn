@@ -133,7 +133,7 @@ pub def lower_assignment(
     return Ok(None)
 
 
-pub def assignment_place(mut builder: Builder, destination: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+pub def assignment_place(mut builder: Builder, destination: RustPlace, span: SourceSpan) -> Result[Place, str]:
     """Replace a checked reference value's own slot; source receiver and projected writes still address their referents."""
     if len(destination.projection) == 0:
         match destination.local_id():

@@ -11,7 +11,7 @@ from lists import is_builtin_iteration
 from table_views import borrowed_at
 
 
-pub def later_clauses(block: &RustBlock) -> list[tuple[int, int, list[int]]]:
+pub def later_clauses(block: RustBlock) -> list[tuple[int, int, list[int]]]:
     """
     Find each later `for` clause of one step body: its iterator local, its source local, and the locals bound before it.
 
@@ -112,7 +112,7 @@ def builtin_poll(kind: &RustStatementKind) -> tuple[int, int]:
         _ => return (-1, -1)
 
 
-def iterator_initialization(kind: &RustStatementKind) -> tuple[int, int]:
+def iterator_initialization(kind: RustStatementKind) -> tuple[int, int]:
     """Read an iterator's initialization from a whole source local, or (-1, -1)."""
     match kind:
         RustStatementKind.Assign(place=place, rvalue=value) =>
@@ -133,7 +133,7 @@ def assigned_local(kind: &RustStatementKind) -> int:
         _ => return -1
 
 
-pub def whole_local(place: &RustPlace) -> int:
+pub def whole_local(place: RustPlace) -> int:
     """Read a whole Body IR local's index, or -1 for a projection or a global."""
     if len(place.projection) != 0:
         return -1

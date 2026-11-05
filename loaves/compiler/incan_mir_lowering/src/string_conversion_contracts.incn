@@ -63,17 +63,17 @@ pub def conversion_trait(module: &BodyIrModule) -> Result[str, str]:
                 _ => return Err("unsupported Body IR string conversion contract identity")
 
 
-def is_conversion_trait(identity: &CanonicalSymbolId) -> bool:
+def is_conversion_trait(identity: CanonicalSymbolId) -> bool:
     """Require the selected lexical TryFrom trait rather than a same-name value or member."""
     return identity.kind == SemanticSourceTargetKind.Trait and identity.namespace == SymbolNamespace.OrdinaryLexical and identity.declaration_name == "TryFrom"
 
 
-def is_conversion_method(identity: &CanonicalSymbolId) -> bool:
+def is_conversion_method(identity: CanonicalSymbolId) -> bool:
     """Require the selected member method, not a free function or differently named declaration."""
     return identity.kind == SemanticSourceTargetKind.Method and identity.namespace == SymbolNamespace.Member and identity.declaration_name == "try_from"
 
 
-def method_belongs_to_owner(method: &CanonicalSymbolId, owner: &CanonicalSymbolId) -> bool:
+def method_belongs_to_owner(method: CanonicalSymbolId, owner: CanonicalSymbolId) -> bool:
     """Keep the method's origin and complete source span inside the selected trait's declaration."""
     if method.origin != owner.origin:
         return false
@@ -139,14 +139,14 @@ pub def conversion_chain(
         _ => return Err("unsupported Body IR automatic string conversion primitive")
 
 
-def underlying_identity(declaration: &NominalDeclaration, name: str) -> Option[CanonicalSymbolId]:
+def underlying_identity(declaration: NominalDeclaration, name: str) -> Option[CanonicalSymbolId]:
     """Borrow the exact retained key for native lookup, copying only the selected canonical identity."""
     match declaration.named_type_identities.get(name):
         Some(identity) => return Some(identity.clone())
         None => return None
 
 
-def conversion_owner_name(declaration: &NominalDeclaration) -> bool:
+def conversion_owner_name(declaration: NominalDeclaration) -> bool:
     """Accept a source leaf or its exact retained carrier, never carrier_name's unproven spelling fallback."""
     if declaration.name == declaration.canonical.declaration_name:
         return true

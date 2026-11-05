@@ -60,7 +60,7 @@ from carrier_operands import element_operand, element_plan_operand
 from sequence_builtins import argument_type
 
 
-pub def collection_value(mut builder: Builder, read: &RustPlaceOperand, span: SourceSpan) -> Result[Operand, str]:
+pub def collection_value(mut builder: Builder, read: RustPlaceOperand, span: SourceSpan) -> Result[Operand, str]:
     """
     Materialize a checked collection read while preserving caller-owned bindings.
 
@@ -76,7 +76,7 @@ pub def collection_value(mut builder: Builder, read: &RustPlaceOperand, span: So
 pub def collection_place_value(
     mut builder: Builder,
     place: Place,
-    fact: &OwnershipFact,
+    fact: OwnershipFact,
     span: SourceSpan,
 ) -> Result[Operand, str]:
     """Materialize whole or structurally projected dictionary/set storage using the same checked read policy; projected moves gain no authority over their containing owner."""
@@ -168,7 +168,7 @@ pub def collection_assignment(
 pub def collection_length(
     mut builder: Builder,
     receiver: Place,
-    destination: &Option[RustPlace],
+    destination: Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Lower canonical len without transferring container ownership."""
@@ -226,7 +226,7 @@ pub def collection_contains(
     return Ok(None)
 
 
-pub def dictionary_index_read(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Operand, str]:
+pub def dictionary_index_read(mut builder: Builder, source: RustPlace, span: SourceSpan) -> Result[Operand, str]:
     """Clone a checked dictionary element through legacy indexing and error behavior, then read what follows from it."""
     if len(source.projection) == 0:
         return Err("unsupported Body IR dictionary read without key")
@@ -236,7 +236,7 @@ pub def dictionary_index_read(mut builder: Builder, source: &RustPlace, span: So
 
 pub def dictionary_value_read(
     mut builder: Builder,
-    source: &RustPlace,
+    source: RustPlace,
     receiver: Place,
     span: SourceSpan,
 ) -> Result[Operand, str]:
@@ -248,7 +248,7 @@ pub def dictionary_value_read(
 pub def read_dictionary_element(
     mut builder: Builder,
     receiver: Place,
-    source: &RustPlace,
+    source: RustPlace,
     slot: int,
     span: SourceSpan,
 ) -> Result[Place, str]:
@@ -286,8 +286,8 @@ pub def read_dictionary_element(
 
 pub def dictionary_index_assignment(
     mut builder: Builder,
-    destination: &RustPlace,
-    value: &RustRvalue,
+    destination: RustPlace,
+    value: RustRvalue,
     span: SourceSpan,
 ) -> Result[None, str]:
     """Replace dictionary entries after evaluating the source value and retained key."""
@@ -297,10 +297,10 @@ pub def dictionary_index_assignment(
 
 pub def dictionary_entry_assignment(
     mut builder: Builder,
-    destination: &RustPlace,
+    destination: RustPlace,
     receiver: Place,
     start: int,
-    value: &RustRvalue,
+    value: RustRvalue,
     span: SourceSpan,
 ) -> Result[None, str]:
     """Insert an evaluated entry into its retained dictionary, including a dictionary reached through a structural field."""

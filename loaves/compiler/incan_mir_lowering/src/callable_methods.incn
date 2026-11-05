@@ -117,7 +117,7 @@ pub def callable_methods(
     return Err("unsupported Body IR unavailable native Callable1 source body")
 
 
-def standard_callable(identity: &CanonicalSymbolId) -> bool:
+def standard_callable(identity: CanonicalSymbolId) -> bool:
     """Only the artifact-backed standard declaration grants this native protocol, including through aliases."""
     if (
         identity.kind != SemanticSourceTargetKind.Trait
@@ -128,7 +128,7 @@ def standard_callable(identity: &CanonicalSymbolId) -> bool:
     return standard_callable_origin(identity.origin)
 
 
-def standard_callable_origin(origin: &SymbolOrigin) -> bool:
+def standard_callable_origin(origin: SymbolOrigin) -> bool:
     """Authenticate the provider path; the explicit origin type also retains its Rust struct-pattern import."""
     match origin:
         SymbolOrigin.Package(library=library, module_path=path) =>

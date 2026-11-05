@@ -246,7 +246,7 @@ pub def function_pointer_storage(body: &RustBody) -> list[int]:
     return locals
 
 
-pub def validate_callable_representation(body: &RustBody) -> Result[None, str]:
+pub def validate_callable_representation(body: RustBody) -> Result[None, str]:
     """Refuse callable signatures whose closure-holding contract the checker did not record."""
     match body.callable_representation:
         Some(_representation) => return Ok(None)
@@ -629,9 +629,9 @@ pub def function_assignment(
 
 
 pub def source_function_item(
-    module: &RustModule,
+    module: RustModule,
     mut builder: Builder,
-    value: &RustRvalue,
+    value: RustRvalue,
     span: SourceSpan,
 ) -> Result[Option[tuple[str, PlanType, str]], str]:
     """Retain a function item's exact signature and declaration name from its checked named-read or original identity."""
@@ -744,7 +744,7 @@ def item_result(mut builder: Builder, ty: &RustType) -> Result[PlanType, str]:
 
 
 def function_item_identity(
-    module: &RustModule,
+    module: RustModule,
     mut builder: Builder,
     parameters: &list[RustParameter],
     target: &RustNamedTarget,
@@ -842,7 +842,7 @@ pub def function_item_callee(mut builder: Builder, name: str, span: SourceSpan) 
     return Callee(kind=CalleeKind.Planned(name), span=span)
 
 
-def imported_item_body(module: &RustModule, bodies: BodyIndex, target: &RustNamedTarget) -> Result[int, str]:
+def imported_item_body(module: RustModule, bodies: BodyIndex, target: RustNamedTarget) -> Result[int, str]:
     """
     Find the one retained body, in another module of the project graph, that an imported function item names.
 

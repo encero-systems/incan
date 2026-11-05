@@ -746,7 +746,7 @@ pub def bind_enum_payload(
 pub def enum_payload_read(
     mut builder: Builder,
     place: Place,
-    fact: &OwnershipFact,
+    fact: OwnershipFact,
     span: SourceSpan,
 ) -> Result[Operand, str]:
     """Preserve checked native reference payloads and copy facts; clone only payloads with owned storage."""
@@ -829,8 +829,8 @@ pub def enum_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan
 
 pub def read_generic_decorator(
     mut builder: Builder,
-    value: &RustPlace,
-    global: &RustGlobalPlace,
+    value: RustPlace,
+    global: RustGlobalPlace,
     span: SourceSpan,
 ) -> Result[Option[Operand], str]:
     """Read only a validated wrapper's own closed binding through its instance's publishing accessor."""

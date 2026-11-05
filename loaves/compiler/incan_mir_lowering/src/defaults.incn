@@ -216,7 +216,7 @@ def mapped_written_operands(
     return Ok(operands)
 
 
-def omitted_slots(binding: &ArgumentBinding, count: int) -> Result[list[int], str]:
+def omitted_slots(binding: ArgumentBinding, count: int) -> Result[list[int], str]:
     """Retain defaults from either checked evaluation policy, each slot in range and none also written."""
     match binding:
         ArgumentBinding.Resolved(arguments=bindings, defaulted_slots=defaults) =>
@@ -226,7 +226,7 @@ def omitted_slots(binding: &ArgumentBinding, count: int) -> Result[list[int], st
         _ => return Err("unsupported Body IR unresolved ArgumentBinding")
 
 
-def checked_omitted_slots(bindings: &list[BoundArgument], defaults: &list[usize], count: int) -> Result[list[int], str]:
+def checked_omitted_slots(bindings: list[BoundArgument], defaults: list[usize], count: int) -> Result[list[int], str]:
     """Validate disjoint in-range omitted slots against the retained written argument map."""
     mut occupied: list[int] = []
     for bound in bindings:

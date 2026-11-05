@@ -65,7 +65,7 @@ def binding_publish_name(base: str) -> str:
     return f"{base}__incan_binding_publish"
 
 
-pub def validate_instance_binding(binding: &DecoratedBinding) -> Result[None, str]:
+pub def validate_instance_binding(binding: DecoratedBinding) -> Result[None, str]:
     """Admit a synchronous per-instantiation binding with its initializer; its frames check the closed signature."""
     if binding.initialization != DecoratedInitialization.PerInstantiation:
         return Err("unsupported Body IR cached decorator outside per-instantiation policy")
@@ -115,7 +115,7 @@ pub def reified_pointer(mut builder: Builder, name: str, signature: list[PlanTyp
     return read_place(pointer, false, span)
 
 
-pub def validate_binding_policy(binding: &DecoratedBinding) -> Result[None, str]:
+pub def validate_binding_policy(binding: DecoratedBinding) -> Result[None, str]:
     """Honor the kernel-validated lifetime and complete initializer field without inferring a replacement from storage."""
     match binding.initialization:
         DecoratedInitialization.PerInstantiation => return validate_instance_binding(binding)

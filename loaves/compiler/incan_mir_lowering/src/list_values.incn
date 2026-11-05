@@ -238,7 +238,7 @@ pub def value_operand(mut builder: Builder, value: &RustOperand, span: SourceSpa
             return scalar_operand(builder, value, span)
 
 
-pub def element_read(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Option[Operand], str]:
+pub def element_read(mut builder: Builder, source: RustPlace, span: SourceSpan) -> Result[Option[Operand], str]:
     """Copy a collection element or text slice without changing its source storage; `None` for structural places."""
     match source.local_id():
         Some(local) =>
@@ -278,7 +278,7 @@ pub def element_read(mut builder: Builder, source: &RustPlace, span: SourceSpan)
     return Ok(Some(indexed_read(builder, source, span)?))
 
 
-pub def indexed_read(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Operand, str]:
+pub def indexed_read(mut builder: Builder, source: RustPlace, span: SourceSpan) -> Result[Operand, str]:
     """Use the retained list projection and legacy negative-index error behavior; a final slice copies a new list."""
     if len(source.projection) == 0:
         return Err("unsupported Body IR list read without index")
@@ -340,7 +340,7 @@ pub def sequence_read_storage(mut builder: Builder, source: Place, span: SourceS
 def read_indexed_element(
     mut builder: Builder,
     place: Place,
-    source: &RustPlace,
+    source: RustPlace,
     slot: int,
     span: SourceSpan,
 ) -> Result[Place, str]:
@@ -460,7 +460,7 @@ def sequence_slice_bounds(mut builder: Builder, projection: &PlaceElem, span: So
 def read_sequence_slice(
     mut builder: Builder,
     place: Place,
-    projection: &PlaceElem,
+    projection: PlaceElem,
     span: SourceSpan,
 ) -> Result[Place, str]:
     """Copy a typed string or list slice through its own legacy runtime boundary."""
@@ -483,7 +483,7 @@ def read_sequence_slice(
     )
 
 
-def read_list_slice(mut builder: Builder, place: Place, projection: &PlaceElem, span: SourceSpan) -> Result[Place, str]:
+def read_list_slice(mut builder: Builder, place: Place, projection: PlaceElem, span: SourceSpan) -> Result[Place, str]:
     """Copy the selected elements into a new owned list through legacy's Python-style slice helper."""
     leaf, depth = require_list_shape(place_type(builder.locals, place), "unsupported Body IR slicing non-list")?
     bounds = sequence_slice_bounds(builder, projection, span)?
@@ -594,7 +594,7 @@ pub def list_base_place(mut builder: Builder, source: &RustPlace, span: SourceSp
 
 pub def list_index_operand(
     mut builder: Builder,
-    source: &RustPlace,
+    source: RustPlace,
     slot: int,
     span: SourceSpan,
 ) -> Result[Operand, str]:
@@ -607,7 +607,7 @@ pub def list_index_operand(
 pub def list_assignment(
     mut builder: Builder,
     destination: Place,
-    value: &RustRvalue,
+    value: RustRvalue,
     span: SourceSpan,
 ) -> Result[None, str]:
     """Construct list literals or transfer checked list values, dropping an initialized destination first."""
@@ -694,7 +694,7 @@ pub def append_list_value(
 pub def frozen_list_assignment(
     mut builder: Builder,
     target: Place,
-    value: &RustRvalue,
+    value: RustRvalue,
     span: SourceSpan,
 ) -> Result[None, str]:
     """

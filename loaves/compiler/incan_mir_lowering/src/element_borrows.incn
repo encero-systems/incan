@@ -40,7 +40,7 @@ from calls import instantiated_external_call
 from table_views import borrowed_at
 
 
-pub def shared_element_place(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Option[Place], str]:
+pub def shared_element_place(mut builder: Builder, source: RustPlace, span: SourceSpan) -> Result[Option[Place], str]:
     """
     Reach a checked shared list element loan without copying its owner or requiring Clone.
 
@@ -151,7 +151,7 @@ pub def element_method_receiver(
 
 def shared_element_receiver(
     mut builder: Builder,
-    source: &RustPlace,
+    source: RustPlace,
     receiver_type: PlanType,
     span: SourceSpan,
 ) -> Result[Place, str]:
@@ -162,13 +162,13 @@ def shared_element_receiver(
     return Ok(reference)
 
 
-pub def mutable_element_reference(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+pub def mutable_element_reference(mut builder: Builder, source: RustPlace, span: SourceSpan) -> Result[Place, str]:
     """Reborrow the nominal element, or a nominal field inside it, that a list or dictionary place selects."""
     place = mutable_element_place(builder, source, span)?
     return model_reference(builder, place, span)
 
 
-pub def mutable_element_place(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+pub def mutable_element_place(mut builder: Builder, source: RustPlace, span: SourceSpan) -> Result[Place, str]:
     """
     Reach the storage a list or dictionary place selects, so a change through it lands in the container.
 
@@ -204,7 +204,7 @@ pub def mutable_element_prefix(
     return Ok(place)
 
 
-def projected_field(mut builder: Builder, place: Place, projection: &PlaceElem, span: SourceSpan) -> Result[Place, str]:
+def projected_field(mut builder: Builder, place: Place, projection: PlaceElem, span: SourceSpan) -> Result[Place, str]:
     """Project a checked model or constant tuple field through its retained element reference."""
     owner = dereferenced(builder, place)
     steps = field_steps(
@@ -252,7 +252,7 @@ pub def borrow_element_mut(
     return Ok(output)
 
 
-def element_start(mut builder: Builder, source: &RustPlace) -> Result[int, str]:
+def element_start(mut builder: Builder, source: RustPlace) -> Result[int, str]:
     """Count the structural steps before the first element index; a list or dictionary root has none."""
     match source.local_id():
         None => return Err("unsupported Body IR mutable borrow of a static element")
@@ -268,7 +268,7 @@ def element_start(mut builder: Builder, source: &RustPlace) -> Result[int, str]:
     return Err("unsupported Body IR mutable borrow of a non-element place")
 
 
-def local_root(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+def local_root(mut builder: Builder, source: RustPlace, span: SourceSpan) -> Result[Place, str]:
     """Map the place's frame local; static storage is a snapshot, so a borrow of it could never change the static."""
     match source.local_id():
         Some(local) => return Ok(plan_place(int(local.index()) + 1 + builder.local_offset, span))

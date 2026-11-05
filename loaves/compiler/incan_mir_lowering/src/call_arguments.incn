@@ -51,8 +51,8 @@ from carrier_operands import boundary_operand
 
 pub def call_parameter_type(
     mut builder: Builder,
-    body: &RustBody,
-    parameter: &RustCallableParam,
+    body: RustBody,
+    parameter: RustCallableParam,
 ) -> Result[PlanType, str]:
     """
     The representation a call passes for one declared parameter, shared by functions and methods.
@@ -75,7 +75,7 @@ pub def call_parameter_type(
     return stored_parameter_type(body, parameter, ty)
 
 
-pub def stored_parameter_type(body: &RustBody, parameter: &RustCallableParam, ty: PlanType) -> Result[PlanType, str]:
+pub def stored_parameter_type(body: RustBody, parameter: &RustCallableParam, ty: PlanType) -> Result[PlanType, str]:
     """
     A deferred producer owns its value parameters; ordinary frames retain the shared collection ABI.
 
@@ -101,7 +101,7 @@ pub def lacks_exclusive_parameter(ty: PlanType) -> bool:
         None => return true
 
 
-pub def has_defaulted_slots(binding: &RustArgumentBinding) -> bool:
+pub def has_defaulted_slots(binding: RustArgumentBinding) -> bool:
     """Report whether a resolved call leaves at least one declared slot to its default."""
     match binding:
         RustArgumentBinding.Resolved(arguments=_arguments, defaulted_slots=defaults) => return len(defaults) != 0

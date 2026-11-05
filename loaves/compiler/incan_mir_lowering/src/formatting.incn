@@ -149,7 +149,7 @@ def debug_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -
     return Err("unsupported Body IR nonmodel FormatStyle.Debug")
 
 
-def display_tuple_place(mut builder: Builder, value: &RustPlace, span: SourceSpan) -> Result[Option[Place], str]:
+def display_tuple_place(mut builder: Builder, value: RustPlace, span: SourceSpan) -> Result[Option[Place], str]:
     """Display a whole local tuple while leaving global statics and other carriers on their existing paths."""
     match value.local_id():
         None => return Ok(None)
@@ -411,7 +411,7 @@ def display_string_operand(mut builder: Builder, operand: Operand, span: SourceS
 
 def clone_display_place(
     mut builder: Builder,
-    value: &RustPlace,
+    value: RustPlace,
     span: SourceSpan,
     type_parameter: bool,
 ) -> Result[Place, str]:

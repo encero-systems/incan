@@ -349,7 +349,7 @@ def scope_within(mut builder: Builder, scope: int, root: int) -> bool:
     return false
 
 
-pub def validate_callback_place(mut builder: Builder, value: &RustPlace) -> Result[None, str]:
+pub def validate_callback_place(mut builder: Builder, value: RustPlace) -> Result[None, str]:
     """Reject a lexical capture before any source read or write can enter an uninitialized callback frame."""
     match value.local_id():
         Some(local) =>
@@ -390,7 +390,7 @@ def lower_race_callback(module: &BodyIrModule, mut builder: Builder, body: &Rust
     return Ok(None)
 
 
-def validate_race_assignment(value: &RustRvalue) -> Result[None, str]:
+def validate_race_assignment(value: RustRvalue) -> Result[None, str]:
     """Require an assignment without nested arm blocks that could transfer control out of the callback."""
     match value:
         RustRvalue.Match(scrutinee=_value, arms=_arms) => return Err("unsupported Body IR Race callback Match")

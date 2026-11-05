@@ -9,7 +9,7 @@ from list_values import projected_element_read
 from table_views import borrowed_table, borrowed_at
 
 
-pub def model_list_read(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Option[Operand], str]:
+pub def model_list_read(mut builder: Builder, source: RustPlace, span: SourceSpan) -> Result[Option[Operand], str]:
     """Read an index or slice after a retained nominal field or tuple element prefix, cloning its result instead of moving the parent."""
     match structural_prefix(builder, source)?:
         None => return Ok(None)
@@ -71,7 +71,7 @@ pub def structural_prefix(mut builder: Builder, source: &RustPlace) -> Result[Op
 
 pub def prefix_place(
     mut builder: Builder,
-    source: &RustPlace,
+    source: RustPlace,
     count: int,
     span: SourceSpan,
 ) -> Result[OperandPlace, str]:
@@ -92,7 +92,7 @@ pub def prefix_place(
     return Ok(place)
 
 
-def prefixed_list_read(mut builder: Builder, source: &RustPlace, count: int, span: SourceSpan) -> Result[Operand, str]:
+def prefixed_list_read(mut builder: Builder, source: RustPlace, count: int, span: SourceSpan) -> Result[Operand, str]:
     """Read the list indexes, slices and element fields that follow a structural prefix, cloning an owned result."""
     container = prefix_place(builder, source, count, span)?
     return projected_element_read(builder, source, container, count, span)

@@ -319,9 +319,9 @@ def governed_runtime_module(owners: &list[str]) -> bool:
 
 
 def instance_frame_selection(
-    body: &RustBody,
+    body: RustBody,
     original_callable: bool,
-    owners: &list[str],
+    owners: list[str],
 ) -> Result[tuple[DecoratorFrame, int], str]:
     """Keep the checked execution role and last matching source owner, refusing an instance without provenance."""
     mut role = DecoratorFrame.Normal

@@ -76,7 +76,7 @@ def owned_slots_for_bindings(
     return Ok(owned)
 
 
-pub def argument_storage(mut builder: Builder, argument: &RustArgument) -> Result[Option[PlanType], str]:
+pub def argument_storage(mut builder: Builder, argument: RustArgument) -> Result[Option[PlanType], str]:
     """Inspect a proven frame local without reading it, executing an index, or manufacturing a projected field ABI."""
     match argument.as_one():
         Some(RustOperand.Place(read)) =>
@@ -94,7 +94,7 @@ pub def argument_storage(mut builder: Builder, argument: &RustArgument) -> Resul
     return Ok(None)
 
 
-def validate_uniform_storage(original: &RustBody, owned: list[int]) -> Result[None, str]:
+def validate_uniform_storage(original: RustBody, owned: list[int]) -> Result[None, str]:
     """Refuse one generic type variable used at incompatible callable ABIs or an unevaluated default."""
     for owner in owned:
         for slot in range(len(original.params)):

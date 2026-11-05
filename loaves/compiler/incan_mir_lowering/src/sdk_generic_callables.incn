@@ -81,7 +81,7 @@ pub def sdk_owned_callable_bindings(
         _ => return Ok([])
 
 
-def require_plain_sdk_callable(mut builder: Builder, argument: &RustArgument) -> Result[None, str]:
+def require_plain_sdk_callable(mut builder: Builder, argument: RustArgument) -> Result[None, str]:
     """Refuse a partial callable whose extra supplied flags are absent from the SDK's checked input signature."""
     match argument.as_one():
         Some(RustOperand.Place(read)) =>
@@ -123,7 +123,7 @@ pub def sdk_callable_type(
 
 pub def sdk_callable_type_arguments(
     mut builder: Builder,
-    delegation: &LoafCallable,
+    delegation: LoafCallable,
     names: list[str],
     closed: list[RustType],
     owned: list[tuple[str, PlanType]],
@@ -150,7 +150,7 @@ pub def sdk_callable_type_arguments(
     return Ok(result)
 
 
-def argument_storage(mut builder: Builder, argument: &RustArgument) -> Result[Option[PlanType], str]:
+def argument_storage(mut builder: Builder, argument: RustArgument) -> Result[Option[PlanType], str]:
     """Inspect a proven frame local without reading it, executing an index, or manufacturing a projected field ABI."""
     match argument.as_one():
         Some(RustOperand.Place(read)) =>

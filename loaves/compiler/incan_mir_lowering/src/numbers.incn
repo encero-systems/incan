@@ -32,7 +32,7 @@ pub def float_operand(
         RustOperand.Constant(constant) => return Ok(float_constant(constant))
 
 
-def float_constant(value: &RustConstant) -> bool:
+def float_constant(value: RustConstant) -> bool:
     """Preserve the Rust enum import through a typed boundary until legacy pattern-only imports work in dev.8."""
     match value:
         RustConstant.Float(_text) => return true

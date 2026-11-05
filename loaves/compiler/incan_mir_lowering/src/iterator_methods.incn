@@ -106,7 +106,7 @@ pub def iterator_methods(
     return Ok(selected)
 
 
-pub def standard_protocol(identity: &CanonicalSymbolId) -> bool:
+pub def standard_protocol(identity: CanonicalSymbolId) -> bool:
     """Authenticate the standard declaring trait rather than a source trait with the same spelling."""
     if (
         identity.kind != SemanticSourceTargetKind.Trait

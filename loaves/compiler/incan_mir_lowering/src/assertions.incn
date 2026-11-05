@@ -25,8 +25,8 @@ from closures import function_assignment
 
 pub def lower_assertion(
     mut builder: Builder,
-    kind: &AssertionKind,
-    message: &Option[RustOperand],
+    kind: AssertionKind,
+    message: Option[RustOperand],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Branch before materializing failure text, or invoke a retained unit callable inside the unwind boundary."""
