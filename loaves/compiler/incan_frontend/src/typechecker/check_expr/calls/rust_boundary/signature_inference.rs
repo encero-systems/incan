@@ -248,6 +248,13 @@ impl TypeChecker {
                     .unwrap_or(native)
             });
             let actual = self.rust_inference_type(native_actual.as_ref().unwrap_or(actual), parameters);
+            // Frozen text crosses into Rust in the owned-string form a `str` value has: the frozen carrier implements
+            // no Rust trait, so a generic parameter bound to it could never satisfy its callee's bounds (#2590).
+            let actual = if actual == ResolvedType::FrozenStr {
+                ResolvedType::Str
+            } else {
+                actual
+            };
             let (target, actual) = match (&target, &actual) {
                 (ResolvedType::Ref(_) | ResolvedType::RefMut(_), ResolvedType::Ref(_) | ResolvedType::RefMut(_)) => {
                     (&target, &actual)
