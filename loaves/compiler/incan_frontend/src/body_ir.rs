@@ -152,9 +152,28 @@ pub fn build_body_ir_module(
     type_info: &TypeCheckInfo,
     context: &BodyIrContext<'_>,
 ) -> bir::BodyIrModule {
+    let mut module = build_body_ir_module_unsettled(program, module_path, type_info, context);
+    shared_reads::retain_modules(std::slice::from_mut(&mut module), context.modules);
+    module
+}
+
+/// Build one module through every representation pass except unit-wide shared-read settlement. Compilation drivers
+/// use this boundary while collecting an authored unit so import-cycle peers can reach one fixed point together.
+pub fn build_body_ir_module_unsettled(
+    program: &ast::Program,
+    module_path: &[String],
+    type_info: &TypeCheckInfo,
+    context: &BodyIrContext<'_>,
+) -> bir::BodyIrModule {
     let mut module = build_module_seed(program, module_path, type_info, context);
     retain_module_representations(&mut module, program, type_info, context.modules);
     module
+}
+
+/// Settle inferred shared parameters and their call operands across every authored module simultaneously. Dependency
+/// modules are immutable context whose already-published signatures may participate but cannot be refined here.
+pub fn settle_shared_reads(modules: &mut [bir::BodyIrModule], context: &[bir::BodyIrModule]) {
+    shared_reads::retain_modules(modules, context);
 }
 
 /// The declarations-only Body IR one member of an import cycle contributes to the other members' context before its

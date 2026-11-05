@@ -20,6 +20,7 @@ pub fn lower_authored_modules(
     session: &CompilationSession,
     bodies: &mut Vec<BodyIrModule>,
 ) -> Result<(), String> {
+    let authored_start = bodies.len();
     let provider_operations = incan_frontend::body_ir::ProviderOperationCatalog::from_loaves(session.loaves())?;
     let unit = session.unit();
     let library_package = (unit.kind == UnitKind::Library).then_some(unit.package.as_str());
@@ -58,11 +59,17 @@ pub fn lower_authored_modules(
             )
             .map_err(|error| format!("Body IR free-function input baseline: {error}"))?;
         }
-        let lowered =
-            incan_frontend::body_ir::build_body_ir_module(&module.ast, &module.path_segments, type_info, &context);
+        let lowered = incan_frontend::body_ir::build_body_ir_module_unsettled(
+            &module.ast,
+            &module.path_segments,
+            type_info,
+            &context,
+        );
         bodies.truncate(completed);
         bodies.push(lowered);
     }
+    let (context, authored) = bodies.split_at_mut(authored_start);
+    incan_frontend::body_ir::settle_shared_reads(authored, context);
     Ok(())
 }
 

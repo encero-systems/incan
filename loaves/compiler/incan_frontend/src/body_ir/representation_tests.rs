@@ -93,6 +93,8 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
     assert_settled_function_seeds()?;
     assert_free_function_input_baseline()?;
     assert_shared_loans()?;
+    assert_projected_shared_loans()?;
+    assert_lent_and_moved_read()?;
     assert_equality_contract()?;
     let mut changed = seed.clone();
     changed.bodies[0].native_attributes.push(bir::NativeAttribute {
@@ -134,17 +136,8 @@ fn checked_seed(
 /// Prove the decreasing shared-access fixed point across forwarding, recursion and a function-item adapter while a
 /// value-returning body and explicit source contracts keep their established ownership.
 fn assert_shared_loans() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "model Native:\n    value: int\nclass Reader:\n    pub def read(self, items: Native) -> int:\n        return items.value\ntrait Fetcher:\n    def fetch(self, scope: Native, request: Native) -> int: ...\nclass Fetch with Fetcher:\n    def fetch(self, scope: Native, request: Native) -> int:\n        return scope.value + request.value\ndef leaf(items: Native) -> int:\n    return items.value\ndef explicit(items: &Native) -> int:\n    return items.value\ndef forward(items: Native) -> int:\n    return leaf(items)\ndef explicit_forward(items: Native) -> int:\n    return explicit(items)\ndef method_forward(reader: Reader, items: Native) -> int:\n    return reader.read(items)\ndef trait_forward[F with Fetcher](source: F, scope: Native, request: Native) -> int:\n    return source.fetch(scope, request)\ndef left(items: Native, remaining: int) -> int:\n    if remaining == 0:\n        return items.value\n    return right(items, remaining - 1)\ndef right(items: Native, remaining: int) -> int:\n    if remaining == 0:\n        return items.value\n    return left(items, remaining - 1)\ndef escaped(items: Native) -> int:\n    return items.value\ndef take(items: Native) -> Native:\n    return items\ndef use() -> int:\n    callback = escaped\n    return callback(Native(value=1))\n";
+    let source = "model Native:\n    value: int\nmodel Wrapper:\n    item: Native\nclass Reader:\n    pub def read(self, items: Native) -> int:\n        return items.value\ntrait Fetcher:\n    def fetch(self, scope: Native, request: Native) -> int: ...\nclass Fetch with Fetcher:\n    def fetch(self, scope: Native, request: Native) -> int:\n        return scope.value + request.value\ndef leaf(items: Native) -> int:\n    return items.value\ndef explicit(items: &Native) -> int:\n    return items.value\ndef forward(items: Native) -> int:\n    return leaf(items)\ndef explicit_forward(items: Native) -> int:\n    return explicit(items)\ndef explicit_projected(wrapper: &Wrapper) -> int:\n    return explicit(wrapper.item)\ndef method_forward(reader: Reader, items: Native) -> int:\n    return reader.read(items)\ndef trait_forward[F with Fetcher](source: F, scope: Native, request: Native) -> int:\n    return source.fetch(scope, request)\ndef left(items: Native, remaining: int) -> int:\n    if remaining == 0:\n        return items.value\n    return right(items, remaining - 1)\ndef right(items: Native, remaining: int) -> int:\n    if remaining == 0:\n        return items.value\n    return left(items, remaining - 1)\ndef escaped(items: Native) -> int:\n    return items.value\ndef take(items: Native) -> Native:\n    return items\ndef use() -> int:\n    callback = escaped\n    return callback(Native(value=1))\n";
     let (_, _, mut candidate) = checked_seed(source)?;
-    for body in &mut candidate.bodies {
-        for identity in std::sync::Arc::make_mut(&mut body.named_type_identities)
-            .values_mut()
-            .filter(|identity| identity.declaration_name == "Native")
-        {
-            identity.kind = super::SemanticSourceTargetKind::RustItem;
-            identity.origin = incan_semantics_core::SymbolOrigin::RustCrate(vec!["native".to_owned()]);
-        }
-    }
     let leaf = candidate
         .bodies
         .iter_mut()
@@ -177,7 +170,7 @@ fn assert_shared_loans() -> Result<(), Box<dyn std::error::Error>> {
             .ok_or("missing explicit loan control")?;
         parameter.params[0].input_access = access;
         let original_type = parameter.params[0].ty.clone();
-        super::shared_reads::retain(&mut explicit, &[]);
+        super::shared_reads::retain_modules(std::slice::from_mut(&mut explicit), &[]);
         let parameter = explicit
             .bodies
             .iter()
@@ -187,7 +180,7 @@ fn assert_shared_loans() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(parameter.params[0].ty, original_type);
         assert_eq!(parameter.locals[parameter.params[0].local.index()].ty, original_type);
     }
-    super::shared_reads::retain(&mut candidate, &[]);
+    super::shared_reads::retain_modules(std::slice::from_mut(&mut candidate), &[]);
     for name in ["leaf", "forward", "explicit_forward", "left", "right", "escaped"] {
         let body = candidate
             .bodies
@@ -227,6 +220,25 @@ fn assert_shared_loans() -> Result<(), Box<dyn std::error::Error>> {
         method_forward.params[1].input_access,
         incan_semantics_core::IncanInputAccess::InferredShared
     );
+    for name in ["explicit_forward", "explicit_projected"] {
+        let body = candidate
+            .bodies
+            .iter()
+            .find(|body| body.name == name)
+            .ok_or("missing explicit forwarding body")?;
+        assert!(body.block.stmts.iter().any(|statement| {
+            let bir::StatementKind::Call { args, .. } = &statement.kind else {
+                return false;
+            };
+            args.iter().any(|argument| {
+                matches!(
+                    argument,
+                    bir::ArgumentElement::One(bir::Operand::Place(read))
+                        if read.fact == bir::OwnershipFact::Borrow && !read.last_use
+                )
+            })
+        }));
+    }
     let trait_forward = candidate
         .bodies
         .iter()
@@ -304,6 +316,117 @@ fn assert_shared_loans() -> Result<(), Box<dyn std::error::Error>> {
         Some(bir::ArgumentElement::One(bir::Operand::Place(read)))
             if read.fact == bir::OwnershipFact::Borrow && !read.last_use
     ));
+    Ok(())
+}
+
+/// Prove an exact checked field projection is lent to a read-only callee while a projected transfer keeps both the
+/// field and its containing parameter owned.
+fn assert_projected_shared_loans() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "model Native:\n    value: int\nmodel Wrapper:\n    item: Native\ndef observe(item: Native) -> int:\n    return item.value\ndef projected(wrapper: Wrapper) -> int:\n    return observe(wrapper.item)\ndef take(item: Native) -> Native:\n    return item\ndef projected_take(wrapper: Wrapper) -> Native:\n    return take(wrapper.item)\n";
+    let (_, _, mut module) = checked_seed(source)?;
+    super::shared_reads::retain_modules(std::slice::from_mut(&mut module), &[]);
+
+    for name in ["observe", "projected"] {
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == name)
+            .ok_or("missing projected shared body")?;
+        assert_eq!(
+            body.params[0].input_access,
+            incan_semantics_core::IncanInputAccess::InferredShared,
+            "{name}: {body:#?}"
+        );
+    }
+    let projected = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "projected")
+        .ok_or("missing projected caller")?;
+    assert!(projected.block.stmts.iter().any(|statement| {
+        matches!(
+            &statement.kind,
+            bir::StatementKind::Call { args, .. }
+                if matches!(args.first(), Some(bir::ArgumentElement::One(bir::Operand::Place(read)))
+                    if !read.place.projection.is_empty()
+                        && read.fact == bir::OwnershipFact::Borrow
+                        && !read.last_use)
+        )
+    }));
+    for name in ["take", "projected_take"] {
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == name)
+            .ok_or("missing projected transfer body")?;
+        assert_eq!(
+            body.params[0].input_access,
+            incan_semantics_core::IncanInputAccess::Inferred,
+            "{name}: {body:#?}"
+        );
+    }
+    let conversion_source =
+        "def count(values: list[int]) -> int:\n    return 42\ndef ranged() -> int:\n    return count(range(1, 3))\n";
+    let (_, _, mut conversions) = checked_seed(conversion_source)?;
+    super::shared_reads::retain_modules(std::slice::from_mut(&mut conversions), &[]);
+    let ranged = conversions
+        .bodies
+        .iter()
+        .find(|body| body.name == "ranged")
+        .ok_or("missing range conversion caller")?;
+    assert!(ranged.block.stmts.iter().any(|statement| {
+        matches!(
+            &statement.kind,
+            bir::StatementKind::Call { args, .. }
+                if matches!(args.first(), Some(bir::ArgumentElement::One(bir::Operand::Place(read)))
+                    if read.fact == bir::OwnershipFact::Move || read.last_use)
+        )
+    }));
+    Ok(())
+}
+
+/// Prove a read lent to one input and moved to another of the same call clones for the move, so the callee's loan
+/// never reads moved storage.
+fn assert_lent_and_moved_read() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "model Item:\n    count: int\ndef both(kept: Item, taken: Item) -> Item:\n    total = kept.count\n    return taken\ndef caller(item: Item) -> Item:\n    return both(item, item)\n";
+    let (_, _, mut module) = checked_seed(source)?;
+    super::shared_reads::retain_modules(std::slice::from_mut(&mut module), &[]);
+    let both = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "both")
+        .ok_or("missing lending callee")?;
+    assert_eq!(
+        both.params[0].input_access,
+        incan_semantics_core::IncanInputAccess::InferredShared,
+        "{both:#?}"
+    );
+    assert_eq!(
+        both.params[1].input_access,
+        incan_semantics_core::IncanInputAccess::Inferred,
+        "{both:#?}"
+    );
+    let caller = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "caller")
+        .ok_or("missing lending caller")?;
+    let facts = caller.block.stmts.iter().find_map(|statement| match &statement.kind {
+        bir::StatementKind::Call { args, .. } => Some(
+            args.iter()
+                .filter_map(|argument| match argument {
+                    bir::ArgumentElement::One(bir::Operand::Place(read)) => Some(read.fact),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+        ),
+        _ => None,
+    });
+    assert_eq!(
+        facts,
+        Some(vec![bir::OwnershipFact::Borrow, bir::OwnershipFact::Clone]),
+        "{caller:#?}"
+    );
     Ok(())
 }
 
