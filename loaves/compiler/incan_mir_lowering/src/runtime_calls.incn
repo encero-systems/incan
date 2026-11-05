@@ -164,7 +164,7 @@ pub def retain_runtime_instances(
                 added = retain_frame_nominals(template_constructors, module, templates, closed, nominal_instances)?
                 for declaration in added:
                     module.nominal_declarations.append(declaration.clone())
-                retain_nominal_tables(program, module)
+                retain_nominal_tables(program, module)?
                 if len(added) != 0:
                     while len(unions) != 0:
                         _ = unions.pop()

@@ -17,7 +17,7 @@ from nominal_frames import nominal_frames, closed_arguments, declaration_storage
 from decls import library_item
 from program_context import body_at, nominal_at
 from table_views import borrowed_at
-from native_type_identity import ConstructorIndex, native_owner, representation_arguments
+from native_type_identity import ConstructorIndex, native_owner, named_positions, representation_arguments
 from rust::std::collections import BTreeMap
 
 
@@ -138,7 +138,7 @@ pub def specialize_nominals_with_instances(
     for declaration in module.static_declarations:
         collect_nominal_type(constructors, module, declaration.ty, instances, [])?
     for body in nominal_frames(module)?:
-        if owner_template(module, body) == None and closed_arguments([body.return_type.clone()]):
+        if owner_template(constructors, module, body)? == None and closed_arguments([body.return_type.clone()]):
             retain_selected_members(body, selected)
         for local in body.locals:
             _ = collect_nominal_type(constructors, module, local.ty, instances, [])?
@@ -165,7 +165,7 @@ pub def specialize_nominals_with_instances(
                 )?
     # 2. Close field and method dependencies until their checked instance inventory is complete. An instance lays out
     # its fields once; after a new member is selected, the worklist revisits only owner frames not yet closed.
-    templates = owner_templates(module)
+    templates = owner_templates(constructors, module)?
     mut pending: list[list[int]] = []
     mut cursor = 0
     while cursor < len(instances):
@@ -227,14 +227,14 @@ pub def specialize_nominals_with_instances(
     return Ok((result, instances))
 
 
-def owner_templates(module: &BodyIrModule) -> list[int]:
+def owner_templates(constructors: &ConstructorIndex, module: &BodyIrModule) -> Result[list[int], str]:
     """Each body's open receiver template as a declaration index, or -1 for a body without one, read once."""
     mut templates: list[int] = []
     for index in range(len(module.bodies)):
-        match owner_template(module, body_at(module.bodies, index)):
+        match owner_template(constructors, module, body_at(module.bodies, index))?:
             Some(owner) => templates.append(owner)
             None => templates.append(-1)
-    return templates
+    return Ok(templates)
 
 
 def lay_out_instance(
@@ -425,9 +425,9 @@ def collect_generic_nominal_type(
         _ = collect_nominal_type(constructors, module, borrowed_at(arguments, position), instances, ancestors)?
     if not closed_arguments(arguments):
         return Ok(None)
-    for index in range(len(module.nominal_declarations)):
+    for index in named_declarations(constructors, module, base)?:
         declaration = nominal_at(module.nominal_declarations, index)
-        if not admitted_owner(declaration) or declaration.name != base:
+        if not admitted_owner(declaration):
             continue
         if len(declaration.type_parameters) != len(arguments):
             return Err(f"unsupported Body IR nominal type argument arity on {base}")
@@ -505,19 +505,25 @@ def retain_field_storage(mut declaration: NominalDeclaration, template: &Nominal
     return declaration
 
 
-def owner_template(module: &BodyIrModule, body: &Body) -> Option[int]:
+def owner_template(constructors: &ConstructorIndex, module: &BodyIrModule, body: &Body) -> Result[Option[int], str]:
     """Locate an open receiver in the native table, borrowing each declaration instead of copying it."""
     if len(body.locals) == 0 or not is_receiver(body.locals[0].origin):
-        return None
+        return Ok(None)
     match borrowed_at(body.locals, 0).ty:
         RustType.Generic(base=base, args=_arguments) =>
-            name = str(base)
-            for index in range(len(module.nominal_declarations)):
+            for index in named_declarations(constructors, module, str(base))?:
                 declaration = nominal_at(module.nominal_declarations, index)
-                if admitted_owner(declaration) and len(declaration.type_parameters) != 0 and declaration.name == name:
-                    return Some(index)
+                if admitted_owner(declaration) and len(declaration.type_parameters) != 0:
+                    return Ok(Some(index))
         _ => pass
-    return None
+    return Ok(None)
+
+
+def named_declarations(constructors: &ConstructorIndex, module: &BodyIrModule, name: str) -> Result[list[int], str]:
+    """Positions of the declarations with this name, read from the index that covers this module's table."""
+    if constructors.count != len(module.nominal_declarations):
+        return Err("invalid Body IR nominal index for its declaration table")
+    return Ok(named_positions(constructors, name))
 
 
 def is_receiver(origin: &LocalOrigin) -> bool:
@@ -529,7 +535,12 @@ def is_receiver(origin: &LocalOrigin) -> bool:
 
 def admitted_owner(declaration: &NominalDeclaration) -> bool:
     """Admit retained source owners and exact native carriers after the original module's layout validation."""
-    return declaration.native_item != "" or declaration.canonical.kind == SemanticSourceTargetKind.Class or declaration.canonical.kind == SemanticSourceTargetKind.Model or declaration.canonical.kind == SemanticSourceTargetKind.Newtype
+    return (
+        declaration.native_item != ""
+        or declaration.canonical.kind == SemanticSourceTargetKind.Class
+        or declaration.canonical.kind == SemanticSourceTargetKind.Model
+        or declaration.canonical.kind == SemanticSourceTargetKind.Newtype
+    )
 
 
 def close_owner_body(body: &Body, instance: &NominalInstance) -> Result[Body, str]:
