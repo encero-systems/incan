@@ -244,6 +244,7 @@ impl TypeChecker {
             return None;
         }
         let mut bindings = self.rust_impl_self_bindings(implementation, owner)?;
+        self.infer_rust_bound_bindings(&implementation.bounds, &implementation.type_params, &mut bindings);
         let template = self.rust_inference_type(
             &self.native_rust_signature_type(&implementation.self_type, ""),
             &implementation.type_params,

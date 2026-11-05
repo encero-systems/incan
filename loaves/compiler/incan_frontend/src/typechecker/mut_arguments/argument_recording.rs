@@ -109,6 +109,7 @@ impl TypeChecker {
                 .expr_type(value.span)
                 .filter(|ty| self.value_type_cannot_be_copied(ty))
                 .map(ToString::to_string);
+            let shared_native_field = self.shared_native_field_argument(value);
             self.mut_params.pending.push(PendingMutArgument {
                 order: self.check_work.mutation_arguments,
                 callee: identity.clone(),
@@ -117,11 +118,28 @@ impl TypeChecker {
                 position: index + 1,
                 place,
                 uncopyable_type,
+                shared_native_field,
                 span: value.span,
                 through_local,
             });
             self.check_work.mutation_arguments += 1;
         }
+    }
+
+    /// Report whether a native field argument is projected through a shared native receiver.
+    ///
+    /// Its source-facing collection may be cloneable, but the retained native place is still a loan from the owner;
+    /// a `mut` source parameter cannot manufacture exclusive access to that place.
+    fn shared_native_field_argument(&self, expr: &Spanned<Expr>) -> bool {
+        let mut node = expr;
+        while let Expr::Paren(inner) = &node.node {
+            node = inner;
+        }
+        let Expr::Field(base, _) = &node.node else {
+            return false;
+        };
+        self.type_info.rust.field_values.contains_key(&node.span)
+            && matches!(self.type_info.expr_type(base.span), Some(ResolvedType::Ref(_)))
     }
 
     /// Retain caller-visible forwarding effects before recording the argument's eventual copy or refusal policy.

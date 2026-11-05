@@ -1,4 +1,4 @@
-# behavior: native receivers retain loans, projections, trait calls, primitive methods and specialized public alias constructors, including imported scalar constants (#2439), qualified Neg and Borrow calls (#2441, #2442), usize tuple elements (#2444), AtomicUsize and AtomicBool (#2256)
+# behavior: native receivers retain loans, projections, trait calls, primitive methods and specialized public alias constructors, including imported scalar constants (#2439), qualified Neg and Borrow calls (#2441, #2442), usize tuple elements (#2444), AtomicUsize and AtomicBool (#2256); native iterator adapters close implementation-only associated types, lifetime-only owners keep valid identities, and dynamic text probes frozen text constants (#2445, #2446, #2448)
 # expect-stdout:
 #   allocated
 #   1
@@ -21,7 +21,8 @@ from rust::std::cmp import Ordering
 from rust::std::env import args, args_os
 from rust::std::f64::consts import PI
 from rust::std::hash import Hash as NativeHash, Hasher, DefaultHasher
-from rust::std::io import Cursor
+from rust::std::io import BufRead, Cursor, stdin
+from rust::std::iter import Iterator
 from rust::std::io::prelude import Read as FacadeRead
 from rust::std::net import Ipv4Addr
 from rust::std::os::raw import c_int
@@ -31,11 +32,16 @@ from rust::std::path import PathBuf
 from rust::std::primitive import usize, i64 as NativeInt, u32 as NativeUnsigned, bool as NativeBool
 from rust::std::process import Command, Output
 from rust::std::rc import Rc
+from rust::std::slice import Iter
 from rust::std::string import String as RustString
 from rust::std::sync::atomic import AtomicUsize, AtomicBool, Ordering as AtomicOrdering
 from rust::std import time as native_time
 from rust::std::time import Duration
+from rust::std::vec import Vec
 from std.io import BytesIO
+
+
+const ENVIRONMENT_NAMES = ["OVEN_TRACE", "RUSTC_BOOTSTRAP"]
 
 
 type AllocationHandle = rusttype Rc[int]:
@@ -102,6 +108,21 @@ def show_argument_iteration() -> None:
     println(len(arguments))
 
 
+def show_cloned_iterator() -> None:
+    """Close `Cloned<I>::Item` from the iterator implementation's associated equality."""
+    values: Vec[int] = [1, 2, 3]
+    iterator: Iter[int] = values.iter()
+    assert iterator.cloned().next() == Some(1)
+
+
+pub def read_buffered_lines() -> None:
+    """Compile an owned native Lines iterator whose poll borrows its retained state exclusively."""
+    for line in stdin().lock().lines():
+        match line:
+            Ok(value) => println(value)
+            Err(_) => return
+
+
 def show_receiver_methods() -> None:
     """Read a duration through its inherent Rust method."""
     value = Duration.from_secs(2)
@@ -161,12 +182,16 @@ def show_trait_methods() -> None:
     # A trait reached through a facade re-export selects the trait its definition path names (rust-23).
     mut cursor = Cursor.new(b"text")
     mut read: str = ""
-    assert FacadeRead.read_to_string(cursor, read).unwrap() == 4
+    match FacadeRead.read_to_string(cursor, read):
+        Ok(count) => assert count == 4
+        Err(_) => assert false
     assert read == "text"
     # A private function's shared-read loan holds for a call inside a closure expression too (rust-13).
     path = PathBuf.from("a/b/c")
     check = () => ends_in_c(path)
     assert ends_in_c(path)
+    name = "OVEN_TRACE".replace("TRACE", "TRACE")
+    assert name in ENVIRONMENT_NAMES
     assert check()
     assert ends_in_c(path)
 
@@ -278,6 +303,7 @@ def main() -> None:
     # 1. Observe associated functions and argument iteration.
     show_associated_functions()
     show_argument_iteration()
+    show_cloned_iterator()
 
     # 2. Observe methods and constructed records.
     show_receiver_methods()
