@@ -102,6 +102,7 @@ pub(super) fn checked_list_leaf_type(leaf: &ListLeaf) -> Result<PlanType, PlanEr
         ListLeaf::List(elements, _) => elements.len() == 1,
         ListLeaf::Set(elements) => elements.len() == 1,
         ListLeaf::Dict(elements) => elements.len() == 2,
+        ListLeaf::TypeToken(elements) => elements.len() == 1,
         _ => true,
     };
     if !valid {
@@ -149,14 +150,11 @@ pub(super) fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), Plan
         });
     }
     if let PlanType::TypeToken(elements) = ty
-        && !matches!(
-            elements.as_slice(),
-            [PlanType::Int | PlanType::Float | PlanType::Bool | PlanType::String]
-        )
+        && elements.len() != 1
     {
         return Err(PlanError::Invalid {
             function: "TypeToken".into(),
-            reason: "unsupported TypeToken represented type or arity".into(),
+            reason: "a TypeToken must retain exactly one represented type".into(),
         });
     }
 
@@ -201,6 +199,11 @@ pub(super) fn validate_nested_carrier_components(plan: &Plan, ty: &PlanType) -> 
             }
             for element in elements {
                 validate_model_type(plan, element)?;
+            }
+        }
+        PlanType::TypeToken(elements) => {
+            for represented in elements {
+                validate_model_type(plan, represented)?;
             }
         }
         PlanType::FrozenCollection(name, elements) | PlanType::FrozenCollectionRef(name, elements) => {

@@ -407,7 +407,7 @@ pub(crate) fn linked_zip_ty(
     })
 }
 
-/// Declare the SDK's type marker directly rather than inventing a source model or surrogate storage.
+/// Declare the SDK's type marker with erased zero-sized storage; the validated plan retains represented identity.
 pub(super) fn type_token_ty(elements: &[PlanType], span: Span) -> Box<ast::Ty> {
     let mut path = ast::Path::from_ident(ident("incan_std_core", span));
     path.segments
@@ -415,7 +415,7 @@ pub(super) fn type_token_ty(elements: &[PlanType], span: Span) -> Box<ast::Ty> {
     let mut segment = ast::PathSegment::from_ident(ident("TypeToken", span));
     let arguments = elements
         .iter()
-        .map(|element| ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(element, span))))
+        .map(|_| ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(&PlanType::Unit, span))))
         .collect();
     segment.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
         span,

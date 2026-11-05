@@ -472,6 +472,7 @@ pub(super) fn operand(plan: &Plan, function: &Function, value: &Operand) -> Resu
             Constant::Float(_) => Scalar::Float,
             Constant::Bool(_) => Scalar::Bool,
             Constant::Unit => Scalar::Unit,
+            Constant::TypeToken(represented) => Scalar::TypeToken(represented.iter().map(scalar).collect()),
             Constant::Text(_) => Scalar::StrRef,
         }),
     }

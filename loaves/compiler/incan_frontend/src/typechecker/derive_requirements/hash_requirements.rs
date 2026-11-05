@@ -168,6 +168,10 @@ impl TypeChecker {
         member_ty: &ResolvedType,
         span: Span,
     ) {
+        if matches!(member_ty, ResolvedType::TypeToken(_)) {
+            self.push_error_once(errors::type_token_operation_not_supported("hashing", span));
+            return;
+        }
         let Some((holder, missing)) = self.first_missing_derives(member_ty, &[DeriveId::Eq, DeriveId::Hash]) else {
             return;
         };
@@ -191,8 +195,10 @@ impl TypeChecker {
         expected_member: Option<&ResolvedType>,
     ) -> bool {
         expected_member.is_some_and(|ty| {
-            self.first_missing_derives(ty, &[DeriveId::Eq, DeriveId::Hash])
-                .is_some()
+            matches!(ty, ResolvedType::TypeToken(_))
+                || self
+                    .first_missing_derives(ty, &[DeriveId::Eq, DeriveId::Hash])
+                    .is_some()
         })
     }
 

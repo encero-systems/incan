@@ -54,3 +54,22 @@ pub def echo[T](value: T) -> T:
 
 pub def echo(value: str, count: int) -> str:
     return value
+
+
+pub model IntegerTarget:
+    pub value: int
+
+
+pub model FloatTarget:
+    pub value: float
+
+
+pub def typed_target(value: int, target: Type[int]) -> IntegerTarget:
+    return IntegerTarget(value=value)
+
+
+pub def typed_target(value: int, target: Type[float]) -> FloatTarget:
+    return FloatTarget(value=float(value))
+
+
+pub safe_typed_target = alias typed_target

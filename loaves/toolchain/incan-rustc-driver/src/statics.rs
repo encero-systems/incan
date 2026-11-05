@@ -76,10 +76,7 @@ fn guard_owned_result(
         | PlanType::FrozenBytes
         | PlanType::StaticText
         | PlanType::StaticBytes => true,
-        PlanType::TypeToken(elements) => matches!(
-            elements.as_slice(),
-            [PlanType::Int | PlanType::Float | PlanType::Bool | PlanType::String]
-        ),
+        PlanType::TypeToken(elements) => elements.len() == 1,
         // A frozen collection is a view of `'static` storage: it borrows nothing from the guarded cell.
         PlanType::FrozenCollection(..) => true,
         PlanType::List(leaf, depth) => *depth > 0 && guard_owned_leaf(plan, leaf, visiting, tcx),
@@ -151,6 +148,9 @@ fn guard_owned_leaf(
         ListLeaf::Model(index, name) => guard_owned_result(plan, &PlanType::Model(*index, name.clone()), visiting, tcx),
         ListLeaf::Enum(index, name) => guard_owned_result(plan, &PlanType::Enum(*index, name.clone()), visiting, tcx),
         ListLeaf::Tuple(elements) => guard_owned_result(plan, &PlanType::Tuple(elements.clone()), visiting, tcx),
+        ListLeaf::TypeToken(represented) => {
+            represented.len() == 1 && guard_owned_result(plan, &PlanType::TypeToken(represented.clone()), visiting, tcx)
+        }
         ListLeaf::List(elements, depth) => {
             *depth > 0
                 && elements.len() == 1

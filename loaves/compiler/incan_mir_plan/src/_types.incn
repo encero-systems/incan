@@ -75,6 +75,8 @@ pub enum ListLeaf:
     FrozenStr
     FrozenBytes
     FunctionPointer(list[PlanType])
+    # A zero-sized type token preserves its represented checked carrier when stored in a collection.
+    TypeToken(list[PlanType])
     List(list[ListLeaf], int)
     Dict(list[ListLeaf])
     Set(list[ListLeaf])
@@ -174,7 +176,7 @@ pub enum PlanType:
     FrozenCollection(str, list[PlanType])
     # A shared view of the same baked storage; comparisons never consume or clone its elements.
     FrozenCollectionRef(str, list[PlanType])
-    # The existing SDK's zero-sized marker with exactly one checked represented primitive type.
+    # The existing SDK's zero-sized marker with exactly one checked represented type.
     TypeToken(list[PlanType])
     # Exact static string storage, including generic arguments, distinct from a borrowed native StrRef view.
     StaticText
@@ -275,6 +277,7 @@ pub def list_leaf_type(leaf: ListLeaf) -> PlanType:
         ListLeaf.FrozenStr => return PlanType.FrozenStr
         ListLeaf.FrozenBytes => return PlanType.FrozenBytes
         ListLeaf.FunctionPointer(signature) => return PlanType.FunctionPointer(signature)
+        ListLeaf.TypeToken(represented) => return PlanType.TypeToken(represented)
         ListLeaf.List(element, depth) => return PlanType.List(element[0], depth)
         ListLeaf.Dict(entry) => return PlanType.Dict(entry[0], entry[1])
         ListLeaf.Set(element) => return PlanType.Set(element[0])

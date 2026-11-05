@@ -149,6 +149,14 @@ fn constant<'tcx>(tcx: TyCtxt<'tcx>, value: &Constant, span: Span) -> Result<mir
             user_ty: None,
             const_: mir::Const::Val(mir::ConstValue::ZeroSized, tcx.types.unit),
         })),
+        Constant::TypeToken(represented) => {
+            let token = native_type(tcx, &PlanType::TypeToken(represented.clone()))?;
+            mir::Operand::Constant(Box::new(mir::ConstOperand {
+                span,
+                user_ty: None,
+                const_: mir::Const::Val(mir::ConstValue::ZeroSized, token),
+            }))
+        }
         Constant::Text(text) => {
             let alloc_id = tcx.allocate_bytes_dedup(text.as_bytes(), mir::interpret::CTFE_ALLOC_SALT);
             let meta = u64::try_from(text.len()).map_err(|_| PlanError::Invalid {

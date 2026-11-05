@@ -167,7 +167,7 @@ pub def scalar_operand(mut builder: Builder, value: &RustOperand, span: SourceSp
 
 
 def type_token_literal(mut builder: Builder, represented: &RustType, span: SourceSpan) -> Result[Operand, str]:
-    """Construct the existing SDK marker with the checked primitive type, keeping its real native ADT and signature."""
+    """Construct the existing SDK marker as a typed zero-sized constant with its checked represented type."""
     argument = native_source_type(
         builder.constructors,
         builder.nominals,
@@ -176,17 +176,7 @@ def type_token_literal(mut builder: Builder, represented: &RustType, span: Sourc
         represented,
         builder.intrinsics,
     )?
-    match argument:
-        (PlanType.Int | PlanType.Float | PlanType.Bool | PlanType.String) => pass
-        _ => return Err("unsupported Body IR nonprimitive TypeToken value")
-    marker = PlanType.TypeToken([argument])
-    path = "incan_std_core::reflection::TypeToken::new"
-    builder.externals.append(
-        ExternalFunction(path=path, type_arguments=[argument], parameters=[], return_type=marker, span=span),
-    )
-    output = temporary(builder, marker, span)
-    terminate_call(builder, CalleeKind.Instantiated(path, [argument]), [], output, span)
-    return Ok(read_place(output, false, span))
+    return Ok(literal(Constant.TypeToken([argument]), span))
 
 
 def retained_tuple_constant(
@@ -509,5 +499,5 @@ pub def scalar_constant(constant: &RustConstant, span: SourceSpan) -> Result[Ope
         RustConstant.NumericNewtype(_value) => return Err("unsupported Body IR numeric newtype scalar constant")
         RustConstant.None => return Err("unsupported Body IR None constant")
         RustConstant.TypeToken(_represented) =>
-            return Err("type token constants require a standard library type marker constructor")
+            return Err("type token constants require their checked represented type")
         RustConstant.FrozenAggregate(_ty, _values) => return Err("unsupported Body IR frozen aggregate scalar constant")

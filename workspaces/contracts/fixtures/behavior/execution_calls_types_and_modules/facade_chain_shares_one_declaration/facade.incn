@@ -1,4 +1,6 @@
 """Provide the sibling declarations used by the fixture."""
-pub from provider import compute
+
+pub from provider import compute, select_target
 
 pub renamed = alias compute
+pub renamed_target = alias select_target
