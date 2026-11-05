@@ -24,7 +24,8 @@ from observation import SETTLE_SECONDS, Ledger, load_ledger, now_seconds, trace_
 from pub::incan_platform.trace import Operation
 from jec import begin, record
 from owner_protocol import Reply, Request, prepares_executable
-from rust_units import registry_record_path, rust_facet
+from rust_registry import registry_record_path
+from rust_manifest import rust_facet
 from testing import tests_binary
 from toolchain import Toolchain, load_toolchain, toolchain_file
 from unit import UnitDescription, describe
@@ -32,6 +33,7 @@ from unit_freshness import Key, artifact_identity, compiler_fingerprint, descrip
 from apple_sdk import sdk_paths
 from unit_rust import prepare_native
 from installation_page import begin_command, end_command
+from storage_admission import take_decision
 
 const FALLBACK_REASON: str = "the owner serves standard-only projects without Rust facets or vocabulary entries"
 
@@ -143,6 +145,8 @@ pub model Owner:
                     reply = self.respond("fallback", reason)
                 else:
                     reply.reason = reason
+        # A refused storage admission is not served here: the command reruns the request and reports the outcome.
+        _ = take_decision()
         end_command()
         reply.trace = taken_trace()
         record(Operation.OwnerRequest, f"{request.command}|{request.path}|{request.profile}", clock)

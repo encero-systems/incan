@@ -15,7 +15,7 @@ incan describe-unit PATH [UNIT OPTIONS]
 incan build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
 incan fmt [--check] PATH...
 incan owner stop
-incan bakery gc [--keep-days N] | verify | repair-payload SHA256 FILE
+incan bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE
 incan inspect codegraph PATH [GRAPH OPTIONS]
 incan inspect dependencies PATH [UNIT OPTIONS]
 incan inspect run ID --proofs
@@ -107,7 +107,7 @@ Stops resident project owners belonging to the selected Incan home. `OVEN_OWNER=
 
 ## `incan bakery gc`
 
-Removes superseded manifests, index pages and record segments that no current view or live snapshot lease reaches. A leased old snapshot remains readable, including unopened values. Once collection expires an unleased historical view, a later attempt to lease that descriptor fails. Unreferenced unit and sealed-set payloads are removed unless a live preparation guard protects their digest. Unit staging is removed only when its producer claim is free; other staging remains retained. A project's registration holds the units its latest successful result of each unit uses, until a newer result of that unit replaces it or the project's directory is removed. A unit record that only a replaced registration or a removed project used leaves the store with the name entries that select it, so its payloads are removed in the same collection. A record that a current registration reaches, directly or through the records it reaches, stays however long ago it was registered; so does a record that no registration has named, such as one the installed toolchain supplied. Nothing expires by age: `--keep-days N` accepts one through six decimal digits, from `0` through `999999`, and does not change what collection keeps. `INCAN_BAKERY` selects the physical bakery directory.
+Removes superseded manifests, index pages and record segments that no current view or live snapshot lease reaches. A leased old snapshot remains readable, including unopened values. Once collection expires an unleased historical view, a later attempt to lease that descriptor fails. Unreferenced unit and sealed-set payloads are removed unless a live preparation guard protects their digest. Staging is removed, with its reservation, only when its producer's claim is free: the claim its [reservation](#storage-admission) names or, for staging without one, the claim of the unit identity it is named by. Staging whose producer is not known remains retained. A project's registration holds the units its latest successful result of each unit uses, until a newer result of that unit replaces it or the project's directory is removed. A unit record that only a replaced registration or a removed project used leaves the store with the name entries that select it, so its payloads are removed in the same collection. A record that a current registration reaches, directly or through the records it reaches, stays however long ago it was registered; so does a record that no registration has named, such as one the installed toolchain supplied. Nothing expires by age: `--keep-days N` accepts one through six decimal digits, from `0` through `999999`, and does not change what collection keeps. Collection applies to the bakery the [storage policy](#storage-policy) selects.
 
 Success exits `0` and reports retained and expired unit counts, retired projects, cleared staging directories, removed layout and payload files, and reclaimed immutable bytes. A corrupt reachable layout or live lease descriptor, an I/O failure, or continuous arrival of new snapshot leases returns nonzero. A deferred collection removes no layout files. Publication waits during collection; reads through registered snapshots remain available.
 
@@ -122,6 +122,72 @@ Reads every unit record and every byte of every payload file in the selected bak
 ## `incan bakery repair-payload SHA256 FILE`
 
 Re-admits an explicit replacement file only when its full SHA-256 digest matches the committed payload name. A mismatched replacement is refused before changing the store. Existing damaged bytes are moved to quarantine; frozen payloads are never edited in place. This command does not select another record revision or namespace.
+
+## `incan bakery status`
+
+Reports where the selected bakery's bytes are and why they remain. Reading the status writes no registration, record, reservation or staging directory. `--format` accepts `text` (default) or `json`; both state the same facts. Success exits `0`; an unreadable store or an invalid [storage policy](#storage-policy) exits `1`.
+
+Byte counts are logical file lengths. A payload that several projects reach counts once in the live total and once in each of those projects' totals. Filesystem allocation and copy-on-write sharing are not measured.
+
+| Field | JSON type | Contract |
+| --- | --- | --- |
+| `schema` | String | `incan.oven.store-status/1`. |
+| `store` | String | The bakery directory. |
+| `store_source` | String | What selected the bakery directory: `INCAN_BAKERY`, the configuration file whose `storage.root` names it, or `default`. |
+| `observed_at` | Integer | Seconds since the Unix epoch at which the status was observed. |
+| `accounting` | String | The basis of the byte counts. |
+| `policy` | Object | The effective storage policy: `file`, the configuration file that was read or an empty string, and `root`, `min_free_bytes`, `failed_attempt_ttl_seconds` and `history_ttl_seconds`, each an object with its `value` and its `source`, `default` or the file. `root` is the resolved path the configuration selects, also when `INCAN_BAKERY` overrides it. |
+| `admission` | Object | `available_bytes` observed on the bakery's filesystem, `reserve_bytes`, `reserved_bytes` held by live reservations, and `admissible_bytes`, the largest write admitted now, negative inside the reserve. |
+| `total_bytes` | Integer | Logical bytes of the regular files under the bakery directory. |
+| `units` | Object | `units`, the unit records, and `payload_bytes`, the unique payload bytes they name. |
+| `live` | Object | `projects` whose directory exists, and the `units` and unique `payload_bytes` their registrations reach. |
+| `roots` | Array | One object per registered project, largest first: `project`, `orphaned` (its directory is gone), `registrations`, and the `units` and `payload_bytes` its registrations reach. |
+| `unregistered` | Object | `units` and `payload_bytes` of the records no live registration reaches and collection keeps, such as those the installed toolchain supplied. |
+| `collectable` | Object | What `incan bakery gc` would reclaim now: `units`, orphaned `projects`, `payload_bytes`, ended `staging_directories` and their `staging_bytes`, the sum of both byte counts in `bytes`, and `estimate`, the basis. Superseded layout files and payloads no record names are not counted. |
+| `staging` | Object | `active`, the reservations of live bakes; `ended`, each ended attempt's `staging`, `work`, `bytes`, `end_observed_at` and `reclaimable_at`, both null until an admission observes the end; and `unrecorded`, the `directories` and `bytes` of staging without a reservation. |
+
+A reservation object has `staging`, `work`, `reserved_bytes`, `basis` (`estimate`, `exact` or `unknown`), `phase` (`staging`, `sealing` or `ended`), `live`, `allocated_bytes`, `outstanding_bytes` and `created`.
+
+## Storage admission
+
+A bake is admitted against free space before it writes. A write is admitted when the bakery filesystem's observed free space, minus the bytes live concurrent reservations still hold, minus the free-space reserve `storage.min-free-bytes`, covers it. Admission in one bakery is serialized, so concurrent commands never count the same free bytes. An Incan unit or Rust library is admitted before it stages for the payload size of the unit last baked under its name. Other bakes, and bakes with no earlier unit of their name, are admitted before they stage while the bakery's filesystem is outside the reserve. Every bake is admitted for its exact staged size before its staged files are stored. A command that bakes nothing is not admitted and is never refused. Admission never removes content to make room.
+
+An admitted bake holds a reservation under `<bakery>/reservations/` until it seals or its staging directory is removed. The reservation holds space while its producer holds its claim. Bytes already in its staging directory are part of the observed free space and are not counted again.
+
+A refused admission stops the command with exit status `3` and a decision-required outcome. Nothing prompts. With `--format json` the outcome is one JSON document on stdout; otherwise its readable explanation is printed on stderr. A bake refused before storing its staged files removes its staging directory and its reservation. A later command observes free space, reservations and the store again.
+
+| Field | JSON type | Contract |
+| --- | --- | --- |
+| `schema` | String | `incan.oven.storage-decision/1`. |
+| `outcome` | String | `decision-required`. |
+| `store` | String | The bakery directory. |
+| `observed_at` | Integer | Seconds since the Unix epoch at which the pressure was observed. |
+| `operation` | Object | `work`, the bake or seal and its unit identity; `required_bytes`; and `basis`: `estimate` (the unit last baked under the same name), `exact` (the staged bytes) or `unknown`. |
+| `policy` | Object | The effective storage policy, as in `incan bakery status`. |
+| `available_bytes` | Integer | Free bytes observed on the bakery's filesystem. |
+| `reserved_bytes` | Integer | Bytes live concurrent reservations hold. |
+| `reservations` | Array | The concurrent reservations holding space, as in `incan bakery status`. |
+| `admissible_bytes` | Integer | Available minus reserved minus the reserve; negative inside the reserve. |
+| `shortfall_bytes` | Integer | Required minus admissible. |
+| `collectable` | Object | What `incan bakery gc` would reclaim, as in `incan bakery status`. |
+| `actions` | Array | The actions that can change the outcome, each with `action` and `consequence`. `collect` has `command` (`incan bakery gc`) and `reclaims_bytes`; `wait` has `reserved_bytes`; `lower-reserve` has `key`, `file` and `current_bytes`; `free-space` has no further fields. `resolves` states whether the action alone covers the shortfall by the observed numbers. `collect` is listed only when collection would reclaim bytes, `wait` only when concurrent reservations hold space, and `lower-reserve` only when the reserve is above zero. |
+
+A bake whose producer released its claim without sealing has ended. Its staging directory is kept for `storage.failed-attempt-ttl` after an admission first observes that end, then an admission removes it with its reservation. A clock reading earlier than the recorded end restarts the window at that reading. Staging without a reservation is removed only by `incan bakery gc`. Admission and this window never remove a unit record, a payload or a registration.
+
+## Storage policy
+
+`config.toml` in the Incan home may hold a `[storage]` table. Omitting the file, the table or a key selects the default.
+
+| Key | Type | Meaning | Default |
+| --- | --- | --- | --- |
+| `root` | Nonempty path string | Bakery directory; a relative path is resolved against the directory that holds `config.toml` | `bakery` in the Incan home |
+| `min-free-bytes` | Nonnegative integer | Free filesystem bytes that admission leaves untouched | `6442450944` (6 GiB) |
+| `failed-attempt-ttl` | Duration string | How long an ended attempt's staging is kept after its end is observed | `"24h"` |
+| `history-ttl` | Duration string | Maximum automatic diagnostic-history window | `"24h"` |
+
+A command uses the bakery that `INCAN_BAKERY` names when it is set and nonempty, then `storage.root`, then `bakery` in the Incan home. `INCAN_BAKERY` applies to that invocation only and never changes `config.toml`. `incan bakery status` reports the bakery directory and which of the three selected it.
+
+A duration is a nonnegative integer of at most twelve digits followed by `s`, `m`, `h` or `d`, for seconds, minutes, hours or 24-hour days. An unknown key, a value of another type, an empty `root`, a negative reserve or a malformed duration fails the command that reads the policy, naming the file, the key and the accepted form. Without `INCAN_BAKERY`, selecting the bakery reads the policy, so an invalid configuration fails every command that uses the bakery. A zero reserve adds no reserve; a write must still fit in observed free space. A zero `failed-attempt-ttl` makes an ended attempt reclaimable when its end is first observed. Other tables of the file are not part of this policy.
 
 ## `incan inspect codegraph`
 
@@ -172,7 +238,7 @@ Requires `INCAN_ENGINE=records`. `ID` is the 32-character lowercase hexadecimal 
 | `INCAN_HOME` | Toolchain, cache and owner home. Default: `.incan` under `HOME`, or `USERPROFILE` when `HOME` is absent. |
 | `INCAN_STDLIB` | Optional directory containing standard-package source directories with `loaf.toml`; otherwise the installed toolchain's `stdlib` directory is selected. Compiled artifacts belong to the installed toolchain and selected profile. |
 | `INCAN_ENGINE` | `legacy` (default) or `records`. Records mode accepts the file-based `run` and `build` commands and `inspect run ID --proofs`. Help, version and `explain` do not select an engine. Other unsupported commands fail without falling back to legacy. |
-| `INCAN_BAKERY` | Optional physical bakery directory; otherwise `<INCAN_HOME>/bakery`. |
+| `INCAN_BAKERY` | Optional bakery directory for one invocation. It overrides `storage.root` in the home's `config.toml` without changing the file; otherwise the [storage policy](#storage-policy) selects the bakery, `<INCAN_HOME>/bakery` by default. |
 | `INCAN_SYSROOT` | Explicit local Rust sysroot for installation. Otherwise installation probes Rustup `1.98.0`, then `rustc`. Identity verification is required. |
 | `OVEN_OWNER` | `off` disables resident owner use. |
 | `OVEN_TRACE` | `-` writes invocation traces to stderr; another nonempty value names a trace output file. |
@@ -184,3 +250,5 @@ A requested trace that cannot be written produces one `incan: trace incomplete: 
 ## Exit codes
 
 `0` indicates success, including help. Unknown commands and unknown options exit `2`; the error is followed by ``Run `incan --help` for usage.`` Invalid unit-command syntax also exits `2`. Other argument-value refusals, preparation and compilation failures return nonzero. `run` returns the program's status. `test` returns nonzero when any collected test fails.
+
+`3` is a decision-required outcome: [storage admission](#storage-admission) refused a write, and the command stopped before writing it without removing stored content to make room. It is distinct from success and from failure; under `--format json` its document is printed on stdout.

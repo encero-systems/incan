@@ -1,7 +1,9 @@
 """Rust ABI extractions are baked once, indexed, registered and expired when a newer run replaces them."""
 
 from std.fs import Path
-from bakery import Fact, collect, find
+from bakery import find
+from bakery_records import Fact
+from bakery_roots import collect
 from files import make_directory, read, write as write_file
 from rust_facts import refresh
 from scratch import scratch_directory

@@ -32,7 +32,7 @@ from graph_process import process_facts
 from graph_rust import inspect_rust
 from json_fields import required_items, string_value
 from publication import publish
-from rust_units import rust_facet
+from rust_manifest import rust_facet
 from toolchain import Toolchain, load_toolchain
 from unit import project_root_of
 from unit_freshness import artifact_identity, fingerprint

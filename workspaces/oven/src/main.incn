@@ -11,6 +11,8 @@ from engine_client import execute as execute_records
 from engine_proofs import report as proof_report
 from engine_service import serve as serve_engine, refusal_code
 from bakery import bakery, bakery_command, parse_bakery, repair_payload_command
+from storage_admission import take_decision
+from store_status import parse_status, status_command
 from features import FeatureRequest
 from home import TOOLCHAIN, dependency_artifact_dir
 from intake import read_project, source_root_of, ManifestReader
@@ -18,7 +20,10 @@ from unit import describe, project_root_of
 from unit_rust import compile_incan_library, describe_native, toolchain_for
 from incan_units import check_unit, compile_unit, make_unit, program_binary, report_dependencies, run_program
 from unit_compiler import crate_name, run_compiler
-from rust_units import RustBuild, build_rust, read_registry_units, rust_facet
+from rust_units import build_rust
+from rust_build import RustBuild
+from rust_registry import read_registry_units
+from rust_manifest import rust_facet
 from rust_testing import build_rust_tests
 from toolchain import load_toolchain, rust_compiler
 from formatting import format_paths, parse_arguments as format_options
@@ -165,6 +170,11 @@ def dispatch(command: str, rest: list[str]) -> None:
             Ok(options) => finish("toolchain", toolchain_command(options))
         return
     if command == "bakery":
+        if len(rest) > 0 and rest[0] == "status":
+            match parse_status(rest[1:]):
+                Err(reason) => argument_error("bakery", reason)
+                Ok(format) => finish("bakery", status_command(format), format)
+            return
         if len(rest) > 0 and rest[0] == "repair-payload":
             finish("bakery", repair_payload_command(rest))
             return
@@ -438,7 +448,7 @@ def check(arguments: list[str]) -> None:
         fail(f"incan check: `--format` is text or json, got `{format}`", 2)
     match parse_options(own):
         Err(reason) => syntax_error("check", reason)
-        Ok(options) => finish("check", checked(validated("check", options), format))
+        Ok(options) => finish("check", checked(validated("check", options), format), format)
 
 
 def checked(options: Options, format: str) -> Result[i32, str]:
@@ -459,13 +469,37 @@ def inspected_dependencies(options: Options) -> Result[i32, str]:
     return report_dependencies(unit, toolchain_for(unit)?)
 
 
-def finish(command: str, result: Result[i32, str]) -> None:
-    """Exit with a command's exit code, or report why it could not run."""
+def finish(command: str, result: Result[i32, str], format: str = "text") -> None:
+    """Exit with a command's exit code, its decision-required storage outcome, or report why it could not run."""
     match result:
-        Err(reason) => fail(f"incan {command}: {reason}", 1)
+        Err(reason) =>
+            decide(command, reason, format)
+            fail(f"incan {command}: {reason}", 1)
         Ok(code) =>
             finish_trace()
             exit(code)
+
+
+def decide(command: str, reason: str, format: str) -> None:
+    """
+    Exit with status three when a command stopped because storage admission refused a write.
+
+    The outcome is never a prompt: `--format json` prints its versioned document on stdout, and text prints its
+    explanation on stderr. A failure that is not that refusal returns to ordinary reporting.
+    """
+    match take_decision():
+        None => return
+        Some(decided) =>
+            if decided.summary not in reason:
+                return
+            if format == "json":
+                println(decided.document)
+            else:
+                mut err = stderr()
+                # A closed standard error cannot be told about, so a failed write is ignored.
+                _ = err.write_all(RustString.from(f"incan {command}: {decided.text}\n").into_bytes())
+            finish_trace()
+            exit(3)
 
 
 def validated(command: str, options: Options) -> Options:
