@@ -1,6 +1,6 @@
 # RFC 172: Async syntax without an import
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-11-05
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
