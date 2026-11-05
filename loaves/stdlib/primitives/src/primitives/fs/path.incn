@@ -1,0 +1,27 @@
+"""Simple lexical paths for primitive filesystem operations."""
+
+from rust::std::fs import remove_file
+from rust::std::path import Path as RustPath
+
+
+@derive(Clone)
+pub class PrimitivePath:
+    """
+    A simple filesystem path for foundational operations.
+
+    This type deliberately omits slash notation, whole-file conveniences and filesystem policy. Use `join()` for
+    lexical composition and `std.fs.Path` for the application-oriented facade. The two path types are not nominally
+    interchangeable.
+    """
+
+    pub value: str
+
+    pub def join(self, segment: str) -> PrimitivePath:
+        """Return a lexical child path without querying the filesystem."""
+        return PrimitivePath(value=RustPath.new(self.value).join(segment).to_string_lossy().into_owned())
+
+    pub def remove(self) -> Result[None, str]:
+        """Remove this file, reporting the host failure text without adding facade policy."""
+        match remove_file(RustPath.new(self.value)):
+            Ok(_) => return Ok(None)
+            Err(error) => return Err(f"{error}")

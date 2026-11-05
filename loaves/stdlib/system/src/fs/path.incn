@@ -1,5 +1,4 @@
 from rust::std::env import current_dir, var as env_var
-from rust::std::cell import RefCell
 from rust::std::fs import (
     File as RustFile,
     FileTimes,
@@ -11,7 +10,6 @@ from rust::std::fs import (
     create_dir_all,
     hard_link,
     metadata,
-    read as rust_read,
     read_dir,
     read_link,
     remove_dir,
@@ -20,16 +18,20 @@ from rust::std::fs import (
     rename as rust_rename,
     set_permissions,
     symlink_metadata,
-    write as rust_write,
 )
 from rust::std::os::unix::fs import MetadataExt, symlink
 from rust::std::path import Path as RustPath
-from rust::std::rc import Rc
 from rust::std::time import SystemTime
 from rust::rustix::fs import statvfs
 from std.fs.file import File, _decode_text, _encode_text, _open_file, _validate_open_options
 from std.fs.glob import matches
-from std.fs.locking import FileLock, exclusive as lock_exclusive, shared as lock_shared, try_exclusive as try_lock_exclusive, try_shared as try_lock_shared
+from std.fs.locking import (
+    FileLock,
+    exclusive as lock_exclusive,
+    shared as lock_shared,
+    try_exclusive as try_lock_exclusive,
+    try_shared as try_lock_shared,
+)
 from std.fs.mapping import MappedFile, map_read as map_file_read
 from std.fs.metadata import DirEntry, PathStat, DiskUsage
 from std.io import IoError
@@ -216,9 +218,8 @@ pub type Path = newtype str:
         Returns:
             The file contents as `bytes`, or `Err(IoError)` if the read fails.
         """
-        match rust_read(RustPath.new(self.0)):
-            Ok(data) => return Ok(data)
-            Err(err) => return Err(_io_error(self, err))
+        file = self.open("rb")?
+        return file.read_bytes(-1)
 
     pub def write_bytes(self, data: bytes) -> Result[None, IoError]:
         """
@@ -230,9 +231,9 @@ pub type Path = newtype str:
         Returns:
             `Ok(None)` after writing all bytes, or `Err(IoError)` if the host rejects the write.
         """
-        match rust_write(RustPath.new(self.0), data):
-            Ok(_) => return Ok(None)
-            Err(err) => return Err(_io_error(self, err))
+        file = self.open("wb")?
+        _ = file.write_bytes(data)?
+        return Ok(None)
 
     pub def read_text(self, encoding: str, errors: str) -> Result[str, IoError]:
         """
@@ -273,9 +274,7 @@ pub type Path = newtype str:
         if let Some(line_ending) = newline:
             out = out.replace("\n", line_ending)
         bytes_out = _encode_text(self, out, encoding, errors)?
-        match rust_write(RustPath.new(self.0), bytes_out):
-            Ok(_) => return Ok(None)
-            Err(err) => return Err(_io_error(self, err))
+        return self.write_bytes(bytes_out)
 
     pub def open(
         self,
@@ -313,7 +312,7 @@ pub type Path = newtype str:
                     File(
                         path=self,
                         mode=mode,
-                        handle=Rc.new(RefCell.new(handle)),
+                        handle=handle,
                         encoding=encoding,
                         errors=errors,
                         newline=newline,
