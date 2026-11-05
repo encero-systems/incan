@@ -8,14 +8,14 @@
     - RFC 039 (`race for`), whose import activation this RFC supersedes
     - RFC 142 (async consumers and structured concurrency)
     - RFC 168 (`std.primitives`)
-- **Issue:** —
+- **Issue:** https://github.com/encero-systems/incan/issues/2683
 - **RFC PR:** —
 - **Written against:** v0.6
 - **Shipped in:** —
 
 ## Summary
 
-`async` and `await` become reserved words of the language, and `race for` becomes language syntax. None of them needs an import. Importing remains how a program reaches the async library: `spawn`, `sleep`, channels and the rest.
+`async` and `await` become reserved words of the language, and `race for` becomes language syntax. None of them needs an import. Importing remains how a program reaches the async library: `spawn`, `sleep`, channels and the rest. A module named `async` stays importable and is used like any other module, so `std.async` keeps its name.
 
 ## Motivation
 
@@ -35,6 +35,7 @@ Python separates these concerns. `async def` and `await` are reserved words sinc
 - `async` and `await` are always reserved.
 - `race for` parses without an import.
 - A program that uses async syntax gets the runtime it needs because it uses it, not because of an import.
+- `std.async` keeps its name and works like any other module.
 
 ## Non-Goals
 
@@ -55,21 +56,33 @@ async def answer() -> int:
 
 The import is there for `sleep`. Without the `sleep` call, the module needs no import at all.
 
-`async` and `await` can't name a variable, a parameter or any other declaration. `race` still can, because only the two words `race for` form the syntax.
+A program can't declare either word: `async = 1`, `def async()` and a parameter named `await` are all refused. A module named `async` is different. Importing it binds it like any other module, so this works too:
+
+```incan
+from std import async
+
+
+async def answer() -> int:
+    await async.sleep(0.1)
+    return 42
+```
+
+`race` stays an ordinary name, because only `race for <name>:` is syntax. `[race for race in races]` is still a comprehension.
 
 ## Reference-level explanation
 
-- `async` and `await` must be hard keywords in every module, whatever it imports.
-- `race for` must parse as the race expression in every module. `race` alone must remain an ordinary identifier.
-- Using `async` or `await` as a name must be refused with a diagnostic that says the word is reserved.
-- Compiling a module that uses async syntax must select the async runtime from the checked use of that syntax, with no import required.
-- A module that uses no async syntax and imports no async library must not reach the async runtime.
+- `async` and `await` must be reserved in every module, whatever it imports. A variable, parameter, field, function or other declaration named `async` or `await` must be refused with a diagnostic that says the word is reserved.
+- `async` followed by `def` must parse as the async modifier in every module, and `await` must parse as the await expression.
+- A reserved word may be a segment of a module path. A module named `async` may be bound by an import, and `async` followed by `.` must resolve through that binding as any other module binding does.
+- `race for <name>:` must parse as the race expression in every module. `race` must remain an ordinary identifier, and `race for` followed by anything else must keep its ordinary meaning.
+- Compiling a program that uses async syntax must select the async runtime from the checked use of that syntax, with no import required.
+- A program that uses no async syntax and no async library, directly or through its dependencies, must not reach the async runtime.
 
 ## Design details
 
 ### Compatibility
 
-Source that names something `async` or `await` no longer compiles. Python made the same change in 3.7. Incan has not reached 1.0, and renaming is mechanical. Existing async imports stay valid: an import that was only there to activate syntax becomes an unused import.
+Source that declares something named `async` or `await` no longer compiles. Python made the same change in 3.7. Incan has not reached 1.0, and renaming is mechanical. Existing async imports stay valid: an import that was only there to activate syntax becomes an unused import.
 
 ### Interaction with `std.primitives`
 
@@ -77,22 +90,26 @@ Whether the syntax needs a library is now separate from where the library lives,
 
 ## Alternatives considered
 
-- **Contextual keywords, like `assert`.** `async` could stay usable as a name outside the positions where it has meaning. That keeps two meanings for one word and a more complicated parser, for little benefit.
+- **Contextual keywords, like `assert`.** `async` could stay usable as a declared name outside the positions where it has meaning. That keeps two meanings for one word in every program, for little benefit.
 - **Keep import activation.** It preserves a rule whose reason has gone.
+- **Refuse `async` as a module binding.** Nothing about parsing requires it, since `async` as the modifier is only ever followed by `def`. It would refuse `import std.async` and make `std.async` the one module that can't be called through its name.
+- **Rename the module, as Python's `asyncio`.** That changes every existing import to avoid a conflict that doesn't exist.
 
 ## Drawbacks
 
-- Two more words are unavailable as names.
+- Two more words are unavailable as declared names.
+- A reserved word that can still be a module binding needs one sentence to explain.
 
 ## Layers affected
 
-- **Parser / AST**: `async` and `await` become hard keywords, and `race for` no longer checks for an import.
-- **Typechecker / Symbol resolution**: refuse the reserved words as names.
+- **Parser / AST**: `async` and `await` no longer check for an import, `async` is the modifier before `def` and a name before `.`, and `race for <name>:` no longer checks for an import.
+- **Typechecker / Symbol resolution**: refuse the reserved words as declared names, and resolve a module named `async` like any other module binding.
 - **Stdlib / Runtime**: runtime selection follows checked async use.
 - **Formatter**: no new syntax.
 - **LSP / Tooling**: completion offers the keywords in every module.
 
 ## Design Decisions
 
-- `async` and `await` are reserved rather than contextual, matching Python.
-- `race` stays an identifier, and only `race for` is syntax.
+- `async` and `await` can't be declared, matching Python.
+- A module named `async` is imported and called like any other module, so `std.async` keeps its name and `async.sleep(0.1)` works.
+- `race` stays an identifier, and only `race for <name>:` is syntax.
