@@ -41,7 +41,7 @@ from cli_help import help_hint, unknown_option
 from command_help import UNIT_VALUE_OPTIONS, command_help, usage, version_text
 from surfaces import OVEN, invoked, misplaced
 from pub::incan_platform.trace import WorkObserver
-from segment_files import observe_work
+from pub::incan_platform.store.files import observe_work
 from trace_adapter import finish as finish_trace
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation

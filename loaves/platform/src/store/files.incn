@@ -1,13 +1,12 @@
 """The segment store's failures, its work observation, and the synced file operations every store module uses."""
 
 from rust::std::process import id, exit as process_exit
-from pub::incan_platform.trace import Clock, Operation, WorkObserver
 from rust::std::string import String as RustString
-from std.environ import get_or
-from std.fs import Path
-from std.io import IoError
-from pub::incan_platform.durability import sync_ordered
-from store_index import IndexError
+from std.primitives.environ import read as read_environment
+from crate.durability import sync_ordered
+from crate.trace import Clock, Operation, WorkObserver
+from crate.store.index import IndexError
+from crate.store.path import StoreIoError, StorePath as Path
 
 static WORK: WorkObserver = WorkObserver()
 
@@ -49,7 +48,7 @@ pub def failure(kind: str, object: str, detail: str) -> StoreError:
     return StoreError(kind=kind, object=object, detail=detail)
 
 
-pub def io_failure(object: Path, error: IoError) -> StoreError:
+pub def io_failure(object: Path, error: StoreIoError) -> StoreError:
     """An I/O error on one path."""
     return failure("io", object.0, error.message())
 
@@ -81,24 +80,24 @@ pub def natural(text: str) -> Option[int]:
 
 def file_size(path: Path) -> int:
     """A file's size, zero when it cannot be read."""
-    match path.stat():
+    match path.store_stat():
         Err(_) => return 0
         Ok(info) =>
-            match info.size():
+            match info.store_size():
                 Ok(size) => return size
                 Err(_) => return 0
 
 
 pub def remove_tree(path: Path) -> None:
     """Remove a staging directory; a failure leaves it for recovery and never fails a commit."""
-    match path.remove_tree():
+    match path.store_remove_tree():
         Ok(_) => pass
         Err(_) => pass
 
 
 pub def ensure_directory(path: Path) -> Result[None, StoreError]:
     """Create `path` and its parents when absent."""
-    return path.mkdir(true, true).map_err((error) => io_failure(path, error))
+    return path.store_mkdir(true, true).map_err((error) => io_failure(path, error))
 
 
 pub def sync_file(path: Path) -> Result[None, StoreError]:
@@ -114,14 +113,14 @@ pub def place_synced(target: Path, data: bytes) -> Result[None, StoreError]:
     ensure_directory(target.parent())?
     temporary = Path(f"{target.0}.{id()}.tmp")
     writing = begin_work()
-    temporary.write_bytes(data).map_err((error) => io_failure(temporary, error))?
+    temporary.store_write_bytes(data).map_err((error) => io_failure(temporary, error))?
     record_work(Operation.StoreFileWrite, target.0, writing)
     boundary = publication_kind(target)
     publication_boundary(f"{boundary}-written")
     sync_file(temporary)?
     publication_boundary(f"{boundary}-synced")
     renaming = begin_work()
-    temporary.replace(target).map_err((error) => io_failure(target, error))?
+    temporary.store_replace(target).map_err((error) => io_failure(target, error))?
     record_work(Operation.StoreFileRename, target.0, renaming)
     publication_boundary(f"{boundary}-replaced")
     return Ok(None)
@@ -140,7 +139,10 @@ def publication_kind(target: Path) -> str:
 
 pub def publication_boundary(name: str) -> None:
     """Terminate only at an explicitly requested fault-injection boundary; ordinary publication has no effects here."""
-    if get_or("INCAN_STORE_CRASH_AFTER", "") == name:
+    mut requested = ""
+    if let Ok(value) = read_environment("INCAN_STORE_CRASH_AFTER"):
+        requested = value
+    if requested == name:
         process_exit(86)
 
 

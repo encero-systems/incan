@@ -7,7 +7,7 @@ from std.fs import Path
 from std.json import JsonValue
 from files import json_text
 from json_fields import required_items, required_text, string_value
-from segment_files import StoreError
+from pub::incan_platform.store.files import StoreError
 
 const UNIT_SCHEMA: str = "incan.bakery.unit/1"
 

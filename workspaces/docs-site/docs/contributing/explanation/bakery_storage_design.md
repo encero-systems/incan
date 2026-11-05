@@ -6,7 +6,7 @@ This page is the storage contract under the [build engine architecture](build_en
 
 ## 1. Decision
 
-Build an **indexed, immutable-record physical storage profile of the platform store substrate (`incan_platform.store`), under RFC 165's snapshot and transaction contract**. `std.db` is that substrate's public typed surface; the bakery is its first compiler/build-system client, not a separate database. Keep the substrate Incan-authored, temporarily behind the existing storage module boundary in Oven until it moves into the platform Loaf (S2), with no compiler or Oven types crossing into that module.
+Build an **indexed, immutable-record physical storage profile of the platform store substrate (`incan_platform.store`), under RFC 165's snapshot and transaction contract**. `std.db` is that substrate's public typed surface; the bakery is its first compiler/build-system client, not a separate database. The substrate is Incan-authored in the platform Loaf, with no compiler or Oven types crossing into it. Oven retains the bakery families, build orchestration and storage policy above that mechanism.
 
 The same store admits facts from three producers: a local computation, a dependency Loaf, and a toolchain or registry bundle. Admission has one implementation. Reading an admitted fact does not depend on which producer supplied it.
 
@@ -605,7 +605,7 @@ Preserve the existing `map_read` and native-consumer integration. Align the modu
 - [DD-0012: Incremental compilation over a persistent semantic store](../../design_records/0012_incremental_compilation_over_a_semantic_store.md): per-declaration facets, name slots, the ranked graph, frozen Loaves and deterministic compaction.
 - RFC 124 (Oven store unit identity and cross-plan artifact sharing) and RFC 125 (incan.pub Loaf registry and baked asset distribution).
 - RFC 165 (typed embedded storage with `std.db`, over the `incan_platform.store` substrate) and RFC 166 (indexed graphs and snapshot-bound graph access in `std.graph`): the contracts this store implements and serves.
-- The existing segment store in Oven and the `std.fs` mapping module, both under development on the bakery branch.
+- The platform segment store in `loaves/platform/src/store.incn` and its store submodules, plus the foundational mapping contract in `std.primitives`.
 
 ### Capabilities to verify or track before claiming completion
 
