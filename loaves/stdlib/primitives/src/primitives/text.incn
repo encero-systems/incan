@@ -1,0 +1,47 @@
+"""Owned UTF-8 conversion from borrowed text and byte storage."""
+
+from rust::std::string import String as RustString
+from rust::std::str import from_utf8
+from rust::std::convert import Into as RustInto
+from rust::incan_std_core::frozen import FrozenStr as RuntimeFrozenStr, FrozenBytes as RuntimeFrozenBytes
+
+
+pub def encode_utf8(value: &str) -> bytes:
+    """
+    Copy borrowed UTF-8 text into independent byte storage.
+
+    The result owns its allocation and retains no dependency on `value`.
+    """
+    return RustString.from(value).into_bytes()
+
+
+pub def encode_frozen_utf8(value: RuntimeFrozenStr) -> bytes:
+    """Copy frozen UTF-8 text into independently owned byte storage through the shared encoder."""
+    return encode_utf8(value.as_str())
+
+
+pub def copy_frozen_bytes(value: RuntimeFrozenBytes) -> bytes:
+    """Copy immutable frozen byte storage into an independently owned buffer."""
+    return RustInto.into(value.as_slice())
+
+
+pub def decode_utf8(value: &bytes, replace_invalid: bool) -> tuple[bool, str]:
+    """
+    Decode borrowed bytes as UTF-8 into independent text storage.
+
+    Args:
+        value: Bytes to validate without transferring their backing storage.
+        replace_invalid: Whether each malformed sequence becomes U+FFFD instead of returning an error.
+
+    Returns:
+        `(true, text)` after successful or replacement decoding, or `(false, detail)` for strict malformed input.
+
+    The explicit status keeps policy-specific surface errors outside this primitive while still carrying the native
+    validation detail to their owner.
+    """
+    if replace_invalid:
+        return (true, RustString.from_utf8_lossy(value).into_owned())
+
+    match from_utf8(value):
+        Ok(text) => return (true, RustString.from(text))
+        Err(error) => return (false, str(error))
