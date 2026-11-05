@@ -143,12 +143,13 @@ pub def shared_sequence_receiver(
     mut builder: Builder,
     arguments: &list[RustArgumentElement],
     span: SourceSpan,
+    text_membership: bool = false,
 ) -> Result[Place, str]:
-    """Read frozen snapshots or shared collection receivers, materializing indexed fields once without changing their owners."""
+    """Read frozen snapshots or shared collection receivers, optionally materializing frozen text for membership."""
     match argument_type(builder, arguments, 0, span)?:
         PlanType.FrozenCollection(_name, _elements) =>
             value = argument_value(builder, arguments, 0, span)?
-            return frozen_list_snapshot(builder, value, span)
+            return frozen_list_snapshot(builder, value, span, text_membership)
         _ => return shared_receiver_place(builder, arguments, 0, span)
 
 
@@ -281,13 +282,13 @@ pub def frozen_dictionary_contains(
         _ => return Err("unsupported Body IR nonfrozen dictionary membership")
 
 
-pub def frozen_list_snapshot_type(ty: PlanType) -> Result[PlanType, str]:
-    """Keep static text reads owned and nominal list elements exact; runtime instantiation still proves Clone and Static."""
+pub def frozen_list_snapshot_type(ty: PlanType, text_membership: bool = false) -> Result[PlanType, str]:
+    """Keep ordinary elements exact while allowing membership to compare owned text with frozen text."""
     match ty:
         PlanType.FrozenCollection(name, elements) =>
             if name not in ["FrozenList", "FrozenSet", "FrozenDict"] or len(elements) == 0:
                 return Err("unsupported Body IR frozen collection snapshot")
-            if elements[0] == PlanType.StaticText:
+            if elements[0] == PlanType.StaticText or (text_membership and elements[0] == PlanType.FrozenStr):
                 return Ok(PlanType.List(ListLeaf.Str, 1))
             if elements[0] == PlanType.StaticBytes:
                 if name != "FrozenList":
@@ -311,10 +312,15 @@ pub def frozen_list_snapshot_type(ty: PlanType) -> Result[PlanType, str]:
         _ => return Err("unsupported Body IR nonfrozen snapshot")
 
 
-pub def frozen_list_snapshot(mut builder: Builder, value: Operand, span: SourceSpan) -> Result[Place, str]:
-    """Materialize an ordered owned snapshot through the runtime, leaving immutable static storage unchanged."""
+pub def frozen_list_snapshot(
+    mut builder: Builder,
+    value: Operand,
+    span: SourceSpan,
+    text_membership: bool = false,
+) -> Result[Place, str]:
+    """Materialize an ordered owned snapshot, converting frozen text only for cross-text membership."""
     ty = operand_type(builder, value)?
-    snapshot = frozen_list_snapshot_type(ty)?
+    snapshot = frozen_list_snapshot_type(ty, text_membership)?
     match ty:
         PlanType.FrozenCollection(name, elements) =>
             mut path = "incan_native_runtime::frozen_list_items"
@@ -322,7 +328,7 @@ pub def frozen_list_snapshot(mut builder: Builder, value: Operand, span: SourceS
                 path = "incan_native_runtime::frozen_set_items"
             elif name == "FrozenDict":
                 path = "incan_native_runtime::frozen_dict_keys"
-            if elements[0] == PlanType.StaticText:
+            if elements[0] == PlanType.StaticText or (text_membership and elements[0] == PlanType.FrozenStr):
                 path = "incan_native_runtime::frozen_list_text_items"
                 if name == "FrozenSet":
                     path = "incan_native_runtime::frozen_set_text_items"

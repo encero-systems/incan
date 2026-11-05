@@ -533,7 +533,7 @@ pub def lower_list_helper(
     """
     if len(arguments) != 2:
         return Err("unsupported Body IR list membership arity")
-    receiver = shared_sequence_receiver(builder, arguments, span)?
+    receiver = shared_sequence_receiver(builder, arguments, span, true)?
     leaf, depth = require_list_shape(place_type(builder.locals, receiver), "unsupported Body IR membership on non-list")?
     admit_membership_equality(builder, leaf)?
     element = list_element(leaf, depth)

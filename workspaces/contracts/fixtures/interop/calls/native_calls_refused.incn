@@ -1,4 +1,4 @@
-# behavior: Unadmitted native calls, unsafe methods and constructors, owned foreign fields, unsafe callback storage, native calls without a selectable callee, numeric arguments that violate a parameterized Rust bound, method results with unfixed parameters, borrowed scalar callback returns, a later use that conflicts with the owner arguments a local's first use fixed, and an exclusive borrow of an immutable binding that holds a shared socket reference are refused (#2256, #2481)
+# behavior: Unadmitted native calls, unsafe methods and constructors, owned foreign fields, unsafe callback storage, native calls without a selectable callee, numeric arguments that violate a parameterized Rust bound, method results with unfixed parameters, borrowed scalar callback returns, a later use that conflicts with the owner arguments a local's first use fixed, an exclusive borrow of an immutable binding that holds a shared socket reference, and a native field behind a shared owner passed to a mutable source parameter are refused (#2256, #2449, #2481)
 # expect-stderr-contains:
 #   does not resolve for this match
 #   Rust method `rust::std::path::Path::missing_contract` has no admitted callable signature
@@ -32,6 +32,7 @@
 #   does not satisfy bound `std::convert::AsRef<std::ffi::OsStr>`
 #   sum`: its type parameter `S` is not fixed by the call
 #   Rust callback cannot return a borrowed scalar without a retained lifetime contract
+#   native field is reached through a shared owner
 # expect-exit: 1
 
 """A known native owner does not authorize a guessed associated method signature, and no refused call executes."""
@@ -47,7 +48,7 @@ from rust::std::mem import MaybeUninit, size_of_val
 from rust::std::os::unix::net import UnixStream
 from rust::std::os::unix::process import CommandExt
 from rust::std::path import Path, PathBuf
-from rust::std::process import Command
+from rust::std::process import Command, Output
 from rust::std::rc import Rc
 from rust::std::sync import Mutex
 from rust::std::string import String as RustString
@@ -220,6 +221,16 @@ def read_through_a_shared_binding() -> None:
         Err(_) => pass
 
 
+def native_field_through_shared_owner(output: &Output) -> bool:
+    """Refuse exclusive source access to byte storage projected through a shared native owner."""
+    return empty_bytes(output.stdout)
+
+
+def empty_bytes(mut values: bytes) -> bool:
+    """Keep the mutable parameter read-only so the shared-native origin alone decides the refusal."""
+    return len(values) == 0
+
+
 def main() -> None:
     """
     Request refused native calls before anything can execute.
@@ -254,3 +265,6 @@ def main() -> None:
     unfixed_method_result()
     borrowed_scalar_key()
     read_through_a_shared_binding()
+    match Command.new("true").output():
+        Ok(output) => println(native_field_through_shared_owner(output))
+        Err(_) => pass

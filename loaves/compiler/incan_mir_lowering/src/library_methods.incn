@@ -316,9 +316,9 @@ pub def lower_standard_slot(
     Lower a standard-library slot through the behavior a derive or a held callable gives the receiver.
 
     A slot the receiver's own method fills is left to ordinary dispatch, because that method is what legacy calls. A
-    receiver type that declares a method of the slot's name without such a record refuses, rather than taking the derived
-    behavior in its place. A checked Serialize default that still names the protocol itself keeps the canonical JSON
-    implementation; retaining that default is not an override.
+    receiver type that declares a method of the slot's name without such a record also uses ordinary dispatch. A checked
+    Serialize default that still names the protocol itself keeps the canonical JSON implementation; retaining that
+    default is not an override.
     """
     mut json_default = false
     if receiver_fills_slot(module, target, builder, arguments[0], span)?:
@@ -329,9 +329,16 @@ pub def lower_standard_slot(
             return Ok(false)
         # A retained default points at the protocol itself; only a distinct implementation overrides that slot.
         json_default = true
-    if is_json_serialize_method(target) or is_derived_clone(target) or is_derived_display(target):
-        if not json_default and receiver_declares_method(module, builder, arguments[0], slot_name(target), span)?:
-            return Err("unsupported Body IR standard slot on a type with its own method of that name")
+    mut standard_slot = is_json_serialize_method(target) or is_derived_clone(target) or is_derived_display(target)
+    match comparison_dunder(target):
+        Some(_operator) => standard_slot = true
+        None => pass
+    if (
+        standard_slot
+        and not json_default
+        and receiver_declares_method(module, builder, arguments[0], slot_name(target), span)?
+    ):
+        return Ok(false)
     if is_json_serialize_method(target):
         lower_model_json_builtin(builder, arguments, destination, span)?
         return Ok(true)

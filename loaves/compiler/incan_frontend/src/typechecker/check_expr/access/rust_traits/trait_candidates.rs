@@ -103,6 +103,7 @@ impl TypeChecker {
                 bindings.insert(name, value);
             }
         }
+        self.infer_rust_bound_bindings(&implementation.bounds, &variables, &mut bindings);
         if open_owner {
             let template = self.native_rust_signature_type(&implementation.self_type, "");
             let closed = self.instantiate_rust_signature_type(&template, &variables, &bindings);

@@ -286,6 +286,28 @@ pub fn uncopyable_argument_to_mut_parameter(
     ))
 }
 
+/// Refuse a native field projected through a shared owner when a source parameter requests exclusive access.
+///
+/// Even a read-only callee cannot form the `&mut` required by its parameter from the retained shared native loan.
+/// `INCAN-T0117` remains the stable code for mutable-argument authority failures.
+pub fn shared_native_field_to_mut_parameter(
+    parameter: MutParameterLabel<'_>,
+    callee: &str,
+    span: Span,
+) -> CompileError {
+    let binding = parameter.binding_name();
+    let parameter = parameter.in_sentence();
+    CompileError::type_error(
+        format!("Argument for the 'mut' parameter {parameter} of '{callee}' requires exclusive access"),
+        span,
+    )
+    .with_stable_code("INCAN-T0117")
+    .with_hint(format!(
+        "Remove 'mut' from the read-only parameter, or copy the field into a 'mut' binding first: mut {binding} = ..."
+    ))
+    .with_note("The native field is reached through a shared owner, which cannot grant an exclusive loan")
+}
+
 /// Spell the remedy for an `INCAN-T0117` argument: declare the binding `mut`, or pass a `mut` variable in its place.
 fn mut_argument_hint(place: &MutArgumentPlace, parameter: MutParameterLabel<'_>) -> String {
     let binding = parameter.binding_name();

@@ -232,6 +232,7 @@ impl TypeChecker {
     pub(super) fn rust_display_without_lifetimes(rust_ty: &str) -> String {
         Self::strip_borrow_lifetimes(rust_ty)
             .replace("'static ", "")
+            .replace("<>", "")
             .trim_start_matches("::")
             .to_string()
     }
