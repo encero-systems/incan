@@ -12,6 +12,7 @@
     - RFC 065 (`std.hash`)
     - RFC 083 (symbol and method aliases)
     - RFC 088 (iterator adapter surface)
+    - RFC 107 (type-directed library APIs)
     - RFC 099 (generic trait-targeted methods)
     - RFC 101 (`std.collections.OrdinalMap`)
     - RFC 128 (one Callable trait and the shared signature model)
@@ -291,7 +292,7 @@ A type projection must resolve to one trait-owned inferred member in one selecte
 
 Distinct owners or distinct ordinary instantiations exposing the same member name must make an unqualified projection ambiguous, even when their current bindings normalize to the same type. A compiler must not choose based on declaration order, imports, capitalization, or convenient equality of the resulting types. The proposed trait-qualified projection `T.Name from TraitExpression` must identify the owner and ordinary instantiation. The qualifier applies to a member projection, not an arbitrary expression. The qualifier must bind to the immediately preceding member projection and form one primary type expression, consistently with RFC 144's value-level projections. The owning trait expression uses the existing type-name and generic-argument grammar; it must not consume a surrounding arithmetic, comparison, or comprehension clause. Delimited uses such as `Option[T.Item from Trait]` must not require extra parentheses. A further postfix operation on the selected result must parenthesize the projection, as in `(T.Item from Trait).Other`; the unparenthesized form must not be guessed to mean that result access. Any actual attachment ambiguity must produce a diagnostic requesting explicit parentheses. This rule does not change ordinary operator precedence.
 
-Projections must be accepted in type positions, including parameters, return types, generic arguments, type operations, and checked constraints. They must not be interpreted as value-field access. A generic projection that is justified by its bounds may remain symbolic until substitution; an unjustified projection must produce a diagnostic instead of becoming `Unknown` or `Any`.
+Projections must be accepted in type positions, including parameters, return types, generic arguments, `Type[T]` token targets, type operations, and checked constraints. They must not be interpreted as value-field access. A generic projection that is justified by its bounds may remain symbolic until substitution; an unjustified projection must produce a diagnostic instead of becoming `Unknown` or `Any`.
 
 ### Methods, inheritance, and cycles
 
@@ -380,6 +381,7 @@ These cases describe required behavior; they are not compiler test results. They
 | A trait header listing `infer Value` before an ordinary `K`                         | Reject; inferred members must form a suffix.                                  |
 | An `EncodedIterator` adoption whose item does not satisfy `TextEncodable`             | Reject at adoption; the inferred member must satisfy its declared bound.       |
 | A generic consumer of `EncodedIterator` calling `encode` on its projected item         | Accept the capability proved by the inferred member bound.                    |
+| `Type[I.Item]` as the expected type of a value token, for a concrete `I`              | Accept; it is the token of the selected item type, with no separate token model. |
 
 ## Alternatives considered
 
