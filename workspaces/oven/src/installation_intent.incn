@@ -1,7 +1,7 @@
 """Encode normalized standard manifest intent without retaining a TOML document or parsing it on command replay."""
 
 from std.io import _BytesIO
-from intake import FeatureDeclaration, LocalDependency, ProjectIntent, RustInputRequest
+from manifest_intent import FeatureDeclaration, LocalDependency, ProjectIntent, RustInputRequest
 from page_codec import Reader, put_flag, put_number, put_optional, put_text, put_texts
 from toolchain_access import ToolchainAccess
 

@@ -28,7 +28,7 @@ from std.hash import sha256
 from std.json import JsonValue, parse
 from files import json_text
 from home import home, standard_library_dir
-from intake import parse_document
+from manifest_intent import parse_document
 from loaf_local_graph import unique
 from observation import SETTLE_SECONDS, FileMetadata, children, file_metadata
 from toolchain import Toolchain, described_toolchain, toolchain_file

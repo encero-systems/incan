@@ -2,7 +2,7 @@
 
 from std.fs import MappedView
 from std.io import BytesIO, _BytesIO
-from intake import ProjectIntent
+from manifest_intent import ProjectIntent
 from installation_intent import read_intent, write_intent
 from page_codec import Reader, put_number, put_text, put_texts
 from toolchain_types import NativeCrate, InstalledCompiler

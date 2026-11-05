@@ -1,0 +1,337 @@
+"""Toolchain reuse contracts: a changed compiler, installed digest or registry completion rekeys every unit."""
+
+from rust::std::fs import OpenOptions, metadata
+from rust::std::process import Command
+from rust::std::thread import sleep
+from rust::std::time import Duration
+from std.fs import Path
+from std.json import JsonValue
+from pub::incan_platform.trace import flush as flush_trace
+from files import json_text, make_directory, read, read_json, remove, write as write_file
+from json_fields import required_items, required_text
+from registry_metadata import completion_selection
+from registry_pages import question, recall_catalog, current as catalog_current
+from registry_codec import Catalog, decode as decode_catalog, encode as encode_catalog
+from retained_readings import INSTALLED_DIGEST, installed_digest, retain
+from observation import SETTLE_SECONDS, file_digest, now_seconds, observe
+from scratch import scratch_directory
+from rust_registry import read_registry_units
+from rust_target import compiler_version, deployment_target
+from toolchain import Toolchain, load_toolchain, rust_compiler
+from unit_publication import record_path, record_payload
+from unit_freshness import fingerprint
+from freshness_fixtures import compiler_fingerprint, fixture, reconcile, unit_key, write
+
+
+def rewrite_in_place(path: Path, text: str) -> Result[None, str]:
+    """Replace a file's bytes where they are with `text`, then put its modification time back as it was."""
+    prefix = f"{path.0}: "
+    stat = metadata(f"{path.0}").map_err((error) => f"{prefix}{error}")?
+    before = stat.modified().map_err((error) => f"{prefix}{error}")?
+    write_file(path, text)?
+    mut options = OpenOptions.new()
+    options.write(true)
+    file = options.open(f"{path.0}").map_err((error) => f"{prefix}{error}")?
+    file.set_modified(before).map_err((error) => f"{prefix}{error}")?
+    return Ok(None)
+
+
+pub def test_toolchain_change_rekeys_every_unit() -> Result[None, str]:
+    """
+    Compiler, native, ABI, recorded producer selection, target and deployment changes each invalidate a unit's
+    generation, and an unchanged compiler is not asked for its target again. An unchanged installation's files are
+    hashed once per home and its registry closure is completed once per generation.
+    """
+    scratch = scratch_directory()?
+    setup = fixture(scratch.path())?
+    first = compiler_fingerprint(setup.toolchain)?
+    mut pinned = setup.unit
+    pinned.selected_toolchain = Some(setup.toolchain)
+    assert json_text(pinned.to_json())? == json_text(setup.unit.to_json())?
+    assert compiler_fingerprint(setup.toolchain)? == first
+    write(Path(setup.toolchain.driver), "driver two, a longer compiler")?
+    driver = compiler_fingerprint(setup.toolchain)?
+    assert driver != first
+    write(Path(setup.toolchain.externs[0].path), "runtime two, another interface")?
+    record_payload(Path(setup.toolchain.externs[0].path), fingerprint(["runtime two"])?)?
+    runtime = compiler_fingerprint(setup.toolchain)?
+    assert runtime != driver
+    write(Path(setup.toolchain.rust_abi[0]), "abi two, other facts")?
+    abi = compiler_fingerprint(setup.toolchain)?
+    assert abi != runtime
+    mut recorded = setup.toolchain
+    lock = scratch.path().joinpath("selected.json")
+    write(lock, "first producer closure")?
+    recorded.registry_lock = lock.0
+    selected = compiler_fingerprint(recorded)?
+    assert selected == abi
+    write(lock, "other producer closure")?
+    assert compiler_fingerprint(recorded)? == selected
+    mut moved = setup.toolchain
+    moved.sysroot = "/rust/1.98.0-x86_64-unknown-linux-gnu"
+    moved.target = "x86_64-unknown-linux-gnu"
+    assert compiler_fingerprint(moved)? != abi
+    # Rewriting the driver in place with the same length and putting its modification time back is still a change.
+    rewrite_in_place(Path(setup.toolchain.driver), "driver 2.., a longer compiler")?
+    assert compiler_fingerprint(setup.toolchain)? != driver
+    # A unit that links the replaced native crate is keyed differently too.
+    before = reconcile(scratch.path(), setup)?
+    write(Path(setup.toolchain.externs[0].path), "runtime three, once more different")?
+    record_payload(Path(setup.toolchain.externs[0].path), fingerprint(["runtime three"])?)?
+    assert reconcile(scratch.path(), setup)?.key != before.key
+    # The compiler's own answers are part of its identity, and an unchanged compiler is not asked them again.
+    check_compiler_probes(scratch.path(), setup.toolchain)?
+    # What every project learns from the installation is learned once per home.
+    check_installed_digest(scratch.path())?
+    check_registry_completion(scratch.path())?
+    # Older installed producers can be used locally, but their bytes cannot invent an input identity.
+    remove(record_path(Path(setup.toolchain.externs[0].path)))?
+    legacy = unit_key(setup.unit, setup.toolchain)?
+    assert legacy.digest == ""
+    assert "unit identity refused:" in legacy.refusal
+    assert "no recorded producer identity" in legacy.refusal
+    return Ok(None)
+
+
+def check_compiler_probes(scratch: Path, toolchain: Toolchain) -> Result[None, str]:
+    """
+    The selected rustc is asked for its version and deployment target once per installation and deployment selection.
+
+    1. A first identification asks rustc both questions; an unchanged repeat asks nothing.
+    2. Another deployment selection is another question, answered once.
+    3. A replaced rustc is asked again, and identifies another compiler.
+    """
+    # 1. The probing rustc records each question it is asked.
+    probes = scratch.joinpath("probes")
+    rustc = scratch.joinpath("rust").joinpath("bin").joinpath("rustc")
+    probing_rustc(rustc, probes, "1.98.0")?
+    settled(rustc)?
+    mut probing = toolchain
+    probing.sysroot = scratch.joinpath("rust").0
+    probing.target = ""
+    first = compiler_fingerprint(probing)?
+    asked = read(probes)?
+    assert asked == "-vV\n--print deployment-target\n"
+    assert compiler_fingerprint(probing)? == first
+    assert read(probes)? == asked
+    # 2. rustc answers the deployment target from the selection it runs with.
+    version = compiler_version(rustc.0)?
+    assert deployment_target(rustc.0, version, [("MACOSX_DEPLOYMENT_TARGET", "12.3")])? == "12.3\n"
+    assert deployment_target(rustc.0, version, [("MACOSX_DEPLOYMENT_TARGET", "12.3")])? == "12.3\n"
+    assert read(probes)? == asked + "--print deployment-target\n"
+    # 3. Another rustc at the same path is another installation.
+    probing_rustc(rustc, probes, "1.98.1")?
+    assert compiler_fingerprint(probing)? != first
+    assert read(probes)? == asked + "--print deployment-target\n" + asked
+    return Ok(None)
+
+
+def check_installed_digest(scratch: Path) -> Result[None, str]:
+    """
+    An installed file, such as the pinned `rustc_driver` library, is hashed once per generation for the whole home.
+
+    1. A settled file's first digest is the digest of its bytes.
+    2. While its generation is unchanged, the retained digest answers and its bytes are not read again.
+    3. A rewritten file is hashed again.
+    """
+    # 1. The first ask hashes the bytes.
+    library = scratch.joinpath("rust").joinpath("lib").joinpath("librustc_driver-test.dylib")
+    write(library, "driver library one")?
+    settled(library)?
+    assert installed_digest(library)? == file_digest(library)?
+    # 2. A retained answer that is not the bytes' digest shows that the bytes were not read again.
+    retain(library, INSTALLED_DIGEST, observe(library)?, JsonValue.string("retained"))
+    assert installed_digest(library)? == "retained"
+    # 3. A rewrite in place, even with its modification time put back, is another generation.
+    rewrite_in_place(library, "driver library two")?
+    assert installed_digest(library)? == file_digest(library)?
+    return Ok(None)
+
+
+def check_registry_completion(scratch: Path) -> Result[None, str]:
+    """
+    A registry closure is completed from its producers' metadata once per closure generation and pinned compiler.
+
+    1. A settled closure of one installed producer entry is completed from that producer's metadata.
+    2. While the closure and its entry are unchanged, the retained completion answers.
+    3. A rewritten closure is completed again.
+    """
+    # 1. One installed producer entry, linked into a closure of its own.
+    toolchain = load_toolchain()?
+    installed = Path(toolchain.registry_units)
+    supplied = required_items(read_json(installed)?, "units")?[0]
+    # Exercise the legacy completion contract even when the supplying installation already carries native facts.
+    mut legacy: Dict[str, JsonValue] = {}
+    for key in supplied.keys():
+        if key not in ["name", "crate_hash", "artifact", "kind", "refusal"]:
+            legacy[key] = supplied.require(key).map_err((error) => error.message())?
+    item = JsonValue.object(legacy)
+    entry = required_text(item, "entry")?.replace(":", "-")
+    source = installed.parent().joinpath("entries").joinpath(entry)
+    directory = scratch.joinpath("registry")
+    make_directory(directory.joinpath("entries"))?
+    linked = directory.joinpath("entries").joinpath(entry)
+    mut copy_entry = Command.new("/bin/cp")
+    assert copy_entry.arg("-R").arg(source.0).arg(linked.0).status().map_err((error) => str(error))?.success()
+    artifact = JsonValue.string(f"entries/{entry}/artifacts/{sole_artifact(source)?}")
+    externs = JsonValue.object({required_text(item, "entry")?: JsonValue.object({"path": artifact})})
+    closure = directory.joinpath("closure.json")
+    document = {"schema": JsonValue.string("incan.oven.closure/1"), "externs": externs, "units": JsonValue.array([item])}
+    write(closure, json_text(JsonValue.object(document))?)?
+    settled(closure)?
+    first = read_registry_units(closure)?.units[0]
+    assert first.name != "" and first.crate_hash != ""
+    # A baked closure carries native identity, so a fresh home need not ask rustc for it again.
+    mut published: Dict[str, JsonValue] = {}
+    for key in item.keys():
+        published[key] = item.require(key).map_err((error) => error.message())?
+    published["name"] = JsonValue.string("baked_native_name")
+    published["crate_hash"] = JsonValue.string(first.crate_hash)
+    published["artifact"] = artifact
+    published["kind"] = JsonValue.string(first.kind)
+    published["dependencies"] = JsonValue.array(
+        [JsonValue.object({"entry": JsonValue.string(entry)}) for entry in first.dependencies],
+    )
+    mut unavailable: Dict[str, JsonValue] = {}
+    for key in published.keys():
+        if key != "dependencies":
+            unavailable[key] = published[key]
+    unavailable["entry"] = JsonValue.string("sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+    unavailable["refusal"] = JsonValue.string("producer recorded an unavailable alternative")
+    baked_closure = directory.joinpath("baked.json")
+    write(
+        baked_closure,
+        json_text(
+            JsonValue.object(
+                {"schema": JsonValue.string("incan.oven.closure/1"), "externs": externs, "units": JsonValue.array(
+                    [JsonValue.object(published), JsonValue.object(unavailable)],
+                )},
+            ),
+        )?,
+    )?
+    assert read_registry_units(baked_closure)?.units[0].name == "baked_native_name"
+    assert read_registry_units(baked_closure)?.units[1].refusal == "producer recorded an unavailable alternative"
+    # Relative artifacts belong to the closure's directory, including a closure outside its artifact store.
+    relative = artifact.expect_str().map_err((error) => error.message())?
+    relocated_path = JsonValue.string("../../registry/" + relative)
+    mut outside = published
+    outside["artifact"] = relocated_path
+    outside_externs = JsonValue.object({required_text(item, "entry")?: JsonValue.object({"path": relocated_path})})
+    outside_closure = scratch.joinpath("published/deep/closure.json")
+    write(
+        outside_closure,
+        json_text(
+            JsonValue.object(
+                {"schema": JsonValue.string("incan.oven.closure/1"), "externs": outside_externs, "units": JsonValue.array(
+                    [JsonValue.object(outside)],
+                )},
+            ),
+        )?,
+    )?
+    selected = read_registry_units(outside_closure)?.units[0]
+    assert selected.artifact == directory.joinpath(relative).0
+    assert Path(selected.artifact).is_file()
+    # 2. The exact typed page answers without a closure or completion JSON document.
+    selection = completion_selection(rust_compiler(toolchain))?
+    observed = observe(closure)?
+    key = question(closure, observed, selection)?
+    match recall_catalog(key)?:
+        None =>
+            assert false, "the completed closure has no typed page"
+        Some(catalog) =>
+            assert catalog_current(catalog)
+            assert catalog.units == [first]
+            check_registry_page_codec(scratch, catalog)?
+            # Directory membership and artifact rewrites expire the page without changing producer identities.
+            marker = Path(first.directory).joinpath("observation-probe")
+            write(marker, "new directory member")?
+            assert not catalog_current(catalog)
+            assert read_registry_units(closure)?.units[0] == first
+            remove(marker)?
+            assert read_registry_units(closure)?.units[0] == first
+            current = recall_catalog(key)?
+            match current:
+                None =>
+                    assert false, "directory repair did not retain a replacement typed page"
+                Some(refreshed) =>
+                    artifact_file = Path(first.artifact)
+                    contents = artifact_file.read_bytes().map_err((error) => error.message())?
+                    artifact_file.chmod(false).map_err((error) => error.message())?
+                    artifact_file.write_bytes(contents).map_err((error) => error.message())?
+                    assert not catalog_current(refreshed)
+                    assert read_registry_units(closure)?.units[0] == first
+    assert read_registry_units(closure)?.units[0] == first
+    # 3. Another closure generation is completed again from the producer's metadata.
+    rewrite_in_place(closure, read(closure)?)?
+    next = question(closure, observe(closure)?, selection)?
+    assert next != key
+    assert question(closure, observed, selection + ":changed")? != key
+    # An explicit match keeps this test usable by bootstrap compilers affected by #2431.
+    match recall_catalog(next)?:
+        Some(_) =>
+            assert false, "a rewritten closure reused the previous generation's page"
+        None => pass
+    assert read_registry_units(closure)?.units[0].name == first.name
+    _ = flush_trace()
+    return Ok(None)
+
+
+def check_registry_page_codec(scratch: Path, catalog: Catalog) -> Result[None, str]:
+    """Typed pages round-trip exact fields and refuse truncated, oversized and unknown-version encodings."""
+    page = scratch.joinpath("registry-codec.page")
+    bytes = encode_catalog(catalog)?
+    page.write_bytes(bytes).map_err((error) => error.message())?
+    mapped = page.map_read().map_err((error) => error.message())?
+    match mapped.view(0, mapped.len()):
+        None =>
+            assert false, "the typed page is not mapped"
+        Some(view) =>
+            assert decode_catalog(view)?.units == catalog.units
+            for length in [0, 7, 35, view.len() - 1]:
+                if let Some(truncated) = view.slice(0, length):
+                    match decode_catalog(truncated):
+                        Ok(_) =>
+                            assert false, "a truncated registry page was accepted"
+                        Err(_) => pass
+    # Malformed scalar counts and versions are rejected before any row allocation.
+    mut invalid_index = 0
+    for damaged in [b"\xff\xff\xff\xff\xff\xff\xff\xff", b"\x00\x00\x00\x00\x00\x00\x00\x00"]:
+        file = scratch.joinpath(f"registry-invalid-{invalid_index}.page")
+        invalid_index += 1
+        file.write_bytes(damaged).map_err((error) => error.message())?
+        mapping = file.map_read().map_err((error) => error.message())?
+        if let Some(view) = mapping.view(0, mapping.len()):
+            match decode_catalog(view):
+                Ok(_) =>
+                    assert false, "an invalid registry page was accepted"
+                Err(_) => pass
+    return Ok(None)
+
+
+def sole_artifact(entry: Path) -> Result[str, str]:
+    """The file name of the one library an installed producer entry holds."""
+    for candidate in entry.joinpath("artifacts").iterdir().map_err((error) => error.message())?:
+        if candidate.name().startswith("lib"):
+            return Ok(candidate.name())
+    return Err(f"{entry.0} holds no library")
+
+
+def probing_rustc(path: Path, probes: Path, release: str) -> Result[None, str]:
+    """Install a rustc that records each question in `probes` and answers its version and deployment target."""
+    mut script = "#!/bin/sh\n" + f"printf '%s\\n' \"$*\" >> '{probes.0}'\n"
+    script += f"[ \"$1\" = -vV ] && printf 'rustc {release}\\nhost: aarch64-apple-darwin\\n' && exit 0\n"
+    script += "printf '%s\\n' \"${MACOSX_DEPLOYMENT_TARGET:-11.0}\"\n"
+    if path.is_file():
+        remove(path)?
+    write(path, script)?
+    mut chmod = Command.new("/bin/chmod")
+    assert chmod.arg("+x").arg(path.0).status().map_err((error) => str(error))?.success()
+    return Ok(None)
+
+
+def settled(path: Path) -> Result[None, str]:
+    """Wait until `path` is old enough that what is learned from it is retained (see `observation`)."""
+    observed = observe(path)?
+    while now_seconds() < observed.newest + SETTLE_SECONDS:
+        sleep(Duration.from_millis(100))
+    return Ok(None)

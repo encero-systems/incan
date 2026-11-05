@@ -19,13 +19,14 @@ Oven is the build system and the `incan` command line, written in Incan (DD-0008
 | `rust_binaries.incn` | A facet's binaries. A binary that links the toolchain's own `rustc_driver` gets a runpath to it and the identity it was built against. |
 | `rust_manifest.incn` | A Loaf's Rust facet declaration: its library crate, binaries and toolchain requests. |
 | `rust_registry.incn` | The registry closure a toolchain ships, and the registry units a build selects from it. |
-| `intake.incn`, `manifest_errors.incn` | Reading `loaf.toml`: the package, its scripts and features, its path, Rust-facet and registry dependencies (standard packages are ambient, never declared), its source root, contract model bundles and C headers. Every refusal names the manifest, the field path and its TOML location. |
+| `intake.incn`, `manifest_intent.incn`, `manifest_errors.incn` | Reading `loaf.toml`: the package, its scripts and features, its path, Rust-facet and registry dependencies (standard packages are ambient, never declared), its source root, contract model bundles and C headers. Every refusal names the manifest, the field path and its TOML location. |
+| `segment_store.incn` | The store substrate: snapshots, views, reads, transactions, leases and compaction over immutable segments and index pages (DD-0012). `segment_files.incn` holds its failures, work observation and synced file operations, `segment_codec.incn` its frame encoding, `segment_payloads.incn` its content-named payloads, `segment_repair.incn` its explicit repair and quarantine, and `segment_collection.incn` its explicit collection. |
 | `features.incn` | Project feature requests and the Incan view of the shared local facet graph (RFC 114). |
 | `home.incn` | The home (`INCAN_HOME`) and the artifact layout of standard packages and path dependencies; the toolchain's standard packages. |
 | `json_fields.incn`, `semver_req.incn` | Typed JSON fields and version requirement checks for prepared registry units. |
 | `rust_source.incn`, `rust_activation.incn`, `cfg_predicate.incn`, `loaf_local_graph.incn` | The shared local graph: dependency declarations, `cfg` and target predicates, per-unit activation and feature propagation, keeping host and target separate. |
 
-`test_*.incn` hold each module's tests. The dev.8 command accepts one test file at a time; directory discovery is not implemented.
+`test_*.incn` hold each module's tests; `freshness_fixtures.incn` holds the scratch project and toolchain the unit freshness tests share. The dev.8 command accepts one test file at a time; directory discovery is not implemented.
 
 ## Test units
 

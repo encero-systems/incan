@@ -22,7 +22,8 @@ from rust_activation import (
     activate_unit,
     version_matches,
 )
-from intake import FeatureDeclaration, feature_declaration, ManifestReader
+from intake import ManifestReader
+from manifest_intent import FeatureDeclaration, feature_declaration
 from toml_fields import optional_flag, optional_string, optional_strings, read_manifest, required_string
 from pub::incan_platform.trace import Operation
 from jec import begin, record
