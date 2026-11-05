@@ -1,6 +1,6 @@
 # RFC 078: tool execution and typed workflow actions
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-04-26
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
