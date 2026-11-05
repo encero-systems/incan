@@ -1,13 +1,17 @@
-"""Register a descriptor without requesting custom expansion during production."""
+"""Register primitive vocabulary contracts through their compatibility facade."""
 
-from std.vocab import ClauseSurface, DeclarationSurface, DslSurface, VocabRegistration
-from std.vocab import DesugarRequest, IncanExpr, Span, VocabSyntaxNode, VOCAB_SYNTAX_VERSION
+from std.primitives.vocab import ClauseSurface, DeclarationSurface, DslSurface
+from std.primitives.vocab import VOCAB_SYNTAX_VERSION as PRIMITIVE_VOCAB_SYNTAX_VERSION
+from std.primitives.vocab import DesugarRequest as PrimitiveDesugarRequest, VocabRegistration as PrimitiveRegistration
+from std.vocab import DesugarRequest, IncanExpr, Span, VocabRegistration, VocabSyntaxNode, VOCAB_SYNTAX_VERSION
 
 
 pub def library_vocab() -> VocabRegistration:
-    """Publish the import-activated note declaration."""
+    """Publish primitive descriptors through their identity-preserving facade types."""
     expression = IncanExpr.path("orders", Span(start=10, end=16))
-    request = DesugarRequest(node=VocabSyntaxNode.Expression(expression), module_path="consumer.incn")
+    primitive_request = PrimitiveDesugarRequest(node=VocabSyntaxNode.Expression(expression), module_path="consumer.incn")
+    request: DesugarRequest = primitive_request
+    assert VOCAB_SYNTAX_VERSION == PRIMITIVE_VOCAB_SYNTAX_VERSION
     match DesugarRequest.from_json(request.to_json()):
         Ok(decoded) =>
             assert decoded.schema_version == VOCAB_SYNTAX_VERSION
@@ -19,4 +23,8 @@ pub def library_vocab() -> VocabRegistration:
     mut note = DeclarationSurface.named("note").with_header_args().with_clause_body()
     clause = ClauseSurface.expr("VALUE OF").required()
     note = note.with_clause(clause)
-    return VocabRegistration.new().with_surface(DslSurface.on_import("words").with_declaration(note))
+    primitive_registration = PrimitiveRegistration
+        .new()
+        .with_surface(DslSurface.on_import("words").with_declaration(note))
+    registration: VocabRegistration = primitive_registration
+    return registration
