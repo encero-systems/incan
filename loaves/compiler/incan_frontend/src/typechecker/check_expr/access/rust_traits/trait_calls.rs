@@ -177,9 +177,9 @@ impl TypeChecker {
         Some(result)
     }
 
-    /// Select a declared native trait method for a dynamic receiver, canonical source owner or bounded parameter.
-    /// These receivers need no inspected nominal impl template; the caller establishes the declaration or bound,
-    /// and native compilation verifies the exact instantiated signature and obligations before constructing MIR.
+    /// Select a declared native trait method for a concrete receiver, dynamic receiver or bounded parameter.
+    /// The explicit trait path establishes the declaration; checked arguments and destination close its binders,
+    /// while native compilation verifies the exact instantiated signature and obligations before constructing MIR.
     pub(in crate::typechecker::check_expr::access) fn resolve_rust_declared_trait_method(
         &mut self,
         call: RustPathMethodCall<'_>,
@@ -203,44 +203,67 @@ impl TypeChecker {
             Some(name) => ResolvedType::TypeVar(name.to_owned()),
             None => owner,
         };
-        let arguments = self.rust_owner_type_args(&owner, call.rust_path).unwrap_or_default();
+        if !call.type_args.is_empty() {
+            return None;
+        }
+        let mut known_arguments = self.rust_owner_type_args(&owner, call.rust_path).unwrap_or_default();
         let associated_count = info
             .items
             .iter()
             .filter(|item| matches!(item, RustTraitAssoc::TypeAlias { .. }))
             .count();
-        if arguments.len() != info.type_params.len() + associated_count || !call.type_args.is_empty() {
+        if known_arguments.len() > info.type_params.len() + associated_count {
             return None;
         }
-        // Trait parameters belong to the declaration, but Self belongs to the selected receiver. Keep it open
-        // until that receiver is applied below; substituting the trait path here loses the actual result carrier.
-        let substitutions = info
+        known_arguments.truncate(info.type_params.len());
+        let mut variables = info.type_params.clone();
+        variables.extend(original.type_params.iter().cloned());
+        let mut bindings = info
             .type_params
             .iter()
-            .zip(&arguments)
-            .map(|(name, argument)| (name.as_str(), render_resolved_type_as_rust_arg(argument)))
-            .collect();
-        let signature = Self::specialize_rust_signature(original, &substitutions, "Self");
-        let bindings = self.infer_rust_signature_bindings(
-            &signature,
+            .zip(known_arguments)
+            .map(|(name, argument)| (name.clone(), argument))
+            .collect::<HashMap<_, _>>();
+        let inferred = self.infer_rust_signature_bindings(
+            original,
             call.rust_path,
-            &original.type_params,
+            &variables,
             call.args,
             call.arg_types,
             call.expected_return_ty,
         );
+        for (name, value) in inferred {
+            if let Some(previous) = bindings.get(&name) {
+                if !self.rust_trait_carriers_match(previous, &value) {
+                    return None;
+                }
+            } else {
+                bindings.insert(name, value);
+            }
+        }
+        let trait_arguments = info
+            .type_params
+            .iter()
+            .map(|name| bindings.get(name).cloned())
+            .collect::<Option<Vec<_>>>()?;
+        if trait_arguments
+            .iter()
+            .any(|argument| matches!(argument, ResolvedType::Unknown | ResolvedType::CallSiteInfer))
+        {
+            return None;
+        }
         let displays = bindings
             .iter()
             .map(|(name, value)| (name.as_str(), render_resolved_type_as_rust_arg(value)))
             .collect();
         let signature = self.rust_signature_projections(Self::specialize_rust_signature(
-            &signature,
+            original,
             &displays,
             &render_resolved_type_as_rust_arg(&owner),
         ));
         self.rust_trait_input_borrow_cost(&signature, &call)?;
         let mut native_arguments = vec![owner.clone()];
-        native_arguments.extend(arguments.into_iter().take(info.type_params.len()));
+        native_arguments.extend(trait_arguments);
         for parameter in &original.type_params {
             native_arguments.push(bindings.get(parameter)?.clone());
         }
@@ -273,9 +296,9 @@ impl TypeChecker {
         Some(result)
     }
 
-    /// Retain an explicit native trait call on a concrete source declaration or a parameter with an innermost native
-    /// bound. Concrete implementations are verified by rustc; a parameter still requires its declared authority.
-    /// Both use the existing declared-trait selector, preserving source identities in Self and its result.
+    /// Retain an explicit native trait call on a concrete receiver or a parameter with an innermost native bound.
+    /// Concrete implementations are verified by rustc; a parameter still requires its declared authority. Both use
+    /// the declared-trait selector, preserving source identities in Self and its result.
     pub(in crate::typechecker::check_expr::access) fn retain_rust_source_trait_call(
         &mut self,
         call: &RustTraitQualifiedCall<'_>,
@@ -308,8 +331,11 @@ impl TypeChecker {
                 })
             })
         } else {
-            matches!(owner, ResolvedType::Named(name) | ResolvedType::Generic(name, _)
-                if self.source_nominal_carrier_key(name).is_some())
+            matches!(
+                owner,
+                ResolvedType::Int | ResolvedType::Float | ResolvedType::Numeric(_) | ResolvedType::Bool
+            ) || matches!(owner, ResolvedType::Named(name) | ResolvedType::Generic(name, _)
+                    if self.source_nominal_carrier_key(name).is_some())
         };
         if !admitted {
             return None;

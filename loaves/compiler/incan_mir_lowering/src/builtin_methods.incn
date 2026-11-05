@@ -347,6 +347,8 @@ def float_method(member: str, receiver: PlanType) -> Option[tuple[str, list[Plan
         return None
     if member == "f64.powf":
         return Some(("f64::powf", [receiver, receiver], receiver))
+    if member == "f64.abs":
+        return Some(("f64::abs", [receiver], PlanType.Float))
     if member == f"{width}.is_finite":
         return Some((f"{width}::is_finite", [receiver], PlanType.Bool))
     if member == f"{width}.is_nan":
