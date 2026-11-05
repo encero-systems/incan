@@ -1,6 +1,6 @@
 # RFC 171: Retire `@rust.allow`, `@rust.extern` and `rust.module`
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-11-05
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
