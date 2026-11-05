@@ -7,6 +7,7 @@
     - RFC 027 (`incan-vocab` block registration and desugaring)
     - RFC 028 (trait-based operator overloading)
     - RFC 046 (computed properties)
+    - RFC 050 (enum methods and trait adoption)
     - RFC 058 (`std.datetime` temporal values, intervals, and runtime timing)
     - RFC 068 (protocol hooks for core language syntax)
     - RFC 109 (`tap` and `then`)
@@ -48,6 +49,7 @@ A library has no way to write any of this today. It can publish a free function,
 - Let a library add typed properties and methods to any type, active only where imported.
 - Keep a type's own members first, so an extension never changes what existing code means.
 - Have the compiler check what a property may do.
+- Let an `enum` declare its own properties, as `model` and `class` bodies can, so an extension is never the only way to give a type a property.
 - Let the prelude activate an extension, so library code can be available everywhere with no compiler knowledge of its names.
 - Show at every use where a member comes from.
 
@@ -209,6 +211,20 @@ Nothing depends on import order.
 
 If you own the type and the behavior is part of what the type is, make it a member of the type. An extension is for an overlay: a layer adding words about a type that should not have to know about that layer. `badge` belongs in an `admin_ui` extension only if badges are an admin concern.
 
+A type's own property is written inside the type, and an `enum` works the same way as a `model` or a `class`:
+
+```incan
+enum OrderStatus:
+    Pending
+    Paid
+    Cancelled
+
+    pub property is_open -> bool:
+        match self:
+            OrderStatus.Pending => return true
+            _ => return false
+```
+
 ## Reference-level explanation
 
 ### Declaration
@@ -263,6 +279,10 @@ If you own the type and the behavior is part of what the type is, make it a memb
 27. A published Loaf must carry its extensions and their members, so consumers can resolve them without source.
 28. Completion, hover and go-to-definition must show the extension a member comes from and where it is declared. `incan inspect` must report which extensions are active in a file, and generated documentation must list an extension's members with their receivers.
 
+### Properties on enums
+
+29. An `enum` body must accept `property` members under RFC 046's rules, as `model` and `class` bodies do, including one that implements a property an adopted trait requires. A variant named `property` must stay valid, since `property` is contextual.
+
 ### Conformance workloads
 
 | Workload | Required evidence |
@@ -278,6 +298,7 @@ If you own the type and the behavior is part of what the type is, make it a memb
 | Isolation | A body cannot read a private field, and an extension member does not satisfy a trait bound. |
 | Refusals | A hook, a field and a `pub` member are refused with their diagnostics. |
 | Mutation | `mut self` changes a mutable binding and an unshared temporary, under RFC 129. |
+| Enum properties | An enum declares its own property and implements one a trait requires, and a variant named `property` still works. |
 
 ## Design details
 
@@ -327,7 +348,7 @@ Member lookup gains steps, and the source alone does not show where a member com
 
 ## Layers affected
 
-- **Parser / AST:** `extension` blocks, `property ... on`, and a numeric literal followed by a member read.
+- **Parser / AST:** `extension` blocks, `property ... on`, `property` in `enum` bodies, and a numeric literal followed by a member read.
 - **Typechecker / Symbol resolution:** receiver checking, activation, the resolution order, specificity and the purity check.
 - **IR Lowering / Emission:** static calls with no runtime member lookup, and evaluation order.
 - **Standard library:** prelude activation, and RFC 109's `std.chain` as the first extension it activates.
@@ -349,4 +370,5 @@ Member lookup gains steps, and the source alone does not show where a member com
 - **Resolution:** own member, then declared or imported extensions, then the prelude, with the most specific receiver winning inside a step and ties refused.
 - **Naming a member directly:** `extension_name.member(receiver, ...)`.
 - **Prelude activation:** the standard prelude can activate an extension, with no compiler knowledge of its names.
+- **Enum properties:** an `enum` body accepts `property`, so an extension cannot do for an enum what its own author cannot. A type's own property keeps RFC 046's rules and is not required to be pure.
 - **Rust companion crates:** none. RFC 160 removed them, and an extension is ordinary Incan.
