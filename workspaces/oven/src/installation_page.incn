@@ -3,6 +3,8 @@
 from pub::incan_platform.trace import Operation
 from rust::std::string import String as RustString
 from rust::std::sync import Arc
+from rust::std::thread import sleep
+from rust::std::time import Duration
 from std.encoding.hex import hexlify
 from std.fs import Path
 from std.fs.locking import FileLock
@@ -20,6 +22,10 @@ from segment_store import claim, snapshot
 from toolchain_types import Toolchain
 from installation_documents import capture as capture_documents
 from frozen_inputs import clear as clear_documents, select as select_documents
+
+# How many times admission reads an installation that first use may still be settling, and the pause between reads.
+const ADMISSION_ATTEMPTS: int = 5
+const ADMISSION_RETRY_MS: u64 = 100
 
 # One current installation scope; later selections replace it rather than retaining a history of decoded pages.
 static pages: Dict[str, Installation] = {}
@@ -172,25 +178,48 @@ pub def retain(
     """
     Parse and admit one complete installation generation while holding its bakery claim.
 
-    1. Capture the normalized standard manifests and all observations that bracket their reads.
-    2. Seal and admit one deterministic typed page through the shared record-set mechanism.
-    3. Recheck the inputs and atomically select that exact revision.
+    First use settles records inside an installation, so another process can change what an attempt just read. That
+    attempt describes no single generation, so admission reads again, and only a failure that persists refuses.
     """
-    # 1. Concurrent first admissions recheck under the same installation claim.
+    # Concurrent first admissions recheck under the same installation claim.
     store = installation_catalog()?
     key = question(directory)
     held = claim(store, key).map_err((error) => error.message())?
     if let Some(page) = recall(directory)?:
         return Ok(page)
+    match prepared:
+        Some((toolchain, generation)) =>
+            match admit_generation(directory, toolchain, generation, store, key):
+                Ok(page) => return Ok(page)
+                Err(_reason) => pass
+        None => pass
+    mut failure = ""
+    for attempt in range(ADMISSION_ATTEMPTS):
+        if attempt > 0:
+            sleep(Duration.from_millis(ADMISSION_RETRY_MS))
+        generation = observe(directory.joinpath("toolchain.json"))?.stamp
+        match admit_generation(directory, producer(directory)?, generation, store, key):
+            Ok(page) => return Ok(page)
+            Err(reason) => failure = reason
+    return Err(failure)
+
+
+def admit_generation(
+    directory: Path,
+    toolchain: Toolchain,
+    generation: str,
+    store: Path,
+    key: str,
+) -> Result[Installation, str]:
+    """
+    Make one attempt to admit the installation's current generation.
+
+    1. Capture the normalized standard manifests and all observations that bracket their reads.
+    2. Seal and admit one deterministic typed page through the shared record-set mechanism.
+    3. Recheck the inputs and atomically select that exact revision.
+    """
+    # 1. An earlier attempt's selected documents never describe this generation.
     clear_documents()
-    generation = match prepared:
-        Some((_toolchain, stamp)) => stamp
-        None => observe(directory.joinpath("toolchain.json"))?.stamp
-
-    toolchain = match prepared:
-        Some((value, _stamp)) => value
-        None => producer(directory)?
-
     page = capture(directory, toolchain, generation)?
     data = encode(page)?
     digest = hexlify(sha256.digest(data))
