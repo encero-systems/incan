@@ -368,6 +368,7 @@ pub fn params_from_checked(params: &[CallableParam], defaults: &[Option<CheckedP
             Some(ParamExport {
                 name: param.name.clone()?,
                 ty: type_ref_from_resolved(&param.ty),
+                surface_type_name: param.surface_type_name.clone(),
                 kind: param_kind_from_ast(param.kind),
                 has_default,
                 is_mut: param.is_mut,

@@ -3,6 +3,61 @@
 use super::*;
 
 impl TypeChecker {
+    /// Collect transparent alias names before source-order signature collection begins.
+    pub(super) fn collect_source_type_alias_names(declarations: &[Spanned<Declaration>]) -> HashSet<String> {
+        let mut names = HashSet::new();
+        for declaration in declarations {
+            match &declaration.node {
+                Declaration::TypeAlias(alias) => {
+                    names.insert(alias.name.clone());
+                }
+                Declaration::TestModule(module) => {
+                    names.extend(Self::collect_source_type_alias_names(&module.body));
+                }
+                _ => {}
+            }
+        }
+        names
+    }
+
+    /// Retain the authored annotation only when some leaf or constructor names a transparent type alias.
+    ///
+    /// Returning no spelling for an alias-free annotation preserves the existing registry-owned diagnostic names.
+    /// The normalized [`ResolvedType`] remains the sole semantic type in either case.
+    pub(super) fn alias_surface_type_name(&self, ty: &Type) -> Option<String> {
+        self.source_type_contains_alias(ty).then(|| ty.to_string())
+    }
+
+    /// Return whether an annotation contains a locally visible transparent alias at any nesting depth.
+    fn source_type_contains_alias(&self, ty: &Type) -> bool {
+        let is_alias = |name: &str| self.type_aliases.contains_key(name) || self.source_type_alias_names.contains(name);
+        match ty {
+            Type::Simple(name) | Type::ConstrainedPrimitive(name, _) => is_alias(name),
+            Type::Generic(name, args) => {
+                is_alias(name)
+                    || args
+                        .iter()
+                        .any(|argument| self.source_type_contains_alias(&argument.node))
+            }
+            Type::Dotted(segments) => is_alias(&segments.join(".")),
+            Type::DottedGeneric(segments, args) => {
+                is_alias(&segments.join("."))
+                    || args
+                        .iter()
+                        .any(|argument| self.source_type_contains_alias(&argument.node))
+            }
+            Type::Function(params, result) => {
+                params.iter().any(|param| self.source_type_contains_alias(&param.node))
+                    || self.source_type_contains_alias(&result.node)
+            }
+            Type::Ref(inner) | Type::RefMut(inner) | Type::MutParam(inner) => {
+                self.source_type_contains_alias(&inner.node)
+            }
+            Type::Tuple(items) => items.iter().any(|item| self.source_type_contains_alias(&item.node)),
+            Type::Qualified(_) | Type::IntLiteral(_) | Type::Unit | Type::SelfType | Type::Infer => false,
+        }
+    }
+
     /// Register the resolved target for a source-level type alias.
     pub fn register_type_alias_target(&mut self, alias: &TypeAliasDecl) {
         let type_params = alias
@@ -99,6 +154,7 @@ impl TypeChecker {
                     .map(|param| CallableParam {
                         name: param.name,
                         ty: self.expand_type_aliases_inner(param.ty, expanding),
+                        surface_type_name: param.surface_type_name,
                         kind: param.kind,
                         has_default: param.has_default,
                         is_partial_preset: param.is_partial_preset,

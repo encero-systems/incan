@@ -561,6 +561,7 @@ fn params(values: &[ParamExport]) -> Vec<CallableParam> {
         .map(|value| CallableParam {
             name: Some(value.name.clone()),
             ty: resolved_type_from_manifest_type_ref(&value.ty),
+            surface_type_name: value.surface_type_name.clone(),
             kind: match value.kind {
                 ParamKindExport::Normal => crate::ast::ParamKind::Normal,
                 ParamKindExport::RestPositional => crate::ast::ParamKind::RestPositional,

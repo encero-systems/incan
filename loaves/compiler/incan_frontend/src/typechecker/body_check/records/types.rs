@@ -129,6 +129,7 @@ fn read_parameters_at(
         let is_mut = flag(fields)?;
         parameters.push(CallableParam {
             name,
+            surface_type_name: None,
             kind,
             has_default,
             is_partial_preset,
