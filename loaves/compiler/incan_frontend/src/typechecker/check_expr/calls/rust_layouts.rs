@@ -162,6 +162,70 @@ impl TypeChecker {
         }
     }
 
+    /// Close a native enum constructor's owner from its destination, payloads and declared defaults. The retained
+    /// Body IR carrier is additive: source checking keeps its public constructor result, while lowering receives every
+    /// owner argument needed to specialize the selected enum layout.
+    pub(in crate::typechecker::check_expr) fn retain_rust_variant_owner(
+        &mut self,
+        path: &str,
+        args: &[CallArg],
+        params: &[CallableParam],
+        expected: Option<&ResolvedType>,
+        span: Span,
+    ) {
+        let Some(metadata) = self.rust_item_metadata_for_complete_type(path) else {
+            return;
+        };
+        let RustItemKind::Type(info) = &metadata.kind else {
+            return;
+        };
+        let mut bindings = HashMap::new();
+        if let Some(expected) = expected
+            && let Some(mut arguments) = self.rust_owner_type_args(expected, path)
+            && self.complete_rust_owner_arguments(info, &mut arguments)
+        {
+            bindings.extend(info.type_params.iter().cloned().zip(arguments));
+        }
+        for (position, argument) in args.iter().enumerate() {
+            let (slot, value) = match argument {
+                CallArg::Positional(value) => (position, value),
+                CallArg::Named(name, value) => {
+                    let Some(slot) = params
+                        .iter()
+                        .position(|parameter| parameter.name.as_deref() == Some(name.node.as_str()))
+                    else {
+                        return;
+                    };
+                    (slot, value)
+                }
+                _ => return,
+            };
+            let (Some(parameter), Some(actual)) = (params.get(slot), self.type_info.expr_type(value.span).cloned())
+            else {
+                return;
+            };
+            self.infer_type_param_bindings(&parameter.ty, &actual, &mut bindings);
+        }
+        let mut arguments = Vec::with_capacity(info.type_params.len());
+        for (index, parameter) in info.type_params.iter().enumerate() {
+            let argument = bindings
+                .get(parameter)
+                .cloned()
+                .or_else(|| self.owner_default(info, index, &arguments, path));
+            let Some(argument) = argument.filter(Self::is_settled_type_argument) else {
+                return;
+            };
+            arguments.push(argument);
+        }
+        let public = self.rust_public_type_path(path);
+        let owner = if arguments.is_empty() {
+            ResolvedType::RustPath(public)
+        } else {
+            ResolvedType::Generic(public, arguments)
+        };
+        self.type_info.calls.body_ir_constructor_types.insert(span, owner);
+    }
+
     /// Retain a half-open integer range literal as the metadata-validated public native constructor selected by its
     /// argument slot. Source-only ranges keep their four-field layout; Body IR consumes these ordinary constructor
     /// facts without native lookup.

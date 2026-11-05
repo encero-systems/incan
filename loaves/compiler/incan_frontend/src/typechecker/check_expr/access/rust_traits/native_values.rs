@@ -428,17 +428,20 @@ impl TypeChecker {
             }
             _ => {}
         }
-        let Some(arguments) = self.rust_owner_type_args(owner, path) else {
-            return owner.clone();
+        // A transparent rusttype contributes its backing Rust owner to a selected native signature. Keeping the
+        // source alias here would make a forwarded shared receiver borrow a nominal wrapper that has no MIR frame.
+        let owner = self.rusttype_native_target(owner).unwrap_or_else(|| owner.clone());
+        let Some(arguments) = self.rust_owner_type_args(&owner, path) else {
+            return owner;
         };
         let original_arity = arguments.len();
         let arguments = self.rust_storage_owner_arguments(arguments, info, path);
         if arguments.len() == original_arity {
-            return owner.clone();
+            return owner;
         }
         if arguments.is_empty() {
             if info.type_params.is_empty() {
-                return owner.clone();
+                return owner;
             }
             return self.resolved_type_from_rust_display(path);
         }

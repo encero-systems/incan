@@ -1,4 +1,4 @@
-# behavior: native receivers retain loans, projections, trait calls, primitive methods and specialized public alias constructors, including AtomicUsize and AtomicBool (#2256)
+# behavior: native receivers retain loans, projections, trait calls, primitive methods and specialized public alias constructors, including imported scalar constants (#2439), qualified Neg and Borrow calls (#2441, #2442), usize tuple elements (#2444), AtomicUsize and AtomicBool (#2256)
 # expect-stdout:
 #   allocated
 #   1
@@ -16,14 +16,16 @@
 """Observe native receivers through associated functions, inherent methods, blanket traits and iterators."""
 
 from rust::std::collections import BTreeMap, VecDeque
+from rust::std::borrow import Borrow
 from rust::std::cmp import Ordering
 from rust::std::env import args, args_os
+from rust::std::f64::consts import PI
 from rust::std::hash import Hash as NativeHash, Hasher, DefaultHasher
 from rust::std::io import Cursor
 from rust::std::io::prelude import Read as FacadeRead
 from rust::std::net import Ipv4Addr
 from rust::std::os::raw import c_int
-from rust::std::ops import Index, Range
+from rust::std::ops import Index, Neg, Range
 from rust::std::os::unix::process import CommandExt as UnixCommandExt
 from rust::std::path import PathBuf
 from rust::std::primitive import usize, i64 as NativeInt, u32 as NativeUnsigned, bool as NativeBool
@@ -58,6 +60,12 @@ model FlagSet:
     """Keep indexed records behind a borrowed model field."""
 
     flags: list[Flag]
+
+
+model BorrowValue:
+    """Keep a source model behind an explicitly qualified native Borrow call."""
+
+    value: int
 
 
 def ends_in_c(path: PathBuf) -> bool:
@@ -250,6 +258,16 @@ def reverse_ordering(value: &Ordering) -> Ordering:
     return value.reverse()
 
 
+def shared_borrow_value(value: &BorrowValue) -> int:
+    """Read a shared source model selected by the native Borrow result."""
+    return value.value
+
+
+def inspect_borrow_value(mut value: BorrowValue) -> int:
+    """Pass an explicitly qualified native Borrow result across a source call boundary."""
+    return shared_borrow_value(Borrow.borrow(value))
+
+
 def main() -> None:
     """
     Observe native receivers.
@@ -297,6 +315,13 @@ def show_primitive_methods() -> None:
     assert signed.count_ones() == 3
     assert unsigned.count_ones() == 1
     assert flag.then_some(42) == Some(42)
+    assert PI.abs() > 3.0
+    assert Neg.neg(1i8) == -1i8
+    assert inspect_borrow_value(BorrowValue(value=7)) == 7
+    left: usize = 1.wrapping_resize()
+    right: usize = 2.wrapping_resize()
+    pair: tuple[usize, usize] = (left, right)
+    assert pair[0] == 1usize
 
 
 def show_atomic_aliases() -> None:

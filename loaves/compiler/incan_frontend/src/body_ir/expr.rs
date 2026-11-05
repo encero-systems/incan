@@ -649,6 +649,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Place {
         let ty = self.resolve_ty(expr.span);
+        if self.type_info.rust.checked_constants.contains_key(&expr.span) {
+            // An imported Rust constant is a retained value, not a runtime cell. A receiver projection therefore
+            // materializes that checked value before borrowing it instead of resolving the import name as a local.
+            let operand = self.lower_expr_to_operand(expr, scope, out);
+            return self.materialize_operand_to_place(operand, ty, scope, hir_span(expr.span), out);
+        }
         if let ast::Expr::Ident(name) = &expr.node
             && let Some(place) = self.place_for_name(name, expr.span, &ty)
             && let Some(value) = self.model_constant_operand(&place, scope, hir_span(expr.span), out)
