@@ -1,0 +1,195 @@
+"""The field accumulator `strptime` fills while parsing civil date and time text."""
+
+from std.datetime.error import DateTimeError
+from crate.datetime.civil.naive._calendar import _DAYS_PER_WEEK
+from crate.datetime.civil.naive._format_text import (
+    _is_calendar_field,
+    _parse_calendar_number,
+    _expanded_short_year,
+    _parse_week_number,
+    _sunday_zero_to_iso_weekday,
+    _parse_clock_number,
+    _is_date_directive,
+    _is_time_directive,
+    _is_timezone_directive,
+)
+from crate.datetime.civil.naive._fixed_offset import FixedOffset, _parse_offset
+
+
+pub model _StrptimeFields:
+    """Civil parse defaults, consumed input position and directive-presence flags used for final resolution."""
+
+    pub year: int = 1900
+    pub month: int = 1
+    pub day: int = 1
+    pub hour: int = 0
+    pub minute: int = 0
+    pub second: int = 0
+    pub nanosecond: int = 0
+    pub ordinal_day: int = 0
+    pub iso_year: int = 1900
+    pub iso_week: int = 0
+    pub iso_weekday: int = 1
+    pub saw_iso: bool = false
+    pub week_number: int = 0
+    pub week_starts_monday: bool = false
+    pub saw_week_number: bool = false
+    pub saw_weekday: bool = false
+    pub hour_12: int = 0
+    pub saw_hour_12: bool = false
+    pub saw_pm: bool = false
+    pub offset: FixedOffset
+    pub has_offset: bool = false
+    pub next: int = 0
+
+
+pub def _parse_temporal_literal(mut fields: _StrptimeFields, value: str, literal: str) -> Result[None, DateTimeError]:
+    """Consume one exact literal, including percent, newline and tab directives."""
+    if fields.next >= len(value) or value[fields.next:fields.next + 1] != literal:
+        return Err(DateTimeError(detail="strptime literal mismatch"))
+    fields.next += 1
+    return Ok(None)
+
+
+pub def _parse_temporal_directive(
+    mut fields: _StrptimeFields,
+    value: str,
+    directive: str,
+    allow_date: bool,
+    allow_time: bool,
+    allow_offset: bool,
+) -> Result[None, DateTimeError]:
+    """Check a directive's temporal category once, then dispatch to its field parser."""
+    match directive:
+        "%" => return _parse_temporal_literal(fields, value, "%")
+        "n" => return _parse_temporal_literal(fields, value, "\n")
+        "t" => return _parse_temporal_literal(fields, value, "\t")
+        _ => pass
+    if _is_timezone_directive(directive):
+        if not allow_offset:
+            return Err(DateTimeError(detail="timezone offset directive requires DateTimeOffset"))
+        return _parse_temporal_offset(fields, value, directive)
+    if _is_date_directive(directive):
+        if not allow_date:
+            return Err(DateTimeError(detail="date directive requires Date or DateTime"))
+        return _parse_temporal_date(fields, value, directive)
+    if _is_time_directive(directive):
+        if not allow_time:
+            return Err(DateTimeError(detail="time directive requires Time or DateTime"))
+        return _parse_temporal_time(fields, value, directive)
+    return Err(DateTimeError(detail="unsupported strptime directive"))
+
+
+def _parse_temporal_offset(mut fields: _StrptimeFields, value: str, directive: str) -> Result[None, DateTimeError]:
+    """Retain the last fixed offset; named timezone directives remain a distinct refusal."""
+    if directive == "Z":
+        return Err(DateTimeError(detail="named timezone directives are not supported by std.datetime"))
+    parsed = _parse_offset(value, fields.next)?
+    fields.offset = parsed.offset
+    fields.has_offset = true
+    fields.next = parsed.next
+    return Ok(None)
+
+
+def _parse_temporal_date(mut fields: _StrptimeFields, value: str, directive: str) -> Result[None, DateTimeError]:
+    """Assign calendar fields directly and delegate week-based directives to their shared parser."""
+    if not _is_calendar_field(directive):
+        return _parse_temporal_week(fields, value, directive)
+    number = _parse_calendar_number(value, fields.next, directive)?
+    match directive:
+        "Y" =>
+            fields.year = number.value
+            fields.iso_year = fields.year
+        "y" =>
+            fields.year = _expanded_short_year(number.value)
+            fields.iso_year = fields.year
+        "m" | "b" | "h" | "B" => fields.month = number.value
+        "d" | "e" => fields.day = number.value
+        "j" => fields.ordinal_day = number.value
+        _ => pass
+    fields.next = number.next
+    return Ok(None)
+
+
+def _parse_temporal_week(mut fields: _StrptimeFields, value: str, directive: str) -> Result[None, DateTimeError]:
+    """Assign week-year, week and weekday fields, preserving each directive's range and presence rules."""
+    number = _parse_week_number(value, fields.next, directive)?
+    match directive:
+        "a" | "A" =>
+            fields.iso_weekday = number.value
+            fields.saw_weekday = true
+        "u" =>
+            if number.value < 1 or number.value > _DAYS_PER_WEEK:
+                return Err(DateTimeError(detail="ISO weekday must be in 1..7"))
+            fields.iso_weekday = number.value
+            fields.saw_iso = true
+            fields.saw_weekday = true
+        "w" =>
+            if number.value < 0 or number.value > 6:
+                return Err(DateTimeError(detail="weekday must be in 0..6"))
+            fields.iso_weekday = _sunday_zero_to_iso_weekday(number.value)
+            fields.saw_weekday = true
+        "G" =>
+            fields.iso_year = number.value
+            fields.saw_iso = true
+        "g" =>
+            fields.iso_year = _expanded_short_year(number.value)
+            fields.saw_iso = true
+        "V" =>
+            fields.iso_week = number.value
+            fields.saw_iso = true
+        "U" | "W" =>
+            if number.value < 0 or number.value > 53:
+                return Err(DateTimeError(detail="calendar week must be in 0..53"))
+            fields.week_number = number.value
+            fields.week_starts_monday = directive == "W"
+            fields.saw_week_number = true
+        _ => pass
+    fields.next = number.next
+    return Ok(None)
+
+
+def _parse_temporal_time(mut fields: _StrptimeFields, value: str, directive: str) -> Result[None, DateTimeError]:
+    """Assign numeric clock fields or the case-insensitive AM/PM period."""
+    if directive in ["p", "P"]:
+        return _parse_temporal_period(fields, value)
+    number = _parse_clock_number(value, fields.next, directive)?
+    match directive:
+        "H" => fields.hour = number.value
+        "I" =>
+            fields.hour_12 = number.value
+            fields.saw_hour_12 = true
+        "M" => fields.minute = number.value
+        "S" => fields.second = number.value
+        "f" => fields.nanosecond = number.value
+        _ => pass
+    fields.next = number.next
+    return Ok(None)
+
+
+def _parse_temporal_period(mut fields: _StrptimeFields, value: str) -> Result[None, DateTimeError]:
+    """Consume AM or PM, retaining the last period independently of whether an hour has been seen."""
+    period = value[fields.next:fields.next + 2].upper()
+    if period == "PM":
+        fields.saw_pm = true
+    elif period == "AM":
+        fields.saw_pm = false
+    else:
+        return Err(DateTimeError(detail="expected AM or PM"))
+    fields.next += 2
+    return Ok(None)
+
+
+pub def _resolve_parsed_hour(fields: _StrptimeFields) -> Result[int, DateTimeError]:
+    """Let a seen 12-hour field override the 24-hour field, with an absent period interpreted as AM."""
+    if not fields.saw_hour_12:
+        return Ok(fields.hour)
+    if fields.hour_12 < 1 or fields.hour_12 > 12:
+        return Err(DateTimeError(detail="12-hour clock hour must be in 1..12"))
+    if fields.saw_pm:
+        if fields.hour_12 == 12:
+            return Ok(12)
+        return Ok(fields.hour_12 + 12)
+    if fields.hour_12 == 12:
+        return Ok(0)
+    return Ok(fields.hour_12)

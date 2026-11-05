@@ -10,8 +10,19 @@ from rust::std::string import String as RustString
 from std.collections import OrdinalKey, OrdinalMapError
 from std.datetime.runtime import SystemTime
 from std.hash import md5 as hash_md5, sha1 as hash_sha1
-from std.io import BytesIO, Endian, IoError, _BytesIO
-from std.traits.error import Error
+from std.io import BytesIO, Endian, _BytesIO
+from crate.uuid._bytes import (
+    _hex_value,
+    _hex_byte,
+    _read_u128_from_bytes,
+    _byte_at_uuid,
+    _invalid_length,
+    _invalid_format,
+    _invalid_bytes_len,
+    _io_error,
+)
+pub from crate.uuid._types import UuidVersion, UuidVariant, UuidError
+pub from crate.uuid._bytes import _discard_written_count
 
 
 # Well-known UUIDs are stored as their network-order u128 values. That keeps module load work to a plain value
@@ -29,83 +40,6 @@ pub const NAMESPACE_OID: UUID = UUID(143098242562633686632406296499919794376)
 # X500 = 6ba7b814-9dad-11d1-80b4-00c04fd430c8
 pub const NAMESPACE_X500: UUID = UUID(143098242721090011660934971687007695048)
 
-
-pub enum UuidVersion:
-    """
-    RFC 9562 UUID version marker.
-
-    `Nil` and `Max` represent the two special UUID values. `Unknown(version)` preserves non-standard version
-    nibbles for UUIDs introduced through `from_bytes(...)` or `from_int(...)` instead of rejecting the value.
-    """
-
-    Nil
-    V1
-    V2
-    V3
-    V4
-    V5
-    V6
-    V7
-    V8
-    Max
-    Unknown(int)
-
-    def from_nibble(value: int) -> Self:
-        """
-        Convert a UUID version nibble into the corresponding marker.
-
-        Args:
-            value: The high nibble from UUID byte 6.
-
-        Returns:
-            The known version marker, or `Unknown(value)` for non-standard UUIDs.
-        """
-        match value:
-            1 => return UuidVersion.V1
-            2 => return UuidVersion.V2
-            3 => return UuidVersion.V3
-            4 => return UuidVersion.V4
-            5 => return UuidVersion.V5
-            6 => return UuidVersion.V6
-            7 => return UuidVersion.V7
-            8 => return UuidVersion.V8
-            _ => return UuidVersion.Unknown(value)
-
-
-pub enum UuidVariant:
-    """
-    UUID variant encoded in octet 8.
-
-    Values introduced through binary or numeric conversion may report non-RFC variants. Version 8 construction
-    always forces the RFC 9562 variant bits.
-    """
-
-    Ncs
-    Rfc9562
-    Microsoft
-    Future
-    Unknown
-
-
-pub model UuidError with Error:
-    """
-    Error returned by UUID parsing and byte conversion.
-
-    `kind` is stable enough for callers to branch on validation categories such as `invalid_length`,
-    `invalid_character`, and `invalid_bytes`. `detail` keeps the human-readable context.
-    """
-
-    pub kind: str
-    pub detail: str
-
-    def message(self) -> str:
-        """
-        Return the human-readable error detail.
-
-        Returns:
-            The detail text attached to the UUID failure.
-        """
-        return self.detail
 
 @derive(Clone, Copy, Eq, Ord, Hash)
 pub type UUID = newtype u128 with OrdinalKey:
@@ -600,19 +534,6 @@ model _UuidBytesWriter:
         return Ok(None)
 
 
-pub def _discard_written_count(_count: int) -> None:
-    """
-    Drop a successful byte count from `BytesIO.write_bytes`.
-
-    Args:
-        _count: Number of bytes written.
-
-    Returns:
-        `None` for writer methods that expose only success or failure.
-    """
-    pass
-
-
 def _uuid_writer(operation: str) -> _UuidBytesWriter:
     """
     Create a UUID byte writer tagged with an operation name for errors.
@@ -924,178 +845,3 @@ def _v8_from_raw_bytes(raw: bytes) -> Result[UUID, UuidError]:
         A UUIDv8 value with version and variant bits applied.
     """
     return _uuid_from_versioned_bytes(raw, 8, "v8")
-
-
-def _hex_value(digit: str) -> Result[int, UuidError]:
-    """
-    Decode one lower-case hexadecimal digit.
-
-    Args:
-        digit: Single-character hexadecimal text.
-
-    Returns:
-        The numeric value for the digit.
-    """
-    match digit:
-        "0" => return Ok(0)
-        "1" => return Ok(1)
-        "2" => return Ok(2)
-        "3" => return Ok(3)
-        "4" => return Ok(4)
-        "5" => return Ok(5)
-        "6" => return Ok(6)
-        "7" => return Ok(7)
-        "8" => return Ok(8)
-        "9" => return Ok(9)
-        "a" => return Ok(10)
-        "b" => return Ok(11)
-        "c" => return Ok(12)
-        "d" => return Ok(13)
-        "e" => return Ok(14)
-        "f" => return Ok(15)
-        _ => return Err(_invalid_character(digit))
-
-
-def _hex_digit(value: int) -> str:
-    """
-    Encode a nibble as lower-case hexadecimal text.
-
-    Args:
-        value: Integer from 0 through 15.
-
-    Returns:
-        A single hexadecimal character.
-    """
-    digits = "0123456789abcdef"
-    return digits.__slice__(value, value + 1)
-
-
-def _hex_byte(value: u8) -> str:
-    """
-    Encode a byte as two lower-case hexadecimal digits.
-
-    Args:
-        value: Byte to encode.
-
-    Returns:
-        Two hexadecimal characters.
-    """
-    as_int = int(value)
-    high = as_int // 16
-    low = as_int - (high * 16)
-    return _hex_digit(high) + _hex_digit(low)
-
-
-def _read_u128_from_bytes(raw: bytes) -> Result[u128, IoError]:
-    """
-    Read sixteen network-order bytes into a `u128`.
-
-    Args:
-        raw: Bytes to read.
-
-    Returns:
-        The decoded integer, or `Err(IoError)` when the input is too short.
-    """
-    reader = BytesIO(raw)
-    value: u128 = reader.read(Endian.Big)?
-    return Ok(value)
-
-
-def _byte_at(raw: bytes, index: int) -> Result[u8, IoError]:
-    """
-    Read one byte from a byte buffer.
-
-    Args:
-        raw: Source bytes.
-        index: Byte offset to read.
-
-    Returns:
-        The selected byte, or `Err(IoError)` when the offset is outside the buffer.
-    """
-    reader = BytesIO(raw)
-    reader.seek(index)?
-    value: u8 = reader.read(Endian.Big)?
-    return Ok(value)
-
-
-def _byte_at_uuid(raw: bytes, index: int, operation: str) -> Result[u8, UuidError]:
-    """
-    Read one byte and convert I/O failures into UUID errors.
-
-    Args:
-        raw: Source bytes.
-        index: Byte offset to read.
-        operation: Operation label used in the error detail.
-
-    Returns:
-        The selected byte, or `Err(UuidError)`.
-    """
-    match _byte_at(raw, index):
-        Ok(value) => return Ok(value)
-        Err(err) => return Err(_io_error(operation, err))
-
-
-def _invalid_length(length: int) -> UuidError:
-    """
-    Build an invalid-length UUID error.
-
-    Args:
-        length: Observed text length.
-
-    Returns:
-        A `UuidError` describing the length mismatch.
-    """
-    return UuidError(kind="invalid_length", detail=f"UUID text must contain 32 hex digits, got {length}")
-
-
-def _invalid_format(detail: str) -> UuidError:
-    """
-    Build an invalid-format UUID error.
-
-    Args:
-        detail: Specific format problem.
-
-    Returns:
-        A `UuidError` with `invalid_format` kind.
-    """
-    return UuidError(kind="invalid_format", detail=detail)
-
-
-def _invalid_character(digit: str) -> UuidError:
-    """
-    Build an invalid-hex-character UUID error.
-
-    Args:
-        digit: Rejected digit text.
-
-    Returns:
-        A `UuidError` with `invalid_character` kind.
-    """
-    return UuidError(kind="invalid_character", detail=f"invalid UUID hex digit: {digit}")
-
-
-def _invalid_bytes_len(length: int) -> UuidError:
-    """
-    Build an invalid-byte-length UUID error.
-
-    Args:
-        length: Observed byte length.
-
-    Returns:
-        A `UuidError` with `invalid_bytes` kind.
-    """
-    return UuidError(kind="invalid_bytes", detail=f"UUID byte representation must be 16 bytes, got {length}")
-
-
-def _io_error(operation: str, err: IoError) -> UuidError:
-    """
-    Convert an `IoError` into this module's UUID error type.
-
-    Args:
-        operation: Operation label to include in the error detail.
-        err: Source I/O error.
-
-    Returns:
-        A `UuidError` with `io_error` kind.
-    """
-    return UuidError(kind="io_error", detail=f"{operation} failed: {err.message()}")

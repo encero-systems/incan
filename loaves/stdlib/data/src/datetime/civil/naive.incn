@@ -8,26 +8,59 @@ from std.collections import OrdinalKey, OrdinalMapError
 from std.datetime.error import DateTimeError
 from std.datetime.runtime import SystemTime
 from std.datetime.civil.intervals import TimeDelta, YearMonthInterval, DateTimeInterval, _timedelta_from_nanos
-
-const _DAYS_PER_YEAR: int = 365
-const _DAYS_PER_LEAP_YEAR: int = 366
-const _DAYS_PER_WEEK: int = 7
-const _MONTHS_PER_YEAR: int = 12
-const _HOURS_PER_DAY: int = 24
-const _MINUTES_PER_HOUR: int = 60
-const _SECONDS_PER_MINUTE: int = 60
-const _SECONDS_PER_HOUR: int = _MINUTES_PER_HOUR * _SECONDS_PER_MINUTE
-const _SECONDS_PER_DAY: int = _HOURS_PER_DAY * _SECONDS_PER_HOUR
-const _NANOS_PER_MICROSECOND: int = 1_000
-const _NANOS_PER_MILLISECOND: int = 1_000_000
-const _NANOS_PER_SECOND: int = 1_000_000_000
-const _NANOS_PER_DAY: int = _SECONDS_PER_DAY * _NANOS_PER_SECOND
-const _UNIX_EPOCH_YEAR: int = 1970
-
-
-model _ParsedNumber:
-    value: int
-    next: int
+from crate.datetime.civil.naive._calendar import (
+    _DAYS_PER_YEAR,
+    _DAYS_PER_LEAP_YEAR,
+    _DAYS_PER_WEEK,
+    _MONTHS_PER_YEAR,
+    _HOURS_PER_DAY,
+    _MINUTES_PER_HOUR,
+    _SECONDS_PER_MINUTE,
+    _SECONDS_PER_HOUR,
+    _SECONDS_PER_DAY,
+    _NANOS_PER_SECOND,
+    _NANOS_PER_DAY,
+    _UNIX_EPOCH_YEAR,
+    _min_int,
+)
+from crate.datetime.civil.naive._format_text import (
+    _read_directive,
+    _expand_format_aliases,
+    _parse_fixed_digits,
+    _format_padded,
+    _is_date_directive,
+    _is_time_directive,
+    _is_timezone_directive,
+    _hour_12,
+    _period_upper,
+    _period_lower,
+    _month_short,
+    _month_long,
+    _weekday_short,
+    _weekday_long,
+    _pad2,
+    _pad4,
+    _pad9,
+    _parse_fractional_nanos,
+)
+from crate.datetime.civil.naive._fixed_offset import _format_offset
+from crate.datetime.civil.naive._strptime_fields import (
+    _StrptimeFields,
+    _parse_temporal_literal,
+    _parse_temporal_directive,
+    _resolve_parsed_hour,
+)
+pub from crate.datetime.civil.naive._calendar import is_leap_year, days_in_month
+pub from crate.datetime.civil.naive._fixed_offset import FixedOffset, utc, _ParsedOffset, _parse_offset
+pub from crate.datetime.civil.naive._ordinal_bytes import (
+    ordinal_key_bytes,
+    ordinal_key_byte,
+    ordinal_key_u32_le,
+    ordinal_key_signed_magnitude_i64,
+    ordinal_key_read_u32_le,
+    ordinal_key_read_signed_magnitude_i64,
+    ordinal_key_signed_magnitude_i64_is_canonical,
+)
 
 
 pub model Date with OrdinalKey:
@@ -790,96 +823,6 @@ pub model DateTime with OrdinalKey:
         return date_seconds + day_seconds
 
 
-pub model FixedOffset:
-    """
-    Fixed UTC offset measured in whole minutes.
-
-    Fixed offsets are deterministic values, so they belong in `std.datetime`. Named timezones are rule databases that
-    resolve to different offsets across instants and belong in separately versioned packages such as `pub.timezones`.
-    """
-
-    pub seconds: int
-
-    @staticmethod
-    def seconds(value: int) -> Result[FixedOffset, DateTimeError]:
-        """
-        Construct a checked fixed offset from seconds.
-
-        Args:
-            value: Signed offset seconds. The value must be within one day and divisible by one minute.
-
-        Returns:
-            `Ok(FixedOffset)` for valid whole-minute offsets, otherwise `Err(DateTimeError)`.
-        """
-        if value <= 0 - _SECONDS_PER_DAY or value >= _SECONDS_PER_DAY:
-            return Err(DateTimeError(detail="fixed offset must be within one day"))
-        if value % _SECONDS_PER_MINUTE != 0:
-            return Err(DateTimeError(detail="fixed offset must be representable as whole minutes"))
-        return Ok(FixedOffset(seconds=value))
-
-    @staticmethod
-    def minutes(value: int) -> Result[FixedOffset, DateTimeError]:
-        """
-        Construct a checked fixed offset from minutes.
-
-        Args:
-            value: Signed offset minutes.
-
-        Returns:
-            `Ok(FixedOffset)` when the offset is within one day, otherwise `Err(DateTimeError)`.
-        """
-        return FixedOffset.seconds(value * _SECONDS_PER_MINUTE)
-
-    @staticmethod
-    def hours(value: int) -> Result[FixedOffset, DateTimeError]:
-        """
-        Construct a checked fixed offset from hours.
-
-        Args:
-            value: Signed offset hours.
-
-        Returns:
-            `Ok(FixedOffset)` when the offset is within one day, otherwise `Err(DateTimeError)`.
-        """
-        return FixedOffset.seconds(value * _SECONDS_PER_HOUR)
-
-    @staticmethod
-    def utc() -> FixedOffset:
-        """
-        Return the zero UTC offset.
-
-        Returns:
-            `FixedOffset(seconds=0)`.
-        """
-        return FixedOffset(seconds=0)
-
-    def isoformat(self) -> str:
-        """
-        Format this offset as ISO offset text.
-
-        Returns:
-            `Z` for UTC, otherwise `+HH:MM` or `-HH:MM`.
-        """
-        if self.seconds == 0:
-            return "Z"
-        return _format_offset(self, true, true)
-
-
-pub def utc() -> FixedOffset:
-    """
-    Return the zero UTC offset.
-
-    Returns:
-        `FixedOffset(seconds=0)`.
-    """
-    return FixedOffset.utc()
-
-
-pub model _ParsedOffset:
-    pub offset: FixedOffset
-    pub next: int
-
-
 pub model _ParsedTemporal:
     pub datetime: DateTime
     pub offset: FixedOffset
@@ -972,45 +915,6 @@ pub def _strftime_datetime_inner(datetime: DateTime, offset: FixedOffset, has_of
                         out += _format_time_directive(datetime.time, directive, padding)?
                     else:
                         return Err(DateTimeError(detail="unsupported strftime directive"))
-    return Ok(out)
-
-
-def _read_directive(format: str, start: int) -> Result[_ParsedNumber, DateTimeError]:
-    mut index = start + 1
-    if index >= len(format):
-        return Err(DateTimeError(detail="unexpected end of strftime format"))
-    modifier = format[index:index + 1]
-    if modifier == "-" or modifier == "_" or modifier == "0" or modifier == ":":
-        index += 1
-        if index >= len(format):
-            return Err(DateTimeError(detail="unexpected end of strftime format"))
-    return Ok(_ParsedNumber(value=index, next=index + 1))
-
-
-def _expand_format_aliases(format: str) -> Result[str, DateTimeError]:
-    mut out = ""
-    mut index = 0
-    while index < len(format):
-        if format[index:index + 1] != "%":
-            out += format[index:index + 1]
-            index += 1
-        else:
-            parsed = _read_directive(format, index)?
-            directive = format[parsed.value:parsed.value + 1]
-            mut modifier = format[parsed.value - 1:parsed.value]
-            if modifier != "-" and modifier != "_" and modifier != "0" and modifier != ":":
-                modifier = "".to_string()
-            if modifier != "" and _is_compound_format_alias(directive):
-                return Err(DateTimeError(detail="padding modifiers are not supported on compound strftime aliases"))
-            match directive:
-                "F" => out += "%Y-%m-%d"
-                "D" | "x" => out += "%m/%d/%y"
-                "R" => out += "%H:%M"
-                "T" | "X" => out += "%H:%M:%S"
-                "r" => out += "%I:%M:%S %p"
-                "c" => out += "%a %b %_d %H:%M:%S %Y"
-                _ => out += "%" + modifier + directive
-            index = parsed.next
     return Ok(out)
 
 
@@ -1109,230 +1013,6 @@ pub def _strptime_temporal(
     )
 
 
-model _StrptimeFields:
-    """Civil parse defaults, consumed input position and directive-presence flags used for final resolution."""
-
-    year: int = 1900
-    month: int = 1
-    day: int = 1
-    hour: int = 0
-    minute: int = 0
-    second: int = 0
-    nanosecond: int = 0
-    ordinal_day: int = 0
-    iso_year: int = 1900
-    iso_week: int = 0
-    iso_weekday: int = 1
-    saw_iso: bool = false
-    week_number: int = 0
-    week_starts_monday: bool = false
-    saw_week_number: bool = false
-    saw_weekday: bool = false
-    hour_12: int = 0
-    saw_hour_12: bool = false
-    saw_pm: bool = false
-    offset: FixedOffset
-    has_offset: bool = false
-    next: int = 0
-
-
-def _parse_temporal_literal(mut fields: _StrptimeFields, value: str, literal: str) -> Result[None, DateTimeError]:
-    """Consume one exact literal, including percent, newline and tab directives."""
-    if fields.next >= len(value) or value[fields.next:fields.next + 1] != literal:
-        return Err(DateTimeError(detail="strptime literal mismatch"))
-    fields.next += 1
-    return Ok(None)
-
-
-def _parse_temporal_directive(
-    mut fields: _StrptimeFields, value: str, directive: str,
-    allow_date: bool, allow_time: bool, allow_offset: bool,
-) -> Result[None, DateTimeError]:
-    """Check a directive's temporal category once, then dispatch to its field parser."""
-    match directive:
-        "%" => return _parse_temporal_literal(fields, value, "%")
-        "n" => return _parse_temporal_literal(fields, value, "\n")
-        "t" => return _parse_temporal_literal(fields, value, "\t")
-        _ => pass
-    if _is_timezone_directive(directive):
-        if not allow_offset:
-            return Err(DateTimeError(detail="timezone offset directive requires DateTimeOffset"))
-        return _parse_temporal_offset(fields, value, directive)
-    if _is_date_directive(directive):
-        if not allow_date:
-            return Err(DateTimeError(detail="date directive requires Date or DateTime"))
-        return _parse_temporal_date(fields, value, directive)
-    if _is_time_directive(directive):
-        if not allow_time:
-            return Err(DateTimeError(detail="time directive requires Time or DateTime"))
-        return _parse_temporal_time(fields, value, directive)
-    return Err(DateTimeError(detail="unsupported strptime directive"))
-
-
-def _parse_temporal_offset(mut fields: _StrptimeFields, value: str, directive: str) -> Result[None, DateTimeError]:
-    """Retain the last fixed offset; named timezone directives remain a distinct refusal."""
-    if directive == "Z":
-        return Err(DateTimeError(detail="named timezone directives are not supported by std.datetime"))
-    parsed = _parse_offset(value, fields.next)?
-    fields.offset = parsed.offset
-    fields.has_offset = true
-    fields.next = parsed.next
-    return Ok(None)
-
-
-def _parse_temporal_date(mut fields: _StrptimeFields, value: str, directive: str) -> Result[None, DateTimeError]:
-    """Assign calendar fields directly and delegate week-based directives to their shared parser."""
-    if not _is_calendar_field(directive):
-        return _parse_temporal_week(fields, value, directive)
-    number = _parse_calendar_number(value, fields.next, directive)?
-    match directive:
-        "Y" =>
-            fields.year = number.value
-            fields.iso_year = fields.year
-        "y" =>
-            fields.year = _expanded_short_year(number.value)
-            fields.iso_year = fields.year
-        "m" | "b" | "h" | "B" => fields.month = number.value
-        "d" | "e" => fields.day = number.value
-        "j" => fields.ordinal_day = number.value
-        _ => pass
-    fields.next = number.next
-    return Ok(None)
-
-
-def _is_calendar_field(directive: str) -> bool:
-    """Whether a date directive assigns a calendar field rather than an ISO or calendar-week field."""
-    return directive in ["Y", "y", "m", "d", "e", "j", "b", "h", "B"]
-
-
-def _parse_calendar_number(value: str, start: int, directive: str) -> Result[_ParsedNumber, DateTimeError]:
-    """Parse a calendar field's numeric width or English month name without changing civil state."""
-    match directive:
-        "Y" => return _parse_number(value, start, 4, 4)
-        "y" => return _parse_number(value, start, 2, 2)
-        "d" | "e" => return _parse_day_number(value, start)
-        "j" => return _parse_number(value, start, 1, 3)
-        "b" | "h" => return _parse_month_name(value, start, false)
-        "B" => return _parse_month_name(value, start, true)
-        _ => return _parse_number(value, start, 1, 2)
-
-
-def _expanded_short_year(year: int) -> int:
-    """Expand two-digit calendar and ISO years at the shared 1970/2069 boundary."""
-    if year >= 70:
-        return 1900 + year
-    return 2000 + year
-
-
-def _parse_temporal_week(mut fields: _StrptimeFields, value: str, directive: str) -> Result[None, DateTimeError]:
-    """Assign week-year, week and weekday fields, preserving each directive's range and presence rules."""
-    number = _parse_week_number(value, fields.next, directive)?
-    match directive:
-        "a" | "A" =>
-            fields.iso_weekday = number.value
-            fields.saw_weekday = true
-        "u" =>
-            if number.value < 1 or number.value > _DAYS_PER_WEEK:
-                return Err(DateTimeError(detail="ISO weekday must be in 1..7"))
-            fields.iso_weekday = number.value
-            fields.saw_iso = true
-            fields.saw_weekday = true
-        "w" =>
-            if number.value < 0 or number.value > 6:
-                return Err(DateTimeError(detail="weekday must be in 0..6"))
-            fields.iso_weekday = _sunday_zero_to_iso_weekday(number.value)
-            fields.saw_weekday = true
-        "G" =>
-            fields.iso_year = number.value
-            fields.saw_iso = true
-        "g" =>
-            fields.iso_year = _expanded_short_year(number.value)
-            fields.saw_iso = true
-        "V" =>
-            fields.iso_week = number.value
-            fields.saw_iso = true
-        "U" | "W" =>
-            if number.value < 0 or number.value > 53:
-                return Err(DateTimeError(detail="calendar week must be in 0..53"))
-            fields.week_number = number.value
-            fields.week_starts_monday = directive == "W"
-            fields.saw_week_number = true
-        _ => pass
-    fields.next = number.next
-    return Ok(None)
-
-
-def _parse_week_number(value: str, start: int, directive: str) -> Result[_ParsedNumber, DateTimeError]:
-    """Parse the spelling and width of a weekday, week or ISO-year directive."""
-    match directive:
-        "a" => return _parse_weekday_name(value, start, false)
-        "A" => return _parse_weekday_name(value, start, true)
-        "u" | "w" => return _parse_number(value, start, 1, 1)
-        "G" => return _parse_number(value, start, 4, 4)
-        "g" => return _parse_number(value, start, 2, 2)
-        _ => return _parse_number(value, start, 1, 2)
-
-
-def _sunday_zero_to_iso_weekday(weekday: int) -> int:
-    """Map the Sunday-zero weekday spelling to the Monday-one civil representation."""
-    if weekday == 0:
-        return 7
-    return weekday
-
-
-def _parse_temporal_time(mut fields: _StrptimeFields, value: str, directive: str) -> Result[None, DateTimeError]:
-    """Assign numeric clock fields or the case-insensitive AM/PM period."""
-    if directive in ["p", "P"]:
-        return _parse_temporal_period(fields, value)
-    number = _parse_clock_number(value, fields.next, directive)?
-    match directive:
-        "H" => fields.hour = number.value
-        "I" =>
-            fields.hour_12 = number.value
-            fields.saw_hour_12 = true
-        "M" => fields.minute = number.value
-        "S" => fields.second = number.value
-        "f" => fields.nanosecond = number.value
-        _ => pass
-    fields.next = number.next
-    return Ok(None)
-
-
-def _parse_clock_number(value: str, start: int, directive: str) -> Result[_ParsedNumber, DateTimeError]:
-    """Parse ordinary clock fields as one or two digits, or scale fractional seconds to nanoseconds."""
-    if directive == "f":
-        return _parse_fractional_number(value, start)
-    return _parse_number(value, start, 1, 2)
-
-
-def _parse_temporal_period(mut fields: _StrptimeFields, value: str) -> Result[None, DateTimeError]:
-    """Consume AM or PM, retaining the last period independently of whether an hour has been seen."""
-    period = value[fields.next:fields.next + 2].upper()
-    if period == "PM":
-        fields.saw_pm = true
-    elif period == "AM":
-        fields.saw_pm = false
-    else:
-        return Err(DateTimeError(detail="expected AM or PM"))
-    fields.next += 2
-    return Ok(None)
-
-
-def _resolve_parsed_hour(fields: _StrptimeFields) -> Result[int, DateTimeError]:
-    """Let a seen 12-hour field override the 24-hour field, with an absent period interpreted as AM."""
-    if not fields.saw_hour_12:
-        return Ok(fields.hour)
-    if fields.hour_12 < 1 or fields.hour_12 > 12:
-        return Err(DateTimeError(detail="12-hour clock hour must be in 1..12"))
-    if fields.saw_pm:
-        if fields.hour_12 == 12:
-            return Ok(12)
-        return Ok(fields.hour_12 + 12)
-    if fields.hour_12 == 12:
-        return Ok(0)
-    return Ok(fields.hour_12)
-
-
 def _resolve_parsed_date(fields: _StrptimeFields) -> Result[Date, DateTimeError]:
     """Resolve ordinal, calendar-week and ISO-week fields in their original precedence and refusal order."""
     mut year = fields.year
@@ -1361,218 +1041,6 @@ def _resolve_parsed_date(fields: _StrptimeFields) -> Result[Date, DateTimeError]
         month = iso_date.month
         day = iso_date.day
     return Date.from_fields(year, month, day)
-
-
-def _parse_number(value: str, start: int, min_digits: int, max_digits: int) -> Result[_ParsedNumber, DateTimeError]:
-    mut index = start
-    mut digits = 0
-    while index < len(value) and digits < max_digits and _is_digit(value[index:index + 1]):
-        index += 1
-        digits += 1
-    if digits < min_digits:
-        return Err(DateTimeError(detail="expected numeric strptime field"))
-    return Ok(_ParsedNumber(value=int(value[start:index]), next=index))
-
-
-def _parse_fixed_digits(value: str, start: int, digits: int, detail: str) -> Result[int, DateTimeError]:
-    mut index = start
-    while index < start + digits:
-        if not _is_digit(value[index:index + 1]):
-            return Err(DateTimeError(detail=detail))
-        index += 1
-    return Ok(int(value[start:start + digits]))
-
-
-def _parse_day_number(value: str, start: int) -> Result[_ParsedNumber, DateTimeError]:
-    mut index = start
-    if value[index:index + 1] == " ":
-        index += 1
-    return _parse_number(value, index, 1, 2)
-
-
-def _parse_fractional_number(value: str, start: int) -> Result[_ParsedNumber, DateTimeError]:
-    number = _parse_number(value, start, 1, 9)?
-    if number.next < len(value) and _is_digit(value[number.next:number.next + 1]):
-        return Err(DateTimeError(detail="fractional seconds must have at most 9 digits"))
-    mut nanos = number.value
-    mut digits = number.next - start
-    while digits < 9:
-        nanos = nanos * 10
-        digits += 1
-    return Ok(_ParsedNumber(value=nanos, next=number.next))
-
-
-def _parse_month_name(value: str, start: int, long: bool) -> Result[_ParsedNumber, DateTimeError]:
-    mut month = 1
-    while month <= _MONTHS_PER_YEAR:
-        mut name = _month_short(month)
-        if long:
-            name = _month_long(month)
-        if value[start:start + len(name)].lower() == name.lower():
-            return Ok(_ParsedNumber(value=month, next=start + len(name)))
-        month += 1
-    return Err(DateTimeError(detail="expected month name"))
-
-
-def _parse_weekday_name(value: str, start: int, long: bool) -> Result[_ParsedNumber, DateTimeError]:
-    mut weekday = 1
-    while weekday <= _DAYS_PER_WEEK:
-        mut name = _weekday_short(weekday)
-        if long:
-            name = _weekday_long(weekday)
-        if value[start:start + len(name)].lower() == name.lower():
-            return Ok(_ParsedNumber(value=weekday, next=start + len(name)))
-        weekday += 1
-    return Err(DateTimeError(detail="expected weekday name"))
-
-
-pub def _parse_offset(value: str, start: int) -> Result[_ParsedOffset, DateTimeError]:
-    if value[start:start + 1] == "Z":
-        return Ok(_ParsedOffset(offset=FixedOffset.utc(), next=start + 1))
-    sign = value[start:start + 1]
-    if sign != "+" and sign != "-":
-        return Err(DateTimeError(detail="expected fixed offset sign"))
-    hour = _parse_number(value, start + 1, 2, 2)?
-    mut index = hour.next
-    if value[index:index + 1] == ":":
-        index += 1
-    minute = _parse_number(value, index, 2, 2)?
-    if hour.value >= _HOURS_PER_DAY or minute.value >= _MINUTES_PER_HOUR:
-        return Err(DateTimeError(detail="fixed offset is out of range"))
-    mut seconds = hour.value * _SECONDS_PER_HOUR + minute.value * _SECONDS_PER_MINUTE
-    if sign == "-":
-        seconds = 0 - seconds
-    return Ok(_ParsedOffset(offset=FixedOffset.seconds(seconds)?, next=minute.next))
-
-
-def _format_offset(offset: FixedOffset, colon: bool, use_z: bool) -> str:
-    if offset.seconds == 0 and use_z:
-        return "Z"
-    mut value = offset.seconds
-    mut sign = "+"
-    if value < 0:
-        sign = "-".to_string()
-        value = 0 - value
-    hour = _pad2(value // _SECONDS_PER_HOUR)
-    minute = _pad2((value % _SECONDS_PER_HOUR) // _SECONDS_PER_MINUTE)
-    if colon:
-        return sign + hour + ":" + minute
-    return sign + hour + minute
-
-
-def _format_padded(value: int, width: int, padding: str) -> str:
-    mut out = str(value)
-    if padding == "-":
-        return out
-    mut fill = "0"
-    if padding == "_":
-        fill = " ".to_string()
-    while len(out) < width:
-        out = fill + out
-    return out
-
-
-def _is_digit(value: str) -> bool:
-    match value:
-        "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" => return true
-        _ => return false
-
-
-def _is_date_directive(directive: str) -> bool:
-    match directive:
-        "Y" | "y" | "m" | "d" | "e" | "j" | "a" | "A" | "b" | "h" | "B" | "w" | "u" | "U" | "W" | "V" | "G" | "g" => return true
-        _ => return false
-
-
-def _is_time_directive(directive: str) -> bool:
-    match directive:
-        "H" | "I" | "M" | "S" | "f" | "p" | "P" => return true
-        _ => return false
-
-
-def _is_timezone_directive(directive: str) -> bool:
-    match directive:
-        "z" | "Z" => return true
-        _ => return false
-
-
-def _is_compound_format_alias(directive: str) -> bool:
-    match directive:
-        "F" | "D" | "R" | "T" | "c" | "x" | "X" | "r" => return true
-        _ => return false
-
-
-def _hour_12(hour: int) -> int:
-    value = hour % 12
-    if value == 0:
-        return 12
-    return value
-
-
-def _period_upper(hour: int) -> str:
-    if hour < 12:
-        return "AM"
-    return "PM"
-
-
-def _period_lower(hour: int) -> str:
-    if hour < 12:
-        return "am"
-    return "pm"
-
-
-def _month_short(month: int) -> str:
-    match month:
-        1 => return "Jan"
-        2 => return "Feb"
-        3 => return "Mar"
-        4 => return "Apr"
-        5 => return "May"
-        6 => return "Jun"
-        7 => return "Jul"
-        8 => return "Aug"
-        9 => return "Sep"
-        10 => return "Oct"
-        11 => return "Nov"
-        _ => return "Dec"
-
-
-def _month_long(month: int) -> str:
-    match month:
-        1 => return "January"
-        2 => return "February"
-        3 => return "March"
-        4 => return "April"
-        5 => return "May"
-        6 => return "June"
-        7 => return "July"
-        8 => return "August"
-        9 => return "September"
-        10 => return "October"
-        11 => return "November"
-        _ => return "December"
-
-
-def _weekday_short(weekday: int) -> str:
-    match weekday:
-        1 => return "Mon"
-        2 => return "Tue"
-        3 => return "Wed"
-        4 => return "Thu"
-        5 => return "Fri"
-        6 => return "Sat"
-        _ => return "Sun"
-
-
-def _weekday_long(weekday: int) -> str:
-    match weekday:
-        1 => return "Monday"
-        2 => return "Tuesday"
-        3 => return "Wednesday"
-        4 => return "Thursday"
-        5 => return "Friday"
-        6 => return "Saturday"
-        _ => return "Sunday"
 
 
 def _iso_year(date: Date) -> int:
@@ -1666,144 +1134,6 @@ def _datetime_from_unix_nanoseconds_utc(nanoseconds: int) -> DateTime:
     return DateTime(date=date, time=time)
 
 
-pub def ordinal_key_bytes(data: bytes) -> list[u8]:
-    """
-    Return raw bytes as an ordinal-key fragment.
-    """
-    return [data[index] for index in range(len(data))]
-
-
-pub def ordinal_key_byte(value: int) -> list[u8]:
-    """
-    Return the low byte of an integer as an ordinal-key fragment.
-    """
-    byte: u8 = value.wrapping_resize()
-    return [byte]
-
-
-pub def ordinal_key_u32_le(value: int) -> list[u8]:
-    """
-    Return a non-negative 32-bit integer in little-endian byte order.
-    """
-    byte0: u8 = (value % 256).wrapping_resize()
-    byte1: u8 = ((value // 256) % 256).wrapping_resize()
-    byte2: u8 = ((value // 65536) % 256).wrapping_resize()
-    byte3: u8 = ((value // 16777216) % 256).wrapping_resize()
-    return [byte0, byte1, byte2, byte3]
-
-
-pub def ordinal_key_signed_magnitude_i64(value: int) -> list[u8]:
-    """
-    Return a sign byte followed by a 64-bit little-endian magnitude.
-
-    Date/time ordinal encodings use this form for human-domain fields that can be negative, such as Gregorian years or
-    UTC offsets, without depending on host integer representation.
-    """
-    mut sign = 0
-    mut magnitude = value
-    if value < 0:
-        sign = 1
-        magnitude = 0 - value
-    sign_byte: u8 = sign.wrapping_resize()
-    byte0: u8 = (magnitude % 256).wrapping_resize()
-    byte1: u8 = ((magnitude // 256) % 256).wrapping_resize()
-    byte2: u8 = ((magnitude // 65536) % 256).wrapping_resize()
-    byte3: u8 = ((magnitude // 16777216) % 256).wrapping_resize()
-    byte4: u8 = ((magnitude // 4294967296) % 256).wrapping_resize()
-    byte5: u8 = ((magnitude // 1099511627776) % 256).wrapping_resize()
-    byte6: u8 = ((magnitude // 281474976710656) % 256).wrapping_resize()
-    byte7: u8 = ((magnitude // 72057594037927936) % 256).wrapping_resize()
-    return [sign_byte, byte0, byte1, byte2, byte3, byte4, byte5, byte6, byte7]
-
-
-pub def ordinal_key_read_u32_le(data: bytes, offset: int) -> int:
-    """
-    Read a non-negative 32-bit little-endian integer from ordinal-key bytes.
-    """
-    mut value = int(data[offset])
-    value += int(data[offset + 1]) * 256
-    value += int(data[offset + 2]) * 65536
-    value += int(data[offset + 3]) * 16777216
-    return value
-
-
-pub def ordinal_key_read_signed_magnitude_i64(data: bytes, offset: int) -> int:
-    """
-    Read the sign-byte plus little-endian-magnitude encoding used by date/time ordinal keys.
-    """
-    sign = int(data[offset])
-    mut value = int(data[offset + 1])
-    value += int(data[offset + 2]) * 256
-    value += int(data[offset + 3]) * 65536
-    value += int(data[offset + 4]) * 16777216
-    value += int(data[offset + 5]) * 4294967296
-    value += int(data[offset + 6]) * 1099511627776
-    value += int(data[offset + 7]) * 281474976710656
-    value += int(data[offset + 8]) * 72057594037927936
-    if sign == 1:
-        return 0 - value
-    return value
-
-
-pub def ordinal_key_signed_magnitude_i64_is_canonical(data: bytes, offset: int) -> bool:
-    """
-    Return whether a signed-magnitude ordinal integer uses a supported sign byte and canonical zero representation.
-    """
-    sign = int(data[offset])
-    if sign != 0 and sign != 1:
-        return false
-    if sign == 0:
-        return true
-    mut magnitude = 0
-    magnitude += int(data[offset + 1])
-    magnitude += int(data[offset + 2]) * 256
-    magnitude += int(data[offset + 3]) * 65536
-    magnitude += int(data[offset + 4]) * 16777216
-    magnitude += int(data[offset + 5]) * 4294967296
-    magnitude += int(data[offset + 6]) * 1099511627776
-    magnitude += int(data[offset + 7]) * 281474976710656
-    magnitude += int(data[offset + 8]) * 72057594037927936
-    return magnitude != 0
-
-
-pub def is_leap_year(year: int) -> bool:
-    """
-    Check whether a Gregorian year is a leap year.
-
-    Args:
-        year: Gregorian year.
-
-    Returns:
-        `true` for leap years.
-    """
-    if year % 400 == 0:
-        return true
-    if year % 100 == 0:
-        return false
-    return year % 4 == 0
-
-
-pub def days_in_month(year: int, month: int) -> int:
-    """
-    Return the number of days in a Gregorian month.
-
-    Args:
-        year: Gregorian year.
-        month: Month in `1..12`.
-
-    Returns:
-        Day count for the month. Invalid month values are treated as 31-day months by this low-level helper; checked
-        constructors validate month ranges before calling it.
-    """
-    match month:
-        2 =>
-            if is_leap_year(year):
-                return 29
-            return 28
-        4 | 6 | 9 | 11 => return 30
-        _ => return 31
-
-
 pub def iso_weeks_in_year(year: int) -> int:
     """
     Return the number of ISO weeks in an ISO week-numbering year.
@@ -1820,48 +1150,3 @@ pub def iso_weeks_in_year(year: int) -> int:
     if is_leap_year(year) and jan1.weekday() == 3:
         return 53
     return 52
-
-
-def _min_int(left: int, right: int) -> int:
-    if left < right:
-        return left
-    return right
-
-
-def _pad2(value: int) -> str:
-    if value < 10:
-        return "0" + str(value)
-    return str(value)
-
-
-def _pad4(value: int) -> str:
-    if value < 10:
-        return "000" + str(value)
-    if value < 100:
-        return "00" + str(value)
-    if value < 1000:
-        return "0" + str(value)
-    return str(value)
-
-
-def _pad9(value: int) -> str:
-    mut out = str(value)
-    while len(out) < 9:
-        out = "0" + out
-    return out
-
-
-def _parse_fractional_nanos(value: str) -> Result[int, DateTimeError]:
-    if len(value) < 1 or len(value) > 9:
-        return Err(DateTimeError(detail="fractional seconds must have 1 to 9 digits"))
-    mut out = 0
-    mut index = 0
-    while index < len(value) and index < 9:
-        if not _is_digit(value[index:index + 1]):
-            return Err(DateTimeError(detail="fractional seconds must contain only digits"))
-        out = out * 10 + int(value[index:index + 1])
-        index += 1
-    while index < 9:
-        out = out * 10
-        index += 1
-    return Ok(out)
