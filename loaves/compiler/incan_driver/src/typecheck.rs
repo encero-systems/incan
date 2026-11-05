@@ -77,7 +77,7 @@ pub fn typecheck_modules(
 
         // A standard package checks its complete source before publishing its public checked facade.
         let check_result = if own_standard_package.is_some() {
-            checker.check_with_imports_allow_private(&module.ast, &deps_for_module)
+            checker.check_standard_package_with_imports(&module.ast, &deps_for_module)
         } else {
             checker.check_with_imports(&module.ast, &deps_for_module)
         };

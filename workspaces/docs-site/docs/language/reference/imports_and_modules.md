@@ -75,6 +75,7 @@ def load(path: str) -> models.Config:     # accepted
 - An import binds its local name in the module scope, beside the module's declarations.
 - A second binding of a name in the same scope is refused: a repeated import of the same declaration as a duplicate, and an import of a different declaration as ambiguous.
 - `std` and `rust` cannot be bound as local names, by a declaration or an import (`INCAN-T0001` on a declaration). The exception is an import that binds the root of its own path, such as `import std.web as std`. `import rust::std` without `as` binds `std` and is refused.
+- A bare enum variant name binds beside the module's declarations without displacing one. A module that declares `model FieldMetadata` and an enum variant `FieldMetadata` binds and exports the model under that name; the variant stays reachable through its enum, as `CalleeKind.FieldMetadata`.
 
 ```incan
 import codecs.prelude as codecs_prelude
@@ -95,6 +96,23 @@ model Response:
     @staticmethod
     def make(body: str) -> Response:          # accepted
         return Response(body=body)
+```
+
+### Names in annotations
+
+- A name in an annotation names a type: a builtin type, or a model, class, enum, newtype, trait, type alias or type parameter, declared or imported.
+- Refused (`INCAN-T0001`): an annotation name bound to anything else, such as an enum variant, a function, a constant, a local or a module.
+
+```incan
+enum Shape:
+    Circle(float)
+    Square(float)
+
+def area(shape: Shape) -> float:          # accepted
+    return 0.0
+
+def radius(shape: Circle) -> float:       # refused: Circle is a variant of Shape
+    return 0.0
 ```
 
 ### Builtin functions
