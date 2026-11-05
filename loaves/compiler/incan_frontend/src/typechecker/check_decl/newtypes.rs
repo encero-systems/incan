@@ -216,6 +216,7 @@ impl TypeChecker {
         }
         self.record_body_ir_trait_adoptions(&nt.name, &resolved_trait_adoptions);
         self.refuse_awaitable_adoptions(&nt.name, &resolved_trait_adoptions);
+        self.refuse_pub_on_trait_implementations(&nt.name, &nt.traits, &nt.methods);
         resolved_trait_adoptions
     }
 

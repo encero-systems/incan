@@ -58,6 +58,7 @@ impl TypeChecker {
         self.resolve_forward_type_references(&module_ast.declarations);
         self.record_local_nominal_type_param_bounds(&module_ast.declarations);
         self.resolve_pending_trait_supertraits();
+        self.settle_trait_implementation_visibility(&module_ast.declarations);
         self.infer_hash_key_type_params(&module_ast.declarations, false);
         self.register_dependency_derivable_metadata(module_name, module_ast);
         self.cache_dependency_direct_member_symbols(module_name, module_ast, true);
@@ -146,6 +147,7 @@ impl TypeChecker {
         self.resolve_forward_type_references(&module_ast.declarations);
         self.record_local_nominal_type_param_bounds(&module_ast.declarations);
         self.resolve_pending_trait_supertraits();
+        self.settle_trait_implementation_visibility(&module_ast.declarations);
         self.infer_hash_key_type_params(&module_ast.declarations, false);
         self.register_dependency_derivable_metadata(module_name, module_ast);
         self.cache_dependency_direct_member_symbols(module_name, module_ast, false);

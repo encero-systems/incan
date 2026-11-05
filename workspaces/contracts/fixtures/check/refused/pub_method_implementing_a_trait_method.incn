@@ -1,0 +1,16 @@
+# behavior: a method that implements an adopted trait's method takes the trait's visibility, so marking it `pub` is refused (#2570)
+# expect-diagnostic: INCAN-T0001
+
+pub trait Describe:
+    def describe(self) -> str
+
+
+pub model Account with Describe:
+    pub owner: str
+
+    pub def describe(self) -> str:
+        return "account of " + self.owner
+
+
+def main() -> None:
+    println(Account(owner="ada").describe())

@@ -9,10 +9,11 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     CanonicalIdentityExport, EnumValueExport, EnumValueTypeExport, ExportIdentityKind, ExportIdentityProjection,
-    FieldExport, FieldVisibilityExport, FunctionExport, ImplementationTraitBoundOriginExport, LibraryExports,
-    LibraryManifest, LibraryManifestError, MethodExport, NewtypeConstraintExport, ParamDefaultExport, ParamExport,
-    ParamKindExport, PartialTargetKindExport, PresetValueExport, PropertyExport, ReceiverExport, TypeBoundExport,
-    TypeParamExport, TypeRef, VisitTypeRefs, params_from_checked, resolved_type_from_manifest_type_ref,
+    FieldExport, FunctionExport, ImplementationTraitBoundOriginExport, LibraryExports, LibraryManifest,
+    LibraryManifestError, MemberVisibilityExport, MethodExport, NewtypeConstraintExport, ParamDefaultExport,
+    ParamExport, ParamKindExport, PartialTargetKindExport, PresetValueExport, PropertyExport, ReceiverExport,
+    TypeBoundExport, TypeParamExport, TypeRef, VisitTypeRefs, params_from_checked,
+    resolved_type_from_manifest_type_ref,
 };
 use crate::library_exports::{
     CheckedAliasExport, CheckedClassExport, CheckedConstExport, CheckedEnumExport, CheckedEnumVariant,
@@ -641,8 +642,8 @@ fn fields(values: &[FieldExport]) -> Result<Vec<CheckedField>, LibraryManifestEr
                 ty: resolved_type_from_manifest_type_ref(&value.ty),
                 surface_type_name: value.surface_type_name.clone(),
                 visibility: match value.visibility {
-                    FieldVisibilityExport::Public => crate::ast::Visibility::Public,
-                    FieldVisibilityExport::Private => crate::ast::Visibility::Private,
+                    MemberVisibilityExport::Public => crate::ast::Visibility::Public,
+                    MemberVisibilityExport::Private => crate::ast::Visibility::Private,
                 },
                 has_default: value.has_default,
                 default: value.default.as_ref().map(default_value).transpose()?,
@@ -674,6 +675,7 @@ fn methods(values: &[MethodExport]) -> Result<Vec<CheckedMethod>, LibraryManifes
                 ownership: value.ownership.as_ref().map(super::ownership::hydrate).transpose()?,
                 name: value.name.clone(),
                 canonical: value.canonical.as_ref().and_then(CanonicalIdentityExport::hydrate),
+                visibility: value.visibility.into(),
                 alias_of: value.alias_of.clone(),
                 type_params: type_params(&value.type_params),
                 receiver: value.receiver.as_ref().map(|receiver| match receiver {

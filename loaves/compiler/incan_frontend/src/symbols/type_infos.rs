@@ -282,6 +282,9 @@ pub struct PropertyInfo {
 pub struct MethodInfo {
     /// Canonical identity of the source method declaration, when declaration provenance is available.
     pub identity: Option<CanonicalSymbolId>,
+    /// Written visibility (#2570). A method declared in a trait, or implementing one, takes the trait's visibility
+    /// instead; compiler-generated methods and compiled metadata without a recorded visibility are public.
+    pub visibility: crate::ast::Visibility,
     pub type_params: Vec<String>,
     pub type_param_bounds: HashMap<String, Vec<String>>,
     pub type_param_bound_details: HashMap<String, Vec<TypeBoundInfo>>,

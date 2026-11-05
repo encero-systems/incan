@@ -267,6 +267,22 @@ pub fn cross_trait_method_collision(trait_a: &str, trait_b: &str, method: &str, 
     .with_hint("Use distinct method names for now; qualified trait-method calls are future work")
 }
 
+/// Report `pub` on a method that implements a method of an adopted trait, which takes the trait's visibility (#2570).
+pub fn pub_modifier_not_allowed_on_trait_implementation(
+    type_name: &str,
+    trait_name: &str,
+    method: &str,
+    span: Span,
+) -> CompileError {
+    CompileError::type_error(
+        format!("Method '{method}' on '{type_name}' implements trait '{trait_name}' and cannot be marked `pub`"),
+        span,
+    )
+    .with_hint(format!(
+        "Remove `pub`; a method that implements a trait method takes the visibility of trait '{trait_name}'"
+    ))
+}
+
 /// Report duplicate concrete methods that cannot be assigned to distinct same-family trait obligations.
 pub fn duplicate_method_not_trait_backed(type_name: &str, method: &str, span: Span) -> CompileError {
     CompileError::type_error(

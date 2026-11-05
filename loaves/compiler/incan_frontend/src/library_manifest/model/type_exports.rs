@@ -231,8 +231,8 @@ pub struct FieldExport {
     ///
     /// Older manifests omitted this field and exposed every recorded field to consumers, so absence remains public for
     /// backward compatibility. New manifests only need to serialize the private case.
-    #[serde(default, skip_serializing_if = "FieldVisibilityExport::is_public")]
-    pub visibility: FieldVisibilityExport,
+    #[serde(default, skip_serializing_if = "MemberVisibilityExport::is_public")]
+    pub visibility: MemberVisibilityExport,
     /// Whether the field has a declared default value.
     pub has_default: bool,
     /// Materializable source default used when a consumer constructs this type through the artifact boundary.
@@ -256,24 +256,42 @@ pub struct PropertyExport {
     pub return_type: TypeRef,
 }
 
-/// Source-level visibility of a model or class field published through a library manifest.
+/// Source-level visibility of a field or method published through a library manifest.
 ///
-/// Private visibility is valid for model and class fields. Legacy manifests that omit this value retain public
-/// visibility through the default.
+/// Private visibility is valid for model and class fields and for methods (#2570). Legacy manifests that omit this
+/// value retain public visibility through the default, as every member was public to their consumers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum FieldVisibilityExport {
-    /// Access is limited to the declaring model or class's own methods.
+pub enum MemberVisibilityExport {
+    /// Access is limited to the declaring type's own methods.
     Private,
     /// Access is available to source and compiled-library consumers.
     #[default]
     Public,
 }
 
-impl FieldVisibilityExport {
-    /// Return whether this field retains the legacy public consumer behavior.
-    fn is_public(&self) -> bool {
+impl MemberVisibilityExport {
+    /// Return whether this member retains the legacy public consumer behavior.
+    pub(crate) fn is_public(&self) -> bool {
         matches!(self, Self::Public)
+    }
+}
+
+impl From<crate::ast::Visibility> for MemberVisibilityExport {
+    fn from(visibility: crate::ast::Visibility) -> Self {
+        match visibility {
+            crate::ast::Visibility::Private => Self::Private,
+            crate::ast::Visibility::Public => Self::Public,
+        }
+    }
+}
+
+impl From<MemberVisibilityExport> for crate::ast::Visibility {
+    fn from(visibility: MemberVisibilityExport) -> Self {
+        match visibility {
+            MemberVisibilityExport::Private => Self::Private,
+            MemberVisibilityExport::Public => Self::Public,
+        }
     }
 }
 

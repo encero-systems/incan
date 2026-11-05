@@ -48,6 +48,7 @@ pub fn method_export_from_api(method: &ApiMethod) -> MethodExport {
         ownership: method.ownership.clone(),
         name: method.name.clone(),
         canonical: method.canonical.clone(),
+        visibility: method.visibility,
         alias_of: method.alias_of.clone(),
         type_params: method.type_params.clone(),
         receiver: method.receiver.clone(),

@@ -373,6 +373,12 @@ pub struct ApiMethod {
     /// Canonical member declaration identity, distinct for same-name overloads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub canonical: Option<CanonicalIdentityExport>,
+    /// Source-level method visibility (#2570); API metadata that omits it keeps the method public.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::library_manifest::MemberVisibilityExport::is_public"
+    )]
+    pub visibility: crate::library_manifest::MemberVisibilityExport,
     /// Canonical method targeted by this same-type alias, when this entry projects an alias rather than a body.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alias_of: Option<String>,

@@ -24,7 +24,7 @@ pub(super) fn validate_field_visibilities(raw: &RawLibraryManifest) -> Result<()
 /// Reject private fields on one manifest surface that only represents public requirements.
 pub(super) fn reject_private_fields(owner: &str, fields: &[super::FieldExport]) -> Result<(), LibraryManifestError> {
     for field in fields {
-        if matches!(field.visibility, FieldVisibilityExport::Private) {
+        if matches!(field.visibility, MemberVisibilityExport::Private) {
             return Err(LibraryManifestError::Invalid(format!(
                 "{owner} field `{}` cannot be private in a library manifest",
                 field.name

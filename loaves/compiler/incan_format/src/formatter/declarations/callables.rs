@@ -202,6 +202,7 @@ impl Formatter {
 
     /// Write the reusable prefix before a method's opening parameter parenthesis.
     pub(super) fn write_method_prefix(&mut self, method: &MethodDecl) {
+        self.write_visibility(method.visibility);
         if method.is_async() {
             self.writer.write("async ");
         }
