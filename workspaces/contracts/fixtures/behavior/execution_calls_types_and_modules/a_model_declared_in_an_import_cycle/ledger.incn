@@ -1,0 +1,19 @@
+"""Declare a model and measure it through `entries`, which imports the model back from here."""
+
+from entries import size
+
+
+pub model Entry:
+    """One named entry."""
+
+    pub name: str
+
+
+pub def named(name: str) -> Entry:
+    """An entry named `name`."""
+    return Entry(name=name)
+
+
+pub def measured(name: str) -> int:
+    """The size `entries` gives an entry named `name`."""
+    return size(named(name))

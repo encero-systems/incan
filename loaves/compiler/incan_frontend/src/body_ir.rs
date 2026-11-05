@@ -155,6 +155,19 @@ pub fn build_body_ir_module(
     module
 }
 
+/// The declarations-only Body IR one member of an import cycle contributes to the other members' context before its
+/// own bodies are lowered: its model, nominal and enum layouts under the module identity [`build_body_ir_module`]
+/// gives it. A caller lowering a cycle adds every not-yet-lowered member's declarations to the context of each member,
+/// so no member depends on the order the cycle's bodies are lowered in.
+pub fn build_cycle_declarations(
+    program: &ast::Program,
+    module_path: &[String],
+    type_info: &TypeCheckInfo,
+    library_package: Option<&str>,
+) -> bir::BodyIrModule {
+    module_seed::build_cycle_declarations(program, module_path, type_info, library_package)
+}
+
 /// A type leaf whose retained canonical identity must survive Result-side settlement.
 enum RetainedTypeLeaf {
     /// A source or package nominal binding.

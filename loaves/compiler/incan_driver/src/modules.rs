@@ -293,12 +293,14 @@ fn own_standard_module(session: &CompilationSession, module_path: &[String]) -> 
 
 /// Return modules in stable topological order (dependencies first).
 ///
-/// Discovery traversal uses a stack, which is not guaranteed to produce dependency-safe ordering for siblings.
-/// This explicit sort guarantees each module appears only after its direct and transitive dependencies for acyclic
-/// portions of the graph. For cyclic components (for example stdlib prelude re-export loops), we keep deterministic
-/// fallback ordering rather than hard-failing in collection.
+/// Discovery traversal uses a stack, which is not guaranteed to produce dependency-safe ordering for siblings. This
+/// explicit sort places each module after its direct and transitive dependencies. An import cycle is placed as one
+/// unit: its members follow every module the cycle imports, every module that imports a member follows the whole
+/// cycle, and the members keep reverse discovery order among themselves, the order stdlib prelude re-export loops rely
+/// on. Ties go to the earliest discovered module, so an acyclic graph keeps its discovery order wherever its edges
+/// allow.
 ///
-/// `dependency_edges` is keyed by [`source_identity_key`] on both sides, and the module map built here uses the same
+/// `dependency_edges` is keyed by [`source_identity_key`] on both sides, and the module ids built here use the same
 /// key, so an edge recorded under a file's canonical path still finds the module that was reached by another
 /// spelling.
 pub fn topologically_sort_modules(
@@ -309,76 +311,146 @@ pub fn topologically_sort_modules(
         return Ok(modules);
     }
 
-    let mut module_by_path: HashMap<String, ParsedModule> = HashMap::new();
-    let mut order_index: HashMap<String, usize> = HashMap::new();
-    for (idx, module) in modules.into_iter().enumerate() {
-        let key = source_identity_key(&module.file_path.to_string_lossy());
-        order_index.insert(key.clone(), idx);
-        module_by_path.insert(key, module);
-    }
-
-    let mut indegree: HashMap<String, usize> = module_by_path.keys().cloned().map(|key| (key, 0usize)).collect();
-    let mut reverse_adj: HashMap<String, Vec<String>> = HashMap::new();
-
-    for (module_path, deps) in dependency_edges {
-        if !module_by_path.contains_key(module_path) {
-            continue;
-        }
-        for dep in deps {
-            if !module_by_path.contains_key(dep) {
-                continue;
-            }
-            if let Some(value) = indegree.get_mut(module_path) {
-                *value += 1;
-            }
-            reverse_adj.entry(dep.clone()).or_default().push(module_path.clone());
-        }
-    }
-
-    let mut ready: BTreeSet<(usize, String)> = indegree
+    // A module's id is its discovery position; collection reaches each source identity once.
+    let id_by_key: HashMap<String, usize> = modules
         .iter()
-        .filter_map(|(path, &degree)| {
-            (degree == 0).then_some((order_index.get(path).copied().unwrap_or(usize::MAX), path.clone()))
-        })
+        .enumerate()
+        .map(|(id, module)| (source_identity_key(&module.file_path.to_string_lossy()), id))
         .collect();
-
-    let mut sorted = Vec::new();
-    while let Some((_, next)) = ready.pop_first() {
-        let Some(module) = module_by_path.remove(&next) else {
+    let mut dependencies: Vec<Vec<usize>> = vec![Vec::new(); modules.len()];
+    for (module_path, deps) in dependency_edges {
+        let Some(&module) = id_by_key.get(module_path) else {
             continue;
         };
-        sorted.push(module);
+        dependencies[module].extend(deps.iter().filter_map(|dep| id_by_key.get(dep).copied()));
+    }
+    for module_dependencies in &mut dependencies {
+        module_dependencies.sort_unstable();
+        module_dependencies.dedup();
+    }
 
-        if let Some(dependents) = reverse_adj.get(&next) {
-            for dependent in dependents {
-                if let Some(value) = indegree.get_mut(dependent)
-                    && *value > 0
-                {
-                    *value -= 1;
-                    if *value == 0 {
-                        ready.insert((
-                            order_index.get(dependent).copied().unwrap_or(usize::MAX),
-                            dependent.clone(),
-                        ));
-                    }
-                }
+    // Order the cycles, and the modules outside any cycle, as the nodes of an acyclic graph.
+    let components = strongly_connected_components(&dependencies);
+    let mut component_of = vec![0usize; modules.len()];
+    for (component, members) in components.iter().enumerate() {
+        for &member in members {
+            component_of[member] = component;
+        }
+    }
+    let mut waiting = vec![0usize; components.len()];
+    let mut dependents: Vec<Vec<usize>> = vec![Vec::new(); components.len()];
+    for (module, module_dependencies) in dependencies.iter().enumerate() {
+        for &dependency in module_dependencies {
+            let (component, imported) = (component_of[module], component_of[dependency]);
+            if component != imported {
+                waiting[component] += 1;
+                dependents[imported].push(component);
+            }
+        }
+    }
+    let first_discovered = |component: usize| components[component].iter().copied().min().unwrap_or(usize::MAX);
+    let mut ready: BTreeSet<(usize, usize)> = (0..components.len())
+        .filter(|&component| waiting[component] == 0)
+        .map(|component| (first_discovered(component), component))
+        .collect();
+    let mut placed = Vec::with_capacity(modules.len());
+    while let Some((_, component)) = ready.pop_first() {
+        let mut members = components[component].clone();
+        members.sort_unstable_by_key(|&member| std::cmp::Reverse(member));
+        placed.extend(members);
+        for &dependent in &dependents[component] {
+            waiting[dependent] -= 1;
+            if waiting[dependent] == 0 {
+                ready.insert((first_discovered(dependent), dependent));
             }
         }
     }
 
-    if !module_by_path.is_empty() {
-        // Kahn's algorithm leaves cycle members (and dependents blocked by them) unresolved.
-        // Preserve deterministic behavior by appending unresolved modules in reverse discovery order, which matches the
-        // previous `modules.reverse()` shape that existing stdlib integration tests rely on.
-        let mut unresolved: Vec<(usize, ParsedModule)> = module_by_path
-            .into_iter()
-            .map(|(path, module)| (order_index.get(&path).copied().unwrap_or(usize::MAX), module))
-            .collect();
-        unresolved.sort_by_key(|(idx, _)| std::cmp::Reverse(*idx));
-        sorted.extend(unresolved.into_iter().map(|(_, module)| module));
-    }
+    let mut slots: Vec<Option<ParsedModule>> = modules.into_iter().map(Some).collect();
+    Ok(placed.into_iter().filter_map(|id| slots[id].take()).collect())
+}
 
-    Ok(sorted)
+/// The strongly connected components of a dependency graph over ids `0..dependencies.len()`: every import cycle as
+/// one component, and every module outside a cycle as a component of its own. Iterative Tarjan, so a deep import
+/// chain cannot exhaust the stack.
+fn strongly_connected_components(dependencies: &[Vec<usize>]) -> Vec<Vec<usize>> {
+    const UNVISITED: usize = usize::MAX;
+    let mut index = vec![UNVISITED; dependencies.len()];
+    let mut lowlink = vec![0usize; dependencies.len()];
+    let mut on_stack = vec![false; dependencies.len()];
+    let mut stack = Vec::new();
+    let mut components = Vec::new();
+    let mut next_index = 0;
+    for root in 0..dependencies.len() {
+        if index[root] != UNVISITED {
+            continue;
+        }
+        index[root] = next_index;
+        lowlink[root] = next_index;
+        next_index += 1;
+        stack.push(root);
+        on_stack[root] = true;
+        // Each frame is a module and the position of its next dependency to visit.
+        let mut frames = vec![(root, 0usize)];
+        while let Some(frame) = frames.last_mut() {
+            let node = frame.0;
+            if let Some(&dependency) = dependencies[node].get(frame.1) {
+                frame.1 += 1;
+                if index[dependency] == UNVISITED {
+                    index[dependency] = next_index;
+                    lowlink[dependency] = next_index;
+                    next_index += 1;
+                    stack.push(dependency);
+                    on_stack[dependency] = true;
+                    frames.push((dependency, 0));
+                } else if on_stack[dependency] {
+                    lowlink[node] = lowlink[node].min(index[dependency]);
+                }
+                continue;
+            }
+            frames.pop();
+            if let Some(&(parent, _)) = frames.last() {
+                lowlink[parent] = lowlink[parent].min(lowlink[node]);
+            }
+            if lowlink[node] == index[node] {
+                let mut component = Vec::new();
+                while let Some(member) = stack.pop() {
+                    on_stack[member] = false;
+                    component.push(member);
+                    if member == node {
+                        break;
+                    }
+                }
+                components.push(component);
+            }
+        }
+    }
+    components
+}
+
+/// The other members of each collected module's import cycle, as indexes into `modules`, in index order. A module
+/// outside every cycle has none. Edges are the local source imports [`imported_module_deps_for`] follows.
+pub fn import_cycle_peers(
+    modules: &[ParsedModule],
+    own_standard_package: Option<&'static StandardPackageNamespacePolicy>,
+) -> Vec<Vec<usize>> {
+    let module_idx_by_key = module_key_index(modules);
+    let dependencies: Vec<Vec<usize>> = (0..modules.len())
+        .map(|index| {
+            direct_local_dep_indexes(modules, index, &module_idx_by_key, own_standard_package)
+                .into_iter()
+                .collect()
+        })
+        .collect();
+    let mut peers = vec![Vec::new(); modules.len()];
+    for component in strongly_connected_components(&dependencies) {
+        for &member in &component {
+            let mut others: Vec<usize> = component.iter().copied().filter(|&peer| peer != member).collect();
+            others.sort_unstable();
+            peers[member] = others;
+        }
+    }
+    peers
 }
 
 /// Build a lookup map from canonical module key (`a_b_c`) to module index in `collect_modules` output.

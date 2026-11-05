@@ -39,13 +39,14 @@ pub(super) fn build_module_seed_observed(
     let function_default_sources = collect_function_default_sources(program, type_info);
     let local_function_declarations = collect_local_function_declarations(program);
     let local_nongeneric_functions = collect_local_nongeneric_function_identities(program, type_info);
-    let mut enum_declarations = collect_local_enum_declarations(program, &module_identity, type_info);
-    enum_declarations.extend(rust_values::enum_declarations(type_info));
+    let DeclarationSkeletons {
+        enum_declarations,
+        mut nominal_declarations,
+        fieldless_enum_declarations,
+        value_enum_declarations,
+    } = collect_declaration_skeletons(program, &module_identity, type_info);
     let local_enum_declarations = collect_visible_enum_declarations(&enum_declarations, context);
     let local_receiver_methods = collect_local_receiver_methods(program, type_info);
-    let mut nominal_declarations = collect_local_nominal_declarations(program, &module_identity, type_info);
-    nominal_declarations.extend(rust_values::declarations(type_info));
-    newtype_string_conversion::finalize_candidates(&mut nominal_declarations);
     // Immutable values bind to retained layout skeletons before deferred defaults are attached.
     let constant_declarations = collect::collect_constants(program, type_info, &nominal_declarations);
     let published_constants = collect_published_constants(context, &constant_declarations);
@@ -53,12 +54,10 @@ pub(super) fn build_module_seed_observed(
         .iter()
         .map(|declaration| (declaration.name.clone(), declaration.clone()))
         .collect::<LocalNominalDeclarations>();
-    let fieldless_enum_declarations = collect_local_fieldless_enum_declarations(program, &module_identity, type_info);
     let mut local_fieldless_enum_declarations = fieldless_enum_declarations
         .iter()
         .map(|declaration| (declaration.name.clone(), declaration.clone()))
         .collect::<LocalFieldlessEnumDeclarations>();
-    let value_enum_declarations = collect_local_value_enum_declarations(program, &module_identity, type_info);
     let mut local_value_enum_declarations = value_enum_declarations
         .iter()
         .map(|declaration| (declaration.name.clone(), declaration.clone()))
@@ -136,6 +135,56 @@ pub(super) fn build_module_seed_observed(
         value_enum_declarations,
         bodies,
     }
+}
+
+/// A module's model, nominal and enum layout skeletons: what other modules construct and match against, before its
+/// deferred defaults, bodies and representation refinements exist.
+pub(super) struct DeclarationSkeletons {
+    pub(super) enum_declarations: Vec<bir::EnumDeclaration>,
+    pub(super) nominal_declarations: Vec<bir::NominalDeclaration>,
+    pub(super) fieldless_enum_declarations: Vec<bir::FieldlessEnumDeclaration>,
+    pub(super) value_enum_declarations: Vec<bir::ValueEnumDeclaration>,
+}
+
+/// Collect a module's layout skeletons from its checked source alone; no other module's Body IR is consulted.
+pub(super) fn collect_declaration_skeletons(
+    program: &ast::Program,
+    module_identity: &str,
+    type_info: &TypeCheckInfo,
+) -> DeclarationSkeletons {
+    let mut enum_declarations = collect_local_enum_declarations(program, module_identity, type_info);
+    enum_declarations.extend(rust_values::enum_declarations(type_info));
+    let mut nominal_declarations = collect_local_nominal_declarations(program, module_identity, type_info);
+    nominal_declarations.extend(rust_values::declarations(type_info));
+    newtype_string_conversion::finalize_candidates(&mut nominal_declarations);
+    DeclarationSkeletons {
+        enum_declarations,
+        nominal_declarations,
+        fieldless_enum_declarations: collect_local_fieldless_enum_declarations(program, module_identity, type_info),
+        value_enum_declarations: collect_local_value_enum_declarations(program, module_identity, type_info),
+    }
+}
+
+/// The declarations-only module an import cycle's member shows the other members while their bodies are lowered: its
+/// layout skeletons under its own module identity. Every member then sees every other member's models whatever order
+/// the cycle's bodies are lowered in; the member's own complete module replaces this once it is lowered.
+pub(super) fn build_cycle_declarations(
+    program: &ast::Program,
+    module_path: &[String],
+    type_info: &TypeCheckInfo,
+    library_package: Option<&str>,
+) -> bir::BodyIrModule {
+    let module_identity = match library_package {
+        Some(package) => incan_semantics_core::package_module_identity(package, module_path),
+        None => body_ir_module_identity(module_path),
+    };
+    let skeletons = collect_declaration_skeletons(program, &module_identity, type_info);
+    let mut module = bir::BodyIrModule::declarations_only(module_identity);
+    module.enum_declarations = skeletons.enum_declarations;
+    module.nominal_declarations = skeletons.nominal_declarations;
+    module.fieldless_enum_declarations = skeletons.fieldless_enum_declarations;
+    module.value_enum_declarations = skeletons.value_enum_declarations;
+    module
 }
 
 /// Collect explicit storage before computed constants; decoration and registry effects append their declarations
