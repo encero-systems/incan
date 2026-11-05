@@ -1,6 +1,6 @@
 # RFC 110: Three-way comparison with `__cmp__`
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-06-06
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
