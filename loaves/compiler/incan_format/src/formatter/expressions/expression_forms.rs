@@ -5,6 +5,9 @@ use super::*;
 impl Formatter {
     /// Format one expression node, preserving call/collection entry structure and surface-expression payload syntax.
     pub(in crate::formatter) fn format_expr(&mut self, expr: &Expr) {
+        // Each expression consumes the tail flag. Only a part that nothing follows on the statement's line inherits
+        // it: a binary right operand, a unary operand and a postfix base, since postfix syntax continues a chain.
+        let tail = std::mem::take(&mut self.fluent_tail);
         match expr {
             Expr::Ident(name) => self.writer.write(name),
             Expr::Literal(lit) => self.format_literal(lit),
@@ -14,32 +17,43 @@ impl Formatter {
                 self.writer.write(" ");
                 self.format_binary_op(op);
                 self.writer.write(" ");
+                self.fluent_tail = tail;
                 self.format_spanned_expr(right);
             }
             Expr::Unary(op, operand) => {
                 self.format_unary_op(op);
+                self.fluent_tail = tail;
                 self.format_spanned_expr(operand);
             }
-            Expr::Call(callee, type_args, args) => self.format_call_expression(callee, type_args, args),
+            Expr::Call(callee, type_args, args) => {
+                self.fluent_tail = tail;
+                self.format_call_expression(callee, type_args, args);
+            }
             Expr::Index(base, index) => {
+                self.fluent_tail = tail;
                 self.format_spanned_expr(base);
                 self.writer.write("[");
-                self.format_spanned_expr(index);
+                self.in_brackets(|formatter| formatter.format_spanned_expr(index));
                 self.writer.write("]");
             }
-            Expr::Slice(base, slice) => self.format_slice_expression(base, slice),
+            Expr::Slice(base, slice) => {
+                self.fluent_tail = tail;
+                self.format_slice_expression(base, slice);
+            }
             Expr::Field(base, field) => {
+                self.fluent_tail = tail;
                 self.format_spanned_expr(base);
                 self.writer.write(".");
                 self.writer.write(field);
             }
             Expr::MethodCall(receiver, method, type_args, args) => {
-                if !self.format_fluent_method_chain_if_needed(expr) {
+                if !self.format_fluent_method_chain_if_needed(expr, tail) {
                     let segment = MethodChainSegment {
                         method,
                         type_args,
                         args,
                     };
+                    self.fluent_tail = tail;
                     self.format_spanned_expr(receiver);
                     self.format_method_chain_segment(&segment);
                 }
@@ -49,6 +63,7 @@ impl Formatter {
             Expr::VocabBlock(block) => self.format_expression_vocab_block_braced(block),
             Expr::Embedded(fragment) => self.format_embedded_fragment(fragment),
             Expr::Try(inner) => {
+                self.fluent_tail = tail;
                 self.format_spanned_expr(inner);
                 self.writer.write("?");
             }
@@ -134,17 +149,19 @@ impl Formatter {
     pub(super) fn format_slice_expression(&mut self, base: &Spanned<Expr>, slice: &SliceExpr) {
         self.format_spanned_expr(base);
         self.writer.write("[");
-        if let Some(start) = &slice.start {
-            self.format_spanned_expr(start);
-        }
-        self.writer.write(":");
-        if let Some(end) = &slice.end {
-            self.format_spanned_expr(end);
-        }
-        if let Some(step) = &slice.step {
-            self.writer.write(":");
-            self.format_spanned_expr(step);
-        }
+        self.in_brackets(|formatter| {
+            if let Some(start) = &slice.start {
+                formatter.format_spanned_expr(start);
+            }
+            formatter.writer.write(":");
+            if let Some(end) = &slice.end {
+                formatter.format_spanned_expr(end);
+            }
+            if let Some(step) = &slice.step {
+                formatter.writer.write(":");
+                formatter.format_spanned_expr(step);
+            }
+        });
         self.writer.write("]");
     }
 
@@ -221,20 +238,24 @@ impl Formatter {
     /// Render a parenthesized generator expression and its clauses.
     pub(super) fn format_generator_expression(&mut self, generator: &GeneratorExpr) {
         self.writer.write("(");
-        self.format_spanned_expr(&generator.expr);
-        self.format_comprehension_clauses(&generator.clauses);
+        self.in_brackets(|formatter| {
+            formatter.format_spanned_expr(&generator.expr);
+            formatter.format_comprehension_clauses(&generator.clauses);
+        });
         self.writer.write(")");
     }
 
     /// Render a tuple display, keeping the comma that distinguishes a singleton tuple.
     pub(super) fn format_tuple_expression(&mut self, items: &[Spanned<Expr>]) {
         self.writer.write("(");
-        for (index, item) in items.iter().enumerate() {
-            if index > 0 {
-                self.writer.write(", ");
+        self.in_brackets(|formatter| {
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 {
+                    formatter.writer.write(", ");
+                }
+                formatter.format_spanned_expr(item);
             }
-            self.format_spanned_expr(item);
-        }
+        });
         if items.len() == 1 {
             self.writer.write(",");
         }
@@ -244,34 +265,38 @@ impl Formatter {
     /// Render dictionary entries in their authored order, retaining spread prefixes.
     pub(super) fn format_dict_expression(&mut self, pairs: &[DictEntry]) {
         self.writer.write("{");
-        for (index, entry) in pairs.iter().enumerate() {
-            if index > 0 {
-                self.writer.write(", ");
-            }
-            match entry {
-                DictEntry::Pair(key, value) => {
-                    self.format_spanned_expr(key);
-                    self.writer.write(": ");
-                    self.format_spanned_expr(value);
+        self.in_brackets(|formatter| {
+            for (index, entry) in pairs.iter().enumerate() {
+                if index > 0 {
+                    formatter.writer.write(", ");
                 }
-                DictEntry::Spread(value) => {
-                    self.writer.write("**");
-                    self.format_spanned_expr(value);
+                match entry {
+                    DictEntry::Pair(key, value) => {
+                        formatter.format_spanned_expr(key);
+                        formatter.writer.write(": ");
+                        formatter.format_spanned_expr(value);
+                    }
+                    DictEntry::Spread(value) => {
+                        formatter.writer.write("**");
+                        formatter.format_spanned_expr(value);
+                    }
                 }
             }
-        }
+        });
         self.writer.write("}");
     }
 
     /// Render a brace-delimited set display.
     pub(super) fn format_set_expression(&mut self, items: &[Spanned<Expr>]) {
         self.writer.write("{");
-        for (index, item) in items.iter().enumerate() {
-            if index > 0 {
-                self.writer.write(", ");
+        self.in_brackets(|formatter| {
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 {
+                    formatter.writer.write(", ");
+                }
+                formatter.format_spanned_expr(item);
             }
-            self.format_spanned_expr(item);
-        }
+        });
         self.writer.write("}");
     }
 
@@ -283,7 +308,7 @@ impl Formatter {
                 FStringPart::Literal(text) => self.writer.write(&escape_fstring_literal(text)),
                 FStringPart::Expr { expr, format } => {
                     self.writer.write("{");
-                    self.format_spanned_expr(expr);
+                    self.in_brackets(|formatter| formatter.format_spanned_expr(expr));
                     match format {
                         FStringFormat::Display => {}
                         FStringFormat::Debug => self.writer.write(":?"),
@@ -302,18 +327,22 @@ impl Formatter {
     /// Render a list comprehension and its clauses.
     pub(super) fn format_list_comprehension(&mut self, comp: &ListComp) {
         self.writer.write("[");
-        self.format_spanned_expr(&comp.expr);
-        self.format_comprehension_clauses(&comp.clauses);
+        self.in_brackets(|formatter| {
+            formatter.format_spanned_expr(&comp.expr);
+            formatter.format_comprehension_clauses(&comp.clauses);
+        });
         self.writer.write("]");
     }
 
     /// Render a dictionary comprehension and its clauses.
     pub(super) fn format_dict_comprehension(&mut self, comp: &DictComp) {
         self.writer.write("{");
-        self.format_spanned_expr(&comp.key);
-        self.writer.write(": ");
-        self.format_spanned_expr(&comp.value);
-        self.format_comprehension_clauses(&comp.clauses);
+        self.in_brackets(|formatter| {
+            formatter.format_spanned_expr(&comp.key);
+            formatter.writer.write(": ");
+            formatter.format_spanned_expr(&comp.value);
+            formatter.format_comprehension_clauses(&comp.clauses);
+        });
         self.writer.write("}");
     }
 
