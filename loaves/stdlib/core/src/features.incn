@@ -1136,7 +1136,7 @@ static build_reports_and_rust_inspection: RegistryEntry[FeatureId, FeatureDescri
         since="0.4",
         rfc="RFC 015",
         stability=FeatureStability.Stable,
-        activation="Use `incan describe-unit` or `incan inspect codegraph` with an explicit source path.",
+        activation="Use `oven describe-unit` or `incan inspect codegraph` with an explicit source path.",
         summary="Unit descriptions publish selected compilation inputs; checked graphs expose declarations, Rust interop facts, source ranges and provenance.",
         canonical_forms=build_reports_and_rust_inspection_forms,
         prefer_over="Scraping terminal progress output for source or dependency facts.",

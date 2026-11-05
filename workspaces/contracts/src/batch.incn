@@ -5,7 +5,7 @@ from families import command, read_program
 from files import make_directory, read, write
 from fixture import MINIMAL_MANIFEST, Fixture, fixture_files, materialize, materialize_files
 from group_hints import retain_hint
-from run import Outcome, built_program, clear_trace, trace_file, unit_notes
+from run import Outcome, built_program, clear_trace, surface, trace_file, unit_notes
 from timing_hints import Costs, load_costs, retain_costs
 from workers import Invocation, invoke_many
 
@@ -261,14 +261,16 @@ def isolated_request(
         return Ok(None)
     project = materialize(fixture, scratch)?
     clear_trace(project)?
+    name, arguments = surface(command(fixture, program.header))
     return Ok(
         Some(
             Invocation(
                 program=incan,
-                arguments=command(fixture, program.header),
+                arguments=arguments,
                 project=project,
                 selector=None,
                 duration_hint=duration_hint,
+                arg0=name,
             ),
         ),
     )

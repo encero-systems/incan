@@ -66,6 +66,7 @@ pub def launch(
     environment: list[str],
     stdout_file: Option[Path] = None,
     capture: str = "",
+    arg0: Option[str] = None,
 ) -> Result[Child, str]:
     """
     Start one child with separate captured streams; the caller owns waiting and collection.
@@ -73,6 +74,8 @@ pub def launch(
     `environment` holds `NAME=value` settings added to the inherited environment, as a case's `environment:` block
     declares them. When `stdout_file` is supplied, its consumer owns reading and removing that capture after reaping.
     The runner prepares its trace destination before requesting early observations, including after target removal.
+    `arg0` is the program name the child is started under: `oven` selects the same installed program's project
+    surface (RFC 118).
     """
     mut command = Command.new(incan)
     trace = trace_file(project)
@@ -89,6 +92,9 @@ pub def launch(
         Some(value) =>
             command.env("INCAN_CONTRACT_CASE", value)
             command.arg0(built_program(project, project.name().split("-")[-1]).0)
+        None => pass
+    match arg0:
+        Some(name) => _ = command.arg0(name)
         None => pass
     for argument in arguments:
         command.arg(argument)

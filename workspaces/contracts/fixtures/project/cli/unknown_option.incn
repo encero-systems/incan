@@ -1,14 +1,12 @@
-# behavior: Every public command refuses unknown options before accessing operands and points to help.
+# behavior: Every public incan command refuses unknown options before accessing operands and points to its help.
 # cli-commands:
 #   explain --nonexistent
 #   --nonexistent
 #   run --nonexistent
 #   check --nonexistent
 #   test --nonexistent
-#   describe-unit --nonexistent
 #   build --nonexistent
 #   fmt --nonexistent
-#   owner stop --nonexistent
 #   inspect codegraph --nonexistent
 #   mcp --nonexistent
 #   toolchain pack --nonexistent

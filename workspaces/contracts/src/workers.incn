@@ -30,6 +30,8 @@ pub model Invocation:
     pub environment: list[str] = []
     # Large protocol responses stay in an owned file and are selected by their consumer after reaping.
     pub stdout_file: Option[Path] = None
+    # The program name the child is started under; `oven` selects the project surface of the same program (RFC 118).
+    pub arg0: Option[str] = None
 
 
 model Started:
@@ -87,6 +89,7 @@ pub def invoke_many(requests: list[Invocation], jobs: int) -> list[Result[Outcom
                 request.environment,
                 request.stdout_file,
                 request.capture,
+                request.arg0,
             ):
                 Err(error) => record_failure(index, error)
                 Ok(child) =>

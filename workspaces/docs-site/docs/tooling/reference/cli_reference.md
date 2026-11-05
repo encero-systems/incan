@@ -1,36 +1,43 @@
 # CLI reference
 
-`incan` is Oven, the Incan command line.
+An Incan installation provides two commands, `oven` and `incan`, as one program. `oven` is the project command: it runs, checks, tests, builds and describes units, inspects their operational facts, and manages the bakery and resident owners. `incan` is the language command: compiler diagnostics, formatting, semantic inspection, the context server and the toolchain. `incan run`, `incan check`, `incan test` and `incan build` perform the same operation as the `oven` command of the same name: the same unit, profile, features, artifacts and exit status.
 
 ## Usage
 
 ```text
+oven --help | -h | help
+oven --version
+oven run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
+oven check PATH [--format text|json] [UNIT OPTIONS]
+oven test PATH [UNIT OPTIONS]
+oven describe-unit PATH [UNIT OPTIONS]
+oven build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
+oven owner stop
+oven bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE
+oven inspect dependencies PATH [UNIT OPTIONS]
+oven inspect run ID --proofs
+
 incan --help | -h | help
 incan --version
 incan run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
 incan check PATH [--format text|json] [UNIT OPTIONS]
 incan explain CODE
 incan test PATH [UNIT OPTIONS]
-incan describe-unit PATH [UNIT OPTIONS]
 incan build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
 incan fmt [--check] PATH...
-incan owner stop
-incan bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE
 incan inspect codegraph PATH [GRAPH OPTIONS]
-incan inspect dependencies PATH [UNIT OPTIONS]
-incan inspect run ID --proofs
 incan mcp PATH
 incan toolchain pack OUT
 incan toolchain install ARCHIVE
 ```
 
-There is no implicit command or implicit source path.
+There is no implicit command or implicit source path. Each name runs only its own commands. A command only `oven` runs is an unknown command to `incan`: `incan bakery status` exits `2` and reports ``incan: unknown command `bakery` ``. A language command given to `oven` exits `2` without running and names the command that runs it: `oven fmt` reports ``oven: `oven fmt` is a language command: run `incan fmt` ``.
 
 ## Help and version
 
-`incan --help`, `incan -h` and `incan help` print the command synopses above and the CLI reference location, then exit `0`. `incan COMMAND --help` or `incan COMMAND -h` prints that command's usage, options and one example, then exits `0`. Nested commands include the subcommand: `incan owner stop --help`, `incan inspect codegraph --help`, `incan inspect dependencies --help`, `incan toolchain pack --help` and `incan toolchain install --help`. Help does not require a project or installed toolchain. Arguments after `--` and option values are not interpreted as help flags.
+`oven --help`, `oven -h` and `oven help` print the `oven` synopses above and the CLI reference location, then exit `0`; `incan --help`, `incan -h` and `incan help` do the same for `incan`. `COMMAND --help` or `COMMAND -h` prints that command's usage, options and one example, then exits `0`. Nested commands include the subcommand: `oven owner stop --help`, `oven bakery status --help`, `oven inspect dependencies --help`, `incan inspect codegraph --help`, `incan toolchain pack --help` and `incan toolchain install --help`. Help does not require a project or installed toolchain. Arguments after `--` and option values are not interpreted as help flags.
 
-`incan --version` prints `incan 0.6.0-dev.8` and exits `0`. `incan --version --help` prints its usage and example.
+`oven --version` prints `oven 0.6.0-dev.8` and `incan --version` prints `incan 0.6.0-dev.8`, then exit `0`. `--version --help` prints its usage and example.
 
 ## Unit options
 
@@ -43,13 +50,13 @@ There is no implicit command or implicit source path.
 
 Unknown features, invalid feature edges and unknown options fail the command. Feature-selection options require an owning project. Unsupported command-option combinations exit `2` before dependency preparation. Unit commands accept one path. Package features are specified in [Project configuration](project_configuration.md#projectfeatures).
 
-## `incan run`
+## `oven run`
 
 `PATH` names an Incan entry source. Arguments after `--` are passed to the program. `--argv0 TEXT` sets the program's argument zero. Repeatable `--program-entry PATH` adds program entries. The compiled program inherits stdin, stdout and stderr; its exit status is the command's exit status.
 
 With `INCAN_ENGINE=records`, `PATH` must name one ordinary program source file, the profile must be `debug` or `release`, and editable path dependencies, vocabulary entries, foreign headers, feature-selection flags, substitutions and additional program entries are refused. Build and run select the same compiled unit. The program runs only after successful capture and native selection. `--engine-report` retains a proof report and prints one JSON line before any program output. Without that flag, proof reporting adds no console output. The flag is refused in legacy mode.
 
-## `incan check`
+## `oven check`
 
 Checks the source at `PATH` without producing an executable. `--format` accepts `text` (default) or `json`. Successful checks exit zero; errors exit nonzero.
 
@@ -59,13 +66,13 @@ The JSON report has `schema_version: 2`, Boolean `ok`, and a `diagnostics` array
 
 `CODE` names a stable diagnostic in the installed compiler's catalog, matched without regard to ASCII case. The command prints its title, severity, phase, summary, explanation, examples, common causes, fixes and documentation link when present, then exits `0`. An unknown code exits `1` and names the three nearest catalog codes. Missing or extra operands and unknown options exit `2`. No project is required. This command is available with either engine selection.
 
-## `incan test`
+## `oven test`
 
 `PATH` names a source file containing test functions, or a Loaf directory. For a directory, the command runs the Loaf's Rust facet tests when it declares a Rust facet, then every `test_*.incn` module directly under its source root and its `tests` directory; a Loaf with neither is refused. The command compiles the collected tests and executes each in its own process on every invocation. Each test prints one line: `FILE::TEST` followed by `PASSED`, `FAILED`, `SKIPPED (REASON)`, `XFAIL (REASON)` or `XPASS (REASON)`, where `FILE` is the source file's name. A failed test's output follows on stderr. A compilation error, a failing test or an `XPASS` returns nonzero. `-k`, `--jobs`, `--list`, JSON and JUnit output flags are not accepted by this command.
 
 Collected test functions take no arguments and return `None` or `Result[None, E]`. A result-returning test passes with `Ok(None)` and fails with `Err(error)`; `E` must satisfy the `Debug` trait bound. `@skip`, `@skipif`, `@xfail` and `@xfailif` set a test's outcome policy; `@test`, `@slow`, `@mark` and `@serial` are accepted and do not change execution. Fixtures, parametrized tests, `@timeout` and `@resource` are refused.
 
-## `incan build`
+## `oven build`
 
 An explicit source file selects that unit. For a directory, `lib.incn` in the project's source root selects a library; otherwise `main.incn` there selects a program. The source root is `[build] source-root`, otherwise `src` when present, otherwise the project directory. Other project directories select the Rust facet build.
 
@@ -73,7 +80,7 @@ A library source named `lib.incn` produces an rlib and checked library sidecars.
 
 With `INCAN_ENGINE=records`, only explicit program source files are accepted, with the same restrictions and `--engine-report` behavior as records-mode `run`. Build does not execute the selected program.
 
-## `incan describe-unit`
+## `oven describe-unit`
 
 Writes the selected source's unit description as a JSON object. Execution-only options are refused.
 
@@ -101,11 +108,11 @@ Writes the selected source's unit description as a JSON object. Execution-only o
 
 Formats one or more files or directory trees. `--check` leaves files unchanged and exits `1` when formatting would change a file. `--` ends option parsing. Only `.incn` files are selected; hidden directories, `target`, `node_modules` and nested symbolic links are skipped. Explicitly named files retain their single-file selection. Directory-read errors and no discovered source files are errors. Files that cannot be formatted are reported; other selected files are still processed. The [code style](../../language/reference/code_style.md) specifies formatting rules.
 
-## `incan owner stop`
+## `oven owner stop`
 
 Stops resident project owners belonging to the selected Incan home. `OVEN_OWNER=off` disables owner use for run, build and test. Executables may still be reused with owners disabled. Tests execute afresh even when their executable is reused.
 
-## `incan bakery gc`
+## `oven bakery gc`
 
 Removes superseded manifests, index pages and record segments that no current view or live snapshot lease reaches. A leased old snapshot remains readable, including unopened values. Once collection expires an unleased historical view, a later attempt to lease that descriptor fails. Unreferenced unit and sealed-set payloads are removed unless a live preparation guard protects their digest. Staging is removed, with its reservation, only when its producer's claim is free: the claim its [reservation](#storage-admission) names or, for staging without one, the claim of the unit identity it is named by. Staging whose producer is not known remains retained. A project's registration holds the units its latest successful result of each unit uses, until a newer result of that unit replaces it or the project's directory is removed. A unit record that only a replaced registration or a removed project used leaves the store with the name entries that select it, so its payloads are removed in the same collection. A record that a current registration reaches, directly or through the records it reaches, stays however long ago it was registered; so does a record that no registration has named, such as one the installed toolchain supplied. Nothing expires by age: `--keep-days N` accepts one through six decimal digits, from `0` through `999999`, and does not change what collection keeps. Collection applies to the bakery the [storage policy](#storage-policy) selects.
 
@@ -114,16 +121,16 @@ Success exits `0` and reports retained and expired unit counts, retired projects
 The byte count sums the logical lengths of removed immutable files; staging bytes are excluded. It excludes replacement manifests and filesystem allocation or shared-extent accounting.
 
 
-## `incan bakery verify`
+## `oven bakery verify`
 
 Reads every unit record and every byte of every payload file in the selected bakery. A damaged record is named. A payload file that does not match its committed digest is reported by its canonical object path. Verification does not change records or payloads. Exits `0` when nothing is damaged and `1` otherwise.
 
 
-## `incan bakery repair-payload SHA256 FILE`
+## `oven bakery repair-payload SHA256 FILE`
 
 Re-admits an explicit replacement file only when its full SHA-256 digest matches the committed payload name. A mismatched replacement is refused before changing the store. Existing damaged bytes are moved to quarantine; frozen payloads are never edited in place. This command does not select another record revision or namespace.
 
-## `incan bakery status`
+## `oven bakery status`
 
 Reports where the selected bakery's bytes are and why they remain. Reading the status writes no registration, record, reservation or staging directory. `--format` accepts `text` (default) or `json`; both state the same facts. Success exits `0`; an unreadable store or an invalid [storage policy](#storage-policy) exits `1`.
 
@@ -143,7 +150,7 @@ Byte counts are logical file lengths. A payload that several projects reach coun
 | `live` | Object | `projects` whose directory exists, and the `units` and unique `payload_bytes` their registrations reach. |
 | `roots` | Array | One object per registered project, largest first: `project`, `orphaned` (its directory is gone), `registrations`, and the `units` and `payload_bytes` its registrations reach. |
 | `unregistered` | Object | `units` and `payload_bytes` of the records no live registration reaches and collection keeps, such as those the installed toolchain supplied. |
-| `collectable` | Object | What `incan bakery gc` would reclaim now: `units`, orphaned `projects`, `payload_bytes`, ended `staging_directories` and their `staging_bytes`, the sum of both byte counts in `bytes`, and `estimate`, the basis. Superseded layout files and payloads no record names are not counted. |
+| `collectable` | Object | What `oven bakery gc` would reclaim now: `units`, orphaned `projects`, `payload_bytes`, ended `staging_directories` and their `staging_bytes`, the sum of both byte counts in `bytes`, and `estimate`, the basis. Superseded layout files and payloads no record names are not counted. |
 | `staging` | Object | `active`, the reservations of live bakes; `ended`, each ended attempt's `staging`, `work`, `bytes`, `end_observed_at` and `reclaimable_at`, both null until an admission observes the end; and `unrecorded`, the `directories` and `bytes` of staging without a reservation. |
 
 A reservation object has `staging`, `work`, `reserved_bytes`, `basis` (`estimate`, `exact` or `unknown`), `phase` (`staging`, `sealing` or `ended`), `live`, `allocated_bytes`, `outstanding_bytes` and `created`.
@@ -163,16 +170,16 @@ A refused admission stops the command with exit status `3` and a decision-requir
 | `store` | String | The bakery directory. |
 | `observed_at` | Integer | Seconds since the Unix epoch at which the pressure was observed. |
 | `operation` | Object | `work`, the bake or seal and its unit identity; `required_bytes`; and `basis`: `estimate` (the unit last baked under the same name), `exact` (the staged bytes) or `unknown`. |
-| `policy` | Object | The effective storage policy, as in `incan bakery status`. |
+| `policy` | Object | The effective storage policy, as in `oven bakery status`. |
 | `available_bytes` | Integer | Free bytes observed on the bakery's filesystem. |
 | `reserved_bytes` | Integer | Bytes live concurrent reservations hold. |
-| `reservations` | Array | The concurrent reservations holding space, as in `incan bakery status`. |
+| `reservations` | Array | The concurrent reservations holding space, as in `oven bakery status`. |
 | `admissible_bytes` | Integer | Available minus reserved minus the reserve; negative inside the reserve. |
 | `shortfall_bytes` | Integer | Required minus admissible. |
-| `collectable` | Object | What `incan bakery gc` would reclaim, as in `incan bakery status`. |
-| `actions` | Array | The actions that can change the outcome, each with `action` and `consequence`. `collect` has `command` (`incan bakery gc`) and `reclaims_bytes`; `wait` has `reserved_bytes`; `lower-reserve` has `key`, `file` and `current_bytes`; `free-space` has no further fields. `resolves` states whether the action alone covers the shortfall by the observed numbers. `collect` is listed only when collection would reclaim bytes, `wait` only when concurrent reservations hold space, and `lower-reserve` only when the reserve is above zero. |
+| `collectable` | Object | What `oven bakery gc` would reclaim, as in `oven bakery status`. |
+| `actions` | Array | The actions that can change the outcome, each with `action` and `consequence`. `collect` has `command` (`oven bakery gc`) and `reclaims_bytes`; `wait` has `reserved_bytes`; `lower-reserve` has `key`, `file` and `current_bytes`; `free-space` has no further fields. `resolves` states whether the action alone covers the shortfall by the observed numbers. `collect` is listed only when collection would reclaim bytes, `wait` only when concurrent reservations hold space, and `lower-reserve` only when the reserve is above zero. |
 
-A bake whose producer released its claim without sealing has ended. Its staging directory is kept for `storage.failed-attempt-ttl` after an admission first observes that end, then an admission removes it with its reservation. A clock reading earlier than the recorded end restarts the window at that reading. Staging without a reservation is removed only by `incan bakery gc`. Admission and this window never remove a unit record, a payload or a registration.
+A bake whose producer released its claim without sealing has ended. Its staging directory is kept for `storage.failed-attempt-ttl` after an admission first observes that end, then an admission removes it with its reservation. A clock reading earlier than the recorded end restarts the window at that reading. Staging without a reservation is removed only by `oven bakery gc`. Admission and this window never remove a unit record, a payload or a registration.
 
 ## Storage policy
 
@@ -185,7 +192,7 @@ A bake whose producer released its claim without sealing has ended. Its staging 
 | `failed-attempt-ttl` | Duration string | How long an ended attempt's staging is kept after its end is observed | `"24h"` |
 | `history-ttl` | Duration string | Maximum automatic diagnostic-history window | `"24h"` |
 
-A command uses the bakery that `INCAN_BAKERY` names when it is set and nonempty, then `storage.root`, then `bakery` in the Incan home. `INCAN_BAKERY` applies to that invocation only and never changes `config.toml`. `incan bakery status` reports the bakery directory and which of the three selected it.
+A command uses the bakery that `INCAN_BAKERY` names when it is set and nonempty, then `storage.root`, then `bakery` in the Incan home. `INCAN_BAKERY` applies to that invocation only and never changes `config.toml`. `oven bakery status` reports the bakery directory and which of the three selected it.
 
 A duration is a nonnegative integer of at most twelve digits followed by `s`, `m`, `h` or `d`, for seconds, minutes, hours or 24-hour days. An unknown key, a value of another type, an empty `root`, a negative reserve or a malformed duration fails the command that reads the policy, naming the file, the key and the accepted form. Without `INCAN_BAKERY`, selecting the bakery reads the policy, so an invalid configuration fails every command that uses the bakery. A zero reserve adds no reserve; a write must still fit in observed free space. A zero `failed-attempt-ttl` makes an ended attempt reclaimable when its end is first observed. Other tables of the file are not part of this policy.
 
@@ -193,9 +200,9 @@ A duration is a nonnegative integer of at most twelve digits followed by `s`, `m
 
 Graph options, schemas, queries, context packs and snapshot checks are specified in [Agent context CLI and MCP](agent_context_cli.md). `--strict` refuses a graph containing unchecked units. The default returns available facts and warns about unchecked units.
 
-## `incan inspect dependencies`
+## `oven inspect dependencies`
 
-Prints the packages the unit at `PATH` reaches, as a build of the same unit links them. The unit is checked and planned as for `incan build`; nothing is generated or published. Execution-only options are refused. The text report is:
+Prints the packages the unit at `PATH` reaches, as a build of the same unit links them. The unit is checked and planned as for `oven build`; nothing is generated or published. Execution-only options are refused. The text report is:
 
 ```text
 KIND `PACKAGE` reaches N package(s)
@@ -205,13 +212,13 @@ LIBRARY
     requested by ORIGIN
 ```
 
-`KIND` is `program`, `library` or `test`. Packages are listed by name in ascending order. Under each package, every declaration that entered it from the unit or from another package is listed as its kind and canonical path, for example `function pub::incan_stdlib_codecs::encoding::hex::hexlify`. The `via` line lists the declarations that requested it, starting at the requested root, and is omitted when the declaration is itself a root. `ORIGIN` is `checked source`, `a selected comparison default`, `a selected primitive adapter`, or `runtime operation NAME at FILE:LINE:COLUMN`, with `FILE` relative to the project. A package that a requested but uncovered root selects is listed with `selected by an uncovered root; no declaration is loaded`. Declared dependencies and standard packages the closure does not reach are not listed; [`incan describe-unit`](#incan-describe-unit) lists everything available. A failure exits `1` with the same diagnostic a build reports.
+`KIND` is `program`, `library` or `test`. Packages are listed by name in ascending order. Under each package, every declaration that entered it from the unit or from another package is listed as its kind and canonical path, for example `function pub::incan_stdlib_codecs::encoding::hex::hexlify`. The `via` line lists the declarations that requested it, starting at the requested root, and is omitted when the declaration is itself a root. `ORIGIN` is `checked source`, `a selected comparison default`, `a selected primitive adapter`, or `runtime operation NAME at FILE:LINE:COLUMN`, with `FILE` relative to the project. A package that a requested but uncovered root selects is listed with `selected by an uncovered root; no declaration is loaded`. Declared dependencies and standard packages the closure does not reach are not listed; [`oven describe-unit`](#oven-describe-unit) lists everything available. A failure exits `1` with the same diagnostic a build reports.
 
 ## `incan mcp`
 
 Serves the selected project's graph through newline-delimited JSON-RPC on stdin/stdout. Closing stdin ends the server. Protocol methods, tools, resources and errors are specified in the [MCP reference](agent_context_cli.md#mcp-transport).
 
-## `incan inspect run ID --proofs`
+## `oven inspect run ID --proofs`
 
 Requires `INCAN_ENGINE=records`. `ID` is the 32-character lowercase hexadecimal `run` field printed by a command with `--engine-report`. The command prints that retained report as one JSON object; an unknown or malformed id is an error. Reports are retained only when explicitly requested.
 
@@ -229,7 +236,7 @@ Requires `INCAN_ENGINE=records`. `ID` is the 32-character lowercase hexadecimal 
 
 `pack OUT` archives the installed toolchain closure. Supported extensions are `.tar`, `.tar.gz` and `.tar.zst`. Paths in the packed toolchain manifest are relative; the local Rust sysroot is excluded.
 
-`install ARCHIVE` stages and verifies the archive before publishing it under `INCAN_HOME/toolchains/0.6.0-dev.8/`. Absolute archive members, parent traversal and archive-supplied `sysroot` members are refused. Manifest paths must be portable, the toolchain name must match this Oven, and named artifacts must exist. Installation binds a local Rust sysroot and verifies the driver's compiler identity. A refused archive preserves the existing installation.
+`install ARCHIVE` stages and verifies the archive before publishing it under `INCAN_HOME/toolchains/0.6.0-dev.8/`. Absolute archive members, parent traversal and archive-supplied `sysroot` members are refused. Manifest paths must be portable, the toolchain name must match this Oven, and named artifacts must exist. Installation binds a local Rust sysroot and verifies the driver's compiler identity. A refused archive preserves the existing installation. After publishing, installation exposes the running program as both `oven` and `incan` in its directory: a missing name becomes a symbolic link to it and prints `entry points: oven and incan in DIR`. A different file with either name is refused and left in place.
 
 ## Environment variables
 
@@ -249,6 +256,6 @@ A requested trace that cannot be written produces one `incan: trace incomplete: 
 
 ## Exit codes
 
-`0` indicates success, including help. Unknown commands and unknown options exit `2`; the error is followed by ``Run `incan --help` for usage.`` Invalid unit-command syntax also exits `2`. Other argument-value refusals, preparation and compilation failures return nonzero. `run` returns the program's status. `test` returns nonzero when any collected test fails.
+`0` indicates success, including help. Unknown commands, unknown options and commands given to the other name exit `2`; the error is followed by ``Run `oven --help` for usage.`` or ``Run `incan --help` for usage.``, naming the invoked command. Invalid unit-command syntax also exits `2`. Other argument-value refusals, preparation and compilation failures return nonzero. `run` returns the program's status. `test` returns nonzero when any collected test fails.
 
 `3` is a decision-required outcome: [storage admission](#storage-admission) refused a write, and the command stopped before writing it without removing stored content to make room. It is distinct from success and from failure; under `--format json` its document is printed on stdout.

@@ -1,6 +1,6 @@
 # behavior: a loop over bytes reaches the runtime's list operations, and no standard package
 # cli-commands:
-#   inspect dependencies src/main.incn
+#   oven inspect dependencies src/main.incn
 # expect-stdout-contains:
 #   program `closure_of_a_byte_loop` reaches 1 package
 #   incan_native_runtime

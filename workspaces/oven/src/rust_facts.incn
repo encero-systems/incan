@@ -14,7 +14,7 @@ A description Oven prepares for a compile or check has a `<name>.rust-facts` dir
 
 Before the description's next run, `refresh` seals what was staged, registers the identities the run used as the
 unit's current registration in the project, and rewrites the index from `used`. An extraction a newer run no longer
-uses leaves the bakery at the next `incan bakery gc`, unless another current registration uses it.
+uses leaves the bakery at the next `oven bakery gc`, unless another current registration uses it.
 """
 
 from rust::std::fs import copy as copy_file

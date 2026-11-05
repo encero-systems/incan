@@ -1,0 +1,95 @@
+"""
+The two command surfaces of one Oven program (RFC 118). `oven` is the project command: running, checking, testing,
+building and describing units, inspecting their operational facts, the bakery and resident owners. `incan` is the
+language command: diagnostics, formatting, semantic inspection, the context server and the toolchain. Both run the
+project commands `run`, `check`, `test` and `build`, which on `incan` are shallow aliases of the same Oven operation.
+
+One installed program serves both: the name it is invoked as selects the surface, and installation exposes it under
+both names. Each surface runs only its own commands: an Oven command is unknown to `incan`, and `oven` refuses a
+language command by naming the `incan` command that runs it.
+"""
+
+from rust::std::env import args, current_exe
+from rust::std::os::unix::fs import symlink
+from std.fs import Path
+
+pub const OVEN: str = "oven"
+pub const INCAN: str = "incan"
+# Commands only `oven` runs; `inspect` is split by its subcommand below.
+const OVEN_COMMANDS: FrozenList[str] = ["describe-unit", "owner", "bakery"]
+const OVEN_INSPECTIONS: FrozenList[str] = ["dependencies", "run"]
+# Commands only `incan` runs.
+const INCAN_COMMANDS: FrozenList[str] = ["explain", "fmt", "mcp", "toolchain"]
+
+
+pub def invoked() -> str:
+    """The surface this process was invoked as: `oven` when its program name is `oven`, and `incan` otherwise."""
+    for argument in args():
+        if Path(str(argument)).name() == OVEN:
+            return OVEN
+        return INCAN
+    return INCAN
+
+
+pub def owner_of(command: str, arguments: list[str]) -> str:
+    """The surface that owns `command`, or an empty string when both run it or neither knows it."""
+    if command == "inspect":
+        if len(arguments) > 0 and arguments[0] in OVEN_INSPECTIONS:
+            return OVEN
+        if len(arguments) > 0 and arguments[0] == "codegraph":
+            return INCAN
+        return ""
+    if command in OVEN_COMMANDS:
+        return OVEN
+    if command in INCAN_COMMANDS:
+        return INCAN
+    return ""
+
+
+pub def misplaced(surface: str, command: str, arguments: list[str]) -> Option[str]:
+    """
+    The refusal for `command` on `surface` when only the other surface runs it.
+
+    An Oven command on `incan` is unknown, in the words any unknown command gets. A language command on `oven` names
+    the `incan` command that runs it.
+    """
+    owner = owner_of(command, arguments)
+    if owner == "" or owner == surface:
+        return None
+    if surface == INCAN:
+        if command == "inspect":
+            return Some(f"{INCAN} inspect: unknown command `{arguments[0]}`")
+        return Some(f"{INCAN}: unknown command `{command}`")
+    name = spelled(command, arguments)
+    return Some(f"{OVEN}: `oven {name}` is a language command: run `incan {name}`")
+
+
+def spelled(command: str, arguments: list[str]) -> str:
+    """A command as the refusal names it: an inspection includes its subcommand."""
+    if command == "inspect":
+        return f"inspect {arguments[0]}"
+    return command
+
+
+pub def expose_entry_points() -> Result[Path, str]:
+    """
+    Expose the running program as both `oven` and `incan` in its directory, and return that directory.
+
+    A missing entry point becomes a symbolic link to the running program. An entry point that already is this program
+    is kept; any other file of that name is refused, never replaced.
+    """
+    executable = Path(str(current_exe().map_err((error) => f"cannot locate the running Oven: {error}")?.display()))
+    directory = executable.parent()
+    for surface in [OVEN, INCAN]:
+        name = str(surface)
+        entry = directory.joinpath(name)
+        if name == executable.name():
+            continue
+        if entry.exists() or entry.is_symlink():
+            if not entry.samefile(executable.0).unwrap_or(false):
+                return Err(f"{entry.0} exists and is not this Oven; remove it to expose the `{name}` entry point")
+            continue
+        match symlink(executable.name(), entry.0):
+            Err(error) => return Err(f"cannot expose `{name}` at {entry.0}: {error}")
+            Ok(_) => pass
+    return Ok(directory)

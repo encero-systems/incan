@@ -43,4 +43,4 @@ Inactive declarations provide no active API, runtime behavior or graph facts.
 - A feature condition is valid only at compilation-unit scope. It is not an `if` expression and cannot inspect runtime state.
 - Features are additive. Enabling a feature may contribute API or dependencies but must not subtract or reinterpret an unconditional API.
 
-Package features and dependency edges are declared in [`loaf.toml`](../../tooling/reference/project_configuration.md#projectfeatures) and selected through manifest dependencies or Incan CLI feature flags. `incan describe-unit PATH` reports declared and active root features. [Package features](../../tooling/reference/sdk_components_and_package_features.md) specifies selection.
+Package features and dependency edges are declared in [`loaf.toml`](../../tooling/reference/project_configuration.md#projectfeatures) and selected through manifest dependencies or Incan CLI feature flags. `oven describe-unit PATH` reports declared and active root features. [Package features](../../tooling/reference/sdk_components_and_package_features.md) specifies selection.

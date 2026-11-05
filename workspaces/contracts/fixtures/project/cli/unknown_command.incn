@@ -1,10 +1,15 @@
-# behavior: Unknown top-level and nested commands, including the retired internal `_run-built`, report an error and point to help with exit status two.
+# behavior: Unknown top-level and nested commands, including the commands only oven runs and the retired internal `_run-built`, report an error and point to help with exit status two.
 # cli-commands:
 #   nonexistent
 #   inspect nonexistent
-#   owner nonexistent
 #   toolchain nonexistent
 #   _run-built target/incan/debug/bin/unknown_command
+#   describe-unit src/main.incn
+#   owner stop
+#   bakery status
+#   bakery gc --help
+#   inspect dependencies src/main.incn
+#   inspect run 0123456789abcdef0123456789abcdef --proofs
 # expect-stdout:
 # expect-stderr-contains:
 #   unknown command
