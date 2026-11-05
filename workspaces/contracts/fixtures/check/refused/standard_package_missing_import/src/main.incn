@@ -1,0 +1,9 @@
+# behavior: a standard-library package refuses an import of a name its own module does not export, through a crate path and through its std spelling of the module (#2595)
+# expect-diagnostic: INCAN-I0001
+
+from crate.helpers import exported, missing_name
+from std.interop.tools import tool, missing_tool
+
+
+def main() -> None:
+    println(f"{exported()} {tool()}")

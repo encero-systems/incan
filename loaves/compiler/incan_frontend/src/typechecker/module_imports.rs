@@ -446,11 +446,13 @@ impl TypeChecker {
         self.check_program_with_dependency_semantics(program)
     }
 
-    /// Check a program with dependencies, but allow importing private items.
+    /// Check one module of a standard package against its sibling modules' complete interfaces.
     ///
-    /// This is intended for internal compiler stages (like IR codegen) where we need type information across modules
-    /// without enforcing visibility restrictions.
-    pub fn check_with_imports_allow_private(
+    /// A standard package checks its complete source before publishing its public checked facade, so the private
+    /// declarations of the modules it imports stay in scope for their signatures. Its imports still bind only what the
+    /// source module exports: a missing or private name is refused, the same import check every other module gets
+    /// (#2595).
+    pub fn check_standard_package_with_imports(
         &mut self,
         program: &Program,
         dependencies: &[(&str, &Program)],
@@ -463,7 +465,6 @@ impl TypeChecker {
         self.cached_pub_libraries.clear();
         self.foreign_pub_type_remappings.clear();
         self.pub_library_declaration_scopes.clear();
-        // Skip populating dependency exports so visibility checks are bypassed.
         self.dependency_exports.clear();
         self.dependency_member_symbols.clear();
         self.dependency_member_type_aliases.clear();
@@ -480,6 +481,11 @@ impl TypeChecker {
         self.dependency_module_traits.clear();
         self.dependency_trait_rust_derive_paths.clear();
         self.record_nominal_declaring_modules(program, dependencies);
+        // The exports drive the import check; leaving them out let a standard module import a missing name (#2595).
+        for (name, dep_ast) in dependencies {
+            self.dependency_exports
+                .insert(name.to_string(), exported_symbols(dep_ast));
+        }
         self.predeclare_dependency_interfaces(dependencies, false);
         for (name, dep_ast) in dependencies {
             self.import_module_all(dep_ast, name);

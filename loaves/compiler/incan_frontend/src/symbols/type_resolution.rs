@@ -187,6 +187,8 @@ where
 }
 
 /// Resolve builtin and native import names before ordinary source nominal or still-open parameter spellings.
+///
+/// A source nominal is a type or trait binding; any other binding of the spelling stays open (#2594).
 pub(super) fn resolve_simple_type(name: &str, symbols: &SymbolTable) -> ResolvedType {
     if let Some(builtin) = ResolvedType::builtin_simple(name) {
         return builtin;
@@ -202,7 +204,14 @@ pub(super) fn resolve_simple_type(name: &str, symbols: &SymbolTable) -> Resolved
             }
         };
     }
-    if symbols.lookup(name).is_some() {
+    // Only a type or trait binding names a type. A bare variant, function, constant, local, module or capability
+    // holding the spelling leaves it open, so an annotation spelling one is refused like an undeclared name (#2594).
+    // A variant never displaces a declaration of its spelling, so a same-named model still resolves here.
+    if let Some(id) = symbols.lookup(name)
+        && symbols
+            .get(id)
+            .is_none_or(|symbol| matches!(symbol.kind, SymbolKind::Type(_) | SymbolKind::Trait(_)))
+    {
         return ResolvedType::Named(name.to_owned());
     }
     ResolvedType::TypeVar(name.to_owned())
