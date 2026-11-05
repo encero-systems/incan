@@ -149,7 +149,12 @@ pub def lower_library_method(
                         return Err("the standard library method future requires exactly one output type")
                     if target.loaf_trait != None:
                         return Err("a standard library trait method cannot return this future type")
-                    callee = CalleeKind.FutureMethod(path, type_arguments)
+                    # A compiled source method is exported as a crate-root function whose first argument is the
+                    # receiver loan. Only a native inherent method keeps the owner on the callable path.
+                    mut callee = CalleeKind.FutureMethod(path, type_arguments)
+                    match delegation.declaration_frame():
+                        Some(_frame) => callee = CalleeKind.Instantiated(path, type_arguments)
+                        None => pass
                     return construct_boxed_future(builder, callee, parameters, outputs[0], operands, output, span)
                 _ => pass
             # Like a source method's, an owned result (text, an enum, a model, a collection) gets an owner in the

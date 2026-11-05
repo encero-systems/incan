@@ -204,6 +204,7 @@ fn shared_inputs(source: &TypeCheckInfo) -> TypeCheckInfo {
     target.rust.checked_layouts = source.rust.checked_layouts.clone();
     target.rust.checked_enums = source.rust.checked_enums.clone();
     target.rust.declared_conversions = source.rust.declared_conversions.clone();
+    target.rust.validated_rusttype_edges = source.rust.validated_rusttype_edges.clone();
     target.rust.rusttype_canonical_paths = source.rust.rusttype_canonical_paths.clone();
     target.rust.item_public_paths = source.rust.item_public_paths.clone();
     target.rust.trait_imports = source.rust.trait_imports.clone();

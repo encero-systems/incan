@@ -46,6 +46,7 @@ pub fn lower_authored_modules(
             provider_operations: &provider_operations,
             registry_package: Some(&unit.package),
             library_package,
+            include_inline_tests: unit.kind == UnitKind::Test,
         };
         if let Some(directory) = std::env::var_os("INCAN_BODY_IR_FREE_BASELINE") {
             incan_frontend::body_ir::verify_free_function_inputs(
@@ -78,7 +79,8 @@ pub fn checked_modules(
     Ok(bodies)
 }
 
-/// Project exact public package requirements reachable from accepted module facts, including private re-export calls.
+/// Project exact public package requirements reachable from accepted module facts, including private re-export calls
+/// and compiler-provided ambient logger factories.
 /// The current package's declarations compile from this unit and never resolve through a dependency artifact.
 /// Trait-wide default inventories are not execution roots: unused adaptor bodies must not instantiate for every
 /// adopter. Native comparison bridges add their selected slots from checked Body IR in `complete_dependency_context`.
@@ -128,6 +130,13 @@ pub fn required_loaf_identities(
                 .iter()
                 .copied()
                 .flat_map(|info| info.calls.source_display_methods.values().cloned()),
+        )
+        .chain(
+            infos
+                .iter()
+                .copied()
+                .flat_map(|info| info.expressions.ambient_logger_bindings.values())
+                .map(|binding| binding.factory.clone()),
         )
         .chain(
             infos

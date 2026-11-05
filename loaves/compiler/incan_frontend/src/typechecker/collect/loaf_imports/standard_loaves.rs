@@ -1,19 +1,36 @@
 //! Standard Loaf traits, registry types, binding roots and standard Loaf imports.
 
 use super::*;
+use crate::typechecker::AmbientLoggerBindingInfo;
 
 impl TypeChecker {
-    /// Resolve the ambient logger through its ordinary factory's checked return type. This keeps its nominal
-    /// identity and method parameter context independent of whether the caller explicitly imports `Logger`.
-    pub(in crate::typechecker) fn ambient_logger_type(&mut self) -> Option<ResolvedType> {
+    /// Resolve the ambient logger through its ordinary factory's checked return type and exact declaration identity.
+    /// This keeps its nominal identity, executable target and method parameter context independent of whether the
+    /// caller explicitly imports `Logger` or `get_logger`.
+    pub(in crate::typechecker) fn ambient_logger_binding(
+        &mut self,
+    ) -> Option<(ResolvedType, AmbientLoggerBindingInfo)> {
         let module = vec!["std".to_string(), "logging".to_string()];
         let (library, path) = self.loaf_module(&module)?;
-        let (SymbolKind::Function(factory), _) =
-            self.lookup_pub_library_module_symbol_member(&library, &path, "get_logger")?
-        else {
+        let resolved = self
+            .resolve_pub_library_module_symbol_member(&library, &path, "get_logger")
+            .ok()
+            .flatten()?;
+        let SymbolKind::Function(factory) = resolved.kind else {
             return None;
         };
-        Some(factory.return_type)
+        if factory.params.iter().any(|parameter| !parameter.has_default) {
+            return None;
+        }
+        let identity = resolved.canonical?;
+        let defaulted_slots = (0..factory.params.len()).collect();
+        Some((
+            factory.return_type,
+            AmbientLoggerBindingInfo {
+                factory: identity,
+                defaulted_slots,
+            },
+        ))
     }
 
     /// The trait a Loaf publishes as `<module_path>.<name>`, read from its manifest.

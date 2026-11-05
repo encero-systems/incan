@@ -53,8 +53,11 @@ impl TypeChecker {
         let Some(sym_id) = self.symbols.lookup(name) else {
             if name == "log" {
                 self.type_info.expressions.ident_kinds.insert(span, IdentKind::Value);
-                self.type_info.record_ambient_logger_binding(span);
-                return self.ambient_logger_type().unwrap_or(ResolvedType::Unknown);
+                let Some((ty, binding)) = self.ambient_logger_binding() else {
+                    return ResolvedType::Unknown;
+                };
+                self.type_info.record_ambient_logger_binding(span, binding);
+                return ty;
             }
             self.errors.push(errors::unknown_symbol(name, span));
             return ResolvedType::Unknown;

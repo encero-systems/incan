@@ -116,6 +116,10 @@ impl TypeChecker {
                 .or_else(|| Self::one_declaration_behind_namespace_matches(manifest, member, &matches))
                 .ok_or_else(|| source_modules.clone())?,
         };
+        // Reconstruct foreign projected layouts before reading a projected declaration. The raw declaring artifact
+        // spells sibling return types in its own package scope; the retained layout carries the provider-qualified
+        // spellings a consumer can resolve without importing those siblings by name.
+        let remapping = self.public_module_type_remapping(library, manifest, source_module_path);
         let mut kinds = declarations
             .iter()
             .filter_map(|declaration| match declaration {
@@ -181,7 +185,6 @@ impl TypeChecker {
                 .iter()
                 .all(|identity| identity.as_ref() == Some(first))
         });
-        let remapping = self.public_module_type_remapping(library, manifest, &resolved_source_module_path);
         self.remap_symbol_kind_through_declaring_module(library, manifest, canonical.as_ref(), &mut kind);
         self.remap_symbol_kind_with_import_aliases(&mut kind, &remapping);
         if let Some((_, target)) = &mut type_alias {

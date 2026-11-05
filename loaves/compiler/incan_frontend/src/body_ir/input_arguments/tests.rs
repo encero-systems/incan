@@ -37,6 +37,7 @@ fn staged(source: &str, remove_call_proof: bool) -> Result<bir::BodyIrModule, Bo
         provider_operations: &providers,
         registry_package: None,
         library_package: None,
+        include_inline_tests: false,
     };
     let module = super::super::build_module_seed(&program, &[], &facts, &context);
     if checked.is_ok() && !remove_call_proof {

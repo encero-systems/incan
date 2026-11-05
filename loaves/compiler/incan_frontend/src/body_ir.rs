@@ -94,6 +94,8 @@ pub struct BodyIrContext<'a> {
     /// The package a library unit's own declarations belong to; `None` for a program. A library's modules are its
     /// package's modules (`pub::<package>::<module>`), the identity its consumers read them under.
     pub library_package: Option<&'a str>,
+    /// Whether this compilation is a test unit and therefore owns executable bodies from `module tests:`.
+    pub include_inline_tests: bool,
 }
 
 /// Return every checked registry helper required by generated registrations and explicit subject materialization.
@@ -103,8 +105,8 @@ pub fn registry_helper_identities(info: &TypeCheckInfo) -> Vec<CanonicalSymbolId
     registry_effects::helper_identities(info)
 }
 
-/// Build Body IR v0 for every top-level function declaration, inline-test function and non-abstract
-/// class/model/trait method in a typechecked module.
+/// Build Body IR v0 for every top-level function declaration, test-unit inline-test function and non-abstract
+/// class/model/trait method in a typechecked module. Ordinary program and library compilations omit inline tests.
 ///
 /// `ast::Declaration::Function` items each produce one [`bir::Body`], matching the [`CompilerNodeId`]
 /// [`crate::hir::build_hir_v0`] assigns the corresponding declaration (see that function's docs).

@@ -1,8 +1,9 @@
-# behavior: explicit standard trait imports retain derived Clone dispatch and Iterator's declared parameter, including repeated imports (#2256)
+# behavior: Explicit standard trait imports retain derived Clone dispatch and Iterator's declared parameter, including a canonical nominal payload and repeated imports (#2256).
 # expect-stdout:
 #   original 1
 #   copy 5
 #   7
+#   named
 
 from std.derives.copying import Clone
 from std.derives.collection import Iterator
@@ -26,6 +27,25 @@ model Numbers with Iterator[int]:
         return None
 
 
+model NamedValue:
+    """One nominal value carried through an adopted Iterator slot."""
+
+    name: str
+
+
+model NamedValues with Iterator[NamedValue]:
+    """Yield one nominal value through the trait's specialized default inventory."""
+
+    emitted: bool
+
+    def __next__(mut self) -> Option[NamedValue]:
+        """Return one model payload, then report exhaustion."""
+        if self.emitted:
+            return None
+        self.emitted = true
+        return Some(NamedValue(name="named"))
+
+
 def main() -> None:
     original = Counter(value=1)
     mut copy = original.clone()
@@ -35,4 +55,8 @@ def main() -> None:
     mut numbers = Numbers(current=0)
     match numbers.__next__():
         Some(value) => println(value)
+        None => println("missing")
+    mut named = NamedValues(emitted=false)
+    match named.__next__():
+        Some(value) => println(value.name)
         None => println("missing")
