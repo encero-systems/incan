@@ -1,5 +1,7 @@
 """Rust unit reuse contracts: a Rust unit key follows its crate manifest, how it is built and what it links."""
 
+from rust::std::process import Command, Output, Stdio
+from std.environ import get_or
 from std.fs import Path
 from files import read, remove
 from intake import ManifestReader
@@ -17,6 +19,7 @@ from rust_manifest import RustFacet, package_environment
 from registry_units import RegistryUnits
 from loaf_local_graph import LocalEdge, LocalFacet
 from rust_activation import DependencyDomain
+from rust_target import decoded
 from toolchain import NativeCrate
 from unit_publication import admit_payload, record_path, record_payload
 from unit_freshness import artifact_identity, record, fingerprint
@@ -359,3 +362,69 @@ def rust_pass(setup: RustCrate, compiler: str, feature: str) -> Result[Pass, str
     key = reconciled_rust_key(setup.facet, setup.facet, paths, [], described, {}, [setup.dependency.0], compiler, crates)?
     crates.save()?
     return Ok(Pass(key=key.digest, hashed=crates.hashed, listed=crates.listed))
+
+
+pub def test_other_sources_than_the_installed_generation_are_refused_up_front() -> Result[None, str]:
+    """
+    A build reaching an installed native crate whose selected sources differ from the ones it was built from is
+    refused once, before any unit compiles, naming the crate and both ways forward (#2451). The same sources,
+    elsewhere, are the installed crate.
+    """
+    scratch = scratch_directory()?
+    runtime = scratch.path().joinpath("kernel/incan_lang")
+    copy_runtime_source(Path("../../loaves/kernel/incan_lang"), runtime)?
+    write(runtime.joinpath("src/lib.rs"), read(runtime.joinpath("src/lib.rs"))? + "\n// a local edit\n")?
+    probe = scratch.path().joinpath("probe")
+    write(probe.joinpath("loaf.toml"), probe_manifest())?
+    write(probe.joinpath("src/main.incn"), "def main() -> None:\n    println(\"probe\")\n")?
+    output = probe_build(probe)?
+    text = decoded(output.stdout) + decoded(output.stderr)
+    assert output.status.code() == Some(1i32), text
+    assert len(text.split("differ from the sources the installed native generation was built from")) == 2, text
+    assert "the selected sources differ for: incan_lang\n" in text, text
+    assert "install a toolchain built from these sources" in text, text
+    assert "set INCAN_STDLIB to the installed standard library" in text, text
+    assert ": compiled" not in text, text
+    # The unedited sources, copied elsewhere, are the ones the installed crate was built from.
+    copy_runtime_source(Path("../../loaves/kernel/incan_lang"), runtime)?
+    accepted = probe_build(probe)?
+    accepted_text = decoded(accepted.stdout) + decoded(accepted.stderr)
+    assert accepted.status.success(), accepted_text
+    assert "unit incan_lang rust: reused installed producer" in accepted_text, accepted_text
+    return Ok(None)
+
+
+def probe_manifest() -> str:
+    """A program whose only local Loaf is the copied runtime."""
+    lines = [
+        "[project]",
+        "name = \"probe\"",
+        "version = \"0.1.0\"",
+        "[project.scripts]",
+        "main = \"src/main.incn\"",
+        "[dependencies]",
+        "incan_lang = { loaf = \"incan_lang\", path = \"../kernel/incan_lang\" }",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def copy_runtime_source(source: Path, destination: Path) -> Result[None, str]:
+    """Copy a Loaf's manifest and sources, replacing an earlier copy."""
+    if destination.exists():
+        destination.remove_tree().map_err((error) => error.message())?
+    destination.mkdir(true, true).map_err((error) => error.message())?
+    _ = source
+        .joinpath("loaf.toml")
+        .copy(destination.joinpath("loaf.toml"), true, false)
+        .map_err((error) => error.message())?
+    _ = source.joinpath("src").copy(destination.joinpath("src"), true, false).map_err((error) => error.message())?
+    return Ok(None)
+
+
+def probe_build(probe: Path) -> Result[Output, str]:
+    """Build the probe's release program through the installed command, tracing what it compiles."""
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    mut command = Command.new(binary)
+    command.arg("build").arg(probe.joinpath("src/main.incn").0).arg("--profile").arg("release").current_dir(probe.0)
+    command.env("OVEN_OWNER", "off").env("OVEN_TRACE", "-").stdin(Stdio.null())
+    return command.output().map_err((error) => f"cannot run {binary}: {error}")

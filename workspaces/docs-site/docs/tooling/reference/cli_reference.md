@@ -110,7 +110,7 @@ Formats one or more files or directory trees. `--check` leaves files unchanged a
 
 ## `oven owner stop`
 
-Stops resident project owners belonging to the selected Incan home. `OVEN_OWNER=off` disables owner use for run, build and test. Executables may still be reused with owners disabled. Tests execute afresh even when their executable is reused.
+Stops resident project owners belonging to the selected Incan home. An owner also retires on its own, after any request it is serving: once it has served nothing for `OVEN_OWNER_IDLE` seconds, or within about a second of its socket or its home being removed. `OVEN_OWNER=off` disables owner use for run, build and test. Executables may still be reused with owners disabled. Tests execute afresh even when their executable is reused.
 
 ## `oven bakery gc`
 
@@ -243,11 +243,12 @@ Requires `INCAN_ENGINE=records`. `ID` is the 32-character lowercase hexadecimal 
 | Name | Contract |
 | --- | --- |
 | `INCAN_HOME` | Toolchain, cache and owner home. Default: `.incan` under `HOME`, or `USERPROFILE` when `HOME` is absent. |
-| `INCAN_STDLIB` | Optional directory containing standard-package source directories with `loaf.toml`; otherwise the installed toolchain's `stdlib` directory is selected. Compiled artifacts belong to the installed toolchain and selected profile. |
+| `INCAN_STDLIB` | Optional directory containing standard-package source directories with `loaf.toml`; otherwise the installed toolchain's `stdlib` directory is selected. Compiled artifacts belong to the installed toolchain and selected profile. Its sources, like those of any standard, runtime or compiler Loaf a build reaches through a path, must be the ones the installed native generation was built from: a build that reaches an installed native crate whose selected sources differ is refused before anything compiles, naming each such crate. |
 | `INCAN_ENGINE` | `legacy` (default) or `records`. Records mode accepts the file-based `run` and `build` commands and `inspect run ID --proofs`. Help, version and `explain` do not select an engine. Other unsupported commands fail without falling back to legacy. |
 | `INCAN_BAKERY` | Optional bakery directory for one invocation. It overrides `storage.root` in the home's `config.toml` without changing the file; otherwise the [storage policy](#storage-policy) selects the bakery, `<INCAN_HOME>/bakery` by default. |
 | `INCAN_SYSROOT` | Explicit local Rust sysroot for installation. Otherwise installation probes Rustup `1.98.0`, then `rustc`. Identity verification is required. |
 | `OVEN_OWNER` | `off` disables resident owner use. |
+| `OVEN_OWNER_IDLE` | Seconds a resident owner started by this command may serve nothing before it retires: a whole number, at least `4`. Default: `600`. |
 | `OVEN_TRACE` | `-` writes invocation traces to stderr; another nonempty value names a trace output file. |
 | `INCAN_ENGINE_TRACE` | Existing directory for per-process engine JSONL traces. |
 | `INCAN_JEC_TRACE` | Existing directory for per-process JEC compatibility traces. |

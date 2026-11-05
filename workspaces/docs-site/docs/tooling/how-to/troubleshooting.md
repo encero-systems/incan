@@ -22,7 +22,7 @@ incan test tests/test_main.incn
 oven describe-unit src/main.incn
 ```
 
-Check the package, source root, profile and Loaf artifact directories. `INCAN_STDLIB` must name the matching standard-package source directory; compiled artifacts must exist in the selected home and profile. A missing `.incnlib` is an installation or profile mismatch, not a request to download another build system.
+Check the package, source root, profile and Loaf artifact directories. `INCAN_STDLIB` must name the matching standard-package source directory; compiled artifacts must exist in the selected home and profile. A missing `.incnlib` is an installation or profile mismatch, not a request to download another build system. When a build refuses because the selected sources differ from the sources the installed native generation was built from, it names each such crate: install a toolchain built from those sources, or, for standard packages, set `INCAN_STDLIB` to the installed toolchain's `stdlib` directory.
 
 ## Inspect declarations and calls
 
