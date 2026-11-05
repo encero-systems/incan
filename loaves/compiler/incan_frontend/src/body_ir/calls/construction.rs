@@ -244,11 +244,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
     }
 
-    /// Whether field `slot` of the source-local model or class `owner` declares a default built only from literals and
-    /// builtin empty constructors ([`ast::Spanned::is_literal_construction`]), which evaluates to an equal value and
-    /// does nothing else. A field with no default, another default, or an owner this module does not retain answers
-    /// `false`.
-    pub(super) fn field_default_is_literal(&self, owner: &str, slot: usize) -> bool {
+    /// Whether field `slot` of the source-local model or class `owner` declares an effect-free fresh value.
+    ///
+    /// Literal construction is admitted directly. A zero-argument local nominal construction is admitted only when
+    /// every field it omits has the same proof recursively. Missing fields, supplied arguments, cycles, imported
+    /// owners and ordinary calls stay observable and therefore cannot cross a supplied argument's evaluation.
+    pub(super) fn field_default_is_effect_free(&self, owner: &str, slot: usize) -> bool {
         let Some(declaration) = self.local_nominal_declarations.get(owner) else {
             return false;
         };
@@ -257,9 +258,45 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .filter(|fields| fields.len() == declaration.fields.len())
             .and_then(|fields| fields.get(slot))
             .and_then(|field| field.default.as_ref())
-            .is_some_and(|default| {
-                default.is_literal_construction(&|span| self.type_info.resolved_collection_constructor(span).is_some())
+            .is_some_and(|default| self.default_source_is_effect_free(default, &mut HashSet::new()))
+    }
+
+    /// Prove fresh default construction from source declarations without executing a user callable.
+    fn default_source_is_effect_free(&self, value: &ast::Spanned<ast::Expr>, visiting: &mut HashSet<String>) -> bool {
+        if value.is_literal_construction(&|span| self.type_info.resolved_collection_constructor(span).is_some()) {
+            return true;
+        }
+        let (owner, arguments) = match &value.node {
+            ast::Expr::Constructor(owner, arguments) => (owner, arguments.as_slice()),
+            ast::Expr::Call(callee, type_arguments, arguments) if type_arguments.is_empty() => {
+                let ast::Expr::Ident(owner) = &callee.node else {
+                    return false;
+                };
+                (owner, arguments.as_slice())
+            }
+            _ => return false,
+        };
+        if !arguments.is_empty() || !visiting.insert(owner.clone()) {
+            return false;
+        }
+        let proven = self
+            .local_nominal_declarations
+            .get(owner)
+            .and_then(|declaration| {
+                self.function_default_sources
+                    .get(owner)
+                    .filter(|fields| fields.len() == declaration.fields.len())
             })
+            .is_some_and(|fields| {
+                fields.iter().all(|field| {
+                    field
+                        .default
+                        .as_ref()
+                        .is_some_and(|default| self.default_source_is_effect_free(default, visiting))
+                })
+            });
+        visiting.remove(owner);
+        proven
     }
 
     /// Lower a value the checker coerces into a newtype where it is used (RFC 017).
@@ -303,7 +340,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             !matches!(expression.node, ast::Expr::Literal(_))
                 && (0..*slot).any(|prior| {
                     !supplied_slots.contains(&prior)
-                        && !(local_source.is_some() && self.field_default_is_literal(owner, prior))
+                        && !(local_source.is_some() && self.field_default_is_effect_free(owner, prior))
                         && defaults
                             .and_then(|frame| frame.params.get(prior))
                             .is_none_or(|parameter| !defaults::is_literal_default(&parameter.default))

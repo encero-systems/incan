@@ -103,7 +103,9 @@ impl RustcFacts {
             search: &self.search,
             scope: RustFactsScope::Paths {
                 paths: linked,
-                depth: 1,
+                // A chained native call can return an iterator carrier through its first result. Two bounded
+                // signature steps retain that carrier without widening extraction to the dependency crate.
+                depth: 2,
             },
         })?;
         // ---- Missing artifact diagnostics ----
