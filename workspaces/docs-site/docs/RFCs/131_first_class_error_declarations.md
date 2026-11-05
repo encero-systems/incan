@@ -559,7 +559,7 @@ Laziness determines when an outcome is produced. The consuming operation separat
 
 ## Reference-level explanation
 
-The rules below define the agreed declaration model and required integration outcomes. Candidate signatures in the guide do not settle the open APIs listed at the end of this Draft.
+The rules below define the declaration model and required integration outcomes.
 
 ### Declarations, payloads, and namespaces
 
