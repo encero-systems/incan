@@ -182,14 +182,13 @@ def main(argv: list[str]) -> int:
 An optional binding helper can reduce dispatch boilerplate without becoming a second parser contract:
 
 ```incan
-app = cli.app[ToolCommand]()
-    .handler(ToolCommand.Serve, run_server_command)
-    .handler(ToolCommand.Build, run_build_command)
-
 def run_build_command(args: BuildArgs) -> int:
     return build_project(release=args.release, output=args.output)
 
 def main(argv: list[str]) -> int:
+    app = cli.app[ToolCommand]()
+        .handler(ToolCommand.Serve, run_server_command)
+        .handler(ToolCommand.Build, run_build_command)
     return app.run(argv)
 ```
 
