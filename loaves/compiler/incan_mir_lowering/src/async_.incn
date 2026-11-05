@@ -109,6 +109,7 @@ def capture_types(
         mut ty = frame_type(constructors, nominals, enums, body.locals[int(parameter.local.index())], intrinsics)?
         match parameter.input_access:
             IncanInputAccess.Shared => ty = shared_receiver_type(ty)?
+            IncanInputAccess.InferredShared => ty = shared_receiver_type(ty)?
             IncanInputAccess.Exclusive => ty = mutable_receiver_type(ty)?
             _ => pass
         validate_collection_capture(parameter.kind, ty)?

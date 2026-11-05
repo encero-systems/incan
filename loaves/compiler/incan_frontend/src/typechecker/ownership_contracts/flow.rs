@@ -520,12 +520,15 @@ fn validate_invocations(graph: &Graph) -> Result<(), InvalidGraph> {
                 ));
             }
             match (argument.access, argument.loan) {
-                (IncanInputAccess::Shared | IncanInputAccess::Exclusive, Some(id)) => {
+                (
+                    IncanInputAccess::Shared | IncanInputAccess::InferredShared | IncanInputAccess::Exclusive,
+                    Some(id),
+                ) => {
                     let loan = graph
                         .loans
                         .get(id.0)
                         .ok_or(InvalidGraph("argument has an unknown loan"))?;
-                    let expected = if argument.access == IncanInputAccess::Shared {
+                    let expected = if argument.access.is_shared() {
                         LoanKind::Shared
                     } else {
                         LoanKind::Exclusive

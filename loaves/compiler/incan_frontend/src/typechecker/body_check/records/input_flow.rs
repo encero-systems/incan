@@ -240,6 +240,7 @@ pub(super) fn project(positions: &Positions, graph: &Graph, fields: &mut Vec<Str
                 argument.written_position.to_string(),
                 match argument.access {
                     IncanInputAccess::Inferred => "inferred",
+                    IncanInputAccess::InferredShared => "inferred_shared",
                     IncanInputAccess::Shared => "shared",
                     IncanInputAccess::Exclusive => "exclusive",
                     IncanInputAccess::Owned => "owned",
@@ -569,6 +570,7 @@ impl Reader<'_> {
     fn input_access(&mut self) -> Result<IncanInputAccess, NodeBindingError> {
         match self.token()? {
             "inferred" => Ok(IncanInputAccess::Inferred),
+            "inferred_shared" => Ok(IncanInputAccess::InferredShared),
             "shared" => Ok(IncanInputAccess::Shared),
             "exclusive" => Ok(IncanInputAccess::Exclusive),
             "owned" => Ok(IncanInputAccess::Owned),

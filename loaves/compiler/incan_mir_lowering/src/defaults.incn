@@ -275,7 +275,7 @@ pub def evaluate_default(
     owner stays in the caller frame until the call returns.
     """
     access = body.params[index].input_access
-    if access == IncanInputAccess.Shared or access == IncanInputAccess.Exclusive:
+    if access in [IncanInputAccess.Shared, IncanInputAccess.InferredShared, IncanInputAccess.Exclusive]:
         return Err("unsupported Body IR borrowed default requires retained invocation owner")
     _ = default_type(ty)?
     match body.params[index].default:

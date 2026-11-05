@@ -1,16 +1,41 @@
-//! Retain nonescaping native read loans before the executable ABI is published. Owned snapshots, mutable uses,
-//! callable values and public signatures keep their original storage contracts.
+//! Infer shared access for plain parameters from their complete checked bodies, then publish that decision in the
+//! callable signature before the executable ABI is consumed. Owned snapshots, mutable uses and escaping values keep
+//! their original storage contracts.
 
 use std::collections::HashSet;
 
-use super::{CanonicalSymbolId, IncanType, SemanticSourceTargetKind, ast, bir};
+use super::{CanonicalSymbolId, IncanType, SemanticSourceTargetKind, bir};
 use incan_semantics_core::SymbolOrigin;
 
 /// One canonical callable's already checked closed storage signature.
 pub(super) struct Signature {
     identity: CanonicalSymbolId,
+    generic: bool,
     arguments: Vec<IncanType>,
-    parameters: Vec<IncanType>,
+    parameters: Vec<SignatureParameter>,
+}
+
+/// One callable input's value type and its single checked access decision.
+#[derive(Clone, PartialEq)]
+struct SignatureParameter {
+    ty: IncanType,
+    access: incan_semantics_core::IncanInputAccess,
+}
+
+impl SignatureParameter {
+    /// Return the underlying owner when this slot already receives shared access for fixed-point analysis.
+    fn shared_owner(&self) -> Option<&IncanType> {
+        match &self.ty {
+            IncanType::Ref(owner) => Some(owner),
+            owner if self.access.is_shared() => Some(owner),
+            _ => None,
+        }
+    }
+
+    /// Return the owner only when this analysis introduced the call loan; explicit calls were settled earlier.
+    fn inferred_shared_owner(&self) -> Option<&IncanType> {
+        (self.access == incan_semantics_core::IncanInputAccess::InferredShared).then_some(&self.ty)
+    }
 }
 
 /// A read-only proof is local to one frame and never grants an escaping or exclusive loan.
@@ -22,149 +47,300 @@ struct ReadContext<'a> {
     cursor: bool,
 }
 
-/// Retain native cursors and close private helper loans over canonical calls. Each cursor must receive a borrowed
-/// native value after initialization and use only shared operations; replacing its source owner preserves a snapshot.
-pub(super) fn retain(module: &mut bir::BodyIrModule, program: &ast::Program) {
-    let mut signatures = signatures(module);
+/// Retain native cursors, infer plain shared parameters to a greatest fixed point and rewrite every caller from the
+/// resulting signatures. A function-item closure remains the declared by-value callable adapter: only its internal
+/// call lends the wrapper's owned argument to the inferred-shared target.
+pub(super) fn retain(module: &mut bir::BodyIrModule, context: &[bir::BodyIrModule]) {
+    let mut signatures = collect_signatures(module, context, &HashSet::new());
     for body in &mut module.bodies {
         retain_cursors(body, &signatures);
     }
-    let private = program
-        .declarations
-        .iter()
-        .filter_map(|declaration| {
-            let ast::Declaration::Function(function) = &declaration.node else {
-                return None;
-            };
-            (function.visibility == ast::Visibility::Private && function.type_params.is_empty() && !function.is_async())
-                .then_some(super::hir_span(declaration.span))
-        })
-        .collect::<HashSet<_>>();
-    let escaped = escaped_functions(module);
+
+    let mut candidates = candidate_parameters(module);
     loop {
-        let mut changed = false;
-        for body in &mut module.bodies {
-            let eligible =
-                private.contains(&body.span) && !body.canonical.as_ref().is_some_and(|id| escaped.contains(id));
-            changed |= retain_parameters(body, &signatures, eligible);
-        }
-        if !changed {
+        signatures = collect_signatures(module, context, &candidates);
+        let before = candidates.len();
+        candidates.retain(|&(body_index, parameter_index)| {
+            let Some(body) = module.bodies.get(body_index) else {
+                return false;
+            };
+            let Some(parameter) = body.params.get(parameter_index) else {
+                return false;
+            };
+            parameter_is_read_only(body, parameter, &signatures)
+        });
+        if candidates.len() == before {
             break;
         }
-        signatures = self::signatures(module);
     }
-    // A callee's signature is module-level, so a call inside a closure or generator body takes the same loans.
+
+    for (body_index, parameter_index) in &candidates {
+        if let Some(body) = module.bodies.get_mut(*body_index) {
+            retain_shared_parameter(body, *parameter_index);
+        }
+    }
+    signatures = collect_signatures(module, context, &HashSet::new());
     for body in &mut module.bodies {
         retain_body_calls(body, &signatures);
     }
 }
 
-/// Evaluate the existing private-parameter transfer rule for one body against final input signatures. Eligibility
-/// comes from that declaration's visibility and the selected escape membership. The caller owns group iteration;
-/// this operation never updates another signature or chooses a different fixed point. Explicit source access owns its
-/// storage and is never rewritten by this inferred ABI optimization.
-pub(super) fn retain_parameters(body: &mut bir::Body, signatures: &[Signature], eligible: bool) -> bool {
-    if !eligible
-        || !matches!(body.return_type, IncanType::Primitive(_))
-        || !body.return_type.abi_v0_facts().ownership.is_trivially_copy()
-        || body.extern_delegation.is_some()
-        || !body.native_attributes.is_empty()
+/// Publish one inferred decision in both the executable slot and any already admitted checked-input profile. The
+/// profile remains the authority for explicit inputs and returned views, so its complete slot inventory must not
+/// drift merely because this later whole-body analysis refined an ordinary input.
+fn retain_shared_parameter(body: &mut bir::Body, parameter_index: usize) {
+    let Some(parameter) = body.params.get_mut(parameter_index) else {
+        return;
+    };
+    parameter.input_access = incan_semantics_core::IncanInputAccess::InferredShared;
+    if let Some(retained) = body
+        .checked_input_profile
+        .as_mut()
+        .and_then(|profile| profile.parameters.get_mut(parameter_index))
+        && retained.slot == parameter_index
     {
-        return false;
+        retained.access = incan_semantics_core::IncanInputAccess::InferredShared;
     }
-    let mut changed = false;
-    for parameter in &mut body.params {
-        if !parameter.input_access.is_inferred()
-            || parameter.mutable
-            || !native_owner(&parameter.ty, &body.named_type_identities)
-        {
-            continue;
-        }
-        let context = ReadContext {
-            locals: &body.locals,
-            signatures,
-            local: parameter.local,
-            owner: &parameter.ty,
-            cursor: false,
-        };
-        if readonly(&body.block.stmts, &context) {
-            parameter.ty = IncanType::Ref(Box::new(parameter.ty.clone()));
-            body.locals[parameter.local.index()].ty = parameter.ty.clone();
-            changed = true;
-        }
-    }
-    changed
+}
+
+/// Seed every ordinary non-Copy input whose source contract leaves access inferred. The decreasing fixed point removes
+/// any seed whose body moves, stores, returns, mutates or passes the value to a non-shared input. Open trait slots and
+/// their checked implementations keep the trait's authored ABI because an implementation body cannot refine that
+/// independently shared contract.
+fn candidate_parameters(module: &bir::BodyIrModule) -> HashSet<(usize, usize)> {
+    let trait_implementations = module
+        .trait_implementations
+        .iter()
+        .map(|implementation| implementation.implementation.clone())
+        .collect::<HashSet<_>>();
+    module
+        .bodies
+        .iter()
+        .enumerate()
+        .filter(|(_, body)| {
+            body.type_parameters.is_empty()
+                && !body.is_async
+                && !body.is_generator()
+                && body.extern_delegation.is_none()
+                && body.native_attributes.is_empty()
+                && body
+                    .canonical
+                    .as_ref()
+                    .is_none_or(|identity| !trait_implementations.contains(identity))
+                && !has_open_trait_receiver(body)
+        })
+        .flat_map(|(body_index, body)| {
+            body.params
+                .iter()
+                .enumerate()
+                .filter(|(_, parameter)| parameter_is_candidate(body, parameter))
+                .map(move |(parameter_index, _)| (body_index, parameter_index))
+        })
+        .collect()
+}
+
+/// Whether this is a trait-owned default body whose receiver is still the open `Self` contract. Abstract trait
+/// methods have no body; concrete adopters are excluded separately through the checked implementation registry.
+fn has_open_trait_receiver(body: &bir::Body) -> bool {
+    body.params.first().is_some_and(|parameter| {
+        parameter.ty == IncanType::SelfType
+            && body
+                .locals
+                .get(parameter.local.index())
+                .is_some_and(|local| matches!(local.origin, bir::LocalOrigin::Receiver { .. }))
+    })
+}
+
+/// Keep receivers, rest packs, defaults, explicit reference carriers, callable storage, explicit modes, mutable
+/// inputs and Copy values on their established passing rules. Function-item adapters may borrow inside their
+/// forwarding body, but callable-valued parameters keep the by-value closure carrier that lowering supports.
+/// Defaults need a retained invocation owner before they can publish a borrowed parameter contract.
+fn parameter_is_candidate(body: &bir::Body, parameter: &bir::CallableParam) -> bool {
+    parameter.input_access == incan_semantics_core::IncanInputAccess::Inferred
+        && parameter.kind == incan_semantics_core::IncanCallableParamKind::Normal
+        && body
+            .params
+            .iter()
+            .all(|input| input.kind == incan_semantics_core::IncanCallableParamKind::Normal)
+        && matches!(parameter.default, bir::CallableParamDefault::Required)
+        && !parameter.mutable
+        && !parameter.native_owned
+        && !parameter.ty.abi_v0_facts().ownership.is_trivially_copy()
+        && !matches!(parameter.ty, IncanType::Ref(_) | IncanType::RefMut(_))
+        && !matches!(parameter.ty, IncanType::Function { .. })
+        && !matches!(parameter.ty, IncanType::TypeVar(_) | IncanType::SelfType)
+        && native_owner(&parameter.ty, &body.named_type_identities)
+        && !body
+            .locals
+            .get(parameter.local.index())
+            .is_some_and(|local| matches!(local.origin, bir::LocalOrigin::Receiver { .. }))
+}
+
+/// Prove one candidate against the current call-graph hypothesis without changing any signature.
+fn parameter_is_read_only(body: &bir::Body, parameter: &bir::CallableParam, signatures: &[Signature]) -> bool {
+    let context = ReadContext {
+        locals: &body.locals,
+        signatures,
+        local: parameter.local,
+        owner: &parameter.ty,
+        cursor: false,
+    };
+    readonly(&body.block.stmts, &context)
 }
 
 /// Finalize only this body's call-loan operands from selected final signatures, including its lexical closures and
 /// generators. Callee signature production and shared-loan group settlement have already finished.
 pub(super) fn retain_body_calls(body: &mut bir::Body, signatures: &[Signature]) {
     walk_calls_mut(&mut body.block.stmts, &mut |statement| {
-        retain_call_loans(statement, signatures)
+        retain_function_item_adapter(statement, signatures);
+        retain_call_loans(statement, signatures);
     });
 }
 
-/// Combine native selections and concrete local bodies without deriving a signature from a name.
-fn signatures(module: &bir::BodyIrModule) -> Vec<Signature> {
-    module
-        .loaf_callables
-        .iter()
-        .map(|callable| Signature {
-            identity: callable.canonical.clone(),
-            arguments: callable.native_type_arguments.clone(),
-            parameters: callable.parameters.clone(),
+/// Keep a named function's declared by-value callable shape by lowering its forwarding closure as an adapter when
+/// the selected body acquired inferred shared access. Direct function-item lowering is valid only when both input
+/// contracts agree; the adapter owns its callable argument and lends it only for the internal call.
+fn retain_function_item_adapter(statement: &mut bir::Statement, signatures: &[Signature]) {
+    let bir::StatementKind::Assign {
+        rvalue: bir::Rvalue::Closure { params, body, .. },
+        ..
+    } = &mut statement.kind
+    else {
+        return;
+    };
+    if !body.function_item {
+        return;
+    }
+    let [
+        bir::Statement {
+            kind: bir::StatementKind::Call { callee, args, .. },
+            ..
+        },
+    ] = body.stmts.as_slice()
+    else {
+        return;
+    };
+    let adapts_inferred_shared = args.iter().enumerate().any(|(index, _)| {
+        call_parameter(callee, index, signatures).is_some_and(|parameter| {
+            parameter.access == incan_semantics_core::IncanInputAccess::InferredShared
+                && params
+                    .get(index)
+                    .is_some_and(|adapter| adapter.input_access != parameter.access)
         })
-        .chain(module.bodies.iter().filter_map(body_signature))
+    });
+    if adapts_inferred_shared {
+        body.function_item = false;
+    }
+}
+
+/// Combine linked, previously settled module and current-body signatures without deriving a callable from its name.
+fn collect_signatures(
+    module: &bir::BodyIrModule,
+    context: &[bir::BodyIrModule],
+    candidates: &HashSet<(usize, usize)>,
+) -> Vec<Signature> {
+    context
+        .iter()
+        .flat_map(module_signatures)
+        .chain(module.loaf_callables.iter().map(loaf_signature))
+        .chain(
+            module
+                .bodies
+                .iter()
+                .enumerate()
+                .filter_map(|(body_index, body)| body_signature(body, body_index, candidates)),
+        )
         .collect()
 }
 
-/// Project one body's parameter ABI independently from its executable statements. Anonymous frames have no
-/// canonical callable key and therefore supply no named signature.
-pub(super) fn body_signature(body: &bir::Body) -> Option<Signature> {
+/// Read already settled signatures from a dependency module.
+fn module_signatures(module: &bir::BodyIrModule) -> impl Iterator<Item = Signature> + '_ {
+    module.loaf_callables.iter().map(loaf_signature).chain(
+        module
+            .bodies
+            .iter()
+            .enumerate()
+            .filter_map(|(body_index, body)| body_signature(body, body_index, &HashSet::new())),
+    )
+}
+
+/// Prefer an authenticated declaration frame's access facts; a native callable without one retains its reference
+/// spelling as the shared/exclusive authority it already had.
+fn loaf_signature(callable: &bir::LoafCallable) -> Signature {
+    let parameters = callable
+        .declaration_frame()
+        .filter(|frame| frame.params.len() == callable.parameters.len())
+        .map(|frame| {
+            frame
+                .params
+                .iter()
+                .enumerate()
+                .map(|(index, parameter)| SignatureParameter {
+                    ty: callable.parameters[index].clone(),
+                    access: parameter.input_access,
+                })
+                .collect()
+        })
+        .unwrap_or_else(|| {
+            callable
+                .parameters
+                .iter()
+                .map(|ty| SignatureParameter {
+                    ty: ty.clone(),
+                    access: incan_semantics_core::IncanInputAccess::Inferred,
+                })
+                .collect()
+        });
+    Signature {
+        identity: callable.canonical.clone(),
+        generic: !callable.type_parameters.is_empty(),
+        arguments: callable.native_type_arguments.clone(),
+        parameters,
+    }
+}
+
+/// Project one body's parameter access independently from its executable statements. Anonymous frames supply no
+/// named signature. Candidate inputs are shared only for this fixed-point hypothesis.
+fn body_signature(body: &bir::Body, body_index: usize, candidates: &HashSet<(usize, usize)>) -> Option<Signature> {
     Some(Signature {
         identity: body.canonical.clone()?,
+        generic: !body.type_parameters.is_empty(),
         arguments: Vec::new(),
-        parameters: body.params.iter().map(|parameter| parameter.ty.clone()).collect(),
+        parameters: body
+            .params
+            .iter()
+            .enumerate()
+            .map(|(parameter_index, parameter)| SignatureParameter {
+                ty: parameter.ty.clone(),
+                access: if candidates.contains(&(body_index, parameter_index)) {
+                    incan_semantics_core::IncanInputAccess::InferredShared
+                } else {
+                    parameter.input_access
+                },
+            })
+            .collect(),
     })
 }
 
 /// Only native owners with retained declaration identity participate; source models and open types keep their ABI.
 fn native_owner(ty: &IncanType, identities: &std::collections::BTreeMap<String, CanonicalSymbolId>) -> bool {
-    let IncanType::Named(name) = ty else { return false };
-    identities.get(name).is_some_and(|identity| {
-        identity.kind == SemanticSourceTargetKind::RustItem && matches!(identity.origin, SymbolOrigin::RustCrate(_))
-    })
-}
-
-/// A private function exposed as a callable retains the callable's owned argument contract.
-fn escaped_functions(module: &bir::BodyIrModule) -> HashSet<CanonicalSymbolId> {
-    module.bodies.iter().flat_map(body_escapes).collect()
-}
-
-/// Produce the callable-value escape contribution of one lexical owner, retaining the original function-item
-/// criterion. A caller queries membership across these contributions before refining a private parameter ABI.
-pub(super) fn body_escapes(body: &bir::Body) -> HashSet<CanonicalSymbolId> {
-    let mut escaped = HashSet::new();
-    walk(&body.block.stmts, &mut |statement| {
-        if let bir::StatementKind::Assign {
-            rvalue: bir::Rvalue::Closure { body, .. },
-            ..
-        } = &statement.kind
-            && body.function_item
-        {
-            walk(&body.stmts, &mut |statement| {
-                if let bir::StatementKind::Call {
-                    callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
-                    ..
-                } = &statement.kind
-                    && let Some(identity) = &target.canonical
-                {
-                    escaped.insert(identity.clone());
-                }
-            });
-        }
-    });
-    escaped
+    let (name, checked_path) = match ty {
+        IncanType::Named(name) => (name, false),
+        IncanType::Generic { base: name, .. } | IncanType::RustInteropPath(name) => (name, true),
+        _ => return false,
+    };
+    let declaration_name = name.rsplit("::").next().unwrap_or(name);
+    identities
+        .get(name)
+        .or_else(|| {
+            identities
+                .values()
+                .find(|identity| identity.declaration_name == declaration_name)
+        })
+        .is_some_and(|identity| {
+            identity.kind == SemanticSourceTargetKind::RustItem && matches!(identity.origin, SymbolOrigin::RustCrate(_))
+        })
+        || checked_path && bir::rust_item_identity(name).is_some()
 }
 
 /// Borrow a shared native field binding or traversal cursor when every use stays read-only. A field binding starts
@@ -289,14 +465,17 @@ fn shared_statement(statement: &bir::Statement, context: &ReadContext<'_>) -> bo
             args.iter().enumerate().all(|(index, argument)| {
                 let Some(value) = argument.as_one() else { return false };
                 !uses(value, context.local)
-                    || call_parameter(callee, index, context.signatures)
-                        .is_some_and(|ty| matches!(ty, IncanType::Ref(inner) if inner.as_ref() == context.owner))
+                    || matches!(value, bir::Operand::Place(read) if read.fact == bir::OwnershipFact::Borrow)
+                    || call_parameter(callee, index, context.signatures).and_then(SignatureParameter::shared_owner)
+                        == Some(context.owner)
             })
         }
         S::If { cond, .. } => !uses(cond, context.local),
         S::Loop { .. } | S::UnsafeRegion { .. } | S::Drop { .. } | S::Continue => true,
-        S::Return { value } | S::Break { value } => value.as_ref().is_none_or(|value| !uses(value, context.local)),
-        S::Expr { value } => !uses(value, context.local),
+        S::Return { value } | S::Break { value } => value
+            .as_ref()
+            .is_none_or(|value| !uses(value, context.local) || scalar_projection(value, context.local)),
+        S::Expr { value } => !uses(value, context.local) || scalar_projection(value, context.local),
         S::IterNext {
             destination, iterator, ..
         } => destination.local_id() != Some(context.local) && !uses(iterator, context.local),
@@ -348,18 +527,43 @@ fn uses(value: &bir::Operand, local: bir::LocalId) -> bool {
     matches!(value, bir::Operand::Place(read) if read.place.local_id() == Some(local))
 }
 
-/// Resolve a slot only from the retained canonical target, instantiation and checked argument binding.
-fn call_parameter<'a>(callee: &bir::Callee, index: usize, signatures: &'a [Signature]) -> Option<&'a IncanType> {
-    let bir::Callee::Function(bir::CallableTarget::Named(target)) = callee else {
-        return None;
+/// Resolve a function or method slot only from the retained canonical target, instantiation and checked argument
+/// binding. A method binding excludes its receiver, while its body signature keeps that receiver in slot zero.
+fn call_parameter<'a>(
+    callee: &bir::Callee,
+    index: usize,
+    signatures: &'a [Signature],
+) -> Option<&'a SignatureParameter> {
+    let (identity, arguments, slot) = match callee {
+        bir::Callee::Function(bir::CallableTarget::Named(target)) => (
+            target.canonical.as_ref()?,
+            &target.type_args,
+            target.binding.slot_arguments()?.get(index)?.slot,
+        ),
+        bir::Callee::Method(target) => {
+            let slot = if index == 0 {
+                0
+            } else {
+                target.binding.slot_arguments()?.get(index - 1)?.slot + 1
+            };
+            (target.canonical.as_ref()?, &target.type_args, slot)
+        }
+        _ => return None,
     };
-    let identity = target.canonical.as_ref()?;
-    let slot = target.binding.slot_arguments()?.get(index)?.slot;
-    let mut selected = signatures
+    let mut exact = signatures
         .iter()
-        .filter(|signature| signature.identity == *identity && signature.arguments == target.type_args);
-    let signature = selected.next()?;
-    if selected.any(|other| other.parameters != signature.parameters) {
+        .filter(|signature| signature.identity == *identity && signature.arguments == *arguments);
+    if let Some(signature) = exact.next() {
+        if exact.any(|other| other.parameters != signature.parameters) {
+            return None;
+        }
+        return signature.parameters.get(slot);
+    }
+    let mut generic = signatures
+        .iter()
+        .filter(|signature| signature.identity == *identity && signature.generic);
+    let signature = generic.next()?;
+    if generic.any(|other| other.parameters != signature.parameters) {
         return None;
     }
     signature.parameters.get(slot)
@@ -370,7 +574,9 @@ fn retain_call_loans(statement: &mut bir::Statement, signatures: &[Signature]) {
     if let bir::StatementKind::Call { callee, args, .. } = &mut statement.kind {
         for (index, argument) in args.iter_mut().enumerate() {
             if let bir::ArgumentElement::One(bir::Operand::Place(read)) = argument
-                && matches!(call_parameter(callee, index, signatures), Some(IncanType::Ref(_)))
+                && call_parameter(callee, index, signatures)
+                    .and_then(SignatureParameter::inferred_shared_owner)
+                    .is_some()
             {
                 read.fact = bir::OwnershipFact::Borrow;
                 read.last_use = false;

@@ -1,4 +1,4 @@
-# behavior: package callables retain mut inputs, partial defaults, and decorated native tuple-reference parameters
+# behavior: package callables retain mut inputs, partial defaults, decorated native tuple-reference parameters, and inferred shared access for plain non-Clone parameters
 # expect-stdout:
 #   2
 #   3
@@ -12,8 +12,9 @@
 
 """Exercise package callables through values, defaults, source mutation, and decorated native references."""
 
-from pub::callability import Counter, default_build, grow, hyperquant, keep_refs, map_owned, new_counter, plus_one
+from pub::callability import Counter, default_build, grow, hyperquant, keep_refs, map_owned, new_counter, plus_one, poisoned
 from rust::std::vec import Vec
+from rust::std::sync import Mutex
 from pub::callability import Adder, ForwardedUnary, NativeDebug, Unary, apply_custom, apply_unary
 from std.io import BinaryReader
 from std.traits.callable import Callable1 as DirectUnary
@@ -76,9 +77,12 @@ def show_mut_parameters() -> None:
 
 
 def main() -> None:
-    """1. Bind a decorated native reference container. 2. Exercise callable values, defaults, and source mutation."""
+    """1. Bind native owners across the package boundary. 2. Exercise callable values, defaults, and mutation."""
     # 1. Keep the owned vector ABI and its nested exclusive references across the package boundary.
     keep_refs(Vec.new())
+    lock = Mutex.new(7)
+    assert not poisoned(lock)
+    assert not poisoned(lock)
     # 2. Retain the existing callable, default, and caller mutation observations.
     show_callable_values()
     show_partial_defaults()

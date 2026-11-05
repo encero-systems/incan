@@ -11,7 +11,7 @@ from pub::incan_mir_plan import (
     assign as plan_assign,
     place as plan_place,
 )
-from explicit_arguments import argument_access, explicit_place_argument
+from explicit_arguments import argument_access, explicit_place_argument, reference_contract
 from layout_types import native_source_type
 from rust::incan_semantics_core import IncanInputAccess
 from rust::incan_semantics_core::body_ir import (
@@ -294,7 +294,9 @@ def explicit_argument_operand(
     span: SourceSpan,
     access: IncanInputAccess,
 ) -> Result[Operand, str]:
-    """Consume checked storage or a fresh owned literal; borrowed constants must already have retained call storage."""
+    """Consume checked storage or materialize fresh inferred-shared and owned literals for this invocation."""
+    if access == IncanInputAccess.InferredShared:
+        return inferred_shared_argument(builder, value, ty, span)
     match value:
         RustOperand.Place(read) =>
             match read.place.global():
@@ -307,6 +309,77 @@ def explicit_argument_operand(
         RustOperand.Constant(constant) => return explicit_constant_argument(builder, constant, ty, access, span)
 
 
+def inferred_shared_argument(
+    mut builder: Builder,
+    value: &RustOperand,
+    expected: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """
+    Borrow an exact retained owner directly, while preserving the established materialization path for coercions.
+
+    The analysis fact changes a plain owner ABI to shared access. It does not erase a checked call-site conversion:
+    ranges becoming lists, literals becoming frozen views, and callable envelopes must first use their ordinary
+    parameter materialization. Exact stored owners still require the retained Body IR borrow fact.
+    """
+    match reference_contract(expected):
+        Err(_reason) => return call_argument_operand(builder, value, expected, span)
+        Ok((referent, writable)) =>
+            if writable:
+                return Err("invalid Body IR inferred shared reference carrier")
+            match value:
+                RustOperand.Place(read) =>
+                    if read.place.global() == None and not is_element_place(builder, read.place)?:
+                        source = scalar_place(builder, read.place, span)?
+                        actual = place_type(builder.locals, source)
+                        if actual == referent:
+                            return explicit_place_argument(
+                                builder,
+                                source,
+                                read.fact,
+                                expected,
+                                IncanInputAccess.InferredShared,
+                                span,
+                            )
+                        match reference_contract(actual):
+                            Ok((held, _held_writable)) =>
+                                if held == referent:
+                                    return explicit_place_argument(
+                                        builder,
+                                        source,
+                                        read.fact,
+                                        expected,
+                                        IncanInputAccess.InferredShared,
+                                        span,
+                                    )
+                            Err(_reason) => pass
+                RustOperand.Constant(_constant) => pass
+            return materialized_shared_argument(builder, value, expected, referent, span)
+
+
+def materialized_shared_argument(
+    mut builder: Builder,
+    value: &RustOperand,
+    expected: PlanType,
+    referent: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Apply a checked conversion to fresh owned storage, then lend that exact storage for this invocation."""
+    materialized = call_argument_operand(builder, value, referent, span)?
+    if operand_type(builder, materialized)? != referent:
+        return Err("unsupported Body IR inferred shared materialization mismatch")
+    storage = temporary(builder, referent, span)
+    builder.emit(plan_assign(storage, RvalueKind.Use(materialized), span))
+    return explicit_place_argument(
+        builder,
+        storage,
+        OwnershipFact.Borrow,
+        expected,
+        IncanInputAccess.InferredShared,
+        span,
+    )
+
+
 def explicit_constant_argument(
     mut builder: Builder,
     constant: &RustConstant,
@@ -314,7 +387,7 @@ def explicit_constant_argument(
     access: IncanInputAccess,
     span: SourceSpan,
 ) -> Result[Operand, str]:
-    """A fresh owned literal has no earlier owner to retain or clone; shared/exclusive input storage stays mandatory."""
+    """Give an inferred-shared fresh literal invocation storage; explicit loans still require authored storage."""
     if access != IncanInputAccess.Owned:
         return Err("unsupported Body IR borrowed constant without retained local storage")
     match constant:
