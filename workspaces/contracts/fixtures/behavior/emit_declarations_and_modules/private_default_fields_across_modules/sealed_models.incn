@@ -3,7 +3,7 @@ pub model Sealed:
     pub label: str
     revision: int = 1
 
-    def describe(self) -> str:
+    pub def describe(self) -> str:
         return f"{self.label} {self.secret} r{self.revision}"
 
 

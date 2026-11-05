@@ -10,7 +10,7 @@ trait Renamable:
 class Example with Renamable:
     where = alias filter
 
-    def filter(self, value: int) -> int:
+    pub def filter(self, value: int) -> int:
         return value
 
 

@@ -34,7 +34,7 @@ pub class Channel:
     pub incoming: Credits = Credits(limit=DATA_CREDITS)
     pub retired: bool = false
 
-    def send(mut self, request: bytes, message: Message) -> Result[SendOutcome, Refusal]:
+    pub def send(mut self, request: bytes, message: Message) -> Result[SendOutcome, Refusal]:
         """Apply back-pressure before encoding: cancellation and acknowledgments bypass data credits."""
         if self.retired:
             return Err(Refusal(kind=RefusalKind.Transport, detail="engine connection is retired"))
@@ -55,7 +55,7 @@ pub class Channel:
             self.pending.spend(sequence).map_err(credit_refusal)?
         return Ok(SendOutcome.Sent(sequence))
 
-    def receive(mut self) -> Result[Envelope, Refusal]:
+    pub def receive(mut self) -> Result[Envelope, Refusal]:
         """Retire on malformed, duplicate or stale frames; payload allocation follows validated headers."""
         if self.retired:
             return Err(Refusal(kind=RefusalKind.Transport, detail="engine connection is retired"))
@@ -98,7 +98,7 @@ pub class Channel:
             (_) => Refusal(kind=RefusalKind.Credit, detail="acknowledgment names no outstanding frame"),
         )
 
-    def acknowledge(mut self, frame: Envelope) -> Result[None, Refusal]:
+    pub def acknowledge(mut self, frame: Envelope) -> Result[None, Refusal]:
         """Return credit only after the caller consumes one data frame; control needs no acknowledgment."""
         if frame.header.flags == CONTROL:
             return Ok(None)

@@ -87,7 +87,7 @@ Classes do **not** support field metadata/aliases. If you need schema mapping, u
 class Counter:
     value: int
 
-    def increment(mut self) -> None:
+    pub def increment(mut self) -> None:
         self.value += 1
 
 def main() -> None:

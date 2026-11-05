@@ -17,7 +17,7 @@ class SourceScores:
 
     marker: int
 
-    def values(self) -> Result[dict[str, int], str]:
+    pub def values(self) -> Result[dict[str, int], str]:
         """Provide an authored mapping whose scalar lookups remain owned."""
         return Ok({"x": 1})
 

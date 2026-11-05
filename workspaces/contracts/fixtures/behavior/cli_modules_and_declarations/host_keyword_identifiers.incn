@@ -25,7 +25,7 @@ model Slot:
 class Holder:
     use: int
 
-    def where(self) -> int:
+    pub def where(self) -> int:
         return self.use
 
 

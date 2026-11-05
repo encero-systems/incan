@@ -144,11 +144,11 @@ pub class Decoder:
         self.offset += count
         return Ok(value)
 
-    def number(mut self, width: int) -> Result[u64, Refusal]:
+    pub def number(mut self, width: int) -> Result[u64, Refusal]:
         """Read a fixed-width little-endian scalar."""
         return Ok(integer(self.take(width)?))
 
-    def text(mut self) -> Result[str, Refusal]:
+    pub def text(mut self) -> Result[str, Refusal]:
         """Read a length-prefixed strict UTF-8 field within the complete frame's byte bound."""
         size = int(self.number(4)?)
         raw = self.take(size)?
@@ -157,7 +157,7 @@ pub class Decoder:
             .map((value) => str(value))
             .map_err((_) => Refusal(kind=RefusalKind.Schema, detail="engine text is not UTF-8"))
 
-    def finish(self) -> Result[None, Refusal]:
+    pub def finish(self) -> Result[None, Refusal]:
         """Reject trailing fields; v1 does not negotiate optional extensions."""
         if self.offset != len(self.raw):
             return Err(Refusal(kind=RefusalKind.Schema, detail="trailing engine body bytes"))

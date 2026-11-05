@@ -26,10 +26,10 @@ model Box[T]:
 class Greeter:
     pub greeting: str
 
-    def greet(self, name: str, punct: str) -> str:
+    pub def greet(self, name: str, punct: str) -> str:
         return self.greeting + " " + name + punct
 
-    def make(self) -> str:
+    pub def make(self) -> str:
         hello = partial self.greet(punct="!")
         return hello("you")
 

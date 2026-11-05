@@ -38,7 +38,7 @@ pub model RegistryDemand:
     pub selection: RegistrySelection
     pub domain: str
 
-    def key(self) -> str:
+    pub def key(self) -> str:
         """Retain distinct requirements while deduplicating equivalent requests deterministically."""
         return f"{self.domain}:{self.selection.loaf}:{self.selection.requirement}:{sorted(self.selection.features)}"
 
@@ -54,7 +54,7 @@ pub model RegistryUnits:
     # Installation defaults are preferences; an authored project lock remains an exact producer constraint.
     pub installation_bindings: list[Tuple[str, str]] = []
 
-    def artifact_for(self, selection: RegistrySelection, domain: str) -> Result[str, str]:
+    pub def artifact_for(self, selection: RegistrySelection, domain: str) -> Result[str, str]:
         """Bind a root only from the graph's recorded selection, selecting a singleton request when needed."""
         demand = RegistryDemand(selection=selection, domain=domain)
         mut selected = self
@@ -70,7 +70,7 @@ pub model RegistryUnits:
         """Bind the coherent closure of one explicit registry request."""
         return self.artifact_for(RegistrySelection(loaf=loaf, requirement=requirement, features=features), domain)
 
-    def select(self, demands: list[RegistryDemand], profile: str = "") -> Result[RegistryUnits, str]:
+    pub def select(self, demands: list[RegistryDemand], profile: str = "") -> Result[RegistryUnits, str]:
         """
         Resolve all requested compiled roots as one graph; never mix independently chosen producers.
 

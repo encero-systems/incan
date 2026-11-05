@@ -135,13 +135,13 @@ class GraphReader:
     roots: list[str] = []
     hasher: Sha256Hasher = sha256.new()
 
-    def begin(mut self) -> None:
+    pub def begin(mut self) -> None:
         """Initialize framing and canonical array hashing without exposing mutable reader state."""
         if self.array:
             self.phase = "array"
         self.hasher.update(b"[")
 
-    def feed(mut self, chunk: bytes) -> Result[None, str]:
+    pub def feed(mut self, chunk: bytes) -> Result[None, str]:
         """Retain only the current object's bytes, including objects crossing a chunk boundary."""
         for index in range(len(chunk)):
             byte = int(chunk[index])
@@ -257,7 +257,7 @@ class GraphReader:
                 return Err(f"an export copied a dependency-owned record: {path}")
         return Ok(None)
 
-    def finish(mut self) -> Result[GraphDocument, str]:
+    pub def finish(mut self) -> Result[GraphDocument, str]:
         """Reject truncated objects or arrays before returning selected facts and the complete stream's digest."""
         if self.depth != 0 or self.count == 0:
             return Err("a graph export is empty or truncated")

@@ -531,10 +531,10 @@ class InputFields:
     offset: int = 0
     strict_indices: bool = true
 
-    def position(self) -> int:
+    pub def position(self) -> int:
         return self.offset
 
-    def parameters(mut self) -> Result[None, CodecFault]:
+    pub def parameters(mut self) -> Result[None, CodecFault]:
         self.offset = parameters_end(self.values, self.offset, 0)?
         return Ok(None)
 
@@ -547,7 +547,7 @@ class InputFields:
             indices.append(self.number()?)
         return Ok(indices)
 
-    def value_type(mut self) -> Result[None, CodecFault]:
+    pub def value_type(mut self) -> Result[None, CodecFault]:
         self.offset = type_end(self.values, self.offset, 0)?
         return Ok(None)
 
@@ -558,13 +558,13 @@ class InputFields:
         self.offset += 1
         return Ok(value)
 
-    def tag(mut self, allowed: list[str]) -> Result[str, CodecFault]:
+    pub def tag(mut self, allowed: list[str]) -> Result[str, CodecFault]:
         value = self.token()?
         if value not in allowed:
             return Err(CodecFault.Malformed)
         return Ok(value)
 
-    def handle(mut self) -> Result[None, CodecFault]:
+    pub def handle(mut self) -> Result[None, CodecFault]:
         if self.token()? == "":
             return Err(CodecFault.Malformed)
         return Ok(None)
@@ -572,7 +572,7 @@ class InputFields:
     def number(mut self) -> Result[int, CodecFault]:
         return decimal(self.token()?)
 
-    def count(mut self) -> Result[int, CodecFault]:
+    pub def count(mut self) -> Result[int, CodecFault]:
         value = self.number()?
         if value > len(self.values) - self.offset:
             return Err(CodecFault.Malformed)
@@ -604,7 +604,7 @@ class InputFields:
             self.handle()?
         return Ok(None)
 
-    def ordered(self, previous: str, start: int) -> Result[str, CodecFault]:
+    pub def ordered(self, previous: str, start: int) -> Result[str, CodecFault]:
         """A map key uses framed UTF-8 tokens, never native identity order or ambiguous separators."""
         mut parts: list[str] = []
         for value in self.values[start:self.offset]:
@@ -633,7 +633,7 @@ class InputFields:
                 closure_nodes.append(self.number()?)
         return Ok(closure_nodes)
 
-    def graph(mut self, strict_indices: bool) -> Result[None, CodecFault]:
+    pub def graph(mut self, strict_indices: bool) -> Result[None, CodecFault]:
         """Retain every permission, dependency, invocation and edge; indices address this graph's own inventories."""
         self.strict_indices = strict_indices
         self.handle()?

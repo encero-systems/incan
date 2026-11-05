@@ -187,13 +187,13 @@ pub def encode_packet(packet: Packet) -> int:
 pub class Signer:
     handle: Engine
 
-    def update(mut self, chunk: bytes) -> None:
+    pub def update(mut self, chunk: bytes) -> None:
         Mac.update(self.handle, chunk.as_slice())
 
-    def is_ready(self) -> bool:
+    pub def is_ready(self) -> bool:
         return Mac.is_ready(self.handle)
 
-    def finish(self) -> bytes:
+    pub def finish(self) -> bytes:
         return Mac.finalize(self.handle)
 
 

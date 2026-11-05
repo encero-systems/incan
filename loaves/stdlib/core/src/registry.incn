@@ -24,7 +24,7 @@ pub model RegistrySubject:
     pub qualified_name: str
 
     @staticmethod
-    def current_unit() -> Self:
+    pub def current_unit() -> Self:
         """
         Return the explicit compilation-unit subject placeholder.
 
@@ -34,12 +34,12 @@ pub model RegistrySubject:
         return RegistrySubject(kind=SubjectKind.CompilationUnit, qualified_name="<current-unit>")
 
     @staticmethod
-    def package() -> Self:
+    pub def package() -> Self:
         """Return the explicit defining-package subject placeholder."""
         return RegistrySubject(kind=SubjectKind.Package, qualified_name="<package>")
 
     @staticmethod
-    def _checked_current_unit(qualified_name: str) -> Self:
+    pub def _checked_current_unit(qualified_name: str) -> Self:
         """
         Materialize the compiler-checked defining compilation-unit identity.
 
@@ -49,7 +49,7 @@ pub model RegistrySubject:
         return RegistrySubject(kind=SubjectKind.CompilationUnit, qualified_name=qualified_name)
 
     @staticmethod
-    def _checked_package(qualified_name: str) -> Self:
+    pub def _checked_package(qualified_name: str) -> Self:
         """Materialize the compiler-checked defining package identity."""
         return RegistrySubject(kind=SubjectKind.Package, qualified_name=qualified_name)
 
@@ -71,25 +71,25 @@ pub class Registry[K, T]:
     entries: list[RegistryEntry[K, T]]
 
     @staticmethod
-    def define(subjects: list[SubjectKind]) -> Self:
+    pub def define(subjects: list[SubjectKind]) -> Self:
         """Create a declarative registry with its permitted subject kinds."""
         return Registry(subjects=subjects, entries=[])
 
-    def loaded_entries(self) -> list[RegistryEntry[K, T]]:
+    pub def loaded_entries(self) -> list[RegistryEntry[K, T]]:
         """Return entries made available by modules loaded in this process."""
         return self.entries
 
-    def entry(mut self, key: K, subject: RegistrySubject, descriptor: T) -> RegistryEntry[K, T]:
+    pub def entry(mut self, key: K, subject: RegistrySubject, descriptor: T) -> RegistryEntry[K, T]:
         """Construct an explicit compilation-unit or package entry for a checked static."""
         entry = RegistryEntry(key=key, descriptor=descriptor, subject=subject)
         self.entries.append(entry)
         return entry
 
-    def _describe(mut self, key: K, descriptor: T, subject: RegistrySubject) -> None:
+    pub def _describe(mut self, key: K, descriptor: T, subject: RegistrySubject) -> None:
         """Record one compiler-originated declaration description for this process."""
         self.entries.append(RegistryEntry(key=key, descriptor=descriptor, subject=subject))
 
-    def _describe_function(mut self, key: K, descriptor: T, qualified_name: str) -> None:
+    pub def _describe_function(mut self, key: K, descriptor: T, qualified_name: str) -> None:
         """Record one compiler-originated function description for this process."""
         self.entries.append(
             RegistryEntry(
@@ -99,7 +99,7 @@ pub class Registry[K, T]:
             ),
         )
 
-    def _describe_method(mut self, key: K, descriptor: T, qualified_name: str) -> None:
+    pub def _describe_method(mut self, key: K, descriptor: T, qualified_name: str) -> None:
         """Record one compiler-originated method description for this process."""
         self.entries.append(
             RegistryEntry(

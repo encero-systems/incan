@@ -45,7 +45,7 @@ pub model Counter[T with (Clone, Eq)]:
         return Counter(entries=[])
 
     @staticmethod
-    def from_iter(items: list[T]) -> Self:
+    pub def from_iter(items: list[T]) -> Self:
         """
         Count values from a list.
 
@@ -101,7 +101,7 @@ pub model Counter[T with (Clone, Eq)]:
         """
         return self.get(key)
 
-    def get(self, key: T) -> int:
+    pub def get(self, key: T) -> int:
         """
         Return the count for a value.
 
@@ -116,7 +116,7 @@ pub model Counter[T with (Clone, Eq)]:
             return 0
         return self.entries[index].value
 
-    def set(mut self, key: T, count: int) -> None:
+    pub def set(mut self, key: T, count: int) -> None:
         """
         Store a count for a value.
 
@@ -136,7 +136,7 @@ pub model Counter[T with (Clone, Eq)]:
         else:
             self.entries.append(_MapEntry(key=key, value=count))
 
-    def increment(mut self, key: T, amount: int = 1) -> None:
+    pub def increment(mut self, key: T, amount: int = 1) -> None:
         """
         Increase a value's count.
 
@@ -148,7 +148,7 @@ pub model Counter[T with (Clone, Eq)]:
             return raise_value_error("Counter.increment requires a non-negative amount")
         self.set(key, self.get(key) + amount)
 
-    def decrement(mut self, key: T, amount: int = 1) -> None:
+    pub def decrement(mut self, key: T, amount: int = 1) -> None:
         """
         Decrease a value's count.
 
@@ -164,7 +164,7 @@ pub model Counter[T with (Clone, Eq)]:
         else:
             self.set(key, current - amount)
 
-    def subtract_strict(self, other: Counter[T]) -> Result[Counter[T], str]:
+    pub def subtract_strict(self, other: Counter[T]) -> Result[Counter[T], str]:
         """
         Subtract another counter without flooring negative results.
 
@@ -185,7 +185,7 @@ pub model Counter[T with (Clone, Eq)]:
                 return Err("Counter subtraction would produce a negative count")
         return Ok(out)
 
-    def update(mut self, items: list[T]) -> None:
+    pub def update(mut self, items: list[T]) -> None:
         """
         Add one occurrence for each value.
 
@@ -195,7 +195,7 @@ pub model Counter[T with (Clone, Eq)]:
         for item in items:
             self.increment(item)
 
-    def subtract(mut self, items: list[T]) -> None:
+    pub def subtract(mut self, items: list[T]) -> None:
         """
         Subtract one occurrence for each value, flooring at zero.
 
@@ -205,7 +205,7 @@ pub model Counter[T with (Clone, Eq)]:
         for item in items:
             self.decrement(item)
 
-    def total(self) -> int:
+    pub def total(self) -> int:
         """
         Return the sum of all counts.
 
@@ -217,7 +217,7 @@ pub model Counter[T with (Clone, Eq)]:
             total += entry.value
         return total
 
-    def keys(self) -> list[T]:
+    pub def keys(self) -> list[T]:
         """
         Return distinct counted values.
 
@@ -226,7 +226,7 @@ pub model Counter[T with (Clone, Eq)]:
         """
         return _entry_keys(self.entries)
 
-    def items(self) -> list[Tuple[T, int]]:
+    pub def items(self) -> list[Tuple[T, int]]:
         """
         Return counted entries.
 
@@ -235,7 +235,7 @@ pub model Counter[T with (Clone, Eq)]:
         """
         return _entry_items(self.entries)
 
-    def elements(self) -> list[T]:
+    pub def elements(self) -> list[T]:
         """
         Expand counts into repeated values.
 
@@ -244,7 +244,7 @@ pub model Counter[T with (Clone, Eq)]:
         """
         return _counter_elements(self.entries)
 
-    def most_common(self, n: int = -1) -> list[Tuple[T, int]]:
+    pub def most_common(self, n: int = -1) -> list[Tuple[T, int]]:
         """
         Return the most common values.
 
@@ -256,7 +256,7 @@ pub model Counter[T with (Clone, Eq)]:
         """
         return _counter_most_common(self.entries, n)
 
-    def plus(self, other: Counter[T]) -> Counter[T]:
+    pub def plus(self, other: Counter[T]) -> Counter[T]:
         """
         Add counts from another counter.
 
@@ -273,7 +273,7 @@ pub model Counter[T with (Clone, Eq)]:
             out.increment(entry.key, entry.value)
         return out
 
-    def minus(self, other: Counter[T]) -> Counter[T]:
+    pub def minus(self, other: Counter[T]) -> Counter[T]:
         """
         Subtract counts from another counter.
 
@@ -290,7 +290,7 @@ pub model Counter[T with (Clone, Eq)]:
                 out.set(entry.key, remaining)
         return out
 
-    def index_of(self, key: T) -> int:
+    pub def index_of(self, key: T) -> int:
         return _entry_index(self.entries, key)
 
 
@@ -325,7 +325,7 @@ pub model DefaultDict[K with (Clone, Eq), V with Clone]:
         return DefaultDict(entries=[], default_value=None, default_factory=None)
 
     @staticmethod
-    def with_default(value: V) -> Self:
+    pub def with_default(value: V) -> Self:
         """
         Create a default dict from a stored default value.
 
@@ -338,7 +338,7 @@ pub model DefaultDict[K with (Clone, Eq), V with Clone]:
         return DefaultDict(entries=[], default_value=Some(value), default_factory=None)
 
     @staticmethod
-    def with_factory(factory: () -> V) -> Self:
+    pub def with_factory(factory: () -> V) -> Self:
         """
         Create a default dict from a default factory.
 
@@ -407,7 +407,7 @@ pub model DefaultDict[K with (Clone, Eq), V with Clone]:
         """
         self.set(key, value)
 
-    def get(self, key: K) -> Option[V]:
+    pub def get(self, key: K) -> Option[V]:
         """
         Inspect a materialized key without creating a default.
 
@@ -422,7 +422,7 @@ pub model DefaultDict[K with (Clone, Eq), V with Clone]:
             return None
         return Some(self.entries[index].value)
 
-    def set(mut self, key: K, value: V) -> None:
+    pub def set(mut self, key: K, value: V) -> None:
         """
         Insert or replace a key.
 
@@ -436,7 +436,7 @@ pub model DefaultDict[K with (Clone, Eq), V with Clone]:
         else:
             self.entries.append(_MapEntry(key=key, value=value))
 
-    def keys(self) -> list[K]:
+    pub def keys(self) -> list[K]:
         """
         Return materialized keys.
 
@@ -445,7 +445,7 @@ pub model DefaultDict[K with (Clone, Eq), V with Clone]:
         """
         return _entry_keys(self.entries)
 
-    def values(self) -> list[V]:
+    pub def values(self) -> list[V]:
         """
         Return materialized values.
 
@@ -454,7 +454,7 @@ pub model DefaultDict[K with (Clone, Eq), V with Clone]:
         """
         return _entry_values(self.entries)
 
-    def items(self) -> list[Tuple[K, V]]:
+    pub def items(self) -> list[Tuple[K, V]]:
         """
         Return materialized items.
 
@@ -463,7 +463,7 @@ pub model DefaultDict[K with (Clone, Eq), V with Clone]:
         """
         return _entry_items(self.entries)
 
-    def make_default(self) -> V:
+    pub def make_default(self) -> V:
         match self.default_factory:
             Some(factory) => return factory()
             None => pass
@@ -471,7 +471,7 @@ pub model DefaultDict[K with (Clone, Eq), V with Clone]:
             Some(value) => return value
             None => return raise_key_error("DefaultDict key is not present")
 
-    def index_of(self, key: K) -> int:
+    pub def index_of(self, key: K) -> int:
         return _entry_index(self.entries, key)
 
 
@@ -497,7 +497,7 @@ pub model OrderedDict[K with (Clone, Eq), V with Clone]:
         return OrderedDict(entries=[])
 
     @staticmethod
-    def from_items(items: list[Tuple[K, V]]) -> Self:
+    pub def from_items(items: list[Tuple[K, V]]) -> Self:
         """
         Create an ordered dict from pairs.
 
@@ -567,7 +567,7 @@ pub model OrderedDict[K with (Clone, Eq), V with Clone]:
         """
         self.set(key, value)
 
-    def set(mut self, key: K, value: V) -> None:
+    pub def set(mut self, key: K, value: V) -> None:
         """
         Insert or replace a key without moving existing keys.
 
@@ -581,7 +581,7 @@ pub model OrderedDict[K with (Clone, Eq), V with Clone]:
         else:
             self.entries.append(_MapEntry(key=key, value=value))
 
-    def get(self, key: K) -> Option[V]:
+    pub def get(self, key: K) -> Option[V]:
         """
         Look up a key without raising on absence.
 
@@ -596,7 +596,7 @@ pub model OrderedDict[K with (Clone, Eq), V with Clone]:
             return None
         return Some(self.entries[index].value)
 
-    def remove(mut self, key: K) -> V:
+    pub def remove(mut self, key: K) -> V:
         """
         Remove a key and return its value.
 
@@ -613,7 +613,7 @@ pub model OrderedDict[K with (Clone, Eq), V with Clone]:
         self.entries.remove(index)
         return value
 
-    def keys(self) -> list[K]:
+    pub def keys(self) -> list[K]:
         """
         Return stored keys.
 
@@ -622,7 +622,7 @@ pub model OrderedDict[K with (Clone, Eq), V with Clone]:
         """
         return _entry_keys(self.entries)
 
-    def values(self) -> list[V]:
+    pub def values(self) -> list[V]:
         """
         Return stored values.
 
@@ -631,7 +631,7 @@ pub model OrderedDict[K with (Clone, Eq), V with Clone]:
         """
         return _entry_values(self.entries)
 
-    def items(self) -> list[Tuple[K, V]]:
+    pub def items(self) -> list[Tuple[K, V]]:
         """
         Return stored items.
 
@@ -640,7 +640,7 @@ pub model OrderedDict[K with (Clone, Eq), V with Clone]:
         """
         return _entry_items(self.entries)
 
-    def index_of(self, key: K) -> int:
+    pub def index_of(self, key: K) -> int:
         return _entry_index(self.entries, key)
 
 
@@ -666,7 +666,7 @@ pub model SortedDict[K with (Clone, Ord), V with Clone]:
         return SortedDict(entries=[])
 
     @staticmethod
-    def from_items(items: list[Tuple[K, V]]) -> Self:
+    pub def from_items(items: list[Tuple[K, V]]) -> Self:
         """
         Create a sorted dict from pairs.
 
@@ -736,7 +736,7 @@ pub model SortedDict[K with (Clone, Ord), V with Clone]:
         """
         self.set(key, value)
 
-    def set(mut self, key: K, value: V) -> None:
+    pub def set(mut self, key: K, value: V) -> None:
         """
         Insert or replace a key while preserving sorted-key order.
 
@@ -751,7 +751,7 @@ pub model SortedDict[K with (Clone, Ord), V with Clone]:
         self.entries.append(_MapEntry(key=key, value=value))
         self.bubble_entry_left(len(self.entries) - 1)
 
-    def get(self, key: K) -> Option[V]:
+    pub def get(self, key: K) -> Option[V]:
         """
         Look up a key without raising on absence.
 
@@ -766,7 +766,7 @@ pub model SortedDict[K with (Clone, Ord), V with Clone]:
             return None
         return Some(self.entries[index].value)
 
-    def remove(mut self, key: K) -> V:
+    pub def remove(mut self, key: K) -> V:
         """
         Remove a key and return its value.
 
@@ -783,7 +783,7 @@ pub model SortedDict[K with (Clone, Ord), V with Clone]:
         self.entries.remove(index)
         return value
 
-    def keys(self) -> list[K]:
+    pub def keys(self) -> list[K]:
         """
         Return stored keys.
 
@@ -792,7 +792,7 @@ pub model SortedDict[K with (Clone, Ord), V with Clone]:
         """
         return _entry_keys(self.entries)
 
-    def values(self) -> list[V]:
+    pub def values(self) -> list[V]:
         """
         Return stored values.
 
@@ -801,7 +801,7 @@ pub model SortedDict[K with (Clone, Ord), V with Clone]:
         """
         return _entry_values(self.entries)
 
-    def items(self) -> list[Tuple[K, V]]:
+    pub def items(self) -> list[Tuple[K, V]]:
         """
         Return stored items.
 
@@ -810,7 +810,7 @@ pub model SortedDict[K with (Clone, Ord), V with Clone]:
         """
         return _entry_items(self.entries)
 
-    def range_keys(self, start: K, end: K) -> list[K]:
+    pub def range_keys(self, start: K, end: K) -> list[K]:
         """
         Return keys in a half-open range.
 
@@ -823,7 +823,7 @@ pub model SortedDict[K with (Clone, Ord), V with Clone]:
         """
         return _entry_range_keys(self.entries, start, end)
 
-    def range_items(self, start: K, end: K) -> list[Tuple[K, V]]:
+    pub def range_items(self, start: K, end: K) -> list[Tuple[K, V]]:
         """
         Return items in a half-open key range.
 
@@ -836,13 +836,13 @@ pub model SortedDict[K with (Clone, Ord), V with Clone]:
         """
         return _entry_range_items(self.entries, start, end)
 
-    def index_of(self, key: K) -> int:
+    pub def index_of(self, key: K) -> int:
         for index in range(len(self.entries)):
             if self.entries[index].key == key:
                 return index
         return -1
 
-    def bubble_entry_left(mut self, start: int) -> None:
+    pub def bubble_entry_left(mut self, start: int) -> None:
         mut index = start
         while index > 0 and self.entries[index].key < self.entries[index - 1].key:
             self.entries.swap(index, index - 1)

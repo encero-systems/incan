@@ -232,11 +232,11 @@ pub model PreparedInspection:
     pub selected: GraphOptions
     pub toolchain: Toolchain
 
-    def snapshot(self) -> Result[str, str]:
+    pub def snapshot(self) -> Result[str, str]:
         """Identify the exact prepared inputs used by feedback and the answer in this request."""
         return snapshot_identity(self.paths, self.root, self.selected.strict)
 
-    def respond(self, preferences: Dict[str, int] = {}) -> Result[str, str]:
+    pub def respond(self, preferences: Dict[str, int] = {}) -> Result[str, str]:
         """Render the admitted request over its prepared graph without reopening the dependency closure."""
         return response(self.paths, self.root, self.selected, self.toolchain, preferences)
 

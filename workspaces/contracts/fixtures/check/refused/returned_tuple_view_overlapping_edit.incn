@@ -5,7 +5,7 @@ class Address:
     pub city: str
     pub visits: int
 
-    def edit_city(mut self) -> Tuple[Reference[str], int] from self.city:
+    pub def edit_city(mut self) -> Tuple[Reference[str], int] from self.city:
         return (self.city, self.visits)
 
 

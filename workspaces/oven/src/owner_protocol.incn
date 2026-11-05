@@ -29,7 +29,7 @@ pub model Request:
     pub default_features: bool = true
     pub all_features: bool = false
 
-    def to_json(self) -> JsonValue:
+    pub def to_json(self) -> JsonValue:
         """The request as it travels."""
         return JsonValue.object(
             {
@@ -63,7 +63,7 @@ pub model Reply:
     pub trace: list[str] = []
     pub reason: str = ""
 
-    def to_json(self) -> JsonValue:
+    pub def to_json(self) -> JsonValue:
         """The reply as it travels."""
         return JsonValue.object(
             {

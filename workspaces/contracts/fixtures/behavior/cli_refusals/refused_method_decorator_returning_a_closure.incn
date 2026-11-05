@@ -5,7 +5,7 @@ class Box:
     value: int
 
     @as_int
-    def label(self, value: int) -> str:
+    pub def label(self, value: int) -> str:
         return f"{value}"
 
 

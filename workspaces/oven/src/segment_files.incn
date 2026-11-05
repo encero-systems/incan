@@ -39,7 +39,7 @@ pub model StoreError:
     pub object: str
     pub detail: str
 
-    def message(self) -> str:
+    pub def message(self) -> str:
         """One line naming the failure, its object and what was found."""
         return f"store {self.kind} error in {self.object}: {self.detail}"
 

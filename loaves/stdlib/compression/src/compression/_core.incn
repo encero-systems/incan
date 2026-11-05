@@ -24,7 +24,7 @@ pub enum Codec(str):
     Snappy = "snappy"
 
     @staticmethod
-    def all() -> list[Codec]:
+    pub def all() -> list[Codec]:
         """
         Return the stable codec order used by default autodetection filters.
 

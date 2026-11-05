@@ -26,7 +26,7 @@ pub model DirEntry:
 
     pub path: Path
 
-    def file_name(self) -> str:
+    pub def file_name(self) -> str:
         """
         Return the entry name.
 
@@ -35,7 +35,7 @@ pub model DirEntry:
         """
         return self.path.name()
 
-    def is_file(self) -> bool:
+    pub def is_file(self) -> bool:
         """
         Check whether this entry resolves to a regular file.
 
@@ -44,7 +44,7 @@ pub model DirEntry:
         """
         return self.path.is_file()
 
-    def is_dir(self) -> bool:
+    pub def is_dir(self) -> bool:
         """
         Check whether this entry resolves to a directory.
 
@@ -53,7 +53,7 @@ pub model DirEntry:
         """
         return self.path.is_dir()
 
-    def is_symlink(self) -> bool:
+    pub def is_symlink(self) -> bool:
         """
         Check whether this entry itself is a symbolic link.
 
@@ -62,7 +62,7 @@ pub model DirEntry:
         """
         return self.path.is_symlink()
 
-    def metadata(self) -> Result[PathStat, IoError]:
+    pub def metadata(self) -> Result[PathStat, IoError]:
         """
         Create a metadata view for this entry.
 
@@ -92,7 +92,7 @@ pub model PathStat:
     pub path: Path
     pub follow_symlinks: bool
 
-    def size(self) -> Result[int, IoError]:
+    pub def size(self) -> Result[int, IoError]:
         """
         Return the metadata size.
 
@@ -102,7 +102,7 @@ pub model PathStat:
         meta = _path_stat_metadata(self.path, self.follow_symlinks)?
         return Ok(int(meta.len()))
 
-    def is_file(self) -> Result[bool, IoError]:
+    pub def is_file(self) -> Result[bool, IoError]:
         """
         Check whether the metadata describes a regular file.
 
@@ -112,7 +112,7 @@ pub model PathStat:
         meta = _path_stat_metadata(self.path, self.follow_symlinks)?
         return Ok(meta.is_file())
 
-    def is_dir(self) -> Result[bool, IoError]:
+    pub def is_dir(self) -> Result[bool, IoError]:
         """
         Check whether the metadata describes a directory.
 
@@ -122,7 +122,7 @@ pub model PathStat:
         meta = _path_stat_metadata(self.path, self.follow_symlinks)?
         return Ok(meta.is_dir())
 
-    def is_symlink(self) -> Result[bool, IoError]:
+    pub def is_symlink(self) -> Result[bool, IoError]:
         """
         Check whether the original path is a symbolic link.
 
@@ -131,7 +131,7 @@ pub model PathStat:
         """
         return Ok(self.path.is_symlink())
 
-    def readonly(self) -> Result[bool, IoError]:
+    pub def readonly(self) -> Result[bool, IoError]:
         """
         Check whether host permissions mark the path readonly.
 
@@ -141,7 +141,7 @@ pub model PathStat:
         meta = _path_stat_metadata(self.path, self.follow_symlinks)?
         return Ok(meta.permissions().readonly())
 
-    def modified_unix(self) -> Result[int, IoError]:
+    pub def modified_unix(self) -> Result[int, IoError]:
         """
         Return the last modification time.
 
@@ -153,7 +153,7 @@ pub model PathStat:
             Ok(value) => return _system_time_to_unix(self.path, value)
             Err(err) => return Err(_io_error(self.path, err))
 
-    def accessed_unix(self) -> Result[int, IoError]:
+    pub def accessed_unix(self) -> Result[int, IoError]:
         """
         Return the last access time.
 
@@ -165,7 +165,7 @@ pub model PathStat:
             Ok(value) => return _system_time_to_unix(self.path, value)
             Err(err) => return Err(_io_error(self.path, err))
 
-    def created_unix(self) -> Result[int, IoError]:
+    pub def created_unix(self) -> Result[int, IoError]:
         """
         Return the creation time.
 

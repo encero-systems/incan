@@ -5,7 +5,7 @@ class Box:
     pub value: int
 
     @traced
-    def label(self, value: int) -> str:
+    pub def label(self, value: int) -> str:
         return f"{value}"
 
 

@@ -11,14 +11,14 @@ from std.fs import Path
 class Holder:
     pub pair: tuple[list[int], int]
 
-    def add(mut self, value: int) -> None:
+    pub def add(mut self, value: int) -> None:
         self.pair[0].append(value)
 
 
 class Counter:
     pub count: int
 
-    def bump(mut self) -> None:
+    pub def bump(mut self) -> None:
         self.count += 1
 
 

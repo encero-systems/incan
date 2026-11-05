@@ -352,6 +352,7 @@ impl TypeChecker {
                     type_arguments: Vec::new(),
                 },
             );
+            self.publish_rust_trait_method(&class.name, &method.node.name);
         }
         Some(())
     }
@@ -383,7 +384,10 @@ impl TypeChecker {
                     surface_type_name: Some(crate::symbols::field_surface_type_name(&field.node.ty.node, &ty)),
                     ty,
                     visibility: field.node.visibility,
-                    is_type_private: crate::symbols::field_is_type_private(&field.node, true),
+                    is_type_private: crate::symbols::field_is_type_private(
+                        &field.node,
+                        crate::symbols::members_are_type_private(true, class.visibility),
+                    ),
                     owner: Some(class.name.clone()),
                     has_default: field.node.default.is_some(),
                     alias: field.node.metadata.alias.clone(),

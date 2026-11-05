@@ -11,7 +11,7 @@ def id[T](x: T) -> T:
 
 
 class Boxed:
-    def pick[T](self, value: T) -> T:
+    pub def pick[T](self, value: T) -> T:
         return value
 
 

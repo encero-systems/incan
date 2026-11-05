@@ -13,7 +13,7 @@ class Tag:
     pub name: str
     pub hits: int
 
-    def label(self) -> Tuple[int, Borrowed[str]] from self.name:
+    pub def label(self) -> Tuple[int, Borrowed[str]] from self.name:
         return (self.hits, self.name)
 
 
@@ -21,7 +21,7 @@ class Address:
     pub city: str
     pub visits: int
 
-    def edit_city(mut self) -> tuple[Reference[str], int] from self.city:
+    pub def edit_city(mut self) -> tuple[Reference[str], int] from self.city:
         self.visits += 1
         return (self.city, self.visits)
 

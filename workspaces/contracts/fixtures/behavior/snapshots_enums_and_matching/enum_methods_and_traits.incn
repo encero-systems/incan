@@ -22,7 +22,7 @@ pub enum Signal with Labeled:
             case Signal.Stop:
                 return "stop"
 
-    def default() -> Self:
+    pub def default() -> Self:
         return Signal.Start
 
 

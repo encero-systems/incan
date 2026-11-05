@@ -76,11 +76,11 @@ pub class Lifecycle:
         """A request was answered: the idle period starts again."""
         self.last_activity = Instant.now()
 
-    def idle(self) -> bool:
+    pub def idle(self) -> bool:
         """Whether the worker has served nothing for its whole idle period."""
         return int(self.last_activity.elapsed().as_millis()) >= self.bounds.idle_millis
 
-    def settle(mut self, outcome: ActivationOutcome, footprint: int) -> Settled:
+    pub def settle(mut self, outcome: ActivationOutcome, footprint: int) -> Settled:
         """
         The reply to an ended activation and whether the worker retires after it.
 

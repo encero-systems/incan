@@ -18,13 +18,13 @@ class SampleBuffer:
     pub capacity: int
     pub samples: list[int]
 
-    def append(mut self, sample: int) -> Result[Reference[Self], str] from self:
+    pub def append(mut self, sample: int) -> Result[Reference[Self], str] from self:
         if len(self.samples) >= self.capacity:
             return Err("full")
         self.samples.append(sample)
         return Ok(self)
 
-    def append_all(mut self, samples: Borrowed[list[int]]) -> Result[Reference[Self], str] from self:
+    pub def append_all(mut self, samples: Borrowed[list[int]]) -> Result[Reference[Self], str] from self:
         for sample in samples:
             self.append(sample)?
         return Ok(self)

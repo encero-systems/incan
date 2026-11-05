@@ -51,7 +51,7 @@ pub type UUID = newtype u128 with OrdinalKey:
     """
 
     @staticmethod
-    def nil() -> Self:
+    pub def nil() -> Self:
         """
         Return the nil UUID.
 
@@ -61,7 +61,7 @@ pub type UUID = newtype u128 with OrdinalKey:
         return NIL
 
     @staticmethod
-    def max() -> Self:
+    pub def max() -> Self:
         """
         Return the maximum UUID value.
 
@@ -71,7 +71,7 @@ pub type UUID = newtype u128 with OrdinalKey:
         return MAX
 
     @staticmethod
-    def from_int(value: u128) -> Self:
+    pub def from_int(value: u128) -> Self:
         """
         Construct a UUID from its unsigned 128-bit integer representation.
 
@@ -100,7 +100,7 @@ pub type UUID = newtype u128 with OrdinalKey:
             Err(err) => return Err(OrdinalMapError.invalid_key_record(err.message()))
 
     @staticmethod
-    def from_bytes(raw: bytes) -> Result[Self, UuidError]:
+    pub def from_bytes(raw: bytes) -> Result[Self, UuidError]:
         """
         Construct a UUID from 16 RFC/network-order bytes.
 
@@ -118,7 +118,7 @@ pub type UUID = newtype u128 with OrdinalKey:
             Err(err) => return Err(_io_error("from_bytes", err))
 
     @staticmethod
-    def v8(raw: bytes) -> Result[Self, UuidError]:
+    pub def v8(raw: bytes) -> Result[Self, UuidError]:
         """
         Construct an RFC 9562 version 8 UUID from 16 custom bytes.
 
@@ -133,7 +133,7 @@ pub type UUID = newtype u128 with OrdinalKey:
         return _v8_from_raw_bytes(raw)
 
     @staticmethod
-    def v1() -> Result[Self, UuidError]:
+    pub def v1() -> Result[Self, UuidError]:
         """
         Generate an RFC 9562 version 1 UUID.
 
@@ -143,7 +143,7 @@ pub type UUID = newtype u128 with OrdinalKey:
         return _time_uuid(1)
 
     @staticmethod
-    def v3(namespace: UUID, name: Union[str, bytes]) -> Result[Self, UuidError]:
+    pub def v3(namespace: UUID, name: Union[str, bytes]) -> Result[Self, UuidError]:
         """
         Generate an RFC 9562 version 3 namespace UUID.
 
@@ -157,7 +157,7 @@ pub type UUID = newtype u128 with OrdinalKey:
         return _name_uuid_md5(namespace, name)
 
     @staticmethod
-    def v4() -> Result[Self, UuidError]:
+    pub def v4() -> Result[Self, UuidError]:
         """
         Generate an RFC 9562 version 4 UUID.
 
@@ -167,7 +167,7 @@ pub type UUID = newtype u128 with OrdinalKey:
         return _v4_from_random()
 
     @staticmethod
-    def v5(namespace: UUID, name: Union[str, bytes]) -> Result[Self, UuidError]:
+    pub def v5(namespace: UUID, name: Union[str, bytes]) -> Result[Self, UuidError]:
         """
         Generate an RFC 9562 version 5 namespace UUID.
 
@@ -181,7 +181,7 @@ pub type UUID = newtype u128 with OrdinalKey:
         return _name_uuid_sha1(namespace, name)
 
     @staticmethod
-    def v6() -> Result[Self, UuidError]:
+    pub def v6() -> Result[Self, UuidError]:
         """
         Generate an RFC 9562 version 6 UUID.
 
@@ -191,7 +191,7 @@ pub type UUID = newtype u128 with OrdinalKey:
         return _time_uuid(6)
 
     @staticmethod
-    def v7() -> Result[Self, UuidError]:
+    pub def v7() -> Result[Self, UuidError]:
         """
         Generate an RFC 9562 version 7 UUID.
 
@@ -201,7 +201,7 @@ pub type UUID = newtype u128 with OrdinalKey:
         return _unix_time_uuid()
 
     @staticmethod
-    def parse(text: str) -> Result[Self, UuidError]:
+    pub def parse(text: str) -> Result[Self, UuidError]:
         """
         Parse canonical, simple, URN, or braced UUID text.
 
@@ -213,7 +213,7 @@ pub type UUID = newtype u128 with OrdinalKey:
         """
         return UUID.from_bytes(_UuidText(text=text).to_bytes()?)
 
-    def to_int(self) -> u128:
+    pub def to_int(self) -> u128:
         """
         Return the unsigned 128-bit integer representation.
 
@@ -222,7 +222,7 @@ pub type UUID = newtype u128 with OrdinalKey:
         """
         return self.0
 
-    def to_bytes(self) -> Result[bytes, UuidError]:
+    pub def to_bytes(self) -> Result[bytes, UuidError]:
         """
         Return 16 RFC/network-order bytes.
 
@@ -241,7 +241,7 @@ pub type UUID = newtype u128 with OrdinalKey:
             Ok(value) => return value
             Err(err) => return raise_value_error(err.detail)
 
-    def canonical(self) -> Result[str, UuidError]:
+    pub def canonical(self) -> Result[str, UuidError]:
         """
         Return the lower-case canonical 8-4-4-4-12 UUID spelling.
 
@@ -259,7 +259,7 @@ pub type UUID = newtype u128 with OrdinalKey:
 
         return Ok(out)
 
-    def to_string(self) -> str:
+    pub def to_string(self) -> str:
         """
         Return the lower-case canonical UUID spelling.
 
@@ -270,7 +270,7 @@ pub type UUID = newtype u128 with OrdinalKey:
             Ok(value) => return value
             Err(_) => return ""
 
-    def to_hex(self) -> str:
+    pub def to_hex(self) -> str:
         """
         Return 32 lower-case hexadecimal UUID digits without hyphens.
 
@@ -279,7 +279,7 @@ pub type UUID = newtype u128 with OrdinalKey:
         """
         return self.to_string().replace("-", "")
 
-    def to_urn(self) -> str:
+    pub def to_urn(self) -> str:
         """
         Return the UUID as a URN.
 
@@ -297,7 +297,7 @@ pub type UUID = newtype u128 with OrdinalKey:
         """
         return self.to_string()
 
-    def version(self) -> Result[UuidVersion, UuidError]:
+    pub def version(self) -> Result[UuidVersion, UuidError]:
         """
         Return the UUID version marker.
 
@@ -315,7 +315,7 @@ pub type UUID = newtype u128 with OrdinalKey:
         numeric_version = int(value) // 16
         return Ok(UuidVersion.from_nibble(numeric_version))
 
-    def variant(self) -> Result[UuidVariant, UuidError]:
+    pub def variant(self) -> Result[UuidVariant, UuidError]:
         """
         Return the UUID variant marker.
 
@@ -346,7 +346,7 @@ model _UuidText:
 
     text: str
 
-    def to_bytes(self) -> Result[bytes, UuidError]:
+    pub def to_bytes(self) -> Result[bytes, UuidError]:
         """
         Decode the accepted UUID text spellings into network-order bytes.
 
@@ -415,7 +415,7 @@ model _UuidBytesWriter:
     out: _BytesIO
     operation: str
 
-    def raw(self) -> bytes:
+    pub def raw(self) -> bytes:
         """
         Return the bytes written so far.
 
@@ -424,7 +424,7 @@ model _UuidBytesWriter:
         """
         return self.out.getvalue()
 
-    def uuid(self) -> Result[UUID, UuidError]:
+    pub def uuid(self) -> Result[UUID, UuidError]:
         """
         Convert the current buffer into a UUID.
 
@@ -433,7 +433,7 @@ model _UuidBytesWriter:
         """
         return UUID.from_bytes(self.raw())
 
-    def data(self, value: bytes) -> Result[None, UuidError]:
+    pub def data(self, value: bytes) -> Result[None, UuidError]:
         """
         Append raw bytes to the UUID buffer.
 
@@ -445,7 +445,7 @@ model _UuidBytesWriter:
         """
         return self.out.write_bytes(value).map(_discard_written_count).map_err((err) => _io_error(self.operation, err))
 
-    def u8(self, value: u8) -> Result[None, UuidError]:
+    pub def u8(self, value: u8) -> Result[None, UuidError]:
         """
         Append one byte to the UUID buffer.
 
@@ -457,7 +457,7 @@ model _UuidBytesWriter:
         """
         return self.out.write(value, Endian.Big).map_err((err) => _io_error(self.operation, err))
 
-    def u16(self, value: u16) -> Result[None, UuidError]:
+    pub def u16(self, value: u16) -> Result[None, UuidError]:
         """
         Append a 16-bit integer in network byte order.
 
@@ -469,7 +469,7 @@ model _UuidBytesWriter:
         """
         return self.out.write(value, Endian.Big).map_err((err) => _io_error(self.operation, err))
 
-    def u32(self, value: u32) -> Result[None, UuidError]:
+    pub def u32(self, value: u32) -> Result[None, UuidError]:
         """
         Append a 32-bit integer in network byte order.
 
@@ -481,7 +481,7 @@ model _UuidBytesWriter:
         """
         return self.out.write(value, Endian.Big).map_err((err) => _io_error(self.operation, err))
 
-    def u128(self, value: u128) -> Result[None, UuidError]:
+    pub def u128(self, value: u128) -> Result[None, UuidError]:
         """
         Append a 128-bit integer in network byte order.
 
@@ -493,7 +493,7 @@ model _UuidBytesWriter:
         """
         return self.out.write(value, Endian.Big).map_err((err) => _io_error(self.operation, err))
 
-    def clock_seq(self, clock_seq: int) -> Result[None, UuidError]:
+    pub def clock_seq(self, clock_seq: int) -> Result[None, UuidError]:
         """
         Append RFC 9562 variant-adjusted clock sequence bytes.
 
@@ -509,7 +509,7 @@ model _UuidBytesWriter:
         self.u8(low)?
         return Ok(None)
 
-    def u48(self, value: int) -> Result[None, UuidError]:
+    pub def u48(self, value: int) -> Result[None, UuidError]:
         """
         Append a 48-bit integer in network byte order.
 

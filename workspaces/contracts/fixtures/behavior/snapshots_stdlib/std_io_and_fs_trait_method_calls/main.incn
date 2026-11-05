@@ -13,7 +13,7 @@ from codec import encode_pair
 class Encoder:
     pub writer: _BytesIO
 
-    def put(self, item: u16) -> Result[None, IoError]:
+    pub def put(self, item: u16) -> Result[None, IoError]:
         return self.writer.write(item, Endian.Big)
 
 

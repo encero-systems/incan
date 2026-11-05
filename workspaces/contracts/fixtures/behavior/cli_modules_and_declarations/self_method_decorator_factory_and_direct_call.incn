@@ -8,7 +8,7 @@ class Box:
     pub value: int
 
     @labeled("count")
-    def label(self, value: int) -> str:
+    pub def label(self, value: int) -> str:
         return f"{value}"
 
 

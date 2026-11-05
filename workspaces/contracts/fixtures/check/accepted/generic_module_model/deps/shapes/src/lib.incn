@@ -11,7 +11,7 @@ pub model Holder[T]:
 
     pub value: T
 
-    def get(self) -> T:
+    pub def get(self) -> T:
         """Return the field through the source model method."""
         return self.value
 

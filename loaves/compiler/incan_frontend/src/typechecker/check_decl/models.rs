@@ -231,7 +231,7 @@ impl TypeChecker {
                     visibility: field.node.visibility,
                     is_type_private: crate::symbols::field_is_type_private(
                         &field.node,
-                        matches!(model.visibility, Visibility::Public),
+                        crate::symbols::members_are_type_private(false, model.visibility),
                     ),
                     owner: Some(model.name.clone()),
                     has_default: field.node.default.is_some(),

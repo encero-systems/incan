@@ -214,7 +214,7 @@ pub class _BytesIO with (
         """
         return self.read(size)
 
-    def read_exact(self, size: int) -> Result[bytes, IoError]:
+    pub def read_exact(self, size: int) -> Result[bytes, IoError]:
         """
         Read exactly `size` bytes.
 
@@ -241,7 +241,7 @@ pub class _BytesIO with (
             )
         return Ok(chunk)
 
-    def read_until(self, byte: u8) -> Result[bytes, IoError]:
+    pub def read_until(self, byte: u8) -> Result[bytes, IoError]:
         """
         Read through `byte` or EOF.
 
@@ -262,7 +262,7 @@ pub class _BytesIO with (
                 return Ok(out.getvalue())
         return Ok(out.getvalue())
 
-    def skip_until(self, byte: u8) -> Result[int, IoError]:
+    pub def skip_until(self, byte: u8) -> Result[int, IoError]:
         """
         Discard bytes through `byte` or EOF.
 
@@ -283,7 +283,7 @@ pub class _BytesIO with (
                 return Ok(count)
         return Ok(count)
 
-    def tell(self) -> int:
+    pub def tell(self) -> int:
         """
         Return the current byte cursor position.
 
@@ -293,7 +293,7 @@ pub class _BytesIO with (
         cursor = self.handle.borrow()
         return int(cursor.position())
 
-    def seek(self, offset: int, whence: int = 0) -> Result[int, IoError]:
+    pub def seek(self, offset: int, whence: int = 0) -> Result[int, IoError]:
         """
         Move the cursor and return the new position.
 
@@ -325,7 +325,7 @@ pub class _BytesIO with (
                 Err(err) => return Err(_rust_io_error("seek", int(cursor.position()), err))
         return Err(_invalid_input("seek", int(cursor.position()), "whence must be 0, 1, or 2"))
 
-    def rewind(self) -> Result[None, IoError]:
+    pub def rewind(self) -> Result[None, IoError]:
         """
         Move the cursor to the start of the buffer.
 
@@ -335,7 +335,7 @@ pub class _BytesIO with (
         self.seek(0, 0)?
         return Ok(None)
 
-    def seek_relative(self, offset: int) -> Result[None, IoError]:
+    pub def seek_relative(self, offset: int) -> Result[None, IoError]:
         """
         Move the cursor relative to its current position.
 
@@ -348,7 +348,7 @@ pub class _BytesIO with (
         self.seek(offset, 1)?
         return Ok(None)
 
-    def write_bytes(self, data: bytes) -> Result[int, IoError]:
+    pub def write_bytes(self, data: bytes) -> Result[int, IoError]:
         """
         Write bytes at the current cursor position.
 
@@ -381,7 +381,7 @@ pub class _BytesIO with (
         """
         return self.write_bytes(data)
 
-    def truncate(self, size: Option[int] = None) -> Result[int, IoError]:
+    pub def truncate(self, size: Option[int] = None) -> Result[int, IoError]:
         """
         Resize the buffer.
 
@@ -412,7 +412,7 @@ pub class _BytesIO with (
             cursor.set_position(target_u64)
         return Ok(target)
 
-    def getvalue(self) -> bytes:
+    pub def getvalue(self) -> bytes:
         """
         Return a snapshot of the buffer contents.
 
@@ -422,7 +422,7 @@ pub class _BytesIO with (
         cursor = self.handle.borrow()
         return cursor.get_ref().clone()
 
-    def into_bytes(self) -> bytes:
+    pub def into_bytes(self) -> bytes:
         """
         Return the buffer bytes.
 
@@ -432,7 +432,7 @@ pub class _BytesIO with (
         """
         return self.getvalue()
 
-    def remaining(self) -> int:
+    pub def remaining(self) -> int:
         """
         Return the unread byte count from the current cursor to the end.
 

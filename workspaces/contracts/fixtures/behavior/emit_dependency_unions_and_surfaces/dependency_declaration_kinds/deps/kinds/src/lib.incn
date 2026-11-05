@@ -5,7 +5,7 @@ pub model Record:
 pub class Container:
     pub value: int
 
-    def doubled(self) -> int:
+    pub def doubled(self) -> int:
         return self.value * 2
 
 

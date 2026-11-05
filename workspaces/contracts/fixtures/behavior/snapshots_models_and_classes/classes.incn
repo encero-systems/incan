@@ -32,10 +32,10 @@ class Rectangle:
 class Circle:
     radius: float
 
-    def area(self) -> float:
+    pub def area(self) -> float:
         return 3.14159 * self.radius * self.radius
 
-    def circumference(self) -> float:
+    pub def circumference(self) -> float:
         return 2.0 * 3.14159 * self.radius
 
 
@@ -43,34 +43,34 @@ class Circle:
 class Counter:
     count: int
 
-    def increment(mut self) -> None:
+    pub def increment(mut self) -> None:
         self.count += 1
 
-    def decrement(mut self) -> None:
+    pub def decrement(mut self) -> None:
         self.count -= 1
 
-    def get_count(self) -> int:
+    pub def get_count(self) -> int:
         return self.count
 
-    def reset(mut self) -> None:
+    pub def reset(mut self) -> None:
         self.count = 0
 
 
 class Stack:
     items: list[int]
 
-    def push(mut self, item: int) -> None:
+    pub def push(mut self, item: int) -> None:
         self.items.append(item)
 
-    def pop(mut self) -> int:
+    pub def pop(mut self) -> int:
         if len(self.items) > 0:
             return self.items.pop()
         return -1
 
-    def is_empty(self) -> bool:
+    pub def is_empty(self) -> bool:
         return len(self.items) == 0
 
-    def size(self) -> int:
+    pub def size(self) -> int:
         return len(self.items)
 
 
@@ -78,16 +78,16 @@ class Stack:
 class Calculator:
     name: str
 
-    def add(self, a: int, b: int) -> int:
+    pub def add(self, a: int, b: int) -> int:
         return a + b
 
-    def subtract(self, a: int, b: int) -> int:
+    pub def subtract(self, a: int, b: int) -> int:
         return a - b
 
-    def multiply(self, a: int, b: int) -> int:
+    pub def multiply(self, a: int, b: int) -> int:
         return a * b
 
-    def label(self) -> str:
+    pub def label(self) -> str:
         return self.name
 
 
@@ -96,10 +96,10 @@ class Person:
     name: str
     age: int
 
-    def greet(self) -> str:
+    pub def greet(self) -> str:
         return f"Hello, I'm {self.name}"
 
-    def describe(self) -> str:
+    pub def describe(self) -> str:
         return f"{self.name} is {self.age}"
 
 
@@ -107,7 +107,7 @@ class Employee:
     person: Person
     employee_id: int
 
-    def get_info(self) -> str:
+    pub def get_info(self) -> str:
         greeting: str = self.person.greet()
         return f"{greeting} (ID: {self.employee_id})"
 

@@ -32,11 +32,11 @@ pub model UnitLoaf:
     # The authored source root supplied by Oven, never inferred from the consumer's artifact layout.
     pub source_root: Option[str] = None
 
-    def is_dependency(self) -> bool:
+    pub def is_dependency(self) -> bool:
         """Identify a project-authored dependency rather than a standard provider or compiler facade."""
         return not self.standard and not self.toolchain_provided
 
-    def to_json(self) -> JsonValue:
+    pub def to_json(self) -> JsonValue:
         """The Loaf as the description spells it."""
         mut fields = {"key": JsonValue.string(self.key), "name": JsonValue.string(self.name), "dir": JsonValue.string(
             self.dir,
@@ -88,7 +88,7 @@ pub model UnitDescription:
     # Preparation retains the selected compiler generation; it is never serialized as a compiler input field.
     pub selected_toolchain: Option[Toolchain] = None
 
-    def to_json(self) -> JsonValue:
+    pub def to_json(self) -> JsonValue:
         """The description as the compiler reads it; only a unit that declares access names `toolchain_access`."""
         mut fields = {"schema": JsonValue.string(UNIT_DESCRIPTION_SCHEMA), "source": JsonValue.string(self.source), "kind": JsonValue.string(
             self.kind,

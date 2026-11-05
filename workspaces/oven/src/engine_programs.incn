@@ -35,7 +35,7 @@ pub model NativeUnit:
     pub payload: str
     pub binary: str
 
-    def encoded(self) -> Result[str, str]:
+    pub def encoded(self) -> Result[str, str]:
         """The language-neutral native descriptor stored in a caller's virtual view."""
         return json_text(
             JsonValue.object(

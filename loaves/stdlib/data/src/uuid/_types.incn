@@ -23,7 +23,7 @@ pub enum UuidVersion:
     Max
     Unknown(int)
 
-    def from_nibble(value: int) -> Self:
+    pub def from_nibble(value: int) -> Self:
         """
         Convert a UUID version nibble into the corresponding marker.
 

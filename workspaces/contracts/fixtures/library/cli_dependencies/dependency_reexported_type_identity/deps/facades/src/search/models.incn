@@ -41,7 +41,7 @@ pub model Nomination:
     pub rank: int
     pub relevance_bps: int
 
-    def label(self) -> str:
+    pub def label(self) -> str:
         return f"{self.entry_id.0}#{self.rank}"
 
 

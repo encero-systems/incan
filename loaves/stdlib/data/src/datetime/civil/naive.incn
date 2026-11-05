@@ -76,7 +76,7 @@ pub model Date with OrdinalKey:
     pub day: int
 
     @staticmethod
-    def utc_today() -> Date:
+    pub def utc_today() -> Date:
         """
         Return the current UTC calendar date.
 
@@ -90,7 +90,7 @@ pub model Date with OrdinalKey:
         return _datetime_from_unix_nanoseconds_utc(SystemTime.now().unix_nanoseconds()).date
 
     @staticmethod
-    def fromisoformat(value: str) -> Result[Date, DateTimeError]:
+    pub def fromisoformat(value: str) -> Result[Date, DateTimeError]:
         """
         Parse an ISO date string.
 
@@ -108,7 +108,7 @@ pub model Date with OrdinalKey:
         return Date.from_fields(year, month, day)
 
     @staticmethod
-    def strptime(value: str, format: str) -> Result[Date, DateTimeError]:
+    pub def strptime(value: str, format: str) -> Result[Date, DateTimeError]:
         """
         Parse a date with an Incan-native Python-shaped format string.
 
@@ -126,7 +126,7 @@ pub model Date with OrdinalKey:
         return Ok(parsed.date)
 
     @staticmethod
-    def from_fields(year: int, month: int, day: int) -> Result[Date, DateTimeError]:
+    pub def from_fields(year: int, month: int, day: int) -> Result[Date, DateTimeError]:
         """
         Construct a checked date from fields.
 
@@ -169,7 +169,7 @@ pub model Date with OrdinalKey:
             Err(err) => return Err(OrdinalMapError.invalid_key_record(err.message()))
 
     @staticmethod
-    def fromisocalendar(year: int, week: int, weekday: int) -> Result[Date, DateTimeError]:
+    pub def fromisocalendar(year: int, week: int, weekday: int) -> Result[Date, DateTimeError]:
         """
         Construct a date from ISO week calendar fields.
 
@@ -187,7 +187,7 @@ pub model Date with OrdinalKey:
         monday = jan4.add_days(1 - jan4.weekday())
         return Ok(monday.add_days((week - 1) * _DAYS_PER_WEEK + weekday - 1))
 
-    def isoformat(self) -> str:
+    pub def isoformat(self) -> str:
         """
         Format this date as ISO text.
 
@@ -207,7 +207,7 @@ pub model Date with OrdinalKey:
         out.append(day)
         return out
 
-    def strftime(self, format: str) -> Result[str, DateTimeError]:
+    pub def strftime(self, format: str) -> Result[str, DateTimeError]:
         """
         Format this date with an Incan-native Python-shaped format string.
 
@@ -222,7 +222,7 @@ pub model Date with OrdinalKey:
         """
         return _strftime_date(self, format)
 
-    def add_days(self, days: int) -> Date:
+    pub def add_days(self, days: int) -> Date:
         """
         Offset this date by whole days.
 
@@ -242,7 +242,7 @@ pub model Date with OrdinalKey:
             remaining += 1
         return out
 
-    def add_months(self, months: int) -> Date:
+    pub def add_months(self, months: int) -> Date:
         """
         Offset this date by calendar months.
 
@@ -258,7 +258,7 @@ pub model Date with OrdinalKey:
         day = _min_int(self.day, days_in_month(year, month))
         return Date(year=year, month=month, day=day)
 
-    def add_interval(self, interval: Union[TimeDelta, YearMonthInterval, DateTimeInterval]) -> Date:
+    pub def add_interval(self, interval: Union[TimeDelta, YearMonthInterval, DateTimeInterval]) -> Date:
         """
         Apply a civil interval to this date.
 
@@ -306,7 +306,7 @@ pub model Date with OrdinalKey:
         elif isinstance(other, DateTimeInterval):
             return self.add_months(0 - other.year_month().total_months()).add_days(0 - other.days)
 
-    def weekday(self) -> int:
+    pub def weekday(self) -> int:
         """
         Return the ISO weekday.
 
@@ -315,7 +315,7 @@ pub model Date with OrdinalKey:
         """
         return ((self._ordinal() + 6) % 7) + 1
 
-    def iso_week(self) -> int:
+    pub def iso_week(self) -> int:
         """
         Return the ISO week number.
 
@@ -329,7 +329,7 @@ pub model Date with OrdinalKey:
             return 1
         return week
 
-    def day_of_year(self) -> int:
+    pub def day_of_year(self) -> int:
         """
         Return the ordinal day within the calendar year.
 
@@ -343,7 +343,7 @@ pub model Date with OrdinalKey:
             month += 1
         return total
 
-    def quarter(self) -> int:
+    pub def quarter(self) -> int:
         """
         Return the calendar quarter.
 
@@ -391,7 +391,7 @@ pub model Date with OrdinalKey:
             return Date(year=self.year, month=prev_month, day=days_in_month(self.year, prev_month))
         return Date(year=self.year - 1, month=12, day=31)
 
-    def _ordinal(self) -> int:
+    pub def _ordinal(self) -> int:
         mut total = 0
         mut year = 1
         while year < self.year:
@@ -416,7 +416,7 @@ pub model Time with OrdinalKey:
     pub nanosecond: int
 
     @staticmethod
-    def fromisoformat(value: str) -> Result[Time, DateTimeError]:
+    pub def fromisoformat(value: str) -> Result[Time, DateTimeError]:
         """
         Parse an ISO time string.
 
@@ -439,7 +439,7 @@ pub model Time with OrdinalKey:
         return Time.from_fields(hour, minute, second, nanos)
 
     @staticmethod
-    def from_fields(hour: int, minute: int, second: int, nanosecond: int = 0) -> Result[Time, DateTimeError]:
+    pub def from_fields(hour: int, minute: int, second: int, nanosecond: int = 0) -> Result[Time, DateTimeError]:
         """
         Construct a checked time from fields.
 
@@ -485,7 +485,7 @@ pub model Time with OrdinalKey:
             Err(err) => return Err(OrdinalMapError.invalid_key_record(err.message()))
 
     @staticmethod
-    def strptime(value: str, format: str) -> Result[Time, DateTimeError]:
+    pub def strptime(value: str, format: str) -> Result[Time, DateTimeError]:
         """
         Parse a wall-clock time with an Incan-native Python-shaped format string.
 
@@ -502,7 +502,7 @@ pub model Time with OrdinalKey:
         parsed = _strptime_datetime(value, format, false, true)?
         return Ok(parsed.time)
 
-    def isoformat(self) -> str:
+    pub def isoformat(self) -> str:
         """
         Format this time as ISO text.
 
@@ -524,7 +524,7 @@ pub model Time with OrdinalKey:
         nanos = ordinal_key_u32_le(self.nanosecond)
         return [hour, minute, second, nanos[0], nanos[1], nanos[2], nanos[3]]
 
-    def strftime(self, format: str) -> Result[str, DateTimeError]:
+    pub def strftime(self, format: str) -> Result[str, DateTimeError]:
         """
         Format this time with an Incan-native Python-shaped format string.
 
@@ -539,7 +539,7 @@ pub model Time with OrdinalKey:
         """
         return _strftime_time(self, format)
 
-    def seconds_since_midnight(self) -> int:
+    pub def seconds_since_midnight(self) -> int:
         """
         Return whole seconds since midnight.
 
@@ -592,7 +592,7 @@ pub model DateTime with OrdinalKey:
     pub time: Time
 
     @staticmethod
-    def utc_now() -> DateTime:
+    pub def utc_now() -> DateTime:
         """
         Return the current UTC datetime.
 
@@ -606,7 +606,7 @@ pub model DateTime with OrdinalKey:
         return _datetime_from_unix_nanoseconds_utc(SystemTime.now().unix_nanoseconds())
 
     @staticmethod
-    def fromisoformat(value: str) -> Result[DateTime, DateTimeError]:
+    pub def fromisoformat(value: str) -> Result[DateTime, DateTimeError]:
         """
         Parse an ISO datetime string.
 
@@ -626,7 +626,7 @@ pub model DateTime with OrdinalKey:
         return Ok(DateTime(date=date, time=time))
 
     @staticmethod
-    def strptime(value: str, format: str) -> Result[DateTime, DateTimeError]:
+    pub def strptime(value: str, format: str) -> Result[DateTime, DateTimeError]:
         """
         Parse a naive datetime with an Incan-native Python-shaped format string.
 
@@ -644,7 +644,7 @@ pub model DateTime with OrdinalKey:
         return _strptime_datetime(value, format, true, true)
 
     @staticmethod
-    def combine(date: Date, time: Time) -> DateTime:
+    pub def combine(date: Date, time: Time) -> DateTime:
         """
         Combine a date and time.
 
@@ -675,7 +675,7 @@ pub model DateTime with OrdinalKey:
         time = Time.from_ordinal_bytes(data[11:18])?
         return Ok(DateTime(date=date, time=time))
 
-    def isoformat(self) -> str:
+    pub def isoformat(self) -> str:
         """
         Format this datetime as ISO text.
 
@@ -692,7 +692,7 @@ pub model DateTime with OrdinalKey:
         out.extend(ordinal_key_bytes(self.time.ordinal_bytes()))
         return out
 
-    def strftime(self, format: str) -> Result[str, DateTimeError]:
+    pub def strftime(self, format: str) -> Result[str, DateTimeError]:
         """
         Format this naive datetime with an Incan-native Python-shaped format string.
 
@@ -708,7 +708,7 @@ pub model DateTime with OrdinalKey:
         """
         return _strftime_datetime(self, format)
 
-    def add_timedelta(self, delta: TimeDelta) -> DateTime:
+    pub def add_timedelta(self, delta: TimeDelta) -> DateTime:
         """
         Offset this datetime by a day/time interval.
 
@@ -734,7 +734,7 @@ pub model DateTime with OrdinalKey:
         )
         return DateTime(date=self.date.add_days(days), time=time)
 
-    def add_interval(self, interval: Union[TimeDelta, YearMonthInterval, DateTimeInterval]) -> DateTime:
+    pub def add_interval(self, interval: Union[TimeDelta, YearMonthInterval, DateTimeInterval]) -> DateTime:
         """
         Apply a civil interval to this datetime.
 
@@ -817,7 +817,7 @@ pub model DateTime with OrdinalKey:
             return self.time < other.time
         return self.date < other.date
 
-    def _epoch_seconds(self) -> int:
+    pub def _epoch_seconds(self) -> int:
         day_seconds = self.time.seconds_since_midnight()
         date_seconds = self.date._ordinal() * _SECONDS_PER_DAY
         return date_seconds + day_seconds

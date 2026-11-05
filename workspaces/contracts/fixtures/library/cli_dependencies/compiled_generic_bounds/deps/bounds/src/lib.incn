@@ -5,10 +5,10 @@ from std.traits.callable import Callable1 as Mapper
 pub model Holder[V]:
     pub value: V
 
-    def get(self) -> V:
+    pub def get(self) -> V:
         return self.value
 
-    def first[T](self, items: list[T]) -> T:
+    pub def first[T](self, items: list[T]) -> T:
         return items[0]
 
 

@@ -247,9 +247,17 @@ pub struct FieldInfo {
     pub description: Option<String>,
 }
 
+/// Whether the unmarked members of a type, its fields and methods alike, are private to it (#884, #2570).
+///
+/// Those of every class are, and those of a model, enum or newtype marked `pub`. An unmarked member of a model, enum or
+/// newtype without `pub` is visible wherever the type is, which is the module that declares it.
+pub fn members_are_type_private(is_class: bool, type_visibility: crate::ast::Visibility) -> bool {
+    is_class || matches!(type_visibility, crate::ast::Visibility::Public)
+}
+
 /// Return whether a checked field uses the declaring nominal type as its access boundary.
-pub fn field_is_type_private(field: &crate::ast::FieldDecl, private_fields_are_type_private: bool) -> bool {
-    private_fields_are_type_private && matches!(field.visibility, crate::ast::Visibility::Private)
+pub fn field_is_type_private(field: &crate::ast::FieldDecl, members_type_private: bool) -> bool {
+    members_type_private && matches!(field.visibility, crate::ast::Visibility::Private)
 }
 
 /// Return the user-facing field type name without making presentation metadata a second semantic authority.
@@ -282,9 +290,11 @@ pub struct PropertyInfo {
 pub struct MethodInfo {
     /// Canonical identity of the source method declaration, when declaration provenance is available.
     pub identity: Option<CanonicalSymbolId>,
-    /// Written visibility (#2570). A method declared in a trait, or implementing one, takes the trait's visibility
-    /// instead; compiler-generated methods and compiled metadata without a recorded visibility are public.
-    pub visibility: crate::ast::Visibility,
+    /// Where the method may be called from (#2570).
+    pub scope: MethodScope,
+    /// Source name of the type that declares the method, which a subclass inheriting it keeps. Absent for a trait
+    /// method and for a method without a source declaration.
+    pub owner: Option<String>,
     pub type_params: Vec<String>,
     pub type_param_bounds: HashMap<String, Vec<String>>,
     pub type_param_bound_details: HashMap<String, Vec<TypeBoundInfo>>,
@@ -295,6 +305,44 @@ pub struct MethodInfo {
     pub is_async: bool,
     pub has_body: bool, // false for abstract methods (...)
     pub alias_of: Option<String>,
+}
+
+/// Where a method may be called from (#2570).
+///
+/// `pub def` makes a method public. An unmarked method follows the rule for unmarked fields
+/// ([`members_are_type_private`]): it is private to a class, and to a model, enum or newtype marked `pub`, and visible
+/// wherever any other type is. A method declared in a trait, or
+/// one that implements an adopted trait's method, takes the trait's visibility instead: public for a `pub` trait, and
+/// the trait's module for any other trait, which is the only module that can name it. A language hook is public by
+/// rule. A method alias keeps its target's scope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MethodScope {
+    /// Callable only from methods of the declaring type.
+    Type,
+    /// Callable anywhere in the declaring module.
+    Module,
+    /// Callable wherever the type is visible.
+    Public,
+}
+
+impl MethodScope {
+    /// The scope a method declaration's written visibility gives it, on a type whose unmarked members are private to it
+    /// or not ([`members_are_type_private`]).
+    pub fn written(visibility: crate::ast::Visibility, members_type_private: bool) -> Self {
+        match visibility {
+            crate::ast::Visibility::Public => Self::Public,
+            crate::ast::Visibility::Private if members_type_private => Self::Type,
+            crate::ast::Visibility::Private => Self::Public,
+        }
+    }
+
+    /// The visibility a library publishes: only a public method is callable by another module.
+    pub fn published_visibility(self) -> crate::ast::Visibility {
+        match self {
+            Self::Public => crate::ast::Visibility::Public,
+            Self::Type | Self::Module => crate::ast::Visibility::Private,
+        }
+    }
 }
 
 /// Resolved type-parameter bound metadata preserved for export/import paths.

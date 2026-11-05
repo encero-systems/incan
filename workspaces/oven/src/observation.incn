@@ -58,13 +58,13 @@ pub model FileMetadata:
     pub modified_ns: int
     pub changed_ns: int
 
-    def stamp(self) -> str:
+    pub def stamp(self) -> str:
         """The metadata as one comparable text, as ledgers and stamps record it."""
         modified = f"{self.modified_ns // NANOSECONDS}.{self.modified_ns % NANOSECONDS}"
         changed = f"{self.changed_ns // NANOSECONDS}.{self.changed_ns % NANOSECONDS}"
         return f"{self.device}:{self.inode}:{self.size}:{self.mode}:{modified}:{changed}"
 
-    def newest_second(self) -> int:
+    pub def newest_second(self) -> int:
         """The whole second of its latest modification or status change."""
         modified = self.modified_ns // NANOSECONDS
         changed = self.changed_ns // NANOSECONDS
@@ -72,15 +72,15 @@ pub model FileMetadata:
             return changed
         return modified
 
-    def settled(self, settle: int) -> bool:
+    pub def settled(self, settle: int) -> bool:
         """Whether its last change is at least `settle` seconds old, so these metadata can vouch for its bytes."""
         return settled_since(self.newest_second(), settle)
 
-    def is_file(self) -> bool:
+    pub def is_file(self) -> bool:
         """Whether it describes a regular file."""
         return (self.mode & FILE_TYPE) == REGULAR_FILE
 
-    def is_directory(self) -> bool:
+    pub def is_directory(self) -> bool:
         """Whether it describes a directory."""
         return (self.mode & FILE_TYPE) == DIRECTORY
 
@@ -131,7 +131,7 @@ pub model Ledger:
     files: Dict[str, FileEntry] = {}
     directories: Dict[str, DirectoryEntry] = {}
 
-    def digest(mut self, path: Path) -> Result[str, str]:
+    pub def digest(mut self, path: Path) -> Result[str, str]:
         """The digest of `path`'s bytes, read only when its metadata differs from the retained observation."""
         observed = observe(path)?
         if path.0 in self.files and self.files[path.0].stamp == observed.stamp:
@@ -143,7 +143,7 @@ pub model Ledger:
         self.files[path.0] = FileEntry(stamp=retained(observed, self.settle), digest=content)
         return Ok(content)
 
-    def sources(mut self, root: Path, recursive: bool) -> Result[list[str], str]:
+    pub def sources(mut self, root: Path, recursive: bool) -> Result[list[str], str]:
         """
         The files under `root` that this ledger keeps (Incan sources unless its extension says otherwise), sorted.
 
@@ -186,7 +186,7 @@ pub model Ledger:
         self.directories[directory.0] = entry
         return Ok(entry)
 
-    def read(mut self) -> Result[None, str]:
+    pub def read(mut self) -> Result[None, str]:
         """
         Take the rows of the saved document; any malformed row refuses the whole document.
 
@@ -211,7 +211,7 @@ pub model Ledger:
             )
         return Ok(None)
 
-    def save(mut self) -> Result[None, str]:
+    pub def save(mut self) -> Result[None, str]:
         """
         Publish the ledger atomically when this pass changed it, leaving out what no longer exists.
 

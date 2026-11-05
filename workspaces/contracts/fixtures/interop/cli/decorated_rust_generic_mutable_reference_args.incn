@@ -20,7 +20,7 @@ def to_int(function: (ProviderHandle[tuple[&mut int, &mut int]]) -> int) -> ((in
 
 class Container:
     @preserve()
-    def replace(self, mut items: ProviderHandle[tuple[&mut int, &mut int]]) -> None:
+    pub def replace(self, mut items: ProviderHandle[tuple[&mut int, &mut int]]) -> None:
         pass
 
 

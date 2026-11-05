@@ -5,10 +5,10 @@ pub class SampleBuffer:
     pub capacity: int
     pub samples: list[int]
 
-    def edit_samples(mut self) -> Reference[list[int]] from self.samples:
+    pub def edit_samples(mut self) -> Reference[list[int]] from self.samples:
         return self.samples
 
-    def append(mut self, sample: int) -> Result[Reference[Self], str] from self:
+    pub def append(mut self, sample: int) -> Result[Reference[Self], str] from self:
         if len(self.samples) >= self.capacity:
             return Err("full")
         self.samples.append(sample)

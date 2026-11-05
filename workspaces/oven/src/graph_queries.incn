@@ -16,7 +16,7 @@ class Index:
     # Every module and declaration, by id.
     by_id: Dict[str, JsonValue]
 
-    def add(mut self, record: JsonValue, term: str) -> None:
+    pub def add(mut self, record: JsonValue, term: str) -> None:
         """Index one compiler record and retain only the declarations and modules the term names."""
         record_kind = text(record, "record")
         identifier = text(record, "id")
@@ -35,7 +35,7 @@ class Index:
         if checked != "":
             self.canonical_targets.append(checked)
 
-    def ambiguous(self, kind: str, root: str) -> list[str]:
+    pub def ambiguous(self, kind: str, root: str) -> list[str]:
         """List ambiguous declaration matches before relationship hits, preserving the existing query order."""
         if kind == "defs" or len(self.selected) <= 1:
             return []
@@ -45,7 +45,7 @@ class Index:
             hits.append(f"declaration {display(record)} {location(record, root)}{unchecked(record)}")
         return hits
 
-    def lines(self, record: JsonValue, kind: str, term: str, root: str) -> list[str]:
+    pub def lines(self, record: JsonValue, kind: str, term: str, root: str) -> list[str]:
         """Read one record against the shared index without copying every declaration for each hit."""
         record_kind = text(record, "record")
         where = f"{location(record, root)}{unchecked(record)}"

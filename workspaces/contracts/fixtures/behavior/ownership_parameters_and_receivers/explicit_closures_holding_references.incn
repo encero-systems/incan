@@ -19,12 +19,12 @@ class Counter:
     pub value: int
     pub name: str
 
-    def bump(mut self) -> Reference[Self] from self:
+    pub def bump(mut self) -> Reference[Self] from self:
         """Increment this counter and return its existing storage."""
         self.value += 1
         return self
 
-    def scaled(self, factor: Borrowed[Counter]) -> int:
+    pub def scaled(self, factor: Borrowed[Counter]) -> int:
         """Read the receiver and another borrowed place through one closure."""
         read: () -> int = () => self.value * factor.value
         return read()

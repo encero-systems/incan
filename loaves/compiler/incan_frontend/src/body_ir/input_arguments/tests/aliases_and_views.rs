@@ -340,7 +340,7 @@ fn explicit_local_requires_profile_when_callee_is_ordinary() -> Result<(), Box<d
 #[test]
 fn method_frames_borrow_receiver_and_inputs() -> Result<(), Box<dyn std::error::Error>> {
     let module = admitted(
-        "class Counter:\n    pub value: int\n\n    def bump(mut self, mut amount: BorrowedMut[int]) -> None:\n        self.value = self.value + amount\n        amount = 0\n\ndef main() -> int:\n    mut counter = Counter(value=1)\n    mut step = 2\n    counter.bump(step)\n    return counter.value + step\n",
+        "class Counter:\n    pub value: int\n\n    pub def bump(mut self, mut amount: BorrowedMut[int]) -> None:\n        self.value = self.value + amount\n        amount = 0\n\ndef main() -> int:\n    mut counter = Counter(value=1)\n    mut step = 2\n    counter.bump(step)\n    return counter.value + step\n",
     )?;
     let method = module
         .bodies
@@ -397,7 +397,7 @@ fn method_frames_borrow_receiver_and_inputs() -> Result<(), Box<dyn std::error::
 #[test]
 fn returned_views_alias_the_substituted_place() -> Result<(), Box<dyn std::error::Error>> {
     let module = admitted(
-        "class Address:\n    pub city: str\n\n    def set_city(mut self, city: str) -> Reference[Self] from self:\n        self.city = city\n        return self\n\nclass Customer:\n    pub name: str\n    pub address: Address\n\n    def edit_address(mut self) -> Reference[Address] from self.address:\n        return self.address\n\ndef main() -> None:\n    mut customer = Customer(name=\"Sam\", address=Address(city=\"Utrecht\"))\n    mut address = customer.edit_address()\n    customer.name = \"Samuel\"\n    address.set_city(\"Rotterdam\")\n    assert customer.address.city == \"Rotterdam\"\n",
+        "class Address:\n    pub city: str\n\n    pub def set_city(mut self, city: str) -> Reference[Self] from self:\n        self.city = city\n        return self\n\nclass Customer:\n    pub name: str\n    pub address: Address\n\n    pub def edit_address(mut self) -> Reference[Address] from self.address:\n        return self.address\n\ndef main() -> None:\n    mut customer = Customer(name=\"Sam\", address=Address(city=\"Utrecht\"))\n    mut address = customer.edit_address()\n    customer.name = \"Samuel\"\n    address.set_city(\"Rotterdam\")\n    assert customer.address.city == \"Rotterdam\"\n",
     )?;
     let body = |name: &str| {
         module
@@ -473,7 +473,7 @@ fn returned_views_alias_the_substituted_place() -> Result<(), Box<dyn std::error
 #[test]
 fn chained_views_continue_on_the_original_field() -> Result<(), Box<dyn std::error::Error>> {
     let module = admitted(
-        "class Address:\n    pub city: str\n    pub postcode: str\n\n    def set_city(mut self, city: str) -> Reference[Self] from self:\n        self.city = city\n        return self\n\n    def set_postcode(mut self, postcode: str) -> Reference[Self] from self:\n        self.postcode = postcode\n        return self\n\n    def relocate(mut self) -> Reference[Self] from self:\n        return self.set_city(\"Delft\")\n\nclass Customer:\n    pub name: str\n    pub address: Address\n\ndef main() -> None:\n    mut customer = Customer(name=\"Sam\", address=Address(city=\"Utrecht\", postcode=\"3511\"))\n    customer.address.set_city(\"Rotterdam\").set_postcode(\"3011\")\n    customer.address.relocate()\n    print(customer.address.city)\n",
+        "class Address:\n    pub city: str\n    pub postcode: str\n\n    pub def set_city(mut self, city: str) -> Reference[Self] from self:\n        self.city = city\n        return self\n\n    pub def set_postcode(mut self, postcode: str) -> Reference[Self] from self:\n        self.postcode = postcode\n        return self\n\n    pub def relocate(mut self) -> Reference[Self] from self:\n        return self.set_city(\"Delft\")\n\nclass Customer:\n    pub name: str\n    pub address: Address\n\ndef main() -> None:\n    mut customer = Customer(name=\"Sam\", address=Address(city=\"Utrecht\", postcode=\"3511\"))\n    customer.address.set_city(\"Rotterdam\").set_postcode(\"3011\")\n    customer.address.relocate()\n    print(customer.address.city)\n",
     )?;
     let caller = module
         .bodies

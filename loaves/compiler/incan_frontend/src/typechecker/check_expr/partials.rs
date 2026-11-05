@@ -304,6 +304,7 @@ impl TypeChecker {
         else {
             return Ok(None);
         };
+        self.refuse_inaccessible_method(&method, &info, &receiver_ty, target.span);
         let refusal = if overloaded {
             Some("it is overloaded, and a partial presets one callable")
         } else if !info.type_params.is_empty() {

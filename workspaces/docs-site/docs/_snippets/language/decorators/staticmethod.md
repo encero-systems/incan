@@ -5,7 +5,7 @@ class Temperature:
     celsius: float
 
     @staticmethod
-    def from_fahrenheit(f: float) -> Temperature:
+    pub def from_fahrenheit(f: float) -> Temperature:
         return Temperature(celsius=(f - 32.0) / 1.8)
 
 def main() -> None:
@@ -37,7 +37,7 @@ class Box[T with Clone]:
     value: T
 
     @staticmethod
-    def make(value: T) -> Self:
+    pub def make(value: T) -> Self:
         return Box(value=value)
 
 def main() -> None:

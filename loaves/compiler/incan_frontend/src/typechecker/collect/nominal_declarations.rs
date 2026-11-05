@@ -63,16 +63,16 @@ impl TypeChecker {
 
     /// Register a model declaration with its fields, methods, and derived traits.
     pub(super) fn collect_model(&mut self, model: &ModelDecl, span: Span) {
-        let fields = collect_fields(
-            &model.fields,
-            self,
-            &model.name,
-            &model.type_params,
-            matches!(model.visibility, Visibility::Public),
-        );
+        let members_private = crate::symbols::members_are_type_private(false, model.visibility);
+        let fields = collect_fields(&model.fields, self, &model.name, &model.type_params, members_private);
         let properties = collect_properties(&model.properties, self, Some(&model.name), &model.type_params);
-        let mut method_overloads =
-            collect_method_overloads(&model.methods, self, Some(&model.name), &model.type_params);
+        let mut method_overloads = collect_method_overloads(
+            &model.methods,
+            self,
+            Some(&model.name),
+            &model.type_params,
+            members_private,
+        );
         let mut methods = collect_methods_from_overloads(&method_overloads);
 
         let derives = self.extract_derive_names(&model.decorators);
@@ -132,12 +132,13 @@ impl TypeChecker {
         ) = self.inherit_from_parent(&class.extends);
 
         // Add own fields (can override inherited ones)
+        let members_private = crate::symbols::members_are_type_private(true, class.visibility);
         fields.extend(collect_fields(
             &class.fields,
             self,
             &class.name,
             &class.type_params,
-            true,
+            members_private,
         ));
         for field in class
             .fields
@@ -164,8 +165,13 @@ impl TypeChecker {
         ));
 
         // Add own methods (can override inherited ones)
-        let own_method_overloads =
-            collect_method_overloads(&class.methods, self, Some(&class.name), &class.type_params);
+        let own_method_overloads = collect_method_overloads(
+            &class.methods,
+            self,
+            Some(&class.name),
+            &class.type_params,
+            members_private,
+        );
         methods.extend(collect_methods_from_overloads(&own_method_overloads));
         method_overloads.extend(own_method_overloads);
 
@@ -321,7 +327,9 @@ impl TypeChecker {
         self.record_local_rust_derive_paths(&nt.name, &nt.decorators);
 
         // Now collect methods - they can reference the newtype name
-        let mut method_overloads = collect_method_overloads(&nt.methods, self, Some(&nt.name), &nt.type_params);
+        let members_private = crate::symbols::members_are_type_private(false, nt.visibility);
+        let mut method_overloads =
+            collect_method_overloads(&nt.methods, self, Some(&nt.name), &nt.type_params, members_private);
         let mut methods = collect_methods_from_overloads(&method_overloads);
         let method_aliases = collect_method_aliases(&nt.method_aliases, self, &mut methods, &mut method_overloads);
         self.collect_method_partials(&nt.name, &nt.method_partials, &mut methods, &mut method_overloads);
@@ -480,7 +488,9 @@ impl TypeChecker {
         }
         self.record_local_rust_derive_paths(&en.name, &en.decorators);
 
-        let method_overloads = collect_method_overloads(&en.methods, self, Some(&en.name), &en.type_params);
+        let members_private = crate::symbols::members_are_type_private(false, en.visibility);
+        let method_overloads =
+            collect_method_overloads(&en.methods, self, Some(&en.name), &en.type_params, members_private);
         let methods = collect_methods_from_overloads(&method_overloads);
         if let Some(sym) = self.symbols.get_mut(symbol_id)
             && let SymbolKind::Type(TypeInfo::Enum(info)) = &mut sym.kind
