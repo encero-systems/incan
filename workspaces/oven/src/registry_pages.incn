@@ -13,7 +13,7 @@ from registry_codec import Catalog, decode, encode
 from registry_units import RegistryUnit, sole_library
 from sealed_set import Profile, Record, SetSpec, admit, export_set, mapped_value
 from pub::incan_platform.store import begin, commit, get, lease, put
-from segment_store import snapshot
+from store_path_conversion import snapshot
 from unit_freshness import fingerprint
 
 const PROFILE: str = "incan.registry-page/1"

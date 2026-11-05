@@ -33,7 +33,6 @@ pub mod derives;
 pub mod enum_helpers;
 pub mod errors;
 pub mod field_metadata;
-pub mod generated_support;
 pub mod highlighting;
 pub mod keywords;
 pub mod magic_methods;

@@ -6,9 +6,7 @@ from std.hash import file_digest, sha256
 from std.io import BytesIO, Endian, IoError
 from scratch import scratch_directory
 from pub::incan_platform.store import EXPECT_ABSENT, Snapshot, begin, commit, get, put, read_counts
-from segment_store import snapshot
-from segment_payloads import payload_path, put_payload
-from platform_store_path import oven_path
+from store_path_conversion import oven_path, payload_path, put_payload, snapshot
 from sealed_set import (
     ExternalReference,
     Profile,

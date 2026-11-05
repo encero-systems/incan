@@ -1,7 +1,7 @@
 """
 The home bakery: one store per Incan home that every project, test and CI step asks for its units (DD-0012, RFC 124).
 
-Units are records in the home's segment store (`segment_store`), keyed by unit identity. A unit record names its kind,
+Units are records in the home's platform store, keyed by unit identity. A unit record names its kind,
 its name, the identities it reaches and each payload file: a path inside the unit, the content digest it is stored
 under, its size and whether it is a program. Payload files are content-named files of the store, which rustc and the
 OS read as files. `target/` folders hold views of them: copy-on-write clones a user may run, edit or strip.
@@ -54,9 +54,15 @@ from pub::incan_platform.store import (
 )
 from pub::incan_platform.store.files import StoreError
 from pub::incan_platform.store.repair import quarantine_record
-from segment_store import claim as claim_key, snapshot
-from segment_payloads import payload_intact, payload_path, prepare_payloads
-from segment_repair import quarantine_payload, readmit_payload
+from store_path_conversion import (
+    claim as claim_key,
+    payload_intact,
+    payload_path,
+    prepare_payloads,
+    quarantine_payload,
+    readmit_payload,
+    snapshot,
+)
 from unit import UnitDescription
 from unit_freshness import Key, fingerprint
 from bakery_records import Fact, FactFile, claim_file, decode_fact, encode_fact, record_key, staging_root, store_failure

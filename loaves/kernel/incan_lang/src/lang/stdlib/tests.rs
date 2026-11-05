@@ -376,34 +376,14 @@ fn stdlib_json_trait_lookup_covers_source_and_qualified_names_only() {
 }
 
 #[test]
-fn extra_crate_dependency_lookup_is_registry_driven() {
-    let axum = find_extra_crate_dep("axum");
-    assert_eq!(axum.map(|dep| dep.crate_name), Some("axum"));
-    assert_eq!(axum.map(|dep| dep.source), Some(StdlibExtraCrateSource::Declared));
-
-    let macros = find_extra_crate_dep("incan_web_macros");
-    assert_eq!(
-        macros.map(|dep| dep.source),
-        Some(StdlibExtraCrateSource::Path("loaves/stdlib/derive/incan_web_macros"))
-    );
-    assert!(is_path_extra_crate_dep("incan_web_macros"));
-    assert!(!is_path_extra_crate_dep("axum"));
-
-    assert!(find_extra_crate_dep("not_a_stdlib_dependency").is_none());
-}
-
-#[test]
 fn stdlib_registry_keeps_phase_023_metadata() {
     let async_ns = find_namespace("async");
     let reflection_ns = find_namespace("reflection");
     let fs_ns = find_namespace("fs");
     let tempfile_ns = find_namespace("tempfile");
     let traits_ns = find_namespace("traits");
-    let math_ns = find_namespace("math");
     let graph_ns = find_namespace("graph");
     let uuid_ns = find_namespace("uuid");
-    let serde_ns = find_namespace("serde");
-    let json_ns = find_namespace(STDLIB_JSON);
     let hash_ns = find_namespace("hash");
     let checksum_ns = find_namespace("checksum");
     let datetime_ns = find_namespace("datetime");
@@ -424,73 +404,23 @@ fn stdlib_registry_keeps_phase_023_metadata() {
     assert_eq!(reflection_ns.map(|ns| ns.submodules.is_empty()), Some(true));
     assert_eq!(fs_ns.map(|ns| ns.submodules.contains(&"path")), Some(true));
     assert_eq!(fs_ns.and_then(|ns| ns.facet), None);
-    assert_eq!(
-        fs_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
-        Some(vec!["encoding_rs", "rustix"])
-    );
     assert_eq!(tempfile_ns.map(|ns| ns.submodules.is_empty()), Some(true));
     assert_eq!(tempfile_ns.and_then(|ns| ns.facet), None);
-    assert_eq!(
-        tempfile_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
-        Some(vec!["tempfile"])
-    );
     assert_eq!(traits_ns.map(|ns| ns.submodules.contains(&"prelude")), Some(true));
-    assert_eq!(
-        math_ns
-            .and_then(|ns| ns.extra_crate_deps.first())
-            .map(|dep| dep.crate_name),
-        Some("libm")
-    );
     assert_eq!(graph_ns.map(|ns| ns.facet), Some(None));
     assert_eq!(graph_ns.map(|ns| ns.submodules.is_empty()), Some(true));
     assert_eq!(uuid_ns.map(|ns| ns.facet), Some(None));
-    assert_eq!(
-        uuid_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
-        Some(vec!["rand"])
-    );
     assert_eq!(uuid_ns.map(|ns| ns.submodules.is_empty()), Some(true));
     assert_eq!(uuid_ns.map(|ns| ns.typechecker_only), Some(false));
-    assert_eq!(
-        serde_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
-        Some(vec!["serde"])
-    );
-    assert_eq!(
-        json_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
-        Some(vec!["serde"])
-    );
     assert_eq!(collections_ns.and_then(|ns| ns.facet), Some(facets::DATA));
-    assert_eq!(collections_ns.map(|ns| ns.extra_crate_deps.is_empty()), Some(true));
     assert_eq!(collections_ns.map(|ns| ns.submodules.is_empty()), Some(true));
     assert_eq!(collections_ns.map(|ns| ns.typechecker_only), Some(false));
-    assert_eq!(
-        find_namespace("io")
-            .and_then(|ns| ns.extra_crate_deps.first())
-            .map(|dep| dep.crate_name),
-        Some("byteorder")
-    );
     assert_eq!(hash_ns.map(|ns| ns.facet), Some(None));
-    assert_eq!(
-        hash_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
-        Some(vec![
-            "blake2",
-            "blake3",
-            "hmac",
-            "md5",
-            "sha1",
-            "sha2",
-            "sha3",
-            "xxhash_rust",
-        ])
-    );
     assert_eq!(hash_ns.map(|ns| ns.submodules.contains(&"prelude")), Some(true));
     assert_eq!(hash_ns.map(|ns| ns.submodules.contains(&"_core")), Some(true));
     assert_eq!(hash_ns.map(|ns| ns.submodules.contains(&"_streaming")), Some(true));
     assert_eq!(hash_ns.map(|ns| ns.typechecker_only), Some(false));
     assert_eq!(checksum_ns.map(|ns| ns.facet), Some(None));
-    assert_eq!(
-        checksum_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
-        Some(vec!["crc32fast"])
-    );
     assert_eq!(checksum_ns.map(|ns| ns.submodules.is_empty()), Some(true));
     assert_eq!(checksum_ns.map(|ns| ns.typechecker_only), Some(false));
     assert_eq!(compression_ns.map(|ns| ns.facet), Some(None));
@@ -501,13 +431,6 @@ fn stdlib_registry_keeps_phase_023_metadata() {
         compression_ns.map(|ns| ns.submodules.contains(&"snappy.raw")),
         Some(true)
     );
-    assert_eq!(
-        compression_ns
-            .and_then(|ns| ns.extra_crate_deps.first())
-            .map(|dep| dep.crate_name),
-        Some("flate2")
-    );
     assert_eq!(datetime_ns.map(|ns| ns.facet), Some(None));
-    assert_eq!(datetime_ns.map(|ns| ns.extra_crate_deps.is_empty()), Some(true));
     assert_eq!(datetime_ns.map(|ns| ns.submodules.contains(&"civil.naive")), Some(true));
 }

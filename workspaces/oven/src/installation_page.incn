@@ -18,7 +18,7 @@ from jec import begin as begin_work, record as record_work
 from observation import observe
 from sealed_set import Profile, Record, SetSpec, admit, export_set, mapped_value, selected_value
 from pub::incan_platform.store import Snapshot, begin, commit, get, lease, put
-from segment_store import claim, snapshot
+from store_path_conversion import claim, snapshot
 from toolchain_types import Toolchain
 from installation_documents import capture as capture_documents
 from frozen_inputs import clear as clear_documents, select as select_documents

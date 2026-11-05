@@ -297,9 +297,6 @@ pub struct StdlibNamespace {
     /// The Rust facet this namespace's generated code links beyond the mandatory [`facets::CORE`], or `None` when
     /// the core facet serves it.
     pub facet: Option<&'static str>,
-    /// Rust extern ownership names used by this namespace; component Loaf manifests own registry requirements and
-    /// features.
-    pub extra_crate_deps: &'static [StdlibExtraCrateDep],
     /// Known submodules for validation and LSP completion. Empty for leaf modules.
     pub submodules: &'static [&'static str],
     /// When `true`, this namespace is handled entirely by the typechecker with no corresponding `.incn` stub file or
@@ -308,24 +305,6 @@ pub struct StdlibNamespace {
     /// `std.rust` is the canonical example: `Send`, `Sync`, etc. map to native Rust traits that are already in scope
     /// and must not be re-declared or imported in generated code.
     pub typechecker_only: bool,
-}
-
-/// Additional crate dependency needed by a stdlib namespace.
-#[derive(Debug, Clone, Copy)]
-pub struct StdlibExtraCrateDep {
-    /// Cargo dependency key.
-    pub crate_name: &'static str,
-    /// Namespace ownership of a declared registry Loaf or a local toolchain support path.
-    pub source: StdlibExtraCrateSource,
-}
-
-/// Source descriptor for a namespace-provided extra crate dependency.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StdlibExtraCrateSource {
-    /// Path dependency rooted at compiler workspace root.
-    Path(&'static str),
-    /// Registry Loaf whose requirement and features belong to its component manifest.
-    Declared,
 }
 
 /// Builtin trait identity for stdlib method-stub lookup.
@@ -363,39 +342,6 @@ pub struct StdlibTraitMethodModule {
 /// Look up a top-level stdlib namespace by name.
 pub fn find_namespace(name: &str) -> Option<&'static StdlibNamespace> {
     STDLIB_NAMESPACES.iter().find(|ns| ns.name == name)
-}
-
-/// Look up an extra Cargo crate dependency declared by any registered stdlib namespace.
-///
-/// This is the registry boundary for compiler subsystems that need stdlib-managed dependency metadata without
-/// duplicating namespace traversal or crate version knowledge.
-#[must_use]
-pub fn find_extra_crate_dep(crate_name: &str) -> Option<&'static StdlibExtraCrateDep> {
-    extra_crate_deps().find(|dep| dep.crate_name == crate_name)
-}
-
-/// Return whether a crate is supplied by the workspace as a stdlib-managed path dependency.
-#[must_use]
-pub fn is_path_extra_crate_dep(crate_name: &str) -> bool {
-    find_extra_crate_dep(crate_name).is_some_and(|dep| matches!(dep.source, StdlibExtraCrateSource::Path(_)))
-}
-
-/// Return the published Cargo package name when a stdlib-managed Rust crate imports under a different crate key.
-#[must_use]
-pub fn extra_crate_package_alias(crate_name: &str) -> Option<&'static str> {
-    match crate_name {
-        "md5" => Some("md-5"),
-        "xxhash_rust" => Some("xxhash-rust"),
-        _ => None,
-    }
-}
-
-/// Iterate over every extra Cargo crate dependency declared by registered stdlib namespaces.
-///
-/// Consumers that need to filter by dependency source can use this iterator while keeping namespace traversal
-/// centralized in the stdlib registry.
-pub fn extra_crate_deps() -> impl Iterator<Item = &'static StdlibExtraCrateDep> {
-    STDLIB_NAMESPACES.iter().flat_map(|ns| ns.extra_crate_deps)
 }
 
 /// Return the stdlib module path that owns fallback method signatures for a builtin trait name.
