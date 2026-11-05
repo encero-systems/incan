@@ -1,6 +1,6 @@
 # RFC 111: Proof-aware agentic contract feedback
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-06-12
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
