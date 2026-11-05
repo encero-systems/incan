@@ -306,6 +306,7 @@ In stdio mode the AI client starts your program and reads its messages from stan
 36. While `serve_stdio` runs, everything the process and its children write to standard output, including through native libraries, must reach stderr, and only the server must write to the protocol stream.
 37. `std.io` must provide `stdin()` as a `BinaryReader` with an async form, and `stdout()`.
 38. `server.mount(app, path, ...)` must serve Streamable HTTP on an RFC 037 `App`, taking the same limits. Authentication must come from the application's `AuthProvider` and `Guard` into `ToolContext.current().principal`, and must not be reimplemented by `std.mcp`.
+39. `mount` and its `std.web` dependency must be separately selectable, so a server that only uses stdio, such as `incan mcp`, does not carry the web stack.
 
 ### Conformance workloads
 
