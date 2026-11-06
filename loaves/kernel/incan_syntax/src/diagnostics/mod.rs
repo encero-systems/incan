@@ -14,7 +14,7 @@ mod stable;
 
 pub use base::{
     CompileError, DiagnosticRanges, DiagnosticRecipe, ErrorKind, RelatedDeclaration, RelatedSpan, format_error,
-    print_error,
+    format_error_with_related_sources, print_error,
 };
 pub use catalog::{errors, lints};
 pub use miette::IncanDiagnostic;

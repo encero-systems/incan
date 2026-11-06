@@ -563,6 +563,25 @@ pub(super) const PACKAGE_FEATURE_DISABLED: DiagnosticCatalogEntry = DiagnosticCa
     docs_url: Some("https://encero-systems.github.io/incan/tooling/reference/sdk_components_and_package_features/"),
 };
 
+pub(super) const IMPORT_LINK_LOOP: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-I0104",
+    title: "Imported name link loop",
+    severity: "error",
+    phase: "import",
+    summary: "Following an imported or re-exported name returns to a link already on the same lookup walk.",
+    explanation: "Imports and re-exports are links to declarations. A lookup must reach a declaration before it can inspect the name or its members; a loop of links has no declaration to inspect, so the compiler reports every link in traversal order.",
+    examples: &["# a.incn\npub from b import X\n\n# b.incn\npub from a import X"],
+    common_causes: &[
+        "Two facade modules re-export the same name from each other.",
+        "A longer re-export chain returns to an earlier module without declaring the name anywhere.",
+    ],
+    fixes: &[
+        "Make one module in the loop declare the value or type instead of re-exporting it.",
+        "Point one re-export at the module that owns the declaration.",
+    ],
+    docs_url: Some("https://encero-systems.github.io/incan/language/reference/imports_and_modules/"),
+};
+
 pub(super) const TOOLING: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     code: "INCAN-C0001",
     title: "CLI or tooling error",
@@ -709,6 +728,7 @@ pub(super) const CATALOG: &[DiagnosticCatalogEntry] = &[
     SDK_COMPONENT_DISABLED,
     SDK_COMPONENT_UNAVAILABLE,
     PACKAGE_FEATURE_DISABLED,
+    IMPORT_LINK_LOOP,
     TOOLING,
     UNKNOWN,
 ];

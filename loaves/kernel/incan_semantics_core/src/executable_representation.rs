@@ -76,12 +76,14 @@ use crate::body_ir::{
 /// native ABI. Older representations carry no such fact and retain their existing inferred meaning.
 /// Version 49 carries the checker's typed builtin-method operation on every method target. Older representations are
 /// refused because an absent operation would force consumers to reconstruct builtin meaning from canonical text.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 49;
+/// Version 50 carries the primary source label in persisted checker diagnostics. Older representations are refused
+/// because decoding the prior diagnostic row shape would shift every following structured field.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 50;
 
 /// Only the binding-aware combined layout is admitted. Missing input authority cannot be reconstructed from a
 /// native ABI, and a prior layout cannot silently omit initializer transfers, explicit local obligations, returned
 /// views, conditional profiles or the component carrying a view.
-const OLDEST_SUPPORTED_VERSION: u32 = 49;
+const OLDEST_SUPPORTED_VERSION: u32 = 50;
 
 /// Required-field witnesses transported separately from the legacy positional nominal layout.
 #[derive(Serialize, Deserialize)]

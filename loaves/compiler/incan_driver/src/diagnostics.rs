@@ -6,11 +6,25 @@
 //! records it — none of them shape it.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 
 use crate::error::CliError;
 use incan_frontend::ast::Span;
 use incan_frontend::diagnostics;
 use incan_frontend::parsed_module::ParsedModule;
+use incan_semantics_core::SymbolOrigin;
+
+/// One authored source file available for projecting a related declaration in another semantic origin.
+#[derive(Debug, Clone)]
+pub struct CliDiagnosticSource {
+    /// Source path shown to the user.
+    pub file_path: String,
+    /// Authored source whose coordinates the declaration span uses.
+    pub source: String,
+}
+
+/// Source files keyed by the semantic origins that own their declaration spans.
+pub type CliDiagnosticSources = HashMap<SymbolOrigin, CliDiagnosticSource>;
 /// One compiler diagnostic with enough source context for either human or machine-readable rendering.
 #[derive(Debug, Clone)]
 pub struct CliDiagnostic {
@@ -24,6 +38,8 @@ pub struct CliDiagnostic {
 #[derive(Debug, Clone)]
 pub struct CliDiagnosticFailure {
     pub diagnostics: Vec<CliDiagnostic>,
+    /// Sources available for rendering declarations outside a diagnostic's primary file.
+    pub related_sources: CliDiagnosticSources,
     /// Non-fatal diagnostics gathered before the failure, reported but never re-rendered.
     ///
     /// Kept apart from `diagnostics` because these have already been printed to stderr as they were produced.
@@ -48,6 +64,7 @@ impl CliDiagnosticFailure {
                 error,
                 phase,
             }],
+            related_sources: HashMap::new(),
             warnings: Vec::new(),
         }
     }
@@ -71,6 +88,7 @@ impl CliDiagnosticFailure {
                     phase,
                 })
                 .collect(),
+            related_sources: HashMap::new(),
             warnings: Vec::new(),
         }
     }
@@ -97,10 +115,15 @@ impl CliDiagnosticFailure {
     pub fn render_human(&self) -> String {
         let mut rendered = String::new();
         for diagnostic in &self.diagnostics {
-            rendered.push_str(&diagnostics::format_error(
+            rendered.push_str(&diagnostics::format_error_with_related_sources(
                 &diagnostic.file_path,
                 &diagnostic.source,
                 &diagnostic.error,
+                |origin| {
+                    self.related_sources
+                        .get(origin)
+                        .map(|source| (source.file_path.as_str(), source.source.as_str()))
+                },
             ));
             rendered.push('\n');
         }
@@ -119,9 +142,16 @@ impl From<CliError> for CliDiagnosticFailure {
     }
 }
 
-/// Classify diagnostics that are still emitted by the typechecker but originate from an import declaration span.
-pub fn typecheck_diagnostic_phase(module: &ParsedModule, span: Span) -> diagnostics::DiagnosticPhase {
-    diagnostics::phase_for_typecheck_span(&module.ast, span)
+/// Classify diagnostics emitted by the typechecker from their narrow catalog ownership or their authored span.
+pub fn typecheck_diagnostic_phase(
+    module: &ParsedModule,
+    error: &diagnostics::CompileError,
+) -> diagnostics::DiagnosticPhase {
+    if error.stable_code().is_some_and(|code| code.starts_with("INCAN-I")) {
+        diagnostics::DiagnosticPhase::Import
+    } else {
+        diagnostics::phase_for_typecheck_span(&module.ast, error.span)
+    }
 }
 
 thread_local! {
@@ -214,7 +244,7 @@ pub fn typecheck_warning_diagnostics(
         .map(|warning| CliDiagnostic {
             file_path: module.file_path.to_string_lossy().to_string(),
             source: module.source.clone(),
-            phase: typecheck_diagnostic_phase(module, warning.span),
+            phase: typecheck_diagnostic_phase(module, warning),
             error: warning.clone(),
         })
         .collect()

@@ -1,0 +1,3 @@
+"""Republish nominal types through a second source module."""
+
+pub from first import LinkedNode, LinkedState

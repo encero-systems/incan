@@ -1,0 +1,13 @@
+"""Declare nominal members republished by another Loaf."""
+
+
+pub model LinkedNode:
+    pub value: int
+
+    pub def doubled(self) -> int:
+        """Return twice the node value."""
+        return self.value * 2
+
+
+pub enum LinkedState:
+    Active

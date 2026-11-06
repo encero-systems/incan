@@ -11,6 +11,10 @@ pub class Thing:
         """Construct a thing through the imported type namespace."""
         return Thing(name=name)
 
+    pub def label(self) -> str:
+        """Return the field through the declaring type's instance method."""
+        return f"thing {self.name}"
+
 
 pub enum Mode:
     """A public enum whose variant is selected through its type namespace."""

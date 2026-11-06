@@ -261,15 +261,17 @@ impl TypeChecker {
             {
                 return None;
             }
-            if let Some((target_module, target_name)) = self
+            if let Some(link) = self
                 .dependency_member_reexports
                 .get(&key)
                 .and_then(|links| links.get(member))
-                .or_else(|| {
-                    self.body_ir_dependency_pub_reexports
-                        .get(&key)
-                        .and_then(|links| links.get(member))
-                })
+            {
+                return self.body_ir_reexport_target(&owner, &link.target_module, &link.target_name, depth + 1);
+            }
+            if let Some((target_module, target_name)) = self
+                .body_ir_dependency_pub_reexports
+                .get(&key)
+                .and_then(|links| links.get(member))
             {
                 return self.body_ir_reexport_target(&owner, target_module, target_name, depth + 1);
             }

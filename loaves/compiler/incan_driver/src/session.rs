@@ -295,6 +295,7 @@ impl CompilationSession {
     fn expansion_failures(&self, modules: &[ParsedModule]) -> CliDiagnosticFailure {
         let mut failure = CliDiagnosticFailure {
             diagnostics: Vec::new(),
+            related_sources: Default::default(),
             warnings: Vec::new(),
         };
         let retained = match self.desugar_diagnostics.lock() {

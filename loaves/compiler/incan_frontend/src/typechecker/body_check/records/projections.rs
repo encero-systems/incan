@@ -39,7 +39,7 @@ pub(crate) fn project(
             positions.nodes.owner().render_compact(),
             positions.nodes.root().to_owned(),
             if declaration { "declaration" } else { "final" }.into(),
-            "incan.checker-free-functions/9".into(),
+            "incan.checker-free-functions/10".into(),
         ],
     );
     Ok(fields)

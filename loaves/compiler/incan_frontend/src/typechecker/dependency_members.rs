@@ -34,22 +34,36 @@ impl TypeChecker {
         let facade_module_path = self
             .canonical_owner_segments(module_name)
             .unwrap_or_else(|| vec![module_name.to_string()]);
-        for (exported_name, module, item_name) in Self::dependency_source_reexport_targets(module_ast) {
-            reexports.insert(exported_name.clone(), (module.clone(), item_name.clone()));
-            if let Some(kind) = self.dependency_reexported_member_symbol(&facade_module_path, &module, &item_name) {
+        let facade_origin = self
+            .symbols
+            .package_identity()
+            .map(|library| SymbolOrigin::Package {
+                library: library.to_string(),
+                module_path: facade_module_path.clone(),
+            })
+            .unwrap_or_else(|| SymbolOrigin::Module(facade_module_path.clone()));
+        for (exported_name, link) in Self::dependency_source_reexport_targets(module_ast, &facade_origin) {
+            if let Some(kind) =
+                self.dependency_reexported_member_symbol(&facade_module_path, &link.target_module, &link.target_name)
+            {
                 member_symbols.insert(exported_name.clone(), kind);
             }
-            if let Some(target) =
-                self.dependency_member_type_alias_for_path_from(&facade_module_path, &module, &item_name)
-            {
+            if let Some(target) = self.dependency_member_type_alias_for_path_from(
+                &facade_module_path,
+                &link.target_module,
+                &link.target_name,
+            ) {
                 member_type_aliases.insert(exported_name.clone(), target);
             }
-            if let Some(mut projection) =
-                self.dependency_member_partial_projection_for_path_from(&facade_module_path, &module, &item_name)
-            {
+            if let Some(mut projection) = self.dependency_member_partial_projection_for_path_from(
+                &facade_module_path,
+                &link.target_module,
+                &link.target_name,
+            ) {
                 projection.name.clone_from(&exported_name);
-                member_projections.insert(exported_name, projection);
+                member_projections.insert(exported_name.clone(), projection);
             }
+            reexports.insert(exported_name, link);
         }
         for declaration in &module_ast.declarations {
             let Declaration::Import(import) = &declaration.node else {
@@ -363,29 +377,36 @@ impl TypeChecker {
     }
 
     /// Return source-module import targets that a dependency module makes visible as member bindings.
-    pub(super) fn dependency_source_reexport_targets(module_ast: &Program) -> Vec<(String, ImportPath, String)> {
+    pub(super) fn dependency_source_reexport_targets(
+        module_ast: &Program,
+        declaration_origin: &SymbolOrigin,
+    ) -> Vec<(String, DependencyMemberReexport)> {
         module_ast
             .declarations
             .iter()
             .filter_map(|decl| match &decl.node {
-                Declaration::Import(import) => Some(import),
+                Declaration::Import(import) => Some((import, decl.span)),
                 _ => None,
             })
-            .filter_map(|import| match &import.kind {
-                ImportKind::From { module, items } => Some((module.clone(), items.as_slice())),
+            .filter_map(|(import, span)| match &import.kind {
+                ImportKind::From { module, items } => Some((module.clone(), items.as_slice(), span)),
                 ImportKind::PubFrom { library, path, items } => {
                     let mut segments = vec![PUBLIC_LIBRARY_NAMESPACE.to_owned(), library.clone()];
                     segments.extend(path.iter().cloned());
-                    Some((ImportPath::simple(segments), items.as_slice()))
+                    Some((ImportPath::simple(segments), items.as_slice(), span))
                 }
                 _ => None,
             })
-            .flat_map(|(module, items)| {
+            .flat_map(|(module, items, declaration_span)| {
                 items.iter().map(move |item| {
                     (
                         item.alias.as_ref().unwrap_or(&item.name).clone(),
-                        module.clone(),
-                        item.name.clone(),
+                        DependencyMemberReexport {
+                            target_module: module.clone(),
+                            target_name: item.name.clone(),
+                            declaration_origin: declaration_origin.clone(),
+                            declaration_span,
+                        },
                     )
                 })
             })
@@ -576,79 +597,93 @@ impl TypeChecker {
         module: &ImportPath,
         item_name: &str,
     ) -> Option<ResolvedDependencyMember> {
-        // Resolve through the consumer's own module graph first. `dependency_source_import_candidates` already
-        // orders a granted SDK provider ahead of ordinary candidates for a `std.*` path, so provider precedence is
-        // preserved without keying on the spelling here.
-        let current_module_path = self.current_module_path.as_deref().unwrap_or_default();
-        if let Some(member) = self.dependency_member_resolution_from(current_module_path, module, item_name, 0) {
-            return Some(member);
-        }
-
-        // Fall back to the provider registry keyed by the spelled path. A compiled provider is reachable by the path
-        // its manifest publishes even when the consumer's source graph contains no module of that name, which is the
-        // case this originally existed to serve.
-        //
-        // It must stay a fallback. Running it first let the spelling pre-empt resolution: `from helpers import
-        // render` inside `pkg.app` selects the sibling `pkg.helpers`, but a root `helpers` declaring the same member
-        // answered instead -- a module the import did not select.
-        self.loaf_import_identity(module, item_name)
-            .map(|identity| ResolvedDependencyMember::declared_as(identity, item_name))
+        self.resolve_dependency_member_links(module, item_name).ok().flatten()
     }
 
-    /// Resolve one imported member to its declaring identity, using `from_module_path` as the resolution base.
+    /// Follow one imported name through source re-export links to its declaration, retaining an ordered loop when
+    /// the walk revisits a link.
     ///
-    /// The base is the *consumer's* module for a direct import and the *facade's* module when following a re-export,
-    /// because a facade's own relative import paths resolve against where the facade lives, not where the consumer
-    /// does. Every arm that stops the walk answers by a direct lookup of `item_name` in the module it stopped at, so
-    /// that name is the declaring module's spelling the result carries.
-    pub(super) fn dependency_member_resolution_from(
+    /// Module import cycles do not enter `visited`: only a concrete `<module>.<member>` re-export link does. A cycle
+    /// between modules therefore remains accepted unless resolving the requested name traverses the same link twice.
+    pub(super) fn resolve_dependency_member_links(
         &self,
-        from_module_path: &[String],
         module: &ImportPath,
         item_name: &str,
-        depth: usize,
-    ) -> Option<ResolvedDependencyMember> {
-        if depth >= Self::MAX_REEXPORT_DEPTH {
-            return None;
-        }
-        for owner in self.dependency_source_import_candidates(from_module_path, module) {
-            let key = owner.join("_");
-            let resolves_here = self
-                .dependency_member_symbols
-                .get(&key)
-                .is_some_and(|members| members.contains_key(item_name));
-            if !resolves_here {
-                continue;
+    ) -> Result<Option<ResolvedDependencyMember>, DependencyMemberResolutionFailure> {
+        let current_module_path = self.current_module_path.as_deref().unwrap_or_default();
+        let mut base = current_module_path.to_vec();
+        let mut target_module = module.clone();
+        let mut target_name = item_name.to_string();
+        let mut visited = HashMap::<(Vec<String>, String), usize>::new();
+        let mut followed = Vec::<DependencyMemberLinkLocation>::new();
+
+        loop {
+            let mut selected_owner = None;
+            for owner in self.dependency_source_import_candidates(&base, &target_module) {
+                let key = owner.join("_");
+                let declares_member = self
+                    .dependency_direct_member_symbols
+                    .get(&key)
+                    .is_some_and(|members| members.contains_key(&target_name));
+                let links_member = self
+                    .dependency_member_reexports
+                    .get(&key)
+                    .is_some_and(|links| links.contains_key(&target_name));
+                if declares_member
+                    || links_member
+                    || self
+                        .dependency_member_symbols
+                        .get(&key)
+                        .is_some_and(|members| members.contains_key(&target_name))
+                {
+                    selected_owner = Some((owner, key));
+                    break;
+                }
             }
 
-            // Resolution stops at this candidate. It owns the declaration only if it declares the member directly.
+            let Some((owner, key)) = selected_owner else {
+                return Ok(self
+                    .loaf_import_identity(&target_module, &target_name)
+                    .map(|identity| ResolvedDependencyMember::declared_as(identity, &target_name)));
+            };
+
             if self
                 .dependency_direct_member_symbols
                 .get(&key)
-                .and_then(|direct| direct.get(item_name))
+                .and_then(|direct| direct.get(&target_name))
                 .is_some()
             {
-                return self
+                return Ok(self
                     .dependency_direct_member_identities
                     .get(&key)
-                    .and_then(|identities| identities.get(item_name))
+                    .and_then(|identities| identities.get(&target_name))
                     .cloned()
-                    .map(|identity| ResolvedDependencyMember::declared_as(identity, item_name));
+                    .map(|identity| ResolvedDependencyMember::declared_as(identity, &target_name)));
             }
 
-            // Otherwise the member arrived here as a re-export. Follow it to the declaration it names, resolving
-            // against the facade's own module — the same base `cache_dependency_member_symbols` used when it bound
-            // that link, so the identity names exactly the declaration the binding selected. A link into `std.*`
-            // reaches the same provider registry and source metadata the binding itself came from, in the same order.
-            let (target_module, target_name) = self.dependency_member_reexports.get(&key)?.get(item_name)?;
-            return self
-                .dependency_member_resolution_from(&owner, target_module, target_name, depth + 1)
-                .or_else(|| {
-                    self.loaf_import_identity(target_module, target_name)
-                        .map(|identity| ResolvedDependencyMember::declared_as(identity, target_name))
+            let Some(link) = self
+                .dependency_member_reexports
+                .get(&key)
+                .and_then(|links| links.get(&target_name))
+            else {
+                return Ok(None);
+            };
+            let node = (owner.clone(), target_name.clone());
+            if let Some(start) = visited.get(&node).copied() {
+                return Err(DependencyMemberResolutionFailure::LinkLoop {
+                    links: followed[start..].to_vec(),
                 });
+            }
+            visited.insert(node, followed.len());
+            followed.push(DependencyMemberLinkLocation {
+                spelling: format!("{}.{}", owner.join("."), target_name),
+                declaration_origin: link.declaration_origin.clone(),
+                declaration_span: link.declaration_span,
+            });
+            base = owner;
+            target_module = link.target_module.clone();
+            target_name.clone_from(&link.target_name);
         }
-        None
     }
 
     /// Return the identity the Loaf owning `module` publishes for `item_name`: the identity half of

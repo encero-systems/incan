@@ -57,6 +57,10 @@ impl TypeChecker {
             self.errors.push(errors::unknown_symbol(name, span));
             return ResolvedType::Unknown;
         };
+        if let Err(failure) = self.resolve_qualified_name(&[name.to_string()]) {
+            self.report_namespace_resolution_failure(failure, span);
+            return ResolvedType::Unknown;
+        }
         self.observe_binding_read(sym_id, span);
         self.note_mut_param_read(name, span);
         if self.symbols.identity_of(sym_id).is_some_and(|identity| {

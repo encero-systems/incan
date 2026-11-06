@@ -46,6 +46,8 @@ pub(super) enum NamespaceResolutionFailure {
     MissingMember { namespace: String, member: String },
     /// The head is not a namespace that the remaining path can traverse.
     NotNamespace { head: String },
+    /// Re-export links return to a name already visited on this walk.
+    LinkLoop { links: Vec<DependencyMemberLinkLocation> },
 }
 
 impl TypeChecker {
@@ -105,32 +107,74 @@ impl TypeChecker {
         let Some((head, tail)) = segments.split_first() else {
             return Err(NamespaceResolutionFailure::NotNamespace { head: String::new() });
         };
-        if tail.is_empty() {
-            let Some(symbol_id) = self.symbols.lookup(head) else {
-                return Err(NamespaceResolutionFailure::NotNamespace { head: head.clone() });
-            };
-            let Some(symbol) = self.symbols.get(symbol_id) else {
-                return Err(NamespaceResolutionFailure::NotNamespace { head: head.clone() });
-            };
-            return Ok(ResolvedNamespaceMember {
-                kind: ResolvedNamespaceMemberKind::Symbol(symbol.kind.clone()),
-                canonical: self.symbols.identity_of(symbol_id).cloned(),
-                namespace_path: Vec::new(),
-                source_module_path: None,
-                source_name: head.clone(),
-                public_library: None,
-                surface_rust_item: None,
-            });
-        }
-        let mut resolved = if let Some(module_path) = self.module_namespace_path(head) {
-            self.resolve_module_namespace_member(&module_path, &tail[0])?
-        } else {
-            self.resolve_lexical_namespace_member(head, &tail[0])?
-        };
-        for member in &tail[1..] {
+        let mut resolved = self.resolve_namespace_head(head)?;
+        for member in tail {
             resolved = self.resolve_namespace_member(resolved, member)?;
         }
         Ok(resolved)
+    }
+
+    /// Resolve the lexical head and follow an unresolved import placeholder through the dependency link graph.
+    fn resolve_namespace_head(&mut self, head: &str) -> Result<ResolvedNamespaceMember, NamespaceResolutionFailure> {
+        let symbol_id = self
+            .symbols
+            .lookup(head)
+            .ok_or_else(|| NamespaceResolutionFailure::NotNamespace { head: head.to_string() })?;
+        let symbol = self
+            .symbols
+            .get(symbol_id)
+            .ok_or_else(|| NamespaceResolutionFailure::NotNamespace { head: head.to_string() })?;
+        let existing = ResolvedNamespaceMember {
+            kind: ResolvedNamespaceMemberKind::Symbol(symbol.kind.clone()),
+            canonical: self.symbols.identity_of(symbol_id).cloned(),
+            namespace_path: Vec::new(),
+            source_module_path: None,
+            source_name: head.to_string(),
+            public_library: None,
+            surface_rust_item: None,
+        };
+        if !matches!(symbol.kind, SymbolKind::Module(_)) || existing.canonical.is_some() {
+            return Ok(existing);
+        }
+        let Some(binding_path) = self.import_binding_path(head).map(<[String]>::to_vec) else {
+            return Ok(existing);
+        };
+        let Some((item_name, module_path)) = binding_path.split_last() else {
+            return Ok(existing);
+        };
+        if module_path.is_empty()
+            || self
+                .resolved_source_module_path(&ImportPath::simple(binding_path.clone()))
+                .is_some()
+        {
+            return Ok(existing);
+        }
+        let module = ImportPath::simple(module_path.to_vec());
+        let resolved = self
+            .resolve_dependency_member_links(&module, item_name)
+            .map_err(|failure| match failure {
+                DependencyMemberResolutionFailure::LinkLoop { links } => NamespaceResolutionFailure::LinkLoop { links },
+            })?;
+        let Some(resolved) = resolved else {
+            return Ok(existing);
+        };
+        let Some(kind) = self.dependency_member_symbol_for_path(&module, item_name) else {
+            return Ok(existing);
+        };
+        let source_name = resolved.declared_name;
+        let public_library = match &resolved.identity.origin {
+            SymbolOrigin::Package { library, .. } => Some(library.clone()),
+            _ => None,
+        };
+        Ok(ResolvedNamespaceMember {
+            kind: ResolvedNamespaceMemberKind::Symbol(kind),
+            canonical: Some(resolved.identity),
+            namespace_path: module_path.to_vec(),
+            source_module_path: None,
+            source_name,
+            public_library,
+            surface_rust_item: None,
+        })
     }
 
     /// Continue a qualified walk through the namespace exposed by one already resolved declaration.
@@ -547,6 +591,13 @@ impl TypeChecker {
                 errors::namespace_member_not_found(&namespace, &member, span)
             }
             NamespaceResolutionFailure::NotNamespace { head } => errors::qualified_name_head_not_namespace(&head, span),
+            NamespaceResolutionFailure::LinkLoop { links } => {
+                let locations = links
+                    .into_iter()
+                    .map(|link| (link.spelling, link.declaration_origin, link.declaration_span))
+                    .collect::<Vec<_>>();
+                errors::import_link_loop(&locations, span)
+            }
         };
         self.errors.push(error);
     }

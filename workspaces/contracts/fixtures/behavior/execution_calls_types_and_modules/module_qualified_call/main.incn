@@ -1,4 +1,4 @@
-# behavior: a module binding reaches each published declaration exactly as an import by name does, including constructors, annotations, generic and concrete decorators, decorator factories, async functions and nested modules (#2675)
+# behavior: a module binding reaches each published declaration exactly as an import by name does, including constructors, annotations, generic and concrete decorators, decorator factories, async functions and nested modules; a field, method and enum variant resolve on their declaring type through a plain import, an alias and three re-export links (#2675)
 # expect-stdout:
 #   concrete decorator
 #   generic decorator
@@ -11,6 +11,14 @@
 #   2
 #   x
 #   imported
+#   thing imported
+#   alias
+#   thing alias
+#   linked
+#   thing linked
+#   14
+#   14
+#   14
 #   10
 #   11
 #   12
@@ -34,7 +42,8 @@ import helper
 import helper as h
 import nested.provider
 import pkg
-from helper import Mode, Thing, preserve as direct_preserve
+from helper import Mode, Mode as ModeAlias, Thing, Thing as ThingAlias, preserve as direct_preserve
+from links.third import Mode as LinkedMode, Thing as LinkedThing
 from pkg import sub
 from std import web
 
@@ -144,7 +153,18 @@ async def main() -> None:
     # A source module constructor retains its declaration field binding.
     thing: helper.Thing = helper.Thing(name="x")
     println(thing.name)
-    println(Thing.named("imported").name)
+    imported = Thing.named("imported")
+    println(imported.name)
+    println(imported.label())
+    aliased = ThingAlias.named("alias")
+    println(aliased.name)
+    println(aliased.label())
+    linked = LinkedThing.named("linked")
+    println(linked.name)
+    println(linked.label())
+    println(mode_number(Mode.Ready))
+    println(mode_number(ModeAlias.Ready))
+    println(mode_number(LinkedMode.Ready))
     println(LocalClass.number())
     println(LocalModel.make(11).value)
     println(local_enum_number(LocalEnum.Ready))

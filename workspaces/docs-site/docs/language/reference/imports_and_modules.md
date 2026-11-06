@@ -59,11 +59,13 @@ from ...db.schema import Database         # accepted
 
 ### Module bindings
 
-`import models` binds the module. A qualified name first resolves its head in the current scope and then resolves each following segment in that binding's namespace. A module namespace contains its visible functions, types, traits, constants, submodules and reexports. A type namespace contains its associated members, including static methods and enum variants; a value namespace contains its fields and methods.
+An import binds a link to the declaration or module it names; an alias or re-export binds another link, not a declaration with contents of its own. Name lookup resolves the head in the current scope, follows links to their declared node, and then resolves each following segment in that node's namespace. A module namespace contains its visible functions, types, traits, constants, submodules and reexports. A type namespace contains its associated members, including static methods and enum variants; a value namespace contains its fields and methods. A package namespace exposing a child module's names follows the same link rule.
 
 The source position applies its operation after resolution. A call calls a function, constructs a type or invokes another callable member; an annotation uses a type or trait; a value reference reads the selected declaration; and a decorator applies the selected callable. `models.parse(path)` therefore calls the same declaration as `from models import parse`, and `models.Config` names the same declaration as `from models import Config` in annotations and constructor calls.
 
 Refused (`INCAN-T0001`): a namespace does not expose the requested member, including when that member is private, or the head does not provide a namespace for the remaining path. The diagnostic names the namespace and member once. The name `c` bound by `from std.interop import c` is not a module binding; its members, such as `c.i32`, are specified in [`std.interop`](stdlib/interop.md).
+
+Refused (`INCAN-T0001`): following name links returns to a link already on the active lookup walk. The diagnostic lists the loop in order and identifies where each link is written. A cycle between modules remains accepted when resolving the requested name does not repeat a name link.
 
 ```incan
 import models

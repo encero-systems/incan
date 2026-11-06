@@ -6,6 +6,7 @@ use crate::ast::Span;
 
 use crate::diagnostics::CompileError;
 use incan_lang::lang::stdlib;
+use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
 
 /// Circular import detected.
 pub fn circular_import(path: &std::path::Path, span: Span) -> CompileError {
@@ -110,6 +111,52 @@ pub fn namespace_member_not_found(namespace: &str, member: &str, span: Span) -> 
 pub fn qualified_name_head_not_namespace(head: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("`{head}` does not expose a namespace"), span)
         .with_hint("Qualify a module, type, or value whose members are visible here")
+}
+
+/// Following imported-name links returned to the first link without reaching a declaration.
+pub fn import_link_loop(links: &[(String, SymbolOrigin, Span)], span: Span) -> CompileError {
+    let mut names = links
+        .iter()
+        .map(|(spelling, _, _)| spelling.clone())
+        .collect::<Vec<_>>();
+    if let Some(first) = names.first().cloned() {
+        names.push(first);
+    }
+    let mut error = CompileError::type_error(
+        format!("`{}` is imported in a loop: {}", link_name(links), names.join(" -> ")),
+        span,
+    )
+    .with_stable_code("INCAN-I0104")
+    .with_primary_label("used here");
+    for (index, (spelling, origin, declaration_span)) in links.iter().enumerate() {
+        let target = &links[(index + 1) % links.len()].0;
+        let suffix = if index + 1 == links.len() {
+            ", which closes the loop"
+        } else {
+            ""
+        };
+        let identity = CanonicalSymbolId {
+            namespace: SymbolNamespace::OrdinaryLexical,
+            origin: origin.clone(),
+            declaration_name: spelling.rsplit('.').next().unwrap_or(spelling).to_string(),
+            kind: SemanticSourceTargetKind::Other("import".to_string()),
+            scope_discriminant: None,
+            declaration_span: *declaration_span,
+        };
+        error = error.with_related_declaration(identity, format!("`{spelling}` is `{target}`{suffix}"));
+    }
+    error.with_hint(format!(
+        "one of these must declare `{}` instead of re-exporting it",
+        link_name(links)
+    ))
+}
+
+/// Return the repeated local name of a link loop, or a neutral fallback for an internally empty path.
+fn link_name(links: &[(String, SymbolOrigin, Span)]) -> &str {
+    links
+        .first()
+        .and_then(|(spelling, _, _)| spelling.rsplit('.').next())
+        .unwrap_or("this name")
 }
 
 /// A module-qualified type annotation (`mod.Type`) named a member the module does not declare as a type.

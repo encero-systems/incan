@@ -140,7 +140,24 @@ fn provider_import_failures_use_distinct_stable_codes() {
     assert_eq!(code_for_error(&disabled, DiagnosticPhase::Import), "INCAN-I0101");
     assert_eq!(code_for_error(&unavailable, DiagnosticPhase::Import), "INCAN-I0102");
     assert_eq!(code_for_error(&gated, DiagnosticPhase::Import), "INCAN-I0103");
-    for code in ["INCAN-I0101", "INCAN-I0102", "INCAN-I0103"] {
+    let loop_refusal = errors::import_link_loop(
+        &[
+            (
+                "a.X".to_string(),
+                incan_semantics_core::SymbolOrigin::Module(vec!["a".to_string()]),
+                Span::new(0, 19),
+            ),
+            (
+                "b.X".to_string(),
+                incan_semantics_core::SymbolOrigin::Module(vec!["b".to_string()]),
+                Span::new(0, 19),
+            ),
+        ],
+        Span::new(80, 81),
+    );
+
+    assert_eq!(code_for_error(&loop_refusal, DiagnosticPhase::Import), "INCAN-I0104");
+    for code in ["INCAN-I0101", "INCAN-I0102", "INCAN-I0103", "INCAN-I0104"] {
         assert!(explain(code).is_some(), "{code} must have a catalog explanation");
     }
 }

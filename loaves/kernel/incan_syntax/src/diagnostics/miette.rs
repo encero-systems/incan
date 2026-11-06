@@ -120,7 +120,10 @@ impl IncanDiagnostic {
             code,
             source: miette::NamedSource::new(file_name, source.to_string()),
             span: SourceSpan::new(span_start.into(), span_len),
-            label: error.kind.to_string(),
+            label: error
+                .primary_label()
+                .map(str::to_owned)
+                .unwrap_or_else(|| error.kind.to_string()),
             help,
             related: vec![],
         }

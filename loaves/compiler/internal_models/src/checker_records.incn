@@ -4,7 +4,7 @@ from std.encoding.hex import hexlify
 from std.hash import sha256
 
 pub const CHECKER_SCHEMA: str = "incan.checker-fields/9"
-pub const CHECKER_PROFILE: str = "incan.checker-free-functions/9"
+pub const CHECKER_PROFILE: str = "incan.checker-free-functions/10"
 const MAX_RECORD_BYTES: int = 65536
 const MAX_FIELDS: int = 4096
 
@@ -444,7 +444,7 @@ def parameters_end(values: list[str], offset: int, depth: int) -> Result[int, Co
 
 
 def diagnostic_end(values: list[str]) -> Result[int, CodecFault]:
-    """Diagnostics retain recipe prose, optional catalog code, ordered notes/hints and structural related ranges."""
+    """Diagnostics retain recipe prose, optional catalog code, ordered notes/hints, labels and structural ranges."""
     if len(values) < 7 or values[0] not in ["error", "syntax", "type", "warning", "lint"]:
         return Err(CodecFault.Malformed)
     mut end = 3
@@ -455,6 +455,14 @@ def diagnostic_end(values: list[str]) -> Result[int, CodecFault]:
         end += 1 + count
         if end >= len(values):
             return Err(CodecFault.Malformed)
+    if values[end] == "primary-label":
+        end += 2
+    elif values[end] == "no-primary-label":
+        end += 1
+    else:
+        return Err(CodecFault.Malformed)
+    if end >= len(values):
+        return Err(CodecFault.Malformed)
     if values[end] == "expected-actual":
         end += 3
     elif values[end] == "no-expected-actual":

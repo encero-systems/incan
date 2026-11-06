@@ -125,7 +125,7 @@ pub(crate) fn fixture_local_projection(source: &str, name: &str) -> Result<Field
             positions.nodes.owner().render_compact(),
             positions.nodes.root().to_owned(),
             "local".into(),
-            "incan.checker-free-functions/9".into(),
+            "incan.checker-free-functions/10".into(),
         ],
     );
     Ok(fields)

@@ -313,6 +313,37 @@ impl ResolvedDependencyMember {
     }
 }
 
+/// One source re-export link retained for canonical declaration lookup and cycle diagnostics.
+#[derive(Debug, Clone)]
+pub(super) struct DependencyMemberReexport {
+    /// Module path written by the re-export.
+    target_module: ImportPath,
+    /// Declaration name written by the re-export.
+    target_name: String,
+    /// Source owner whose coordinate system contains `declaration_span`.
+    declaration_origin: SymbolOrigin,
+    /// Span of the source import that creates the link.
+    declaration_span: Span,
+}
+
+/// One name-link location in a cycle, in traversal order.
+#[derive(Debug, Clone)]
+pub(super) struct DependencyMemberLinkLocation {
+    /// Canonical module/member spelling of the link.
+    spelling: String,
+    /// Source owner whose coordinate system contains `declaration_span`.
+    declaration_origin: SymbolOrigin,
+    /// Span of the import statement that creates the link, in that module's source coordinates.
+    declaration_span: Span,
+}
+
+/// Why following dependency member links could not reach a declaration.
+#[derive(Debug, Clone)]
+pub(super) enum DependencyMemberResolutionFailure {
+    /// Following re-export bindings returned to a link already on the active walk.
+    LinkLoop { links: Vec<DependencyMemberLinkLocation> },
+}
+
 /// Canonical identity for one type or trait exported through a compiled public-library dependency.
 ///
 /// Local aliases and provider-qualified internal signature spellings map to this value. Admitted artifacts compare
@@ -767,7 +798,7 @@ pub struct TypeChecker {
     /// A facade does not own what it re-exports, so an identity must follow this link to the declaring module instead
     /// of naming the facade. Stored as the written import path plus the original name, resolved with the facade's own
     /// module path as the resolution base.
-    pub dependency_member_reexports: HashMap<String, HashMap<String, (ImportPath, String)>>,
+    pub dependency_member_reexports: HashMap<String, HashMap<String, DependencyMemberReexport>>,
     /// Public-library re-export links omitted by the frozen source-member cache; only private Body IR call checking
     /// follows these links. Direct source declarations and ordinary import resolution remain authoritative.
     body_ir_dependency_pub_reexports: HashMap<String, HashMap<String, (ImportPath, String)>>,
