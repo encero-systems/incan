@@ -112,6 +112,18 @@ pub model UnitDescription:
         return JsonValue.object(fields)
 
 
+pub def dependency_source_roots(unit: UnitDescription) -> list[Tuple[str, str]]:
+    """Name each reached Loaf's authored source root by package, independently of its physical checkout."""
+    mut roots: list[Tuple[str, str]] = []
+    mut seen: list[str] = []
+    for loaf in unit.loaves:
+        if let Some(root) = loaf.source_root:
+            if root not in seen:
+                roots.append((loaf.name, root))
+                seen.append(root)
+    return roots
+
+
 def texts(items: list[str]) -> JsonValue:
     """A JSON array of strings."""
     return JsonValue.array([JsonValue.string(item) for item in items])

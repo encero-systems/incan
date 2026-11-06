@@ -4,7 +4,7 @@ from std.encoding.hex import hexlify
 from std.fs import Path
 from std.hash import sha256
 from std.json import JsonValue
-from codegen import native_arguments, SOURCE_PREFIX
+from codegen import DARWIN_UUID_SALT, SOURCE_PREFIX, TOOLCHAIN_PREFIX, native_arguments, native_executable_arguments
 from files import json_text, read_json
 from json_fields import required_text
 from home import unit_ledger
@@ -22,8 +22,10 @@ from compiler_facts import fact_identity
 from rust_target import compiler_version, deployment_target, inherited_deployment_selection
 from apple_sdk import selected_sdk
 from std.environ import get_or
+from rust::std::env::consts import OS
 
 const UNIT_DOMAIN: str = "incan.oven.unit/3"
+const CODEGEN_DOMAIN: str = "incan.oven.codegen/2"
 
 
 pub def artifact_files(directory: Path, package: str) -> Result[list[Path], str]:
@@ -63,6 +65,8 @@ pub model Key:
     pub digest: str
     # One `kind digest` line per kind of input, in a fixed order, so that a changed key can name what changed.
     pub parts: list[str]
+    # Symbol identity excludes producer bytes while retaining authored source and effective code generation options.
+    pub codegen: str = ""
     # Source origins travel with publication but never enter the identity or its changed-input dimensions.
     pub provenance: list[str] = []
     # A refused portable identity permits a local bake, never reusable publication under a fabricated key.
@@ -177,17 +181,22 @@ pub def cache_identities(caches: list[str]) -> Result[list[str], str]:
 
 pub def description_digest(unit: UnitDescription) -> Result[str, str]:
     """Only facts the compiler observes, excluding source, target and provider locations retained as provenance."""
+    mut uuid_salt = ""
+    if OS == "macos":
+        uuid_salt = DARWIN_UUID_SALT
     facts = JsonValue.object(
         {"crate": JsonValue.string(unit.package), "version": JsonValue.string(unit.version), "edition": JsonValue.string(
             "2024",
         ), "domain": JsonValue.string("target"), "kind": JsonValue.string(unit.kind), "source_mapping": JsonValue.string(
             SOURCE_PREFIX,
-        ), "overflow_checks": JsonValue.bool(unit.profile != "release"), "vocabulary": JsonValue.bool(unit.vocabulary), "vocab_policy": JsonValue.string(
+        ), "toolchain_mapping": JsonValue.string(TOOLCHAIN_PREFIX), "linker_uuid_salt": JsonValue.string(uuid_salt), "overflow_checks": JsonValue.bool(unit.profile != "release"), "vocabulary": JsonValue.bool(unit.vocabulary), "vocab_policy": JsonValue.string(
             unit.vocab_policy,
         ), "vocab_desugarer": JsonValue.bool(unit.vocab_desugarer)},
     )
     bindings = [f"{loaf.key}={loaf.name}:{loaf.standard}:{loaf.toolchain_provided}" for loaf in unit.loaves]
-    flags = native_arguments(unit.profile)
+    mut flags = native_arguments(unit.profile)
+    if unit.kind in ["program", "test"]:
+        flags = native_executable_arguments(unit.profile)
     selected = [f"feature={feature}" for feature in sorted(unit.active_features)]
     declared = [f"declared-feature={feature}" for feature in sorted(unit.declared_features)]
     return fingerprint(
@@ -235,6 +244,7 @@ pub def unit_key_with(unit: UnitDescription, compiler: str, described: str, mut 
         Key(
             digest=key.digest,
             parts=key.parts,
+            codegen=key.codegen,
             provenance=[unit.project_root, unit.source],
             descriptor=fingerprint([json_text(unit.to_json())?])?,
             compiler=key.compiler,
@@ -293,12 +303,13 @@ def loaf_identities(unit: UnitDescription) -> Result[list[str], str]:
 
 
 def assembled(compiler: str, described: str, sources: list[str], artifacts: list[str]) -> Result[Key, str]:
-    """A key from the digests of its four kinds of input."""
+    """Build separate producer-sensitive reuse and producer-independent codegen identities."""
     authored = fingerprint(sources)?
     linked = fingerprint(artifacts)?
     digest = "sha256:" + fingerprint([UNIT_DOMAIN, compiler, described, authored, linked])?
+    codegen = "sha256:" + fingerprint([CODEGEN_DOMAIN, described, authored])?
     parts = [f"compiler {compiler}", f"description {described}", f"sources {authored}", f"artifacts {linked}"]
-    return Ok(Key(digest=digest, parts=parts, compiler=compiler))
+    return Ok(Key(digest=digest, parts=parts, codegen=codegen, compiler=compiler))
 
 
 def unit_files(unit: UnitDescription, mut project: Ledger) -> Result[list[str], str]:

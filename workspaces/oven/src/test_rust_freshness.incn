@@ -1,10 +1,12 @@
 """Rust unit reuse contracts: a Rust unit key follows its crate manifest, how it is built and what it links."""
 
 from rust::std::process import Command, Output, Stdio
+from codegen import native_arguments, rust_arguments
 from std.environ import get_or
 from std.fs import Path
 from files import read, remove
 from intake import ManifestReader
+from invocation_identity import invocation_facts
 from observation import load_ledger
 from scratch import scratch_directory
 from rust_freshness import reconciled_rust_key
@@ -15,6 +17,7 @@ from rust_units import (
     rust_library_producer_key,
 )
 from rust_build import BuiltUnit, RustBuild, artifact_context, linking, native_artifacts
+from rust_binaries import refuse_absolute_runtime_path
 from rust_manifest import RustFacet, package_environment
 from registry_units import RegistryUnits
 from loaf_local_graph import LocalEdge, LocalFacet
@@ -22,7 +25,7 @@ from rust_activation import DependencyDomain
 from rust_target import decoded
 from toolchain import NativeCrate
 from unit_publication import admit_payload, record_path, record_payload
-from unit_freshness import artifact_identity, record, fingerprint
+from unit_freshness import Key, artifact_identity, record, fingerprint
 from freshness_fixtures import Pass, fixture, make_executable, write
 
 
@@ -42,6 +45,12 @@ pub def test_rust_unit_key_follows_its_crate_manifest_how_it_is_built_and_what_i
     request = RustBuild(project="root", rustc="rustc", registry=RegistryUnits(units=[], search=[]))
     unrelated = BuiltUnit(crate_name="other", artifact="/other/library.rlib", directory="/other")
     assert linking(facet, request, {}, [])? == linking(facet, request, {"other": unrelated}, ["/other"])?
+    first_workspace = invocation_facts(["--remap-path-prefix", "/one/checkout=workspace"], Path("/project"), Path("/output"))
+    second_workspace = invocation_facts(["--remap-path-prefix", "/another/checkout=workspace"], Path("/project"), Path("/output"))
+    assert first_workspace == second_workspace
+    first_toolchain = invocation_facts(["--remap-path-prefix", "/one/sysroot=toolchain"], Path("/project"), Path("/output"))
+    second_toolchain = invocation_facts(["--remap-path-prefix", "/another/sysroot=toolchain"], Path("/project"), Path("/output"))
+    assert first_toolchain == second_toolchain
     scratch = scratch_directory()?
     setup = rust_crate(scratch.path())?
     sources = setup.facet.joinpath("rust").joinpath("src")
@@ -73,8 +82,20 @@ pub def test_rust_unit_key_follows_its_crate_manifest_how_it_is_built_and_what_i
     record_payload(setup.dependency, fingerprint(["core two"])?)?
     linked = rust_pass(setup, "another compiler", "alloc")?.key
     assert linked != compiler
+    verify_absolute_binary_runpath_refusal()
     verify_installed_rust_producer(scratch.path().joinpath("installed"))?
     return Ok(None)
+
+
+def verify_absolute_binary_runpath_refusal() -> None:
+    """A location-bound binary refuses reuse while retaining its deterministic code-generation identity."""
+    key = Key(digest="sha256:reuse", codegen="sha256:codegen", parts=[])
+    refused = refuse_absolute_runtime_path(key, ["link-arg=-Wl,-rpath,/bootstrap/sysroot/lib"])
+    assert refused.digest == ""
+    assert refused.codegen == "sha256:codegen"
+    assert refused.refusal == "unit identity refused: absolute runtime search path"
+    assert native_arguments("release") == ["-Copt-level=3"]
+    assert rust_arguments("release") == ["-C", "opt-level=3", "-C", "debuginfo=0"]
 
 
 def verify_installed_rust_producer(scratch: Path) -> Result[None, str]:

@@ -4,6 +4,7 @@ from rust::std::process import Command, Stdio
 from std.fs import Path
 from driver_command import driver_command
 from codegen import compiled_arguments
+from darwin_executable import normalize_release_executable
 from bakery import bakery
 from compiler_refusals import compile_or_replay
 from compiler_worker import compile_resident, served_resident
@@ -13,7 +14,7 @@ from publication import publish
 from rust_facts import refresh as refresh_rust_facts
 from shared_link import shared_arguments
 from toolchain import Toolchain
-from unit import UnitDescription
+from unit import UnitDescription, dependency_source_roots
 from unit_freshness import Key, artifact_identity, unit_key
 
 
@@ -43,11 +44,22 @@ pub def compile_prepared_unit(
     trace_boundary("unit_written")
     output.parent().mkdir(true, true).map_err((error) => f"{output.parent().0}: {error.message()}")?
     # 2. Native flags match the profile and the caller's explicit linkage request.
-    native = compiled_arguments(unit.profile, key.digest, unit.project_root) + shared_arguments(unit, development)?
+    executable = unit.kind in ["program", "test"]
+    native = compiled_arguments(
+        unit.profile,
+        key.codegen,
+        unit.project_root,
+        executable,
+        dependency_source_roots(unit),
+        toolchain.sysroot,
+    )? + shared_arguments(unit, development)?
     invocation = ["--unit", path.0, compiled, output.0, toolchain.sysroot]
     # 3. Refusal replay preserves the owner's request-local console routing.
     trace_boundary("compiler_request")
-    return compile_or_replay(unit, toolchain, invocation, native, bakery()?, key, reason)
+    code = compile_or_replay(unit, toolchain, invocation, native, bakery()?, key, reason)?
+    if code == 0 and executable:
+        normalize_release_executable(output, unit.profile)?
+    return Ok(code)
 
 
 pub def crate_name(unit: UnitDescription) -> str:

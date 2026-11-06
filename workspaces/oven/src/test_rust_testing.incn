@@ -2,8 +2,11 @@
 
 from std.fs import Path
 from std.environ import get_or
+from std.io import BytesIO
 from std.testing import fail
-from codegen import compiled_arguments, rust_incremental_arguments, rust_iteration_enabled
+from codegen import compiled_arguments, native_executable_arguments, rust_executable_arguments, rust_incremental_arguments
+from codegen import rust_iteration_enabled
+from darwin_executable import normalized_macho
 from files import make_directory, read, write
 from graph_dependencies import prepare_graph
 from graph_rust import inspect_rust
@@ -18,6 +21,7 @@ from scratch import scratch_directory
 from testing import run_rust_harness, test_sources
 from toolchain import Toolchain, load_toolchain, rust_compiler
 from unit_rust import compile_incan_library
+from rust::std::env::consts import OS
 from rust::std::process import Command
 
 
@@ -36,6 +40,7 @@ pub def test_rust_facet_reports_passing_and_failing_tests() -> Result[None, str]
     temporary = scratch_directory()?
     root = temporary.path()
     verify_incremental_policy(root)?
+    verify_macho_uuid_normalization()?
     project = root.joinpath("project")
     helper = root.joinpath("helper")
     alternate = root.joinpath("alternate")
@@ -239,11 +244,60 @@ def verify_incremental_policy(root: Path) -> Result[None, str]:
     assert rust_incremental_arguments(scratch, ordinary) == []
     assert rust_incremental_arguments(scratch, iteration) == ["-C", f"incremental={scratch.0}"]
     for profile in ["debug", "release"]:
-        generated = compiled_arguments(profile, "sha256:fixture", root.0)
+        generated = compiled_arguments(profile, "sha256:fixture", root.0)?
         assert rust_incremental_arguments(scratch, generated) == []
         for argument in generated:
             assert "incremental=" not in argument
+    assert "-Cstrip=debuginfo" in native_executable_arguments("release")
+    assert "strip=debuginfo" in rust_executable_arguments("release")
+    if OS == "macos":
+        assert "-Clink-arg=-Wl,-reproducible" in native_executable_arguments("release")
+        assert "link-arg=-Wl,-reproducible" in rust_executable_arguments("release")
+        assert "-Clink-arg=-Wl,-no_adhoc_codesign" in native_executable_arguments("release")
+        assert "link-arg=-Wl,-no_adhoc_codesign" in rust_executable_arguments("release")
+    else:
+        assert "-Clink-arg=-Wl,-reproducible" not in native_executable_arguments("release")
+        assert "link-arg=-Wl,-reproducible" not in rust_executable_arguments("release")
+        assert "-Clink-arg=-Wl,-no_adhoc_codesign" not in native_executable_arguments("release")
+        assert "link-arg=-Wl,-no_adhoc_codesign" not in rust_executable_arguments("release")
+    assert "-Cstrip=debuginfo" in compiled_arguments("release", "sha256:fixture", root.0, true)?
+    assert "-Cstrip=debuginfo" not in compiled_arguments("release", "sha256:fixture", root.0)?
+    relocated = compiled_arguments(
+        "release",
+        "sha256:fixture",
+        "/checkout/project",
+        true,
+        [("platform", "/checkout/loaves/platform/src")],
+        "/checkout/toolchain",
+    )?
+    mut remaps_workspace = false
+    for argument in relocated:
+        if argument.endswith("=workspace"):
+            remaps_workspace = true
+    assert remaps_workspace
+    assert "/checkout/project=source" in relocated
+    assert "/checkout/loaves/platform/src=source/loaves/platform" in relocated
+    assert "/checkout/toolchain=toolchain" in relocated
     return Ok(None)
+
+
+def verify_macho_uuid_normalization() -> Result[None, str]:
+    """Different linker UUIDs normalize to one stable, idempotent executable payload."""
+    header = b"\xcf\xfa\xed\xfe\x0c\x00\x00\x01\x00\x00\x00\x00\x02\x00\x00\x00\x01\x00\x00\x00\x18\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+    command = b"\x1b\x00\x00\x00\x18\x00\x00\x00"
+    first = normalized_macho(macho_fixture(header, command, b"first-uuid-value"))?
+    second = normalized_macho(macho_fixture(header, command, b"other-uuid-value"))?
+    assert first == second
+    assert normalized_macho(first)? == first
+    return Ok(None)
+
+
+def macho_fixture(header: bytes, command: bytes, uuid: bytes) -> bytes:
+    """Assemble the small Mach-O byte fixture without relying on byte-sequence addition."""
+    buffer = BytesIO(b"")
+    for value in [header, command, uuid, b"payload"]:
+        _ = buffer.write_bytes(value)
+    return buffer.getvalue()
 
 
 def verify_incremental_revert(request: RustBuild, helper: Path, original: str, project: Path) -> Result[None, str]:
@@ -285,6 +339,7 @@ def verify_macro_domains(macro: Path, helper: Path, request: RustBuild) -> Resul
     # 2. A different Loaf with the same declaration is refused independently of its target slot.
     here = local_facet(helper.0, DependencyDomain.Target, "helper")
     elsewhere = local_facet("/another/checkout/helper", DependencyDomain.Target, "helper")
+    assert facet_slot(here, request.profile) == facet_slot(elsewhere, request.profile)
     match ordered([here, elsewhere]):
         Ok(_) => fail("two local Loaves declaring one name and version were compiled as one unit")
         Err(reason) =>

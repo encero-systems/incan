@@ -36,8 +36,17 @@ pub model BuiltUnit:
 
 
 pub def facet_slot(facet: LocalFacet, profile: str) -> str:
-    """Locate a project's target slot by path, domain, features and profile; this is never a unit identity."""
-    text = f"{facet.project}\n{facet.domain.value()}\n{",".join(sorted(facet.features))}\n{profile}"
+    """
+    Locate a project's target slot by its declared owner, domain, features and profile.
+
+    The local graph refuses two projects that declare the same package, version and domain, so that declaration is
+    sufficient to distinguish real build units without leaking a checkout path into linker input names. Synthetic
+    facets without a declaration retain the project path as a compatibility fallback. This slot is never an identity.
+    """
+    mut owner = facet.project
+    if facet.package != "" and facet.version != "":
+        owner = f"{facet.package}\n{facet.version}"
+    text = f"{owner}\n{facet.domain.value()}\n{",".join(sorted(facet.features))}\n{profile}"
     return hexlify(sha256.digest(text.encode("utf-8")))[0:16]
 
 
@@ -299,9 +308,13 @@ pub def materialized_arguments(arguments: list[str], key: Key) -> list[str]:
     Derive rustc's symbol disambiguator from the completed unit identity, its conservative external identity.
 
     The invocation key contains a generated metadata role rather than its own digest, avoiding a circular hash.
-    Refused identities receive an ephemeral local disambiguator and can never authorize reusable publication.
+    A refused reusable identity can retain deterministic code-generation inputs without authorizing publication. Only
+    an opaque key with neither identity receives an ephemeral local disambiguator.
     """
-    metadata = unit_metadata(key.digest)
+    mut identity = key.codegen
+    if identity == "":
+        identity = key.digest
+    metadata = unit_metadata(identity)
     mut realized: list[str] = []
     mut previous = ""
     for argument in arguments:
