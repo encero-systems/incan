@@ -55,10 +55,7 @@ pub def conversion_trait(module: &BodyIrModule) -> Result[str, str]:
                 None => pass
             match owner.origin:
                 SymbolOrigin.Package(library=library, module_path=path) =>
-                    if (
-                        (library != "incan_stdlib_core" and library != "incan_stdlib_primitives")
-                        or path != ["traits", "convert"]
-                    ):
+                    if library != "incan_stdlib_primitives" or path != ["traits", "convert"]:
                         return Err("unsupported Body IR string conversion contract identity")
                     match loaf_item_path(owner):
                         Some(item) => return Ok(str(item))

@@ -18,7 +18,7 @@ Kernel packages define shared syntax, identities and language policy. The fronte
 
 Standard packages and user libraries publish checked metadata and native artifacts together. Consumers depend on public exports through declared package identities. A source dependency and its compiled public namespace must agree.
 
-Runtime behavior belongs in `incan_native_runtime` and standard packages. Shared language policy belongs in kernel packages, where it can be consumed without pulling runtime behavior into checking.
+Runtime behavior belongs in `incan_native_runtime` and standard packages. The runtime's only standard-package dependency is `std.primitives`; higher-level standard packages may depend on the runtime or primitives but never become runtime foundations. Shared language policy belongs in kernel packages, where it can be consumed without pulling runtime behavior into checking.
 
 ## Platform boundary
 

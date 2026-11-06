@@ -4,7 +4,7 @@
 #   incan_stdlib_async
 #   incan_stdlib_codecs
 #   incan_stdlib_compression
-#   incan_stdlib_core
+#   incan_stdlib_primitives
 #   incan_stdlib_data
 #   incan_stdlib_interop
 #   incan_stdlib_observability

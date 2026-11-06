@@ -1,7 +1,6 @@
 # behavior: primitive capabilities, async mechanisms, text, authentication, collections and output select no higher-level standard package (#2501)
 # expect-dependencies:
 # expect-std-packages:
-#   incan_stdlib_core
 #   incan_stdlib_primitives
 # expect-active-features:
 

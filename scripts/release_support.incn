@@ -24,7 +24,6 @@ pub const FAMILIES: FrozenList[str] = [
 ]
 pub const STANDARD_PACKAGES: FrozenList[str] = [
     "primitives",
-    "core",
     "testing",
     "async",
     "system",

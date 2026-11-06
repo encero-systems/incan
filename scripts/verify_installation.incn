@@ -169,7 +169,7 @@ def prepare(output: Path, jobs: int, timeout_seconds: int) -> Result[Installatio
 def select_standard_sources(root: Path, home: Path, run: Path) -> Result[str, str]:
     """Expose checkout sources only for standard packages whose compiled artifacts the archive shipped."""
     toolchain = home.joinpath(TOOLCHAIN_DIRECTORY)
-    if toolchain.joinpath("stdlib/core/loaf.toml").is_file():
+    if toolchain.joinpath("stdlib/primitives/loaf.toml").is_file():
         return Ok("")
     stdlib = run.joinpath("stdlib")
     stdlib.mkdir(true, true).map_err((error) => error.message())?
@@ -186,8 +186,8 @@ def select_standard_sources(root: Path, home: Path, run: Path) -> Result[str, st
             return Err(f"missing standard source: {package}")
         stdlib.joinpath(package).symlink_to(source).map_err((error) => error.message())?
         packages.append(package)
-    if "core" not in packages:
-        return Err("archive has no core standard package")
+    if "primitives" not in packages:
+        return Err("archive has no primitive standard package")
     run
         .joinpath("standard-packages.txt")
         .write_text("\n".join(sorted(packages)) + "\n", "utf-8", "strict", None)

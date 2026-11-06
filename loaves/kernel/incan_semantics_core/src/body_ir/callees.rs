@@ -761,8 +761,7 @@ impl MethodTarget {
     }
 }
 
-/// Authenticate the module or standard-package origin of the standard Iterator declaration. The declaration is moving
-/// from the core package to the primitive package, so either owner is accepted while both exist.
+/// Authenticate the module or primitive-package origin of the standard Iterator declaration.
 fn standard_iterator_origin(origin: &crate::SymbolOrigin) -> bool {
     let Some(source_module) = incan_lang::lang::traits::source_module(incan_lang::lang::traits::TraitId::Iterator)
     else {
@@ -772,7 +771,7 @@ fn standard_iterator_origin(origin: &crate::SymbolOrigin) -> bool {
     match origin {
         crate::SymbolOrigin::Module(path) => path == &canonical,
         crate::SymbolOrigin::Package { library, module_path } => {
-            matches!(library.as_str(), "incan_stdlib_core" | "incan_stdlib_primitives")
+            library == "incan_stdlib_primitives"
                 && canonical.first().is_some_and(|root| root == "std")
                 && module_path == &canonical[1..]
         }

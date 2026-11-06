@@ -50,12 +50,12 @@ pub def named_artifacts(context: NativeContext) -> list[Artifact]:
     """Return DD-0010's six byte-bearing release outputs in stable order."""
     driver = context.repo.joinpath("loaves/toolchain/incan-rustc-driver/target/incan")
     runtime = context.repo.joinpath("loaves/compiler/incan_native_runtime/target/incan/native/release")
-    core = context.home.joinpath(f"{TOOLCHAIN_DIRECTORY}/loaves/incan_stdlib_core/release")
+    primitives = context.home.joinpath(f"{TOOLCHAIN_DIRECTORY}/loaves/incan_stdlib_primitives/release")
     return [
         Artifact(name="driver", path=driver.joinpath("rust/release/bin/incan-rustc-driver")),
         Artifact(name="runtime", path=runtime.joinpath("libincan_native_runtime.rlib")),
         Artifact(name="lowering", path=driver.joinpath("loaves/incan_mir_lowering/release/libincan_mir_lowering.rlib")),
-        Artifact(name="standard-core", path=core.joinpath("libincan_stdlib_core.rlib")),
+        Artifact(name="standard-primitives", path=primitives.joinpath("libincan_stdlib_primitives.rlib")),
         Artifact(name="oven", path=context.lane.joinpath("oven-bin/incan")),
         Artifact(name="runner", path=context.lane.joinpath("contracts-bin/contracts")),
     ]

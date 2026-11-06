@@ -267,7 +267,7 @@ Only applies when the diff touches a language feature (not a pure refactor or do
 ## Checklist 8 — Architecture and layering
 
 - [ ] **Changes live in the correct layer/crate** — `incan_syntax` stays syntax-only; `incan_lang` stays pure/deterministic; orchestration layers stay thin.
-- [ ] **Layering rules are preserved** — `incan` must not depend on a standard library facet (`incan_std_core` and the others) except as a dev-dependency; shared policy belongs in `incan_lang`, runtime glue belongs in the facets.
+- [ ] **Layering rules are preserved** — `incan` must not depend on a standard library facet (`incan_std_primitives` and the others) except as a dev-dependency; shared policy belongs in `incan_lang`, runtime glue belongs in the facets.
 - [ ] **No duplicated policy across layers** — if parser/typechecker/lowering/CLI/LSP need the same rule, prefer a shared helper, registry, or semantic pack.
 - [ ] **Registry-driven behavior stays registry-driven** — stdlib namespaces, soft keywords, surface semantics, and runtime requirements should extend the canonical registries rather than add hardcoded special cases.
 - [ ] **Runtime/compiler boundaries stay clean** — generated-program helpers belong in runtime crates; compiler logic belongs in compiler crates; avoid hidden drift between the two.

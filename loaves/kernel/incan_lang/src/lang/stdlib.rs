@@ -84,12 +84,10 @@ pub const JSON_VALUE_TYPE_NAME: &str = "JsonValue";
 pub const JSON_VALUE_RUST_PATH: &str = "incan_std_data::json::JsonValue";
 
 /// The standard library's compiled native artifacts, named by the standard Loaves' published runtime contracts.
-/// The mandatory `core` artifact serves reflection, frozen constants, numerics, strings and collection helpers;
-/// other artifacts serve their owning namespaces. A unit's selected artifacts are explicit compiler inputs.
+/// The mandatory primitive artifact serves foundational carriers and helpers; other artifacts serve their owning
+/// namespaces. A unit's selected artifacts are explicit compiler inputs.
 pub mod facets {
-    /// The mandatory facet every generated program links.
-    pub const CORE: &str = "incan_std_core";
-    /// Foundational native mechanisms owned by `std.primitives`.
+    /// The mandatory foundational facet every generated program links.
     pub const PRIMITIVES: &str = "incan_std_primitives";
     /// `std.json`, `std.serde` and the ordinal-map helpers behind `std.collections`.
     pub const DATA: &str = "incan_std_data";
@@ -100,13 +98,13 @@ pub mod facets {
     /// `std.testing`.
     pub const TESTING: &str = "incan_std_testing";
     /// Every facet, the mandatory one first.
-    pub const ALL: [&str; 6] = [CORE, PRIMITIVES, DATA, ASYNC, WEB, TESTING];
+    pub const ALL: [&str; 5] = [PRIMITIVES, DATA, ASYNC, WEB, TESTING];
 
-    /// The facet a namespace's generated code links: the namespace's own facet, or the mandatory core facet.
+    /// The facet a namespace's generated code links: the namespace's own facet, or the mandatory primitive facet.
     pub fn for_namespace(namespace: &str) -> &'static str {
         super::find_namespace(namespace)
             .and_then(|entry| entry.facet)
-            .unwrap_or(CORE)
+            .unwrap_or(PRIMITIVES)
     }
 
     /// Whether a namespace's runtime module is the crate root of its facet rather than a module inside it.
@@ -298,8 +296,8 @@ pub struct StdlibNamespace {
     pub name: &'static str,
     /// Ordinary standard Loaf permitted to publish this root; compiler-only namespaces have no issuer.
     pub package: Option<&'static str>,
-    /// The Rust facet this namespace's generated code links beyond the mandatory [`facets::CORE`], or `None` when
-    /// the core facet serves it.
+    /// The Rust facet this namespace's generated code links beyond the mandatory [`facets::PRIMITIVES`], or `None`
+    /// when the primitive facet serves it.
     pub facet: Option<&'static str>,
     /// Known submodules for validation and LSP completion. Empty for leaf modules.
     pub submodules: &'static [&'static str],
@@ -432,7 +430,7 @@ pub fn known_stdlib_modules_for_hint() -> Vec<String> {
     known
 }
 
-/// The Rust facet a stdlib module path links beyond the mandatory core facet, or `None` when core serves it.
+/// The Rust facet a stdlib module path links beyond the mandatory primitive facet, or `None` when primitives serve it.
 pub fn stdlib_facet_for(path: &[String]) -> Option<&'static str> {
     if path.len() < 2 || path[0] != STDLIB_ROOT {
         return None;

@@ -15,14 +15,8 @@ fn known_stdlib_modules_cover_existing_surface_paths() {
     let policy = crate::lang::standard_packages::standard_package_namespace_policy("incan_stdlib_primitives");
     assert_eq!(
         policy.map(|policy| policy.namespace_roots.as_slice()),
-        Some(["primitives"].as_slice())
-    );
-    let source_policy = crate::lang::standard_packages::standard_package_source_policy("incan_stdlib_primitives");
-    assert_eq!(
-        source_policy.map(|policy| policy.namespace_roots.as_slice()),
         Some(
             [
-                "primitives",
                 "registry",
                 "reflection",
                 "result",
@@ -32,6 +26,7 @@ fn known_stdlib_modules_cover_existing_surface_paths() {
                 "features",
                 "prelude",
                 "this",
+                "primitives",
             ]
             .as_slice()
         )
@@ -419,7 +414,7 @@ fn stdlib_registry_keeps_phase_023_metadata() {
     assert_eq!(facets::for_component("stdlib-web"), Some(facets::WEB));
     assert_eq!(facets::for_component("stdlib-system"), None);
     assert!(facets::path_names_a_facet("incan_std_primitives::strings::str_len"));
-    assert!(!facets::path_names_a_facet("incan_stdlib_core::anything"));
+    assert!(!facets::path_names_a_facet("third_party::anything"));
     assert_eq!(reflection_ns.map(|ns| ns.submodules.is_empty()), Some(true));
     assert_eq!(fs_ns.map(|ns| ns.submodules.contains(&"path")), Some(true));
     assert_eq!(fs_ns.and_then(|ns| ns.facet), None);
