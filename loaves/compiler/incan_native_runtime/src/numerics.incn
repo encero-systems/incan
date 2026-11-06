@@ -2,9 +2,10 @@
 
 from model_values import display_value
 from integer_helpers import integer_power
+from rust::incan_lang::numeric_strings import parse_float_string, parse_int_string
+from rust::incan_std_primitives::errors import raise_value_error
 from rust::incan_std_primitives::strings import float_to_string
 from rust::std::ops import Neg
-from rust::incan_std_core::conversions import int_from_str, float_from_str
 from rust::incan_std_primitives::num import (
     py_mod_signed,
     py_mod_unsigned,
@@ -220,15 +221,25 @@ pub def negate_i128(value: i128) -> i128:
 
 
 pub def parse_int(value: &str) -> int:
-    """Parse an integer: 1. Use the existing conversion and canonical ValueError panic."""
-    # 1. Delegate parsing and error behavior to the original primitive.
-    return int_from_str(value)
+    """Parse an integer: 1. Use canonical numeric grammar. 2. Raise the language ValueError on refusal."""
+    # 1. Parse through the kernel's single numeric-string policy.
+    match parse_int_string(value):
+        Some(parsed) => return parsed
+        None => pass
+
+    # 2. Preserve the canonical language error instead of exposing a Rust parser failure.
+    raise_value_error(f"cannot convert '{value}' to int")
 
 
 pub def parse_float(value: &str) -> float:
-    """Parse a float: 1. Use the existing conversion and canonical ValueError panic."""
-    # 1. Delegate parsing and error behavior to the original primitive.
-    return float_from_str(value)
+    """Parse a float: 1. Use canonical numeric grammar. 2. Raise the language ValueError on refusal."""
+    # 1. Parse through the kernel's single numeric-string policy.
+    match parse_float_string(value):
+        Some(parsed) => return parsed
+        None => pass
+
+    # 2. Preserve the canonical language error instead of exposing a Rust parser failure.
+    raise_value_error(f"cannot convert '{value}' to float")
 
 
 pub def py_mod_i8(left: i8, right: i8) -> i8:

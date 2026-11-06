@@ -34,7 +34,7 @@ pub fn result(plan: &Plan, owner: i64, info: i64) -> Result<PlanType, PlanError>
         .ok_or_else(refused)?;
     if !model.library_item.is_empty()
         || !model.derives.iter().any(|derive| derive == "FieldInfo")
-        || metadata.library_item != "incan_std_core::reflection::FieldInfo"
+        || metadata.library_item != "incan_std_primitives::reflection::FieldInfo"
         || fields
             .iter()
             .any(|field| !model.fields.iter().any(|slot| slot.name == field.name))
@@ -73,7 +73,7 @@ pub fn items(plan: &Plan, span: Span) -> Result<Vec<Box<ast::Item>>, PlanError> 
 fn accessor(owner: i64, output: &PlanType, span: Span) -> Box<ast::Item> {
     let value = call(
         &[
-            "incan_std_core",
+            "incan_std_primitives",
             "frozen",
             collections::as_str(CollectionTypeId::FrozenList),
             "new",
@@ -103,7 +103,10 @@ fn storage(owner: i64, model: &ModelDeclaration, span: Span) -> Box<ast::Item> {
         ast::ExprKind::AddrOf(ast::BorrowKind::Ref, ast::Mutability::Not, array),
         span,
     );
-    let element = path_ty(global_path(&["incan_std_core", "reflection", "FieldInfo"], span), span);
+    let element = path_ty(
+        global_path(&["incan_std_primitives", "reflection", "FieldInfo"], span),
+        span,
+    );
     let ty = Box::new(ast::Ty {
         id: ast::DUMMY_NODE_ID,
         kind: ast::TyKind::Ref(
@@ -185,7 +188,7 @@ fn entry(field: &FieldMetadata, span: Span) -> Box<ast::Expr> {
             "extra",
             call(
                 &[
-                    "incan_std_core",
+                    "incan_std_primitives",
                     "frozen",
                     collections::as_str(CollectionTypeId::FrozenDict),
                     "new",
@@ -205,7 +208,7 @@ fn entry(field: &FieldMetadata, span: Span) -> Box<ast::Expr> {
     expression(
         ast::ExprKind::Struct(Box::new(ast::StructExpr {
             qself: None,
-            path: global_path(&["incan_std_core", "reflection", "FieldInfo"], span),
+            path: global_path(&["incan_std_primitives", "reflection", "FieldInfo"], span),
             fields: values
                 .into_iter()
                 .map(|(name, value)| ast::ExprField {

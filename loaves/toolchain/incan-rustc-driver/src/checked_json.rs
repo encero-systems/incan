@@ -134,7 +134,8 @@ fn is_source_conversion_trait(path: &str) -> bool {
         && identity.scope_discriminant.is_none()
         && identity.declaration_name == traits::as_str(TraitId::TryFrom)
         && matches!(&identity.origin, SymbolOrigin::Package { library, module_path }
-            if library == "incan_stdlib_core" && module_path == &["traits", "convert"])
+            if matches!(library.as_str(), "incan_stdlib_core" | "incan_stdlib_primitives")
+                && module_path == &["traits", "convert"])
         && incan_semantics_core::body_ir::loaf_item_path(&identity).as_deref() == Some(path)
 }
 

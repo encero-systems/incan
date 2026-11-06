@@ -336,7 +336,7 @@ pub fn render_resolved_type_as_rust_arg(ty: &ResolvedType) -> String {
         }
         ResolvedType::TypeToken(inner) => {
             format!(
-                "incan_std_core::reflection::TypeToken<{}>",
+                "incan_std_primitives::reflection::TypeToken<{}>",
                 render_resolved_type_as_rust_arg(inner)
             )
         }

@@ -729,7 +729,7 @@ const fn runtime(
     }
 }
 
-/// Build ownership metadata for a stdlib-owned type that core keeps as shared vocabulary.
+/// Build ownership metadata for a stdlib-owned type that primitives keep as shared vocabulary.
 const fn stdlib(
     stdlib_module_path: &'static str,
     category: SurfaceTypeCategory,
@@ -840,7 +840,7 @@ mod tests {
             "incan_std_async::sync::JoinHandle<T>",
             "incan_std_async::JoinHandle<T>",
             "tokio::task::JoinHandle<T>",
-            "incan_std_core::task::JoinHandle<T>",
+            "third_party::task::JoinHandle<T>",
             "incan_std_async::task::Unknown<T>",
         ] {
             assert_eq!(from_runtime_rust_path(path), None, "{path}");

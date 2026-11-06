@@ -409,7 +409,7 @@ pub(crate) fn linked_zip_ty(
 
 /// Declare the SDK's type marker with erased zero-sized storage; the validated plan retains represented identity.
 pub(super) fn type_token_ty(elements: &[PlanType], span: Span) -> Box<ast::Ty> {
-    let mut path = ast::Path::from_ident(ident("incan_std_core", span));
+    let mut path = ast::Path::from_ident(ident("incan_std_primitives", span));
     path.segments
         .push(ast::PathSegment::from_ident(ident("reflection", span)));
     let mut segment = ast::PathSegment::from_ident(ident("TypeToken", span));

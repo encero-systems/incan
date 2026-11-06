@@ -90,7 +90,7 @@ fn ordinary_poll(
 }
 
 /// Satisfy the ordinary SDK Iterator ABI without adding Clone or replacing the SDK-owned sum default.
-pub(crate) fn ordinary_items(plan: &Plan, span: Span) -> Result<Vec<Box<ast::Item>>, PlanError> {
+pub(crate) fn ordinary_items(plan: &Plan, source_package: &str, span: Span) -> Result<Vec<Box<ast::Item>>, PlanError> {
     let mut result = Vec::new();
     for (owner, model) in plan.models.iter().enumerate() {
         let Some(methods) = &model.iterator else {
@@ -98,7 +98,7 @@ pub(crate) fn ordinary_items(plan: &Plan, span: Span) -> Result<Vec<Box<ast::Ite
         };
         let poll = ordinary_poll(plan, owner, model, methods, span)?;
         let path = applied(
-            &["incan_stdlib_core", "derives", traits::as_str(TraitId::Iterator)],
+            &[source_package, "derives", traits::as_str(TraitId::Iterator)],
             vec![crate::declarations::ty(&methods.item, span)],
             span,
         );
@@ -127,7 +127,7 @@ pub(crate) fn ordinary_items(plan: &Plan, span: Span) -> Result<Vec<Box<ast::Ite
 }
 
 /// Declare all native slots together; runtime helpers contain the default behavior and rustc checks every bound.
-pub(crate) fn items(plan: &Plan, span: Span) -> Result<Vec<Box<ast::Item>>, PlanError> {
+pub(crate) fn items(plan: &Plan, source_package: &str, span: Span) -> Result<Vec<Box<ast::Item>>, PlanError> {
     let mut result = Vec::new();
     for (owner, model) in plan.models.iter().enumerate() {
         let Some(methods) = &model.fallible_iterator else {
@@ -163,13 +163,14 @@ pub(crate) fn items(plan: &Plan, span: Span) -> Result<Vec<Box<ast::Item>>, Plan
             "collect",
             "fold",
         ] {
-            functions.push(default_method(name, methods, span)?);
+            functions.push(default_method(name, methods, source_package, span)?);
         }
         let path = protocol(
             vec![
                 crate::declarations::ty(&methods.item, span),
                 crate::declarations::ty(&methods.error, span),
             ],
+            source_package,
             span,
         );
         let mut item = crate::declarations::item(
@@ -209,8 +210,8 @@ fn applied(segments: &[&str], arguments: Vec<Box<ast::Ty>>, span: Span) -> ast::
 }
 
 /// Name the actual SDK trait whose implementation satisfies native adapter bounds.
-fn protocol(arguments: Vec<Box<ast::Ty>>, span: Span) -> ast::Path {
-    applied(&["incan_stdlib_core", "derives", "FallibleIterator"], arguments, span)
+fn protocol(arguments: Vec<Box<ast::Ty>>, source_package: &str, span: Span) -> ast::Path {
+    applied(&[source_package, "derives", "FallibleIterator"], arguments, span)
 }
 
 /// Forward one function call; a single-segment source symbol remains crate-local.
@@ -233,7 +234,7 @@ fn cloned_self(span: Span) -> Box<ast::Expr> {
 }
 
 /// Retain the native Clone and exact callable bounds of a generic SDK slot.
-fn parameter(name: &str, callable: Option<Vec<Box<ast::Ty>>>, span: Span) -> ast::GenericParam {
+fn parameter(name: &str, callable: Option<Vec<Box<ast::Ty>>>, source_package: &str, span: Span) -> ast::GenericParam {
     let mut bounds = vec![trait_bound(
         global_path(&["std", "clone", RUST_CLONE_SYMBOL], span),
         span,
@@ -241,7 +242,7 @@ fn parameter(name: &str, callable: Option<Vec<Box<ast::Ty>>>, span: Span) -> ast
     if let Some(arguments) = callable {
         let kind = if arguments.len() == 3 { "Callable2" } else { "Callable1" };
         bounds.push(trait_bound(
-            applied(&["incan_stdlib_core", "traits", kind], arguments, span),
+            applied(&[source_package, "traits", kind], arguments, span),
             span,
         ));
     }
@@ -257,12 +258,12 @@ fn parameter(name: &str, callable: Option<Vec<Box<ast::Ty>>>, span: Span) -> ast
 }
 
 /// Preserve an opaque factory result while rustc verifies the concrete runtime helper's implementation.
-fn opaque(item: Box<ast::Ty>, error: Box<ast::Ty>, span: Span) -> Box<ast::Ty> {
+fn opaque(item: Box<ast::Ty>, error: Box<ast::Ty>, source_package: &str, span: Span) -> Box<ast::Ty> {
     Box::new(ast::Ty {
         id: ast::DUMMY_NODE_ID,
         kind: ast::TyKind::ImplTrait(
             ast::DUMMY_NODE_ID,
-            vec![trait_bound(protocol(vec![item, error], span), span)],
+            vec![trait_bound(protocol(vec![item, error], source_package, span), span)],
         ),
         span,
         tokens: None,
@@ -270,14 +271,19 @@ fn opaque(item: Box<ast::Ty>, error: Box<ast::Ty>, span: Span) -> Box<ast::Ty> {
 }
 
 /// Forward each checked standard default to its Incan runtime ABI, preserving generic binders and receiver mutation.
-fn default_method(name: &str, methods: &FallibleIteratorMethods, span: Span) -> Result<Box<ast::AssocItem>, PlanError> {
+fn default_method(
+    name: &str,
+    methods: &FallibleIteratorMethods,
+    source_package: &str,
+    span: Span,
+) -> Result<Box<ast::AssocItem>, PlanError> {
     let item = || crate::declarations::ty(&methods.item, span);
     let error = || crate::declarations::ty(&methods.error, span);
     let mut generics = ThinVec::new();
     let mut inputs = ThinVec::new();
     let mutable = matches!(name, "collect" | "fold");
     let mut arguments = thin_vec![if mutable { self_value(span) } else { cloned_self(span) }];
-    let mut output = opaque(item(), error(), span);
+    let mut output = opaque(item(), error(), source_package, span);
     match name {
         "take" => inputs.push(("count", crate::declarations::ty(&PlanType::Int, span))),
         "collect" => {
@@ -285,10 +291,11 @@ fn default_method(name: &str, methods: &FallibleIteratorMethods, span: Span) -> 
             output = path_ty(applied(&["std", "result", "Result"], vec![list, error()], span), span);
         }
         "fold" => {
-            generics.push(parameter("U", None, span));
+            generics.push(parameter("U", None, source_package, span));
             generics.push(parameter(
                 "F",
                 Some(vec![named("U", span), item(), named("U", span)]),
+                source_package,
                 span,
             ));
             inputs.push(("initial", named("U", span)));
@@ -301,8 +308,8 @@ fn default_method(name: &str, methods: &FallibleIteratorMethods, span: Span) -> 
         _ => {
             let (input, result) = match name {
                 "map" | "flat_map" => {
-                    generics.push(parameter("U", None, span));
-                    output = opaque(named("U", span), error(), span);
+                    generics.push(parameter("U", None, source_package, span));
+                    output = opaque(named("U", span), error(), source_package, span);
                     let result = if name == "flat_map" {
                         path_ty(applied(&["std", "vec", "Vec"], vec![named("U", span)], span), span)
                     } else {
@@ -313,8 +320,8 @@ fn default_method(name: &str, methods: &FallibleIteratorMethods, span: Span) -> 
                 "filter" => (item(), crate::declarations::ty(&PlanType::Bool, span)),
                 "inspect" => (item(), crate::declarations::ty(&PlanType::Unit, span)),
                 "map_err" => {
-                    generics.push(parameter("U", None, span));
-                    output = opaque(item(), named("U", span), span);
+                    generics.push(parameter("U", None, source_package, span));
+                    output = opaque(item(), named("U", span), source_package, span);
                     (error(), named("U", span))
                 }
                 "inspect_err" => (error(), crate::declarations::ty(&PlanType::Unit, span)),
@@ -325,7 +332,7 @@ fn default_method(name: &str, methods: &FallibleIteratorMethods, span: Span) -> 
                     });
                 }
             };
-            generics.push(parameter("F", Some(vec![input, result]), span));
+            generics.push(parameter("F", Some(vec![input, result]), source_package, span));
             inputs.push(("f", named("F", span)));
         }
     }

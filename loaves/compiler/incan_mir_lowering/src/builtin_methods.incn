@@ -399,7 +399,7 @@ def lower_text_codec_method(
         match declaration.variants[1].fields[0]:
             PlanType.ValidationError => pass
             PlanType.Model(owner, _name) =>
-                if builder.nominals[owner].native_item != "incan_std_core::validation::ValidationError":
+                if builder.nominals[owner].native_item != "incan_std_primitives::validation::ValidationError":
                     return Err("unsupported Body IR decode error identity")
             _ => return Err("unsupported Body IR decode error identity")
     else:
