@@ -95,20 +95,20 @@ mod tests {
     use incan_semantics_core::{DecoratorFeature, SurfaceFeatureKey};
 
     #[test]
-    fn activates_async_soft_keywords_from_imports() -> Result<(), String> {
+    fn async_imports_do_not_activate_language_keywords() -> Result<(), String> {
         let source = "import std.async\n";
         let tokens = lexer::lex(source).map_err(|e| format!("{e:?}"))?;
         let program = parser::parse(&tokens).map_err(|e| format!("{e:?}"))?;
         let context = SurfaceContext::from_program(&program);
-        if !context.is_soft_keyword_active(KeywordId::Async) {
-            return Err("expected `async` to be activated by `import std.async`".to_string());
+        if context.is_soft_keyword_active(KeywordId::Async) {
+            return Err("expected `async` to remain language-owned after `import std.async`".to_string());
         }
-        if !context.is_soft_keyword_active(KeywordId::Await) {
-            return Err("expected `await` to be activated by `import std.async`".to_string());
+        if context.is_soft_keyword_active(KeywordId::Await) {
+            return Err("expected `await` to remain language-owned after `import std.async`".to_string());
         }
         let async_feature = context.soft_keyword_feature(KeywordId::Async);
         if async_feature != Some(SurfaceFeatureKey::SoftKeyword(KeywordId::Async)) {
-            return Err("expected async soft-keyword feature key to be registered".to_string());
+            return Err("expected the async surface feature key to remain registered".to_string());
         }
         Ok(())
     }

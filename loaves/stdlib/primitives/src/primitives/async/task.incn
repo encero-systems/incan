@@ -33,7 +33,6 @@ Examples:
     await yield_now()
 """
 
-import std.primitives.async
 from std.rust import Send, Static
 from rust::incan_std_async::task import JoinHandle as RustJoinHandle, TaskJoinError as RustTaskJoinError
 from rust::incan_std_async::task import RuntimeFuture, RuntimeFnOnce

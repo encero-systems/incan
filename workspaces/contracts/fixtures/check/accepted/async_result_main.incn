@@ -1,7 +1,6 @@
 # behavior: async main may return a unit-success Result
 # expect-accepted:
 
-import std.async
 
 
 async def main() -> Result[None, str]:

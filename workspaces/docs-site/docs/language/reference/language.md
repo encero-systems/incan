@@ -47,8 +47,8 @@ Reservation describes how a spelling is reserved: `Hard` keywords are always res
 | Assert | `assert` |  | Contextual | - | ControlFlow | Statement | RFC 018 | 0.3 | Draft |
 | When | `when` |  | Contextual | - | ControlFlow | Statement | RFC 114 | 0.5 | Stable |
 | Def | `def` | `fn` | Hard | - | Definition | Statement | RFC 000 | 0.1 | Stable |
-| Async | `async` |  | Soft | `std.async`, `std.primitives.async` | Definition | Modifier | RFC 000 | 0.1 | Stable |
-| Await | `await` |  | Soft | `std.async`, `std.primitives.async` | Definition | Expression | RFC 000 | 0.1 | Stable |
+| Async | `async` |  | Hard | - | Definition | Modifier | RFC 000 | 0.1 | Stable |
+| Await | `await` |  | Hard | - | Definition | Expression | RFC 000 | 0.1 | Stable |
 | Capability | `capability` |  | Contextual | - | Definition | Statement | RFC 104 | 0.6 | Draft |
 | Class | `class` |  | Hard | - | Definition | Statement | RFC 000 | 0.1 | Stable |
 | Model | `model` |  | Hard | - | Definition | Statement | RFC 000 | 0.1 | Stable |
@@ -88,8 +88,6 @@ Soft keywords are only reserved when one of their activating `std.*` namespaces 
 
 | Id | Canonical | Activated by | Category | Usage | RFC | Since | Stability |
 |---|---|---|---|---|---|---|---|
-| Async | `async` | `std.async`, `std.primitives.async` | Definition | Modifier | RFC 000 | 0.1 | Stable |
-| Await | `await` | `std.async`, `std.primitives.async` | Definition | Expression | RFC 000 | 0.1 | Stable |
 
 ## Standard library namespaces
 
@@ -101,7 +99,7 @@ Soft keywords are only reserved when one of their activating `std.*` namespaces 
 | `std.registry` | - | - | - |
 | `std.telemetry` | - | `std.telemetry.core` | - |
 | `std.environ` | - | - | - |
-| `std.async` | `incan_std_async` | `std.async.time`, `std.async.task`, `std.async.channel`, `std.async.race`, `std.async.sync`, `std.async.prelude` | `async`, `await` |
+| `std.async` | `incan_std_async` | `std.async.time`, `std.async.task`, `std.async.channel`, `std.async.race`, `std.async.sync`, `std.async.prelude` | - |
 | `std.interop` | - | - | - |
 | `std.serde` | `incan_std_data` | `std.serde.json` | - |
 | `std.json` | `incan_std_data` | - | - |
@@ -305,7 +303,7 @@ def main() -> None:
 
 ## Decorators
 
-User-defined decorators are accepted on top-level `def` and `async def` declarations and on instance methods. A decorator is a callable value: it receives the decorated callable, and the declared name binds the callable it returns. The callable may be selected by an unqualified name or through a namespace, as in `@helpers.preserve` and `@helpers.factory("label")`.
+User-defined decorators are accepted on top-level `def` and `async def` declarations and on instance methods. A decorator is a callable value: it receives the decorated callable, and the declared name binds the callable it returns.
 
 ```incan
 def parse(value: int) -> int:
@@ -325,7 +323,7 @@ def main() -> None:
 | Rule | Contract |
 | --- | --- |
 | Order | Stacked decorators apply bottom-up: the decorator nearest `def` receives the declared function, and each decorator above it receives the result of the one below. |
-| Factories | `@name(args)` or `@module.name(args)` calls the selected factory and applies the callable that call returns as the decorator. |
+| Factories | `@name(args)` calls `name(args)` and applies the callable that call returns as the decorator. |
 | Binding type | The declared name has the type the decorator returns for the decorated callable. Checked API metadata and imports see that type. |
 | Initialization | A nongeneric function is decorated once during module initialization. A generic function is decorated on the first call to each closed instance, once per instance, including when its signature uses type parameters. Explicit and inferred type arguments select the same instance. Concurrent calls wait for initialization; recursive initialization of the same instance is refused, and failed initialization may be retried. |
 | Generic decorators | A decorator or factory generic over the whole callable, `(F) -> F`, has `F` inferred from the decorated function, so the binding keeps the decorated function's signature. A factory call accepts explicit type arguments: `@registered[(str) -> ColumnExpr]("incql.functions.col")`. |

@@ -1,7 +1,7 @@
-# behavior: duplicate async activation fails during typechecking
+# behavior: importing the same async module binding twice is refused as a duplicate import
 # expect-diagnostic: INCAN-I0001
 
-"""Duplicate async activation fails during typechecking."""
+"""Refuse a duplicate module binding independently of language syntax."""
 import std.async
 import std.async
 

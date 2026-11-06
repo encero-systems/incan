@@ -3,7 +3,6 @@
 #   7
 #   timed out
 
-import std.async
 from std.testing import timeout
 from std.async.time import sleep, timeout as async_timeout
 

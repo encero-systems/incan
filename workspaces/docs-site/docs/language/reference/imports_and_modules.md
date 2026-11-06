@@ -265,10 +265,10 @@ The standard-library modules are listed in the [language reference](language.md#
 
 ## Soft keywords
 
-- `async` and `await` are keywords only after an import whose path begins with `std.async`, such as `import std.async` or `from std.async.time import sleep`, from the next declaration on. `from std import async` does not activate them. `race for` requires the same import.
+- `async` and `await` are reserved words in every module. `async def`, `await`, and `race for <name>:` need no import.
+- Refused (`INCAN-P0001`): a variable, parameter, field, function, or other declaration named `async` or `await`.
+- A reserved word may occur in a module path. `import std.async` and `from std import async` bind the module, and `async.sleep(0.1)` resolves through that binding. An explicit alias named `async` or `await` is refused (`INCAN-P0001`).
 - A library's vocabulary keywords are keywords after an import of its provider namespace.
-
-Refused (`INCAN-P0001`): `async` or `await` as a keyword before the import.
 
 ## Rust crate imports
 

@@ -1,7 +1,6 @@
 # behavior: awaiting a native Rust future checks with its associated output type
 # expect-accepted:
 
-import std.async
 from rust::std::future import ready
 
 

@@ -142,6 +142,16 @@ impl<'a> Parser<'a> {
     /// `{ a, b = pair, c = 3 }` is two items and `{ a, b = x, y }` is the unpacking `a, b = x` followed by the item
     /// `y`.
     fn assignment_or_expr_item(&mut self, spelling: TupleValueSpelling) -> Result<Statement, CompileError> {
+        if matches!(
+            &self.peek().kind,
+            TokenKind::Keyword(KeywordId::Async | KeywordId::Await)
+        ) && matches!(
+            self.peek_next().kind,
+            TokenKind::Operator(OperatorId::Eq) | TokenKind::Punctuation(PunctuationId::Colon | PunctuationId::Comma)
+        ) {
+            return Err(self.identifier_error());
+        }
+
         // Look for `ident = expr` or `ident, ident = expr` pattern (simple or tuple assignment)
         if let TokenKind::Ident(_) = &self.peek().kind {
             // Check if next is = or : (for assignment) or , (for tuple unpacking)

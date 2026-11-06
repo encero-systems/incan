@@ -8,7 +8,6 @@
 
 rust.module("tokio")
 
-import std.async
 from rust::incan_std_async::sync import RawSemaphore, RawSemaphorePermit, semaphore_new, semaphore_try_acquire
 from rust::std::future import ready
 from rust::std::mem import drop

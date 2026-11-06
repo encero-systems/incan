@@ -7,7 +7,6 @@
 
 """Async bodies with explicit inputs."""
 
-import std.async
 
 
 class Buffer:

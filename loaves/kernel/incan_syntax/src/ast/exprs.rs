@@ -166,7 +166,7 @@ pub struct SurfaceExpr {
 pub enum SurfaceExprPayload {
     /// Prefix unary keyword expression: `kw expr`.
     PrefixUnary(Box<Spanned<Expr>>),
-    /// Import-activated `std.async` race block: `race for value: ...`.
+    /// Language-owned async race block: `race for value: ...`.
     RaceFor(Box<RaceForExpr>),
     /// DSL-owned leading-dot path with an implicit receiver: `.field` or `.relation.field`.
     LeadingDotPath {

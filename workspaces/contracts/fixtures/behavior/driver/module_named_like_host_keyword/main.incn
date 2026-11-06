@@ -1,4 +1,4 @@
-# behavior: modules named `async`, a soft keyword in Incan and a hard keyword in the host language, import and run at the top level and nested under a package directory
+# behavior: local modules named `async`, a reserved Incan word and host-language keyword, remain valid module-path segments at the top level and below a package directory
 # expect-stdout:
 #   launched
 #   nested launched

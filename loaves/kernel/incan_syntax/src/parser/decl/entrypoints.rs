@@ -207,6 +207,12 @@ impl<'a> Parser<'a> {
             }
             Declaration::VocabBlock(vocab_block)
         } else {
+            if matches!(
+                &self.peek().kind,
+                TokenKind::Keyword(KeywordId::Async | KeywordId::Await)
+            ) {
+                return Err(self.identifier_error());
+            }
             if let Some(err) = self.inactive_soft_keyword_error() {
                 return Err(err);
             }

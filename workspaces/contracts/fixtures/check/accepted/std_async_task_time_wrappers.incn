@@ -3,7 +3,6 @@
 
 """Valid fixture: std.async task/time wrapper APIs typecheck"""
 
-import std.async
 from std.async.task import spawn, spawn_blocking, JoinHandle
 from std.async.time import sleep, timeout, timeout_ms, TimeoutError
 

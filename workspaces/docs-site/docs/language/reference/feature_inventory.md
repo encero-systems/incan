@@ -70,8 +70,8 @@ This inventory describes the source-authored public features in the compiler's c
 | `std.checksum` CRC32 helpers | Stdlib | 0.5 | Import from `std.checksum`. | `from std.checksum import crc32`<br>`crc32.value(b"abc")`<br>`crc32.digest(b"abc")`<br>`h = crc32.new()` | `std.checksum` exposes CRC32 value, digest-byte, and incremental helpers for compatibility and accidental-corruption checks, separate from `std.hash` hashing contracts. | Project-local Rust shims or `std.hash` helpers when a protocol explicitly requires CRC32 checksum semantics. | [std.checksum](stdlib/checksum.md), [Hashing data](../how-to/hashing_data.md), [RFC 065 checksum boundary](../../RFCs/closed/implemented/065_std_hash.md#checksum-boundary), [Release 0.5](../../release_notes/0_5.md) |
 | Testing assertions and markers | Testing | 0.3 | Use `assert` directly; import marker/helper APIs from `std.testing`. | `assert value == expected`<br>`assert call() raises ValueError`<br>`@parametrize("case", cases)` | Tests can use language assertions, raises checks, helper assertions, fixtures, parametrization, and marker decorators. | Ad hoc panic helpers or external test metadata formats for ordinary Incan tests. | [std.testing](stdlib/testing.md), [Testing how-to](../how-to/testing_stdlib.md), [Release 0.3](../../release_notes/0_3.md) |
 | `incan test` runner | Testing | 0.3 | Run `incan test`. | `module tests:`<br>`incan test --list`<br>`incan test --format json --junit report.xml` | The runner owns discovery, inline test modules, stable ids, selection, fixtures, parametrization, reporting, shuffling, and scheduling. | Project-local scripts that duplicate core test discovery and reporting behavior. | [Tooling: testing](../../tooling/how-to/testing.md), [std.testing](stdlib/testing.md), [Release 0.3](../../release_notes/0_3.md) |
-| Async and await | Async | 0.2 | Import `std.async` or one of its submodules. | `from std.async.time import sleep`<br>`async def main() -> None:`<br>`await sleep(1)` | `async` and `await` are import-activated soft keywords backed by compiled `std.async` modules, with native task, timeout and runtime support. | Threading async behavior through synchronous wrappers or relying on pre-0.2 ambient async syntax. | [Async programming](../how-to/async_programming.md), [std.async](stdlib/async.md), [Release 0.2](../../release_notes/0_2.md) |
-| Async race and awaitability | Async | 0.3 | Import `std.async.race` or the relevant async prelude helpers. | `race for value:`<br>`arm(task)`<br>`race(arms)` | `Awaitable[T]`, `race for`, and helper-style race composition support first-ready async workflows. | Legacy `std.async.select` or hand-rolled polling loops. | [Awaitable trait](stdlib_traits/awaitable.md), [Async programming](../how-to/async_programming.md), [Release 0.3](../../release_notes/0_3.md) |
+| Async and await | Async | 0.2 | Use `async def` or `await`; import `std.async` only for library APIs. | `from std.async.time import sleep`<br>`async def main() -> None:`<br>`await sleep(1)` | `async` and `await` are reserved language syntax, while compiled `std.async` modules provide native tasks, timeouts and runtime support. | Threading async behavior through synchronous wrappers or importing a library only to activate syntax. | [Async programming](../how-to/async_programming.md), [std.async](stdlib/async.md), [Release 0.2](../../release_notes/0_2.md) |
+| Async race and awaitability | Async | 0.3 | Use `race for`; import `std.async.race` only for `Awaitable[T]` and helper APIs. | `race for value:`<br>`arm(task)`<br>`race(arms)` | Language-owned `race for`, `Awaitable[T]`, and helper-style race composition support first-ready async workflows. | Legacy `std.async.select` or hand-rolled polling loops. | [Awaitable trait](stdlib_traits/awaitable.md), [Async programming](../how-to/async_programming.md), [Release 0.3](../../release_notes/0_3.md) |
 | Project lifecycle tooling | Tooling | 0.3 | Declare the project and scripts in `loaf.toml`, then pass an explicit source path to Oven. | `loaf.toml`<br>`oven describe-unit src/main.incn`<br>`incan build src/main.incn` | Oven reads project manifests, selects compilation inputs and prepares declared dependencies before checking, building, running or testing source. | Duplicated project resolution in compiler and editor tools. | [Project lifecycle](project_lifecycle.md), [Project lifecycle how-to](../how-to/project_lifecycle.md), [Release 0.3](../../release_notes/0_3.md) |
 | Path-linked multi-package projects | Tooling | 0.5 | Declare path dependencies and select a package's source explicitly. | `[dependencies]`<br>`helper = { path = "../helper" }`<br>`incan build src/main.incn` | Oven prepares the selected package's active path dependency graph, with checked public aliases and unified package features. | Implicit cross-project dependency activation or copying a dependency's source into its consumer. | [Project lifecycle](project_lifecycle.md), [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.5](../../release_notes/0_5.md) |
 | Toolchain installer and release manifest | Tooling | 0.4 | Pack an installed toolchain and install the resulting native archive. | `incan toolchain pack toolchain.tar.zst`<br>`incan toolchain install toolchain.tar.zst` | Oven verifies a staged archive's portable manifest, binds the local Rust sysroot and checks the compiler identity before publishing an installation. | Treating Cargo, repository checkouts, and package-manager adapters as separate sources of install truth. | [Install and run](../../tooling/how-to/install_and_run.md), [Release 0.4](../../release_notes/0_4.md) |
@@ -1119,13 +1119,13 @@ Canonical forms:
 - **Id:** `AsyncAwait`
 - **Category:** `Async`
 - **Since:** `0.2`
-- **RFC:** `RFC 023`
+- **RFC:** `RFC 172`
 - **Stability:** `Stable`
-- **Activation:** Import `std.async` or one of its submodules.
-- **Use instead of:** Threading async behavior through synchronous wrappers or relying on pre-0.2 ambient async syntax.
+- **Activation:** Use `async def` or `await`; import `std.async` only for library APIs.
+- **Use instead of:** Threading async behavior through synchronous wrappers or importing a library only to activate syntax.
 - **References:** [Async programming](../how-to/async_programming.md), [std.async](stdlib/async.md), [Release 0.2](../../release_notes/0_2.md)
 
-`async` and `await` are import-activated soft keywords backed by compiled `std.async` modules, with native task, timeout and runtime support.
+`async` and `await` are reserved language syntax, while compiled `std.async` modules provide native tasks, timeouts and runtime support.
 
 Canonical forms:
 
@@ -1138,13 +1138,13 @@ Canonical forms:
 - **Id:** `AsyncRace`
 - **Category:** `Async`
 - **Since:** `0.3`
-- **RFC:** `RFC 039`
+- **RFC:** `RFC 172`
 - **Stability:** `Stable`
-- **Activation:** Import `std.async.race` or the relevant async prelude helpers.
+- **Activation:** Use `race for`; import `std.async.race` only for `Awaitable[T]` and helper APIs.
 - **Use instead of:** Legacy `std.async.select` or hand-rolled polling loops.
 - **References:** [Awaitable trait](stdlib_traits/awaitable.md), [Async programming](../how-to/async_programming.md), [Release 0.3](../../release_notes/0_3.md)
 
-`Awaitable[T]`, `race for`, and helper-style race composition support first-ready async workflows.
+Language-owned `race for`, `Awaitable[T]`, and helper-style race composition support first-ready async workflows.
 
 Canonical forms:
 

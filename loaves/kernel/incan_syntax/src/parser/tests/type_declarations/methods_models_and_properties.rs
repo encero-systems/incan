@@ -444,16 +444,15 @@ fn test_parse_property_parameter_list_is_focused_error() {
 }
 
 #[test]
-fn test_parse_property_declaration_modifier_is_focused_error() {
+fn test_parse_async_before_property_is_a_reserved_word_error() {
     let errs = parse_str_err(
-        "import std.async\n\nclass Worker:\n  pub async property status -> str:\n    return \"ready\"\n",
-        "property declarations with async modifiers should fail",
+        "class Worker:\n  pub async property status -> str:\n    return \"ready\"\n",
+        "async outside its declaration-modifier position should fail as a reserved word",
     );
     assert!(
-        errs.iter().any(|err| err
-            .message
-            .contains("Declaration modifiers are not supported on properties")),
-        "expected property modifier diagnostic, got: {errs:?}"
+        errs.iter()
+            .any(|err| err.message.contains("`async` is a reserved word")),
+        "expected reserved-word diagnostic, got: {errs:?}"
     );
 }
 

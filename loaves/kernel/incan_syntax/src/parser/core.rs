@@ -107,7 +107,6 @@ pub struct Parser<'a> {
     module_path: Option<String>,
     library_imported_vocab: ImportedLibraryVocab,
     library_imported_dsl_surfaces: ImportedLibraryDslSurfaces,
-    std_async_vocab_active: bool,
     active_scoped_surface_descriptors: Vec<ActiveScopedSurfaceDescriptor>,
     active_scoped_symbol_descriptors: Vec<ActiveScopedSymbolDescriptor>,
     active_embedded_fragment_descriptors: Vec<ActiveEmbeddedFragmentDescriptor>,
@@ -179,7 +178,6 @@ impl<'a> Parser<'a> {
             module_path,
             library_imported_vocab: library_imported_vocab.cloned().unwrap_or_default(),
             library_imported_dsl_surfaces: library_imported_dsl_surfaces.cloned().unwrap_or_default(),
-            std_async_vocab_active: false,
             active_scoped_surface_descriptors: Vec::new(),
             active_scoped_symbol_descriptors: Vec::new(),
             active_embedded_fragment_descriptors: Vec::new(),
@@ -425,18 +423,12 @@ impl<'a> Parser<'a> {
         if let Declaration::Import(import) = decl {
             match &import.kind {
                 ImportKind::Module(path) => {
-                    if import_path_activates_std_async(&path.segments) {
-                        self.std_async_vocab_active = true;
-                    }
                     for kw in incan_lang::lang::stdlib::soft_keywords_for_import(&path.segments) {
                         self.active_soft_keywords.insert(kw);
                     }
                     self.activate_imported_keywords_for_import_path(&path.segments);
                 }
                 ImportKind::From { module, .. } => {
-                    if import_path_activates_std_async(&module.segments) {
-                        self.std_async_vocab_active = true;
-                    }
                     for kw in incan_lang::lang::stdlib::soft_keywords_for_import(&module.segments) {
                         self.active_soft_keywords.insert(kw);
                     }
@@ -692,9 +684,4 @@ fn import_path_activates_namespace(import_path: &[String], namespace: &str) -> b
     let imported = import_path.join(".");
     let trimmed = namespace.trim();
     !trimmed.is_empty() && (trimmed == imported || trimmed.starts_with(&format!("{imported}.")))
-}
-
-/// Return whether an import path activates `std.async` vocabulary in this file.
-fn import_path_activates_std_async(path: &[String]) -> bool {
-    matches!(path, [root, namespace, ..] if root == "std" && namespace == "async")
 }

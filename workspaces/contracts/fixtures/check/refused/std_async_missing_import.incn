@@ -1,9 +1,7 @@
-# behavior: std.async names used without their import are refused
-# expect-diagnostic: INCAN-P0001
+# behavior: the std.async module used without its import is refused even though async syntax is ambient
+# expect-diagnostic: INCAN-T0001
 
-"""Invalid fixture: std.async import missing"""
-
-from std.primitives import hexlify
+"""Invalid fixture: std.async module import missing."""
 
 async def work() -> None:
-    await sleep(0.1)
+    await async.sleep(0.1)

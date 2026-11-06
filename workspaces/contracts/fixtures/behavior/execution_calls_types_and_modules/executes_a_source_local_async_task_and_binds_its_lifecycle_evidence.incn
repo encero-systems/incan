@@ -4,7 +4,6 @@
 
 
 """Executes a source local async task and binds its lifecycle evidence."""
-import std.async
 
 async def child() -> int:
   """Return `42` for this fixture."""

@@ -75,17 +75,17 @@ fn known_stdlib_modules_cover_existing_surface_paths() {
     assert!(is_known_stdlib_module(&segs(&["std", "builtins"])));
 }
 
-/// Both async entry points activate the same keywords while unrelated primitives do not.
+/// Async library imports do not activate language-owned keywords.
 #[test]
-fn async_imports_activate_keywords_from_both_entry_points() {
+fn async_imports_do_not_activate_language_keywords() {
     let std_async = soft_keywords_for_import(&segs(&["std", "async", "time"]));
     let primitive_async = soft_keywords_for_import(&segs(&["std", "primitives", "async", "time"]));
     let unrelated_primitive = soft_keywords_for_import(&segs(&["std", "primitives", "vocab"]));
 
-    assert!(std_async.contains(&KeywordId::Async));
-    assert!(std_async.contains(&KeywordId::Await));
-    assert!(primitive_async.contains(&KeywordId::Async));
-    assert!(primitive_async.contains(&KeywordId::Await));
+    assert!(!std_async.contains(&KeywordId::Async));
+    assert!(!std_async.contains(&KeywordId::Await));
+    assert!(!primitive_async.contains(&KeywordId::Async));
+    assert!(!primitive_async.contains(&KeywordId::Await));
     assert!(!unrelated_primitive.contains(&KeywordId::Async));
     assert!(!unrelated_primitive.contains(&KeywordId::Await));
 }

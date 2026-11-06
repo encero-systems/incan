@@ -2,7 +2,6 @@
 # expect-stdout:
 #   incan
 
-import std.async
 from std.web import Json, Query, Path, route, GET
 from std.serde import json
 

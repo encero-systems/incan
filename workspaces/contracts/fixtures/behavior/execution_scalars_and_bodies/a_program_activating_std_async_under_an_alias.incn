@@ -1,9 +1,10 @@
-# behavior: a program that activates std.async under an alias runs
+# behavior: from std import async binds the reserved module name through ordinary namespace lookup, and async.sleep runs
 # expect-stdout:
 #   42
 
-"""A program that activates std.async under an alias runs."""
-import std.async as async_runtime
+"""Call the async library through the module binding named by the reserved word."""
+
+from std import async
 
 
 def program_result() -> int:
@@ -11,6 +12,7 @@ def program_result() -> int:
     return 42
 
 
-def main() -> None:
+async def main() -> None:
     """Print the fixture values in the expected order."""
+    await async.sleep(0.0)
     println(program_result())

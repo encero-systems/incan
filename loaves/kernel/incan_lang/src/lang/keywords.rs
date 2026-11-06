@@ -323,10 +323,9 @@ pub const KEYWORDS: &[KeywordDescriptor] = &[
         RFC::_000,
         Since(0, 1),
     ),
-    info_soft(
+    info_surface(
         KeywordId::Async,
         "async",
-        &["async", "primitives.async"],
         KeywordSurfaceKind::DeclarationModifier,
         KeywordCategory::Definition,
         &[KeywordUsage::Modifier],
@@ -334,10 +333,9 @@ pub const KEYWORDS: &[KeywordDescriptor] = &[
         Since(0, 1),
         Stability::Stable,
     ),
-    info_soft(
+    info_surface(
         KeywordId::Await,
         "await",
-        &["async", "primitives.async"],
         KeywordSurfaceKind::PrefixExpression,
         KeywordCategory::Definition,
         &[KeywordUsage::Expression],
@@ -850,6 +848,33 @@ const fn info_with_aliases(
     info(id, canonical, aliases, category, usage, introduced_in_rfc, since)
 }
 
+#[allow(clippy::too_many_arguments)] // const table constructor mirrors the keyword metadata shape
+/// Build metadata for an always-reserved keyword with a parser surface handoff.
+const fn info_surface(
+    id: KeywordId,
+    canonical: &'static str,
+    surface_kind: KeywordSurfaceKind,
+    category: KeywordCategory,
+    usage: &'static [KeywordUsage],
+    introduced_in_rfc: RfcId,
+    since: Since,
+    stability: Stability,
+) -> KeywordDescriptor {
+    KeywordDescriptor {
+        id,
+        canonical,
+        aliases: &[],
+        activation: KeywordActivation::Hard,
+        surface_kind: Some(surface_kind),
+        category,
+        usage,
+        introduced_in_rfc,
+        since,
+        stability,
+        examples: &[],
+    }
+}
+
 #[allow(clippy::too_many_arguments)] // const table constructor mirrors `info()` — a struct param would be awkward here
 /// Build metadata for an import-activated soft keyword.
 const fn info_soft(
@@ -946,14 +971,17 @@ mod tests {
         assert!(!soft_keywords_for_namespace("testing").contains(&KeywordId::Assert));
     }
 
-    /// Async syntax activates through both compatible standard-library entry points.
+    /// Async syntax is reserved independently of the standard library.
     #[test]
-    fn async_keywords_use_both_activation_namespaces() {
-        assert_eq!(activations(KeywordId::Async), &["async", "primitives.async"]);
-        assert_eq!(activations(KeywordId::Await), &["async", "primitives.async"]);
-        assert!(soft_keywords_for_namespace("async.time").contains(&KeywordId::Async));
-        assert!(soft_keywords_for_namespace("primitives.async.task").contains(&KeywordId::Await));
-        assert!(!soft_keywords_for_namespace("primitives").contains(&KeywordId::Async));
+    fn async_keywords_are_hard_and_have_no_activation_namespaces() {
+        assert_eq!(activation_kind(KeywordId::Async), KeywordActivation::Hard);
+        assert_eq!(activation_kind(KeywordId::Await), KeywordActivation::Hard);
+        assert!(activations(KeywordId::Async).is_empty());
+        assert!(activations(KeywordId::Await).is_empty());
+        assert!(is_hard(KeywordId::Async));
+        assert!(is_hard(KeywordId::Await));
+        assert!(!soft_keywords_for_namespace("async.time").contains(&KeywordId::Async));
+        assert!(!soft_keywords_for_namespace("primitives.async.task").contains(&KeywordId::Await));
     }
 
     #[test]
