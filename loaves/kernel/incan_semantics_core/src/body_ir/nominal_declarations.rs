@@ -228,11 +228,11 @@ pub fn native_nominal_item(identity: &CanonicalSymbolId) -> Option<String> {
     let crate::SymbolOrigin::Package { library, module_path } = &identity.origin else {
         return None;
     };
-    (library == "incan_stdlib_core"
+    (matches!(library.as_str(), "incan_stdlib_core" | "incan_stdlib_primitives")
         && module_path == &["reflection".to_owned()]
         && identity.declaration_name == "FieldInfo"
         && identity.kind == crate::SemanticSourceTargetKind::Class)
-        .then(|| "incan_std_core::reflection::FieldInfo".to_owned())
+        .then(|| "incan_std_primitives::reflection::FieldInfo".to_owned())
 }
 
 /// Physical direct-route declaration scope of a retained runtime carrier, or the existing source/package scope.

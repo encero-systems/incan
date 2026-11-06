@@ -74,7 +74,7 @@ impl Callbacks<'_> {
 
     /// Declare compiler-owned bridges before publishing the library's public root names.
     pub(super) fn declare_bridges_and_exports(&self, compiler: &interface::Compiler, krate: &mut ast::Crate) {
-        match native_bridge_items(&self.plan, krate.spans.inner_span) {
+        match native_bridge_items(&self.plan, self.source_package, krate.spans.inner_span) {
             Ok(items) => krate.items.extend(items),
             Err(error) => compiler.sess.dcx().fatal(error.to_string()),
         }

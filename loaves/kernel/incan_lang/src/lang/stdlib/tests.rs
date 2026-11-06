@@ -17,6 +17,25 @@ fn known_stdlib_modules_cover_existing_surface_paths() {
         policy.map(|policy| policy.namespace_roots.as_slice()),
         Some(["primitives"].as_slice())
     );
+    let source_policy = crate::lang::standard_packages::standard_package_source_policy("incan_stdlib_primitives");
+    assert_eq!(
+        source_policy.map(|policy| policy.namespace_roots.as_slice()),
+        Some(
+            [
+                "primitives",
+                "registry",
+                "reflection",
+                "result",
+                "derives",
+                "traits",
+                "runtime",
+                "features",
+                "prelude",
+                "this",
+            ]
+            .as_slice()
+        )
+    );
     assert_eq!(
         find_namespace("primitives").and_then(|namespace| namespace.package),
         Some("incan_stdlib_primitives")
