@@ -267,15 +267,15 @@ seed_oven=$lane/oven-bin/incan
 builder=$seed_oven
 build_source_closure
 
-# The candidate compiler must come from the clean tree: Oven compiles the Incan lowering with the seed's driver, then
-# the driver, and installs it with its Rust ABI cache into the build home. Relinking retains one installed native
-# support generation, with every selected producer validated against the current source graph.
-# A seed archive is never relabeled as its output.
+# The candidate compiler comes from the clean tree: Oven compiles the Incan lowering with the seed's driver, then the
+# driver, and installs it with its Rust ABI cache into the build home. Relinking keeps one installed native support
+# generation, each producer validated against the source graph. A seed archive is never relabeled as its output.
 step driver-build env DEV8_LANE="$lane" SELFBUILD_HOME="$INCAN_HOME" SELFBUILD_OVEN="$builder" \
     SELFBUILD_STDLIB="$INCAN_STDLIB" INCAN_RELINK_LOG="$out/driver-build-oven.log" \
     "$builder" run "$source/scripts/relink_driver.incn" -- --release
-# The seed's driver compiled the closure the lowering links. The shipped runtime and standard packages are compiled
-# again by the candidate, so they carry this tree's lowering rather than the seed's.
+# The checking interfaces and the closure the lowering links were written by the seed's driver. The candidate rebuilds
+# the interfaces first, then the shipped runtime and standard packages, so all of them carry this tree's lowering.
+native candidate-source-interfaces build-native-interfaces.sh
 build_runtime_closure candidate-
 native oven-build build-native-tools.sh oven --rebuild
 cp "$lane/oven-bin/incan" "$out/bundle/incan"

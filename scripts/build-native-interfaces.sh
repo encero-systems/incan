@@ -24,10 +24,10 @@ for package in primitives core async; do
     name=$(sed -nE 's/^name = "([^"]+)"/\1/p' "$project/loaf.toml" | head -1)
     directory=$(mktemp -d "$interfaces/$package.XXXXXX")
     unit=$directory/unit.json
-    # Bind the installed support generation before injecting checking-only source interfaces.
+    # Bind installed support, then replace compiled standard providers with this generation's source interfaces.
     SELFBUILD_LIBRARY_OUTPUT= "$builder" "$repo" "$package" release > "$unit.prepared"
     jq --slurpfile interfaces "$interfaces/loaves.json" \
-        '.kind = "library" | .loaves += $interfaces[0]' "$unit.prepared" > "$unit"
+        '.kind = "library" | .loaves |= map(select(.standard | not)) | .loaves += $interfaces[0]' "$unit.prepared" > "$unit"
     SELFBUILD_METADATA_ONLY=1 "$builder" "$repo" identify "$unit"
     if ! "$driver" --source-interface "$unit" "$sysroot" "$directory" > "$directory/build.log" 2>&1; then
         tail -10 "$directory/build.log" | cut -c1-600
