@@ -1,6 +1,6 @@
 # RFC 125: `loaves.pub` Loaf registry and baked asset distribution
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-09-09
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -17,7 +17,7 @@
     - RFC 123 (package executable representation)
     - RFC 124 (Oven store unit identity and cross-plan artifact sharing)
     - RFC 159 (native C library Loaves and the managed Linux C toolchain)
-- **Issue:** —
+- **Issue:** [#2706](https://github.com/encero-systems/incan/issues/2706)
 - **RFC PR:** —
 - **Written against:** v0.6 (in development)
 - **Shipped in:** —
