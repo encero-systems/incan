@@ -266,8 +266,7 @@ pub(super) fn is_registry_description_method(info: &MethodInfo) -> bool {
     }
     match &identity.origin {
         SymbolOrigin::Package { library, module_path } => {
-            matches!(library.as_str(), "incan_stdlib_core" | "incan_stdlib_primitives")
-                && module_path.iter().map(String::as_str).eq(["registry"])
+            library == "incan_stdlib_primitives" && module_path.iter().map(String::as_str).eq(["registry"])
         }
         SymbolOrigin::Module(path) => path.iter().map(String::as_str).eq(["std", "registry"]),
         _ => false,

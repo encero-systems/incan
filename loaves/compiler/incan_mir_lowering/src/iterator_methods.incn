@@ -116,10 +116,7 @@ pub def standard_protocol(identity: CanonicalSymbolId) -> bool:
         return false
     match identity.origin:
         SymbolOrigin.Package(library=library, module_path=path) =>
-            return (
-                (library == "incan_stdlib_core" or library == "incan_stdlib_primitives")
-                and path == ["derives", "collection"]
-            )
+            return library == "incan_stdlib_primitives" and path == ["derives", "collection"]
         SymbolOrigin.Module(path) => return path == ["std", "derives", "collection"]
         _ => return false
 

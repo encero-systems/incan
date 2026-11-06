@@ -3,9 +3,8 @@
 //! A compiled Loaf is one artifact directory per profile: its library manifest (`<name>.incnlib`), its governed bodies
 //! (`<name>.incnbody`), its library unit (`lib<name>.rlib`), the unit's native closure (`<name>.native.json`), and an
 //! optional manifest-authenticated native ABI cache (`<name>.rustabi`). An
-//! ordinary dependency owns `pub::<key>`; a standard package owns the `std.*` roots its compiler-pinned policy assigns
-//! to it. During the core-to-primitives bridge, a unit that no longer links native core assigns the moved roots to
-//! primitives. A module path resolves to exactly one entry.
+//! ordinary dependency owns `pub::<key>`; a standard package owns the `std.*` roots the compiler-pinned
+//! [`STANDARD_PACKAGE_NAMESPACE_POLICIES`] assign to it. A module path resolves to exactly one entry.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
@@ -14,9 +13,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use serde::{Deserialize, Serialize};
 
 use incan_lang::interop::RustItemMetadata;
-use incan_lang::lang::standard_packages::{
-    StandardPackageNamespacePolicy, standard_package_namespace_policy, standard_package_source_policy,
-};
+use incan_lang::lang::standard_packages::{STANDARD_PACKAGE_NAMESPACE_POLICIES, StandardPackageNamespacePolicy};
 use incan_vocab::{KeywordActivation, KeywordRegistration, KeywordSpec};
 
 use crate::rust_abi_cache::RustAbiCache;
@@ -369,25 +366,18 @@ impl LoafIndex {
         })
     }
 
-    /// Admit every location's inventory while deferring full manifests to canonical demand.
-    ///
-    /// `reaches_native_core` selects the bridge generation's namespace view: old-floor units retain catalog ownership,
-    /// while units whose native closure has crossed to primitives let that destination answer the moved roots. Each
-    /// inventory records all global contributors and shipped Rust paths; missing or stale private proofs require full
-    /// admission.
+    /// Admit every location's inventory while deferring full manifests to canonical demand. Each inventory records
+    /// all global contributors and shipped Rust paths; missing or stale private proofs require full admission.
     pub fn deferred(
         locations: impl IntoIterator<Item = (String, String, PathBuf, bool)>,
-        reaches_native_core: bool,
     ) -> Result<Self, LoafIndexError> {
         let mut index = Self::default();
         for (key, name, dir, standard) in locations {
             let namespace = if standard {
-                let policy = if reaches_native_core {
-                    standard_package_namespace_policy(&name)
-                } else {
-                    standard_package_source_policy(&name)
-                }
-                .ok_or_else(|| LoafIndexError::UnknownStandardPackage { package: name.clone() })?;
+                let policy = STANDARD_PACKAGE_NAMESPACE_POLICIES
+                    .iter()
+                    .find(|policy| policy.package_name == name)
+                    .ok_or_else(|| LoafIndexError::UnknownStandardPackage { package: name.clone() })?;
                 LoafNamespace::Standard { policy }
             } else {
                 LoafNamespace::Dependency { key: key.clone() }
@@ -488,8 +478,10 @@ impl LoafIndex {
 
     /// The entry for one standard package, read from its artifact directory.
     pub fn standard(package: &str, dir: &Path) -> Result<LoafEntry, LoafIndexError> {
-        let policy =
-            standard_package_namespace_policy(package).ok_or_else(|| LoafIndexError::UnknownStandardPackage {
+        let policy = STANDARD_PACKAGE_NAMESPACE_POLICIES
+            .iter()
+            .find(|policy| policy.package_name == package)
+            .ok_or_else(|| LoafIndexError::UnknownStandardPackage {
                 package: package.to_owned(),
             })?;
         Ok(LoafEntry {

@@ -36,14 +36,14 @@ fn validate(plan: &Plan, owner: usize, model: &ModelDeclaration) -> Result<(), P
 }
 
 /// Declare the exact native trait for the source layout; its behavior remains in the selected Incan function.
-pub(crate) fn items(plan: &Plan, source_package: &str, span: Span) -> Result<Vec<Box<ast::Item>>, PlanError> {
+pub(crate) fn items(plan: &Plan, span: Span) -> Result<Vec<Box<ast::Item>>, PlanError> {
     let mut result = Vec::new();
     for (owner, model) in plan.models.iter().enumerate() {
         if model.callable_method.is_empty() && model.callable_signature.is_empty() {
             continue;
         }
         validate(plan, owner, model)?;
-        let mut path = global_path(&[source_package, "traits", "callable", "Callable1"], span);
+        let mut path = global_path(&["incan_stdlib_primitives", "traits", "callable", "Callable1"], span);
         crate::shared_callables::type_arguments(
             &mut path,
             model

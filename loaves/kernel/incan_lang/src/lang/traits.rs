@@ -414,7 +414,7 @@ mod tests {
             Some(TraitId::Error)
         );
         assert_eq!(from_qualified_str("std.traits.error.Error"), None);
-        assert_eq!(from_bound_str("pub::incan_stdlib_core::traits::error::Error"), None);
+        assert_eq!(from_bound_str("pub::third_party::traits::error::Error"), None);
         assert_eq!(from_bound_str("pub::other::primitives::errors::Error"), None);
     }
 }

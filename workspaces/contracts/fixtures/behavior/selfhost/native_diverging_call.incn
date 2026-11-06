@@ -5,7 +5,7 @@
 #   constraint positive failed
 # expect-exit: 101
 
-from rust::incan_std_core::validation import raise_constraint_error
+from rust::incan_std_primitives::validation import raise_constraint_error
 
 
 def validate(valid: bool) -> None:

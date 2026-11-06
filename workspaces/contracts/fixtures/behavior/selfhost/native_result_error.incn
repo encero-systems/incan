@@ -10,7 +10,7 @@
 #   invalid
 #   invalid
 
-from rust::incan_std_core::validation import ValidationError as NativeError
+from rust::incan_std_primitives::validation import ValidationError as NativeError
 
 
 def decoded() -> Result[str, NativeError]:

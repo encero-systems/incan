@@ -42,14 +42,8 @@ pub def sdk_owned_callable_bindings(
                                     return Err("the standard library generic callable signatures differ")
                                 _ = require_plain_sdk_callable(builder, arguments[index + 1])?
                                 mut storage = PlanType.Closure(signature)
-                                path = delegation.rust_path()
-                                if (
-                                    path == Some(
-                                        "incan_stdlib_core::derives::collection::FallibleIterator::map_err",
-                                    )
-                                    or path == Some(
-                                        "incan_stdlib_primitives::derives::collection::FallibleIterator::map_err",
-                                    )
+                                if delegation.rust_path() == Some(
+                                    "incan_stdlib_primitives::derives::collection::FallibleIterator::map_err",
                                 ):
                                     if len(signature) != 2:
                                         return Err(

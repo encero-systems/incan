@@ -248,7 +248,7 @@ mod tests {
         add_alias(
             &mut manifest,
             "Unary",
-            package("incan_stdlib_core"),
+            package("incan_stdlib_primitives"),
             SemanticSourceTargetKind::Trait,
         )?;
         add_alias(

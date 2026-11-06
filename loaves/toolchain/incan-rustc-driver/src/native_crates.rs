@@ -107,9 +107,6 @@ impl<'ast> Visitor<'ast> for DeclarationRoots {
                 "incan_native_runtime" => {
                     self.roots.insert("incan_native_runtime");
                 }
-                "incan_std_core" => {
-                    self.roots.insert("incan_std_core");
-                }
                 "incan_std_primitives" => {
                     self.roots.insert("incan_std_primitives");
                 }
