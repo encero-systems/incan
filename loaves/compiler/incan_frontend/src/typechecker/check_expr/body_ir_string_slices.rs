@@ -3,7 +3,9 @@
 use super::TypeChecker;
 use crate::ast::{CallArg, Expr, Spanned};
 use crate::symbols::{ResolvedType, canonical_builtin_member_identity};
+use incan_lang::lang::builtins::BuiltinMethodId;
 use incan_lang::lang::magic_methods::{self, MagicMethodId};
+use incan_lang::lang::surface::string_methods::{self, StringMethodId};
 
 impl TypeChecker {
     /// Retain the internal slice member only for a checked primitive str receiver and exactly two positional int
@@ -35,8 +37,11 @@ impl TypeChecker {
             return;
         }
         let key = expression.span;
-        let canonical = canonical_builtin_member_identity("str", magic_methods::as_str(MagicMethodId::Slice));
+        let operation = BuiltinMethodId::Str(StringMethodId::Slice);
+        let canonical =
+            canonical_builtin_member_identity(operation.owner(), string_methods::as_str(StringMethodId::Slice));
         self.type_info.calls.body_ir_string_slice_members.insert(key, canonical);
+        self.type_info.record_resolved_builtin_method_call(key, operation);
         self.type_info
             .calls
             .body_ir_call_result_types

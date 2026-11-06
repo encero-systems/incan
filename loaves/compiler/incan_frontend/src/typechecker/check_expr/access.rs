@@ -45,7 +45,9 @@ use incan_lang::lang::text_codecs::{self, DecodeErrorsPolicy};
 use incan_lang::lang::trait_bounds;
 use incan_lang::lang::traits::{self as core_traits, TraitId};
 use incan_lang::lang::types::collections::CollectionTypeId;
-use incan_lang::lang::types::numerics::{self as numerics, IntegerHelperFamily, IntegerHelperOperation, NumericFamily};
+use incan_lang::lang::types::numerics::{
+    self as numerics, IntegerHelperFamily, IntegerHelperOperation, NumericFamily, NumericResizeMethodId,
+};
 use incan_lang::lang::{conventions, stdlib};
 use incan_lang::lang::{enum_helpers, surface::option_methods};
 use incan_semantics_core::body_ir::HelperOp;
@@ -220,14 +222,6 @@ struct CompilerBuiltinMethodSelection {
     operation: Option<BuiltinMethodId>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum NumericResizeMethodPolicy {
-    Lossless,
-    Try,
-    Wrapping,
-    Saturating,
-}
-
 /// Diagnostic label for a Rust path receiver in type errors (`rust::{path}`).
 fn rust_receiver_display(path: &str) -> String {
     format!("rust::{path}")
@@ -279,47 +273,78 @@ impl TypeChecker {
             ResolvedType::Int | ResolvedType::Float | ResolvedType::Numeric(_) | ResolvedType::Bool => {
                 let owner_id = super::super::numeric_type_id_for_compat(base_ty)?;
                 let owner = incan_lang::lang::types::numerics::as_str(owner_id);
-                let member = if matches!(
-                    method,
-                    "resize" | "try_resize" | "wrapping_resize" | "saturating_resize"
-                ) {
-                    method
-                } else if matches!(
+                if let Some(resize) = numerics::resize_method_from_str(method) {
+                    return Some(CompilerBuiltinMethodSelection {
+                        identity: Self::compiler_builtin_member_identity(owner, numerics::resize_method_as_str(resize)),
+                        operation: Some(BuiltinMethodId::NumericResize(owner_id, resize)),
+                    });
+                }
+                if matches!(
                     incan_lang::lang::types::numerics::info_for(owner_id).family,
                     NumericFamily::BinaryFloat
                 ) {
-                    float_methods::from_str(method).map(float_methods::as_str)?
+                    let method = float_methods::from_str(method)?;
+                    (
+                        owner,
+                        float_methods::as_str(method),
+                        Some(BuiltinMethodId::Float(owner_id, method)),
+                    )
                 } else {
-                    return None;
-                };
-                (owner, member, None)
+                    let helper = numerics::integer_helper_from_str(method)?;
+                    if !numerics::supports_integer_helper(owner_id, helper) {
+                        return None;
+                    }
+                    (
+                        owner,
+                        helper.canonical,
+                        Some(BuiltinMethodId::IntegerHelper(
+                            owner_id,
+                            helper.family,
+                            helper.operation,
+                        )),
+                    )
+                }
             }
             ResolvedType::Str => (
                 incan_lang::lang::types::stringlike::as_str(incan_lang::lang::types::stringlike::StringLikeId::Str),
                 string_methods::from_str(method).map(string_methods::as_str)?,
-                None,
+                string_methods::from_str(method).map(BuiltinMethodId::Str),
             ),
-            ResolvedType::FrozenStr => (
-                incan_lang::lang::types::stringlike::as_str(
-                    incan_lang::lang::types::stringlike::StringLikeId::FrozenStr,
-                ),
-                string_methods::from_str(method).map(string_methods::as_str)?,
-                None,
-            ),
-            ResolvedType::Bytes => (
-                incan_lang::lang::types::stringlike::as_str(incan_lang::lang::types::stringlike::StringLikeId::Bytes),
-                bytes_methods::from_str(method)
-                    .map(bytes_methods::as_str)
-                    .or_else(|| (method == "as_slice").then_some("as_slice"))?,
-                None,
-            ),
-            ResolvedType::FrozenBytes => (
-                incan_lang::lang::types::stringlike::as_str(
-                    incan_lang::lang::types::stringlike::StringLikeId::FrozenBytes,
-                ),
-                frozen_bytes_methods::from_str(method).map(frozen_bytes_methods::as_str)?,
-                None,
-            ),
+            ResolvedType::FrozenStr => {
+                let method = string_methods::from_str(method)?;
+                (
+                    incan_lang::lang::types::stringlike::as_str(
+                        incan_lang::lang::types::stringlike::StringLikeId::FrozenStr,
+                    ),
+                    string_methods::as_str(method),
+                    Some(BuiltinMethodId::FrozenStr(method)),
+                )
+            }
+            ResolvedType::Bytes => {
+                let method = bytes_methods::from_str(method)?;
+                (
+                    incan_lang::lang::types::stringlike::as_str(
+                        incan_lang::lang::types::stringlike::StringLikeId::Bytes,
+                    ),
+                    bytes_methods::as_str(method),
+                    Some(BuiltinMethodId::Bytes(method)),
+                )
+            }
+            ResolvedType::FrozenBytes => {
+                let method = frozen_bytes_methods::from_str(method).or_else(|| {
+                    bytes_methods::from_str(method).and_then(|method| {
+                        (method == bytes_methods::BytesMethodId::Decode)
+                            .then_some(frozen_bytes_methods::FrozenBytesMethodId::Decode)
+                    })
+                })?;
+                (
+                    incan_lang::lang::types::stringlike::as_str(
+                        incan_lang::lang::types::stringlike::StringLikeId::FrozenBytes,
+                    ),
+                    frozen_bytes_methods::as_str(method),
+                    Some(BuiltinMethodId::FrozenBytes(method)),
+                )
+            }
             _ => return None,
         };
         Some(CompilerBuiltinMethodSelection {
@@ -363,7 +388,7 @@ impl TypeChecker {
             ResolvedType::Generic(name, _) if Self::is_iterator_protocol_name(name) => (
                 Self::iterator_protocol_name(),
                 iterator_methods::from_str(method).map(iterator_methods::as_str)?,
-                None,
+                iterator_methods::from_str(method).map(BuiltinMethodId::Iterator),
             ),
             ResolvedType::Generic(name, _) => match collection_type_id(name) {
                 Some(CollectionTypeId::List) => match list_methods::from_str(method) {
@@ -394,23 +419,30 @@ impl TypeChecker {
                         Some(BuiltinMethodId::Set(method)),
                     )
                 }
-                Some(CollectionTypeId::Option) => (
-                    incan_lang::lang::types::collections::as_str(CollectionTypeId::Option),
-                    option_methods::from_str(method)
-                        .map(option_methods::as_str)
-                        .or_else(|| (method == "clone").then_some("clone"))?,
-                    None,
-                ),
-                Some(CollectionTypeId::Result) => (
-                    incan_lang::lang::types::collections::as_str(CollectionTypeId::Result),
-                    result_methods::from_str(method).map(result_methods::as_str)?,
-                    None,
-                ),
-                Some(CollectionTypeId::Generator) => (
-                    incan_lang::lang::types::collections::as_str(CollectionTypeId::Generator),
-                    iterator_methods::from_str(method).map(iterator_methods::as_str)?,
-                    None,
-                ),
+                Some(CollectionTypeId::Option) => {
+                    let method = option_methods::from_str(method)?;
+                    (
+                        incan_lang::lang::types::collections::as_str(CollectionTypeId::Option),
+                        option_methods::as_str(method),
+                        Some(BuiltinMethodId::Option(method)),
+                    )
+                }
+                Some(CollectionTypeId::Result) => {
+                    let method = result_methods::from_str(method)?;
+                    (
+                        incan_lang::lang::types::collections::as_str(CollectionTypeId::Result),
+                        result_methods::as_str(method),
+                        Some(BuiltinMethodId::Result(method)),
+                    )
+                }
+                Some(CollectionTypeId::Generator) => {
+                    let method = iterator_methods::from_str(method)?;
+                    (
+                        incan_lang::lang::types::collections::as_str(CollectionTypeId::Generator),
+                        iterator_methods::as_str(method),
+                        Some(BuiltinMethodId::Generator(method)),
+                    )
+                }
                 _ => return None,
             },
             _ => return None,
@@ -437,18 +469,10 @@ impl TypeChecker {
         expected_return_ty: Option<&ResolvedType>,
     ) -> Option<ResolvedType> {
         let source = super::super::numeric_type_id_for_compat(base_ty)?;
-        let policy = match method {
-            "resize" => NumericResizeMethodPolicy::Lossless,
-            "try_resize" => NumericResizeMethodPolicy::Try,
-            "wrapping_resize" => NumericResizeMethodPolicy::Wrapping,
-            "saturating_resize" => NumericResizeMethodPolicy::Saturating,
-            _ => return None,
-        };
+        let policy = numerics::resize_method_from_str(method)?;
         let explicit_target = match type_args {
             [] => None,
-            [target] if !matches!(policy, NumericResizeMethodPolicy::Lossless) => {
-                Some(self.resolve_type_checked(target))
-            }
+            [target] if !matches!(policy, NumericResizeMethodId::Lossless) => Some(self.resolve_type_checked(target)),
             [_] => {
                 self.errors.push(errors::type_mismatch(
                     "no explicit target on resize()",
@@ -473,7 +497,7 @@ impl TypeChecker {
         }
 
         let contextual_target = match policy {
-            NumericResizeMethodPolicy::Try => match expected_return_ty {
+            NumericResizeMethodId::Try => match expected_return_ty {
                 Some(ResolvedType::Generic(name, args))
                     if collection_type_id(name.as_str()) == Some(CollectionTypeId::Option) && args.len() == 1 =>
                 {
@@ -510,7 +534,7 @@ impl TypeChecker {
                 != super::super::numeric_type_id_for_compat(&contextual_target)
         {
             let contextual_result = match policy {
-                NumericResizeMethodPolicy::Try => option_ty(contextual_target),
+                NumericResizeMethodId::Try => option_ty(contextual_target),
                 _ => contextual_target,
             };
             self.errors.push(errors::type_mismatch(
@@ -543,7 +567,7 @@ impl TypeChecker {
     /// target in Option; the other policies retain the written or inferred target type.
     fn checked_numeric_resize_result(
         &mut self,
-        policy: NumericResizeMethodPolicy,
+        policy: NumericResizeMethodId,
         source: numerics::NumericTypeId,
         target: numerics::NumericTypeId,
         target_ty: ResolvedType,
@@ -559,7 +583,7 @@ impl TypeChecker {
             )
         );
         match policy {
-            NumericResizeMethodPolicy::Lossless => {
+            NumericResizeMethodId::Lossless => {
                 if !incan_lang::numeric_values::numeric_type_losslessly_widens_to(source, target) {
                     self.errors.push(
                         errors::type_mismatch("lossless numeric resize target", &target_ty.to_string(), span)
@@ -571,9 +595,7 @@ impl TypeChecker {
                 }
                 Some(target_ty)
             }
-            NumericResizeMethodPolicy::Try
-            | NumericResizeMethodPolicy::Wrapping
-            | NumericResizeMethodPolicy::Saturating => {
+            NumericResizeMethodId::Try | NumericResizeMethodId::Wrapping | NumericResizeMethodId::Saturating => {
                 if !integer_to_integer {
                     self.errors.push(errors::type_mismatch(
                         "integer resize target",
@@ -583,7 +605,7 @@ impl TypeChecker {
                     return None;
                 }
                 match policy {
-                    NumericResizeMethodPolicy::Try => Some(option_ty(target_ty)),
+                    NumericResizeMethodId::Try => Some(option_ty(target_ty)),
                     _ => Some(target_ty),
                 }
             }

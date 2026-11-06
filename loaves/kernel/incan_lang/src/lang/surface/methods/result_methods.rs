@@ -4,7 +4,7 @@ use super::LangItemInfo;
 use crate::lang::registry::{RFC, RfcId, Since, Stability};
 
 /// Stable identifier for an RFC 070 `Result[T, E]` combinator.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ResultMethodId {
     Map,
     MapErr,
@@ -14,6 +14,10 @@ pub enum ResultMethodId {
     InspectErr,
     Unwrap,
     UnwrapOr,
+    /// Report whether the result carries an `Ok` payload.
+    IsOk,
+    /// Report whether the result carries an `Err` payload.
+    IsErr,
 }
 
 pub type ResultMethodInfo = LangItemInfo<ResultMethodId>;
@@ -80,6 +84,22 @@ pub const RESULT_METHODS: &[ResultMethodInfo] = &[
         "unwrap_or",
         &[],
         "Return the Ok payload or a default value.",
+        RFC::_000,
+        Since(0, 1),
+    ),
+    info(
+        ResultMethodId::IsOk,
+        "is_ok",
+        &[],
+        "Return whether the result contains an Ok payload.",
+        RFC::_000,
+        Since(0, 1),
+    ),
+    info(
+        ResultMethodId::IsErr,
+        "is_err",
+        &[],
+        "Return whether the result contains an Err payload.",
         RFC::_000,
         Since(0, 1),
     ),

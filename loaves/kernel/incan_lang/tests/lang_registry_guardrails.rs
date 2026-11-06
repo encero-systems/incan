@@ -415,7 +415,7 @@ fn string_methods_spellings_unique_and_resolvable() {
 fn bytes_methods_spellings_unique_and_resolvable() {
     assert_registry_round_trip(RegistryRoundTrip {
         label: "bytes method",
-        expected_len: 1,
+        expected_len: 2,
         items: bytes_methods::BYTES_METHODS,
         id_of: |info| info.id,
         canonical_of: |info| info.canonical,
@@ -453,7 +453,7 @@ fn dict_methods_spellings_unique_and_resolvable() {
 fn result_methods_spellings_unique_and_resolvable() {
     assert_registry_round_trip(RegistryRoundTrip {
         label: "result method",
-        expected_len: 8,
+        expected_len: 10,
         items: result_methods::RESULT_METHODS,
         id_of: |info| info.id,
         canonical_of: |info| info.canonical,

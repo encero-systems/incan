@@ -6,6 +6,7 @@ use super::*;
 use incan_lang::lang::builtins::{BuiltinFnId, BuiltinMethodId};
 use incan_lang::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
 use incan_lang::lang::surface::list_methods::ListMethodId;
+use incan_lang::lang::surface::option_methods::OptionMethodId;
 use incan_lang::lang::surface::result_methods::ResultMethodId;
 use incan_semantics_core::SymbolOrigin;
 

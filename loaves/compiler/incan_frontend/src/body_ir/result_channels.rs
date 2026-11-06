@@ -2,9 +2,8 @@
 
 use super::primitives::result_type_parts;
 use super::{BodyBuilder, IncanPrimitiveType, IncanType, ast, bir, hir_span};
-use incan_lang::lang::surface::result_methods::{self, ResultMethodId};
-use incan_lang::lang::types::collections::{self, CollectionTypeId};
-use incan_semantics_core::{HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
+use incan_lang::lang::builtins::BuiltinMethodId;
+use incan_lang::lang::surface::result_methods::ResultMethodId;
 
 impl BodyBuilder<'_, '_> {
     /// Fill only matching Result channel holes from an already typed Body IR value; fixed channels stay fixed.
@@ -97,20 +96,10 @@ impl BodyBuilder<'_, '_> {
 
     /// Select only a registry-owned builtin Result member, excluding same-spelled source methods.
     pub(super) fn checked_result_method(&self, span: ast::Span) -> Option<ResultMethodId> {
-        let identity = self.type_info.resolved_identity(span)?;
-        if identity.origin != SymbolOrigin::Builtin
-            || identity.namespace != SymbolNamespace::Member
-            || identity.kind != SemanticSourceTargetKind::Method
-            || identity.scope_discriminant.is_some()
-            || identity.declaration_span != HirSourceSpan::new(0, 0)
-        {
-            return None;
+        match self.type_info.resolved_builtin_method_call(span)? {
+            BuiltinMethodId::Result(method) => Some(method),
+            _ => None,
         }
-        let member = identity
-            .declaration_name
-            .strip_prefix(collections::as_str(CollectionTypeId::Result))?
-            .strip_prefix('.')?;
-        result_methods::from_str(member)
     }
 
     /// Carry a checked chaining callback's closed result into its call, retaining the unselected channel.

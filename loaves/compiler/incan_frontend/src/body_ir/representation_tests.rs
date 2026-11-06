@@ -97,7 +97,7 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
     assert_complete_shared_read_shapes()?;
     assert_lent_and_moved_read()?;
     assert_equality_contract()?;
-    assert_builtin_collection_method_identities()?;
+    assert_builtin_method_identities()?;
     let mut changed = seed.clone();
     changed.bodies[0].native_attributes.push(bir::NativeAttribute {
         path: "selected::attribute".to_owned(),
@@ -111,24 +111,45 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
     Ok(())
 }
 
-/// Prove collection method meaning crosses the checker/Body IR boundary as a closed operation, independently of the
+/// Prove builtin method meaning crosses the checker/Body IR boundary as a closed operation, independently of the
 /// retained source spelling and canonical provenance.
-fn assert_builtin_collection_method_identities() -> Result<(), Box<dyn std::error::Error>> {
+fn assert_builtin_method_identities() -> Result<(), Box<dyn std::error::Error>> {
     use incan_lang::lang::builtins::BuiltinMethodId;
-    use incan_lang::lang::surface::dict_methods::DictMethodId;
-    use incan_lang::lang::surface::list_methods::ListMethodId;
-    use incan_lang::lang::surface::set_methods::SetMethodId;
+    use incan_lang::lang::surface::{
+        bytes_methods::BytesMethodId, clone_methods::CloneMethodId, dict_methods::DictMethodId,
+        float_methods::FloatMethodId, iterator_methods::IteratorMethodId, list_methods::ListMethodId,
+        option_methods::OptionMethodId, result_methods::ResultMethodId, set_methods::SetMethodId,
+        string_methods::StringMethodId,
+    };
+    use incan_lang::lang::types::numerics::{
+        IntegerHelperFamily, IntegerHelperOperation, NumericResizeMethodId, NumericTypeId,
+    };
 
-    let source = "def operations() -> None:\n    mut values: list[int] = []\n    values.append(1)\n    values.count(1)\n    values.iter()\n    mut labels: dict[str, int] = {}\n    labels.insert(\"one\", 1)\n    labels.keys()\n    mut seen: set[int] = set()\n    seen.add(1)\n    seen.contains(1)\n";
+    let source = "def operations() -> None:\n    mut values: list[int] = []\n    values.append(1)\n    values.count(1)\n    values.iter().take(1).collect()\n    numbers().collect()\n    mut labels: dict[str, int] = {}\n    labels.insert(\"one\", 1)\n    labels.keys()\n    mut seen: set[int] = set()\n    seen.add(1)\n    seen.contains(1)\n    \"value\".encode()\n    b\"value\".decode()\n    Some(1).is_some()\n    result: Result[int, str] = Ok(1)\n    result.is_ok()\n    1u8.checked_add(1u8)\n    resized: u16 = 1u8.resize()\n    1.0.sqrt()\n\n\ndef numbers() -> Generator[int]:\n    yield 1\n\n\ndef clone_number(value: &int) -> int:\n    return value.clone()\n";
     let (_, facts, module) = checked_seed(source)?;
     let expected = [
         BuiltinMethodId::List(ListMethodId::Append),
         BuiltinMethodId::List(ListMethodId::Count),
         BuiltinMethodId::ListIter,
+        BuiltinMethodId::Iterator(IteratorMethodId::Take),
+        BuiltinMethodId::Iterator(IteratorMethodId::Collect),
+        BuiltinMethodId::Generator(IteratorMethodId::Collect),
         BuiltinMethodId::Dict(DictMethodId::Insert),
         BuiltinMethodId::Dict(DictMethodId::Keys),
         BuiltinMethodId::Set(SetMethodId::Add),
         BuiltinMethodId::Set(SetMethodId::Contains),
+        BuiltinMethodId::Str(StringMethodId::Encode),
+        BuiltinMethodId::Bytes(BytesMethodId::Decode),
+        BuiltinMethodId::Option(OptionMethodId::IsSome),
+        BuiltinMethodId::Result(ResultMethodId::IsOk),
+        BuiltinMethodId::IntegerHelper(
+            NumericTypeId::U8,
+            IntegerHelperFamily::Checked,
+            IntegerHelperOperation::Add,
+        ),
+        BuiltinMethodId::NumericResize(NumericTypeId::U8, NumericResizeMethodId::Lossless),
+        BuiltinMethodId::Float(NumericTypeId::F64, FloatMethodId::Sqrt),
+        BuiltinMethodId::Clone(CloneMethodId::Clone),
     ];
     let checked = facts
         .calls
@@ -136,7 +157,10 @@ fn assert_builtin_collection_method_identities() -> Result<(), Box<dyn std::erro
         .values()
         .copied()
         .collect::<Vec<_>>();
-    assert!(expected.iter().all(|operation| checked.contains(operation)));
+    assert!(
+        expected.iter().all(|operation| checked.contains(operation)),
+        "checker operations: {checked:?}",
+    );
 
     let carried = module
         .bodies
@@ -150,7 +174,10 @@ fn assert_builtin_collection_method_identities() -> Result<(), Box<dyn std::erro
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert!(expected.iter().all(|operation| carried.contains(operation)));
+    assert!(
+        expected.iter().all(|operation| carried.contains(operation)),
+        "Body IR operations: {carried:?}",
+    );
     Ok(())
 }
 

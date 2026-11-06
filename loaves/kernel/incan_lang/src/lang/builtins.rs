@@ -19,9 +19,13 @@
 
 use super::registry::{LangItemInfo, RFC, RfcId, Since, Stability};
 use super::surface::{
-    dict_methods::DictMethodId, frozen_dict_methods::FrozenDictMethodId, frozen_list_methods::FrozenListMethodId,
-    frozen_set_methods::FrozenSetMethodId, list_methods::ListMethodId, set_methods::SetMethodId,
+    bytes_methods::BytesMethodId, clone_methods::CloneMethodId, dict_methods::DictMethodId,
+    float_methods::FloatMethodId, frozen_bytes_methods::FrozenBytesMethodId, frozen_dict_methods::FrozenDictMethodId,
+    frozen_list_methods::FrozenListMethodId, frozen_set_methods::FrozenSetMethodId, iterator_methods::IteratorMethodId,
+    list_methods::ListMethodId, option_methods::OptionMethodId, result_methods::ResultMethodId,
+    set_methods::SetMethodId, string_methods::StringMethodId,
 };
+use super::types::numerics::{IntegerHelperFamily, IntegerHelperOperation, NumericResizeMethodId, NumericTypeId};
 
 /// Stable identifier for a builtin function.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -52,6 +56,30 @@ pub enum BuiltinFnId {
 /// semantic operation key transported through Body IR; canonical symbol identity remains separate provenance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum BuiltinMethodId {
+    /// Runtime text operations on `str`.
+    Str(StringMethodId),
+    /// Frozen text operations on `frozenstr`.
+    FrozenStr(StringMethodId),
+    /// Runtime byte-buffer operations on `bytes`.
+    Bytes(BytesMethodId),
+    /// Frozen byte operations on `frozenbytes`.
+    FrozenBytes(FrozenBytesMethodId),
+    /// Protocol operations on an opaque `Iterator[T]` value.
+    Iterator(IteratorMethodId),
+    /// Adapter and consumer operations on a concrete `Generator[T]` value.
+    Generator(IteratorMethodId),
+    /// Payload and predicate operations on `Option[T]`.
+    Option(OptionMethodId),
+    /// Payload, predicate, and combinator operations on `Result[T, E]`.
+    Result(ResultMethodId),
+    /// Compiler-owned generic Clone operation.
+    Clone(CloneMethodId),
+    /// Native float operation selected for one concrete numeric receiver.
+    Float(NumericTypeId, FloatMethodId),
+    /// Integer overflow helper selected for one concrete numeric receiver.
+    IntegerHelper(NumericTypeId, IntegerHelperFamily, IntegerHelperOperation),
+    /// Numeric resize policy selected for one concrete numeric receiver.
+    NumericResize(NumericTypeId, NumericResizeMethodId),
     /// Mutable and query operations on `List[T]`.
     List(ListMethodId),
     /// Borrow or consume a `List[T]` as its lazy iterator state.
@@ -74,6 +102,20 @@ impl BuiltinMethodId {
         use super::types::collections::{CollectionTypeId, as_str};
 
         match self {
+            Self::Str(_) => super::types::stringlike::as_str(super::types::stringlike::StringLikeId::Str),
+            Self::FrozenStr(_) => super::types::stringlike::as_str(super::types::stringlike::StringLikeId::FrozenStr),
+            Self::Bytes(_) => super::types::stringlike::as_str(super::types::stringlike::StringLikeId::Bytes),
+            Self::FrozenBytes(_) => {
+                super::types::stringlike::as_str(super::types::stringlike::StringLikeId::FrozenBytes)
+            }
+            Self::Iterator(_) => super::traits::as_str(super::traits::TraitId::Iterator),
+            Self::Generator(_) => super::types::collections::as_str(CollectionTypeId::Generator),
+            Self::Option(_) => super::types::collections::as_str(CollectionTypeId::Option),
+            Self::Result(_) => super::types::collections::as_str(CollectionTypeId::Result),
+            Self::Clone(_) => super::traits::as_str(super::traits::TraitId::Clone),
+            Self::Float(owner, _) | Self::IntegerHelper(owner, _, _) | Self::NumericResize(owner, _) => {
+                super::types::numerics::as_str(owner)
+            }
             Self::List(_) | Self::ListIter => as_str(CollectionTypeId::List),
             Self::Dict(_) => as_str(CollectionTypeId::Dict),
             Self::Set(_) => as_str(CollectionTypeId::Set),
@@ -86,6 +128,18 @@ impl BuiltinMethodId {
     /// Return the canonical member spelling used only to validate retained provenance.
     pub fn member(self) -> &'static str {
         match self {
+            Self::Str(method) | Self::FrozenStr(method) => super::surface::string_methods::as_str(method),
+            Self::Bytes(method) => super::surface::bytes_methods::as_str(method),
+            Self::FrozenBytes(method) => super::surface::frozen_bytes_methods::as_str(method),
+            Self::Iterator(method) | Self::Generator(method) => super::surface::iterator_methods::as_str(method),
+            Self::Option(method) => super::surface::option_methods::as_str(method),
+            Self::Result(method) => super::surface::result_methods::as_str(method),
+            Self::Clone(method) => super::surface::clone_methods::as_str(method),
+            Self::Float(_, method) => super::surface::float_methods::as_str(method),
+            Self::IntegerHelper(_, family, operation) => {
+                super::types::numerics::integer_helper_as_str(family, operation)
+            }
+            Self::NumericResize(_, method) => super::types::numerics::resize_method_as_str(method),
             Self::List(method) => super::surface::list_methods::as_str(method),
             Self::ListIter => {
                 super::surface::iterator_methods::as_str(super::surface::iterator_methods::IteratorMethodId::Iter)
@@ -104,16 +158,79 @@ impl BuiltinMethodId {
             Self::List(method) => super::surface::list_methods::changes_receiver(method),
             Self::Dict(method) => super::surface::dict_methods::changes_receiver(method),
             Self::Set(method) => super::surface::set_methods::changes_receiver(method),
-            Self::ListIter | Self::FrozenList(_) | Self::FrozenDict(_) | Self::FrozenSet(_) => false,
+            Self::Str(_)
+            | Self::FrozenStr(_)
+            | Self::Bytes(_)
+            | Self::FrozenBytes(_)
+            | Self::Iterator(_)
+            | Self::Generator(_)
+            | Self::Option(_)
+            | Self::Result(_)
+            | Self::Clone(_)
+            | Self::Float(_, _)
+            | Self::IntegerHelper(_, _, _)
+            | Self::NumericResize(_, _)
+            | Self::ListIter
+            | Self::FrozenList(_)
+            | Self::FrozenDict(_)
+            | Self::FrozenSet(_) => false,
         }
     }
 }
 
 /// Resolve the canonical owner and member stored by a checked-body record to its stable builtin method identity.
 pub fn method_from_parts(owner: &str, member: &str) -> Option<BuiltinMethodId> {
+    if owner == super::traits::as_str(super::traits::TraitId::Iterator) {
+        return super::surface::iterator_methods::from_str(member).map(BuiltinMethodId::Iterator);
+    }
+    if owner == super::traits::as_str(super::traits::TraitId::Clone) {
+        return super::surface::clone_methods::from_str(member).map(BuiltinMethodId::Clone);
+    }
+
+    use super::types::stringlike::{StringLikeId, from_str as stringlike_from_str};
+
+    match stringlike_from_str(owner) {
+        Some(StringLikeId::Str) => {
+            if member == super::surface::string_methods::as_str(StringMethodId::Slice) {
+                return Some(BuiltinMethodId::Str(StringMethodId::Slice));
+            }
+            return super::surface::string_methods::from_str(member).map(BuiltinMethodId::Str);
+        }
+        Some(StringLikeId::FrozenStr) => {
+            return super::surface::string_methods::from_str(member).map(BuiltinMethodId::FrozenStr);
+        }
+        Some(StringLikeId::Bytes) => {
+            return super::surface::bytes_methods::from_str(member).map(BuiltinMethodId::Bytes);
+        }
+        Some(StringLikeId::FrozenBytes) => {
+            return super::surface::frozen_bytes_methods::from_str(member).map(BuiltinMethodId::FrozenBytes);
+        }
+        Some(StringLikeId::FString) => return None,
+        None => {}
+    }
+
+    if let Some(owner) = super::types::numerics::from_str(owner) {
+        if let Some(method) = super::types::numerics::resize_method_from_str(member) {
+            return Some(BuiltinMethodId::NumericResize(owner, method));
+        }
+        if let Some(method) = super::surface::float_methods::from_str(member) {
+            return super::types::numerics::is_binary_float(owner).then_some(BuiltinMethodId::Float(owner, method));
+        }
+        if let Some(helper) = super::types::numerics::integer_helper_from_str(member) {
+            return super::types::numerics::supports_integer_helper(owner, helper)
+                .then_some(BuiltinMethodId::IntegerHelper(owner, helper.family, helper.operation));
+        }
+        return None;
+    }
+
     use super::types::collections::{CollectionTypeId, from_str};
 
     match from_str(owner)? {
+        CollectionTypeId::Generator => {
+            super::surface::iterator_methods::from_str(member).map(BuiltinMethodId::Generator)
+        }
+        CollectionTypeId::Option => super::surface::option_methods::from_str(member).map(BuiltinMethodId::Option),
+        CollectionTypeId::Result => super::surface::result_methods::from_str(member).map(BuiltinMethodId::Result),
         CollectionTypeId::List => match super::surface::list_methods::from_str(member) {
             Some(method) => Some(BuiltinMethodId::List(method)),
             None if super::surface::iterator_methods::from_str(member)
@@ -423,7 +540,15 @@ const fn info(
 #[cfg(test)]
 mod tests {
     use super::{BuiltinFnId, BuiltinMethodId, method_from_parts, protected_binding_builtin};
-    use crate::lang::surface::{list_methods::ListMethodId, set_methods::SetMethodId};
+    use crate::lang::surface::{
+        bytes_methods::BytesMethodId, clone_methods::CloneMethodId, float_methods::FloatMethodId,
+        frozen_bytes_methods::FrozenBytesMethodId, iterator_methods::IteratorMethodId, list_methods::ListMethodId,
+        option_methods::OptionMethodId, result_methods::ResultMethodId, set_methods::SetMethodId,
+        string_methods::StringMethodId,
+    };
+    use crate::lang::types::numerics::{
+        IntegerHelperFamily, IntegerHelperOperation, NumericResizeMethodId, NumericTypeId,
+    };
 
     /// Protect function aliases and collection-method effects through their typed registry identities.
     #[test]
@@ -434,10 +559,30 @@ mod tests {
         assert!(BuiltinMethodId::List(ListMethodId::Append).changes_receiver());
         assert!(!BuiltinMethodId::List(ListMethodId::Contains).changes_receiver());
         assert!(BuiltinMethodId::Set(SetMethodId::Add).changes_receiver());
-        let operation = BuiltinMethodId::ListIter;
-        assert_eq!(
-            method_from_parts(operation.owner(), operation.member()),
-            Some(operation)
-        );
+        let operations = [
+            BuiltinMethodId::Str(StringMethodId::Encode),
+            BuiltinMethodId::FrozenStr(StringMethodId::SplitWhitespace),
+            BuiltinMethodId::Bytes(BytesMethodId::AsSlice),
+            BuiltinMethodId::FrozenBytes(FrozenBytesMethodId::Decode),
+            BuiltinMethodId::Iterator(IteratorMethodId::Take),
+            BuiltinMethodId::Generator(IteratorMethodId::Collect),
+            BuiltinMethodId::Option(OptionMethodId::IsSome),
+            BuiltinMethodId::Result(ResultMethodId::Map),
+            BuiltinMethodId::Clone(CloneMethodId::Clone),
+            BuiltinMethodId::Float(NumericTypeId::F64, FloatMethodId::Sqrt),
+            BuiltinMethodId::IntegerHelper(
+                NumericTypeId::U8,
+                IntegerHelperFamily::Checked,
+                IntegerHelperOperation::Add,
+            ),
+            BuiltinMethodId::NumericResize(NumericTypeId::U8, NumericResizeMethodId::Try),
+            BuiltinMethodId::ListIter,
+        ];
+        for operation in operations {
+            assert_eq!(
+                method_from_parts(operation.owner(), operation.member()),
+                Some(operation)
+            );
+        }
     }
 }

@@ -1,13 +1,19 @@
 use super::LangItemInfo;
 use crate::lang::registry::{RFC, RfcId, Since, Stability};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum OptionMethodId {
     /// Borrow the payload mutably without consuming the option.
     AsMut,
     Copied,
     UnwrapOr,
     Unwrap,
+    /// Report whether the option carries a payload.
+    IsSome,
+    /// Report whether the option is empty.
+    IsNone,
+    /// Clone the option and its present payload through its compiler-owned contract.
+    Clone,
 }
 
 pub type OptionMethodInfo = LangItemInfo<OptionMethodId>;
@@ -42,6 +48,30 @@ pub const OPTION_METHODS: &[OptionMethodInfo] = &[
         "unwrap",
         &[],
         "Return the contained value or panic.",
+        RFC::_000,
+        Since(0, 1),
+    ),
+    info(
+        OptionMethodId::IsSome,
+        "is_some",
+        &[],
+        "Return whether the option contains a payload.",
+        RFC::_000,
+        Since(0, 1),
+    ),
+    info(
+        OptionMethodId::IsNone,
+        "is_none",
+        &[],
+        "Return whether the option contains no payload.",
+        RFC::_000,
+        Since(0, 1),
+    ),
+    info(
+        OptionMethodId::Clone,
+        "clone",
+        &[],
+        "Clone the option and its present payload.",
         RFC::_000,
         Since(0, 1),
     ),
