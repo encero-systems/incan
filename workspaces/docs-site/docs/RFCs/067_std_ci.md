@@ -9,8 +9,7 @@
     - RFC 055 (`std.fs` path-centric filesystem APIs)
     - RFC 063 (`std.process` process spawning and command execution)
     - RFC 066 (`std.http` HTTP client surface)
-    - RFC 103 (secret values and non-disclosure)
-- **Issue:** <https://github.com/encero-systems/incan/issues/85>
+- **Issue:** https://github.com/encero-systems/incan/issues/85
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** —
@@ -55,7 +54,7 @@ Today, each of those usually gets reinvented with ad hoc shell behavior or backe
 
 - Shipping a GitHub-specific, GitLab-specific, or provider-specific SDK as part of `std.ci`.
 - Replacing `std.http`, `std.fs`, or `std.process`; `std.ci` should compose with them, not duplicate them.
-- Defining a full JWT or cryptography story here.
+- Defining a full JWT or cryptography story here beyond whatever minimal hooks later prove necessary.
 - Defining a workflow YAML format or a hosted-runner orchestration system.
 - Making CI automation a language feature rather than a stdlib surface.
 
@@ -159,7 +158,7 @@ The CI surface must support the common workflow pattern of reading payload files
 - explicit helpers such as `set_output(...)`, or
 - a smaller primitive model built on environment variables and append-safe file helpers
 
-This RFC does not require one exact spelling, but it does require the capability.
+This RFC does not require one exact spelling yet, but it does require the capability.
 
 ### Exit behavior
 
@@ -177,7 +176,7 @@ CI scripts must remain locally testable with fixture payloads and explicit envir
 
 ### Secrets and diagnostics
 
-The CI surface must preserve RFC 103 secret non-disclosure in debug output, errors, workflow outputs, summaries, annotations, and action receipts. SecretStr and SecretBytes values must retain their checked sensitivity at each boundary; CI helpers must not render their plaintext or claim that a logging convention replaces the secret-type contract. An explicitly authorized wire sink does not authorize publishing a secret into a workflow output or summary. This module consumes RFC 103 rather than defining another secret type system.
+The CI surface should avoid exposing secrets carelessly in debug-facing or error-facing helpers. It does not need to define a complete secret type system, but it should follow conservative diagnostic practices and defer richer secret handling to dedicated follow-up work where needed.
 
 ## Design details
 
@@ -205,16 +204,16 @@ It is a small bridge between hosted automation environments and ordinary Incan c
 
 ### Compatibility / migration
 
-This feature is additive. Existing bash, shell, or JavaScript-based CI steps remain valid. The design claim is that Incan should offer a better standard path for new automation scripts.
+This feature is additive. Existing bash, shell, or JavaScript-based CI steps remain valid. The design claim is that Incan should offer a better standard path for new automation scripts once the module exists.
 
 ## Alternatives considered
 
 - **Keep shell and JavaScript glue only**
-    - Rejected because it leaves automation brittle, weakly typed, and difficult to test.
+  - Rejected because it leaves automation brittle, weakly typed, and difficult to test.
 - **Make GitHub a builtin**
-    - Rejected because it introduces too much provider policy.
+  - Rejected because it introduces too much provider policy too early.
 - **Push everything into `std.http` plus `std.fs`**
-    - Rejected because CI environments do have a small amount of distinct execution-context behavior worth standardizing.
+  - Rejected because CI environments do have a small amount of distinct execution-context behavior worth standardizing.
 
 ## Drawbacks
 
@@ -224,7 +223,7 @@ This feature is additive. Existing bash, shell, or JavaScript-based CI steps rem
 
 ## Implementation architecture
 
-*(Non-normative.)* The module builds on `env`, `fs`, and `process` primitives, with fixture-driven examples that demonstrate local testing against payload files. Real CI automation flows compose on top of `std.http` without needing any provider-specific builtin APIs.
+*(Non-normative.)* A sensible rollout starts with `env`, `fs`, and `process` primitives plus fixture-driven examples that demonstrate local testing against payload files. Once `std.http` is available, real CI automation flows can compose on top without needing any provider-specific builtin APIs.
 
 ## Layers affected
 
