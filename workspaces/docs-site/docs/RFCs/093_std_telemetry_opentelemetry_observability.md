@@ -98,14 +98,15 @@ Applications that want OpenTelemetry-compatible observability configure it once 
 ```incan
 import std.telemetry as telemetry
 
-def main() -> None:
+def main() -> Result[None, telemetry.ConfigurationError]:
     telemetry.configure(
         service="checkout-api",
-        version=VERSION,
+        version="1.0.0",
         environment="production",
         export=telemetry.otlp(endpoint="http://collector:4318"),
         instrument=telemetry.instrument.stdlib(),
-    )
+    )?
+    return Ok(None)
 ```
 
 After configuration, logs emitted through `std.logging` can be enriched with the configured resource, instrumentation scope, and active trace context. Stdlib modules that are enabled by instrumentation policy may emit spans, events, or attributes through the same provider.
@@ -216,10 +217,12 @@ def checkout_attrs() -> telemetry.Attributes:
 
 ### Stdlib instrumentation
 
-Applications control stdlib instrumentation policy:
+The following independent application chooses its instrumentation policy at startup.
 
 ```incan
-def main() -> None:
+import std.telemetry as telemetry
+
+def main() -> Result[None, telemetry.ConfigurationError]:
     telemetry.configure(
         service="checkout-api",
         export=telemetry.otlp(),
@@ -228,7 +231,8 @@ def main() -> None:
             telemetry.instrument.std_process(),
             telemetry.instrument.std_fs(level=telemetry.InstrumentationLevel.ERRORS),
         ],
-    )
+    )?
+    return Ok(None)
 ```
 
 This keeps telemetry ambient only after explicit configuration. Libraries emit useful telemetry when a provider exists, but they do not own exporter setup.
@@ -302,10 +306,14 @@ pub def configure(
     propagation: PropagationPolicy = PropagationPolicy.DEFAULT,
     sampling: SamplingPolicy = SamplingPolicy.DEFAULT,
     instrument: InstrumentationPolicy | list[InstrumentationPolicy] | None = None,
-) -> TelemetryProvider
+) -> Result[TelemetryProvider, ConfigurationError]
 ```
 
-Calling `configure(...)` more than once must be deterministic. The accepted behavior may be replacement, explicit error, or scoped provider installation, but it must not silently merge incompatible exporter or resource policies.
+The first successful call atomically installs a process-wide provider and freezes its configuration for the lifetime of the process. The provider must own or retain an immutable snapshot of its resource and policies, including the selection and configuration of exporters. Mutating caller-owned configuration inputs after installation cannot alter the installed settings. The provider can continue emitting, buffering and flushing telemetry.
+
+Every subsequent call returns `Err(ConfigurationError.AlreadyConfigured)`, including a call with identical arguments. A rejected call leaves the active provider in place and must not start another exporter. A failed initial setup releases any partially acquired resources and leaves the process unconfigured, so a corrected call can succeed. Concurrent attempts must produce at most one successful installation.
+
+For example, once the application configures the service as `checkout`, a later call specifying `billing` returns `AlreadyConfigured`. Subsequent spans still identify the service as `checkout`. Tests that need independent process-wide configurations can run in separate processes.
 
 Libraries must not call `configure(...)` during import or normal helper execution. Application entrypoints, command runners, test harnesses, and embedding hosts may call it.
 
@@ -500,10 +508,13 @@ This section is non-normative. A pragmatic implementation should preserve the sa
 - **LSP / Tooling**: completions, hovers, and diagnostics should explain semantic-convention helpers, telemetry decorators, baggage/context APIs, and instrumentation policy.
 - **Docs / examples**: docs must distinguish simple `std.logging` from opt-in `std.telemetry`, show controlled ambient setup, and document data-export implications.
 
+## Design Decisions
+
+- **Process configuration:** The first successful installation freezes the settings. Every later installation attempt returns a typed error.
+
 ## Unresolved questions
 
 - What is the exact normative shape of `TelemetryValue`, especially for bytes, nested models, and custom conversion hooks?
-- Should `configure(...)` replace an existing provider, reject repeated calls, or support scoped provider installation?
 - How much of `Resource` should be inferred automatically from project metadata versus supplied explicitly?
 - What is the precise package/module qualification rule for default decorator span names?
 - What error-status mapping should `@telemetry.trace` apply to `Result` returns versus raised panics or exceptions?
