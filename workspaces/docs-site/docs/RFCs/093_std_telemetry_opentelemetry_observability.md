@@ -354,6 +354,16 @@ The decorator may accept:
 
 The decorator must start a span before function body execution, make that span current while the function executes, record errors according to policy, and end the span when the function returns, propagates an error, or exits through panic/assert behavior.
 
+For a traced function returning a `Result`, the span reports that call's own return value. An `Err` marks the call as failed and identifies the returned error by its RFC 131 type and case. An `Ok` records a successful call, including when the function recovered from a child call's failure. If the caller propagates the error with `?`, its own span also reports failure because it returned `Err`. Error identity suffices for this rule; it does not require exporting payloads or arguments.
+
+For example, a customer lookup can recover from an unavailable cache by reading from the database. With all three functions traced, the trace reads:
+
+```text
+load_customer           succeeded
+  read_from_cache       failed: CacheError.Unavailable
+  read_from_database    succeeded
+```
+
 Async functions must preserve the same logical current span across suspension points once async context propagation is supported.
 
 ### Explicit spans
@@ -511,13 +521,14 @@ This section is non-normative. A pragmatic implementation should preserve the sa
 ## Design Decisions
 
 - **Process configuration:** The first successful installation freezes the settings. Every later installation attempt returns a typed error.
+- **Traced results:** Each span reports its own call’s outcome. A caller that recovers can succeed while the failed child remains visible.
 
 ## Unresolved questions
 
 - What is the exact normative shape of `TelemetryValue`, especially for bytes, nested models, and custom conversion hooks?
 - How much of `Resource` should be inferred automatically from project metadata versus supplied explicitly?
 - What is the precise package/module qualification rule for default decorator span names?
-- What error-status mapping should `@telemetry.trace` apply to `Result` returns versus raised panics or exceptions?
+- How should a trace represent a panic or failed assertion when the call exits without returning a `Result`?
 - What is the minimal safe context propagation story for async tasks and spawned work?
 - Which baggage keys, if any, should be copied into attributes by default?
 - How should semantic-convention helpers be generated, versioned, and exposed when OpenTelemetry convention stability changes?
