@@ -674,9 +674,9 @@ pub def join_branch_owners(
 
     Body IR counts last uses across branches in source order, so one branch may move a value that another only borrows,
     and a branch's own temporaries (a condition's constructed model, a comparison's enum value) end with it. Rust drops
-    such a value at scope end through a drop flag. Destroying text, collections and nominal values only releases their
-    memory, so releasing the value at the end of the branch that kept it is equivalent. An owner of any other type
-    left live on only some paths stays refused.
+    such a value at scope end through a drop flag. Destroying text, collections, nominal values and lazy generators
+    only releases their storage, so releasing the value at the end of the branch that kept it is equivalent. An owner
+    of any other type left live on only some paths stays refused.
     """
     mut live: list[int] = []
     if len(ends) != 0:
@@ -697,10 +697,11 @@ pub def join_branch_owners(
 
 
 def releases_only_memory(ty: PlanType) -> bool:
-    """Report whether destroying an owner of this type only frees memory: text, owned collections and nominal values."""
+    """Report whether destroying an owner only releases storage, including a lazy generator's retained state."""
     if ty == PlanType.String or is_owned_collection(ty):
         return true
     match ty:
+        PlanType.Generator(_leaf, _depth) => return true
         PlanType.Model(_index, _name) => return true
         PlanType.Enum(_index, _name) => return true
         PlanType.Tuple(_elements) => return true

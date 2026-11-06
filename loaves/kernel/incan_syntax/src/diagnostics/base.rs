@@ -380,7 +380,7 @@ impl std::fmt::Display for ErrorKind {
 /// Produces a rustc-style diagnostic with colored header, source line, underline caret, notes and hints. Useful for
 /// CLI error handling where errors are collected into a `Result` instead of printed immediately.
 pub fn format_error(file_name: &str, source: &str, error: &CompileError) -> String {
-    let (line_num, col_num, line_text) = get_line_info(source, error.span.start);
+    let (line_num, col_num, _) = get_line_info(source, error.span.start);
 
     // Color codes
     let red = "\x1b[31m";
@@ -396,10 +396,12 @@ pub fn format_error(file_name: &str, source: &str, error: &CompileError) -> Stri
 
     let mut out = String::new();
 
-    // Header
+    let heading = match error.stable_code() {
+        Some(code) => format!("{}[{code}]", severity_name(error.kind)),
+        None => error.kind.to_string(),
+    };
     out.push_str(&format!(
-        "{bold}{kind_color}{kind}{reset}{bold}: {message}{reset}\n",
-        kind = error.kind,
+        "{bold}{kind_color}{heading}{reset}{bold}: {message}{reset}\n",
         message = error.message,
     ));
 
@@ -411,35 +413,7 @@ pub fn format_error(file_name: &str, source: &str, error: &CompileError) -> Stri
         col = col_num,
     ));
 
-    // Source line with line number
-    let line_num_width = format!("{}", line_num).len();
-    out.push_str(&format!("  {cyan}{:>width$} |{reset}\n", "", width = line_num_width));
-    out.push_str(&format!(
-        "  {cyan}{:>width$} |{reset} {}\n",
-        line_num,
-        line_text,
-        width = line_num_width
-    ));
-
-    // Caret pointing to error
-    let underline_len = if error.span.end > error.span.start && col_num > 0 {
-        let start_offset = error.span.start.saturating_sub(col_num.saturating_sub(1));
-        let end_in_line = error.span.end.saturating_sub(start_offset);
-        end_in_line
-            .min(line_text.len())
-            .saturating_sub(col_num.saturating_sub(1))
-            .max(1)
-    } else {
-        1
-    };
-
-    out.push_str(&format!(
-        "  {cyan}{:>width$} |{reset} {}{kind_color}{}{reset}\n",
-        "",
-        " ".repeat(col_num - 1),
-        "^".repeat(underline_len),
-        width = line_num_width
-    ));
+    render_source_labels(&mut out, source, error, kind_color, cyan, reset);
 
     // Notes
     for note in error.notes() {
@@ -460,6 +434,93 @@ pub fn format_error(file_name: &str, source: &str, error: &CompileError) -> Stri
     }
 
     out
+}
+
+/// Collapse type and syntax subclasses to the user-facing severity used beside a stable catalog code.
+fn severity_name(kind: ErrorKind) -> &'static str {
+    match kind {
+        ErrorKind::Error | ErrorKind::Syntax | ErrorKind::Type => "error",
+        ErrorKind::Warning => "warning",
+        ErrorKind::Lint => "lint",
+    }
+}
+
+/// One source underline, with the primary location distinguished from compiler-owned related evidence.
+struct SourceAnnotation<'a> {
+    span: Span,
+    label: Option<&'a str>,
+    primary: bool,
+}
+
+/// Render the primary source span and every same-file secondary label in source order.
+fn render_source_labels(
+    out: &mut String,
+    source: &str,
+    error: &CompileError,
+    kind_color: &str,
+    cyan: &str,
+    reset: &str,
+) {
+    let primary_label = error
+        .related_spans()
+        .iter()
+        .find(|related| related.span == error.span)
+        .map(|related| related.label.as_str());
+    let mut annotations = vec![SourceAnnotation {
+        span: error.span,
+        label: primary_label,
+        primary: true,
+    }];
+    annotations.extend(
+        error
+            .related_spans()
+            .iter()
+            .filter(|related| related.span != error.span)
+            .map(|related| SourceAnnotation {
+                span: related.span,
+                label: Some(related.label.as_str()),
+                primary: false,
+            }),
+    );
+    annotations.sort_by_key(|annotation| (annotation.span.start, !annotation.primary));
+    let width = annotations
+        .iter()
+        .map(|annotation| get_line_info(source, annotation.span.start).0)
+        .max()
+        .unwrap_or(1)
+        .to_string()
+        .len();
+    out.push_str(&format!("  {cyan}{:>width$} |{reset}\n", ""));
+    let mut shown_line = None;
+    for annotation in annotations {
+        let (line, column, text) = get_line_info(source, annotation.span.start);
+        if shown_line != Some(line) {
+            out.push_str(&format!("  {cyan}{line:>width$} |{reset} {text}\n"));
+            shown_line = Some(line);
+        }
+        let color = if annotation.primary { kind_color } else { cyan };
+        let marker = if annotation.primary { '^' } else { '-' };
+        let underline = marker.to_string().repeat(underline_len(annotation.span, column, text));
+        let label = annotation.label.map_or(String::new(), |label| format!(" {label}"));
+        out.push_str(&format!(
+            "  {cyan}{:>width$} |{reset} {}{color}{underline}{reset}{label}\n",
+            "",
+            " ".repeat(column.saturating_sub(1)),
+        ));
+    }
+}
+
+/// Measure one underline within its first source line, clamping a multiline span at that line's end.
+fn underline_len(span: Span, column: usize, line_text: &str) -> usize {
+    if span.end <= span.start || column == 0 {
+        return 1;
+    }
+    let line_start = span.start.saturating_sub(column.saturating_sub(1));
+    span.end
+        .saturating_sub(line_start)
+        .min(line_text.len())
+        .saturating_sub(column.saturating_sub(1))
+        .max(1)
 }
 
 /// Print an error with source context (simple implementation)
@@ -500,7 +561,7 @@ mod tests {
 
     /// Supplementary text and tooling facts preserve diagnostic content without growing the common error carrier.
     #[test]
-    fn structured_details_stay_out_of_the_common_error_layout() {
+    fn structured_details_stay_out_of_the_common_error_layout() -> Result<(), Box<dyn std::error::Error>> {
         let bare = CompileError::type_error("type mismatch".to_string(), Span::new(8, 11));
         assert!(bare.notes().is_empty());
         assert!(bare.hints().is_empty());
@@ -527,7 +588,7 @@ mod tests {
             related: vec![Span::new(12, 15)],
             declarations: Vec::new(),
         };
-        let rebound = recipe.diagnostic(&moved).expect("one range per related label");
+        let rebound = recipe.diagnostic(&moved).ok_or("one range per related label")?;
         assert_eq!(rebound.into_recipe(), (recipe.clone(), moved));
         let missing = DiagnosticRanges {
             primary: Span::new(20, 23),
@@ -541,6 +602,7 @@ mod tests {
             std::mem::size_of::<CompileError>(),
             std::mem::size_of::<Span>()
         );
+        Ok(())
     }
 
     #[test]
@@ -561,5 +623,14 @@ mod tests {
         assert_eq!(line, 2);
         assert_eq!(col, 4);
         assert_eq!(text, "line 2");
+
+        let error = CompileError::type_error("conflict".into(), Span::new(14, 16))
+            .with_stable_code("INCAN-T0001")
+            .with_related_span(Span::new(0, 6), "reader starts here")
+            .with_related_span(Span::new(14, 16), "source changes here");
+        let rendered = format_error("sample.incn", source, &error);
+        assert!(rendered.contains("error[INCAN-T0001]"));
+        assert!(rendered.contains("reader starts here"));
+        assert!(rendered.contains("source changes here"));
     }
 }

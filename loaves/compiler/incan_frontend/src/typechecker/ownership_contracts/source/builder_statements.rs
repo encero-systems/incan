@@ -140,6 +140,41 @@ impl Builder<'_> {
             let incoming = self.bind_closure(root.clone(), &assignment.value, incoming)?;
             return Ok((incoming, true));
         }
+        // A lazy builtin result owns its runtime cursor while retaining ordinary graph loans to every stored source.
+        let lazy_result = matches!(self.checker.type_info.expr_type(assignment.value.span),
+            Some(ResolvedType::Generic(name, _))
+                if incan_lang::lang::types::collections::from_str(name)
+                    == Some(incan_lang::lang::types::collections::CollectionTypeId::Generator))
+            || self
+                .checker
+                .type_info
+                .expr_type(assignment.value.span)
+                .is_some_and(|ty| ty.iterator_item_type().is_some());
+        if lazy_result && let Some(result) = self.retained_result(&assignment.value, incoming.clone(), false)? {
+            if result.loans.is_empty() {
+                return Ok((result.incoming, false));
+            }
+            if self.graph.dependent_locals.insert(root.clone(), result.loans).is_some() {
+                return Err(Unavailable {
+                    span: assignment.name_span,
+                    reason: "lazy result has more than one dependency destination".into(),
+                });
+            }
+            return Ok((result.incoming, true));
+        }
+        if let Some(result) = self.retained_carrier(&assignment.value, incoming.clone(), false)? {
+            if result.loans.is_empty() {
+                return Ok((result.incoming, false));
+            }
+            if self.graph.dependent_locals.insert(root.clone(), result.loans).is_some() {
+                return Err(Unavailable {
+                    span: assignment.name_span,
+                    reason: "lazy carrier has more than one dependency destination".into(),
+                });
+            }
+            self.graph.dependent_values.insert(assignment.value.span);
+            return Ok((result.incoming, true));
+        }
         // A new local initialized by a returned view aliases its substituted place under the call's result loan.
         if let Some(view) = self.view_source(&assignment.value)? {
             let (incoming, path) = self.evaluate_view_source(&assignment.value, view, incoming)?;
@@ -373,6 +408,99 @@ impl Builder<'_> {
         ))
     }
 
+    /// Build the common header and poll edges of a statement loop or eager comprehension. A stored iterable remains
+    /// shared-borrowed through every poll, while an iterator result reuses the loans retained by that result.
+    pub(super) fn for_header(
+        &mut self,
+        pattern: &Spanned<crate::ast::Pattern>,
+        iter: &Spanned<Expr>,
+        span: Span,
+        incoming: Vec<usize>,
+    ) -> Result<(usize, Vec<usize>), Unavailable> {
+        let crate::ast::Pattern::Binding(name) = &pattern.node else {
+            return Err(Unavailable {
+                span: pattern.span,
+                reason: "loop pattern needs checked binding access".into(),
+            });
+        };
+        if self.checker.type_info.protocols.iterations.contains_key(&iter.span)
+            || self.checker.type_info.protocols.iterations.contains_key(&span)
+        {
+            return Err(Unavailable {
+                span: iter.span,
+                reason: "protocol iteration needs checked callable access facts".into(),
+            });
+        }
+        let item = self
+            .checker
+            .type_info
+            .resolved_write_identity(pattern.span, name)
+            .cloned()
+            .ok_or(Unavailable {
+                span: pattern.span,
+                reason: "missing checked loop item".into(),
+            })?;
+        let takes_items = self.checker.type_info.for_loop_takes_items(iter.span);
+        let iterable = if takes_items { None } else { self.optional_place(iter)? };
+        let retained = if takes_items {
+            None
+        } else {
+            self.retained_result(iter, incoming.clone(), false)?
+        };
+        let mut evaluated = match &retained {
+            Some(result) => result.incoming.clone(),
+            None => self.expression(iter, incoming, takes_items)?,
+        };
+        let iteration = match iterable {
+            Some(path) => {
+                let place = path.place.clone();
+                let loan = self.call_loan(path, false, false, iter.span);
+                evaluated = self.event(evaluated, Event::Borrow(loan), iter.span);
+                Some((loan, place))
+            }
+            None => None,
+        };
+        let header = self.event(evaluated, Event::Nothing, span)[0];
+        // The poll reads the iterable through its loan; exhaustion leaves the loop from here.
+        let mut poll = match iteration {
+            Some((loan, place)) => self.event(
+                vec![header],
+                Event::Access {
+                    place,
+                    access: Access::Read,
+                    through: Some(loan),
+                },
+                iter.span,
+            ),
+            None => vec![header],
+        };
+        if let Some(result) = retained {
+            for loan in result.loans {
+                let source = self
+                    .graph
+                    .loans
+                    .get(loan.0)
+                    .map(|loan| loan.source.clone())
+                    .ok_or(Unavailable {
+                        span: iter.span,
+                        reason: "iterator loop has no retained source loan".into(),
+                    })?;
+                poll = self.event(
+                    poll,
+                    Event::Access {
+                        place: source,
+                        access: Access::Read,
+                        through: Some(loan),
+                    },
+                    iter.span,
+                );
+            }
+        }
+        // Each poll declares the item afresh, as an initializer does: its root is registered, with no write event.
+        self.root(&item, pattern.span)?;
+        Ok((header, poll))
+    }
+
     /// Iterate an evaluated iterable. A stored iterable stays shared-borrowed while the loop runs: each poll at the
     /// header reads through that loan, so the back edge keeps it live across the body and an edit of the iterable
     /// there conflicts. A loop that takes the list's items consumes it instead. The item is a fresh local declared at
@@ -383,66 +511,7 @@ impl Builder<'_> {
         span: Span,
         incoming: Vec<usize>,
     ) -> Result<Vec<usize>, Unavailable> {
-        let crate::ast::Pattern::Binding(name) = &loop_.pattern.node else {
-            return Err(Unavailable {
-                span: loop_.pattern.span,
-                reason: "loop pattern needs checked binding access".into(),
-            });
-        };
-        if self
-            .checker
-            .type_info
-            .protocols
-            .iterations
-            .contains_key(&loop_.iter.span)
-            || self.checker.type_info.protocols.iterations.contains_key(&span)
-        {
-            return Err(Unavailable {
-                span: loop_.iter.span,
-                reason: "protocol iteration needs checked callable access facts".into(),
-            });
-        }
-        let item = self
-            .checker
-            .type_info
-            .resolved_write_identity(loop_.pattern.span, name)
-            .cloned()
-            .ok_or(Unavailable {
-                span: loop_.pattern.span,
-                reason: "missing checked loop item".into(),
-            })?;
-        let takes_items = self.checker.type_info.for_loop_takes_items(loop_.iter.span);
-        let iterable = if takes_items {
-            None
-        } else {
-            self.optional_place(&loop_.iter)?
-        };
-        let mut evaluated = self.expression(&loop_.iter, incoming, takes_items)?;
-        let iteration = match iterable {
-            Some(path) => {
-                let place = path.place.clone();
-                let loan = self.call_loan(path, false, false, loop_.iter.span);
-                evaluated = self.event(evaluated, Event::Borrow(loan), loop_.iter.span);
-                Some((loan, place))
-            }
-            None => None,
-        };
-        let header = self.event(evaluated, Event::Nothing, span)[0];
-        // The poll reads the iterable through its loan; exhaustion leaves the loop from here.
-        let poll = match iteration {
-            Some((loan, place)) => self.event(
-                vec![header],
-                Event::Access {
-                    place,
-                    access: Access::Read,
-                    through: Some(loan),
-                },
-                loop_.iter.span,
-            ),
-            None => vec![header],
-        };
-        // Each poll declares the item afresh, as an initializer does: its root is registered, with no write event.
-        self.root(&item, loop_.pattern.span)?;
+        let (header, poll) = self.for_header(&loop_.pattern, &loop_.iter, span, incoming)?;
         self.loops.push(LoopEdges {
             header,
             breaks: Vec::new(),
@@ -529,7 +598,15 @@ impl Builder<'_> {
                         });
                     }
                     (Some(value), None, None) => {
-                        self.expression(value, incoming, true)?;
+                        if let Some(result) = self.retained_result(value, incoming.clone(), true)? {
+                            self.escape_retained_result(result, value.span)?;
+                        } else if let Some(result) = self.retained_carrier(value, incoming.clone(), true)? {
+                            self.escape_retained_result(result, value.span)?;
+                        } else if let Some(result) = self.stored_result(value, incoming.clone())? {
+                            self.escape_retained_result(result, value.span)?;
+                        } else {
+                            self.expression(value, incoming, true)?;
+                        }
                     }
                     (None, None, None) => {}
                     (_, Some(_), Some(_)) => {

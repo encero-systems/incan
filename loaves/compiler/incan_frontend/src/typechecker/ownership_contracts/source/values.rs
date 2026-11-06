@@ -15,9 +15,16 @@ impl Builder<'_> {
         entries: &[ListEntry],
         incoming: &[usize],
     ) -> Result<Option<(Vec<usize>, Vec<super::LoanId>)>, Unavailable> {
-        let mut has_view = false;
+        let mut has_dependency = false;
         for entry in entries {
             let ListEntry::Element(value) = entry else { continue };
+            if let Some(path) = self.optional_place(value)?
+                && let super::Root::Binding(root) = path.place.root
+                && self.graph.dependent_locals.contains_key(&root)
+            {
+                has_dependency = true;
+                continue;
+            }
             let call = super::super::builtins::view_call(value);
             let native = self
                 .checker
@@ -26,9 +33,9 @@ impl Builder<'_> {
                 .explicit_input_calls
                 .get(&call.span)
                 .is_some_and(|call| call.kind == super::super::InputCallKind::Native);
-            has_view |= !native && self.view_source(value)?.is_some();
+            has_dependency |= !native && self.view_source(value)?.is_some();
         }
-        if !has_view {
+        if !has_dependency {
             return Ok(None);
         }
         let mut incoming = incoming.to_vec();
@@ -51,6 +58,15 @@ impl Builder<'_> {
                 .explicit_input_calls
                 .get(&call.span)
                 .is_some_and(|call| call.kind == super::super::InputCallKind::Native);
+            if let Some(stored) = self.stored_result(value, incoming.clone())? {
+                incoming = stored.incoming;
+                for dependency in stored.loans {
+                    let (next, _, loan) = self.carry_dependency(dependency, value.span, incoming)?;
+                    incoming = next;
+                    loans.push(loan);
+                }
+                continue;
+            }
             if !native && let Some(source) = self.view_source(value)? {
                 let (outgoing, path) = self.evaluate_view_source(value, source, incoming)?;
                 incoming = outgoing;

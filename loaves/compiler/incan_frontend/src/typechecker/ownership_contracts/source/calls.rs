@@ -28,13 +28,12 @@ impl Builder<'_> {
         span: Span,
         incoming: Vec<usize>,
     ) -> Result<Vec<usize>, Unavailable> {
-        if let Some(builtin) = self
-            .checker
-            .type_info
-            .resolved_builtin_call(span)
-            .filter(|builtin| matches!(builtin, BuiltinFnId::Print | BuiltinFnId::Len))
-        {
-            return self.observer_call(builtin, arguments, span, incoming);
+        if let Some(builtin) = self.checker.type_info.resolved_builtin_call(span) {
+            return if matches!(builtin, BuiltinFnId::Print | BuiltinFnId::Len) {
+                self.observer_call(builtin, arguments, span, incoming)
+            } else {
+                self.builtin_call(builtin, arguments, span, incoming)
+            };
         }
         if self.carrier_constructor(callee) {
             return self.carrier_construction(arguments, span, incoming);
@@ -141,6 +140,38 @@ impl Builder<'_> {
                     span: expression.span,
                     reason: "observer may invoke an unprojected display or length operation".into(),
                 });
+            }
+            incoming = self.expression(expression, incoming, false)?;
+            let (evaluated, dependency) = self.retain_operation_operand(expression, incoming)?;
+            incoming = evaluated;
+            operands.extend(dependency);
+        }
+        self.finish_operation(span, operands, incoming)
+    }
+
+    /// Evaluate a checker-selected core builtin as a bounded operation. Builtins do not retain caller storage after
+    /// completion; argument reads still keep an existing iterator or returned view live through the call. The
+    /// `isinstance` target is a checked type expression rather than a runtime value and therefore has no access event.
+    fn builtin_call(
+        &mut self,
+        builtin: BuiltinFnId,
+        arguments: &[CallArg],
+        span: Span,
+        mut incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        let mut operands = Vec::new();
+        for (index, argument) in arguments.iter().enumerate() {
+            let expression = match argument {
+                CallArg::Positional(expression) | CallArg::Named(_, expression) => expression,
+                _ => {
+                    return Err(Unavailable {
+                        span,
+                        reason: "builtin argument expansion needs checked access facts".into(),
+                    });
+                }
+            };
+            if builtin == BuiltinFnId::IsInstance && index == 1 {
+                continue;
             }
             incoming = self.expression(expression, incoming, false)?;
             let (evaluated, dependency) = self.retain_operation_operand(expression, incoming)?;

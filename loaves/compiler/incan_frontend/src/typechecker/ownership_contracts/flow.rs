@@ -264,16 +264,22 @@ fn validate_closures(graph: &Graph) -> Result<(), InvalidGraph> {
             };
             // A captured alias is reborrowed through its own loan; a direct capture is borrowed whole.
             let source_matches = match loan.parent {
-                Some(parent) => graph.local_loans.get(capture) == Some(&parent),
+                Some(parent) => {
+                    graph.local_loans.get(capture) == Some(&parent)
+                        || graph
+                            .dependent_locals
+                            .get(capture)
+                            .is_some_and(|dependencies| dependencies.contains(&parent))
+                }
                 None => loan.source.projection.is_empty() && capture == root,
             };
             if !closure.captures.contains(capture) || !source_matches {
                 return Err(InvalidGraph("closure loan borrows no captured place"));
             }
-            if loan.span != *span || loan.kind != LoanKind::Shared || loan.writable || !covered.insert(capture.clone())
-            {
+            if loan.span != *span || loan.kind != LoanKind::Shared || loan.writable {
                 return Err(InvalidGraph("closure loan differs from its shared captured borrow"));
             }
+            covered.insert(capture.clone());
         }
         if graph.local_loans.contains_key(&closure.local) {
             return Err(InvalidGraph("closure local holds a loan its closure does not record"));
@@ -419,7 +425,6 @@ fn validate(graph: &Graph) -> Result<Validated, InvalidGraph> {
     if graph.dependent_values.len() > graph.dependent_locals.len() {
         return Err(InvalidGraph("dependent aggregate has no local destination"));
     }
-
     // ---- Referenced edges and storage identities ----
     for (index, node) in graph.nodes.iter().enumerate() {
         if node.successors.iter().any(|successor| *successor >= graph.nodes.len()) {

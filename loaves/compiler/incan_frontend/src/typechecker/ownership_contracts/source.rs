@@ -21,8 +21,10 @@ mod builder_places;
 mod builder_statements;
 mod calls;
 mod closures;
+mod comprehensions;
 mod matches;
 mod operations;
+mod retained_results;
 mod values;
 
 /// A source shape whose access behavior has not been projected. The anchor is the unsupported operation itself.
@@ -348,6 +350,9 @@ impl Builder<'_> {
         incoming: Vec<usize>,
         consume: bool,
     ) -> Result<Vec<usize>, Unavailable> {
+        if let Some(result) = self.retained_result(expression, incoming.clone(), false)? {
+            return Ok(result.incoming);
+        }
         if self
             .checker
             .type_info
@@ -480,6 +485,8 @@ impl Builder<'_> {
                     outgoing,
                 )
             }
+            Expr::ListComp(comprehension) => self.list_comprehension(comprehension, expression.span, incoming),
+            Expr::DictComp(comprehension) => self.dict_comprehension(comprehension, expression.span, incoming),
             // `await` on a call suspends this body until the call's future completes, and the call's loans end there as
             // a synchronous call's do. Awaiting a stored future needs task facts of its own.
             Expr::Surface(surface) if super::builtins::awaited(surface).is_some() => {

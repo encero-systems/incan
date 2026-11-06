@@ -27,6 +27,49 @@ pub struct Generator<T> {
     iter: Box<dyn Iterator<Item = T>>,
 }
 
+/// Cursor over a compiler-proven shared list loan.
+///
+/// Incan's ownership checker keeps the source list alive and refuses mutation until the generator's last use. Rust
+/// cannot express that source relationship in `Generator<T>` yet, so this narrow #2426 carrier stores the list
+/// address without manufacturing an owned snapshot. It is removable once the native plan carries borrowed iterator
+/// lifetimes directly.
+struct BorrowedListCursor<T> {
+    source: *const [T],
+    index: usize,
+}
+
+impl<T> Iterator for BorrowedListCursor<T>
+where
+    T: Clone,
+{
+    type Item = T;
+
+    /// Clone only the item at the current cursor, never the source list.
+    fn next(&mut self) -> Option<Self::Item> {
+        // SAFETY: the Incan ownership contract attached to list iteration retains a shared loan for the lifetime of
+        // this cursor. It prevents both source destruction and mutation that could invalidate the vector allocation.
+        let source = unsafe { &*self.source };
+        let value = source.get(self.index)?.clone();
+        self.index += 1;
+        Some(value)
+    }
+}
+
+/// Create a lazy generator over a compiler-proven shared list loan without copying the list.
+///
+/// The generated program must retain the source loan through the generator's last use. This runtime boundary does
+/// not independently extend the source lifetime; callers without that semantic proof must use an owning iterator.
+#[must_use]
+pub fn borrowed_list<T>(values: &[T]) -> Generator<T>
+where
+    T: Clone + 'static,
+{
+    Generator::new(BorrowedListCursor {
+        source: values as *const [T],
+        index: 0,
+    })
+}
+
 impl<T> Generator<T> {
     /// Create a generator from an owned Rust iterator.
     ///

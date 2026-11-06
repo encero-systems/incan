@@ -62,32 +62,48 @@ impl SourcePaths<'_> {
                     node: Expr::Match(scrutinee, arms),
                     ..
                 }) => {
-                    let evaluated = self.region(scrutinee.span, incoming);
+                    let evaluated = self.expression(scrutinee, incoming)?;
                     let mut outgoing = Vec::new();
                     let mut remaining = evaluated;
                     for arm in arms {
                         let arm_input = if let Some(guard) = &arm.node.guard {
-                            let guarded = self.region(guard.span, remaining);
+                            let guarded = self.expression(guard, remaining)?;
                             remaining = guarded.clone();
                             guarded
                         } else {
                             remaining.clone()
                         };
                         outgoing.extend(match &arm.node.body {
-                            MatchBody::Expr(value) => self.region(value.span, arm_input),
+                            MatchBody::Expr(value) => self.expression(value, arm_input)?,
                             MatchBody::Block(body) => self.block(body, arm_input)?,
                         });
                     }
                     outgoing
                 }
-                Statement::Assignment(_)
-                | Statement::TupleUnpack(_)
-                | Statement::CompoundAssignment(_)
-                | Statement::FieldAssignment(_)
-                | Statement::Expr(_) => self.region(statement.span, incoming),
+                Statement::Assignment(value) => {
+                    let incoming = self.expression(&value.value, incoming)?;
+                    self.region(statement.span, incoming)
+                }
+                Statement::TupleUnpack(value) => {
+                    let incoming = self.expression(&value.value, incoming)?;
+                    self.region(statement.span, incoming)
+                }
+                Statement::CompoundAssignment(value) => {
+                    let incoming = self.expression(&value.value, incoming)?;
+                    self.region(statement.span, incoming)
+                }
+                Statement::FieldAssignment(value) => {
+                    let incoming = self.expression(&value.object, incoming)?;
+                    let incoming = self.expression(&value.value, incoming)?;
+                    self.region(statement.span, incoming)
+                }
+                Statement::Expr(value) => {
+                    let incoming = self.expression(value, incoming)?;
+                    self.region(statement.span, incoming)
+                }
                 Statement::Return(value) => {
                     if let Some(value) = value {
-                        let _ = self.region(value.span, incoming);
+                        let _ = self.expression(value, incoming)?;
                     }
                     Vec::new()
                 }
@@ -95,10 +111,10 @@ impl SourcePaths<'_> {
                     let AssertKind::Condition(condition) = &assertion.kind else {
                         return Err("operation execution requires an ordinary assertion");
                     };
-                    let success = self.region(condition.span, incoming);
+                    let success = self.expression(condition, incoming)?;
                     if let Some(message) = &assertion.message {
                         // Failure terminates after its message, including when either region produces no event.
-                        let _ = self.region(message.span, success.clone());
+                        let _ = self.expression(message, success.clone())?;
                     }
                     success
                 }
@@ -106,10 +122,10 @@ impl SourcePaths<'_> {
                     let Condition::Expr(condition) = &branch.condition else {
                         return Err("operation paths require a checked expression condition");
                     };
-                    let mut remaining = self.region(condition.span, incoming);
+                    let mut remaining = self.expression(condition, incoming)?;
                     let mut outgoing = self.block(&branch.then_body, remaining.clone())?;
                     for (condition, body) in &branch.elif_branches {
-                        remaining = self.region(condition.span, remaining);
+                        remaining = self.expression(condition, remaining)?;
                         outgoing.extend(self.block(body, remaining.clone())?);
                     }
                     outgoing.extend(match &branch.else_body {
@@ -125,7 +141,7 @@ impl SourcePaths<'_> {
                         return Err("operation paths require a checked expression condition");
                     };
                     let header = self.node(incoming)?;
-                    let tested = self.region(condition.span, vec![header]);
+                    let tested = self.expression(condition, vec![header])?;
                     self.repeat(header, &loop_.body, tested)?
                 }
                 Statement::Loop(loop_) => {
@@ -133,9 +149,9 @@ impl SourcePaths<'_> {
                     self.repeat(header, &loop_.body, Vec::new())?
                 }
                 Statement::For(loop_) => {
-                    let evaluated = self.region(loop_.iter.span, incoming);
+                    let evaluated = self.expression(&loop_.iter, incoming)?;
                     let header = self.node(evaluated)?;
-                    let polled = self.region(loop_.iter.span, vec![header]);
+                    let polled = self.expression(&loop_.iter, vec![header])?;
                     self.repeat(header, &loop_.body, polled)?
                 }
                 Statement::Break(None) => {
@@ -192,6 +208,54 @@ impl SourcePaths<'_> {
     fn connect(&mut self, incoming: &[usize], next: usize) {
         for predecessor in incoming {
             self.expected[*predecessor].push(next);
+        }
+    }
+
+    /// Reconstruct expression-owned control flow where eager comprehensions contain their own loop back edges.
+    /// Other admitted expressions retain the established contiguous-region order.
+    fn expression(&mut self, expression: &Spanned<Expr>, incoming: Vec<usize>) -> Result<Vec<usize>, &'static str> {
+        match &expression.node {
+            Expr::ListComp(comprehension) => {
+                self.comprehension(&comprehension.clauses, &[&comprehension.expr], incoming)
+            }
+            Expr::DictComp(comprehension) => self.comprehension(
+                &comprehension.clauses,
+                &[&comprehension.key, &comprehension.value],
+                incoming,
+            ),
+            _ => Ok(self.region(expression.span, incoming)),
+        }
+    }
+
+    /// Rebuild nested comprehension loops and filter skip paths from the source clause order.
+    fn comprehension(
+        &mut self,
+        clauses: &[crate::ast::ComprehensionClause],
+        output: &[&Spanned<Expr>],
+        incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, &'static str> {
+        let Some((clause, remaining)) = clauses.split_first() else {
+            let mut incoming = incoming;
+            for value in output {
+                incoming = self.expression(value, incoming)?;
+            }
+            return Ok(incoming);
+        };
+        match clause {
+            crate::ast::ComprehensionClause::For { iter, .. } => {
+                let evaluated = self.expression(iter, incoming)?;
+                let header = self.node(evaluated)?;
+                let polled = self.expression(iter, vec![header])?;
+                let completed = self.comprehension(remaining, output, polled.clone())?;
+                self.connect(&completed, header);
+                Ok(polled)
+            }
+            crate::ast::ComprehensionClause::If(condition) => {
+                let checked = self.expression(condition, incoming)?;
+                let mut accepted = self.comprehension(remaining, output, checked.clone())?;
+                accepted.extend(checked);
+                Ok(accepted)
+            }
         }
     }
 

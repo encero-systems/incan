@@ -2,7 +2,6 @@
 # expect-stdout:
 #   flat iteration memory bounded
 #   nested iteration memory bounded
-# pending: #2426: lowering still snapshots borrowed list sources because generators cannot retain a source loan
 
 """Compare list iteration's peak memory with the same executable's list-only baseline."""
 
@@ -45,8 +44,8 @@ def main() -> Result[None, str]:
 
 
 def within_source_memory(baseline: int, measured: int) -> bool:
-    """Allow allocator variation and one yielded row, while excluding a complete copy of the large source."""
-    return measured <= baseline + baseline // 4 + 16 * 1024 * 1024
+    """Allow five percent allocator variation and one yielded row, while excluding a copy of the large source."""
+    return measured <= baseline + baseline // 20
 
 
 def measure(mode: str) -> Result[int, str]:

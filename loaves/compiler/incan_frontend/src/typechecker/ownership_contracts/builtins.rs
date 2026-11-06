@@ -2,15 +2,60 @@
 //! the builtin carrier forms that hold or reveal a carried view.
 
 use incan_lang::lang::surface::constructors::{self, ConstructorId};
+use incan_lang::lang::surface::iterator_methods::{self, IteratorMethodId};
 use incan_lang::lang::surface::list_methods::{self, ListMethodId};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
-use incan_semantics_core::SymbolOrigin;
+use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
 
 use crate::ast::{CallArg, Expr, Pattern, PatternArg, Span, Spanned, SurfaceExpr, SurfaceExprPayload};
 use crate::symbols::ResolvedType;
 use crate::typechecker::TypeCheckInfo;
 use incan_lang::lang::keywords::KeywordId;
 use incan_semantics_core::SurfaceFeatureKey;
+
+use super::flow::{Graph, LoanId};
+
+/// Return the registry identity of a lazy builtin result, never a method selected only by source spelling.
+pub(super) fn retained_iterator_member(identity: &CanonicalSymbolId) -> Option<IteratorMethodId> {
+    if identity.origin != SymbolOrigin::Builtin || identity.namespace != incan_semantics_core::SymbolNamespace::Member {
+        return None;
+    }
+    let method = iterator_methods::from_str(identity.declaration_name.rsplit_once('.')?.1)?;
+    let owner = identity.declaration_name.split_once('.')?.0;
+    let list = collections::as_str(CollectionTypeId::List);
+    let generator = collections::as_str(CollectionTypeId::Generator);
+    let iterator = incan_lang::lang::traits::as_str(incan_lang::lang::traits::TraitId::Iterator);
+    match method {
+        IteratorMethodId::Iter if owner == list => Some(method),
+        _ if owner == generator || owner == iterator => Some(method),
+        _ => None,
+    }
+}
+
+/// Return the lazy iterator member authenticated for one checked call span.
+pub(super) fn retained_iterator_method(facts: &TypeCheckInfo, span: Span) -> Option<IteratorMethodId> {
+    retained_iterator_member(facts.resolved_identity(span)?)
+}
+
+/// Return whether a loan descends from a checked lazy-result dependency. The source expression's canonical builtin
+/// identity authenticates iterator calls; a generator expression is authenticated by its already checked result type.
+pub(super) fn lazy_result_loan(graph: &Graph, facts: &TypeCheckInfo, loan: LoanId) -> bool {
+    let mut loan = Some(loan);
+    while let Some(id) = loan {
+        let Some(retained) = graph.loans.get(id.0) else {
+            return false;
+        };
+        if retained_iterator_method(facts, retained.span).is_some()
+            || matches!(facts.expr_type(retained.span),
+                Some(ResolvedType::Generic(name, _))
+                    if collections::from_str(name) == Some(CollectionTypeId::Generator))
+        {
+            return true;
+        }
+        loan = retained.parent;
+    }
+    false
+}
 
 /// The builtin `Ok`, `Err` or `Some` constructor a callee names. A same-spelled source callable is never a builtin
 /// carrier. This is the one definition the source flow and both admission walkers share.

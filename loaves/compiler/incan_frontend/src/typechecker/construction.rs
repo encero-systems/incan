@@ -20,6 +20,7 @@ impl TypeChecker {
             body_checks: Vec::new(),
             checked_bodies: Vec::new(),
             checked_declarations: Vec::new(),
+            lazy_result_bodies: HashSet::new(),
             diagnostic_owner_ranges: Vec::new(),
             body_open_diagnostics: Vec::new(),
             symbols: SymbolTable::new(),

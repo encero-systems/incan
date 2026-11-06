@@ -1,7 +1,9 @@
 """Lower checked list arguments, list methods and builtins, and indexed list mutation."""
 
 from pub::incan_mir_plan import (
+    CalleeKind,
     Constant,
+    ExternalFunction,
     ListLeaf,
     Operand,
     OperandKind,
@@ -36,7 +38,7 @@ from element_places import is_element_place
 from element_borrows import borrow_element_mut
 from options import none_operand
 from builtins import list_call
-from frame import place_type, Builder, temporary, drop_owned, external_call, read_place, literal
+from frame import place_type, Builder, temporary, drop_owned, external_call, read_place, literal, terminate_call
 from collections import is_collection
 from lists import list_shape, require_list_shape, list_element
 from checked_values import scalar_operand, scalar_place
@@ -164,44 +166,68 @@ def lower_list_iter(
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Start a lazy iterator over a snapshot of the list, so the list stays readable, as legacy's `iter()` leaves it."""
+    """Borrow stored list input or consume owned storage, never copying the complete source."""
     if len(arguments) != 1:
         return Err("invalid Body IR list iter arguments")
     leaf, depth = require_list_shape(argument_type(builder, arguments, 0, span)?, "unsupported Body IR iter on non-list")?
     element = list_element(leaf, depth)
-    cell = static_collection_receiver(builder, arguments, false, span)?
-    mut reference = read_place(plan_place(0, span), false, span)
-    match cell:
-        Some((_global, receiver)) => reference = list_borrow(builder, receiver, false, span)?
-        None => reference = borrowed_list_argument(builder, arguments, 0, false, span)?
-    snapshot = temporary(builder, PlanType.List(leaf, depth), span)
-    list_call(
-        builder,
-        "clone_list",
-        element,
-        [PlanType.ListRef(leaf, depth)],
-        PlanType.List(leaf, depth),
-        [reference],
-        snapshot,
-        span,
-    )
-    builder.owned.append(snapshot.local)
     result = PlanType.Generator(leaf, depth - 1)
     output = call_destination(builder, destination, result, span)?
     if borrowed_at(builder.locals, output.local).ty != result:
         return Err("unsupported Body IR list iter destination")
     drop_owned(builder, output.local, span)
-    generator_runtime_call(
-        builder,
-        "list_generator",
-        element,
-        [PlanType.List(leaf, depth)],
-        result,
-        [read_place(snapshot, true, span)],
-        output,
-        span,
-    )
+    match arguments[0].as_one():
+        Some(RustOperand.Place(read)) =>
+            root = list_root_place(builder, read.place, span)?
+            if read.fact == OwnershipFact.Move and place_type(builder.locals, root) == PlanType.List(leaf, depth):
+                generator_runtime_call(
+                    builder,
+                    "list_generator",
+                    element,
+                    [PlanType.List(leaf, depth)],
+                    result,
+                    [read_place(root, true, span)],
+                    output,
+                    span,
+                )
+            else:
+                reference = list_borrow(builder, root, false, span)?
+                borrowed_list_generator_call(builder, reference, leaf, depth, output, span)?
+        Some(_value) =>
+            owned = argument_value(builder, arguments, 0, span)?
+            generator_runtime_call(
+                builder,
+                "list_generator",
+                element,
+                [PlanType.List(leaf, depth)],
+                result,
+                [owned],
+                output,
+                span,
+            )
+        None => return Err("unsupported Body IR list iter spread")
     builder.owned.append(output.local)
+    return Ok(None)
+
+
+pub def borrowed_list_generator_call(
+    mut builder: Builder,
+    reference: Operand,
+    leaf: ListLeaf,
+    depth: int,
+    output: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Convert one checked vector loan to its native slice and construct a lazy cursor without copying the list."""
+    element = list_element(leaf, depth)
+    slice_type = PlanType.SliceRef([element])
+    slice_reference = list_slice_view(builder, reference, [element], false, span)?
+    result = PlanType.Generator(leaf, depth - 1)
+    path = "incan_std_core::iter::borrowed_list"
+    builder.externals.append(
+        ExternalFunction(path=path, type_arguments=[element], parameters=[slice_type], return_type=result, span=span),
+    )
+    terminate_call(builder, CalleeKind.Instantiated(path, [element]), [slice_reference], output, span)
     return Ok(None)
 
 
