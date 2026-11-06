@@ -364,6 +364,13 @@ load_customer           succeeded
   read_from_database    succeeded
 ```
 
+When a panic unwinds through traced calls, record one failure at its origin. For an assertion failure, include the failed condition and its authored source location, resolvable against the build that produced the trace. Each enclosing span that exits through the same panic reports failure and refers to that origin. Apply RFC 103 redaction to exported evidence. The default trace omits arguments and locals. RFC 131 controls stack trace capture.
+
+```text
+import_orders    failed: panic propagated from write_batch
+  write_batch    failed: assertion `len(rows) > 0` at writer.incn:42
+```
+
 Async functions must preserve the same logical current span across suspension points once async context propagation is supported.
 
 ### Explicit spans
@@ -522,13 +529,13 @@ This section is non-normative. A pragmatic implementation should preserve the sa
 
 - **Process configuration:** The first successful installation freezes the settings. Every later installation attempt returns a typed error.
 - **Traced results:** Each span reports its own call’s outcome. A caller that recovers can succeed while the failed child remains visible.
+- **Panics and assertions:** Record the origin once. Spans unwound by the same failure refer to that origin.
 
 ## Unresolved questions
 
 - What is the exact normative shape of `TelemetryValue`, especially for bytes, nested models, and custom conversion hooks?
 - How much of `Resource` should be inferred automatically from project metadata versus supplied explicitly?
 - What is the precise package/module qualification rule for default decorator span names?
-- How should a trace represent a panic or failed assertion when the call exits without returning a `Result`?
 - What is the minimal safe context propagation story for async tasks and spawned work?
 - Which baggage keys, if any, should be copied into attributes by default?
 - How should semantic-convention helpers be generated, versioned, and exposed when OpenTelemetry convention stability changes?
