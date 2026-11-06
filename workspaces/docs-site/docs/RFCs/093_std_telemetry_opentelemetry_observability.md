@@ -382,6 +382,8 @@ load_customer           succeeded
   read_from_database    succeeded
 ```
 
+On export, an ordinary successful call leaves the OTel span status `Unset` and omits `error.type`. For a returned `Err`, export status `Error` with `error.type` identifying the RFC 131 error case. In the cache example only the cache span carries the error type. See the [OTel error conventions](https://opentelemetry.io/docs/specs/semconv/general/recording-errors/).
+
 When a panic unwinds through traced calls, record one failure at its origin. For an assertion failure, include the failed condition and its authored source location, resolvable against the build that produced the trace. Each enclosing span that exits through the same panic reports failure and refers to that origin. Apply RFC 103 redaction to exported evidence. The default trace omits arguments and locals. RFC 131 controls stack trace capture.
 
 ```text
@@ -409,6 +411,10 @@ The API must avoid the reserved `ctx` spelling. Use `context`, `TelemetryContext
 
 `TelemetryContext` must carry current span context and baggage. `Baggage` is a separate key-value carrier and must not be treated as identical to attributes. Baggage may be propagated; attributes describe a specific telemetry record.
 
+With HTTP instrumentation enabled, extract valid W3C Trace Context from inbound requests and inject the active context into outbound requests using `traceparent` and, when present, `tracestate`. A Python caller, an Incan handler and a Rust downstream service can then produce spans under the same trace ID. The default sampler follows the parent’s sampling decision and samples new root traces. See [OTel propagators](https://opentelemetry.io/docs/specs/otel/context/api-propagators/) and [parent-based sampling](https://opentelemetry.io/docs/specs/otel/trace/sdk/#sampling).
+
+Baggage travels with a request under the propagation policy. By default none of its keys are copied to span or log attributes. A public, non-secret key is eligible for copying when explicitly selected by application policy. For example, `checkout` can send `region="eu"` to `billing` for routing. If the application selects `region` for span attributes, the collector also sees `region="eu"` on those spans. Secret values are excluded from both propagation and attribute export, even when a key is selected. See [OTel baggage](https://opentelemetry.io/docs/concepts/signals/baggage/).
+
 `TelemetryContext.with_baggage(key, value)` returns a new context with an additional baggage item. It must not mutate unrelated active context invisibly.
 
 `telemetry.run(context, fn, *args, **kwargs)` runs a callable inside a telemetry context. The exact variadic spelling should follow existing Incan callable conventions.
@@ -435,6 +441,8 @@ def user_attrs() -> telemetry.Attributes:
     return {semconv.http.request.method: "GET"}
 ```
 
+HTTP instrumentation names the server span using the method and matched route template, for example `GET /customers/{id}` for a request to `/customers/42`. If the route template is unavailable, use the method alone. A traced Incan function inside that request still produces its declaration name, such as `checkout.customers.load`. See the [OTel HTTP span conventions](https://opentelemetry.io/docs/specs/semconv/http/http-spans/).
+
 The semantic-convention surface must record the OpenTelemetry semantic-convention version it was generated from. Packages may support multiple convention versions, but one active version per Incan release is acceptable for the standard library.
 
 ### Exporters
@@ -448,6 +456,8 @@ The exporter surface should include at least:
 - OTLP exporter shape
 
 OTLP transport details such as HTTP versus gRPC, batching, retry, shutdown flushing, environment variable mapping, and collector compatibility are part of the exporter contract.
+
+Explicit flush reports whether pending export succeeded, failed, or timed out. Shutdown attempts to drain buffered records within a bound before releasing exporter resources. For example, `oven test` can finish its last test span and shut down telemetry before exiting. A collector outage can be reported separately while the command retains the actual test result. See the [OTel tracing SDK lifecycle](https://opentelemetry.io/docs/specs/otel/trace/sdk/#forceflush).
 
 ### Stdlib instrumentation policy
 
@@ -547,6 +557,7 @@ This section is non-normative. A pragmatic implementation should preserve the sa
 
 - **Process configuration:** The first successful installation freezes the settings. Every later installation attempt returns a typed error.
 - **Resource identity:** Resolve explicit attributes first, then standard OpenTelemetry environment settings, then application Loaf defaults for service name and version.
+- **Baggage:** Copy only public, non-secret keys explicitly selected by application policy into record attributes.
 - **Default span names:** Use the fully qualified name of the declaration, independent of how the caller imports it.
 - **Traced results:** Each span reports its own call’s outcome. A caller that recovers can succeed while the failed child remains visible.
 - **Panics and assertions:** Record the origin once. Spans unwound by the same failure refer to that origin.
@@ -555,7 +566,6 @@ This section is non-normative. A pragmatic implementation should preserve the sa
 
 - What is the exact normative shape of `TelemetryValue`, especially for bytes, nested models, and custom conversion hooks?
 - What is the minimal safe context propagation story for async tasks and spawned work?
-- Which baggage keys, if any, should be copied into attributes by default?
 - How should semantic-convention helpers be generated, versioned, and exposed when OpenTelemetry convention stability changes?
 - What meter API should `std.telemetry.metrics` expose, and how should it control cardinality and aggregation?
 - Which exporter transports belong in standard telemetry support?
