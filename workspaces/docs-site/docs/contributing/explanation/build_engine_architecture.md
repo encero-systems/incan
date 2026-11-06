@@ -321,10 +321,14 @@ Stages S1 to S4 build the store (the bakery on the platform store substrate; S1 
 | 10 | E4 Scheduler, memory, lifecycle | Antichain scheduling, CPU and memory tokens, fairness, shared-interest cancellation, worker recycling, crash matrices | E3, S2 leases and collection |
 | 11 | E5 Test, run and readers | Harness partitioning, fresh per-case execution, explicit replay, LSP overlays, MCP and graph pages, contract runner | E4 |
 | 12 | S4 Distribution qualification | Same sets from local bake, bundle and registry; trust refusals, upgrades, platforms and filesystems, Baseline-comparable workloads | E5 |
-| 13 | E6 Native incremental proof | Override audit, tracked per-definition inputs, qualified seeds, fixed CGUs, edited and cold baseline comparisons | E2 to E5 |
-| 14 | E7 Default switch and removal | Default engine, full census and CI phases, removal of obsolete authority in a separate cleanup, including the hand-ordered release script | E6, S4, the acceptance report |
+| 13 | E7 Default switch and removal | Default engine, full census and CI phases, and removal of the first engine's obsolete authority in a separate cleanup | E5, S4, the acceptance report |
+| 14 | E6 Native incremental proof | Override audit, tracked per-definition inputs, qualified seeds, fixed CGUs, edited and cold baseline comparisons | E2 to E5; qualified independently of the default switch |
 
 E1 is split in two so the engine's own proofs do not wait for the compiler's per-declaration producers. E1a proves the engine's mechanics with one record per compiled unit: the compiler already works in units, and RFC 124 gives each unit an identity from its compiled inputs. E1b swaps that one producer for the per-declaration producers of the producer map's first slice; the engine does not change. The rule that a compiler adapter must not repackage whole-program results as per-declaration records still holds: E1a's records are unit records and are named so.
+
+E1b, S3 and the ranked-graph part of E2 are delivered as one implementation slice: per-declaration producers are not useful until the compiler can consume their records, and record reads do not establish demand-driven reuse until the typed graph owns their dependencies. E6 is a separate qualification of per-function native recompilation; its proof can mature independently and does not block selecting the record engine as the default after the E7 correctness and distribution acceptance holds.
+
+Release orchestration is already an Incan program rather than shell authority. Its typed native-build graph currently expresses the admitted bootstrap dependency order. At E3, the engine's typed Loaf graph replaces that hand-ordered graph inside `release.incn`; this is a change of build authority, not a second release route. The shell release scripts were removed with the Incan release program and are therefore not part of E7 cleanup.
 
 ## Proof by stage
 
@@ -542,7 +546,7 @@ The platform is one Loaf, `incan_platform` in `loaves/platform`, between foundat
 | Readers | Engine query surface | Reused in part: `workspaces/oven/src/graph_context_index.incn`, `workspaces/contracts/src/graph.incn` (#2484) | `Query` / `Page`, typed cursors; graph reads through an RFC 166 `GraphRead` adapter over stored relationships | In-memory node and link structures duplicate the store; replaced by the `GraphRead` adapter in S3 |
 | Profiling and proofs | Engine over platform tracing | To be built | `oven inspect run <id> --proofs`, `--engine-report` | See tracing flag |
 | Engine selector | Engine entry in `workspaces/oven/src/main.incn` | To be built | `INCAN_ENGINE=legacy\|records` | Temporary by design; removed at E7 |
-| Toolchain release | `oven bake` of the toolchain's Loaf graph | To be built (the hand-ordered `scripts/release-dev8.sh` stands in) | Bake the driver, runtime and std as units in dependency order; pack the admitted set | The script orders compilation by hand and compiles std with the previous toolchain's driver; it retires at E7 |
+| Toolchain release | `oven bake` of the toolchain's Loaf graph | To be built; `scripts/release.incn` currently supplies a typed, hand-ordered native-build graph | Bake the driver, runtime and std as units in dependency order; pack the admitted set | E3 replaces the hand-ordered graph inside the Incan release program; no shell release authority remains |
 
 ## Language and platform boundary
 

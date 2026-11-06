@@ -1,41 +1,35 @@
 # Scripts
 
-Utility scripts for development and CI.
+Repository checks, release production, and development utilities are Incan programs. Release and CI logic calls these modules and functions directly where the work shares one process; installed compilers and external transport or version-control tools remain child processes.
 
-## Contents
+## Release and installed verification
 
-- `generate_feature_inventory.incn`: Generates the feature inventory from strict compiler-checked codegraph registry records for `loaves/stdlib/core/src/features.incn`. Run `incan run scripts/generate_feature_inventory.incn`; set `INCAN` when the installed command is not on `PATH`.
-- `check_us_english.incn`: Checks or rewrites tracked text using the explicit vocabulary in `english_spellings.incn` and exceptions in `check_us_english.allow`. Invoked by `make pre-commit`; pass `--fix` directly to rewrite files.
-- `check_reference_contract.incn`: Checks changed reference pages against the prose rules and documented exceptions. Invoked by `make pre-commit`; `--all` selects the full reference inventory.
-- `test_ci_scope.incn`: Tests the shell CI scope command with isolated Git responses and Unix permissions. Run `incan test scripts/test_ci_scope.incn` from the repository root. Checker tests run through `incan test scripts/test_check_us_english.incn` and `incan test scripts/test_check_reference_contract.incn`.
-- `relink_driver.incn`: Rebuilds and installs a dev.8 driver through an installed Oven. `--release` optimizes the local Rust units; `--lowering` recompiles the lowering's Incan source.
-- `oven_tests.incn`: Runs installed CI's Oven test step through an installed Oven: each Oven test source, each Loaf's test sources from that Loaf, and the record-scope contract in an isolated project that adds the frontend's native adapter. Each source runs as its own invocation, and the passing ids must equal `workspaces/contracts/dev8-oven-tests.txt`. Run `incan run scripts/oven_tests.incn -- OVEN EVIDENCE [--jobs N] [--memory GIB]`. At most N invocations run at once; without `--jobs`, `CI_DEV8_JOBS` or the core count selects N. Each invocation also reserves memory from measured peaks, 6 GiB for a compiler Loaf's tests and the record-scope contract and 4 GiB otherwise, and one starts only while the reservations fit `--memory`, else physical memory less 1 GiB; with nothing running, one always starts. OVEN must keep each test file's executable apart, under `target/incan/<profile>/tests/<file stem>/`. Invoked by `ci-dev8.sh`; `incan test scripts/test_oven_tests.incn` checks its options, invocation order, log joining and id parsing.
-- `build-native-runtime.sh`, `build-native-stdlib.sh` and `build-native-tools.sh`: Build the runtime, standard packages, and Oven, the contract runner or the LSP from source with an installed dev.8 toolchain.
-- `run_examples.incn`: Runs example entry points, including async functions, and checks the entries declared in `examples/check-only.txt`. Installed Oven prepares dependencies automatically. Invoked by `make examples`; `incan test scripts/test_run_examples.incn` checks discovery, mode selection, working directories and failure propagation.
-- `check_docs_examples.sh`: Typechecks committed `verified_*.incn` documentation snippets so tutorial examples cannot drift away from the compiler. Set `INCAN_DOCS_BUILD_WEB=1` only when the active toolchain provides a receipt-compatible Oven Loaf for backend verification.
-- `../workspaces/docs-site/scripts/check_incapunk_components.incn`: Validates the Incus asset manifest, semantic pools, reusable component hooks, representative adoption, navigation, and accessibility contracts. Invoked by `make docs`.
-- `../workspaces/docs-site/scripts/check_learning_journey.incn`: Validates the six-intent Learn hub, canonical setup sources, audience bridges, and project-tutorial contracts. Invoked by `make docs`.
+- `release.incn` builds and qualifies the complete native release closure from an installed seed. Run `incan run scripts/release.incn -- SHA OUT [--prove-fixed-point] [--jobs N] [--timeout SECONDS]`. The fixed-point flag rebuilds and compares DD-0010's six named artifacts; normal qualification omits it until the reproducibility stage lands.
+- `native_build.incn` owns the typed native-build units used by release production and fixed-point verification.
+- `verify_fixed_point.incn` builds through generation three, retains all three digest sets, and requires byte-identical generation-two and generation-three driver, runtime, lowering, standard core, Oven, and contract runner artifacts.
+- `verify_installation.incn` audits and verifies an installed toolchain. Run `incan run scripts/verify_installation.incn -- OUT [--jobs N] [--timeout SECONDS]` with the installation selected by `INCAN_HOME` and its server selected by `INCAN_LSP`.
+- `release_support.incn` holds shared release options, process evidence, receipts, census parsing, and baseline comparison. `incan test scripts/test_release_support.incn` proves its pure contracts.
+- `publish_build_toolchain.incn` validates and pushes complete macOS and Linux bundles, then rewrites `build-toolchain.json`. Publication is a maintainer operation and is not part of qualification.
+- `oven_tests.incn` runs every committed Oven test source with bounded concurrency and requires the exact ids in `workspaces/contracts/oven-tests.txt`. Run `incan run scripts/oven_tests.incn -- OVEN EVIDENCE [--jobs N] [--memory GIB]`; `incan test scripts/test_oven_tests.incn` proves its planning and evidence helpers.
 
-## Rebuild the dev.8 driver
+The release writes `receipt.json`, `timings.tsv`, per-phase logs, `bundle/{incan,incan-lsp,toolchain.tar.zst}`, and installed-verification evidence below `ci/run.*/`. A failed phase leaves a refused receipt and its complete log.
 
-Set `DEV8_LANE` to a directory containing the `incan` checkout, an installed Oven at `oven-bin/incan` and an installed toolchain home at `dev8-home`; `SELFBUILD_OVEN` and `SELFBUILD_HOME` select others. The installed toolchain supplies the pinned Rust compiler and registry units.
+## Rebuild the installed driver
+
+`relink_driver.incn` rebuilds and optionally installs the native driver through an installed Oven. The installed support closure is release-only, so release qualification uses `--release`:
 
 ```sh
-DEV8_LANE=/path/to/workspace incan run scripts/relink_driver.incn
-DEV8_LANE=/path/to/workspace incan run scripts/relink_driver.incn -- --lowering --release
+DEV8_LANE=/path/to/workspace SELFBUILD_HOME=/path/to/home SELFBUILD_OVEN=/path/to/home/bin/incan SELFBUILD_STDLIB=/path/to/checkout/loaves/stdlib INCAN_RELINK_LOG=/path/to/relink.log incan run scripts/relink_driver.incn -- --release
 ```
 
-The default profile is debug. Add `--lowering` after editing the lowering's Incan source: it withdraws the lowering's build stamp so Oven compiles it again. Add `--release` to compile with Oven's release profile. The build runs against a compiler home beside the installation (`compiler-build`) that links the installed Loaves, native artifacts and registry units and names every other installed artifact by its absolute path. Installation copies the driver into the toolchain under its content digest, builds its standard Rust ABI cache when that is missing, points `toolchain.json` at both, and removes the relinked driver and cache the manifest named before. Set `INCAN_DRIVER_INSTALL=0` to build without installing, for before/after measurements.
+Add `--lowering` when the lowering source must be rebuilt. Set `INCAN_DRIVER_INSTALL=0` for a build-only measurement. `INCAN_RELINK_TRACE=1` prints phase durations; `INCAN_RELINK_LOG` selects the retained build log.
 
-Set `INCAN_RELINK_TRACE=1` to print the relink phase durations. `INCAN_RELINK_LOG` selects the build log path; otherwise the current profile's log is replaced under `bootstrap/`.
+## Repository checks
 
-## Configuration
+- `run_examples.incn` discovers and runs repository examples in their declared mode. `make examples` invokes it; `incan test scripts/test_run_examples.incn` proves discovery and failure propagation.
+- `check_docs_examples.incn` checks every verified documentation snippet and source-backed tutorial, then requires canonical formatting. `make docs` invokes it. Pass `--build-web` only with a receipt-compatible Oven Loaf; `--offline` makes that backend build resolve offline.
+- `check_us_english.incn`, `check_changed_rustdocs.incn`, `check_agents_doc_sync.incn`, `check_doc_paths.incn`, and `check_reference_contract.incn` implement the local pre-commit checks.
+- `generate_feature_inventory.incn` regenerates the compiler-checked feature inventory from the registry records in `loaves/stdlib/core/src/features.incn`.
+- `bench_build_times.incn` compares cold, warm, and observable incremental builds across installed toolchains. Run `incan run scripts/bench_build_times.incn -- --toolchain LABEL=PATH [--toolchain LABEL=PATH ...] [--project PATH] [--repetitions N] [--output PATH] [--scratch PATH] [--keep-work] [--warm-max-ms N]`. Incremental timings count only when running the result proves that the edit reached the binary.
 
-`run_examples.sh` respects these environment variables:
-
-|         Variable         |                       Default                       |                  Description                   |
-| ------------------------ | --------------------------------------------------- | ---------------------------------------------- |
-| `INCAN_BIN`              | `incan` | Installed Incan command |
-| `INCAN_EXAMPLES_TIMEOUT` | `120` | Deadline in seconds for each command; requires GNU `timeout` or `gtimeout` |
-| `INCAN_EXAMPLES_ONLY` | Empty | Colon-separated repository-relative entry paths; empty selects all entries |
-| `INCAN_EXAMPLES_OUT` | `target/examples` | Directory for `examples.tsv`, command logs and generated input snapshots |
+The docs site also owns `workspaces/docs-site/scripts/check_incapunk_components.incn` and `check_learning_journey.incn`; its strict build invokes those checks.

@@ -1,0 +1,5 @@
+{
+  "version": "0.6.0-dev.8",
+  "aarch64-apple-darwin": "ghcr.io/encero-systems/incan.pub/toolchain/incan:0cb030e9c6d9817c620e481854e7d6f6440fd9d6-aarch64-apple-darwin@sha256:09311df3da0ac8a401855e278d8e6df2439c97473e22c85a8e02267ef51d4b49",
+  "x86_64-unknown-linux-gnu": "ghcr.io/encero-systems/incan.pub/toolchain/incan:0cb030e9c6d9817c620e481854e7d6f6440fd9d6-x86_64-unknown-linux-gnu@sha256:4322409c6457c57a68d4f274d416eb940a8d1c497b06122e5b545817349da6e8"
+}

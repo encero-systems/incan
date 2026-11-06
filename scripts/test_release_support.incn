@@ -1,0 +1,131 @@
+"""Verify release argument, baseline, receipt, and byte-comparison contracts without native production."""
+
+from std.fs import Path
+from std.json import JsonValue
+from std.tempfile import TemporaryDirectory
+from release_support import (
+    Counts,
+    check_baseline,
+    parse_release_options,
+    parse_verification_options,
+    release_receipt,
+    same_bytes,
+)
+
+const SHA: str = "0123456789abcdef0123456789abcdef01234567"
+const COMPLETE_LOG: str = """PASS behavior/a/a
+PASS check/a/a
+PASS library/a/a
+PASS interop/a/a
+PASS testing/a/a
+PASS project/a/a
+PASS format/a/a
+PASS graph/a/a
+total: 8 passed, 0 failed, 0 pending
+"""
+
+
+def test_release_arguments_keep_fixed_point_and_process_budgets_explicit() -> Result[None, str]:
+    """The two operands and optional fixed-point, jobs, and timeout choices parse in any option position."""
+    options = parse_release_options(["--jobs", "6", SHA, "out", "--prove-fixed-point", "--timeout", "900"])?
+    assert options.source_sha == SHA
+    assert options.output.0 == "out"
+    assert options.prove_fixed_point
+    assert options.jobs == 6
+    assert options.timeout_seconds == 900
+    assert parse_release_options([SHA, "out"])?.jobs == 4
+    return Ok(None)
+
+
+def test_release_arguments_refuse_ambiguous_or_unbounded_invocations() -> Result[None, str]:
+    """Missing operands, abbreviated SHAs, unknown options, and nonpositive budgets fail closed."""
+    assert refused_release([SHA]) == "usage: release.incn SHA OUT [--prove-fixed-point] [--jobs N] [--timeout SECONDS]"
+    assert refused_release(["deadbeef", "out"]) == "SHA must be a full lowercase source commit"
+    assert refused_release([SHA, "out", "--fast"]) == "unknown option `--fast`"
+    assert refused_release([SHA, "out", "--jobs", "0"]) == "--jobs needs a positive integer"
+    return Ok(None)
+
+
+def test_verification_arguments_have_independent_defaults() -> Result[None, str]:
+    """Installed verification defaults to two workers and a 120-second command timeout."""
+    defaults = parse_verification_options(["evidence"])?
+    assert defaults.output.0 == "evidence"
+    assert defaults.jobs == 2
+    assert defaults.timeout_seconds == 120
+    selected = parse_verification_options(["--timeout", "300", "evidence", "--jobs", "5"])?
+    assert selected.jobs == 5
+    assert selected.timeout_seconds == 300
+    return Ok(None)
+
+
+def test_baseline_requires_complete_unique_results_and_preserves_every_pass() -> Result[None, str]:
+    """All eight families, one total, unique keys, and every baseline PASS are one indivisible contract."""
+    report = check_baseline("# measured\nbehavior/a/a\ngraph/a/a\n", COMPLETE_LOG)?
+    assert report.counts == Counts(passed=8, failed=0, pending=0), "counts"
+    assert report.baseline_keys == 2, "baseline keys"
+    assert report.lost_passes == [], "lost passes"
+    failed_behavior = COMPLETE_LOG
+        .replace("PASS behavior/a/a", "FAIL behavior/a/a")
+        .replace("total: 8 passed, 0 failed", "total: 7 passed, 1 failed")
+    lost = refused_baseline("behavior/a/a\n", failed_behavior)
+    assert lost == "lost PASS behavior/a/a -> FAIL", lost
+    without_graph = COMPLETE_LOG.replace("PASS graph/a/a\n", "").replace("total: 8 passed", "total: 7 passed")
+    missing = refused_baseline("behavior/a/a\n", without_graph)
+    assert missing == "family absent: graph", missing
+    return Ok(None)
+
+
+def test_receipt_keeps_refusal_evidence_distinct_from_success() -> Result[None, str]:
+    """The stable receipt carries exact phase, compiler mode, artifacts, counts, and parity state."""
+    receipt = release_receipt(
+        SHA,
+        "aarch64-apple-darwin",
+        "passed",
+        "complete",
+        0,
+        42,
+        {"incan": JsonValue.string("abc")},
+        "native-fixed-point",
+        JsonValue.object({"pass": JsonValue.int(8)}),
+        JsonValue.object({"passed": JsonValue.int(141)}),
+        JsonValue.bool(true),
+    )
+    schema = receipt.require("schema").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+    assert schema == "incan.release-rehearsal/1"
+    assert receipt.require("phase").and_then((value) => value.expect_str()).map_err((error) => error.message())? == "complete"
+    compiler_build = receipt
+        .require("compiler_build")
+        .and_then((value) => value.expect_str())
+        .map_err((error) => error.message())?
+    assert compiler_build == "native-fixed-point"
+    assert receipt.require("baseline_parity").and_then((value) => value.expect_bool()).map_err(
+        (error) => error.message(),
+    )?
+    return Ok(None)
+
+
+def test_byte_comparison_reads_complete_content() -> Result[None, str]:
+    """Fixed-point equality accepts identical bytes and refuses a same-sized differing file."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    left = temporary.path().joinpath("left")
+    right = temporary.path().joinpath("right")
+    left.write_bytes(b"alpha").map_err((error) => error.message())?
+    right.write_bytes(b"alpha").map_err((error) => error.message())?
+    assert same_bytes(left, right)?
+    right.write_bytes(b"alpHa").map_err((error) => error.message())?
+    assert not same_bytes(left, right)?
+    return Ok(None)
+
+
+def refused_release(arguments: list[str]) -> str:
+    """Return a release parser refusal for concise assertions."""
+    match parse_release_options(arguments):
+        Ok(_) => return "accepted"
+        Err(message) => return message
+
+
+def refused_baseline(baseline: str, log: str) -> str:
+    """Return a baseline checker refusal for concise assertions."""
+    match check_baseline(baseline, log):
+        Ok(_) => return "accepted"
+        Err(message) => return message

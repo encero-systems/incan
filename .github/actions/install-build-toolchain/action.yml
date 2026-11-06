@@ -1,35 +1,35 @@
-# Installs the pinned dev.8 release bundle for the runner's host through scripts/ci-dev8.sh and puts its `incan` on
-# PATH for the job's later steps. Every job that runs `incan` uses this action; it fails, naming BUILD_TOOLCHAIN, while
-# that repository variable pins no bundle for the host.
+# Installs the immutable release bundle pinned in build-toolchain.json and exports its commands for later steps.
 name: Install the build toolchain
-description: >
-  Pulls the GHCR bundle that BUILD_TOOLCHAIN pins for this host, installs it with Rust 1.98.0, and exports
-  INCAN_HOME, INCAN_STDLIB and PATH. With verify, it also runs the Oven tests, the LSP contract and every contract
-  family against the installation.
+description: Pulls and installs the checked-in host pin with Rust 1.98.0, then optionally runs Incan verification.
 inputs:
-  reference:
-    description: The bundle's GHCR tag@sha256:digest, read from the BUILD_TOOLCHAIN map for the host's target triple.
-    required: false
-    default: ''
+  target:
+    description: Rust host target triple whose checked-in bundle should be installed.
+    required: true
   token:
     description: Token that can read the bundle's GHCR package.
     required: true
   verify:
-    description: Also verify the installation against this checkout's tests and contracts.
+    description: Run installed verification after the bootstrap installation.
     required: false
     default: 'false'
 runs:
   using: composite
   steps:
-    - name: Require a pinned release bundle
-      shell: bash
+    - name: Read the checked-in immutable pin
+      id: pin
+      uses: actions/github-script@v8
       env:
-        TOOLCHAIN_REF: ${{ inputs.reference }}
-      run: |
-        if [ -z "$TOOLCHAIN_REF" ]; then
-          echo "::error::BUILD_TOOLCHAIN pins no build toolchain for this host; this job runs incan and needs one"
-          exit 1
-        fi
+        BUILD_TARGET: ${{ inputs.target }}
+      with:
+        script: |
+          const fs = require('fs');
+          const pins = JSON.parse(fs.readFileSync('build-toolchain.json', 'utf8'));
+          const reference = pins[process.env.BUILD_TARGET];
+          if (!reference) {
+            core.setFailed(`build-toolchain.json has no pin for ${process.env.BUILD_TARGET}`);
+            return;
+          }
+          core.setOutput('reference', reference);
     - name: Install oras
       uses: oras-project/setup-oras@v1
       with:
@@ -40,15 +40,42 @@ runs:
         GHCR_USER: ${{ github.actor }}
         GHCR_TOKEN: ${{ inputs.token }}
       run: printf '%s' "$GHCR_TOKEN" | oras login ghcr.io --username "$GHCR_USER" --password-stdin
-    - name: Install dev.8
+    - name: Install pinned Rust
+      shell: bash
+      run: rustup toolchain install 1.98.0 --profile minimal --component rustc-dev
+    - name: Pull the pinned bundle
       shell: bash
       env:
-        TOOLCHAIN_REF: ${{ inputs.reference }}
-        VERIFY: ${{ inputs.verify }}
-        CI_DEV8_OUT: ${{ runner.temp }}/dev8
+        TOOLCHAIN_REF: ${{ steps.pin.outputs.reference }}
+      run: oras pull "$TOOLCHAIN_REF" --output "$RUNNER_TEMP/build-toolchain-bundle"
+    - name: Install the build toolchain
+      shell: bash
       run: |
-        if [ "$VERIFY" = true ]; then
-          scripts/ci-dev8.sh "$TOOLCHAIN_REF"
-        else
-          scripts/ci-dev8.sh --install "$TOOLCHAIN_REF"
-        fi
+        mkdir -p "$RUNNER_TEMP/incan-build-toolchain/bin"
+        cp "$RUNNER_TEMP/build-toolchain-bundle/incan" "$RUNNER_TEMP/incan-build-toolchain/bin/incan"
+        cp "$RUNNER_TEMP/build-toolchain-bundle/incan-lsp" "$RUNNER_TEMP/incan-build-toolchain/bin/incan-lsp"
+        chmod +x "$RUNNER_TEMP/incan-build-toolchain/bin/incan" "$RUNNER_TEMP/incan-build-toolchain/bin/incan-lsp"
+        INCAN_HOME="$RUNNER_TEMP/incan-build-toolchain" \
+          "$RUNNER_TEMP/incan-build-toolchain/bin/incan" toolchain install \
+          "$RUNNER_TEMP/build-toolchain-bundle/toolchain.tar.zst"
+        {
+          printf 'INCAN_HOME=%s\n' "$RUNNER_TEMP/incan-build-toolchain"
+          printf 'INCAN_LSP=%s\n' "$RUNNER_TEMP/incan-build-toolchain/bin/incan-lsp"
+          printf 'INCAN_SYSROOT=%s\n' "$(rustup run 1.98.0 rustc --print sysroot)"
+          printf 'RUSTUP_TOOLCHAIN=1.98.0\n'
+          printf 'INCAN_NO_BANNER=1\n'
+          printf 'OVEN_OWNER=off\n'
+        } >> "$GITHUB_ENV"
+        printf '%s\n' "$RUNNER_TEMP/incan-build-toolchain/bin" >> "$GITHUB_PATH"
+    - name: Verify the installed toolchain
+      if: inputs.verify == 'true'
+      shell: bash
+      env:
+        INCAN_HOME: ${{ runner.temp }}/incan-build-toolchain
+        INCAN_LSP: ${{ runner.temp }}/incan-build-toolchain/bin/incan-lsp
+        INCAN_RELEASE_ARCHIVE: ${{ runner.temp }}/build-toolchain-bundle/toolchain.tar.zst
+        RUSTUP_TOOLCHAIN: 1.98.0
+        OVEN_OWNER: off
+      run: >-
+        "$INCAN_HOME/bin/incan" run scripts/verify_installation.incn --
+        "$RUNNER_TEMP/release-verification" --jobs 2 --timeout 120

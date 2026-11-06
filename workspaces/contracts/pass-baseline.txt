@@ -1,4 +1,4 @@
-# Installed and direct dev.8 PASS keys, measured 2026-10-24 (Europe/Berlin) on aarch64-apple-darwin.
+# Installed and direct release PASS keys, measured 2026-10-24 (Europe/Berlin) on aarch64-apple-darwin.
 # Compiler and fixture source tree committed as edf65667d3f413a5a0d9f8e560eb9a59968df95a.
 # Packed and measured before committing that unchanged tree; the CI checkout record names parent ed6475e26.
 # Archive SHA-256: 74dc9f59d1fb8168c21a197151389d4b66878cc7045e60b8782385940acb2b05.

@@ -10,9 +10,9 @@ be excluded on its own:
 3. The record-scope contract, in an isolated project under `EVIDENCE/checker-records`.
 
 Each invocation writes its own log under `EVIDENCE/oven-tests/`. `oven-tests.log` joins them in the order above, so
-it does not depend on scheduling. The passing ids must equal `workspaces/contracts/dev8-oven-tests.txt`.
+it does not depend on scheduling. The passing ids must equal `workspaces/contracts/oven-tests.txt`.
 
-At most N invocations run at once: `--jobs N`, else `CI_DEV8_JOBS`, else the core count. Each invocation also
+At most N invocations run at once: `--jobs N`, else the core count. Each invocation also
 reserves memory, and one starts only while the reservations fit the memory they share: `--memory GIB`, else physical
 memory less a headroom. OVEN must store each test source's executable apart, so invocations in one project never
 replace each other's.
@@ -27,7 +27,6 @@ from rust::std::rc import Rc
 from rust::std::string import String as RustString
 from rust::std::thread import available_parallelism, sleep
 from rust::std::time import Duration
-from std.environ import get_or
 from std.fs import Path
 from std.regex import Regex
 from check_support import read, repository_root, write_stderr
@@ -48,8 +47,8 @@ const NEEDS_SETTLED_INSTALLATION: FrozenList[str] = ["test_engine_protocol.incn"
 const RECORD_SOURCES: FrozenList[str] = ["checker_records", "record_scope", "records", "record_service"]
 const RECORD_TESTS: FrozenList[str] = ["canonical_record_controls", "test_record_scope"]
 const USAGE: str = "usage: oven_tests.incn OVEN EVIDENCE [--jobs N] [--memory GIB]"
-# The step reports failures as installed CI's script reports its own.
-const REPORTER: str = "ci-dev8"
+# The step reports failures under the installed-verification program's name.
+const REPORTER: str = "verify-installation"
 
 
 pub model Options:
@@ -95,7 +94,7 @@ model Running:
 def main() -> None:
     """Run the step: status 2 for refused arguments, 1 for a failed step and 0 when every expected test passed."""
     arguments = [str(argument) for argument in args()][1:]
-    match parse_options(arguments, get_or("CI_DEV8_JOBS", ""), host_cores(), host_memory()):
+    match parse_options(arguments, "", host_cores(), host_memory()):
         Ok(options) =>
             match run(options):
                 Ok(outcome) =>
@@ -178,7 +177,7 @@ def run(options: Options) -> Result[str, str]:
     succeeded = ran and ran_alone
     log = options.evidence.joinpath("oven-tests.log")
     joined = join_logs(planned, log)?
-    expected = read(root.joinpath("workspaces/contracts/dev8-oven-tests.txt"))?
+    expected = read(root.joinpath("workspaces/contracts/oven-tests.txt"))?
     summary = summarize(joined, expected)?
     return report(options.evidence, summary, succeeded)
 

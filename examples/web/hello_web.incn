@@ -27,6 +27,8 @@ model User:
     id: int
     name: str
     email: str
+
+
 # Routes
 
 

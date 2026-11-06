@@ -1,0 +1,147 @@
+"""Build three DD-0010 release generations and require generations two and three to be byte-identical."""
+
+from rust::std::time import Instant
+from std.fs import Path
+from native_build import NativeContext, build_runtime, build_source_interfaces, build_standard_packages, build_tool
+from release_support import TOOLCHAIN_DIRECTORY, append_timing, digest, same_bytes
+from relink_driver import Relink, run as relink
+
+
+pub model Artifact:
+    """One fixed-point component and the file whose bytes represent it."""
+
+    pub name: str
+    pub path: Path
+
+
+pub def prove_fixed_point(context: NativeContext) -> Result[None, str]:
+    """
+    Build and compare the release in six steps.
+
+    1. Retain generation one's six named files.
+    2. Build generation two with generation one.
+    3. Retain generation two's six named files.
+    4. Build generation three with generation two.
+    5. Retain generation three and compare generations two and three byte for byte.
+    6. Retain all three digest sets and refuse any fixed-point mismatch.
+    """
+    evidence = context.evidence.joinpath("generations")
+    evidence.mkdir(true, true).map_err((error) => error.message())?
+    artifacts = named_artifacts(context)
+
+    # 1-2. Generation one is evidence and the immutable producer of generation two, never the comparison baseline.
+    first = snapshot_generation(evidence, artifacts, "generation-one")?
+    rebuild_generation(context, evidence, first["oven"], "generation-two")?
+
+    # 3-4. Both compared generations are produced from this source by a compiler produced from this source.
+    second = snapshot_generation(evidence, artifacts, "generation-two")?
+    rebuild_generation(context, evidence, second["oven"], "generation-three")?
+
+    # 5-6. Missing snapshots already refuse; only exact generation-two/generation-three bytes establish the fixed point.
+    third = snapshot_generation(evidence, artifacts, "generation-three")?
+    mismatches = compare_generations(artifacts, second, third)?
+    write_evidence(evidence, artifacts, first, second, third, mismatches)?
+    if len(mismatches) > 0:
+        return Err(f"generation three differs from generation two: {", ".join(mismatches)}")
+    return Ok(None)
+
+
+pub def named_artifacts(context: NativeContext) -> list[Artifact]:
+    """Return DD-0010's six byte-bearing release outputs in stable order."""
+    driver = context.repo.joinpath("loaves/toolchain/incan-rustc-driver/target/incan")
+    runtime = context.repo.joinpath("loaves/compiler/incan_native_runtime/target/incan/native/release")
+    core = context.home.joinpath(f"{TOOLCHAIN_DIRECTORY}/loaves/incan_stdlib_core/release")
+    return [
+        Artifact(name="driver", path=driver.joinpath("rust/release/bin/incan-rustc-driver")),
+        Artifact(name="runtime", path=runtime.joinpath("libincan_native_runtime.rlib")),
+        Artifact(name="lowering", path=driver.joinpath("loaves/incan_mir_lowering/release/libincan_mir_lowering.rlib")),
+        Artifact(name="standard-core", path=core.joinpath("libincan_stdlib_core.rlib")),
+        Artifact(name="oven", path=context.lane.joinpath("oven-bin/incan")),
+        Artifact(name="runner", path=context.lane.joinpath("contracts-bin/contracts")),
+    ]
+
+
+def snapshot_generation(evidence: Path, artifacts: list[Artifact], generation: str) -> Result[Dict[str, Path], str]:
+    """Copy one generation's named files before its successor replaces their stable destinations."""
+    directory = evidence.joinpath(generation)
+    directory.mkdir(true, true).map_err((error) => error.message())?
+    mut snapshots: Dict[str, Path] = {}
+    for artifact in artifacts:
+        if not artifact.path.is_file():
+            return Err(f"missing {generation} {artifact.name}: {artifact.path.0}")
+        retained = directory.joinpath(artifact.name)
+        _ = artifact.path.copy(retained, true, true).map_err((error) => error.message())?
+        snapshots[artifact.name] = retained
+    return Ok(snapshots)
+
+
+def rebuild_generation(context: NativeContext, evidence: Path, builder: Path, generation: str) -> Result[None, str]:
+    """Produce one complete successor with the preceding generation's retained Oven and selected compiler home."""
+    driver_started = Instant.now()
+    relink(
+        Relink(
+            repo=context.repo,
+            bootstrap=context.lane.joinpath("bootstrap"),
+            toolchain_home=context.home,
+            builder=builder.0,
+            stdlib=context.stdlib,
+            profile="release",
+            refresh=true,
+            log=evidence.joinpath(f"{generation}-driver.log"),
+        ),
+    )?
+    append_timing(context.timings, f"{generation}-driver", driver_started.elapsed().as_secs_f64())?
+    helper = context.lane.joinpath("out/native-builds/toolchain-native")
+    successor = NativeContext(
+        repo=context.repo,
+        lane=context.lane,
+        home=context.home,
+        builder=builder.0,
+        stdlib=context.stdlib,
+        evidence=evidence,
+        timings=context.timings,
+        timeout_seconds=context.timeout_seconds,
+    )
+    interfaces = build_source_interfaces(successor, helper, f"{generation}-")?
+    _ = build_runtime(successor, helper, Some(interfaces), true, f"{generation}-")?
+    build_standard_packages(successor, helper, f"{generation}-")?
+    _ = build_tool(successor, "oven", true, f"{generation}-oven")?
+    _ = build_tool(successor, "contracts", true, f"{generation}-runner")?
+    return Ok(None)
+
+
+def compare_generations(
+    artifacts: list[Artifact],
+    second: Dict[str, Path],
+    third: Dict[str, Path],
+) -> Result[list[str], str]:
+    """Return every named component whose generation-two and generation-three snapshots differ byte for byte."""
+    mut mismatches: list[str] = []
+    for artifact in artifacts:
+        if not same_bytes(second[artifact.name], third[artifact.name])?:
+            mismatches.append(artifact.name)
+    return Ok(mismatches)
+
+
+def write_evidence(
+    evidence: Path,
+    artifacts: list[Artifact],
+    first: Dict[str, Path],
+    second: Dict[str, Path],
+    third: Dict[str, Path],
+    mismatches: list[str],
+) -> Result[None, str]:
+    """Write all three SHA-256 digest sets and the exact generation-two/generation-three comparison."""
+    mut lines = [
+        "component\tgeneration_one_sha256\tgeneration_two_sha256\tgeneration_three_sha256\ttwo_equals_three\tpath",
+    ]
+    for artifact in artifacts:
+        lines.append(
+            f"{artifact.name}\t{digest(first[artifact.name])?}\t{digest(second[artifact.name])?}\t{digest(
+                third[artifact.name],
+            )?}\t{artifact.name not in mismatches}\t{artifact.path.0}",
+        )
+    return evidence
+        .joinpath("generation-bytes.tsv")
+        .write_text("\n".join(lines) + "\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())

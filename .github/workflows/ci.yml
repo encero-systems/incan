@@ -3,8 +3,7 @@ name: CI
 # Full CI runs on main, on release branches and on the development line's pull request into main. Stacked PRs get
 # stack_checks.yml instead.
 
-# Steps that run `incan` install the pinned dev.8 release bundle (BUILD_TOOLCHAIN) with Rust 1.98.0 and rustc-dev
-# through .github/actions/install-build-toolchain (DD-0010); the job fails while no bundle is pinned for its host.
+# Steps that run `incan` install the host bundle pinned in build-toolchain.json with Rust 1.98.0 and rustc-dev.
 
 on:
   push:
@@ -37,10 +36,10 @@ jobs:
           components: rustfmt
       - name: Check Rust formatting
         run: git ls-files -z 'loaves/*.rs' ':!:loaves/**/fixtures/**' | xargs -0 rustfmt +nightly --edition 2024 --config skip_children=true --check
-      - name: Install dev.8
+      - name: Install the build toolchain
         uses: ./.github/actions/install-build-toolchain
         with:
-          reference: ${{ fromJSON(vars.BUILD_TOOLCHAIN || '{}')['x86_64-unknown-linux-gnu'] }}
+          target: x86_64-unknown-linux-gnu
           token: ${{ secrets.GITHUB_TOKEN }}
       - name: Check changed Rust docs
         shell: bash
@@ -55,7 +54,5 @@ jobs:
             base_ref="HEAD^"
           fi
           incan run scripts/check_changed_rustdocs.incn -- --base "$base_ref"
-      - name: Check US English
-        run: incan run scripts/check_us_english.incn
       - name: Check the AGENTS.md skill table
         run: incan run scripts/check_agents_doc_sync.incn

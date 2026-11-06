@@ -28,6 +28,7 @@ fmt:
 
 .PHONY: docs
 docs:
+	@INCAN_BIN="$${INCAN_BIN:-$(INCAN)}" $(INCAN) run scripts/check_docs_examples.incn
 	@$(MAKE) -C workspaces/docs-site docs-build
 
 .PHONY: pre-commit

@@ -46,6 +46,8 @@ The commitment in short:
 - **Incan only, no Cargo.** The only authored Rust is three named bootstrap adapters.
 - **Delivery in measured stages.** Store stages S1 to S4 and engine stages E1 to E7 each exit on proofs measured in a cold and a warm home.
 
+E1b, S3 and the ranked semantic graph of E2 ship as one slice because producers, record consumers and typed dependency ownership are not useful independently. E6 qualifies per-function native recompilation separately and does not block making the record engine the default once the default-switch acceptance holds. Release production is already Incan-authored: the shell release scripts were removed before E7, and E3 replaces the typed hand-ordered bootstrap graph inside `release.incn` with the toolchain Loaf graph rather than adding another release route.
+
 The architecture page holds the governing rules, the decision register (BE-01 to BE-34), the stage order, the proof tables and the code map.
 
 > **Clarification (2026-11-06):** RFC 168 established `std.primitives` as the foundation below `incan_platform`; the platform is below every other standard package, not below the primitive package. The living architecture page reflects that dependency order.
@@ -65,6 +67,7 @@ It refines DD-0012 in one respect: one engine per physical bakery, with homes as
 - Readers answer bounded questions with bounded work.
 - The checker, Body IR and lowering become per-record producers; that restructuring is the main cost, as DD-0012 stated.
 - The first engine's owner, ledger, stamp and whole-closure paths are removed once E7's acceptance holds.
+- The release stays one Incan-authored route: E3 changes its build authority from an explicit typed bootstrap graph to the engine's typed Loaf graph.
 
 ## Non-goals
 

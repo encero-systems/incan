@@ -1,0 +1,413 @@
+"""Verify one installed release toolchain against this checkout's complete contract and native-test surface."""
+
+from rust::std::process import exit
+from std.environ import args, get_or
+from std.fs import Path
+from std.json import JsonValue
+from std.tempfile import TemporaryDirectory
+from check_support import repository_root, write_stderr
+from release_support import (
+    FAMILIES,
+    BaselineReport,
+    TOOLCHAIN_DIRECTORY,
+    Step,
+    baseline_summary,
+    check_baseline,
+    counts_json,
+    digest,
+    parse_verification_options,
+    require_step,
+    run_step,
+    write_json,
+)
+
+
+pub model Installation:
+    """Installed commands, source checkout, selected standard sources, and retained evidence."""
+
+    pub root: Path
+    pub home: Path
+    pub oven: Path
+    pub lsp: Path
+    pub stdlib: str
+    pub run: Path
+    pub jobs: int
+    pub timeout_seconds: int
+
+
+def main() -> None:
+    """Verify the selected installation, reporting option refusals as status 2 and gate failures as status 1."""
+    arguments = args().unwrap_or([])
+    match parse_verification_options(arguments[1:]):
+        Ok(options) =>
+            match verify(options.output, options.jobs, options.timeout_seconds):
+                Ok(_) => exit(0)
+                Err(message) =>
+                    write_stderr(message + "\n")
+                    exit(1)
+        Err(message) =>
+            write_stderr(message + "\n")
+            exit(2)
+
+
+pub def verify(output: Path, jobs: int, timeout_seconds: int) -> Result[Path, str]:
+    """
+    Verify an installed toolchain in six steps.
+
+    1. Audit installation paths and select only shipped standard packages.
+    2. Build this checkout's contract runner with the installed compiler.
+    3. Run the complete Oven test inventory and every production Rust-facet suite.
+    4. Require the installed LSP contract independently.
+    5. Run all eight contract families and preserve every committed PASS key.
+    6. Retain checksums, complete logs, counts, and a stable summary.
+    """
+    installation = prepare(output, jobs, timeout_seconds)?
+
+    # 1. Installed records may name only this installation and never a builder path.
+    audit_relocation(installation.home, [get_or("INCAN_BUILDER_HOME", ""), get_or("INCAN_BUILDER_SOURCE", "")])?
+
+    # 2. A checkout runner proves the installed compiler can read the current source contracts.
+    runner = build_runner(installation)?
+
+    # 3. Unit and Rust-facet tests exercise release-owned native surfaces outside the census.
+    run_oven_tests(installation)?
+    suites = run_rust_facets(installation)?
+
+    # 4. Graph verification is never allowed to skip because no language server was selected.
+    verify_lsp(installation, runner)?
+
+    # 5. Every family runs once under one budget and the committed PASS baseline is a lower bound.
+    report = run_contracts(installation, runner)?
+
+    # 6. The caller receives one durable evidence directory even on hosts with shared temporary storage.
+    summary = baseline_summary(report) + f"; {suites} Rust facet suites\n"
+    installation.run
+        .joinpath("summary.txt")
+        .write_text(summary, "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    println(summary.strip())
+    return Ok(installation.run)
+
+
+pub def audit_relocation(home: Path, builder_paths: list[str]) -> Result[None, str]:
+    """Refuse stale generations and absolute JSON paths outside the selected installation."""
+    installation = home.resolve().map_err((error) => error.message())?
+    toolchain = installation.joinpath(TOOLCHAIN_DIRECTORY)
+    if not toolchain.is_dir():
+        return Err(f"missing installed toolchain: {toolchain.0}")
+    if len(toolchain.rglob("*.previous.*").map_err((error) => error.message())?) > 0:
+        return Err("stale toolchain generation")
+    for document in release_json_documents(toolchain)?:
+        value = JsonValue
+            .parse(document.read_text("utf-8", "strict").map_err((error) => error.message())?)
+            .map_err((error) => f"{document.0}: {error.message()}")?
+        for observed in strings_and_keys(value)?:
+            if observed.startswith("/") and observed != installation.0 and not observed.startswith(installation.0 + "/"):
+                return Err(f"nonportable toolchain JSON {document.0}: {observed}")
+    for builder in builder_paths:
+        if builder == "":
+            continue
+        for document in toolchain.rglob("*").map_err((error) => error.message())?:
+            if document.is_file():
+                match document.read_text("utf-8", "strict"):
+                    Ok(text) =>
+                        if f"{builder}/" in text:
+                            return Err(f"installed records name the builder: {builder}")
+                    Err(_) => pass
+    return Ok(None)
+
+
+def release_json_documents(toolchain: Path) -> Result[list[Path], str]:
+    """Select release-owned metadata, excluding vendored registry sources and the Rust sysroot."""
+    mut documents = [toolchain.joinpath("toolchain.json")]
+    for name in ["native", "loaves"]:
+        directory = toolchain.joinpath(name)
+        if directory.is_dir():
+            documents += directory.rglob("*.json").map_err((error) => error.message())?
+    for name in ["closure.json", "selected.json"]:
+        document = toolchain.joinpath("registry").joinpath(name)
+        if document.is_file():
+            documents.append(document)
+    return Ok(documents)
+
+
+def prepare(output: Path, jobs: int, timeout_seconds: int) -> Result[Installation, str]:
+    """Resolve installed commands and create one retained `run.*` evidence directory."""
+    root = repository_root()?
+    home_text = get_or("INCAN_HOME", "")
+    if home_text == "":
+        return Err("INCAN_HOME must select the installed release")
+    home = Path(home_text).resolve().map_err((error) => error.message())?
+    oven = home.joinpath("bin/incan")
+    lsp = Path(get_or("INCAN_LSP", home.joinpath("bin/incan-lsp").0))
+    if not oven.is_file() or not lsp.is_file():
+        return Err("the installed Oven and language server are required")
+    output.mkdir(true, true).map_err((error) => error.message())?
+    temporary = TemporaryDirectory.try_new_with("run.", "", Some(output)).map_err((error) => error.message())?
+    run = temporary.persist().map_err((error) => error.message())?
+    standard = select_standard_sources(root, home, run)?
+    retain_input_digests(run, oven, lsp)?
+    return Ok(
+        Installation(
+            root=root,
+            home=home,
+            oven=oven,
+            lsp=lsp,
+            stdlib=standard,
+            run=run,
+            jobs=jobs,
+            timeout_seconds=timeout_seconds,
+        ),
+    )
+
+
+def select_standard_sources(root: Path, home: Path, run: Path) -> Result[str, str]:
+    """Expose checkout sources only for standard packages whose compiled artifacts the archive shipped."""
+    toolchain = home.joinpath(TOOLCHAIN_DIRECTORY)
+    if toolchain.joinpath("stdlib/core/loaf.toml").is_file():
+        return Ok("")
+    stdlib = run.joinpath("stdlib")
+    stdlib.mkdir(true, true).map_err((error) => error.message())?
+    mut packages: list[str] = []
+    for artifact in toolchain.joinpath("loaves").iterdir().map_err((error) => error.message())?:
+        if not artifact.is_dir():
+            continue
+        name = artifact.name()
+        if not name.startswith("incan_stdlib_"):
+            return Err(f"unknown standard package: {name}")
+        package = name[13:]
+        source = root.joinpath(f"loaves/stdlib/{package}")
+        if not source.joinpath("loaf.toml").is_file():
+            return Err(f"missing standard source: {package}")
+        stdlib.joinpath(package).symlink_to(source).map_err((error) => error.message())?
+        packages.append(package)
+    if "core" not in packages:
+        return Err("archive has no core standard package")
+    run
+        .joinpath("standard-packages.txt")
+        .write_text("\n".join(sorted(packages)) + "\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    return Ok(stdlib.0)
+
+
+def build_runner(installation: Installation) -> Result[Path, str]:
+    """Build a private copy of the contract runner with the installed compiler."""
+    project = installation.run.joinpath("runner")
+    project.mkdir(true, true).map_err((error) => error.message())?
+    _ = installation.root
+        .joinpath("workspaces/contracts/loaf.toml")
+        .copy(project.joinpath("loaf.toml"), true, true)
+        .map_err((error) => error.message())?
+    _ = installation.root
+        .joinpath("workspaces/contracts/src")
+        .copy(project.joinpath("src"), true, true)
+        .map_err((error) => error.message())?
+    require_step(
+        command_step(
+            installation,
+            "runner-build",
+            installation.oven.0,
+            ["build", project.joinpath("src/main.incn").0],
+            project,
+            installation.run.joinpath("runner-build.log"),
+        ),
+    )?
+    runner = project.joinpath("target/incan/debug/bin/contracts")
+    if not runner.is_file():
+        return Err(f"runner build produced no executable: {runner.0}")
+    return Ok(runner)
+
+
+def run_oven_tests(installation: Installation) -> Result[None, str]:
+    """Run the stable Oven and Loaf Incan-test inventory through the installed toolchain."""
+    return require_step(
+        command_step(
+            installation,
+            "oven-tests",
+            installation.oven.0,
+            [
+                "run",
+                installation.root.joinpath("scripts/oven_tests.incn").0,
+                "--",
+                installation.oven.0,
+                installation.run.0,
+                "--jobs",
+                str(installation.jobs),
+            ],
+            installation.root,
+            installation.run.joinpath("oven-tests-command.log"),
+        ),
+    )
+
+
+def run_rust_facets(installation: Installation) -> Result[int, str]:
+    """Run every production Loaf test suite that owns a Rust facet, retaining one log per project."""
+    output = installation.run.joinpath("rust-tests")
+    output.mkdir(true, true).map_err((error) => error.message())?
+    mut suites = 0
+    mut failed: list[str] = []
+    manifests = sorted(
+        [path.0 for path in installation.root.joinpath("loaves").rglob("loaf.toml").map_err((error) => error.message())?],
+    )
+    for manifest_text in manifests:
+        manifest = Path(manifest_text)
+        text = manifest.read_text("utf-8", "strict").map_err((error) => error.message())?
+        if not owns_rust_facet(text):
+            continue
+        suites += 1
+        project = manifest.parent()
+        relative = project.0[len(installation.root.0) + 1:]
+        label = relative.replace("/", "-")
+        code = run_step(
+            command_step(
+                installation,
+                f"rust-facet-{label}",
+                installation.oven.0,
+                ["test", project.0, "--profile", "release"],
+                installation.root,
+                output.joinpath(f"{label}.log"),
+            ),
+        )?
+        if code != 0:
+            failed.append(relative)
+    if suites == 0:
+        return Err("no Rust facets found")
+    if len(failed) > 0:
+        return Err("Rust facet test failures: " + ", ".join(failed))
+    return Ok(suites)
+
+
+def verify_lsp(installation: Installation, runner: Path) -> Result[None, str]:
+    """Require the installed server's live initialization, navigation, call hierarchy, and stale-buffer contract."""
+    mut environment = command_environment(installation)
+    environment["INCAN_LSP"] = installation.lsp.0
+    return require_step(
+        Step(
+            name="lsp-contract",
+            executable=runner.0,
+            arguments=[
+                installation.oven.0,
+                installation.root.joinpath("workspaces/contracts/fixtures").0,
+                "--scratch",
+                installation.run.joinpath("lsp-scratch").0,
+                "--jobs",
+                "1",
+                "--timeout",
+                str(installation.timeout_seconds),
+                "graph/incan/relationships",
+            ],
+            environment=environment,
+            remove_environment=["RUSTC_BOOTSTRAP"],
+            directory=Some(installation.root),
+            log=installation.run.joinpath("lsp-contract.log"),
+            timeout_seconds=installation.timeout_seconds * 2,
+        ),
+    )
+
+
+def run_contracts(installation: Installation, runner: Path) -> Result[BaselineReport, str]:
+    """Run all families once, accept runner status 0 or 1, then enforce completeness and the committed baseline."""
+    mut environment = command_environment(installation)
+    environment["INCAN_LSP"] = installation.lsp.0
+    log = installation.run.joinpath("contracts.log")
+    code = run_step(
+        Step(
+            name="contracts",
+            executable=runner.0,
+            arguments=[
+                installation.oven.0,
+                installation.root.joinpath("workspaces/contracts/fixtures").0,
+                "--scratch",
+                installation.run.joinpath("scratch").0,
+                "--jobs",
+                str(installation.jobs),
+                "--timeout",
+                str(installation.timeout_seconds),
+                "--isolated",
+            ] + [family for family in FAMILIES],
+            environment=environment,
+            remove_environment=["RUSTC_BOOTSTRAP"],
+            directory=Some(installation.root),
+            log=log,
+            timeout_seconds=installation.timeout_seconds * 20,
+        ),
+    )?
+    if code > 1:
+        return Err(f"contract runner exited {code}; evidence: {installation.run.0}")
+    baseline = installation.root.joinpath("workspaces/contracts/pass-baseline.txt")
+    report = check_baseline(
+        baseline.read_text("utf-8", "strict").map_err((error) => error.message())?,
+        log.read_text("utf-8", "strict").map_err((error) => error.message())?,
+    )?
+    write_json(installation.run.joinpath("counts.json"), counts_json(report.counts))?
+    return Ok(report)
+
+
+def command_step(
+    installation: Installation,
+    name: str,
+    executable: str,
+    arguments: list[str],
+    directory: Path,
+    log: Path,
+) -> Step:
+    """Create one installed-verification child specification."""
+    return Step(
+        name=name,
+        executable=executable,
+        arguments=arguments,
+        environment=command_environment(installation),
+        remove_environment=["RUSTC_BOOTSTRAP"],
+        directory=Some(directory),
+        log=log,
+        timeout_seconds=installation.timeout_seconds,
+    )
+
+
+def command_environment(installation: Installation) -> Dict[str, str]:
+    """Return the explicit environment selected for every installed-verification child."""
+    return {"INCAN_HOME": installation.home.0, "INCAN_STDLIB": installation.stdlib, "INCAN_NO_BANNER": "1", "OVEN_OWNER": "off", "RUSTUP_TOOLCHAIN": "1.98.0"}
+
+
+def owns_rust_facet(manifest: str) -> bool:
+    """Return whether a production Loaf manifest declares a Rust library or binary facet."""
+    for line in manifest.split("\n"):
+        selected = line.split("#")[0].strip()
+        if selected == "[rust]" or selected == "[[rust.bin]]":
+            return true
+    return false
+
+
+def strings_and_keys(value: JsonValue) -> Result[list[str], str]:
+    """Collect every JSON string and object key for the relocation audit."""
+    mut values: list[str] = []
+    if value.is_str():
+        values.append(value.expect_str().map_err((error) => error.message())?)
+    elif value.is_array():
+        for entry in value.expect_array().map_err((error) => error.message())?:
+            values += strings_and_keys(entry)?
+    elif value.is_object():
+        fields = value.expect_object().map_err((error) => error.message())?
+        for key in fields.keys():
+            values.append(key)
+            values += strings_and_keys(fields[key])?
+    return Ok(values)
+
+
+def retain_input_digests(run: Path, oven: Path, lsp: Path) -> Result[None, str]:
+    """Retain the installed commands' and optional source archive's exact SHA-256 identities."""
+    run
+        .joinpath("oven.sha256")
+        .write_text(f"{digest(oven)?}  {oven.0}\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    run
+        .joinpath("lsp.sha256")
+        .write_text(f"{digest(lsp)?}  {lsp.0}\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    archive = Path(get_or("INCAN_RELEASE_ARCHIVE", ""))
+    if archive.is_file():
+        run
+            .joinpath("archive.sha256")
+            .write_text(f"{digest(archive)?}  {archive.0}\n", "utf-8", "strict", None)
+            .map_err((error) => error.message())?
+    return Ok(None)

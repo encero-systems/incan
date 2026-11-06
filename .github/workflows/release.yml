@@ -1,10 +1,7 @@
-name: dev.8 installed toolchain
+name: Release qualification
 
-# Full CI runs on main, on release branches and on the development line's pull request into main. Stacked PRs get
-# stack_checks.yml instead.
-
-# Set BUILD_TOOLCHAIN only after the real release passes its self-hosting gate.
-# Its JSON maps each target triple to a GHCR tag@sha256:digest (publisher output).
+# Full qualification builds this checkout's compiler from the checked-in released seed. Stacked PRs use
+# stack_checks.yml; the release workflow enables the fixed-point flag once the reproducibility stage lands.
 on:
   push:
     branches: [main, release/**]
@@ -17,12 +14,12 @@ permissions:
   packages: read
 
 concurrency:
-  group: dev8-${{ github.event.pull_request.number || github.ref }}
+  group: release-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  contracts:
-    name: Contracts (${{ matrix.target }})
+  qualification:
+    name: Release (${{ matrix.target }})
     strategy:
       fail-fast: false
       matrix:
@@ -34,22 +31,29 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v5
-      - name: Install and verify dev.8
+        with:
+          fetch-depth: 0
+      - name: Install the released build seed
         uses: ./.github/actions/install-build-toolchain
         with:
-          reference: ${{ fromJSON(vars.BUILD_TOOLCHAIN || '{}')[matrix.target] }}
+          target: ${{ matrix.target }}
           token: ${{ secrets.GITHUB_TOKEN }}
-          verify: 'true'
-      - name: Retain installation and contract evidence
+      - name: Build and verify the checkout release
+        run: >-
+          incan run scripts/release.incn -- "$GITHUB_SHA" "$RUNNER_TEMP/release"
+          --jobs 6 --timeout 600
+      - name: Retain release evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dev8-${{ matrix.target }}
+          name: release-${{ matrix.target }}
           path: |
-            ${{ runner.temp }}/dev8/run.*/*.txt
-            ${{ runner.temp }}/dev8/run.*/*.log
-            ${{ runner.temp }}/dev8/run.*/*.sha256
-            ${{ runner.temp }}/dev8/run.*/*.json
+            ${{ runner.temp }}/release/**/*.diff
+            ${{ runner.temp }}/release/**/*.json
+            ${{ runner.temp }}/release/**/*.log
+            ${{ runner.temp }}/release/**/*.sha256
+            ${{ runner.temp }}/release/**/*.tsv
+            ${{ runner.temp }}/release/**/*.txt
           if-no-files-found: warn
 
   docs:
@@ -63,10 +67,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Install dev.8
+      - name: Install the build toolchain
         uses: ./.github/actions/install-build-toolchain
         with:
-          reference: ${{ fromJSON(vars.BUILD_TOOLCHAIN || '{}')['x86_64-unknown-linux-gnu'] }}
+          target: x86_64-unknown-linux-gnu
           token: ${{ secrets.GITHUB_TOKEN }}
       - name: Check US English
         run: incan run scripts/check_us_english.incn
