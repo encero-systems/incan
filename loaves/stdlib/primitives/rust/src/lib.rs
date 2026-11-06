@@ -1,6 +1,19 @@
-//! Native owner anchors required by the Incan-authored primitive standard package.
+//! Native foundations required by the Incan-authored primitive standard package.
 
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
+pub mod channel;
+pub mod errors;
 pub mod file;
+pub mod frozen;
 pub mod mapping;
+pub mod sync;
+pub mod task;
+pub mod time;
+
+/// Internal re-exports used by compiler-generated code and primitive async sources.
+///
+/// These are toolchain-locked implementation details rather than user-facing standard-library API.
+pub mod __private {
+    pub use tokio;
+}

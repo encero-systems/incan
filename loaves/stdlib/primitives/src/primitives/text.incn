@@ -3,7 +3,7 @@
 from rust::std::string import String as RustString
 from rust::std::str import from_utf8
 from rust::std::convert import Into as RustInto
-from rust::incan_std_core::frozen import FrozenStr as RuntimeFrozenStr, FrozenBytes as RuntimeFrozenBytes
+from rust::incan_std_primitives::frozen import FrozenStr as RuntimeFrozenStr, FrozenBytes as RuntimeFrozenBytes
 
 
 pub def encode_utf8(value: &str) -> bytes:

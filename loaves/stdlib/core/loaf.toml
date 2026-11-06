@@ -15,3 +15,4 @@ root = "rust"
 [dependencies]
 incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
 incan_derive = { loaf = "incan_derive", path = "../derive/incan_derive", version = "0.6.0-dev.6" }
+incan_std_primitives = { loaf = "incan_stdlib_primitives", path = "../primitives", version = "0.5.0" }

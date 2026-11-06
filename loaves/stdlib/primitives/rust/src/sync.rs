@@ -1,4 +1,4 @@
-//! Tokio-backed synchronization adapters for `std.async.sync`.
+//! Tokio-backed synchronization adapters for `std.primitives.async.sync`.
 
 use std::fmt;
 use std::sync::{Arc, Mutex as StdMutex};

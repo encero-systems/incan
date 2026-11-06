@@ -1,4 +1,4 @@
-//! Tokio-backed channel adapters for `std.async.channel`.
+//! Tokio-backed channel adapters for `std.primitives.async.channel`.
 
 use std::fmt;
 use std::sync::{Arc, Mutex as StdMutex};

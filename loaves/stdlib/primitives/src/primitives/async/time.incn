@@ -27,11 +27,11 @@ Examples:
         Err(err) => println(err.message())
 """
 
-from std.rust import Send, Static
+from std.primitives.async import Send, Static
 from std.primitives.errors import Error
-from rust::incan_std_async::task import RuntimeFuture
-from rust::incan_std_async::time import clamp_seconds, clamp_millis
-from rust::incan_std_async::__private::tokio::time import (
+from rust::incan_std_primitives::task import RuntimeFuture
+from rust::incan_std_primitives::time import clamp_seconds, clamp_millis
+from rust::incan_std_primitives::__private::tokio::time import (
     sleep as tokio_sleep,
     timeout as tokio_timeout,
 )

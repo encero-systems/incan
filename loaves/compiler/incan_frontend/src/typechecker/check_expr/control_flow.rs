@@ -224,6 +224,9 @@ impl TypeChecker {
         if let Some(future) = self.rust_associated_type(ty, "std::future::IntoFuture", "IntoFuture") {
             return self.rust_associated_type(&future, "std::future::Future", "Output");
         }
+        if let Some(output) = self.runtime_join_handle_output(ty) {
+            return Some(output);
+        }
         if let Some(name) = self.generic_placeholder_name(ty) {
             return self.await_output_type_from_active_bound(name);
         }
@@ -244,6 +247,33 @@ impl TypeChecker {
             ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.await_output_type_from_type(inner),
             _ => None,
         }
+    }
+
+    /// Resolve the registry-owned task handle's await output when selected Loaf metadata omits its native associated
+    /// type. Runtime provenance is required so an equal-spelled source type cannot acquire task semantics.
+    fn runtime_join_handle_output(&self, ty: &ResolvedType) -> Option<ResolvedType> {
+        let projected;
+        let native = if let Some(target) = self.rusttype_native_target(ty) {
+            projected = target;
+            &projected
+        } else {
+            ty
+        };
+        let ResolvedType::Generic(base, arguments) = native else {
+            return None;
+        };
+        if surface_types::from_runtime_rust_path(base) != Some(SurfaceTypeId::JoinHandle)
+            || !self.type_info.runtime_owner_admitted(SurfaceTypeId::JoinHandle)
+        {
+            return None;
+        }
+        let [payload] = arguments.as_slice() else {
+            return None;
+        };
+        Some(result_ty(
+            payload.clone(),
+            ResolvedType::Named(surface_types::TASK_JOIN_ERROR_TYPE_NAME.to_string()),
+        ))
     }
 
     /// Resolve `Awaitable[T]` output from active generic bounds for one placeholder.

@@ -48,6 +48,8 @@ The commitment in short:
 
 The architecture page holds the governing rules, the decision register (BE-01 to BE-34), the stage order, the proof tables and the code map.
 
+> **Clarification (2026-11-06):** RFC 168 established `std.primitives` as the foundation below `incan_platform`; the platform is below every other standard package, not below the primitive package. The living architecture page reflects that dependency order.
+
 This record supersedes two earlier rules:
 
 - **DD-0012, decision 10:** "a missing or damaged record is a miss". A missing record is `Absent`; damage is a corruption `DbError` and never reads as absence.

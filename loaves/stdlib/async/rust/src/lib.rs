@@ -1,18 +1,14 @@
-//! Task, timer, channel and synchronization runtime: the Rust facet of the `async` standard library component.
+//! Racing and runtime entry adapters: the Rust facet of the higher-level `async` standard library component.
 //!
-//! The `std.async` sources import these modules with `from rust::incan_std_async::…`; generated code links the crate
-//! when its program reaches `std.async`, and the compiler writes the checked `std.async` facade into every generated
-//! crate today, so in practice every program does. The modules are thin, Python-shaped wrappers over tokio: task
-//! spawning and joining, timeouts, racing, channels and the synchronization primitives.
+//! Foundational task, timer, channel and synchronization adapters live in `incan_std_primitives`. This facet preserves
+//! their established module paths through identity-preserving re-exports and owns only the higher-level race and
+//! runtime entry mechanisms.
 
 #![deny(clippy::unwrap_used)]
 
-pub mod channel;
 pub mod race;
 pub mod runtime;
-pub mod sync;
-pub mod task;
-pub mod time;
+pub use incan_std_primitives::{channel, sync, task, time};
 
 /// Internal re-exports used by compiler-generated code and the `std.async` sources.
 ///

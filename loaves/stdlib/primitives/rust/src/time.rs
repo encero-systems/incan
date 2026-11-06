@@ -1,4 +1,4 @@
-//! Tokio-backed time adapters for `std.async.time`.
+//! Tokio-backed time adapters for `std.primitives.async.time`.
 
 use crate::task::{JoinHandle, TaskJoinError};
 use std::fmt;

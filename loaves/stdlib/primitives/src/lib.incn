@@ -37,6 +37,7 @@ import primitives.vocab._syntax
 import primitives.vocab._versions
 import primitives.vocab.scoped
 import primitives.vocab.transport
+pub from primitives.async import Fn, FnMut, FnOnce, Send, Static, Sync
 pub from primitives.io import Endian, IoError, WriteBuffer
 pub from primitives.native_strings import nul_terminated_utf8
 pub from primitives.output import write_stderr_line, write_stdout_line

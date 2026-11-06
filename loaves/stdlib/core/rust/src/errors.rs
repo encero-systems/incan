@@ -10,6 +10,8 @@ use core::fmt::{self, Display};
 use incan_lang::errors::{ErrorKind, IncanError, ZeroDivisionOperation};
 use incan_lang::lang;
 
+pub use incan_std_primitives::errors::raise_value_error;
+
 /// Raise a runtime error (implemented as a panic) with canonical formatting.
 #[cold]
 #[track_caller]
@@ -46,13 +48,6 @@ pub fn error_string_kind_fmt(kind: ErrorKind, msg: fmt::Arguments<'_>) -> String
     // Writing to String cannot fail.
     let _ = write!(&mut out, "{}: {}", lang::errors::as_str(kind), msg);
     out
-}
-
-/// Raise a `ValueError` with a canonical `ValueError: ...` prefix.
-#[cold]
-#[track_caller]
-pub fn raise_value_error(msg: &str) -> ! {
-    raise(IncanError::with_message(ErrorKind::ValueError, msg))
 }
 
 /// Raise a `TypeError` with a canonical `TypeError: ...` prefix.

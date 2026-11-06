@@ -1,4 +1,4 @@
-//! Tokio-backed task adapters for `std.async.task`.
+//! Tokio-backed task adapters for `std.primitives.async.task`.
 
 use std::fmt;
 use std::future::{Future, IntoFuture};

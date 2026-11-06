@@ -23,7 +23,7 @@ Cancellation contracts:
 - `OneshotReceiver.recv()` is cancel-safe: cancelling a pending receive does not consume the one-shot value.
 """
 from std.primitives.errors import Error
-from rust::incan_std_async::channel import (
+from rust::incan_std_primitives::channel import (
     RawSender,
     RawSenderPermit,
     RawReceiver,
