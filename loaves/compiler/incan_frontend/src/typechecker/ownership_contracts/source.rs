@@ -101,6 +101,9 @@ struct Path {
 struct Builder<'a> {
     checker: &'a TypeChecker,
     owner: CanonicalSymbolId,
+    /// Whether an ordinary iteration-only profile may evaluate fresh aggregate list elements. Explicit ownership
+    /// profiles keep their established refusal until retained aggregate storage has a complete transfer proof.
+    allow_fresh_aggregate_elements: bool,
     graph: Graph,
     locals: BTreeMap<CanonicalSymbolId, Permission>,
     aliases: BTreeMap<CanonicalSymbolId, Path>,
@@ -141,7 +144,7 @@ pub(super) fn build(
     span: Span,
     identity: &CanonicalSymbolId,
 ) -> Result<Graph, Unavailable> {
-    build_reporting_views(checker, callable, span, identity).0
+    build_reporting_views(checker, callable, span, identity, false).0
 }
 
 /// Build the body's graph and also return the diagnostics for returns that do not borrow the declared view.
@@ -150,9 +153,17 @@ pub(super) fn build_reporting_views(
     callable: CallableSource<'_>,
     span: Span,
     identity: &CanonicalSymbolId,
+    allow_fresh_aggregate_elements: bool,
 ) -> (Result<Graph, Unavailable>, Vec<crate::diagnostics::CompileError>) {
     let mut view_errors = Vec::new();
-    let graph = build_graph(checker, callable, span, identity, &mut view_errors);
+    let graph = build_graph(
+        checker,
+        callable,
+        span,
+        identity,
+        allow_fresh_aggregate_elements,
+        &mut view_errors,
+    );
     (graph, view_errors)
 }
 
@@ -164,6 +175,7 @@ fn build_graph(
     callable: CallableSource<'_>,
     span: Span,
     identity: &CanonicalSymbolId,
+    allow_fresh_aggregate_elements: bool,
     view_errors: &mut Vec<crate::diagnostics::CompileError>,
 ) -> Result<Graph, Unavailable> {
     let (parameters, body, receiver, name, kind) = match callable {
@@ -217,6 +229,7 @@ fn build_graph(
     let mut builder = Builder {
         checker,
         owner: identity.clone(),
+        allow_fresh_aggregate_elements,
         locals: checker
             .symbols
             .all_symbols()
@@ -243,6 +256,7 @@ fn build_graph(
             owner: identity.clone(),
             permissions: BTreeMap::new(),
             loans: Vec::new(),
+            direct_iteration_loans: BTreeSet::new(),
             local_loans: BTreeMap::new(),
             dependent_locals: BTreeMap::new(),
             dependent_values: BTreeSet::new(),

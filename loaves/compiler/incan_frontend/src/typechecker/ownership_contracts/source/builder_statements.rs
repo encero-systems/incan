@@ -455,6 +455,7 @@ impl Builder<'_> {
             Some(path) => {
                 let place = path.place.clone();
                 let loan = self.call_loan(path, false, false, iter.span);
+                self.graph.direct_iteration_loans.insert(loan);
                 evaluated = self.event(evaluated, Event::Borrow(loan), iter.span);
                 Some((loan, place))
             }

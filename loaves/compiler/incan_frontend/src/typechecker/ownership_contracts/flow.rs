@@ -44,7 +44,7 @@ pub(in crate::typechecker) struct Place {
 
 impl Place {
     /// A prefix owns its descendants; differing canonical stored fields are proven disjoint.
-    fn contains(&self, other: &Self) -> bool {
+    pub(super) fn contains(&self, other: &Self) -> bool {
         self.root == other.root && other.projection.starts_with(&self.projection)
     }
 
@@ -217,6 +217,9 @@ pub(in crate::typechecker) struct Graph {
     pub owner: CanonicalSymbolId,
     pub permissions: BTreeMap<Root, Permission>,
     pub loans: Vec<Loan>,
+    /// Loans created by direct stored-place iteration. Diagnostic projection consumes this authenticated source fact
+    /// rather than rediscovering loop structure by walking the completed control-flow graph.
+    pub direct_iteration_loans: BTreeSet<LoanId>,
     /// Explicit local declarations retain their selected loan independently of display spelling.
     pub local_loans: BTreeMap<CanonicalSymbolId, LoanId>,
     /// Owned locals whose values keep one or more checked source loans alive through their last value use.

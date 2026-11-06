@@ -1,5 +1,4 @@
-//! DD-0006 lifetime contracts: a source return or field type never names a lifetime-bearing Rust type, and a match
-//! subject whose type names none holds no loan of its evaluation's temporaries.
+//! DD-0006 native lifetime contracts owned by the canonical ownership boundary.
 
 use std::cell::RefCell;
 
