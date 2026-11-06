@@ -7,8 +7,11 @@
     - RFC 164 (explicit ownership and borrowing contracts)
     - RFC 024 (extensible derive protocol)
     - RFC 047 (lightweight directed graph types)
+    - RFC 085 (field metadata and rename continuity)
     - RFC 086 (schema descriptors and adapters)
     - RFC 094 (context managers)
+    - RFC 103 (secret values)
+    - RFC 106 (declaration identity and semantic digests)
     - RFC 112 (crash-safe publication and file coordination)
     - RFC 114 (compiled providers and package features)
     - RFC 117 (Loaf project model)
@@ -155,6 +158,45 @@ def restore_page() -> Result[Page, CrumbError]:
 A crumb carries the typed encoded value or owns the backing handles sufficient to reconstruct it. A model representation may compose field crumbs; it is not merely an unretained hash whose bytes might already have been collected. Exporting a representation with external field references must include or explicitly retain the required contents. A hash identifies candidate contents, not their continued availability.
 
 The storage implementation may keep scalars inline, share immutable typed fields in memory, encode field values, or use a combination. Calling `.crumble()` explicitly requests an encoded representation; ordinary model access and database storage do not require repeatedly serializing and deserializing every field. Decoding and copying remain observable work. The format and physical layout must be qualified using composed application and compiler-shaped records, including distinct source locations, rather than assuming all repeated instructions have identical provenance.
+
+A crumb keeps working as its model changes, because it matches fields by a small identity rather than by name or position. The compiler computes a field's identity from the earliest name the field has had, so nobody assigns one:
+
+```incan
+# A crumb written with this model
+model Invoice:
+    id: int
+    customer: str
+    total: int
+
+# reads with this one, with no migration
+model Invoice:
+    total: int
+    id: int
+    buyer [renamed_from="customer"]: str
+    note: Option[str]
+```
+
+`buyer` has the identity of `customer`, so its values arrive there, and reordering the fields changes nothing. `note` is not in the old crumb, so it reads as `None`, and an older reader given a newer crumb skips `note`. A required field that a crumb does not hold is a typed failure.
+
+Additive changes are preferred. Dropping a field does not erase it: its values stay in existing crumbs, and they read again if the name returns, because it is the same field.
+
+A crumb can also say whether two values are the same. Its canonical hash covers the fields that define the value, and its object hash covers every field. A field that records when something arrived rather than what it is can opt out of the first:
+
+```incan
+model Reading:
+    sensor: str
+    value: float
+    received_at [canonical=false]: DateTime
+
+def same_reading(morning: DateTime, evening: DateTime) -> Result[None, CrumbError]:
+    first = Reading(sensor="a1", value=20.5, received_at=morning).crumble()?
+    second = Reading(sensor="a1", value=20.5, received_at=evening).crumble()?
+    assert first.canonical_hash() == second.canonical_hash()
+    assert first.object_hash() != second.object_hash()
+    return Ok(None)
+```
+
+`first` and `second` are the same reading, stored at different times.
 
 ### Fluent lazy resource scopes
 
@@ -336,11 +378,11 @@ A bare identifier is not authority to read another store or inaccessible root. L
 
 `Record` must describe supported fields, their types, field identities and deterministic encoding through `std.primitives.crumb`. Crumb owns encoding, typed reconstruction, schema/version checks and decoding errors. The database owns record identity, field indexes, deduplication policy, transactions and retention. Crumb must not import database or compiler implementation services. Primitive values, enums, supported containers, other record models and typed record references must compose. Unsupported resources, cycles through live heap references and unbound runtime state must produce a declaration or encoding error, not an opaque dump of memory.
 
-A stored value must decode to its declared Incan model. This does not require serialized bytes to have the layout of a native model instance. On-disk encoding must not depend on native struct padding, process addresses, hash-map iteration order or host endianness. A codec profile must define ordering, floating-point representation and canonicalization explicitly; it must not silently merge distinctions that the declared value semantics preserve.
+A stored value must decode to its declared Incan model. This does not require serialized bytes to have the layout of a native model instance. On-disk encoding must not depend on native struct padding, process addresses, hash-map iteration order or host endianness. A codec profile must define the arrangement of the bytes explicitly and must keep every distinction its hash profile draws, so a value read back has the hash it was written with. Every frame must name its codec profile, and a reader that does not support that profile must return a typed failure rather than guess. A matching model is not evidence of a matching arrangement.
 
-Crumb conversion must preserve declared model data and validate the requested model/schema before exposing a reconstructed value. Incompatible types or versions, missing referenced contents, malformed lengths, damaged bytes and unsupported resources must return typed failures. Decoding must be bounded and consume its declared frame exactly. Stored data must not supply executable reconstruction code. Conversion must honor the established model construction and validation contract; reconstruction is not a private bypass for producing an invalid model. Secret export and diagnostics remain governed by the language's secret-handling rules; encoding is not permission to disclose protected fields, and redaction must not be misrepresented as lossless reconstruction.
+Crumb conversion must preserve declared model data and validate the requested model/schema before exposing a reconstructed value. Incompatible types or versions, missing referenced contents, malformed lengths, damaged bytes and unsupported resources must return typed failures. Decoding must be bounded and consume its declared frame exactly. Stored data must not supply executable reconstruction code. Conversion must honor the established model construction and validation contract; reconstruction is not a private bypass for producing an invalid model. `SecretStr` and `SecretBytes` follow RFC 103: a model that holds either, directly or nested, must be refused during checking when it is crumbled or stored, with a diagnostic naming the field path. A frame and a hash must therefore never hold a secret's contents or anything derived from them. A model that records that a secret existed declares RFC 103's `RedactedSecret`, which is ordinary, forgeable data and cannot restore the secret.
 
-Field lookup must bind the selected field identity, declared value type and equality profile. A content hash locates candidates; the implementation must verify the actual typed value before treating a candidate as equal. Forced collisions must not alias distinct values or records. Range order must follow the declared value semantics rather than arbitrary digest or encoded-byte order. Crumb's format is independent of a particular hash algorithm or mandatory per-field blob layout.
+Field lookup must bind the selected field identity, declared value type and equality profile. A content hash locates candidates; the implementation must verify the actual typed value before treating a candidate as equal. Forced collisions must not alias distinct values or records. Range order must follow the declared value semantics rather than arbitrary digest or encoded-byte order. Field lookup is independent of a particular hash algorithm, and Crumb's format is independent of a mandatory per-field blob layout.
 
 Custom codecs may implement the same typed contract. Their identity, schema, determinism and resource limits must be inspectable. Executable codec code is supplied by the installed program, not loaded and executed from an imported record set.
 
@@ -348,7 +390,55 @@ The record contract must also enumerate retained typed revision and payload refe
 
 Retaining references and historical observations must be distinct types. `ObservedRevision[T]` and `PayloadIdentity` preserve evidence without registering immortal retention roots; using either requires an availability check and acquisition of a live lease before reading. Removing that payload does not rewrite the historical observation. Conversely, the store must not expire an active `RevisionRef[T]` or `PayloadRef` as if it were only an observation.
 
-Changing a schema or codec requires an explicit versioned migration or an explicitly compatible descriptor. A field renamed with RFC 085's `renamed_from` is such a descriptor, so its stored records need no migration. Migration must stage and validate a successor selection before publication; old leased snapshots must remain readable using their declared profiles, or the operation must refuse. Unsupported versions must never be treated as absent records.
+Changing a schema or codec requires an explicit versioned migration or an explicitly compatible descriptor. A field renamed with RFC 085's `renamed_from` is such a descriptor, so its stored records need no migration. Reordering fields, dropping a field and adding a field that reads as `None` or empty when absent are compatible in the same way, because a reader matches fields by identity. Migration must stage and validate a successor selection before publication; old leased snapshots must remain readable using their declared profiles, or the operation must refuse. Unsupported versions must never be treated as absent records.
+
+### Field identities
+
+A field's identity is the first 4 bytes of the SHA-256 of the UTF-8 bytes of its earliest name, which is the first name in its RFC 085 `renamed_from` when it has one and its own name otherwise. An enum variant's identity follows the same rule. The compiler derives identities from checked declarations, and authors neither write nor assign them.
+
+- A frame must list the identities of each model's fields once, in ascending byte order, rather than tagging every value. That order keeps declaration order out of the encoding and lets a reader find a field without scanning the list.
+- A reader must match values to fields by identity, never by name or declared position. Renaming a field under RFC 085 or reordering fields must therefore neither misread existing data nor change a value's canonical representation.
+- An identity must be unique only within its model or enum, because a frame says which model it holds. Two fields of one model, or two variants of one enum, with the same identity must produce a declaration error naming both. The author resolves it by naming the newer one differently.
+- A value whose identity the reader's model does not declare must be skipped. A field the frame does not hold must read as `None` when it is optional and as empty when it is a collection whose declared default is empty. Any other field the frame does not hold, including one with another default, must produce a typed failure naming the field, because reading must not depend on a model's current defaults.
+- Removing a field's earliest name from `renamed_from` gives the field a new identity, which makes it a dropped field and an added one.
+- A name that returns after being dropped is the same field. It has its old identity, and values written before the drop must read again when their type still fits. A field with a new meaning needs a new name. Crumb keeps no history of dropped names; a database built on these primitives may keep that history and refuse a returning name under its own policy.
+
+### What counts as the same value
+
+A hash covers a typed value, never the bytes of a frame, so one value has one hash under every codec profile. What a hash covers is the value's canonical representation. Every hash names its hash profile and its algorithm, as in `crumb1:sha256:…`, and hashes under different profiles must not be compared. A change to these rules must take a new profile name, and the earlier profile must stay readable, because stored hashes were computed under it.
+
+The profile `crumb1` defines the following:
+
+- **Floats:** `-0.0` and `0.0` are different values. Every NaN is one value, the quiet NaN with a clear sign and a zero payload. Encoding writes that NaN, so a float holding any other NaN reads back as that one.
+- **Strings:** a string is not normalized, so two spellings of one character, such as `é` as one code point and as two, are different values.
+- **Optionals:** `None` and `Some(None)` are different values, and a bare `x` in an `Option` slot is the same value as `Some(x)`.
+- **Dicts and sets:** entries hash in the profile's own order, which runs no user code: `false` before `true`, integers numerically, strings and bytes byte by byte, `None` before any other value, tuples and lists element by element with a shorter one first, a newtype as the value it holds, enum values by variant identity and then payload, and models field by field in identity order.
+- **Fields:** a model's fields hash in ascending identity order. A field holding what it would read as when absent, `None` for an optional or empty for a collection whose declared default is empty, contributes nothing, so adding such a field moves no existing record's hash.
+- **References:** a typed reference contributes the identity it names and never its target's contents, so a later revision of the target moves no hash.
+
+These rules define what hashes and stored comparisons treat as the same. They do not change the language's `==`, where `-0.0 == 0.0` stays true and `nan == nan` stays false. A hash or a stored comparison must not call a model's `__eq__`. A field index says which of the two it follows through its equality profile.
+
+### Record hashes
+
+A stored record carries three hashes, and each answers its own question:
+
+| Hash           | Covers                                   | Answers                                  |
+| -------------- | ---------------------------------------- | ---------------------------------------- |
+| Object hash    | Every stored field                       | Is this exactly what was stored?         |
+| Canonical hash | The stored fields that define the record | Is this the same thing?                  |
+| Model hash     | The stored shape of its model            | Was this written against the same model? |
+
+A field counts toward the canonical hash unless its declaration opts out with RFC 085's `canonical=false`, and a nested model's fields follow that model's own settings.
+
+The model hash covers each field's identity, declared type and `canonical` setting, with nested models and enums folded in. The compiler computes it from the checked declaration. Documentation, methods, declaration order and the model's path must not enter it, so renaming or reordering fields does not move it. A record whose model hash differs from its family's model needs a migration or a compatible descriptor.
+
+The object hash and the canonical hash must not cover the model hash, because adding an optional field would then make every record look changed. A comparison across models must therefore check the model hash as well.
+
+Two records with equal contents have equal hashes and different identities. A hash shows that a record no longer matches its contents, but evidence of tampering also needs a signature or a digest kept elsewhere. Computing a hash needs no store; recording one beside a record is the database's job.
+
+### Names the store reserves
+
+A name that starts with three underscores belongs to the store, the way two mark a language hook such as `__eq__`. A model must not declare a field with such a name, and doing so is a declaration error. The store's names are a closed list, `___id`, `___revision`, `___model_hash`, `___canonical_hash` and `___object_hash`, and they name those facts wherever a stored record is inspected or exported. Importing a record that holds any other such name must return a typed failure rather than skip it as an unknown field. No hash covers one of these names, so a hash never covers itself, and a value that was never stored has none of them.
 
 ### Indexes and relationships
 
@@ -487,7 +577,8 @@ Inspection must expose capabilities, schemas, view and snapshot identities, inde
 | Interactive experience   | A render reads one state snapshot; a draft fork cannot mutate the published view; stale cursors and absent-selection changes are detected; no callback or effect executes inside storage operations.                                            |
 | Scale and memory         | Point reads, bounded ranges, idle snapshots and streaming compaction are measured at increasing corpus sizes; counters expose unrelated work and hidden whole-store materialization.                                                            |
 | Storage modes | Equivalent typed operations agree across disk, spooled-memory and memory modes. Cross the spool threshold during an uncommitted incremental import and with active readers; verify stable identities, no premature publication, valid borrowed buffers, observable resource bounds and temporary cleanup after retention ends. Memory exhaustion must not create spill files. |
-| Crumb reconstruction | Restore composed models, payload enums, collections, optional values and compiler-shaped records after process restart. Test schema mismatches, unavailable field contents, malformed framing, resource limits, collision candidates and protected-field diagnostics. Compare typed sharing, encoded sharing and scalar-inline layouts with allocation/copy/decode measurements; no production performance or durability claim follows from a representation spike alone. |
+| Crumb reconstruction | Restore composed models, payload enums, collections, optional values and compiler-shaped records after process restart. Test schema mismatches, unavailable field contents, malformed framing, resource limits, collision candidates and protected-field diagnostics. Read crumbs written before a rename, a reorder, an added optional field and a dropped field, and read a dropped field's earlier values when its name returns; refuse a missing required field, colliding identities at declaration and a frame naming an unknown codec profile. Compare typed sharing, encoded sharing and scalar-inline layouts with allocation/copy/decode measurements; no production performance or durability claim follows from a representation spike alone. |
+| Value identity | `-0.0`, `0.0`, `None`, `Some(None)` and two spellings of one string stay distinct through encoding, reading and hashing. NaNs with different signs and payloads read back as the one NaN and hash alike. A dict or set built in different insertion orders has one hash, and one value has one hash under every codec profile. Renaming a field, reordering fields and adding an optional field move no existing record's canonical or object hash. A rename or reorder leaves the model hash alone, and adding a field moves it. `canonical=false` moves the object hash and not the canonical hash. Checking refuses a `___` field and a secret held directly or nested. |
 | Packaging                | A consumer selecting memory graphs alone excludes storage; a storage consumer excludes analytical engines, protocol compilers and renderer runtimes unless explicitly selected.                                                                 |
 | Projected batch scans    | A narrow projection over a wide family agrees with point reads; counters prove no full-model construction on the direct-column path, disclose decoded/copied bytes and keep unsupported predicates explicit.                                    |
 
@@ -524,6 +615,17 @@ This RFC adds a standard module. It does not reopen RFC 047 or reinterpret exist
 - **Only expose an untyped key/value store:** insufficient as the public standard-library contract; every consumer would rebuild schemas, reference validation and revision-safe materialization.
 - **Put a complete analytical or graph-query engine in `std.db`:** rejected because storage access must remain independently selectable and domain-neutral. Query libraries can consume typed scans and graph views.
 - **Serialize arbitrary native objects:** rejected because process-local layout and resources cannot define portable durable identity or safe recovery.
+- **Match encoded fields by position:** rejected because reordering a model's fields would silently misread existing data.
+- **Match encoded fields by name:** a reader could translate old names, but a rename would change every record's canonical representation, so every record would look changed.
+- **Field numbers assigned by hand, as Protobuf does:** every field would carry a number that its author has to manage and never reuse, when `renamed_from` already says what a rename means.
+- **Field IDs assigned in table metadata, as Iceberg does:** Crumb has to work outside a store, in files and messages, where no table exists to hold them.
+- **Treat `-0.0` and `0.0` as one value, as `==` does:** reading a record back would change a value that a program can observe, for example through division.
+- **Keep NaN signs and payloads:** two values that print alike would hash differently.
+- **Normalize strings:** reading back would change what was written, and a hash would depend on a Unicode version.
+- **Order dict and set entries through their own comparison:** hashing would run user code.
+- **Use RFC 106's semantic digest as the model hash:** that digest must move on a field reorder and on a changed reference target, and neither changes what a record holds.
+- **One hash per record:** it could not say both "this is exactly what was stored" and "this is the same reading, received twice".
+- **Leave a secret field out of the encoding and mark it:** a model would read back without a field it declares. RFC 103 refuses a placeholder from a serializer, and an unsupported field must not disappear from the result.
 - **Make persistence mandatory for interactive state:** rejected because transient state and pure in-memory graphs are first-class workloads.
 - **Keep no history by default, as SQLite does:** a consumer could not resume after a restart without first declaring a policy, so the common case would need configuration before it worked.
 - **Keep all history by default, as Datomic does:** the disk of an application that never thought about history would grow for as long as it runs.
@@ -535,10 +637,14 @@ This RFC adds a standard module. It does not reopen RFC 047 or reinterpret exist
 
 The standard library would acquire a long-lived storage-format and recovery commitment. Precise identities, leases, cursors and trace semantics add API weight, and typed schemas require explicit evolution. Retention can consume disk until a caller releases roots, and a live reader that never finishes holds history past its policy; bounded resource errors are less convenient than silent eviction. The default history window costs a disk store a day of superseded revisions that an application may never read. Supporting disk, spooled-memory and memory modes requires conformance across different failure models. These costs are justified only if consumers actually share the implementation and its proofs.
 
+Field identities tie encoded data to a field's earliest name, so that name has to stay in source for as long as data written under it is read, and a small frame pays for its identity list.
+
+A hash profile is a long-lived commitment, because a changed rule needs a new profile name and the old one stays readable. A program that carries data in NaN payloads loses it on encoding.
+
 ## Layers affected
 
 - **Standard library and platform:** the shared storage substrate, typed API, graph adapter, capability profiles and independent package selection.
-- **Type checking and derive support:** model/codec compatibility, typed family and endpoint validation, and lifetime-safe materialization through existing language mechanisms.
+- **Type checking and derive support:** model/codec compatibility, field identity collisions, reserved `___` field names, models holding secrets, typed family and endpoint validation, and lifetime-safe materialization through existing language mechanisms.
 - **Tooling and inspection:** stable schemas, identities, read evidence, resource counters and durability qualification.
 - **Documentation and contracts:** public API reference and independent storage, graph, publishing and interactive-state conformance cases.
 
@@ -554,6 +660,12 @@ The standard library would acquire a long-lived storage-format and recovery comm
 - **Crumb:** `std.primitives.crumb` owns typed encoding and reconstruction. `.crumble()` and `Model.from_crumb(...)` are the model-facing pair. The database owns indexing, transactions, physical sharing and retention.
 - **Representation freedom:** typed sharing in memory, inline scalar values and encoded field contents are valid physical choices. No raw native struct dump, compulsory eager serialization or universal zero-copy promise is adopted.
 - **Field identity and equality:** field-scoped hashes locate candidates; typed equality confirms matches. Logical records remain distinct even when contents share storage.
+- **Field identities in encoded values:** the first 4 bytes of the SHA-256 of a field's earliest name, listed once per frame in ascending byte order. Four bytes suffice because an identity has to be unique only within one model and a collision is a declaration error: a model of 1,000 fields has about a 1 in 8,600 chance of one, where 2 bytes would expect about 8 collisions.
+- **Frames name their codec profile:** one model can then use different arrangements of its bytes, such as a lone record in rows and a large table in columns, and an unknown arrangement is refused instead of misread.
+- **Hashes cover values under a named profile:** `crumb1` keeps `-0.0` apart from `0.0` and `None` apart from `Some(None)`, treats every NaN as one value and leaves strings as written. It orders dicts and sets itself, so hashing runs no user code, and a field at its absent value contributes nothing, so additive changes move no hash. The language's `==` is unchanged.
+- **Three hashes per stored record:** the object hash, the canonical hash and the model hash, with `canonical=false` opting a field out of the second.
+- **Reserved names:** `___` names belong to the store, and the list is closed.
+- **Secrets are refused rather than dropped:** a model holding `SecretStr` or `SecretBytes` cannot be crumbled or stored, and a hash never covers a secret.
 - **Ownership:** ordinary reads use duckborrowing and owned point results. Primitive contracts expose explicit borrowing; retained batches own backing resources and snapshot leases. Borrowed columns remain bounded by their actual owner.
 - **Descriptor mechanism:** reuse checked model declarations and the public extensible derive/descriptor protocols. Proving those facilities sufficient, or tracking a specific missing language capability, is an implementation prerequisite; compiler-private descriptor shortcuts are forbidden.
 - **Durability qualification:** each supported target/filesystem profile must provide reproducible publication/recovery evidence before claiming local durability. Unsupported profiles refuse that claim; the representation experiment is not power-loss qualification.

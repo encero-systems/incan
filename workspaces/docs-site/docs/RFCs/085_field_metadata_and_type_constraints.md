@@ -19,6 +19,7 @@
     - RFC 132 (frozen classes)
     - RFC 137 (named enum payload fields)
     - RFC 150 (deprecation facts, whose vocabulary `renamed_from` shares)
+    - RFC 165 (typed embedded storage, whose field identities derive from the earliest name)
     - RFC 142 (shared failure-policy vocabulary)
     - RFC 143 (cloning with field overrides)
 - **Issue:** [#472](https://github.com/encero-systems/incan/issues/472)
@@ -228,7 +229,7 @@ model Customer:
     }
 ```
 
-The field keeps its identity. `std.db` reads records stored under the old name with no migration, an API diff reports a rename rather than a removal and an addition, and generated documentation shows the history. The nested block shares RFC 150's lifecycle facts, so `since`, `retire_in`, `message`, `by` and `issue` mean what they mean on `deprecated`, and all of them are optional. `by` says who or what decided, whether a person, a team or a tool's finding. `retire_in` is a plan rather than a deadline: once the package reaches that version, a lint suggests removing the key, and nothing changes on its own. Enum variants take the same key.
+The field keeps its identity. `std.db` reads records stored under the old name with no migration, an API diff reports a rename rather than a removal and an addition, and generated documentation shows the history. The nested block shares RFC 150's lifecycle facts, so `since`, `retire_in`, `message`, `by` and `issue` mean what they mean on `deprecated`, and all of them are optional. `by` says who or what decided, whether a person, a team or a tool's finding. `retire_in` is a plan rather than a deadline: once the package reaches that version, a lint suggests removing the lifecycle facts, and nothing changes on its own. The earlier name stays, because RFC 165 derives the field's identity from it. Enum variants take the same key.
 
 `renamed_from` is separate from `as`, which sets a wire name. `email_address [renamed_from="email"] as "email": str` keeps JSON using `email`.
 
@@ -271,8 +272,9 @@ variant_decl = IDENT field_meta? variant_payload? variant_value? ;
 `renamed_from` must accept an earlier name, a list of earlier names, or a nested block under RFC 096, on a field or an enum variant. The block must contain `name`, a string or list of strings, and may contain RFC 150's shared lifecycle facts, `since`, `retire_in`, `message`, `by` and `issue`, each at most once and using the same descriptor as `deprecated`. `by` and `issue` are unverified descriptive text and grant nothing.
 
 - The field or variant must keep its stable anchor across a declared rename. Without `renamed_from`, a rename is a new source identity.
+- A list of earlier names must be in the order the names were used, earliest first.
 - An earlier name that still exists on the same model or enum must be refused, and so must one name claimed twice.
-- `retire_in` must not change behavior. Once the package's version reaches it, a lint must suggest removing the key.
+- `retire_in` must not change behavior. Once the package's version reaches it, a lint must suggest removing the lifecycle facts and must keep the earlier name, because RFC 165 derives the field's identity from it.
 - Checked metadata must preserve every rename fact, so that API diffs, generated documentation, RFC 106's graph and RFC 165's stored records can use them.
 - A rename must not change a wire name or make a decoder accept the old one. Wire names follow `alias` and `as`.
 
@@ -301,6 +303,7 @@ Compiler-semantic keys are interpreted by the language and can affect constructi
 - `validate`: a checked synchronous callable taking one explicitly typed field-value parameter and returning `Result[None, E]`, where E provides RFC 131's common Error interface.
 - `normalize`: an ordered list of checked source fieldmethod identities resolving composed normalization under RFC 087 and RFC 122. These references are construction operations, not ordinary callable values.
 - `default_factory`: a checked callable with zero arguments or explicitly typed field-dependency parameters, returning a field value `T` or a fallible `Result[T, E]`, where `E` provides the common Error interface.
+- `canonical: bool`: whether a field counts toward RFC 165's canonical hash, which it does when the key is absent.
 
 Standard descriptive keys are checked and preserved by the compiler but do not change ordinary execution by themselves. This RFC defines:
 
@@ -583,5 +586,5 @@ Artifact metadata should preserve field metadata losslessly for packages that cl
 - Include lists and dictionaries in the safe metadata value set. Descriptor serialization must support them.
 - Allow `examples` to contain safe metadata values assignable to the field type, with string examples allowed when typed examples are not available.
 - Keep `primary_key` and `primary_key_position` as field metadata. Composite key order is represented by field-level positions; richer model-level identity constraints are not part of this design.
-- Treat stable field anchors as source-field and model-field metadata identities, not as external alias identities. A rename is a new source identity unless `renamed_from` declares continuity, and that key carries RFC 150's shared lifecycle facts: `since`, `retire_in`, `message`, `by` and `issue`. External aliases and adapter mappings do not by themselves preserve the Incan field anchor.
+- Treat stable field anchors as source-field and model-field metadata identities, not as external alias identities. A rename is a new source identity unless `renamed_from` declares continuity, and that key carries RFC 150's shared lifecycle facts: `since`, `retire_in`, `message`, `by` and `issue`. RFC 165 derives a field's encoded identity from its earliest name, so that name stays when the lifecycle facts go. External aliases and adapter mappings do not by themselves preserve the Incan field anchor.
 - Enum variants take the same metadata as fields, with the same `name [metadata]` shape and RFC 096 blocks. `__variants__()` exposes it, as `__fields__()` does for models, and `T.__doc__()` exposes a type's parsed docstring. A key meaningful only for a stored field is refused on a variant.

@@ -131,9 +131,9 @@ Host operations must report actual failures and support limits. Platform selecti
 
 ### Crumb typed encoding
 
-`std.primitives.crumb` owns the Crumb encoding and reconstruction contract described in RFC 165: supported models provide `.crumble()` and `Model.from_crumb(...)`, preserving their declared data and model type. Type/schema compatibility, bounded decoding, version checks and typed conversion errors belong in this primitive. Checked model declarations supply the structural facts; importing the compiler implementation or a database to obtain them is forbidden.
+`std.primitives.crumb` owns the Crumb encoding and reconstruction contract described in RFC 165: supported models provide `.crumble()` and `Model.from_crumb(...)`, preserving their declared data and model type. Type/schema compatibility, field identities, hash profiles and the object, canonical and model hashes as RFC 165 defines them, bounded decoding, version and codec profile checks and typed conversion errors belong in this primitive. Checked model declarations supply the structural facts; importing the compiler implementation or a database to obtain them is forbidden.
 
-Crumb must be usable independently for encoded values, files, messages or compiler artifacts. `std.db` owns storage, field indexes, physical sharing policy, transactions and retention; those responsibilities must not move into Crumb. An in-memory value need not be encoded merely because it can be crumbled. Supported data and encoding boundaries follow RFC 165; live runtime resources and arbitrary executable reconstruction are not ordinary stored model data.
+Crumb must be usable independently for encoded values, files, messages or compiler artifacts. `std.db` owns storage, record identities and revisions, field indexes, physical sharing policy, transactions and retention; those responsibilities must not move into Crumb. An in-memory value need not be encoded merely because it can be crumbled. Supported data and encoding boundaries follow RFC 165; live runtime resources and arbitrary executable reconstruction are not ordinary stored model data.
 
 ### Async and vocabulary
 
@@ -187,6 +187,6 @@ Separating existing modules requires compatibility work where types currently co
 - **Shared contracts:** foundational errors and traits retain identity through higher-level re-exports.
 - **Async and vocabulary foundations:** async mechanisms and vocabulary use foundational vocabulary-authoring contracts; higher-level entry points remain available.
 - **Protocol methods stay with their protocol:** a foundational protocol's provided methods and the types they use are foundational, so RFC 142's async consumers, `ErrorPolicy` and their outcome types live in primitives rather than becoming higher-level functions.
-- **Crumb foundation:** typed model encoding and reconstruction live in `std.primitives.crumb`, independently of database storage and transaction policy.
+- **Crumb foundation:** typed model encoding and reconstruction live in `std.primitives.crumb`, independently of database storage and transaction policy. Field identities are computed from declarations and hashes from typed values, so neither needs a store.
 - **Grouped modules:** common root re-exports are supported; platform backend layout is an implementation choice.
 - **Native boundary ownership:** shared low-level interop boundaries do not make all native-backed domain behavior primitive.
