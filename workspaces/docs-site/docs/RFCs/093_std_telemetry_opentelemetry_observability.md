@@ -124,7 +124,7 @@ def submit(req: Request) -> Result[Response, Error]:
     return charge(req)
 ```
 
-The default span name is derived from the fully qualified Incan symbol, such as `checkout.submit`. Users should not have to repeat the function name as a string for ordinary tracing.
+If this function is declared in the `orders` module of the `checkout` Loaf, its default span name is `checkout.orders.submit`. Users should not have to repeat the function name as a string for ordinary tracing.
 
 Users can override the span name and provide an attribute factory when a domain-specific operation name is clearer:
 
@@ -341,7 +341,7 @@ def submit(req: Request) -> Result[Response, Error]:
     ...
 ```
 
-With no explicit name, the span name must default to the fully qualified Incan symbol. For a function `submit` in module `checkout`, the default name should be `checkout.submit` or the package-qualified equivalent once package identity is available.
+By default, the span name is the fully qualified Incan name of the traced declaration. It includes the declaring Loaf, module path and any enclosing type. For example, `submit` in the `orders` module of the `checkout` Loaf produces `checkout.orders.submit`. The same declaration spelling in the `billing` Loaf produces `billing.orders.submit`. Calling the first function through an import alias such as `send_order` still produces `checkout.orders.submit`. An explicit `@telemetry.trace(name=...)` supplies the span name instead.
 
 The decorator may accept:
 
@@ -528,6 +528,7 @@ This section is non-normative. A pragmatic implementation should preserve the sa
 ## Design Decisions
 
 - **Process configuration:** The first successful installation freezes the settings. Every later installation attempt returns a typed error.
+- **Default span names:** Use the fully qualified name of the declaration, independent of how the caller imports it.
 - **Traced results:** Each span reports its own call’s outcome. A caller that recovers can succeed while the failed child remains visible.
 - **Panics and assertions:** Record the origin once. Spans unwound by the same failure refer to that origin.
 
@@ -535,7 +536,6 @@ This section is non-normative. A pragmatic implementation should preserve the sa
 
 - What is the exact normative shape of `TelemetryValue`, especially for bytes, nested models, and custom conversion hooks?
 - How much of `Resource` should be inferred automatically from project metadata versus supplied explicitly?
-- What is the precise package/module qualification rule for default decorator span names?
 - What is the minimal safe context propagation story for async tasks and spawned work?
 - Which baggage keys, if any, should be copied into attributes by default?
 - How should semantic-convention helpers be generated, versioned, and exposed when OpenTelemetry convention stability changes?
