@@ -1,4 +1,4 @@
-# behavior: an integer identity reaches only the runtime operations its program performs, and no standard package
+# behavior: an integer identity reaches only its runtime operations; the ambient logging prelude reaches no standard package when unused
 # cli-commands:
 #   oven inspect dependencies src/main.incn
 # expect-stdout:

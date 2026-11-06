@@ -3,6 +3,32 @@
 const _HEX_LOWER: str = "0123456789abcdef"
 
 pub from crate.primitives.fs import Path
+pub from crate.primitives._logging import (
+    ColorPolicy,
+    Level,
+    LogFormat,
+    LogRecord,
+    LogStyle,
+    Logger,
+    LoggerName,
+    LoggingConfig,
+    OutputTarget,
+    basic_config,
+    get_logger,
+    log,
+)
+pub from crate.primitives._telemetry import (
+    Attributes,
+    InstrumentationScope,
+    Resource,
+    SpanContext,
+    SpanId,
+    TelemetryValue,
+    TelemetryValueKind,
+    Timestamp,
+    TraceFlags,
+    TraceId,
+)
 
 
 pub def hexlify(data: bytes) -> str:

@@ -130,16 +130,6 @@ impl TypeCheckInfo {
         self.references.resolved_write_types.insert(key, ty);
     }
 
-    /// Return the checked factory that materializes the ambient `std.logging` logger binding at `span`.
-    pub fn ambient_logger_binding(&self, span: Span) -> Option<&AmbientLoggerBindingInfo> {
-        self.expressions.ambient_logger_bindings.get(&span)
-    }
-
-    /// Record that an identifier resolved to the ambient `std.logging` logger binding through `binding`.
-    pub fn record_ambient_logger_binding(&mut self, span: Span, binding: AmbientLoggerBindingInfo) {
-        self.expressions.ambient_logger_bindings.insert(span, binding);
-    }
-
     /// Return whether the `dict.get(key)` call at `span` only has its result read (see
     /// [`ExpressionArtifacts::read_only_dict_lookups`]).
     pub fn is_read_only_dict_lookup(&self, span: Span) -> bool {

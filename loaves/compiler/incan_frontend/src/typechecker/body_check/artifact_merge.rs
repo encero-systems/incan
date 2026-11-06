@@ -33,7 +33,6 @@ pub(super) fn append_expressions(target: &mut ExpressionArtifacts, local: Expres
         assignment_binding_types,
         computed_property_accesses,
         ident_kinds,
-        ambient_logger_bindings,
         value_destination_types,
         numeric_conversion_destinations,
         read_only_dict_lookups,
@@ -62,7 +61,6 @@ pub(super) fn append_expressions(target: &mut ExpressionArtifacts, local: Expres
     target.assignment_binding_types.extend(assignment_binding_types);
     target.computed_property_accesses.extend(computed_property_accesses);
     target.ident_kinds.extend(ident_kinds);
-    target.ambient_logger_bindings.extend(ambient_logger_bindings);
     target.value_destination_types.extend(value_destination_types);
     target
         .numeric_conversion_destinations

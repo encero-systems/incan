@@ -30,7 +30,6 @@ pub(super) fn expression_artifacts(value: &ExpressionArtifacts) -> Result<(), No
         assignment_binding_types: _,
         computed_property_accesses,
         ident_kinds: _,
-        ambient_logger_bindings,
         value_destination_types: _,
         numeric_conversion_destinations,
         read_only_dict_lookups,
@@ -39,7 +38,7 @@ pub(super) fn expression_artifacts(value: &ExpressionArtifacts) -> Result<(), No
         source_targets: _,
         local_partial_method_targets,
     } = value;
-    require_empty!("ExpressionArtifacts"; body_ir_open_calls, body_ir_open_values, body_ir_open_bindings, body_ir_empty_list_requirements, body_ir_callable_name_reads, body_ir_nominal_pattern_owners, expression_type_identities, computed_property_accesses, ambient_logger_bindings, numeric_conversion_destinations, read_only_dict_lookups, chained_values_written_per_target, validated_newtype_coercions, local_partial_method_targets);
+    require_empty!("ExpressionArtifacts"; body_ir_open_calls, body_ir_open_values, body_ir_open_bindings, body_ir_empty_list_requirements, body_ir_callable_name_reads, body_ir_nominal_pattern_owners, expression_type_identities, computed_property_accesses, numeric_conversion_destinations, read_only_dict_lookups, chained_values_written_per_target, validated_newtype_coercions, local_partial_method_targets);
     Ok(())
 }
 

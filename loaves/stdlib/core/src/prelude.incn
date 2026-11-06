@@ -12,3 +12,4 @@ from std.traits.ops import Add, Sub, Mul, Div, Neg, Mod
 from std.traits.error import Error
 from std.traits.indexing import Index, IndexMut, Sliceable
 from std.traits.callable import Callable0, Callable1, Callable2
+pub from std.primitives import log

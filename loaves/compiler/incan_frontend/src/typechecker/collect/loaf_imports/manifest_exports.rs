@@ -238,6 +238,34 @@ impl TypeChecker {
         }
     }
 
+    /// Reconstruct a declaration from the compiled artifact that owns its canonical identity.
+    ///
+    /// A cross-package facade alias may not carry a callable or nominal projection because the target is a const,
+    /// static or enum variant. The identity graph still names the exact declaring artifact and source declaration, so
+    /// consumers hydrate that ordinary declaration instead of treating the facade member as ambiguous. Hydration
+    /// admits the declaring Loaf through the normal import boundary so its ownership contracts accompany the symbol.
+    pub(in crate::typechecker::collect) fn symbol_kind_from_canonical_identity(
+        &mut self,
+        canonical: &CanonicalSymbolId,
+    ) -> Option<SymbolKind> {
+        let library = self.loaves.declaring_loaf(canonical)?.key.clone();
+        let manifest = self.loaf_manifest_or_refuse(&library, Span::default())?;
+        let identity = manifest
+            .contract_metadata
+            .identity_graph
+            .exports
+            .iter()
+            .find(|identity| {
+                identity.canonical.as_ref().and_then(|value| value.hydrate()).as_ref() == Some(canonical)
+            })?;
+        let declaration = Self::api_declaration_for_target_path(&manifest, &identity.source_path)?;
+        let mut kind = self.symbol_kind_from_api_declaration(manifest.contract_metadata.api.as_ref(), declaration)?;
+        let root_remapping = self.public_library_canonical_type_remapping(&library, &manifest);
+        self.remap_symbol_kind_through_declaring_module(&library, &manifest, Some(canonical), &mut kind);
+        self.remap_symbol_kind_with_import_aliases(&mut kind, &root_remapping);
+        Some(kind)
+    }
+
     /// Reconstruct one trait from the exact canonical identity admitted by its declaring manifest.
     ///
     /// `expected_provider` retains the older named-projection check that the alias metadata and selected artifact name

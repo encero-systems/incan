@@ -50,7 +50,7 @@ impl TypeChecker {
         items: &[ImportItem],
         span: Span,
     ) {
-        if self.reject_unsupported_rust_core_alloc(crate_name, span) {
+        if self.reject_unavailable_rust_crate(crate_name, span) {
             return;
         }
 
@@ -77,6 +77,50 @@ impl TypeChecker {
             return true;
         }
         false
+    }
+
+    /// Refuse a Rust crate root that the current project did not admit.
+    ///
+    /// Project loading supplies the exact crate names selected from direct Rust dependencies and sibling Rust facets.
+    /// A reached dependency Loaf also admits its compiled facade crate, while the compiler's own interop crates and
+    /// toolchain-owned standard-library facets are intrinsic. Rustc-internal roots defer to the Rust facts provider,
+    /// which verifies the unit's exact native closure. A checker constructed without project context keeps the existing
+    /// deferred behavior.
+    fn reject_undeclared_rust_crate(&mut self, crate_name: &str, span: Span) -> bool {
+        if Self::is_intrinsic_rust_crate(crate_name)
+            || Self::rust_facts_owns_admission(crate_name)
+            || self.dependency_loaf_supplies_rust_root(crate_name)
+            || self
+                .declared_crate_names
+                .as_ref()
+                .is_none_or(|declared| declared.contains(crate_name))
+        {
+            return false;
+        }
+        self.errors.push(errors::rust_crate_not_declared(crate_name, span));
+        true
+    }
+
+    /// Whether the compiler generation owns this Rust import root independently of a project declaration.
+    fn is_intrinsic_rust_crate(crate_name: &str) -> bool {
+        matches!(crate_name, "std" | "incan_lang" | "serde") || incan_lang::lang::stdlib::facets::is_facet(crate_name)
+    }
+
+    /// Whether the Rust facts provider must decide admission from the unit's exact native closure.
+    fn rust_facts_owns_admission(crate_name: &str) -> bool {
+        crate_name.starts_with("rustc_")
+    }
+
+    /// Whether an admitted nonstandard Loaf supplies its compiled crate under `crate_name`.
+    fn dependency_loaf_supplies_rust_root(&self, crate_name: &str) -> bool {
+        self.loaves.identities().any(|(_, identity)| {
+            !self.loaves.is_standard_package(&identity.name) && identity.name.replace('-', "_") == crate_name
+        })
+    }
+
+    /// Apply the project and target admission rules before an imported crate can bind any symbols.
+    fn reject_unavailable_rust_crate(&mut self, crate_name: &str, span: Span) -> bool {
+        self.reject_unsupported_rust_core_alloc(crate_name, span) || self.reject_undeclared_rust_crate(crate_name, span)
     }
 
     /// Build a full Rust import path vector from crate, optional module path, and optional item name.

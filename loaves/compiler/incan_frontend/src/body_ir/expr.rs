@@ -500,9 +500,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         let ty = self.resolve_ty(expr.span);
-        if let Some(binding) = self.type_info.ambient_logger_binding(expr.span).cloned() {
-            return self.lower_ambient_logger(binding, ty, scope, span, out);
-        }
         if !self.bindings.contains_key(name)
             && let IncanType::TypeToken(represented) = &ty
         {
@@ -532,42 +529,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return value;
         }
         self.source_place_operand(place, &ty)
-    }
-
-    /// Materialize an accepted ambient logger read through the exact checked standard-library factory.
-    ///
-    /// The source binding is virtual: it must not become an unresolved local or select `get_logger` from its spelling.
-    /// Every factory parameter must have a published default because the ambient surface supplies no source arguments.
-    fn lower_ambient_logger(
-        &mut self,
-        binding: crate::typechecker::AmbientLoggerBindingInfo,
-        ty: IncanType,
-        scope: bir::ScopeId,
-        span: HirSourceSpan,
-        out: &mut Vec<bir::Statement>,
-    ) -> bir::Operand {
-        let name = binding.factory.declaration_name.clone();
-        let target = bir::NamedCallableTarget {
-            receiver_type: None,
-            name,
-            direct_call_id: None,
-            canonical: Some(binding.factory),
-            builtin: None,
-            type_args: Vec::new(),
-            binding: bir::ArgumentBinding::Resolved {
-                arguments: Vec::new(),
-                defaulted_slots: binding.defaulted_slots,
-            },
-        };
-        self.push_call_temp(
-            bir::Callee::Function(bir::CallableTarget::Named(target)),
-            Vec::new(),
-            ty,
-            scope,
-            span,
-            false,
-            out,
-        )
     }
 
     /// Lower a field's checked callable, property, enum, module or projected value before retaining ownership facts.
@@ -676,12 +637,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Place {
         let ty = self.resolve_ty(expr.span);
-        if self.type_info.ambient_logger_binding(expr.span).is_some() {
-            // The ambient binding is a factory-produced value rather than storage. Materialize it before a method
-            // receiver borrows the value, just as other non-place expressions are materialized.
-            let operand = self.lower_expr_to_operand(expr, scope, out);
-            return self.materialize_operand_to_place(operand, ty, scope, hir_span(expr.span), out);
-        }
         if self.type_info.rust.checked_constants.contains_key(&expr.span) {
             // An imported Rust constant is a retained value, not a runtime cell. A receiver projection therefore
             // materializes that checked value before borrowing it instead of resolving the import name as a local.

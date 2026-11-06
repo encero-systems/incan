@@ -1,36 +1,48 @@
 //! Standard Loaf traits, registry types, binding roots and standard Loaf imports.
 
 use super::*;
-use crate::typechecker::AmbientLoggerBindingInfo;
-
 impl TypeChecker {
-    /// Resolve the ambient logger through its ordinary factory's checked return type and exact declaration identity.
-    /// This keeps its nominal identity, executable target and method parameter context independent of whether the
-    /// caller explicitly imports `Logger` or `get_logger`.
-    pub(in crate::typechecker) fn ambient_logger_binding(
-        &mut self,
-    ) -> Option<(ResolvedType, AmbientLoggerBindingInfo)> {
-        let module = vec!["std".to_string(), "logging".to_string()];
-        let (library, path) = self.loaf_module(&module)?;
-        let resolved = self
-            .resolve_pub_library_module_symbol_member(&library, &path, "get_logger")
-            .ok()
-            .flatten()?;
-        let SymbolKind::Function(factory) = resolved.kind else {
-            return None;
-        };
-        if factory.params.iter().any(|parameter| !parameter.has_default) {
-            return None;
+    /// Materialize one otherwise-unbound value exported by the source-defined standard prelude.
+    ///
+    /// The prelude declaration, not a compiler spelling table, decides which values are ambient. Existing bindings
+    /// always win, so parameters, imports and local declarations retain ordinary lexical shadowing.
+    pub(in crate::typechecker) fn materialize_implicit_prelude_value(&mut self, name: &str, span: Span) -> bool {
+        if name.contains('.') || self.symbols.lookup(name).is_some() {
+            return false;
         }
-        let identity = resolved.canonical?;
-        let defaulted_slots = (0..factory.params.len()).collect();
-        Some((
-            factory.return_type,
-            AmbientLoggerBindingInfo {
-                factory: identity,
-                defaulted_slots,
+        let module = vec!["std".to_string(), "prelude".to_string()];
+        let Some((library, path)) = self.loaf_module(&module) else {
+            return false;
+        };
+        let Some(resolved) = self
+            .resolve_pub_library_module_symbol_member(&library, &path, name)
+            .ok()
+            .flatten()
+        else {
+            return false;
+        };
+        if !matches!(
+            resolved.kind,
+            SymbolKind::Variable(_)
+                | SymbolKind::Static(_)
+                | SymbolKind::Function(_)
+                | SymbolKind::FunctionOverloads(_)
+                | SymbolKind::Variant(_)
+        ) {
+            return false;
+        }
+        self.collect_loaf_from_imports(
+            &LoafImport {
+                key: library,
+                module: path,
             },
-        ))
+            &[ImportItem {
+                name: name.to_string(),
+                alias: None,
+            }],
+            span,
+        );
+        self.symbols.lookup(name).is_some()
     }
 
     /// The trait a Loaf publishes as `<module_path>.<name>`, read from its manifest.

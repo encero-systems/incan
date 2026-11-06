@@ -209,6 +209,18 @@ pub fn unsupported_rust_core_alloc(crate_name: &str, span: Span) -> CompileError
     .with_note("Support for `rust::core` / `rust::alloc` will be introduced in a future RFC")
 }
 
+/// A `rust::` import names a crate outside the dependency origins admitted by the project.
+pub fn rust_crate_not_declared(crate_name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Rust crate `{crate_name}` is not declared by this project"),
+        span,
+    )
+    .with_hint(format!(
+        "Declare `{crate_name}` under `[rust-dependencies]` or add the Loaf that supplies its Rust facet"
+    ))
+    .with_note("Cached Rust metadata does not grant a project dependency authority")
+}
+
 /// Soft keyword usage requires importing its stdlib namespace.
 pub fn soft_keyword_requires_import(keyword: &str, namespace: &str, span: Span) -> CompileError {
     CompileError::new(

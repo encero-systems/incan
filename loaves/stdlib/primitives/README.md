@@ -22,4 +22,6 @@ The `incan_std_primitives` facet owns the native carriers and operations that co
 
 `std.primitives.output` writes complete UTF-8 lines and returns actual host write failures as text without depending on higher-level I/O errors. Generated stdout and panic-hook stderr keep their own paths in the language runtime.
 
+`std.primitives` owns the structured telemetry values, logger types and root `log` static used by ambient logging. `std.logging` reexports those declarations, and the standard prelude reexports the same static identity. The primitive logger uses the package's declared native serialization, clock and output dependencies directly; it imports no higher standard package. Merely loading the prelude does not make a program that never reads `log` reach the logger implementation.
+
 Other hashing algorithms, argument-vector policy and temporary directories remain in their existing standard packages. This package does not implement database storage, a Crumb format or ownership features merely by providing these algorithms.

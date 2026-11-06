@@ -120,37 +120,25 @@ impl TypeChecker {
         // spells sibling return types in its own package scope; the retained layout carries the provider-qualified
         // spellings a consumer can resolve without importing those siblings by name.
         let remapping = self.public_module_type_remapping(library, manifest, source_module_path);
-        let mut kinds = declarations
-            .iter()
-            .filter_map(|declaration| match declaration {
-                ApiDeclaration::Alias(alias) => self
-                    .symbol_kind_from_api_declaration(manifest.contract_metadata.api.as_ref(), declaration)
-                    .or_else(|| {
-                        self.symbol_kind_from_api_target_path(
-                            manifest,
-                            Self::api_alias_target_path(manifest, source_module_path, &alias.name, &alias.target_path),
-                        )
-                    }),
-                _ => self.symbol_kind_from_api_declaration(manifest.contract_metadata.api.as_ref(), declaration),
-            })
-            .collect::<Vec<_>>();
-        let mut type_alias = declarations
-            .iter()
-            .find_map(|declaration| Self::public_member_type_alias(manifest, source_module_path, declaration));
-        let (resolved_source_module_path, resolved_source_name) =
-            declarations
-                .iter()
-                .find_map(|declaration| match declaration {
-                    ApiDeclaration::Alias(alias) => Self::normalized_api_declaration_target(
-                        Self::api_alias_target_path(manifest, source_module_path, &alias.name, &alias.target_path),
-                    ),
-                    _ => None,
-                })
-                .unwrap_or_else(|| (source_module_path.clone(), member.to_string()));
         let public_path = std::iter::once(manifest.name.clone())
             .chain(module_path.iter().cloned())
             .chain(std::iter::once(member.to_string()))
             .collect::<Vec<_>>();
+        let projected_canonical = manifest
+            .contract_metadata
+            .identity_graph
+            .canonical_for_public_path(&public_path);
+        let mut kinds = self.public_member_symbol_kinds(
+            manifest,
+            source_module_path,
+            &declarations,
+            projected_canonical.as_ref(),
+        );
+        let mut type_alias = declarations
+            .iter()
+            .find_map(|declaration| Self::public_member_type_alias(manifest, source_module_path, declaration));
+        let (resolved_source_module_path, resolved_source_name) =
+            Self::public_member_source(manifest, &declarations, source_module_path, member);
         let source_path = resolved_source_module_path
             .iter()
             .cloned()
@@ -180,11 +168,16 @@ impl TypeChecker {
             }
             _ => return Err(source_modules),
         };
-        let canonical = overload_identities.first().cloned().flatten().filter(|first| {
-            overload_identities
-                .iter()
-                .all(|identity| identity.as_ref() == Some(first))
-        });
+        let canonical = overload_identities
+            .first()
+            .cloned()
+            .flatten()
+            .filter(|first| {
+                overload_identities
+                    .iter()
+                    .all(|identity| identity.as_ref() == Some(first))
+            })
+            .or(projected_canonical);
         self.remap_symbol_kind_through_declaring_module(library, manifest, canonical.as_ref(), &mut kind);
         self.remap_symbol_kind_with_import_aliases(&mut kind, &remapping);
         if let Some((_, target)) = &mut type_alias {
@@ -202,6 +195,54 @@ impl TypeChecker {
             type_alias,
             partial_projection,
         }))
+    }
+
+    /// Reconstruct each declaration shape published under one public facade member.
+    fn public_member_symbol_kinds(
+        &mut self,
+        manifest: &LibraryManifest,
+        source_module_path: &[String],
+        declarations: &[&ApiDeclaration],
+        projected_canonical: Option<&CanonicalSymbolId>,
+    ) -> Vec<SymbolKind> {
+        declarations
+            .iter()
+            .filter_map(|declaration| match declaration {
+                ApiDeclaration::Alias(alias) => self
+                    .symbol_kind_from_api_declaration(manifest.contract_metadata.api.as_ref(), declaration)
+                    .or_else(|| {
+                        self.symbol_kind_from_api_target_path(
+                            manifest,
+                            Self::api_alias_target_path(manifest, source_module_path, &alias.name, &alias.target_path),
+                        )
+                    })
+                    .or_else(|| {
+                        projected_canonical.and_then(|canonical| self.symbol_kind_from_canonical_identity(canonical))
+                    }),
+                _ => self.symbol_kind_from_api_declaration(manifest.contract_metadata.api.as_ref(), declaration),
+            })
+            .collect()
+    }
+
+    /// Resolve an alias target's source coordinates, or retain the facade member's own declaration coordinates.
+    fn public_member_source(
+        manifest: &LibraryManifest,
+        declarations: &[&ApiDeclaration],
+        source_module_path: &[String],
+        member: &str,
+    ) -> (Vec<String>, String) {
+        declarations
+            .iter()
+            .find_map(|declaration| match declaration {
+                ApiDeclaration::Alias(alias) => Self::normalized_api_declaration_target(Self::api_alias_target_path(
+                    manifest,
+                    source_module_path,
+                    &alias.name,
+                    &alias.target_path,
+                )),
+                _ => None,
+            })
+            .unwrap_or_else(|| (source_module_path.to_vec(), member.to_string()))
     }
 
     /// Read a public alias's type parameters and target through the retained declaration. Native union projections

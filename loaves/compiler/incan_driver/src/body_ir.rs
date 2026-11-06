@@ -86,8 +86,7 @@ pub fn checked_modules(
     Ok(bodies)
 }
 
-/// Project exact public package requirements reachable from accepted module facts, including private re-export calls
-/// and compiler-provided ambient logger factories.
+/// Project exact public package requirements reachable from accepted module facts, including private re-export calls.
 /// The current package's declarations compile from this unit and never resolve through a dependency artifact.
 /// Trait-wide default inventories are not execution roots: unused adaptor bodies must not instantiate for every
 /// adopter. Native comparison bridges add their selected slots from checked Body IR in `complete_dependency_context`.
@@ -137,13 +136,6 @@ pub fn required_loaf_identities(
                 .iter()
                 .copied()
                 .flat_map(|info| info.calls.source_display_methods.values().cloned()),
-        )
-        .chain(
-            infos
-                .iter()
-                .copied()
-                .flat_map(|info| info.expressions.ambient_logger_bindings.values())
-                .map(|binding| binding.factory.clone()),
         )
         .chain(
             infos

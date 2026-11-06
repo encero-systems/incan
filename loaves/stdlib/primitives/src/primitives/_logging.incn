@@ -1,0 +1,584 @@
+"""
+Foundational structured logging shared by the ambient prelude and `std.logging`.
+
+The implementation stays below higher standard packages: host time and output come from Rust's standard library,
+while structured values and JSON derive through native dependencies already owned by `std.primitives`.
+
+Example:
+
+```incan
+from std.logging import Level, basic_config
+
+def main() -> None:
+    basic_config(level=Level.INFO, target="stdout")
+    log.info("started")
+```
+"""
+
+from rust::serde import Serialize as RustSerialize
+from rust::serde_json import to_string
+from rust::std::io import stderr, stdout, Write
+from rust::std::panic import panic_any
+from rust::std::string import String as RustString
+from rust::std::time import SystemTime, UNIX_EPOCH
+from crate.primitives._telemetry import (
+    Timestamp,
+    TelemetryValue,
+    Attributes,
+    Resource,
+    InstrumentationScope,
+    TraceId,
+    SpanId,
+    TraceFlags,
+)
+
+const _NANOS_PER_SECOND: int = 1_000_000_000
+const _SECONDS_PER_MINUTE: int = 60
+const _SECONDS_PER_HOUR: int = 3_600
+const _SECONDS_PER_DAY: int = 86_400
+const _NANOS_PER_DAY: int = _SECONDS_PER_DAY * _NANOS_PER_SECOND
+
+
+pub enum Level(str):
+    """
+    Logging severity threshold and event level.
+
+    Levels are ordered from `TRACE` through `FATAL`. A configured threshold emits events at that level or any more
+    severe level.
+    """
+
+    TRACE = "TRACE"
+    DEBUG = "DEBUG"
+    INFO = "INFO"
+    WARN = "WARN"
+    ERROR = "ERROR"
+    FATAL = "FATAL"
+    WARNING = alias WARN
+    CRITICAL = alias FATAL
+
+    pub def rank(self) -> int:
+        """Return the ordering rank used by source-level threshold filtering."""
+        match self:
+            Level.TRACE => return 10
+            Level.DEBUG => return 20
+            Level.INFO => return 30
+            Level.WARN => return 40
+            Level.ERROR => return 50
+            Level.FATAL => return 60
+
+    pub def severity_number(self) -> int:
+        """Return the OpenTelemetry `SeverityNumber` for this level."""
+        match self:
+            Level.TRACE => return 1
+            Level.DEBUG => return 5
+            Level.INFO => return 9
+            Level.WARN => return 13
+            Level.ERROR => return 17
+            Level.FATAL => return 21
+
+    pub def display_name(self) -> str:
+        """Return the human-facing level name."""
+        match self:
+            Level.WARN => return "WARNING"
+            Level.FATAL => return "CRITICAL"
+            _ => return self.value()
+
+
+pub enum LogFormat(str):
+    """
+    Event output format.
+
+    Use `HUMAN` for terminal-oriented text and `JSON` for one JSON object per emitted event.
+    """
+
+    HUMAN = "human"
+    JSON = "json"
+
+
+pub enum LogStyle(str):
+    """
+    Human renderer style.
+
+    The style only affects `LogFormat.HUMAN`; JSON output keeps a stable record-shaped representation.
+    """
+
+    MINIMAL = "minimal"
+    SHORT = "short"
+    COMPLETE = "complete"
+    VERBOSE = "verbose"
+
+
+pub enum ColorPolicy(str):
+    """
+    Human renderer color policy.
+
+    The policy is part of the committed configuration shape. The current source renderer is colorless until the stdlib
+    has a source-owned terminal capability surface.
+    """
+
+    AUTO = "auto"
+    ALWAYS = "always"
+    NEVER = "never"
+
+
+@derive(Clone)
+pub type OutputTarget = newtype str:
+    """
+    Validated process stream for logging output.
+
+    `stdout` is useful for JSON line output that another process consumes. `stderr` keeps ordinary human logs separate
+    from application output and is the default target.
+    """
+
+    def from_underlying(target: str) -> Result[Self, ValidationError]:
+        """Validate and construct an output target."""
+        if target != "stdout" and target != "stderr":
+            return Err(ValidationError("std.logging target must be 'stdout' or 'stderr'"))
+        return Ok(OutputTarget(target))
+
+    pub def write_line(self, line: str) -> None:
+        """Write one rendered log line to the configured stream."""
+        data = RustString.from(line + "\n").into_bytes()
+        if self.0 == "stderr":
+            mut err = stderr()
+            _ = err.write_all(data)
+            return
+        mut out = stdout()
+        _ = out.write_all(data)
+
+
+@derive(Clone)
+pub model LoggingConfig:
+    """
+    Source-level logging policy for the generated program.
+
+    Application entrypoints update this policy with `basic_config(...)`. Library code should leave it alone and only
+    emit events through `Logger` values.
+    """
+
+    pub level: Level = Level.WARN
+    pub format: LogFormat = LogFormat.HUMAN
+    pub style: LogStyle = LogStyle.SHORT
+    pub color: ColorPolicy = ColorPolicy.AUTO
+    pub target: OutputTarget = OutputTarget("stderr")
+
+
+static _config: LoggingConfig = LoggingConfig()
+
+
+@derive(RustSerialize)
+pub model LogRecord:
+    """
+    Structured event record produced by logger event methods.
+
+    Records use Incan field names and OpenTelemetry aliases. Event-specific attributes override bound logger
+    attributes with the same key.
+    """
+
+    pub timestamp [alias="Timestamp", description="Time when the event occurred."]: Timestamp
+    pub observed_timestamp [alias="ObservedTimestamp", description="Time when telemetry observed the event."]: Option[Timestamp] = None
+    pub trace_id [alias="TraceId", description="Request trace identifier when the event is span-correlated."]: Option[TraceId] = None
+    pub span_id [alias="SpanId", description="Span identifier when the event is span-correlated."]: Option[SpanId] = None
+    pub trace_flags [alias="TraceFlags", description="W3C trace flags for the correlated span."]: Option[TraceFlags] = None
+    pub severity_text [alias="SeverityText", description="OpenTelemetry severity text, such as INFO or WARN."]: str
+    pub severity_number [alias="SeverityNumber", description="OpenTelemetry normalized severity number."]: int
+    pub body [alias="Body", description="Human or structured event body."]: TelemetryValue
+    pub resource [alias="Resource", description="Entity that produced this telemetry."]: Resource
+    pub instrumentation_scope [alias="InstrumentationScope", description="Logical scope that emitted this record."]: InstrumentationScope
+    pub attributes [alias="Attributes", description="Additional structured attributes for this event."]: Attributes = Attributes(
+        {},
+    )
+    pub event_name [alias="EventName", description="Optional event class or type name."]: Option[str] = None
+
+    pub def emit(self, config: LoggingConfig) -> None:
+        """Render and write this record using the supplied logging policy."""
+        config.target.write_line(self._render_with(config.format, config.style))
+
+    pub def render(self, config: LoggingConfig) -> str:
+        """Render this record using the configured output format."""
+        return self._render_with(config.format, config.style)
+
+    def _render_with(self, format: LogFormat, style: LogStyle) -> str:
+        """Render this record using explicit format and style values."""
+        if format == LogFormat.JSON:
+            return _to_json(self)
+        return self.render_human(style)
+
+    pub def render_human(self, style: LogStyle) -> str:
+        """Render this record with the configured human output style."""
+        rendered_level = self._level_display_name()
+        rendered_fields = self._attributes_human()
+        logger = self.instrumentation_scope.name
+        body = self.body.display_text()
+        match style:
+            LogStyle.MINIMAL => return f"[{rendered_level}] {body}{rendered_fields}"
+            LogStyle.SHORT => return f"{self._short_timestamp()} [{rendered_level}] {body}{rendered_fields}"
+            LogStyle.COMPLETE => return f"{self.timestamp.0} [{rendered_level}] {body}{rendered_fields}"
+            LogStyle.VERBOSE =>
+                return f"{self.timestamp.0} [{rendered_level}] {body}{rendered_fields}\n  logger={logger}"
+
+    def _short_timestamp(self) -> str:
+        """Return the time-of-day portion of an RFC 3339 timestamp when it is present."""
+        if len(self.timestamp.0) >= 19:
+            return self.timestamp.0[11:19]
+        return self.timestamp.0
+
+    def _level_display_name(self) -> str:
+        """Return the human-facing level name, preserving an unknown severity spelling."""
+        match Level.from_value(self.severity_text):
+            Some(level) => return level.display_name()
+            None => return self.severity_text
+
+    def _attributes_human(self) -> str:
+        """Render the record attributes in stable key order for human output."""
+        fields = self.attributes.0
+        if len(fields) == 0:
+            return ""
+
+        keys = sorted([key for key in fields.keys()])
+        return " fields={" + ", ".join([self._attribute_human(key, fields[key]) for key in keys]) + "}"
+
+    def _attribute_human(self, key: str, value: TelemetryValue) -> str:
+        """Render one structured attribute as a human field entry."""
+        return f"{key}=\"{value.display_text()}\""
+
+
+@derive(Clone)
+pub type LoggerName = newtype str:
+    """
+    Validated dot-separated logger name.
+
+    Logger names must be non-empty, must not start or end with `.`, and must not contain empty path segments.
+    """
+
+    def from_underlying(name: str) -> Result[Self, ValidationError]:
+        """Validate and construct a logger name."""
+        if len(name) == 0:
+            return Err(ValidationError("std.logging logger names must not be empty"))
+        if name.startswith(".") or name.endswith("."):
+            return Err(ValidationError("std.logging logger names must not start or end with '.'"))
+        if name.contains(".."):
+            return Err(ValidationError("std.logging logger names must not contain empty segments"))
+        return Ok(LoggerName(name))
+
+
+pub model Logger:
+    """
+    Named logger with bound structured context.
+
+    Logger values are cheap handles around a name and an immutable field map. Methods such as `bind(...)` and
+    `child(...)` return new loggers rather than mutating the original logger.
+    """
+
+    pub name: LoggerName
+    pub fields: Dict[str, Union[TelemetryValue, str, bool, int, float, None]] = {}
+
+    pub def child(self, suffix: str) -> Logger:
+        """
+        Return a descendant logger.
+
+        Args:
+            suffix: Dot-separated suffix to append to this logger's name.
+
+        Returns:
+            A logger named `<self.name>.<suffix>`.
+        """
+        return Logger(name=f"{self.name.0}.{suffix}", fields=self.fields)
+
+    pub def bind(self, fields: Dict[str, Union[TelemetryValue, str, bool, int, float, None]]) -> Logger:
+        """
+        Return a logger with additional bound context.
+
+        Args:
+            fields: Structured fields to attach to every event from the returned logger.
+
+        Returns:
+            A new logger with merged bound fields. Fields in `fields` override existing bound fields with the same key.
+        """
+        return Logger(name=self.name, fields=self._fields_with(fields))
+
+    pub def is_enabled(self, level: Level) -> bool:
+        """
+        Check whether `level` passes the current source-level threshold.
+
+        Returns:
+            `true` when an event at `level` would be emitted.
+        """
+        return level.rank() >= _config.level.rank()
+
+    pub def trace(
+        self,
+        message: str,
+        fields: Dict[str, Union[TelemetryValue, str, bool, int, float, None]] = {},
+    ) -> None:
+        """
+        Emit a trace event.
+
+        Args:
+            message: Human-readable event message.
+            fields: Event-specific structured fields.
+        """
+        self._event(Level.TRACE, message, fields)
+
+    pub def debug(
+        self,
+        message: str,
+        fields: Dict[str, Union[TelemetryValue, str, bool, int, float, None]] = {},
+    ) -> None:
+        """
+        Emit a debug event.
+
+        Args:
+            message: Human-readable event message.
+            fields: Event-specific structured fields.
+        """
+        self._event(Level.DEBUG, message, fields)
+
+    pub def info(
+        self,
+        message: str,
+        fields: Dict[str, Union[TelemetryValue, str, bool, int, float, None]] = {},
+    ) -> None:
+        """
+        Emit an info event.
+
+        Args:
+            message: Human-readable event message.
+            fields: Event-specific structured fields.
+        """
+        self._event(Level.INFO, message, fields)
+
+    pub def warning(
+        self,
+        message: str,
+        fields: Dict[str, Union[TelemetryValue, str, bool, int, float, None]] = {},
+    ) -> None:
+        """
+        Emit a warning event.
+
+        Args:
+            message: Human-readable event message.
+            fields: Event-specific structured fields.
+        """
+        self._event(Level.WARN, message, fields)
+
+    pub def error(
+        self,
+        message: str,
+        fields: Dict[str, Union[TelemetryValue, str, bool, int, float, None]] = {},
+    ) -> None:
+        """
+        Emit an error event.
+
+        Args:
+            message: Human-readable event message.
+            fields: Event-specific structured fields.
+        """
+        self._event(Level.ERROR, message, fields)
+
+    pub def critical(
+        self,
+        message: str,
+        fields: Dict[str, Union[TelemetryValue, str, bool, int, float, None]] = {},
+    ) -> None:
+        """
+        Emit a critical event.
+
+        Args:
+            message: Human-readable event message.
+            fields: Event-specific structured fields.
+        """
+        self._event(Level.FATAL, message, fields)
+
+    def _event(
+        self,
+        level: Level,
+        message: str,
+        fields: Dict[str, Union[TelemetryValue, str, bool, int, float, None]],
+    ) -> None:
+        """
+        Build and emit one event record when the source-level threshold allows it.
+
+        Event-specific fields override fields bound to the logger.
+        """
+        if not self.is_enabled(level):
+            return
+        record = LogRecord(
+            timestamp=Timestamp(_utc_timestamp()),
+            severity_text=level.value(),
+            severity_number=level.severity_number(),
+            body=TelemetryValue.string(message),
+            resource=Resource(),
+            instrumentation_scope=InstrumentationScope(name=self.name.0),
+            attributes=self._attributes_with(fields),
+        )
+        record.emit(_config)
+
+    def _fields_with(
+        self,
+        fields: Dict[str, Union[TelemetryValue, str, bool, int, float, None]],
+    ) -> Dict[str, Union[TelemetryValue, str, bool, int, float, None]]:
+        """Merge event fields over this logger's bound fields."""
+        mut merged: Dict[str, Union[TelemetryValue, str, bool, int, float, None]] = {}
+        for key in self.fields.keys():
+            merged[key] = self.fields[key]
+        for key in fields.keys():
+            merged[key] = fields[key]
+        return merged
+
+    def _attributes_with(
+        self,
+        fields: Dict[str, Union[TelemetryValue, str, bool, int, float, None]],
+    ) -> Attributes:
+        """Convert the merged logger and event fields into telemetry attributes."""
+        merged = self._fields_with(fields)
+        return Attributes({key: _log_value(merged[key]) for key in merged.keys()})
+
+
+def _log_value(value: Union[TelemetryValue, str, bool, int, float, None]) -> TelemetryValue:
+    """Normalize one logging field value into the foundational telemetry representation."""
+    match value:
+        TelemetryValue(existing) => return existing
+        str(text) => return TelemetryValue.string(text)
+        bool(flag) => return TelemetryValue.bool(flag)
+        int(number) => return TelemetryValue.int(number)
+        float(number) => return TelemetryValue.float(number)
+        None => return TelemetryValue.none()
+
+
+pub def basic_config(
+    level: Level = Level.WARN,
+    format: LogFormat = LogFormat.HUMAN,
+    style: LogStyle = LogStyle.SHORT,
+    color: ColorPolicy = ColorPolicy.AUTO,
+    target: str = "stderr",
+) -> None:
+    """
+    Configure source-level logging policy for the current generated program.
+
+    Args:
+        level: Minimum event level to emit.
+        format: Renderer format.
+        style: Human renderer style.
+        color: Human renderer color policy. Currently accepted but not applied.
+        target: Output target name. `"stdout"` writes to standard output; `"stderr"` writes to standard error.
+    """
+    _config.level = level
+    _config.format = format
+    _config.style = style
+    _config.color = color
+    match OutputTarget.from_underlying(target):
+        Ok(output_target) => _config.target = output_target
+        Err(_err) =>
+            assert false, "std.logging target must be 'stdout' or 'stderr'"
+
+
+pub def get_logger(name: Option[str] = None) -> Logger:
+    """
+    Return a named logger.
+
+    Args:
+        name: Explicit dot-separated logger name. When omitted, the caller module name is used where available;
+            metadata-free snippets fall back to `"root"`.
+
+    Returns:
+        A logger with no bound fields.
+    """
+    match name:
+        Some(explicit_name) => return Logger(name=explicit_name, fields={})
+        None => return Logger(name=LoggerName("root"), fields={})
+
+
+pub static log: Logger = Logger(name=LoggerName("root"), fields={})
+
+
+@derive(Clone)
+model _UtcDate:
+    """Gregorian date fields derived from a Unix day offset."""
+
+    year: int
+    month: int
+    day: int
+
+
+def _to_json[T with RustSerialize](value: T) -> str:
+    """Serialize one derived logging value or stop on an impossible derived-serialization failure."""
+    match to_string(value):
+        Ok(text) => return text
+        Err(error) => panic_any(str(error))
+
+
+def _utc_timestamp() -> str:
+    """Read the host clock and return the current UTC instant in RFC 3339 form."""
+    nanoseconds = _unix_nanoseconds()
+    days = nanoseconds // _NANOS_PER_DAY
+    nanos_of_day = nanoseconds % _NANOS_PER_DAY
+    seconds = nanos_of_day // _NANOS_PER_SECOND
+    date = _civil_from_days(days)
+    base = (
+        _pad4(date.year) + "-" + _pad2(date.month) + "-" + _pad2(date.day) + "T" + _pad2(seconds // _SECONDS_PER_HOUR) + ":" + _pad2(
+            (seconds % _SECONDS_PER_HOUR) // _SECONDS_PER_MINUTE,
+        ) + ":" + _pad2(seconds % _SECONDS_PER_MINUTE)
+    )
+    fractional = nanos_of_day % _NANOS_PER_SECOND
+    if fractional == 0:
+        return base + "Z"
+    return base + "." + _pad9(fractional) + "Z"
+
+
+def _unix_nanoseconds() -> int:
+    """Return signed nanoseconds from the Unix epoch using the host system clock."""
+    match SystemTime.now().duration_since(UNIX_EPOCH):
+        Ok(duration) => return int(duration.as_secs()) * _NANOS_PER_SECOND + int(duration.subsec_nanos())
+        Err(error) =>
+            duration = error.duration()
+            return 0 - (int(duration.as_secs()) * _NANOS_PER_SECOND + int(duration.subsec_nanos()))
+
+
+def _civil_from_days(days: int) -> _UtcDate:
+    """
+    Convert a signed Unix day offset to proleptic Gregorian fields.
+
+    The arithmetic shifts the epoch to March so leap days fall at the end of each computational year, divides the
+    shifted date into 400-year Gregorian eras, and finally moves January and February back to their calendar positions.
+    """
+    epoch_days = days + 719_468
+    era = epoch_days // 146_097
+    day_of_era = epoch_days - era * 146_097
+    year_of_era = (day_of_era - day_of_era // 1_460 + day_of_era // 36_524 - day_of_era // 146_096) // 365
+    mut year = year_of_era + era * 400
+    day_of_year = day_of_era - (365 * year_of_era + year_of_era // 4 - year_of_era // 100)
+    month_prime = (5 * day_of_year + 2) // 153
+    day = day_of_year - (153 * month_prime + 2) // 5 + 1
+    mut month = month_prime + 3
+    if month_prime >= 10:
+        month = month_prime - 9
+    if month <= 2:
+        year += 1
+    return _UtcDate(year=year, month=month, day=day)
+
+
+def _pad2(value: int) -> str:
+    """Format one nonnegative integer with at least two digits."""
+    if value < 10:
+        return "0" + str(value)
+    return str(value)
+
+
+def _pad4(value: int) -> str:
+    """Format one nonnegative integer with at least four digits."""
+    if value < 10:
+        return "000" + str(value)
+    if value < 100:
+        return "00" + str(value)
+    if value < 1_000:
+        return "0" + str(value)
+    return str(value)
+
+
+def _pad9(value: int) -> str:
+    """Format one nonnegative integer with at least nine digits."""
+    mut out = str(value)
+    while len(out) < 9:
+        out = "0" + out
+    return out
