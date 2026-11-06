@@ -455,7 +455,13 @@ The exporter surface should include at least:
 - stdout/debug exporter
 - OTLP exporter shape
 
-OTLP transport details such as HTTP versus gRPC, batching, retry, shutdown flushing, environment variable mapping, and collector compatibility are part of the exporter contract.
+The OTLP exporter supports `http/protobuf` (default) and `grpc`. Use standard OTLP configuration to select the protocol and endpoint. For example, an application that installs `telemetry.otlp()` can send to an HTTP/Protobuf collector with `OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4318`. To use a gRPC collector instead, set `OTEL_EXPORTER_OTLP_PROTOCOL=grpc` and point `OTEL_EXPORTER_OTLP_ENDPOINT` at its gRPC endpoint. The same instrumented code serves both deployments. Follow the [OTLP exporter specification](https://opentelemetry.io/docs/specs/otel/protocol/exporter/).
+
+Protobuf encoding belongs to the OTLP exporter. Applications using only local logging or core telemetry types must build independently of the OTLP codec and transport dependencies. Applications using either OTLP transport must build with the supported Incan toolchain alone. If bindings are generated, use pinned schemas and supply the resulting bindings with the exporter. Regeneration belongs to exporter maintenance. An ordinary consumer build must neither require a system `protoc` or CMake for Protobuf nor silently download or build a vendored `protoc`.
+
+Implementation acceptance includes clean builds of a local-logging program and an OTLP program on a host without `protoc` or CMake. Inspect their resolved build dependencies and build steps to catch transitive generator dependencies. Exercise both OTLP transports against a collector and verify it receives a known span.
+
+Batching, retry, shutdown flushing and collector compatibility remain part of the exporter contract.
 
 Explicit flush reports whether pending export succeeded, failed, or timed out. Shutdown attempts to drain buffered records within a bound before releasing exporter resources. For example, `oven test` can finish its last test span and shut down telemetry before exiting. A collector outage can be reported separately while the command retains the actual test result. See the [OTel tracing SDK lifecycle](https://opentelemetry.io/docs/specs/otel/trace/sdk/#forceflush).
 
@@ -556,6 +562,7 @@ This section is non-normative. A pragmatic implementation should preserve the sa
 ## Design Decisions
 
 - **Process configuration:** The first successful installation freezes the settings. Every later installation attempt returns a typed error.
+- **Export:** Support OTLP over HTTP/Protobuf by default and gRPC through configuration.
 - **Resource identity:** Resolve explicit attributes first, then standard OpenTelemetry environment settings, then application Loaf defaults for service name and version.
 - **Baggage:** Copy only public, non-secret keys explicitly selected by application policy into record attributes.
 - **Default span names:** Use the fully qualified name of the declaration, independent of how the caller imports it.
@@ -568,7 +575,6 @@ This section is non-normative. A pragmatic implementation should preserve the sa
 - What is the minimal safe context propagation story for async tasks and spawned work?
 - How should semantic-convention helpers be generated, versioned, and exposed when OpenTelemetry convention stability changes?
 - What meter API should `std.telemetry.metrics` expose, and how should it control cardinality and aggregation?
-- Which exporter transports belong in standard telemetry support?
 - Which stdlib modules should have default instrumentation, and what default instrumentation policy avoids noisy or sensitive telemetry?
 
 <!-- Rename this section to "Design Decisions" once all questions have been resolved.
