@@ -376,9 +376,12 @@ impl TypeChecker {
         self.refuse_mutating_call_through_read_only_binding(call.base, base_ty, call.method, call.span);
         self.note_mut_param_method_call(call.base, base_ty, call.method);
         self.record_mutable_receiver_method_call(base_ty, call.method, call.span);
-        if let Some(identity) = Self::compiler_builtin_method_identity(base_ty, call.method) {
-            self.note_lazy_result_member(&identity);
-            self.type_info.record_resolved_identity(call.span, identity);
+        if let Some(selection) = Self::compiler_builtin_method_selection(base_ty, call.method) {
+            self.note_lazy_result_member(&selection.identity, selection.operation);
+            self.type_info.record_resolved_identity(call.span, selection.identity);
+            if let Some(operation) = selection.operation {
+                self.type_info.record_resolved_builtin_method_call(call.span, operation);
+            }
         }
     }
 

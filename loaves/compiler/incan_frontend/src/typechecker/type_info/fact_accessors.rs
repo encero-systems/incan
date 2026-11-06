@@ -324,6 +324,11 @@ impl TypeCheckInfo {
         self.calls.resolved_builtin_calls.get(&call_span).copied()
     }
 
+    /// Return the compiler-owned builtin method selected for one checked call.
+    pub fn resolved_builtin_method_call(&self, call_span: Span) -> Option<BuiltinMethodId> {
+        self.calls.resolved_builtin_method_calls.get(&call_span).copied()
+    }
+
     /// Return the `message()` call a declared type displays through, or `None` when it has a `Display` of its own or
     /// does not adopt `Error`.
     ///
@@ -342,6 +347,11 @@ impl TypeCheckInfo {
     /// Record the compiler-owned builtin selected for one checked call.
     pub fn record_resolved_builtin_call(&mut self, call_span: Span, builtin: BuiltinFnId) {
         self.calls.resolved_builtin_calls.insert(call_span, builtin);
+    }
+
+    /// Record the compiler-owned builtin method selected for one checked call.
+    pub fn record_resolved_builtin_method_call(&mut self, call_span: Span, builtin: BuiltinMethodId) {
+        self.calls.resolved_builtin_method_calls.insert(call_span, builtin);
     }
 
     /// Record the checked target fact for one compiler-owned `isinstance` call.

@@ -97,6 +97,7 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
     assert_complete_shared_read_shapes()?;
     assert_lent_and_moved_read()?;
     assert_equality_contract()?;
+    assert_builtin_collection_method_identities()?;
     let mut changed = seed.clone();
     changed.bodies[0].native_attributes.push(bir::NativeAttribute {
         path: "selected::attribute".to_owned(),
@@ -107,6 +108,49 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
         .err()
         .ok_or("baseline omitted an invocation-only field")?;
     assert!(difference.to_string().contains("native_attributes"));
+    Ok(())
+}
+
+/// Prove collection method meaning crosses the checker/Body IR boundary as a closed operation, independently of the
+/// retained source spelling and canonical provenance.
+fn assert_builtin_collection_method_identities() -> Result<(), Box<dyn std::error::Error>> {
+    use incan_lang::lang::builtins::BuiltinMethodId;
+    use incan_lang::lang::surface::dict_methods::DictMethodId;
+    use incan_lang::lang::surface::list_methods::ListMethodId;
+    use incan_lang::lang::surface::set_methods::SetMethodId;
+
+    let source = "def operations() -> None:\n    mut values: list[int] = []\n    values.append(1)\n    values.count(1)\n    values.iter()\n    mut labels: dict[str, int] = {}\n    labels.insert(\"one\", 1)\n    labels.keys()\n    mut seen: set[int] = set()\n    seen.add(1)\n    seen.contains(1)\n";
+    let (_, facts, module) = checked_seed(source)?;
+    let expected = [
+        BuiltinMethodId::List(ListMethodId::Append),
+        BuiltinMethodId::List(ListMethodId::Count),
+        BuiltinMethodId::ListIter,
+        BuiltinMethodId::Dict(DictMethodId::Insert),
+        BuiltinMethodId::Dict(DictMethodId::Keys),
+        BuiltinMethodId::Set(SetMethodId::Add),
+        BuiltinMethodId::Set(SetMethodId::Contains),
+    ];
+    let checked = facts
+        .calls
+        .resolved_builtin_method_calls
+        .values()
+        .copied()
+        .collect::<Vec<_>>();
+    assert!(expected.iter().all(|operation| checked.contains(operation)));
+
+    let carried = module
+        .bodies
+        .iter()
+        .flat_map(|body| &body.block.stmts)
+        .filter_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Method(target),
+                ..
+            } => target.builtin_operation(),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(expected.iter().all(|operation| carried.contains(operation)));
     Ok(())
 }
 

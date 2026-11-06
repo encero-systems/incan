@@ -41,8 +41,8 @@
 use std::fmt::Write as _;
 
 use incan_lang::errors::ErrorKind;
-/// The compiler-owned builtin identity carried by checked named call targets.
-pub use incan_lang::lang::builtins::BuiltinFnId;
+/// The compiler-owned builtin identities carried by checked call targets.
+pub use incan_lang::lang::builtins::{BuiltinFnId, BuiltinMethodId};
 use incan_lang::lang::errors;
 use incan_lang::lang::surface::string_methods::StringMethodId;
 use incan_lang::lang::types::collections::CollectionTypeId;

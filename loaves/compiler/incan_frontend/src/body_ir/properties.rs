@@ -159,7 +159,7 @@ impl BodyBuilder<'_, '_> {
                 name,
                 canonical: Some(canonical),
                 intrinsic_carrier: None,
-                reflection: None,
+                operation: None,
                 loaf_trait: None,
                 trait_arguments: None,
                 type_args: Vec::new(),

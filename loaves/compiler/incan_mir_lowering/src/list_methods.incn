@@ -27,6 +27,7 @@ from rust::incan_semantics_core::body_ir import (
     PlaceElem,
     PlaceOperand as RustPlaceOperand,
 )
+from rust::incan_lang::lang::surface::list_methods import ListMethodId as RustListMethodId
 from generators import generator_shape, generator_collect, generator_runtime_call
 from generator_adapters import is_generator_adapter, iterator_method
 from generator_consumers import is_generator_consumer
@@ -57,7 +58,7 @@ from list_values import (
 )
 from builtin_methods import lower_generator_member
 from list_iteration import list_root_place, shared_sequence_receiver
-from hashed_collections import collection_length, collection_method
+from hashed_collections import collection_length
 from carrier_operands import boundary_operand, element_plan_operand
 from sequence_builtins import argument_type
 
@@ -160,7 +161,7 @@ pub def borrowed_list_argument(
         None => return Err("unsupported Body IR list argument spread")
 
 
-def lower_list_iter(
+pub def lower_list_iter(
     mut builder: Builder,
     arguments: &list[RustArgumentElement],
     destination: &Option[RustPlace],
@@ -231,14 +232,14 @@ pub def borrowed_list_generator_call(
     return Ok(None)
 
 
-pub def lower_list_method(
+pub def lower_remaining_builtin_method(
     mut builder: Builder,
     member: str,
     arguments: &list[RustArgumentElement],
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Admit already resolved builtin list members with exact runtime signatures."""
+    """Lower builtin generator and byte-slice members not yet carried by the closed operation identity."""
     receiver_ty = argument_type(builder, arguments, 0, span)?
     match generator_shape(receiver_ty):
         Some((leaf, depth)) =>
@@ -256,10 +257,6 @@ pub def lower_list_method(
             builder.owned.append(output.local)
             return Ok(None)
         None => pass
-    if member == "List.iter":
-        return lower_list_iter(builder, arguments, destination, span)
-    if member in ["List.reserve", "List.reserve_exact"]:
-        return lower_list_reservation(builder, member, arguments, destination, span)
     if member == "bytes.as_slice":
         if (
             len(arguments) != 1
@@ -277,11 +274,23 @@ pub def lower_list_method(
                 builder.emit(plan_assign(output, RvalueKind.Use(reference), span))
                 return Ok(None)
             None => return Err("invalid Body IR bytes.as_slice spread")
-    if member == "List.contains":
+    return Err(f"unsupported Body IR remaining builtin Method {member}")
+
+
+pub def lower_list_method(
+    mut builder: Builder,
+    method: RustListMethodId,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Lower one checker-selected list operation without interpreting its source or canonical spelling."""
+    if method in [RustListMethodId.Reserve, RustListMethodId.ReserveExact]:
+        return lower_list_reservation(builder, method == RustListMethodId.ReserveExact, arguments, destination, span)
+    if method == RustListMethodId.Contains:
         return lower_list_helper(builder, false, arguments, destination, span)
-    if is_collection(receiver_ty):
-        return collection_method(builder, member, arguments, destination, span)
-    description = f"unsupported Body IR list Method {member} on non-list in {builder.name}"
+    receiver_ty = argument_type(builder, arguments, 0, span)?
+    description = f"unsupported Body IR list Method {method:?} on non-list in {builder.name}"
     source_location = f"{span.file}:{span.line}:{span.column}"
     leaf, depth = require_list_shape(receiver_ty, f"{description} at {source_location}")?
     element = list_element(leaf, depth)
@@ -289,47 +298,48 @@ pub def lower_list_method(
     mut mutable = false
     mut result = PlanType.Unit
     mut parameters: list[PlanType] = []
-    match member:
-        "List.append" =>
+    match method:
+        RustListMethodId.Append =>
             name = "append_list"
             mutable = true
             parameters = [element]
-        "List.extend" =>
+        RustListMethodId.Extend =>
             name = "extend_list"
             mutable = true
             parameters = [PlanType.ListRef(leaf, depth)]
-        "List.pop" =>
+        RustListMethodId.Pop =>
             name = "pop_list"
             mutable = true
             result = element
-        "List.remove" =>
+        RustListMethodId.Remove =>
             name = "remove_list"
             mutable = true
             parameters = [PlanType.Int]
-        "List.swap" =>
+        RustListMethodId.Swap =>
             name = "swap_list"
             mutable = true
             parameters = [PlanType.Int, PlanType.Int]
-        "List.clone" =>
+        RustListMethodId.Clone =>
             name = "clone_list"
             result = PlanType.List(leaf, depth)
-        "List.count" =>
+        RustListMethodId.Count =>
             result = PlanType.Int
             if len(arguments) == 1:
                 name = "length_list"
             else:
                 name = "count_list"
                 parameters = [element]
-        "List.index" =>
+        RustListMethodId.Index =>
             name = "index_list"
             result = PlanType.Int
             parameters = [element]
-        _ => return Err(f"unsupported Body IR list Method {member}")
+        RustListMethodId.Contains | RustListMethodId.Reserve | RustListMethodId.ReserveExact =>
+            return Err("unsupported Body IR duplicate typed list dispatch")
     if len(arguments) != len(parameters) + 1:
-        return Err(f"unsupported Body IR list Method arity {member}")
+        return Err(f"unsupported Body IR list Method arity {method:?}")
     mut operands: list[Operand] = []
     for index in range(len(parameters)):
-        if name == "extend_list":
+        if method == RustListMethodId.Extend:
             operands.append(borrowed_list_argument(builder, arguments, index + 1, false, span)?)
         else:
             match arguments[index + 1].as_one():
@@ -354,7 +364,7 @@ pub def lower_list_method(
 
 def lower_list_reservation(
     mut builder: Builder,
-    member: str,
+    exact: bool,
     arguments: &list[RustArgumentElement],
     destination: &Option[RustPlace],
     span: SourceSpan,
@@ -372,7 +382,7 @@ def lower_list_reservation(
     reference, cell = list_method_receiver(builder, arguments, true, span)?
     output = call_destination(builder, destination, PlanType.Unit, span)?
     mut method = "reserve"
-    if member == "List.reserve_exact":
+    if exact:
         method = "reserve_exact"
     instantiated_external_call(
         builder,

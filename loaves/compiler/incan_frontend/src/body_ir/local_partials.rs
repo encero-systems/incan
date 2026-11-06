@@ -71,7 +71,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         native_trait_delegation: None,
                         name: name.clone(),
                         intrinsic_carrier: None,
-                        reflection: None,
+                        operation: None,
                         loaf_trait: None,
                         trait_arguments: None,
                         canonical: Some(canonical.clone()),

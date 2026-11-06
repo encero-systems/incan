@@ -25,6 +25,9 @@ from rust::incan_semantics_core::body_ir import (
     MethodTarget,
 )
 from rust::incan_semantics_core import SymbolOrigin
+from rust::incan_lang::lang::surface::frozen_list_methods import FrozenListMethodId as RustFrozenListMethodId
+from rust::incan_lang::lang::surface::frozen_dict_methods import FrozenDictMethodId as RustFrozenDictMethodId
+from rust::incan_lang::lang::surface::frozen_set_methods import FrozenSetMethodId as RustFrozenSetMethodId
 from generator_adapters import generator_adapter
 from generator_consumers import is_generator_consumer, consumer_result, generator_consumer
 from element_places import is_element_place
@@ -46,11 +49,13 @@ from list_methods import (
     borrowed_list_argument,
     call_destination,
     lower_list_builtin,
+    lower_list_iter,
     lower_list_method,
+    lower_remaining_builtin_method,
 )
 from list_iteration import frozen_dictionary_contains, list_root_place
 from list_values import list_borrow
-from hashed_collections import collection_contains
+from hashed_collections import collection_contains, dictionary_method, set_method
 from sequence_builtins import argument_type, text_argument
 
 
@@ -62,6 +67,10 @@ pub def lower_builtin_method(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Dispatch retained builtin registry members to text, numeric resize, or collection boundaries."""
+    if target.has_builtin_selection():
+        if not target.has_valid_builtin_selection():
+            return Err("unsupported Body IR builtin method operation without matching canonical provenance")
+        return lower_typed_collection_method(builder, target, arguments, destination, span)
     mut member = ""
     match target.canonical:
         Some(identity) =>
@@ -78,15 +87,6 @@ pub def lower_builtin_method(
     receiver_type = argument_type(builder, arguments, 0, span)?
     if lower_integer_helper(builder, member, receiver_type, arguments, destination, span)?:
         return Ok(None)
-    match receiver_type:
-        PlanType.FrozenCollection(name, _elements) =>
-            if member == f"{name}.len":
-                return lower_list_builtin(builder, arguments, destination, span)
-            if name == "FrozenDict" and member == "FrozenDict.contains_key":
-                return frozen_dictionary_contains(builder, arguments, destination, false, span)
-            if name == "FrozenSet" and member == "FrozenSet.contains":
-                return collection_contains(builder, false, arguments, destination, span)
-        _ => pass
     if receiver_type == PlanType.FrozenBytes and member == "frozenbytes.len":
         return lower_list_builtin(builder, arguments, destination, span)
     if lower_text_codec_method(builder, member, arguments, destination, span)?:
@@ -117,7 +117,62 @@ pub def lower_builtin_method(
         Some((name, parameters, result)) =>
             return lower_float_method(builder, name, parameters, result, arguments, destination, span)
         None => pass
-    return lower_list_method(builder, member, arguments, destination, span)
+    return lower_remaining_builtin_method(builder, member, arguments, destination, span)
+
+
+def lower_typed_collection_method(
+    mut builder: Builder,
+    target: &MethodTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Dispatch one checker-selected list, dictionary, set, or frozen collection operation."""
+    match target.builtin_list():
+        Some(method) => return lower_list_method(builder, method, arguments, destination, span)
+        None => pass
+    if target.is_builtin_list_iter():
+        return lower_list_iter(builder, arguments, destination, span)
+    match target.builtin_dict():
+        Some(method) => return dictionary_method(builder, method, arguments, destination, span)
+        None => pass
+    match target.builtin_set():
+        Some(method) => return set_method(builder, method, arguments, destination, span)
+        None => pass
+    match target.builtin_frozen_list():
+        Some(RustFrozenListMethodId.Len) => return lower_list_builtin(builder, arguments, destination, span)
+        Some(RustFrozenListMethodId.IsEmpty) =>
+            return refuse_unsupported_frozen_collection_method(builder, "FrozenList.is_empty", arguments, span)
+        None => pass
+    match target.builtin_frozen_dict():
+        Some(RustFrozenDictMethodId.Len) => return lower_list_builtin(builder, arguments, destination, span)
+        Some(RustFrozenDictMethodId.ContainsKey) =>
+            return frozen_dictionary_contains(builder, arguments, destination, false, span)
+        Some(RustFrozenDictMethodId.IsEmpty) =>
+            return refuse_unsupported_frozen_collection_method(builder, "FrozenDict.is_empty", arguments, span)
+        None => pass
+    match target.builtin_frozen_set():
+        Some(RustFrozenSetMethodId.Len) => return lower_list_builtin(builder, arguments, destination, span)
+        Some(RustFrozenSetMethodId.Contains) =>
+            return collection_contains(builder, false, arguments, destination, span)
+        Some(RustFrozenSetMethodId.IsEmpty) =>
+            return refuse_unsupported_frozen_collection_method(builder, "FrozenSet.is_empty", arguments, span)
+        None => pass
+    return Err("unsupported Body IR builtin method operation")
+
+
+def refuse_unsupported_frozen_collection_method(
+    mut builder: Builder,
+    member: str,
+    arguments: &list[RustArgumentElement],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Preserve the existing non-list refusal for an unsupported frozen-collection member."""
+    receiver = argument_type(builder, arguments, 0, span)?
+    description = f"unsupported Body IR list Method {member} on non-list in {builder.name}"
+    source_location = f"{span.file}:{span.line}:{span.column}"
+    _shape = require_list_shape(receiver, f"{description} at {source_location}")?
+    return Err(f"unsupported Body IR list Method {member}")
 
 
 def lower_integer_helper(

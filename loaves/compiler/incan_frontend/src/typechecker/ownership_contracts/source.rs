@@ -455,8 +455,8 @@ impl Builder<'_> {
                 })
             }
             Expr::Call(callee, _, arguments) => self.call(callee, arguments, expression.span, incoming),
-            Expr::MethodCall(receiver, method, _, arguments) => {
-                match super::builtins::list_method_writes(&self.checker.type_info, receiver, method, expression.span) {
+            Expr::MethodCall(receiver, _, _, arguments) => {
+                match super::builtins::list_method_writes(&self.checker.type_info, expression.span) {
                     Some(writes) => self.list_method(receiver, writes, arguments, expression.span, incoming),
                     None => self.apply_call(Some(receiver), arguments, expression.span, incoming),
                 }

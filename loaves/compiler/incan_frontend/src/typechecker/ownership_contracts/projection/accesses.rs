@@ -384,8 +384,8 @@ impl SourceAccesses<'_, '_> {
                 self.comprehension(&comprehension.clauses, &[&comprehension.key, &comprehension.value])?
             }
             Expr::Generator(generator) => self.generator_access(generator, consume)?,
-            Expr::MethodCall(receiver, method, _, arguments) => {
-                self.method_access(expression, receiver, method, arguments, consume)?
+            Expr::MethodCall(receiver, _, _, arguments) => {
+                self.method_access(expression, receiver, arguments, consume)?
             }
             Expr::Call(callee, _, arguments) => self.call_access(expression, callee, arguments)?,
             // `await` suspends on its call, which is evaluated as written.
@@ -412,16 +412,13 @@ impl SourceAccesses<'_, '_> {
         &mut self,
         expression: &Spanned<Expr>,
         receiver: &Spanned<Expr>,
-        method: &crate::ast::Ident,
         arguments: &[CallArg],
         consume: bool,
     ) -> Result<(), &'static str> {
         if let Some(iterator) = super::super::builtins::retained_iterator_method(self.proof.facts, expression.span) {
             return self.retained_iterator_call(receiver, arguments, iterator, expression.span, consume);
         }
-        if let Some(writes) =
-            super::super::builtins::list_method_writes(self.proof.facts, receiver, method, expression.span)
-        {
+        if let Some(writes) = super::super::builtins::list_method_writes(self.proof.facts, expression.span) {
             let (place, through) = self
                 .place(receiver)?
                 .ok_or("source list method has no stored receiver")?;

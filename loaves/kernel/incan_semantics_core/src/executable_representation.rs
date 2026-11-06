@@ -74,12 +74,14 @@ use crate::body_ir::{
 /// Version 47 lets a tuple element carry a returned view, so a result can pair a view with owned values.
 /// Version 48 distinguishes body-inferred shared inputs from explicit `Borrowed` inputs while preserving their shared
 /// native ABI. Older representations carry no such fact and retain their existing inferred meaning.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 48;
+/// Version 49 carries the checker's typed builtin-method operation on every method target. Older representations are
+/// refused because an absent operation would force consumers to reconstruct builtin meaning from canonical text.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 49;
 
 /// Only the binding-aware combined layout is admitted. Missing input authority cannot be reconstructed from a
 /// native ABI, and a prior layout cannot silently omit initializer transfers, explicit local obligations, returned
 /// views, conditional profiles or the component carrying a view.
-const OLDEST_SUPPORTED_VERSION: u32 = 47;
+const OLDEST_SUPPORTED_VERSION: u32 = 49;
 
 /// Required-field witnesses transported separately from the legacy positional nominal layout.
 #[derive(Serialize, Deserialize)]

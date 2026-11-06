@@ -523,7 +523,7 @@ fn generic_metadata_belongs_to(
     if !target.has_valid_generic_metadata() {
         return false;
     }
-    let Some(crate::body_ir::ReflectionOperation::GenericMetadata(binder)) = &target.reflection else {
+    let Some(crate::body_ir::ReflectionOperation::GenericMetadata(binder)) = &target.operation else {
         return false;
     };
     if !parameters.contains(&binder.declaration_name) {

@@ -75,6 +75,7 @@ pub(super) fn call_artifacts(value: &CallArtifacts) -> Result<(), NodeBindingErr
         inferred_call_result_types,
         mutable_receiver_method_calls,
         resolved_builtin_calls: _,
+        resolved_builtin_method_calls: _,
         fixed_unpack_plans,
         call_site_monomorph_type_args: _,
         isinstance_targets,

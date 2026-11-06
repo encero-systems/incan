@@ -1,8 +1,9 @@
 //! Retain empty collection storage from checked builtin writes without changing legacy inference.
 
-use incan_lang::lang::surface::{dict_methods, set_methods};
+use incan_lang::lang::builtins::BuiltinMethodId;
+use incan_lang::lang::surface::{dict_methods::DictMethodId, set_methods::SetMethodId};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
-use incan_semantics_core::{IncanPrimitiveType, IncanType, SymbolOrigin, body_ir as bir};
+use incan_semantics_core::{IncanPrimitiveType, IncanType, body_ir as bir};
 
 use super::BodyBuilder;
 
@@ -139,25 +140,23 @@ fn checked_write(
     arguments: &[bir::ArgumentElement],
     locals: &[bir::LocalDecl],
 ) -> Option<(usize, IncanType)> {
-    let identity = target.canonical.as_ref()?;
-    if identity.origin != SymbolOrigin::Builtin {
+    if !target.has_valid_builtin_selection() {
         return None;
     }
-    let (owner, member) = identity.declaration_name.split_once('.')?;
+    let operation = target.builtin_operation()?;
+    let (expected, slots) = match operation {
+        BuiltinMethodId::Set(SetMethodId::Add) => (CollectionTypeId::Set, 1),
+        BuiltinMethodId::Dict(DictMethodId::Insert) => (CollectionTypeId::Dict, 2),
+        _ => return None,
+    };
     let bir::ArgumentElement::One(bir::Operand::Place(receiver)) = arguments.first()? else {
         return None;
     };
     let receiver = whole_local(&receiver.place)?;
     let (kind, members) = collection_shape(&locals.get(receiver)?.ty)?;
-    let expected = collections::from_str(owner)?;
     if kind != expected {
         return None;
     }
-    let slots = match kind {
-        CollectionTypeId::Set if set_methods::from_str(member) == Some(set_methods::SetMethodId::Add) => 1,
-        CollectionTypeId::Dict if dict_methods::from_str(member) == Some(dict_methods::DictMethodId::Insert) => 2,
-        _ => return None,
-    };
     if members.len() != slots || arguments.len() != slots + 1 {
         return None;
     }
@@ -173,7 +172,7 @@ fn checked_write(
     Some((
         receiver,
         IncanType::Generic {
-            base: owner.to_string(),
+            base: operation.owner().to_string(),
             args: types?,
         },
     ))

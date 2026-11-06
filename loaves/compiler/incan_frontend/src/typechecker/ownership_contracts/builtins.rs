@@ -1,9 +1,9 @@
 //! Builtin collection methods an explicit body may call on a checked place, with the receiver access each needs, and
 //! the builtin carrier forms that hold or reveal a carried view.
 
+use incan_lang::lang::builtins::BuiltinMethodId;
 use incan_lang::lang::surface::constructors::{self, ConstructorId};
 use incan_lang::lang::surface::iterator_methods::{self, IteratorMethodId};
-use incan_lang::lang::surface::list_methods::{self, ListMethodId};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
 
@@ -15,25 +15,29 @@ use incan_semantics_core::SurfaceFeatureKey;
 
 use super::flow::{Graph, LoanId};
 
-/// Return the registry identity of a lazy builtin result, never a method selected only by source spelling.
+/// Return the registry identity of a deferred iterator or generator member.
+///
+/// Collection families with a closed [`BuiltinMethodId`] are selected through the typed checker fact instead. This
+/// identity-backed path remains for iterator and generator operations whose family has not yet joined that handoff.
 pub(super) fn retained_iterator_member(identity: &CanonicalSymbolId) -> Option<IteratorMethodId> {
     if identity.origin != SymbolOrigin::Builtin || identity.namespace != incan_semantics_core::SymbolNamespace::Member {
         return None;
     }
     let method = iterator_methods::from_str(identity.declaration_name.rsplit_once('.')?.1)?;
     let owner = identity.declaration_name.split_once('.')?.0;
-    let list = collections::as_str(CollectionTypeId::List);
     let generator = collections::as_str(CollectionTypeId::Generator);
     let iterator = incan_lang::lang::traits::as_str(incan_lang::lang::traits::TraitId::Iterator);
-    match method {
-        IteratorMethodId::Iter if owner == list => Some(method),
-        _ if owner == generator || owner == iterator => Some(method),
-        _ => None,
-    }
+    (owner == generator || owner == iterator).then_some(method)
 }
 
 /// Return the lazy iterator member authenticated for one checked call span.
+///
+/// A list iterator is selected only by its typed builtin operation. Iterator and generator adapters retain their
+/// existing canonical-identity path until those families gain their own typed operation handoff.
 pub(super) fn retained_iterator_method(facts: &TypeCheckInfo, span: Span) -> Option<IteratorMethodId> {
+    if facts.resolved_builtin_method_call(span) == Some(BuiltinMethodId::ListIter) {
+        return Some(IteratorMethodId::Iter);
+    }
     retained_iterator_member(facts.resolved_identity(span)?)
 }
 
@@ -123,29 +127,10 @@ pub(crate) fn carried_view_binding(pattern: &Spanned<Pattern>, payload: usize) -
 
 /// Whether a method call is a builtin `list` method, and whether it changes its receiver in place: `Some(true)` for a
 /// write, `Some(false)` for a read. A trait or source method selected for the call is never a builtin.
-pub(super) fn list_method_writes(
-    facts: &TypeCheckInfo,
-    receiver: &Spanned<Expr>,
-    method: &str,
-    span: Span,
-) -> Option<bool> {
-    let list = matches!(
-        facts.expr_type(receiver.span),
-        Some(ResolvedType::Generic(name, arguments))
-            if collections::from_str(name) == Some(CollectionTypeId::List) && arguments.len() == 1
-    );
-    if !list || facts.resolved_method_call(span).is_some() {
-        return None;
-    }
-    match list_methods::from_str(method)? {
-        ListMethodId::Append
-        | ListMethodId::Extend
-        | ListMethodId::Pop
-        | ListMethodId::Swap
-        | ListMethodId::Reserve
-        | ListMethodId::ReserveExact
-        | ListMethodId::Remove => Some(true),
-        ListMethodId::Contains | ListMethodId::Count | ListMethodId::Index | ListMethodId::Clone => Some(false),
+pub(super) fn list_method_writes(facts: &TypeCheckInfo, span: Span) -> Option<bool> {
+    match facts.resolved_builtin_method_call(span)? {
+        operation @ BuiltinMethodId::List(_) => Some(operation.changes_receiver()),
+        _ => None,
     }
 }
 

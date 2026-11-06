@@ -27,6 +27,7 @@ use incan_lang::interop::{
     RustCollectionFamily, RustFieldInfo, RustFunctionSig, RustItemKind, RustItemMetadata, RustTraitAssoc,
     RustTraitInfo, RustTypeInfo, RustVisibility,
 };
+use incan_lang::lang::builtins::BuiltinMethodId;
 use incan_lang::lang::derives::DeriveId;
 use incan_lang::lang::magic_methods;
 use incan_lang::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
@@ -213,6 +214,12 @@ struct MethodArgumentContext {
     enum_variant_parameters: Option<Vec<CallableParam>>,
 }
 
+/// Canonical provenance and the closed operation selected for one compiler-owned method.
+struct CompilerBuiltinMethodSelection {
+    identity: CanonicalSymbolId,
+    operation: Option<BuiltinMethodId>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NumericResizeMethodPolicy {
     Lossless,
@@ -261,8 +268,14 @@ impl TypeChecker {
     }
 
     /// Resolve a builtin method through its receiver and method registries, preserving owner discrimination.
-    fn compiler_builtin_method_identity(base_ty: &ResolvedType, method: &str) -> Option<CanonicalSymbolId> {
-        let (owner, member) = match base_ty {
+    fn compiler_builtin_method_selection(
+        base_ty: &ResolvedType,
+        method: &str,
+    ) -> Option<CompilerBuiltinMethodSelection> {
+        if let Some(selection) = Self::compiler_builtin_collection_method_selection(base_ty, method) {
+            return Some(selection);
+        }
+        let (owner, member, operation) = match base_ty {
             ResolvedType::Int | ResolvedType::Float | ResolvedType::Numeric(_) | ResolvedType::Bool => {
                 let owner_id = super::super::numeric_type_id_for_compat(base_ty)?;
                 let owner = incan_lang::lang::types::numerics::as_str(owner_id);
@@ -279,82 +292,138 @@ impl TypeChecker {
                 } else {
                     return None;
                 };
-                (owner, member)
+                (owner, member, None)
             }
             ResolvedType::Str => (
                 incan_lang::lang::types::stringlike::as_str(incan_lang::lang::types::stringlike::StringLikeId::Str),
                 string_methods::from_str(method).map(string_methods::as_str)?,
+                None,
             ),
             ResolvedType::FrozenStr => (
                 incan_lang::lang::types::stringlike::as_str(
                     incan_lang::lang::types::stringlike::StringLikeId::FrozenStr,
                 ),
                 string_methods::from_str(method).map(string_methods::as_str)?,
+                None,
             ),
             ResolvedType::Bytes => (
                 incan_lang::lang::types::stringlike::as_str(incan_lang::lang::types::stringlike::StringLikeId::Bytes),
                 bytes_methods::from_str(method)
                     .map(bytes_methods::as_str)
                     .or_else(|| (method == "as_slice").then_some("as_slice"))?,
+                None,
             ),
             ResolvedType::FrozenBytes => (
                 incan_lang::lang::types::stringlike::as_str(
                     incan_lang::lang::types::stringlike::StringLikeId::FrozenBytes,
                 ),
                 frozen_bytes_methods::from_str(method).map(frozen_bytes_methods::as_str)?,
+                None,
             ),
-            ResolvedType::FrozenList(_) => (
-                incan_lang::lang::types::collections::as_str(CollectionTypeId::FrozenList),
-                frozen_list_methods::from_str(method).map(frozen_list_methods::as_str)?,
-            ),
-            ResolvedType::FrozenSet(_) => (
-                incan_lang::lang::types::collections::as_str(CollectionTypeId::FrozenSet),
-                frozen_set_methods::from_str(method).map(frozen_set_methods::as_str)?,
-            ),
-            ResolvedType::FrozenDict(_, _) => (
-                incan_lang::lang::types::collections::as_str(CollectionTypeId::FrozenDict),
-                frozen_dict_methods::from_str(method).map(frozen_dict_methods::as_str)?,
-            ),
+            _ => return None,
+        };
+        Some(CompilerBuiltinMethodSelection {
+            identity: Self::compiler_builtin_member_identity(owner, member),
+            operation,
+        })
+    }
+
+    /// Resolve collection and iterator methods while retaining the receiver family in the selected operation.
+    fn compiler_builtin_collection_method_selection(
+        base_ty: &ResolvedType,
+        method: &str,
+    ) -> Option<CompilerBuiltinMethodSelection> {
+        let (owner, member, operation) = match base_ty {
+            ResolvedType::FrozenList(_) => {
+                let method = frozen_list_methods::from_str(method)?;
+                (
+                    incan_lang::lang::types::collections::as_str(CollectionTypeId::FrozenList),
+                    frozen_list_methods::as_str(method),
+                    Some(BuiltinMethodId::FrozenList(method)),
+                )
+            }
+            ResolvedType::FrozenSet(_) => {
+                let method = frozen_set_methods::from_str(method)?;
+                (
+                    incan_lang::lang::types::collections::as_str(CollectionTypeId::FrozenSet),
+                    frozen_set_methods::as_str(method),
+                    Some(BuiltinMethodId::FrozenSet(method)),
+                )
+            }
+            ResolvedType::FrozenDict(_, _) => {
+                let method = frozen_dict_methods::from_str(method)?;
+                (
+                    incan_lang::lang::types::collections::as_str(CollectionTypeId::FrozenDict),
+                    frozen_dict_methods::as_str(method),
+                    Some(BuiltinMethodId::FrozenDict(method)),
+                )
+            }
             // An `Iterator[T]` value, such as an adapter's result or a list's `iter()`, has the RFC 088 surface as its
             // own members, as a `Generator[T]` does.
             ResolvedType::Generic(name, _) if Self::is_iterator_protocol_name(name) => (
                 Self::iterator_protocol_name(),
                 iterator_methods::from_str(method).map(iterator_methods::as_str)?,
+                None,
             ),
             ResolvedType::Generic(name, _) => match collection_type_id(name) {
-                Some(CollectionTypeId::List) => (
-                    incan_lang::lang::types::collections::as_str(CollectionTypeId::List),
-                    list_methods::from_str(method)
-                        .map(list_methods::as_str)
-                        .or_else(|| Self::iterable_iter_member(method))?,
-                ),
-                Some(CollectionTypeId::Dict) => (
-                    incan_lang::lang::types::collections::as_str(CollectionTypeId::Dict),
-                    dict_methods::from_str(method).map(dict_methods::as_str)?,
-                ),
-                Some(CollectionTypeId::Set) => (
-                    incan_lang::lang::types::collections::as_str(CollectionTypeId::Set),
-                    set_methods::from_str(method).map(set_methods::as_str)?,
-                ),
+                Some(CollectionTypeId::List) => match list_methods::from_str(method) {
+                    Some(method) => (
+                        incan_lang::lang::types::collections::as_str(CollectionTypeId::List),
+                        list_methods::as_str(method),
+                        Some(BuiltinMethodId::List(method)),
+                    ),
+                    None => (
+                        incan_lang::lang::types::collections::as_str(CollectionTypeId::List),
+                        Self::iterable_iter_member(method)?,
+                        Some(BuiltinMethodId::ListIter),
+                    ),
+                },
+                Some(CollectionTypeId::Dict) => {
+                    let method = dict_methods::from_str(method)?;
+                    (
+                        incan_lang::lang::types::collections::as_str(CollectionTypeId::Dict),
+                        dict_methods::as_str(method),
+                        Some(BuiltinMethodId::Dict(method)),
+                    )
+                }
+                Some(CollectionTypeId::Set) => {
+                    let method = set_methods::from_str(method)?;
+                    (
+                        incan_lang::lang::types::collections::as_str(CollectionTypeId::Set),
+                        set_methods::as_str(method),
+                        Some(BuiltinMethodId::Set(method)),
+                    )
+                }
                 Some(CollectionTypeId::Option) => (
                     incan_lang::lang::types::collections::as_str(CollectionTypeId::Option),
                     option_methods::from_str(method)
                         .map(option_methods::as_str)
                         .or_else(|| (method == "clone").then_some("clone"))?,
+                    None,
                 ),
                 Some(CollectionTypeId::Result) => (
                     incan_lang::lang::types::collections::as_str(CollectionTypeId::Result),
                     result_methods::from_str(method).map(result_methods::as_str)?,
+                    None,
                 ),
                 Some(CollectionTypeId::Generator) => (
                     incan_lang::lang::types::collections::as_str(CollectionTypeId::Generator),
                     iterator_methods::from_str(method).map(iterator_methods::as_str)?,
+                    None,
                 ),
                 _ => return None,
             },
             _ => return None,
         };
-        Some(Self::compiler_builtin_member_identity(owner, member))
+        Some(CompilerBuiltinMethodSelection {
+            identity: Self::compiler_builtin_member_identity(owner, member),
+            operation,
+        })
+    }
+
+    /// Return canonical provenance for a compiler-owned method after the registry selected it.
+    fn compiler_builtin_method_identity(base_ty: &ResolvedType, method: &str) -> Option<CanonicalSymbolId> {
+        Self::compiler_builtin_method_selection(base_ty, method).map(|selection| selection.identity)
     }
 
     /// Typecheck built-in numeric resize helpers and retain their concrete target for downstream call lowering.

@@ -75,6 +75,11 @@ pub struct CallArtifacts {
     /// This distinguishes an explicit `std.builtins.name(...)` or unshadowed ambient builtin from a source/import
     /// declaration with the same spelling without asking lowering to reconstruct name resolution.
     pub resolved_builtin_calls: HashMap<crate::ast::Span, BuiltinFnId>,
+    /// Compiler-owned builtin method selected for a call, keyed by the full call span.
+    ///
+    /// Canonical identity remains declaration provenance. This operation identity is the closed semantic key used by
+    /// Body IR, ownership projection, and native lowering without reclassifying a declaration-name string.
+    pub resolved_builtin_method_calls: HashMap<crate::ast::Span, BuiltinMethodId>,
     /// RFC 038: unpack operands whose static shape has been proven by call binding.
     ///
     /// Lowering consumes these plans to rewrite fixed/static unpack operands into ordinary IR call arguments. This

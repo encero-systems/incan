@@ -8,7 +8,7 @@ impl<'a> PublicationAudit<'a> {
     /// Both identities are projected together only after the owning generic frame has authenticated their relation.
     pub(super) fn generic_metadata_target(&mut self, target: &mut MethodTarget) -> Result<bool, CoverageReason> {
         if !matches!(
-            target.reflection,
+            target.operation,
             Some(crate::body_ir::ReflectionOperation::GenericMetadata(_))
         ) {
             return Ok(false);
@@ -20,7 +20,7 @@ impl<'a> PublicationAudit<'a> {
         if !generic_metadata_belongs_to(target, callable, &self.type_parameters, self.nominal_declarations) {
             return Err(CoverageReason::UnresolvedReference);
         }
-        let Some(crate::body_ir::ReflectionOperation::GenericMetadata(binder)) = &mut target.reflection else {
+        let Some(crate::body_ir::ReflectionOperation::GenericMetadata(binder)) = &mut target.operation else {
             return Err(CoverageReason::UnresolvedReference);
         };
         if let SymbolOrigin::Module(module_path) = &binder.origin {
@@ -686,6 +686,9 @@ impl<'a> PublicationAudit<'a> {
             }
             Callee::Function(CallableTarget::Local(target)) => self.place(&mut target.operand.place)?,
             Callee::Method(target) => {
+                if !target.has_valid_builtin_selection() {
+                    return Err(CoverageReason::UnsupportedConstruct);
+                }
                 if self.generic_metadata_target(target)? {
                     return Ok(());
                 }

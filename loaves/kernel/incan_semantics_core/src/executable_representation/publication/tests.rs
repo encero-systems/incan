@@ -34,7 +34,7 @@ fn metadata_target() -> MethodTarget {
     member.declaration_name = "__fields__".to_owned();
     let mut target = MethodTarget::synthesized("__fields__");
     target.canonical = Some(member);
-    target.reflection = Some(ReflectionOperation::GenericMetadata(binder));
+    target.operation = Some(ReflectionOperation::GenericMetadata(binder));
     target
 }
 
@@ -63,9 +63,9 @@ fn metadata_requires_the_declared_enclosing_binder() {
 fn ordinary_or_concrete_methods_do_not_gain_generic_publication() {
     let parameters = BTreeSet::from(["T".to_owned()]);
     let mut target = metadata_target();
-    target.reflection = None;
+    target.operation = None;
     assert!(!generic_metadata_belongs_to(&target, &callable(), &parameters, &[]));
-    target.reflection = Some(ReflectionOperation::Metadata);
+    target.operation = Some(ReflectionOperation::Metadata);
     assert!(!generic_metadata_belongs_to(&target, &callable(), &parameters, &[]));
 }
 
@@ -91,7 +91,7 @@ fn metadata_rejects_an_outside_binder_owner() {
     let parameters = BTreeSet::from(["T".to_owned()]);
     let mut target = metadata_target();
     let outside = HirSourceSpan::new(220, 221);
-    if let Some(ReflectionOperation::GenericMetadata(binder)) = &mut target.reflection {
+    if let Some(ReflectionOperation::GenericMetadata(binder)) = &mut target.operation {
         binder.declaration_span = outside;
     }
     if let Some(member) = &mut target.canonical {
@@ -113,7 +113,7 @@ fn metadata_projection_rebases_both_identities_without_a_callable_dependency() -
     audit.type_parameters.insert("T".to_owned());
     let mut target = metadata_target();
     assert_eq!(audit.generic_metadata_target(&mut target), Ok(true));
-    let Some(ReflectionOperation::GenericMetadata(binder)) = &target.reflection else {
+    let Some(ReflectionOperation::GenericMetadata(binder)) = &target.operation else {
         return Err("publication did not preserve the generic metadata operation".into());
     };
     let member = target

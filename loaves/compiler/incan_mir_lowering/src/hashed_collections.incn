@@ -23,6 +23,8 @@ from rust::incan_semantics_core::body_ir import (
     DictEntry,
     PlaceOperand as RustPlaceOperand,
 )
+from rust::incan_lang::lang::surface::dict_methods import DictMethodId as RustDictMethodId
+from rust::incan_lang::lang::surface::set_methods import SetMethodId as RustSetMethodId
 from table_views import borrowed_at
 from options import carrier_layout, replace_owned_destination
 from builtins import list_call
@@ -320,23 +322,36 @@ pub def dictionary_entry_assignment(
         _ => return Err("unsupported Body IR dictionary indexed rvalue")
 
 
-pub def collection_method(
+pub def set_method(
     mut builder: Builder,
-    member: str,
+    method: RustSetMethodId,
     arguments: &list[RustArgumentElement],
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Admit canonical collection methods, materializing indexed read-only receivers before borrowing them."""
-    if member == "Set.contains" or member == "Dict.contains_key":
+    """Lower one checker-selected set operation without interpreting canonical text."""
+    match method:
+        RustSetMethodId.Contains => return collection_contains(builder, false, arguments, destination, span)
+        RustSetMethodId.Add => return collection_insert_method(builder, "Set.add", arguments, span)
+
+
+pub def dictionary_method(
+    mut builder: Builder,
+    method: RustDictMethodId,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Lower one checker-selected dictionary operation without interpreting canonical text."""
+    if method == RustDictMethodId.ContainsKey:
         return collection_contains(builder, false, arguments, destination, span)
-    if member == "Set.add" or member == "Dict.insert":
-        return collection_insert_method(builder, member, arguments, span)
+    if method == RustDictMethodId.Insert:
+        return collection_insert_method(builder, "Dict.insert", arguments, span)
     receiver = shared_receiver_place(builder, arguments, 0, span)?
     ty = place_type(builder.locals, receiver)
-    if member == "Dict.get" and len(arguments) == 2:
+    if method == RustDictMethodId.Get and len(arguments) == 2:
         return optional_dictionary_get(builder, receiver, arguments, destination, span)
-    operation, parameters, result = dictionary_method_signature(ty, member, len(arguments))?
+    operation, parameters, result = dictionary_method_signature(ty, method, len(arguments))?
     mut operands: list[Operand] = []
     for slot in range(len(parameters)):
         operands.append(argument_value(builder, arguments, slot + 1, span)?)

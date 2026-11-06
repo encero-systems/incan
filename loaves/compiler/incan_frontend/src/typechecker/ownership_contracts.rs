@@ -97,10 +97,18 @@ impl TypeChecker {
     }
 
     /// Mark the active callable when a selected builtin member returns or transforms a lazy iterator.
-    pub(in crate::typechecker) fn note_lazy_result_member(&mut self, identity: &CanonicalSymbolId) {
-        if builtins::retained_iterator_member(identity)
-            .is_some_and(|method| !incan_lang::lang::surface::iterator_methods::is_terminal(method))
-        {
+    pub(in crate::typechecker) fn note_lazy_result_member(
+        &mut self,
+        identity: &CanonicalSymbolId,
+        operation: Option<incan_lang::lang::builtins::BuiltinMethodId>,
+    ) {
+        let method = match operation {
+            Some(incan_lang::lang::builtins::BuiltinMethodId::ListIter) => {
+                Some(incan_lang::lang::surface::iterator_methods::IteratorMethodId::Iter)
+            }
+            _ => builtins::retained_iterator_member(identity),
+        };
+        if method.is_some_and(|method| !incan_lang::lang::surface::iterator_methods::is_terminal(method)) {
             self.note_lazy_result_body();
         }
     }
@@ -519,11 +527,11 @@ fn whole_binding(value: &Spanned<Expr>, facts: &TypeCheckInfo) -> Option<Canonic
 
 /// Recognize a compiler-selected mutating list method on the retained source place.
 fn expression_mutates_binding(value: &Spanned<Expr>, source: &CanonicalSymbolId, facts: &TypeCheckInfo) -> bool {
-    let Expr::MethodCall(receiver, method, _, _) = &value.node else {
+    let Expr::MethodCall(receiver, _, _, _) = &value.node else {
         return false;
     };
     place_binding(receiver, facts).as_ref() == Some(source)
-        && builtins::list_method_writes(facts, receiver, method, value.span) == Some(true)
+        && builtins::list_method_writes(facts, value.span) == Some(true)
 }
 
 /// Find replacement of the retained root in statement-owned write positions that expression traversal does not see.

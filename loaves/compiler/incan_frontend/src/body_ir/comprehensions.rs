@@ -545,6 +545,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         callee: bir::Callee::Method(bir::MethodTarget {
                             native_trait_delegation: None,
                             canonical: Some(crate::symbols::canonical_builtin_member_identity("List", "append")),
+                            operation: Some(bir::ReflectionOperation::Builtin(
+                                incan_lang::lang::builtins::BuiltinMethodId::List(
+                                    incan_lang::lang::surface::list_methods::ListMethodId::Append,
+                                ),
+                            )),
                             ..bir::MethodTarget::synthesized("push")
                         }),
                         args: fixed_elements(vec![
@@ -574,6 +579,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         callee: bir::Callee::Method(bir::MethodTarget {
                             native_trait_delegation: None,
                             canonical: Some(crate::symbols::canonical_builtin_member_identity("Dict", "insert")),
+                            operation: Some(bir::ReflectionOperation::Builtin(
+                                incan_lang::lang::builtins::BuiltinMethodId::Dict(
+                                    incan_lang::lang::surface::dict_methods::DictMethodId::Insert,
+                                ),
+                            )),
                             ..bir::MethodTarget::synthesized("insert")
                         }),
                         args: fixed_elements(vec![

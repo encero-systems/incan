@@ -359,7 +359,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             native_trait_delegation: None,
             name: method.to_string(),
             intrinsic_carrier: None,
-            reflection: None,
+            operation: None,
             loaf_trait: None,
             trait_arguments: self
                 .checked_trait_arguments(self.type_info.resolved_method_call(span).map(|call| &call.dispatch)),

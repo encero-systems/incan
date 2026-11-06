@@ -255,8 +255,8 @@ impl CheckedInputBody<'_> {
             Expr::Call(callee, _, arguments) => {
                 self.visit_call_operation(expression, callee, arguments, parameters, execution, seen)?
             }
-            Expr::MethodCall(receiver, method, _, arguments) => {
-                self.visit_method_operation(expression, receiver, method, arguments, parameters, execution, seen)?
+            Expr::MethodCall(receiver, _, _, arguments) => {
+                self.visit_method_operation(expression, receiver, arguments, parameters, execution, seen)?
             }
             Expr::List(entries) => {
                 for entry in entries {
@@ -348,7 +348,6 @@ impl CheckedInputBody<'_> {
         &self,
         expression: &Spanned<Expr>,
         receiver: &Spanned<Expr>,
-        method: &crate::ast::Ident,
         arguments: &[CallArg],
         parameters: &BTreeSet<CanonicalSymbolId>,
         execution: &[usize],
@@ -356,7 +355,7 @@ impl CheckedInputBody<'_> {
     ) -> Result<(), &'static str> {
         self.visit_operation_expression(receiver, parameters, execution, seen)?;
         let retained = super::super::builtins::retained_iterator_method(self.facts, expression.span).is_some();
-        let list = super::super::builtins::list_method_writes(self.facts, receiver, method, expression.span).is_some();
+        let list = super::super::builtins::list_method_writes(self.facts, expression.span).is_some();
         let view = super::super::builtins::byte_slice_view(self.facts, expression).is_some();
         if view {
             return Ok(());

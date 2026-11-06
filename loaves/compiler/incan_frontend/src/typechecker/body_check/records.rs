@@ -516,6 +516,11 @@ fn restore_local(positions: &Positions, local: &mut BodyLocal, row: &[String]) -
                 incan_lang::lang::builtins::from_str(next(&mut values)?).ok_or(NodeBindingError::MissingNode)?;
             local.calls.resolved_builtin_calls.insert(span, builtin);
         }
+        "builtin" if row[2] == "method" => {
+            let builtin = incan_lang::lang::builtins::method_from_parts(next(&mut values)?, next(&mut values)?)
+                .ok_or(NodeBindingError::MissingNode)?;
+            local.calls.resolved_builtin_method_calls.insert(span, builtin);
+        }
         "signature" if matches!(row[2].as_str(), "monomorphs" | "type-arguments") => {
             let count = next(&mut values)?
                 .parse::<usize>()

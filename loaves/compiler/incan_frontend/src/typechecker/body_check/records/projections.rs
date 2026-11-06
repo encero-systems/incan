@@ -89,6 +89,15 @@ pub(super) fn project_calls(
             incan_lang::lang::builtins::as_str(*builtin).into(),
         ]);
     }
+    for (span, builtin) in &local.calls.resolved_builtin_method_calls {
+        fields.push(vec![
+            "builtin".into(),
+            positions.nodes.anchor(*span)?.path,
+            "method".into(),
+            builtin.owner().into(),
+            builtin.member().into(),
+        ]);
+    }
     for (selector, values) in [
         ("call", &local.calls.call_site_callable_params),
         ("body-call", &local.calls.body_ir_call_parameter_types),

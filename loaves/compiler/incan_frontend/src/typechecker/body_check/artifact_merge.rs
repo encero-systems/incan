@@ -109,6 +109,7 @@ pub(super) fn append_calls(target: &mut CallArtifacts, local: CallArtifacts) {
         inferred_call_result_types,
         mutable_receiver_method_calls,
         resolved_builtin_calls,
+        resolved_builtin_method_calls,
         fixed_unpack_plans,
         call_site_monomorph_type_args,
         isinstance_targets,
@@ -160,6 +161,9 @@ pub(super) fn append_calls(target: &mut CallArtifacts, local: CallArtifacts) {
         .mutable_receiver_method_calls
         .extend(mutable_receiver_method_calls);
     target.resolved_builtin_calls.extend(resolved_builtin_calls);
+    target
+        .resolved_builtin_method_calls
+        .extend(resolved_builtin_method_calls);
     target.fixed_unpack_plans.extend(fixed_unpack_plans);
     target
         .call_site_monomorph_type_args
