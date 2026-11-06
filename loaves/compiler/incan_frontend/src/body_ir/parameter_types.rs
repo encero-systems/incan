@@ -209,7 +209,15 @@ fn retain_checked_nominal_names(ty: IncanType, facts: &TypeCheckInfo) -> IncanTy
                 IncanType::NativeBuiltin(incan_semantics_core::RuntimeBuiltinType::ValidationError)
             }
         }
-        IncanType::Named(name) => IncanType::Named(name),
+        IncanType::Named(name) => {
+            let native = facts
+                .declarations
+                .body_ir_native_type_identities
+                .get(&name)
+                .and_then(bir::native_nominal_item)
+                .filter(|path| incan_lang::lang::surface::types::from_runtime_rust_path(path).is_some());
+            native.map_or(IncanType::Named(name), IncanType::Named)
+        }
         IncanType::Generic { base, args } => {
             let base = facts
                 .declarations
@@ -273,8 +281,10 @@ pub(super) fn retained_type_identities(
     // Generated SDK results need no source import. Retain their checked provider binding for publication without
     // replacing an ordinary source binding or interpreting an equal short spelling as a native declaration.
     for (name, identity) in &facts.declarations.body_ir_native_type_identities {
-        if !matches!(identity.origin, incan_semantics_core::SymbolOrigin::Package { .. })
-            || bir::native_nominal_item(identity).is_none()
+        if !matches!(
+            &identity.origin,
+            incan_semantics_core::SymbolOrigin::Package { .. } | incan_semantics_core::SymbolOrigin::RustCrate(_)
+        ) || bir::native_nominal_item(identity).is_none()
         {
             continue;
         }

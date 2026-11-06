@@ -13,20 +13,21 @@ These rules govern every component below and every review of its implementation.
 1. **One home, no split brains.** Each fact, mechanism and decision has exactly one home. No second cache, ledger, freshness check, scheduler, trace channel or storage path exists beside the one named here. The [Code map](#code-map) names that home per component and flags every place where the reused code still has two.
 2. **Simple, directed implementations.** Each component does one job in one direction of dependency. Engine policy calls the compiler's producer contracts and the store's substrate contracts; neither calls back into engine policy.
 3. **Clear, deliberate APIs.** Each component's API is named, minimal and documented as a contract: inputs, outputs, outcomes and ownership. No component reaches into another's internals. A typed outcome replaces every string-parsed error.
-4. **A platform layer that std builds on.** Implementations may be lower level than usual. The platform owns the primitives (store substrate, mapping, durable I/O, IPC, process control, resource probes, tracing). `std` and the engine are peers on top of it. `std` wraps the platform for users and never reimplements it.
+4. **One foundation below the platform and library stack.** `std.primitives` owns the foundational contracts and native mechanisms. The platform imports that package as its sole standard dependency and owns the OS-facing store substrate, mapping, durable I/O, IPC, process control, resource probes and tracing. Other standard packages and the engine sit above the platform and never reimplement either layer.
 5. **The platform wraps, it does not reimplement.** The platform reaches OS and Rust facilities thinly, through Incan interop. Low level means precise and minimal, not homegrown.
 6. **Incan only, no Cargo.** Engine policy, planning, scheduling, admission, tests, tracing and reader APIs are Incan. The only Rust authored for the engine and record service is the three bootstrap adapters in [Language and platform boundary](#language-and-platform-boundary). There is no Cargo invocation, including acquisition, and no Python component.
 
 ## Layers
 
-![Layers: OS facilities, the platform, std and the engine](build_engine_layers.svg)
+![Layers: OS facilities, std.primitives, the platform, other standard packages and the engine](build_engine_layers.svg)
 
 | Layer | Owns | Does not own |
 | --- | --- | --- |
 | 1. OS and Rust facilities | `mmap`, file and directory sync, atomic rename, locks, clones, sockets and pipes, peer credentials, process spawn and groups, limits, clocks | Anything Incan-specific |
-| 2. Platform | Store substrate (`incan_platform.store`, RFC 165), memory mapping with lifetime-safe views, durable I/O and publication ordering, IPC and peer identity, process control and groups, resource probes, tracing | Compiler meaning, package policy, user-facing ergonomics |
-| 3. `std` | User-facing surfaces over the platform (`std.fs`, `std.process`, `std.db`, `std.graph` and peers) | A second implementation of any platform primitive |
-| 3. Engine and compiler record service | Requests, ranked work, scheduling, claims, selection, readers, run and test | Storage layout, OS access outside the platform |
+| 2. `std.primitives` | Foundational values, errors, traits, async mechanisms and vocabulary contracts, backed directly by native dependencies where needed | Higher-level library policy or a dependency on another standard package |
+| 3. Platform | Store substrate (`incan_platform.store`, RFC 165), memory mapping with lifetime-safe views, durable I/O and publication ordering, IPC and peer identity, process control and groups, resource probes, tracing | Compiler meaning, package policy, user-facing ergonomics, or a standard dependency other than `std.primitives` |
+| 4. Other standard packages | User-facing surfaces over the platform and primitives (`std.fs`, `std.process`, `std.db`, `std.graph` and peers) | A second implementation of a foundational or platform mechanism |
+| 4. Engine and compiler record service | Requests, ranked work, scheduling, claims, selection, readers, run and test | Storage layout, OS access outside the platform |
 
 The store substrate is the one RFC 165 specifies. `std.db` is its public typed surface; the engine and the compiler record service consume the substrate contract directly, as RFC 165 permits, so opening the compiler's own facts never depends on a query library. Families, record identities, revisions, views, snapshots, transactions, relationships, read traces and sealed sets mean what RFC 165 defines; a read witness here is one entry of an RFC 165 read trace. The bakery adds only its compiler families and the engine's policy. Readers traverse stored relationships through RFC 166's `GraphRead` protocol in `std.graph`, over the same snapshot, never through a second in-memory graph.
 
@@ -500,7 +501,7 @@ One home per component. **Reused** means existing code that the component builds
 
 ### Platform
 
-The platform is one Loaf, `incan_platform` in `loaves/platform`, below `std`. Oven, the store, the compiler worker host and `std` depend on it. A primitive stays at the home the State column names until it moves into that Loaf. `std.db` (RFC 165, #2519) wraps the store substrate for users and `std.graph` (RFC 166, #2524) supplies the graph reading protocol; neither is a second store or graph implementation.
+The platform is one Loaf, `incan_platform` in `loaves/platform`, between foundational `std.primitives` and every other standard package. It may import `std.primitives` and no other standard Loaf. Oven, the store, the compiler worker host and higher-level standard packages depend on the platform. `std.db` (RFC 165, #2519) wraps the store substrate for users and `std.graph` (RFC 166, #2524) supplies the graph reading protocol; neither is a second store or graph implementation.
 
 | Component | One home | State | API contract | Two-home flags |
 | --- | --- | --- | --- | --- |

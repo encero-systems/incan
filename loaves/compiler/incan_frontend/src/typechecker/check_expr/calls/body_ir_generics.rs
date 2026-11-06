@@ -9,6 +9,7 @@ use crate::symbols::{FunctionInfo, MethodInfo, ResolvedType, TypeBoundInfo, Type
 use incan_lang::interop::is_rust_capability_bound;
 use incan_lang::lang::surface::constructors::ConstructorId;
 use incan_lang::lang::testing::{self, TestingAssertHelperId};
+use incan_lang::lang::trait_bounds;
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 
 impl TypeChecker {
@@ -499,13 +500,18 @@ impl TypeChecker {
         bound: &TypeBoundInfo,
         actual: &ResolvedType,
     ) -> Option<Vec<ResolvedType>> {
-        if self.body_ir_runtime_bound_owner(bound, "incan_std_async::task::RuntimeFuture") {
+        if self.body_ir_runtime_bound_owner(bound, trait_bounds::rust::RUNTIME_FUTURE)
+            || self.body_ir_runtime_bound_owner(bound, trait_bounds::rust::LEGACY_RUNTIME_FUTURE)
+        {
             return self.await_output_type_from_type(actual).map(|output| vec![output]);
         }
         let ResolvedType::Function(parameters, output) = actual else {
             return None;
         };
-        if parameters.is_empty() && self.body_ir_runtime_bound_owner(bound, "incan_std_async::task::RuntimeFnOnce") {
+        if parameters.is_empty()
+            && (self.body_ir_runtime_bound_owner(bound, trait_bounds::rust::RUNTIME_FN_ONCE)
+                || self.body_ir_runtime_bound_owner(bound, trait_bounds::rust::LEGACY_RUNTIME_FN_ONCE))
+        {
             return Some(vec![output.as_ref().clone()]);
         }
         if let [parameter] = parameters.as_slice()

@@ -127,7 +127,10 @@ pub(super) fn build_module_seed_observed(
             &enum_declarations,
         ),
         enum_declarations,
-        loaf_callables: rust_calls::declarations(type_info),
+        loaf_callables: rust_calls::declarations(type_info)
+            .into_iter()
+            .chain(runtime_nominals::members(type_info))
+            .collect(),
         native_union_declarations: Vec::new(),
         static_declarations,
         module_id,

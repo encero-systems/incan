@@ -22,7 +22,7 @@ Runtime behavior belongs in `incan_native_runtime` and standard packages. Shared
 
 ## Platform boundary
 
-`incan_platform` in `loaves/platform` is the OS-facing layer below the standard packages. It wraps OS and Rust facilities thinly through interop and imports no compiler, kernel or standard Loaf; standard packages wrap it, never the other way round. Its IPC carries bytes and peer identity only: the owner and engine protocols that encode those bytes stay in Oven, and the compiler worker's side of `incan.compiler-worker/1` is the worker host `incan_worker_host` in `loaves/compiler`.
+`std.primitives` in `loaves/stdlib/primitives` is the foundational standard package. `incan_platform` in `loaves/platform` is the OS-facing layer immediately above it: the platform imports no compiler or kernel Loaf and no standard Loaf other than `std.primitives`. Every other standard package sits above the platform and may compose its facilities, never the other way round. Platform IPC carries bytes and peer identity only: the owner and engine protocols that encode those bytes stay in Oven, and the compiler worker's side of `incan.compiler-worker/1` is the worker host `incan_worker_host` in `loaves/compiler`.
 
 ## Verification boundary
 
