@@ -28,8 +28,9 @@ from rust::incan_semantics_core::body_ir import (
     PlaceOperand as RustPlaceOperand,
 )
 from rust::incan_lang::lang::surface::list_methods import ListMethodId as RustListMethodId
+from rust::incan_lang::lang::surface::iterator_methods import IteratorMethodId as RustIteratorMethodId
 from generators import generator_shape, generator_collect, generator_runtime_call
-from generator_adapters import is_generator_adapter, iterator_method
+from generator_adapters import is_generator_adapter
 from generator_consumers import is_generator_consumer
 from table_views import borrowed_at
 from frozen_equality import borrow_frozen_argument, frozen_reference_type
@@ -232,22 +233,21 @@ pub def borrowed_list_generator_call(
     return Ok(None)
 
 
-pub def lower_remaining_builtin_method(
+pub def lower_iterator_method(
     mut builder: Builder,
-    member: str,
+    method: RustIteratorMethodId,
     arguments: &list[RustArgumentElement],
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Lower builtin generator and byte-slice members not yet carried by the closed operation identity."""
+    """Lower a checker-selected iterator or generator adapter, consumer, or collection terminal."""
     receiver_ty = argument_type(builder, arguments, 0, span)?
     match generator_shape(receiver_ty):
         Some((leaf, depth)) =>
-            method = iterator_method(member)
             if is_generator_adapter(method) or is_generator_consumer(method):
                 return lower_generator_member(builder, method, arguments, destination, receiver_ty, span)
-            if method != "collect":
-                return Err(f"unsupported Body IR generator Method {member}")
+            if method != RustIteratorMethodId.Collect:
+                return Err("unsupported Body IR selected generator Method")
             if len(arguments) != 1:
                 return Err("invalid Body IR generator collect arguments")
             receiver = argument_place(builder, arguments, 0, span)?
@@ -257,24 +257,33 @@ pub def lower_remaining_builtin_method(
             builder.owned.append(output.local)
             return Ok(None)
         None => pass
-    if member == "bytes.as_slice":
-        if (
-            len(arguments) != 1
-            or receiver_ty not in [
-                PlanType.List(ListLeaf.U8, 1),
-                PlanType.ListRef(ListLeaf.U8, 1),
-                PlanType.ListMutRef(ListLeaf.U8, 1),
-            ]
-        ):
-            return Err("invalid Body IR bytes.as_slice receiver or arity")
-        match arguments[0].as_one():
-            Some(value) =>
-                reference = borrow_slice_operand(builder, value, [PlanType.U8], false, span)?
-                output = call_destination(builder, destination, PlanType.SliceRef([PlanType.U8]), span)?
-                builder.emit(plan_assign(output, RvalueKind.Use(reference), span))
-                return Ok(None)
-            None => return Err("invalid Body IR bytes.as_slice spread")
-    return Err(f"unsupported Body IR remaining builtin Method {member}")
+    return Err("unsupported Body IR selected iterator Method")
+
+
+pub def lower_bytes_as_slice(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Borrow the checker-selected runtime bytes receiver as an immutable native byte slice."""
+    receiver_ty = argument_type(builder, arguments, 0, span)?
+    if (
+        len(arguments) != 1
+        or receiver_ty not in [
+            PlanType.List(ListLeaf.U8, 1),
+            PlanType.ListRef(ListLeaf.U8, 1),
+            PlanType.ListMutRef(ListLeaf.U8, 1),
+        ]
+    ):
+        return Err("invalid Body IR bytes.as_slice receiver or arity")
+    match arguments[0].as_one():
+        Some(value) =>
+            reference = borrow_slice_operand(builder, value, [PlanType.U8], false, span)?
+            output = call_destination(builder, destination, PlanType.SliceRef([PlanType.U8]), span)?
+            builder.emit(plan_assign(output, RvalueKind.Use(reference), span))
+            return Ok(None)
+        None => return Err("invalid Body IR bytes.as_slice spread")
 
 
 pub def lower_list_method(

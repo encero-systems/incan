@@ -143,11 +143,6 @@ pub struct CallArtifacts {
     /// Lowering consumes this decision instead of interpreting a source spelling such as `set(...)` as an ordinary
     /// function call or independently guessing whether a same-named binding shadows the collection constructor.
     pub resolved_collection_constructors: HashMap<crate::ast::Span, CollectionTypeId>,
-    /// Selected runtime-string helper methods, keyed by full call expression span.
-    ///
-    /// This carries the typechecker's canonical [`StringMethodId`] through Body IR so a consumer can select an
-    /// admitted helper operation from a resolved identity rather than rediscovering a method target from source text.
-    pub resolved_string_helper_calls: HashMap<crate::ast::Span, StringMethodId>,
     /// Function-typed parameters of this module's functions and methods that hold any callable of their type, since
     /// the body only calls them, keyed by the parameter's span (#1561).
     ///

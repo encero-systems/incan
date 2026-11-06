@@ -2,20 +2,25 @@
 
 use super::args::{DeclaredSlot, plan_declared_args};
 use super::{BodyBuilder, IncanCallableParamKind, IncanPrimitiveType, IncanType, ast, bir, hir_span};
+use incan_lang::lang::builtins::BuiltinMethodId;
+use incan_lang::lang::surface::bytes_methods::BytesMethodId;
+use incan_lang::lang::surface::frozen_bytes_methods::FrozenBytesMethodId;
+use incan_lang::lang::surface::string_methods::StringMethodId;
 use incan_lang::lang::text_codecs::{DecodeErrorsPolicy, UTF8_ENCODING_LABEL};
 use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
 
 /// Identify the existing checked builtin codec surface; lexical or source-owned lookalikes grant no codec facts.
-fn builtin_codec(identity: &CanonicalSymbolId) -> bool {
-    let admitted = identity.origin == SymbolOrigin::Builtin
-        && matches!(
-            identity.declaration_name.as_str(),
-            "str.encode" | "frozenstr.encode" | "bytes.decode" | "frozenbytes.decode"
-        );
-    let Some((owner, member)) = identity.declaration_name.split_once('.') else {
-        return false;
-    };
-    admitted && identity == &crate::symbols::canonical_builtin_member_identity(owner, member)
+fn builtin_codec(identity: &CanonicalSymbolId, operation: BuiltinMethodId) -> bool {
+    let admitted = matches!(
+        operation,
+        BuiltinMethodId::Str(StringMethodId::Encode)
+            | BuiltinMethodId::FrozenStr(StringMethodId::Encode)
+            | BuiltinMethodId::Bytes(BytesMethodId::Decode)
+            | BuiltinMethodId::FrozenBytes(FrozenBytesMethodId::Decode)
+    );
+    admitted
+        && identity.origin == SymbolOrigin::Builtin
+        && identity == &crate::symbols::canonical_builtin_member_identity(operation.owner(), operation.member())
 }
 
 impl BodyBuilder<'_, '_> {
@@ -30,12 +35,16 @@ impl BodyBuilder<'_, '_> {
         out: &mut Vec<bir::Statement>,
     ) -> Option<bir::Operand> {
         let identity = self.selected_codec_identity(span)?.clone();
-        if !builtin_codec(&identity) {
+        let operation = self.type_info.resolved_builtin_method_call(span)?;
+        if !builtin_codec(&identity, operation) {
             return None;
         }
-        let defaults = match identity.declaration_name.as_str() {
-            "str.encode" | "frozenstr.encode" => vec![("encoding", UTF8_ENCODING_LABEL)],
-            "bytes.decode" | "frozenbytes.decode" => vec![
+        let defaults = match operation {
+            BuiltinMethodId::Str(StringMethodId::Encode) | BuiltinMethodId::FrozenStr(StringMethodId::Encode) => {
+                vec![("encoding", UTF8_ENCODING_LABEL)]
+            }
+            BuiltinMethodId::Bytes(BytesMethodId::Decode)
+            | BuiltinMethodId::FrozenBytes(FrozenBytesMethodId::Decode) => vec![
                 ("encoding", UTF8_ENCODING_LABEL),
                 ("errors", DecodeErrorsPolicy::DEFAULT.as_str()),
             ],
@@ -70,7 +79,17 @@ impl BodyBuilder<'_, '_> {
             })
             .collect::<Vec<_>>();
         let output = self.new_temp(self.method_call_result_type(span), scope, hir_span(span));
-        self.lower_codec_guards(receiver, &identity, &expressions, Vec::new(), output, span, scope, out);
+        self.lower_codec_guards(
+            receiver,
+            &identity,
+            operation,
+            &expressions,
+            Vec::new(),
+            output,
+            span,
+            scope,
+            out,
+        );
         Some(self.temp_operand(output, &self.method_call_result_type(span)))
     }
 
@@ -81,6 +100,7 @@ impl BodyBuilder<'_, '_> {
         &mut self,
         receiver: &ast::Spanned<ast::Expr>,
         identity: &CanonicalSymbolId,
+        operation: BuiltinMethodId,
         expressions: &[(Option<&ast::Spanned<ast::Expr>>, &str)],
         mut supplied: Vec<bir::Operand>,
         output: bir::LocalId,
@@ -92,7 +112,16 @@ impl BodyBuilder<'_, '_> {
         let Some((expression, default)) = expressions.get(slot) else {
             let place = self.lower_expr_to_place(receiver, scope, out);
             let receiver = bir::Operand::place(place, bir::OwnershipFact::Borrow, false);
-            self.emit_codec_call(identity.clone(), receiver, supplied, output, span, scope, out);
+            self.emit_codec_call(
+                identity.clone(),
+                operation,
+                receiver,
+                supplied,
+                output,
+                span,
+                scope,
+                out,
+            );
             return;
         };
         let operand = match expression {
@@ -109,7 +138,17 @@ impl BodyBuilder<'_, '_> {
         };
         supplied.push(operand.clone());
         if expression.is_none() || matches!(expression.map(|value| &value.node), Some(ast::Expr::Literal(_))) {
-            self.lower_codec_guards(receiver, identity, expressions, supplied, output, span, scope, out);
+            self.lower_codec_guards(
+                receiver,
+                identity,
+                operation,
+                expressions,
+                supplied,
+                output,
+                span,
+                scope,
+                out,
+            );
             return;
         }
         let helper = if slot == 0 {
@@ -132,16 +171,21 @@ impl BodyBuilder<'_, '_> {
         for (_, default) in expressions.iter().skip(failure_arguments.len()) {
             failure_arguments.push(bir::Operand::Constant(bir::Constant::Str((*default).to_owned())));
         }
-        let decoding = expressions.len() == 2;
-        let owner = if decoding { "bytes" } else { "str" };
-        let member = if decoding { "decode" } else { "encode" };
-        let empty = if decoding {
-            bir::Constant::Bytes(Vec::new())
-        } else {
-            bir::Constant::Str(String::new())
+        let (failure_operation, empty) = match operation {
+            BuiltinMethodId::Str(StringMethodId::Encode) | BuiltinMethodId::FrozenStr(StringMethodId::Encode) => (
+                BuiltinMethodId::Str(StringMethodId::Encode),
+                bir::Constant::Str(String::new()),
+            ),
+            BuiltinMethodId::Bytes(BytesMethodId::Decode)
+            | BuiltinMethodId::FrozenBytes(FrozenBytesMethodId::Decode) => (
+                BuiltinMethodId::Bytes(BytesMethodId::Decode),
+                bir::Constant::Bytes(Vec::new()),
+            ),
+            _ => return,
         };
         self.emit_codec_call(
-            crate::symbols::canonical_builtin_member_identity(owner, member),
+            crate::symbols::canonical_builtin_member_identity(failure_operation.owner(), failure_operation.member()),
+            failure_operation,
             bir::Operand::Constant(empty),
             failure_arguments,
             output,
@@ -152,6 +196,7 @@ impl BodyBuilder<'_, '_> {
         self.lower_codec_guards(
             receiver,
             identity,
+            operation,
             expressions,
             supplied,
             output,
@@ -175,6 +220,7 @@ impl BodyBuilder<'_, '_> {
     fn emit_codec_call(
         &mut self,
         identity: CanonicalSymbolId,
+        operation: BuiltinMethodId,
         receiver: bir::Operand,
         supplied: Vec<bir::Operand>,
         output: bir::LocalId,
@@ -192,7 +238,7 @@ impl BodyBuilder<'_, '_> {
                 native_trait_delegation: None,
                 name: identity.declaration_name.clone(),
                 intrinsic_carrier: None,
-                operation: None,
+                operation: Some(bir::ReflectionOperation::Builtin(operation)),
                 loaf_trait: None,
                 trait_arguments: None,
                 canonical: Some(identity),

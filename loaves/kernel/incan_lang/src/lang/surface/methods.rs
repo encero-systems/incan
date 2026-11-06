@@ -59,3 +59,5 @@ pub mod option_methods;
 pub mod result_methods;
 
 pub mod iterator_methods;
+
+pub mod clone_methods;

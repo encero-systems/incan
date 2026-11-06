@@ -3,10 +3,12 @@
 use crate::lang::registry::{LangItemInfo, RFC, RfcId, Since, Stability};
 
 /// Stable identifier for a frozen bytes method.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum FrozenBytesMethodId {
     Len,
     IsEmpty,
+    /// Decode frozen UTF-8 bytes through the same public codec contract as runtime bytes.
+    Decode,
 }
 
 pub type FrozenBytesMethodInfo = LangItemInfo<FrozenBytesMethodId>;
@@ -28,6 +30,14 @@ pub const FROZEN_BYTES_METHODS: &[FrozenBytesMethodInfo] = &[
         "Return true if the byte string is empty.",
         RFC::_009,
         Since(0, 1),
+    ),
+    info(
+        FrozenBytesMethodId::Decode,
+        "decode",
+        &[],
+        "Return the frozen bytes decoded as UTF-8 text through the public codec result.",
+        RFC::_009,
+        Since(0, 6),
     ),
 ];
 

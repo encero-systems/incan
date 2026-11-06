@@ -165,7 +165,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let (type_args, args, span, scope, hir_span_value) =
             (call.type_args, call.args, call.span, call.scope, call.hir_span);
         let retained_binding = self.retained_receiver_method_binding(recv, name, span);
-        let helper = match self.checked_string_helper_for_method_call(recv, name, span) {
+        let helper = match self.checked_string_helper_for_method_call(recv, span) {
             Ok(helper) => helper,
             Err(description) => {
                 return self.unsupported_operand(description, scope, hir_span_value, out);
@@ -190,7 +190,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             retained_method,
         } = self.method_call_binding(recv, name, call, retained_binding);
 
-        let intrinsic_carrier = self.checked_intrinsic_carrier(recv, name);
+        let intrinsic_carrier = self.checked_intrinsic_carrier(span);
         let (receiver_operand, mut arg_operands, mut binding) =
             match self.bind_explicit_method_input(canonical.as_ref(), recv, args, span, scope, out) {
                 Some(Ok(bound)) => bound,
@@ -198,8 +198,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     return self.unsupported_operand(description, scope, hir_span_value, out);
                 }
                 None => {
-                    let receiver_operand =
-                        self.lower_method_receiver(recv, name, intrinsic_carrier.as_deref(), span, scope, out);
+                    let receiver_operand = self.lower_method_receiver(recv, span, scope, out);
                     match self.bind_declared_args(&format!("method `{name}`"), declared, args, scope, out) {
                         Ok((operands, binding)) => (receiver_operand, operands, binding),
                         Err(description) => {
@@ -379,9 +378,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             })
             .or_else(|| native_member.as_ref().map(|_| Vec::new()));
         let retained_method = self.retained_alias_method(recv, name, type_args, args, span);
-        let canonical = canonical
-            .or_else(|| retained_method.as_ref().map(|method| method.canonical.clone()))
-            .or_else(|| self.direct_builtin_method_identity(&self.resolve_ty(recv.span), name));
+        let canonical = canonical.or_else(|| retained_method.as_ref().map(|method| method.canonical.clone()));
         let declared = declared.or_else(|| retained_method.as_ref().map(|_| Vec::new()));
         MethodCallBinding {
             canonical,
@@ -393,14 +390,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Retain the existing checked standard-carrier method profile once for both receiver evaluation and dispatch.
     /// User-defined methods and other carriers keep their canonical source method path.
-    pub(super) fn checked_intrinsic_carrier(&self, receiver: &ast::Spanned<ast::Expr>, name: &str) -> Option<String> {
-        match self.resolve_ty(receiver.span).collection()?.0 {
-            carrier @ CollectionTypeId::Option if matches!(name, "is_some" | "is_none" | "unwrap" | "unwrap_or") => {
-                Some(collections::as_str(carrier).to_string())
-            }
-            carrier @ CollectionTypeId::Result if matches!(name, "is_ok" | "is_err" | "unwrap" | "unwrap_or") => {
-                Some(collections::as_str(carrier).to_string())
-            }
+    pub(super) fn checked_intrinsic_carrier(&self, call_span: ast::Span) -> Option<String> {
+        match self.type_info.resolved_builtin_method_call(call_span)? {
+            BuiltinMethodId::Option(
+                OptionMethodId::IsSome | OptionMethodId::IsNone | OptionMethodId::Unwrap | OptionMethodId::UnwrapOr,
+            ) => Some(collections::as_str(CollectionTypeId::Option).to_string()),
+            BuiltinMethodId::Result(
+                ResultMethodId::IsOk | ResultMethodId::IsErr | ResultMethodId::Unwrap | ResultMethodId::UnwrapOr,
+            ) => Some(collections::as_str(CollectionTypeId::Result).to_string()),
             _ => None,
         }
     }
@@ -413,8 +410,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     pub(super) fn lower_method_receiver(
         &mut self,
         receiver: &ast::Spanned<ast::Expr>,
-        name: &str,
-        intrinsic_carrier: Option<&str>,
         call_span: ast::Span,
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
@@ -430,7 +425,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     | ResultMethodId::InspectErr
             )
         );
-        if transforms_result || (intrinsic_carrier.is_some() && matches!(name, "unwrap" | "unwrap_or")) {
+        let consumes_carrier = matches!(
+            self.type_info.resolved_builtin_method_call(call_span),
+            Some(
+                BuiltinMethodId::Option(OptionMethodId::Unwrap | OptionMethodId::UnwrapOr)
+                    | BuiltinMethodId::Result(ResultMethodId::Unwrap | ResultMethodId::UnwrapOr)
+            )
+        );
+        if transforms_result || consumes_carrier {
             return self.lower_consumed_carrier_receiver(receiver, scope, out);
         }
         if let ast::Expr::Field(base, _member) = &receiver.node
@@ -790,10 +792,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     pub(super) fn checked_string_helper_for_method_call(
         &self,
         receiver: &ast::Spanned<ast::Expr>,
-        name: &str,
         span: ast::Span,
     ) -> Result<Option<bir::HelperOp>, String> {
-        let checked = self.type_info.resolved_string_helper_call(span);
+        let checked = match self.type_info.resolved_builtin_method_call(span) {
+            Some(BuiltinMethodId::Str(method) | BuiltinMethodId::FrozenStr(method)) => Some(method),
+            _ => None,
+        };
         let string_receiver = matches!(
             self.resolve_ty(receiver.span),
             IncanType::Primitive(IncanPrimitiveType::Str | IncanPrimitiveType::FrozenStr)
@@ -804,19 +808,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 None => Ok(None),
             };
         }
-        let source = incan_lang::lang::surface::string_methods::from_str(name);
         match checked {
             Some(method) => {
                 let Some(helper) = bir::HelperOp::for_selected_string_method(method) else {
-                    return Err(format!("unadmitted checked string helper identity `{method:?}`"));
+                    return Ok(None);
                 };
-                if source != Some(method) {
-                    return Err("checked string helper identity does not match the source method".to_string());
-                }
                 Ok(Some(helper))
-            }
-            None if source.and_then(bir::HelperOp::for_selected_string_method).is_some() => {
-                Err("selected string helper call is missing its checked string helper identity".to_string())
             }
             None => Ok(None),
         }

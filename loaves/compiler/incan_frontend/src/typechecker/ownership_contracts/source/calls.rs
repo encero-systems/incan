@@ -10,7 +10,10 @@ use super::{
 use crate::ast::{CallArg, Expr, ParamKind, Receiver, Span, Spanned};
 use crate::symbols::CallableParam;
 use crate::typechecker::TypeChecker;
-use incan_lang::lang::builtins::BuiltinFnId;
+use incan_lang::lang::builtins::{BuiltinFnId, BuiltinMethodId};
+use incan_lang::lang::surface::{
+    clone_methods::CloneMethodId, list_methods::ListMethodId, option_methods::OptionMethodId,
+};
 use incan_lang::lang::trait_bounds;
 use incan_lang::lang::traits::{self as core_traits, TraitId};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
@@ -502,12 +505,14 @@ impl Builder<'_> {
             core_traits::as_str(TraitId::Clone),
             trait_bounds::rust::CLONE_METHOD,
         );
-        let list = crate::symbols::canonical_builtin_member_identity(
-            collections::as_str(CollectionTypeId::List),
-            trait_bounds::rust::CLONE_METHOD,
-        );
-        if matches!(self.checker.type_info.resolved_identity(span), Some(identity) if identity == &builtin || identity == &list)
-            || self.checker.type_info.traits.inferred_method_identities.get(&span) == Some(&builtin)
+        if matches!(
+            self.checker.type_info.resolved_builtin_method_call(span),
+            Some(
+                BuiltinMethodId::Clone(CloneMethodId::Clone)
+                    | BuiltinMethodId::List(ListMethodId::Clone)
+                    | BuiltinMethodId::Option(OptionMethodId::Clone)
+            )
+        ) || self.checker.type_info.traits.inferred_method_identities.get(&span) == Some(&builtin)
         {
             return true;
         }
