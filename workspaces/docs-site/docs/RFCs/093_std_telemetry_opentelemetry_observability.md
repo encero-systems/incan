@@ -271,7 +271,7 @@ The top-level `std.telemetry` module may re-export the most common functions and
 - `TelemetryContext`
 - `SchemaUrl` or equivalent schema-version metadata
 
-`TelemetryValue` must support at least `None`, booleans, strings, integers, floats, bytes, lists, and maps whose nested values are also telemetry values. Implementations may add model-to-telemetry conversion hooks, but they must not silently stringify structured values when the destination claims structured preservation.
+`TelemetryValue` must support at least `None`, booleans, strings, integers, floats, bytes, lists, and maps whose nested values are also telemetry values. Attribute construction requires an explicit, checked conversion for raw bytes and custom models. Apply RFC 103 redaction and bounded nesting, collection size and attribute count to the converted value. For example, a Boolean `cached` is an ordinary attribute. A `Customer` model requires an explicit selection of safe data before recording.
 
 `Attributes` is a string-keyed map of `TelemetryValue`. Attribute keys may use OpenTelemetry semantic-convention names such as `service.name`, `http.request.method`, `db.system.name`, or `gen_ai.request.model`.
 
@@ -391,7 +391,7 @@ import_orders    failed: panic propagated from write_batch
   write_batch    failed: assertion `len(rows) > 0` at writer.incn:42
 ```
 
-Async functions must preserve the same logical current span across suspension points once async context propagation is supported.
+An async function retains its current span across suspension and resumption. At spawn, each child inherits a snapshot of the spawning task’s context and the link to its active parent span. If two siblings inherit the same parent, adding baggage in one child affects only that child’s context. Ending either task leaves the other task’s context valid.
 
 ### Explicit spans
 
@@ -467,7 +467,7 @@ Explicit flush reports whether pending export succeeded, failed, or timed out. S
 
 ### Stdlib instrumentation policy
 
-Stdlib instrumentation must be controlled by application policy. A module should not emit network-exported telemetry solely because it was imported.
+Stdlib instrumentation must be controlled by application policy. The application explicitly enables instrumentation at configuration time. Importing a stdlib module or choosing an exporter alone does not enable that module’s automatic instrumentation. Local logging continues to follow the application’s logging settings.
 
 Instrumentation policy should support:
 
@@ -564,6 +564,9 @@ This section is non-normative. A pragmatic implementation should preserve the sa
 - **Process configuration:** The first successful installation freezes the settings. Every later installation attempt returns a typed error.
 - **Export:** Support OTLP over HTTP/Protobuf by default and gRPC through configuration.
 - **Resource identity:** Resolve explicit attributes first, then standard OpenTelemetry environment settings, then application Loaf defaults for service name and version.
+- **Attribute values:** Bound structured values, redact secrets and require checked conversion for bytes and custom models.
+- **Async context:** Preserve the active span across suspension and snapshot context independently for each spawned task.
+- **Stdlib instrumentation:** Automatic recording by stdlib modules requires explicit application opt-in.
 - **Baggage:** Copy only public, non-secret keys explicitly selected by application policy into record attributes.
 - **Default span names:** Use the fully qualified name of the declaration, independent of how the caller imports it.
 - **Traced results:** Each span reports its own call’s outcome. A caller that recovers can succeed while the failed child remains visible.
@@ -571,11 +574,8 @@ This section is non-normative. A pragmatic implementation should preserve the sa
 
 ## Unresolved questions
 
-- What is the exact normative shape of `TelemetryValue`, especially for bytes, nested models, and custom conversion hooks?
-- What is the minimal safe context propagation story for async tasks and spawned work?
 - How should semantic-convention helpers be generated, versioned, and exposed when OpenTelemetry convention stability changes?
 - What meter API should `std.telemetry.metrics` expose, and how should it control cardinality and aggregation?
-- Which stdlib modules should have default instrumentation, and what default instrumentation policy avoids noisy or sensitive telemetry?
 
 <!-- Rename this section to "Design Decisions" once all questions have been resolved.
      An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
