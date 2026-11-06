@@ -277,14 +277,32 @@ The top-level `std.telemetry` module may re-export the most common functions and
 
 ### Resource
 
-`Resource` represents the entity that produced telemetry. At minimum it must support service identity:
+A `Resource` describes the application that produced the telemetry. Resolve its attributes per key when installing the provider. Explicit application settings (including a supplied `Resource`) take precedence over deployment values, which take precedence over detected defaults. Follow the [OpenTelemetry Resource SDK](https://opentelemetry.io/docs/specs/otel/resource/sdk/) and the [SDK environment variable rules](https://opentelemetry.io/docs/specs/otel/configuration/sdk-environment-variables/).
 
-- `service.name`
-- `service.version`
-- deployment environment when known
-- process/runtime identity when known
+| Attribute | Incan resolution, from highest priority to fallback |
+| --- | --- |
+| `service.name` | Explicit service name, then `OTEL_SERVICE_NAME`, then `service.name` in `OTEL_RESOURCE_ATTRIBUTES`, then the application Loaf’s name. If none is available, use `unknown_service:<executable>` or `unknown_service` when the executable name is unavailable. |
+| `service.version` | Explicit version, then `service.version` in `OTEL_RESOURCE_ATTRIBUTES`, then the application Loaf’s version if known. Otherwise omit it. |
+| `deployment.environment.name` | Explicit environment, then `deployment.environment.name` in `OTEL_RESOURCE_ATTRIBUTES`. If neither supplies it, omit it. |
 
-The `configure(...)` convenience parameters `service`, `version`, and `environment` lower into `Resource` attributes. Direct resource construction must also be available for advanced users.
+The Resource also supports process and runtime identity when known. The convenience arguments `service`, `version`, and `environment` set these three attributes. A library emitting a span uses the application’s Resource. The service identity stays the same when the deployment tier changes. See the OpenTelemetry [service](https://opentelemetry.io/docs/specs/semconv/resource/service/) and [deployment](https://opentelemetry.io/docs/specs/semconv/resource/deployment-environment/) conventions.
+
+For example, deploy version `1.4.0` of the `checkout` application Loaf with these settings:
+
+```sh
+export OTEL_SERVICE_NAME=orders-api
+export OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=staging
+```
+
+```incan
+import std.telemetry as telemetry
+
+def main() -> Result[None, telemetry.ConfigurationError]:
+    telemetry.configure()?
+    return Ok(None)
+```
+
+The frozen Resource has service name `orders-api`, version `1.4.0`, and environment `staging`. Removing `OTEL_SERVICE_NAME` from this launch makes the service name fall back to `checkout`. Calling `configure(service="checkout-worker")` instead uses that explicit name and still picks up the deployed environment.
 
 ### Instrumentation scope
 
@@ -298,7 +316,7 @@ The `configure(...)` convenience parameters `service`, `version`, and `environme
 
 ```incan
 pub def configure(
-    service: str,
+    service: Option[str] = None,
     version: Option[str] = None,
     environment: Option[str] = None,
     resource: Option[Resource] = None,
@@ -528,6 +546,7 @@ This section is non-normative. A pragmatic implementation should preserve the sa
 ## Design Decisions
 
 - **Process configuration:** The first successful installation freezes the settings. Every later installation attempt returns a typed error.
+- **Resource identity:** Resolve explicit attributes first, then standard OpenTelemetry environment settings, then application Loaf defaults for service name and version.
 - **Default span names:** Use the fully qualified name of the declaration, independent of how the caller imports it.
 - **Traced results:** Each span reports its own call’s outcome. A caller that recovers can succeed while the failed child remains visible.
 - **Panics and assertions:** Record the origin once. Spans unwound by the same failure refer to that origin.
@@ -535,7 +554,6 @@ This section is non-normative. A pragmatic implementation should preserve the sa
 ## Unresolved questions
 
 - What is the exact normative shape of `TelemetryValue`, especially for bytes, nested models, and custom conversion hooks?
-- How much of `Resource` should be inferred automatically from project metadata versus supplied explicitly?
 - What is the minimal safe context propagation story for async tasks and spawned work?
 - Which baggage keys, if any, should be copied into attributes by default?
 - How should semantic-convention helpers be generated, versioned, and exposed when OpenTelemetry convention stability changes?
