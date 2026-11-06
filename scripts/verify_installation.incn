@@ -1,6 +1,7 @@
 """Verify one installed release toolchain against this checkout's complete contract and native-test surface."""
 
-from rust::std::process import exit
+from rust::std::process import Command, exit
+from rust::std::string import String as RustString
 from std.environ import args, get_or
 from std.fs import Path
 from std.json import JsonValue
@@ -52,14 +53,15 @@ def main() -> None:
 
 pub def verify(output: Path, jobs: int, timeout_seconds: int) -> Result[Path, str]:
     """
-    Verify an installed toolchain in six steps.
+    Verify an installed toolchain in seven steps.
 
     1. Audit installation paths and select only shipped standard packages.
     2. Build this checkout's contract runner with the installed compiler.
     3. Run the complete Oven test inventory and every production Rust-facet suite.
-    4. Require the installed LSP contract independently.
-    5. Run all eight contract families and preserve every committed PASS key.
-    6. Retain checksums, complete logs, counts, and a stable summary.
+    4. Exercise direct-driver identity and minimal runtime-closure integration.
+    5. Require the installed LSP contract independently.
+    6. Run all eight contract families and preserve every committed PASS key.
+    7. Retain checksums, complete logs, counts, and a stable summary.
     """
     installation = prepare(output, jobs, timeout_seconds)?
 
@@ -73,13 +75,16 @@ pub def verify(output: Path, jobs: int, timeout_seconds: int) -> Result[Path, st
     run_oven_tests(installation)?
     suites = run_rust_facets(installation)?
 
-    # 4. Graph verification is never allowed to skip because no language server was selected.
+    # 4. Direct driver contracts run from Incan programs against this fresh installation.
+    run_driver_integration(installation)?
+
+    # 5. Graph verification is never allowed to skip because no language server was selected.
     verify_lsp(installation, runner)?
 
-    # 5. Every family runs once under one budget and the committed PASS baseline is a lower bound.
+    # 6. Every family runs once under one budget and the committed PASS baseline is a lower bound.
     report = run_contracts(installation, runner)?
 
-    # 6. The caller receives one durable evidence directory even on hosts with shared temporary storage.
+    # 7. The caller receives one durable evidence directory even on hosts with shared temporary storage.
     summary = baseline_summary(report) + f"; {suites} Rust facet suites\n"
     installation.run
         .joinpath("summary.txt")
@@ -275,6 +280,142 @@ def run_rust_facets(installation: Installation) -> Result[int, str]:
     if len(failed) > 0:
         return Err("Rust facet test failures: " + ", ".join(failed))
     return Ok(suites)
+
+
+def run_driver_integration(installation: Installation) -> Result[None, str]:
+    """Build direct-driver fixtures and run the Incan identity and runtime-closure verification programs."""
+    evidence = installation.run.joinpath("driver-integration")
+    evidence.mkdir(true, true).map_err((error) => error.message())?
+    oven = installation.home.joinpath("bin/oven")
+    if not oven.is_file():
+        return Err("the installed Oven project command is required for direct-driver integration")
+    toolchain = installation.home.joinpath(TOOLCHAIN_DIRECTORY)
+    manifest = JsonValue
+        .parse(toolchain.joinpath("toolchain.json").read_text("utf-8", "strict").map_err((error) => error.message())?)
+        .map_err((error) => error.message())?
+    driver = installed_path(toolchain, json_text(manifest, "driver")?)
+    sysroot = installed_path(toolchain, json_text(manifest, "sysroot")?)
+
+    helper_source = installation.root.joinpath("workspaces/oven/src/toolchain_native.incn")
+    require_step(
+        command_step(
+            installation,
+            "driver-helper-build",
+            installation.oven.0,
+            ["build", helper_source.0, "--profile", "release"],
+            installation.root.joinpath("workspaces/oven"),
+            evidence.joinpath("helper-build.log"),
+        ),
+    )?
+    helper = installation.root.joinpath("workspaces/oven/target/incan/release/bin/oven")
+    if not helper.is_file():
+        return Err(f"native description helper was not built: {helper.0}")
+
+    identity_project = evidence.joinpath("identity-probe")
+    identity_project.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    identity_project
+        .joinpath("loaf.toml")
+        .write_text(
+            "[project]\nname = \"identity_probe\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n",
+            "utf-8",
+            "strict",
+            None,
+        )
+        .map_err((error) => error.message())?
+    identity_project
+        .joinpath("src/main.incn")
+        .write_text(
+            "def main() -> None:\n    \"\"\"Run the direct-driver identity probe.\"\"\"\n    println(\"identity\")\n",
+            "utf-8",
+            "strict",
+            None,
+        )
+        .map_err((error) => error.message())?
+    identity_unit = evidence.joinpath("identity.unit.json")
+    describe_unit(installation, oven, identity_project.joinpath("src/main.incn"), identity_unit)?
+    identity_program = evidence.joinpath("verify_identity.incn")
+    _ = installation.root
+        .joinpath("loaves/toolchain/incan-rustc-driver/tests/verify_identity.incn")
+        .copy(identity_program, true, true)
+        .map_err((error) => error.message())?
+    require_step(
+        command_step(
+            installation,
+            "driver-identity",
+            installation.oven.0,
+            ["run", identity_program.0, "--", driver.0, sysroot.0, identity_unit.0, evidence.joinpath("identity").0],
+            installation.root,
+            evidence.joinpath("identity.log"),
+        ),
+    )?
+
+    fixture = installation.root.joinpath(
+        "loaves/toolchain/incan-rustc-driver/tests/fixtures/runtime_dependencies/empty.incn",
+    )
+    template_source = evidence.joinpath("runtime-template.incn")
+    _ = fixture.copy(template_source, true, true).map_err((error) => error.message())?
+    runtime_unit = evidence.joinpath("runtime.unit.json")
+    describe_unit(installation, oven, template_source, runtime_unit)?
+    runtime_program = evidence.joinpath("verify_runtime_requirements.incn")
+    _ = installation.root
+        .joinpath("loaves/toolchain/incan-rustc-driver/tests/verify_runtime_requirements.incn")
+        .copy(runtime_program, true, true)
+        .map_err((error) => error.message())?
+    require_step(
+        command_step(
+            installation,
+            "driver-runtime-requirements",
+            installation.oven.0,
+            [
+                "run",
+                runtime_program.0,
+                "--",
+                driver.0,
+                sysroot.0,
+                helper.0,
+                installation.root.0,
+                runtime_unit.0,
+                evidence.joinpath("runtime").0,
+            ],
+            installation.root,
+            evidence.joinpath("runtime.log"),
+        ),
+    )?
+    return Ok(None)
+
+
+def describe_unit(installation: Installation, oven: Path, source: Path, output: Path) -> Result[None, str]:
+    """Describe one source with the installed project command and retain a clean JSON unit document."""
+    mut command = Command.new(oven.0)
+    command
+        .current_dir(installation.root.0)
+        .env("INCAN_HOME", installation.home.0)
+        .env("INCAN_STDLIB", installation.stdlib)
+        .env("INCAN_NO_BANNER", "1")
+        .env("OVEN_OWNER", "off")
+        .env("RUSTUP_TOOLCHAIN", "1.98.0")
+        .env_remove("RUSTC_BOOTSTRAP")
+        .arg("describe-unit")
+        .arg(source.0)
+    result = command.output().map_err((error) => f"cannot describe {source.0}: {error}")?
+    if not result.status.success():
+        diagnostic = RustString.from_utf8_lossy(result.stderr).into_owned()
+        return Err(f"cannot describe {source.0}: {diagnostic}")
+    source_text = RustString.from_utf8(result.stdout).map_err((error) => error.to_string())?
+    _ = JsonValue.parse(source_text).map_err((error) => f"invalid unit for {source.0}: {error.message()}")?
+    return output.write_text(source_text, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+def installed_path(toolchain: Path, value: str) -> Path:
+    """Resolve one installed manifest path against its toolchain root when relative."""
+    if value.startswith("/"):
+        return Path(value)
+    return toolchain.joinpath(value)
+
+
+def json_text(value: JsonValue, key: str) -> Result[str, str]:
+    """Return one required JSON string field."""
+    return value.require(key).and_then((entry) => entry.expect_str()).map_err((error) => error.message())
 
 
 def verify_lsp(installation: Installation, runner: Path) -> Result[None, str]:

@@ -33,3 +33,9 @@ Add `--lowering` when the lowering source must be rebuilt. Set `INCAN_DRIVER_INS
 - `bench_build_times.incn` compares cold, warm, and observable incremental builds across installed toolchains. Run `incan run scripts/bench_build_times.incn -- --toolchain LABEL=PATH [--toolchain LABEL=PATH ...] [--project PATH] [--repetitions N] [--output PATH] [--scratch PATH] [--keep-work] [--warm-max-ms N]`. Incremental timings count only when running the result proves that the edit reached the binary.
 
 The docs site also owns `workspaces/docs-site/scripts/check_incapunk_components.incn` and `check_learning_journey.incn`; its strict build invokes those checks.
+
+## Workspace programs
+
+- `workspaces/benchmarks/run_all.incn`, `check_incan.incn`, the standalone OrdinalMap runner, and the development-loop runner and reporter own benchmark orchestration without shell parsing tools. They retain the existing inputs and result-file contracts.
+- `workspaces/docs-site/scripts/v0_6_roadmap/refresh_github.incn` fetches the governed GitHub snapshot through `gh api`; `render_roadmap.incn` renders it, and `test_roadmap.incn` proves the fixture contract during strict docs builds.
+- `loaves/toolchain/incan-rustc-driver/tests/verify_identity.incn` and `verify_runtime_requirements.incn` exercise direct-driver integration. `verify_installation.incn` runs both against every fresh release installation.

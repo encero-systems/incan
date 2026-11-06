@@ -20,7 +20,7 @@ Performance comparison between Incan, Rust, and Python.
 
 ### Collections
 
-- **ordinal_map** — Standalone comparison of builtin Python `dict`, Python `fastconstmap`, Incan `OrdinalMap`, and the prior Rust spike baseline. It is intentionally not part of `run_all.sh` because `fastconstmap` is an optional Python dependency.
+- **ordinal_map** — Standalone comparison of builtin Python `dict`, Python `fastconstmap`, Incan `OrdinalMap`, and the prior Rust spike baseline. It is intentionally not part of `run_all.incn` because `fastconstmap` is an optional Python dependency.
 
 ## Running Benchmarks
 
@@ -29,9 +29,6 @@ Performance comparison between Incan, Rust, and Python.
 ```bash
 # Install hyperfine (benchmarking tool)
 brew install hyperfine  # macOS
-
-# Used by the benchmark runner for parsing/formatting results
-brew install jq  # macOS
 
 # Select an installed dev.8 toolchain and Oven
 export INCAN_HOME=/path/to/installed/home
@@ -42,26 +39,20 @@ export INCAN_STDLIB=/path/to/incan/loaves/stdlib
 ### Run All Benchmarks
 
 ```bash
-./workspaces/benchmarks/run_all.sh
-```
-
-Or via Make:
-
-```bash
-make benchmarks
+incan run workspaces/benchmarks/run_all.incn
 ```
 
 ### Run Individual Benchmark
 
 ```bash
-./workspaces/benchmarks/run_all.sh fib
+incan run workspaces/benchmarks/run_all.incn -- fib
 ```
 
 ## Results
 
-Results are written to `results/results.md`, with fresh-project and unchanged release build times in `results/build_times.md`. Each measurement retains `uptime`, compiler logs, exact stdout comparisons, and hyperfine JSON under `target/run.*`. Set `BENCH_SCRATCH` to an existing lane-local scratch directory to keep builds there, and `RESULTS_DIR` to select the report directory. Python 3, hyperfine, and jq must be on `PATH`.
+Results are written to `results/results.md`, with fresh-project and unchanged release build times in `results/build_times.md`. Each measurement retains `uptime`, compiler logs, exact stdout comparisons, and hyperfine JSON under `target/run.*`. Set `BENCH_SCRATCH` to an existing scratch directory to keep builds there, and `RESULTS_DIR` to select the report directory. Python 3 and hyperfine must be on `PATH`.
 
-Rust baselines use the installed toolchain's pinned `rustc -C opt-level=3`. Every workload runs once in all three languages and must produce identical output before Incan receives a timing. Build refusals and output mismatches remain visible in the table and make the runner fail. Historical August numbers remain explicitly dated. `check_incan.sh` builds all Incan benchmark sources with the same installed CLI.
+Rust baselines use the installed toolchain's pinned `rustc -C opt-level=3`. Every workload runs once in all three languages and must produce identical output before Incan receives a timing. Build refusals and output mismatches remain visible in the table and make the runner fail. Historical August numbers remain explicitly dated. `incan run workspaces/benchmarks/check_incan.incn` builds all Incan benchmark sources with the same installed CLI.
 
 ## Metrics
 
