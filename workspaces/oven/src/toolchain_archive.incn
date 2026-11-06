@@ -635,8 +635,8 @@ def install_staged(archive: Path, stage: Path, target: Path) -> Result[None, str
     )?
     record(Operation.ArchiveInventory, archive.0, clock)
     for entry in listing.split("\n"):
-        if entry != "" and not safe_member(entry):
-            return Err(f"unsafe toolchain archive member: {entry}")
+        if entry != "":
+            admit_archive_member(entry)?
     # 2. The archive is unpacked into the stage.
     clock = begin()
     run_command("tar", ["-xf", archive.0, "-C", stage.0]).map_err(
@@ -669,19 +669,19 @@ def install_staged(archive: Path, stage: Path, target: Path) -> Result[None, str
     return Ok(None)
 
 
-def safe_member(path: str) -> bool:
-    """Archive members must remain inside staging and cannot supply the machine-local sysroot link."""
+pub def admit_archive_member(path: str) -> Result[None, str]:
+    """Admit a member only inside staging and outside the root link that binds the machine's Rust sysroot."""
     if path.startswith("/"):
-        return false
+        return Err(f"unsafe toolchain archive member: {path}")
     mut first_component = true
     for part in path.split("/"):
         if part == "..":
-            return false
+            return Err(f"unsafe toolchain archive member: {path}")
         if part != "" and part != ".":
             if first_component and part == "sysroot":
-                return false
+                return Err(f"unsafe toolchain archive member: {path}")
             first_component = false
-    return true
+    return Ok(None)
 
 
 def verify_contents(toolchain: Toolchain) -> Result[None, str]:
@@ -703,8 +703,11 @@ def verify_contents(toolchain: Toolchain) -> Result[None, str]:
 def validate_paths(document: JsonValue) -> Result[None, str]:
     """An installation accepts portable manifest paths only; bootstrap absolute paths belong to packing."""
     for path in manifest_paths(document)?:
-        if path == "" or not safe_member(path):
+        if path == "":
             return Err(f"toolchain manifest path is not portable: {path}")
+        match admit_archive_member(path):
+            Ok(_) => pass
+            Err(_) => return Err(f"toolchain manifest path is not portable: {path}")
     if required_text(document, "sysroot")? != "sysroot":
         return Err("packed toolchain sysroot must name its local `sysroot` link")
     return Ok(None)
