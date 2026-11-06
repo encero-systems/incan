@@ -438,7 +438,7 @@ Incan can expose generated behavior without treating generated output as the sou
 
 Incan can also export graph facts for generated or materialized structures. RFC 048 metadata and artifact metadata allow packages to expose public contracts even when source is generated, embedded, or inspected from a built artifact.
 
-Finally, Incan can make graph context part of the project lifecycle. Workspace roots, lockfiles, manifests, stdlib sources, package artifacts, and `incan.pub` metadata can all contribute to graph identity and staleness detection.
+Finally, Incan can make graph context part of the project lifecycle. Workspace roots, lockfiles, manifests, stdlib sources, package artifacts, and `loaves.pub` metadata can all contribute to graph identity and staleness detection.
 
 The language server is another differentiator. A generic graph system usually indexes a repository out of band and then tries to stay fresh. Incan can share one source-analysis substrate between CLI export, MCP context, architecture advice, and live editor features. That does not make LSP the graph protocol; it means the language server can become a low-latency consumer and producer of the same schema where appropriate.
 

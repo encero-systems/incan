@@ -46,7 +46,7 @@ Three things have changed since then.
 **A WebAssembly route is a second route.** Keeping it means a second compilation target for Incan code, with its own standard library and runtime support. It also means embedding a WebAssembly engine and code generator in the compiler and the language server. That engine is a large dependency of its own, with its own native build on each host, Windows included, and its own security advisories. Everything else the toolchain runs is a native program built by one compiler. Desugarers are the only exception.
 
 **The sandbox no longer buys what it was chosen for.** RFC 027 chose WebAssembly for portability, isolation and determinism.
-- **Portability:** `incan.pub` already builds every Loaf for each host target, so one more compiled unit per target is ordinary.
+- **Portability:** `loaves.pub` already builds every Loaf for each host target, so one more compiled unit per target is ordinary.
 - **Isolation:** a separate worker isolates crashes and lets the toolchain terminate stuck work. Authority is a different boundary: RFC 104's capabilities must be enforced across the selected provider's operations, including native and interop paths. Published identity establishes which provider is admitted, not permission to bypass those checks. This RFC therefore requires correct capability enforcement without requiring an operating-system sandbox.
 - **Determinism:** reuse of compiled work already relies on compile-time code being a function of its inputs; desugarers fall under the same rule.
 
@@ -58,7 +58,7 @@ A desugarer written in Incan and compiled like any other Incan program removes t
 
 - Let a Loaf register its vocabulary surfaces in Incan.
 - Let a Loaf define its desugarer in Incan, against a public syntax model exposed by `std.vocab`.
-- Build the vocabulary entry through the native route, as an ordinary unit that Oven caches and `incan.pub` publishes.
+- Build the vocabulary entry through the native route, as an ordinary unit that Oven caches and `loaves.pub` publishes.
 - Run desugarers outside the compiler's process, with bounded time and diagnostics for every failure.
 - Exchange a versioned canonical surface representation with source maps, never generated source text and never the compiler's private syntax tree.
 - Allow tooling to batch a module's nodes, reuse desugarer responses and keep workers running, so editing in the language server does not start a process per keystroke.
@@ -207,7 +207,7 @@ The language server desugars blocks as the consumer edits them. Workers stay run
 ### Building and publication
 
 - Oven must build the vocabulary unit for the host target through the native route, under RFC 124 identity.
-- `incan.pub` publishes vocabulary units like other compiled units. A consumer whose host has no published vocabulary unit for that Loaf builds it from the Loaf's source.
+- `loaves.pub` publishes vocabulary units like other compiled units. A consumer whose host has no published vocabulary unit for that Loaf builds it from the Loaf's source.
 
 ### Standard packages
 
@@ -281,7 +281,7 @@ RFC 160 and RFC 162 exist for RFC 161's single-authority rule. Every surface nor
 ### Compatibility and migration
 
 - A Loaf with a Rust companion crate migrates by moving its `library_vocab()` and its desugarer into an Incan module and naming it as `entry`.
-- No published Loaf on `incan.pub` carries a WebAssembly desugarer at the time of writing. Published Loaves that carry vocabulary descriptors without a desugarer keep working once republished with an `entry`.
+- No published Loaf on `loaves.pub` carries a WebAssembly desugarer at the time of writing. Published Loaves that carry vocabulary descriptors without a desugarer keep working once republished with an `entry`.
 
 ## Alternatives considered
 

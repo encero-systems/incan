@@ -8,7 +8,7 @@
     - RFC 034 (`incan.pub` package registry; superseded by this RFC)
     - RFC 076 (project mutation policy and recovery)
     - RFC 078 (tool execution and typed workflow actions)
-    - RFC 079 (`incan.pub` artifact graph)
+    - RFC 079 (`loaves.pub` artifact graph)
     - RFC 082 (checked API documentation generation)
     - RFC 114 (compiled providers, SDK components, and package features)
     - RFC 117 (`loaf.toml` and Oven's language-neutral project model)

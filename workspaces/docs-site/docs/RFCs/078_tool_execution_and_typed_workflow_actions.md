@@ -10,7 +10,7 @@
     - RFC 075 (starter profiles and mixes)
     - RFC 076 (project mutation policy and recovery)
     - RFC 077 (workspace and multi-package projects)
-    - RFC 079 (`incan.pub` artifact graph)
+    - RFC 079 (`loaves.pub` artifact graph)
     - RFC 080 (declared AI assets)
     - RFC 090 (typed CLI framework)
     - RFC 104 (capabilities, limits and receipts)
@@ -55,7 +55,7 @@ RFC 015 already has envs and scripts. RFC 075 lets mixes advertise tooling actio
 - Define action inputs, outputs, required envs, workspace scope, and mutation behavior.
 - Define action capability requirements, optional capability requests, receipt-schema expectations, and dry-run metadata that can be compared with RFC 104 runtime receipts.
 - Provide machine-readable action discovery for CLI, LSP, IDEs, docs tooling, and agents.
-- Leave room for `incan.pub` to index tools and actions as ecosystem artifacts.
+- Leave room for `loaves.pub` to index tools and actions as ecosystem artifacts.
 
 ## Non-Goals
 

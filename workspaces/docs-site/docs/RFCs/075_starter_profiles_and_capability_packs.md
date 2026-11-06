@@ -68,14 +68,14 @@ The missing layer is an explicit project mutation contract. Users need a command
 - Provide machine-readable inspection surfaces so LSP and IDE tooling can list starters, preview mix changes, show enabled mixes, and surface project-specific actions without reimplementing descriptor resolution.
 - Allow starter and mix descriptors to be resolved from source-agnostic catalogs such as built-in descriptors, local paths, git sources, public package registries, or private catalogs.
 - Support public and private catalog-backed starter and mix discovery.
-- Use `incan.pub` as the default public discovery and trust layer for starter and mix descriptors, while allowing non-public catalogs to use the same descriptor semantics and keeping local application semantics in the lifecycle CLI.
+- Use `loaves.pub` as the default public discovery and trust layer for starter and mix descriptors, while allowing non-public catalogs to use the same descriptor semantics and keeping local application semantics in the lifecycle CLI.
 - Align with RFC 033 when generated projects need typed configuration: starter-provided config should prefer `ctx` source files over untyped sidecar YAML where compiler visibility matters.
 
 ## Non-Goals
 
 - Defining product-specific application templates or app framework semantics.
 - Defining a public registry protocol for distributing starters. RFC 125 is the owner of package registry semantics, superseding RFC 034; RFC 117 owns the Loaf project and dependency model.
-- Defining package ranking, recommendations, telemetry, download analytics, or marketplace UI details for `incan.pub`.
+- Defining package ranking, recommendations, telemetry, download analytics, or marketplace UI details for `loaves.pub`.
 - Defining private catalog hosting, identity, authorization, administration, or commercial policy.
 - Defining the low-level `.incnlib` mix manifest schema in full. This RFC may consume library-declared mix metadata when available, but it primarily defines the project lifecycle UX for applying starter and mix descriptors.
 - Making every package addition mutate project structure. Plain dependency addition remains valid; mix setup is for packages that advertise it and for users who request it through the mix command surface.
@@ -206,7 +206,7 @@ For example, a dry run for `cli 1.3.0 -> 1.6.0` might report:
 
 ```text
 Mix update: cli 1.3.0 -> 1.6.0
-Source: incan.pub:app-cli
+Source: loaves.pub:app-cli
 Publisher: encero
 Source identity changed: no
 Descriptor integrity: verified
@@ -242,7 +242,7 @@ The user-facing update unit is the mix because that is how the project concern w
 The migration steps travel with the mix, not with the project. The provider writes them into the newer descriptor version, inside the Loaf it publishes:
 
 ```text
-app-cli 1.6.0 (a Loaf on incan.pub)
+app-cli 1.6.0 (a Loaf on loaves.pub)
   loaf.toml
   mixes/
     cli.toml              # the [mix] descriptor, with its [[migrations]]
@@ -335,7 +335,7 @@ The CLI resolves `cli` as a mix, sees that its recommended provider is `app-cli`
 ```text
 Mix: cli
 Package: app-cli 0.3.1
-Source: incan.pub:app-cli@0.3.1
+Source: loaves.pub:app-cli@0.3.1
 Requires Incan: >=0.3,<0.4
 
 Would update dependencies:
@@ -402,7 +402,7 @@ test = ["oven", "test"]
 enabled = ["cli"]
 
 [oven.mixes.details.cli]
-source = "incan.pub:app-cli"
+source = "loaves.pub:app-cli"
 version = "0.3.1"
 requested_by = "user"
 ```
@@ -552,9 +552,9 @@ A **mix** is a named descriptor that applies one reusable project concern to an 
 
 A **project mutation** is a planned change to project files, `loaf.toml`, dependency declarations, env definitions, scripts, generated docs, or other explicit artifacts owned by the project.
 
-A **starter catalog** is a source of starter and mix descriptors. The source kinds are built-in descriptors, explicit local descriptor paths, descriptors provided by Loaf packages from `incan.pub`, git references, and public and private catalog sources. Implementations must support all of them under one identity, version, and validation model: a mix written as a local file and later published to `incan.pub` remains the same kind of mix.
+A **starter catalog** is a source of starter and mix descriptors. The source kinds are built-in descriptors, explicit local descriptor paths, descriptors provided by Loaf packages from `loaves.pub`, git references, and public and private catalog sources. Implementations must support all of them under one identity, version, and validation model: a mix written as a local file and later published to `loaves.pub` remains the same kind of mix.
 
-Every source must resolve a descriptor to its exact content, identified by source, id, version, and digest, before any plan is built. Offline operation must use the verified descriptors already available locally, such as built-ins, local paths, and `incan.pub` descriptors Oven already holds. A fact that could not be fetched or verified must be reported as unknown, never assumed compatible.
+Every source must resolve a descriptor to its exact content, identified by source, id, version, and digest, before any plan is built. Offline operation must use the verified descriptors already available locally, such as built-ins, local paths, and `loaves.pub` descriptors Oven already holds. A fact that could not be fetched or verified must be reported as unknown, never assumed compatible.
 
 A **catalog-backed source** is a starter catalog backed by a registry or service that can provide discovery, integrity metadata, yanking state, publisher identity, compatibility information, and descriptor payloads or references. Catalog-backed sources do not apply mutations directly to a project.
 
@@ -749,7 +749,7 @@ When `oven mix add` applies a mix, it must record what was applied. The intent g
 enabled = ["testing.basic", "std.http-client"]
 
 [oven.mixes.details."std.http-client"]
-source = "incan.pub:std-http"
+source = "loaves.pub:std-http"
 version = "0.4.2"
 requested_by = "user"
 
@@ -873,7 +873,7 @@ Automation that proposes a mix update must not also satisfy the receiver's appro
 - applicability fixtures: declared fixture projects must classify as the descriptor expects, including at least one project on which it is `unsupported` or `conflicting`;
 - mutation-plan fixtures: applying the descriptor to each fixture project must produce the declared plan, and each declared migration must plan cleanly from its `from` version.
 
-A mix must therefore demonstrate what it edits and how it behaves on an incompatible project. With `--strict`, warnings are errors. The result must be reported in a versioned machine-readable form. Publishing to `incan.pub` must require a passing strict result; promotion to a higher trust tier is a separate policy step under RFCs 076 and 125.
+A mix must therefore demonstrate what it edits and how it behaves on an incompatible project. With `--strict`, warnings are errors. The result must be reported in a versioned machine-readable form. Publishing to `loaves.pub` must require a passing strict result; promotion to a higher trust tier is a separate policy step under RFCs 076 and 125.
 
 ### Diagnostics
 
@@ -917,7 +917,7 @@ Starter and mix descriptors may add env definitions. If they add matrix envs, th
 
 This RFC defines descriptor semantics and local lifecycle behavior. Catalog source kind is a distribution concern, not a different mix system. A starter or mix descriptor should mean the same thing whether it came from a built-in source, local file, git reference, public registry, or private catalog.
 
-`incan.pub` is positioned to become the default public remote catalog because it already owns package identity, versioning, checksums, signatures, yanking, dependency metadata, and package discovery. Starter and mix descriptors published through `incan.pub` should reuse that trust and compatibility model instead of creating a parallel public marketplace.
+`loaves.pub` is positioned to become the default public remote catalog because it already owns package identity, versioning, checksums, signatures, yanking, dependency metadata, and package discovery. Starter and mix descriptors published through `loaves.pub` should reuse that trust and compatibility model instead of creating a parallel public marketplace.
 
 Private catalogs serve a different need: project and organization blueprints that may be broader than one library package. For example, a private descriptor can describe an end-to-end application shape that includes a CLI, API layer, analytics layer, data quality checks, governance conventions, and agent-relevant guidance. That descriptor can still be represented as ordinary starter and mix metadata. The local lifecycle CLI remains the executor.
 
@@ -932,7 +932,7 @@ The catalog or registry role should be discovery and verification:
 
 The catalog or registry must not be required to compute or apply project mutation plans. The local lifecycle CLI remains responsible for resolving the current project, checking local files, producing dry-run output, enforcing overwrite rules, and writing changes. This boundary keeps remote behavior cacheable and auditable while preserving local control over project mutation.
 
-Publishing a starter or mix to `incan.pub` must require a passing strict `oven mix validate` result, described under provider validation. Promotion to a higher trust tier is a separate policy step under RFCs 076 and 125.
+Publishing a starter or mix to `loaves.pub` must require a passing strict `oven mix validate` result, described under provider validation. Promotion to a higher trust tier is a separate policy step under RFCs 076 and 125.
 
 ### Relationship to RFC 076
 
@@ -944,7 +944,7 @@ RFC 078 owns the action model. Starter and mix descriptors may contribute action
 
 ### Relationship to LSP and IDE integrations
 
-The language server uses the one planning contract above, in-process or through the CLI's `--format json` output, so editor integrations stay thin. Editor plugins may provide rich UI, and they may use cached `incan.pub` catalog data for discovery, but they must not own the semantics of starter resolution, mix compatibility, conflict detection, or manifest mutation. Whether the language server links the planning library or runs the CLI is an integration choice, not a second semantic engine.
+The language server uses the one planning contract above, in-process or through the CLI's `--format json` output, so editor integrations stay thin. Editor plugins may provide rich UI, and they may use cached `loaves.pub` catalog data for discovery, but they must not own the semantics of starter resolution, mix compatibility, conflict detection, or manifest mutation. Whether the language server links the planning library or runs the CLI is an integration choice, not a second semantic engine.
 
 This mirrors the broader Incan tooling direction: the language server and editor integrations should surface compiler and lifecycle knowledge rather than reverse-engineer it from conventions. Starter profiles and mixes should therefore be designed as toolchain data first and editor UI inputs second.
 
@@ -1017,17 +1017,17 @@ The same mutation plan should power dry-run output, human diagnostics, and machi
 - **Agentic tooling:** agent-facing tools may consume mix provenance, file roles, and agent guidance metadata to select relevant skills or workflows, but starter/mix descriptors remain descriptive and must not execute agents implicitly.
 - **Project scaffolding:** the project generator must support descriptor-backed file creation, manifest mutation, safe path normalization, and non-overwrite defaults.
 - **Library/package integration:** library mix metadata feeds starter and mix descriptors where possible, but project mutation remains explicit. Package and registry metadata may also feed descriptor dependency resolution and status reporting.
-- **Registry:** `incan.pub` serves starter and mix descriptors from Loaf packages and requires a passing strict `validate` result to publish them.
+- **Registry:** `loaves.pub` serves starter and mix descriptors from Loaf packages and requires a passing strict `validate` result to publish them.
 - **Documentation:** user docs must explain the difference between minimal scaffolds, starter profiles, mixes, package dependencies, and runtime configuration.
 
 ## Design Decisions
 
-- Descriptors come from built-ins, local paths, Loaf packages on `incan.pub`, git references, and public or private catalogs, all under one identity, version, digest, and validation model. Catalogs find and verify descriptors; the local planner builds and applies plans. Offline work uses verified local evidence and reports anything unverified as unknown.
+- Descriptors come from built-ins, local paths, Loaf packages on `loaves.pub`, git references, and public or private catalogs, all under one identity, version, digest, and validation model. Catalogs find and verify descriptors; the local planner builds and applies plans. Offline work uses verified local evidence and reports anything unverified as unknown.
 - Mix provenance is always recorded: intent (source, version, parameters, top-level request) in `loaf.toml`, evidence (digest, expanded graph, integrity state) in the `[mixes]` table of `oven.provenance.toml`, nothing in `oven.lock`.
 - Required descriptor graphs are resolved completely, with cycle, version, and provider diagnostics. Optional dependencies are explicit edges that, once enabled, resolve exactly like required ones.
 - A file without declared ownership is `bootstrap`; `managed` is declared explicitly for genuinely regenerated files.
 - `oven init --starter` on a non-empty directory requires `--adopt`, previews an adoption plan, and needs every conflict resolved explicitly.
-- `oven starter validate` and `oven mix validate` run RFC 074's template checks plus applicability, dependency, mutation-plan, and migration fixtures, including an incompatible project. Publishing to `incan.pub` requires a passing strict result; promotion is a separate policy step.
+- `oven starter validate` and `oven mix validate` run RFC 074's template checks plus applicability, dependency, mutation-plan, and migration fixtures, including an incompatible project. Publishing to `loaves.pub` requires a passing strict result; promotion is a separate policy step.
 - Prompts collect the same typed parameters that `--set` and `--values` supply, with identical validation; a non-interactive run lists every missing required value.
 - Standard file roles and RFC 078 action kinds are checked identities; any other value is namespaced by its package, and free-form strings never carry meaning.
 - Agent guidance has standard `entrypoints`, `contracts`, `effects`, and `verification` fields; runtime-specific extras are namespaced and inert, and guidance never grants authority to run anything.

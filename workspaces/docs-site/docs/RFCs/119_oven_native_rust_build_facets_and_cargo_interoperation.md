@@ -104,7 +104,7 @@ root = "sources/rust"
 
 The roots must not overlap. Compact exceptions beneath `rust.*` describe this Loaf's own Rust unit and its build roles. A distinct crate, such as a procedural-macro crate, is a sibling Loaf referenced through a `loaf` dependency; it is not an additional `rust.crates` table. This RFC does not use an anonymous `[[sources]]` list or require an author to reproduce Cargo's whole manifest surface.
 
-`crates-io/serde` and `crates-io/tokio` are the Loaves `incan.pub` adopted from those crates.io packages. Their dependency keys, `serde` and `tokio`, are the names this project's Rust code uses for them. They resolve like any Loaf: Oven reads the registry's index and the adopted manifests, never a crates.io index or a `Cargo.toml`, and records each Loaf's identity, archive digest, trust outcome, selected feature closure, and host/target use in `oven.lock`. The project's publication identity remains an Incan registry identity; `oven publish` does not mean `cargo publish`.
+`crates-io/serde` and `crates-io/tokio` are the Loaves `loaves.pub` adopted from those crates.io packages. Their dependency keys, `serde` and `tokio`, are the names this project's Rust code uses for them. They resolve like any Loaf: Oven reads the registry's index and the adopted manifests, never a crates.io index or a `Cargo.toml`, and records each Loaf's identity, archive digest, trust outcome, selected feature closure, and host/target use in `oven.lock`. The project's publication identity remains an Incan registry identity; `oven publish` does not mean `cargo publish`.
 
 ### Build-time work is visible before it runs
 
@@ -174,7 +174,7 @@ oven bake
 
 ### Publishing and consuming
 
-Oven-native packages publish to Incan's registry ecosystem. `incan.pub` is the public endpoint for the foreseeable future; registry identity and trust remain explicit Oven configuration rather than a hard-coded domain in `loaf.toml`.
+Oven-native packages publish to Incan's registry ecosystem. `loaves.pub` is the public endpoint for the foreseeable future; registry identity and trust remain explicit Oven configuration rather than a hard-coded domain in `loaf.toml`.
 
 Oven consumes Rust libraries from the crates.io ecosystem because they are part of the world it interoperates with, and it consumes them as the Loaves the registry adopted them into. That is not reciprocal authority: an Oven-native package is not automatically a crates.io package. If a future product needs a Cargo-consumable publication projection, it must be a separately specified bridge with explicit provenance to a selected `*.loaf` asset.
 
@@ -308,7 +308,7 @@ RFC 097 defines a Rust-host caller facet and its stable ABI/package metadata. RF
 
 ### Publication authority
 
-An Oven-native package's publication identity is a Loaf registry identity. `incan.pub` is the default and only registered endpoint for the foreseeable future. Crates.io is a Rust crate source, not an Oven-native publish target.
+An Oven-native package's publication identity is a Loaf registry identity. `loaves.pub` is the default and only registered endpoint for the foreseeable future. Crates.io is a Rust crate source, not an Oven-native publish target.
 
 ## Alternatives considered
 
@@ -382,7 +382,7 @@ This checklist tracks the full RFC. The ecosystem work in #1561 delivers the ine
 
 - [ ] Warn once for build-script presence and retire executable script candidates and carriers.
 - [x] Carry declared cfg and committed generated inputs through planning, admission, and direct compilation (a registry record's `cfg` and `out` govern the unit in the policy engine, the publisher's observation must agree, and the runtime foundation carries the declared inputs consumers compile against).
-- [x] Harvest manifests and provenance from an explicit existing Cargo build (`oven harvest`, `bake-loafs --harvest-dir`; the release closure's 120 registry package versions are governed by incan.pub records harvested from its own capture).
+- [x] Harvest manifests and provenance from an explicit existing Cargo build (`oven harvest`, `bake-loafs --harvest-dir`; the release closure's 120 registry package versions are governed by loaves.pub records harvested from its own capture).
 - [ ] Execute declared C/C++ and tool units only during publisher baking; the macOS tool-unit executor and generated-input projection refuse consumer execution, missing or substituted tools, undeclared reads, and missing, escaped, or extra outputs, while native-link execution and end-to-end corpus admission remain open.
 - [ ] Preserve normal host procedural-macro compilation and expansion semantics.
 - [x] Define the Rust `incan oven equivalence` gate over stable binding/role/path keys, raw bytes, the recorded deterministic setup, RFC 124 unit identity, and negative identity and integrity cases; the gate emits RFC 125 `attest` evidence only after every comparison succeeds.
@@ -393,7 +393,7 @@ This checklist tracks the full RFC. The ecosystem work in #1561 delivers the ine
 - [ ] Verify Rust test, documentation, example, benchmark, and caller roles with host/target separation.
 - [ ] Verify warm-reusing IDE projections, target switching, and explicit editor macro policy.
 - [ ] Verify that no Oven operation invokes Cargo and that the Cargo-project conversion is explicit.
-- [ ] Retire the compatibility publisher's Cargo observation once incan.pub records govern the corpus, and the compiler-suite foundation's Cargo build once that family bakes through the Loaf-native route; the harvest wire contract, the registry authority and pin, and the policy engine stay.
+- [ ] Retire the compatibility publisher's Cargo observation once loaves.pub records govern the corpus, and the compiler-suite foundation's Cargo build once that family bakes through the Loaf-native route; the harvest wire contract, the registry authority and pin, and the policy engine stay.
 - [ ] Publish the supported conformance envelope and update user-facing reference, adoption, and release documentation.
 
 ## Design decisions
@@ -434,4 +434,4 @@ This checklist tracks the full RFC. The ecosystem work in #1561 delivers the ine
 - **Publisher work records declare work; assets declare products:** `[[rust.facts.link]]` and `[[rust.facts.tool]]` are arrays of typed work records. Their executable is identified by a stable name, immutable `sha256:` owner, owner-relative path and executable-byte `sha256:` digest. Link records bind a complete digested source closure, a non-empty list of sorted unique object records and a logical static library. Each object names a portable `.o` file, its `c`, `cpp` or `assembly` language and its ordered compiler arguments; it references at least one declared source and exactly one output equal to its own name. Every declared source is referenced, and source and object names share one namespace. Source paths may overlap, while source-to-object and object-to-object overlaps are refused. The Oven runs the declared compiler once per object, materializes the output reference beneath the product root, verifies exactly those objects, and writes the target-format indexed archive with its in-process archive writer. Dynamic libraries are refused until a record requires them. Tool records bind digested inputs and logical output contracts. Built archives, generated product bytes, product digests and producer receipts are admitted asset-side evidence, not fact-record fields. Link receipts bind each object's logical argv and digest plus the archive digest. Set-like lists are sorted and duplicate-free, omitted optional lists equal empty lists, logical names are unique in their namespace, and no absolute path, host spelling or capture order enters the record.
 - **Loaves, not crates; adoption is the registry's (2026-10-06):** Oven has no `crate` dependency kind and never reads crates.io, a crate's `Cargo.toml`, or a `Cargo.lock`, and no Cargo runs on any Oven path. A third-party Rust package is adopted once per version by a Loaf registry (RFC 125) into a Loaf whose manifest follows "Rust facet grammar"; the registry hosts its sources and records its build facts per binding. That grammar is the contract: the registry is its one writer and Oven's resolver its one reader. The resolver's per-domain feature unification must reproduce the feature sets of the registry's recorded bindings, which the registry's existing facts test without running Cargo.
 - **Build scripts are inert, and the manifest says what they said (2026-09-13):** earlier drafts planned to execute `build.rs` as a sandboxed host provider and interpret its directives. That design is superseded. A `build.rs` is retained only as source-inventory evidence and produces one warning; it is never a selected unit or execution input. Required compile-time flags, committed generated inputs, linked-library outputs, and generator products are represented by `cfg`, `out`, `link`, and `tool` facts. The registry records those facts when it adopts a package (amended 2026-10-06: by compiling and running the script itself under a declared binding, with no Cargo), but ordinary Oven planning, baking, caching, publication, and consumption never compile, execute, or interpret the script. Proc-macro host execution remains a separate supported contract.
-- **No speculative naming for a future registry endpoint:** `incan.pub` is the registry for the foreseeable future. This RFC does not name, brand, or reserve a hypothetical second public endpoint; an unregistered domain speculatively mentioned in earlier drafts is removed rather than carried forward as a design question.
+- **No speculative naming for a future registry endpoint:** `loaves.pub` is the registry for the foreseeable future. This RFC does not name, brand, or reserve a hypothetical second public endpoint; an unregistered domain speculatively mentioned in earlier drafts is removed rather than carried forward as a design question.

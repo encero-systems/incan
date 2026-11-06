@@ -10,7 +10,7 @@
     - RFC 034 (`incan.pub` package registry; superseded by RFC 125)
     - RFC 041 (first-class Rust interop authoring)
     - RFC 043 (Rust trait implementation from Incan)
-    - RFC 079 (`incan.pub` artifact graph)
+    - RFC 079 (`loaves.pub` artifact graph)
     - RFC 104 (ambient runtime capabilities and receipts)
     - RFC 106 (compiler-backed agent context graph)
     - RFC 117 (`loaf.toml` and Oven's language-neutral project model)
@@ -343,7 +343,7 @@ Public caller diagnostics must bind to the compiler-owned backend-selection and 
 
 Caller ABI version and manifest schema version follow independent, explicit compatibility rules. Within Oven's own build graph, an incompatible compiler, runtime, target, or profile combination must produce an explicit, diagnosable bake failure — Oven refuses to materialize the caller artifact rather than silently linking a mismatched pair — never a silent partial success discovered later at runtime.
 
-Publication to `incan.pub` (RFC 125, RFC 079) — Incan's own registry, not Cargo or crates.io — requires this identity, type/linkage, and diagnostics contract; it must not publish against an unversioned or provisional shape.
+Publication to `loaves.pub` (RFC 125, RFC 079) — Incan's own registry, not Cargo or crates.io — requires this identity, type/linkage, and diagnostics contract; it must not publish against an unversioned or provisional shape.
 
 ### Compatibility and migration
 
@@ -389,7 +389,7 @@ Borrowed non-`Copy` callable parameters illustrate why implementation artifacts 
 - **Stdlib / Runtime (`incan_stdlib`)**: caller-facing runtime hooks, errors, logging, telemetry, async, and capability surfaces may need caller-compatible contracts.
 - **Oven / Tooling**: Oven must plan, materialize, inspect, and verify caller build units and `*.loaf` assets under RFC 117's project/asset contract, including the caller identity record and its Rust facet's link into the calling Rust-authored unit's own build unit (RFC 119); it must reject rather than publish a caller artifact with an unsupported export, and tooling must report diagnostics traceable to #986 execution receipts and the selected Oven build receipt.
 - **LSP / Docs tooling**: tooling should surface caller-visible exports, Rust-facing signatures, compatibility metadata, and unsupported-boundary diagnostics.
-- **Registry / Package metadata**: `incan.pub` (RFC 125, RFC 079) should advertise whether a published Incan package provides a Rust-hosted caller surface, which caller ABI version it requires, and its compiler/runtime/target compatibility range — not a Cargo/crates.io concern.
+- **Registry / Package metadata**: `loaves.pub` (RFC 125, RFC 079) should advertise whether a published Incan package provides a Rust-hosted caller surface, which caller ABI version it requires, and its compiler/runtime/target compatibility range — not a Cargo/crates.io concern.
 
 ## Design decisions
 

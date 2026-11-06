@@ -7,7 +7,7 @@
     - RFC 075 (starter profiles and mixes)
     - RFC 076 (project mutation policy and `oven audit`)
     - RFC 078 (typed workflow actions)
-    - RFC 079 (`incan.pub` artifact graph)
+    - RFC 079 (`loaves.pub` artifact graph)
     - RFC 104 (capabilities and receipts)
     - RFC 117 (`loaf.toml` and Oven's language-neutral project model)
     - RFC 124 (Oven store unit identity)

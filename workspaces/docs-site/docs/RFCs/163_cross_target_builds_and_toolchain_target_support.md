@@ -350,7 +350,7 @@ RFC 119 already separates host and target and requires the plan to report both; 
 
 ### Interaction with RFC 125
 
-Baked assets already record the target triple and domains. Target support components are the toolchain's counterpart: `incan.pub` can publish them per toolchain release and target, so `target add` is a download and a verification, not a build.
+Baked assets already record the target triple and domains. Target support components are the toolchain's counterpart: `loaves.pub` can publish them per toolchain release and target, so `target add` is a download and a verification, not a build.
 
 ### Interaction with RFC 159
 

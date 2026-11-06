@@ -8,7 +8,7 @@
     - RFC 031 (library system phase 1)
     - RFC 125 (`loaves.pub` Loaf registry; supersedes RFC 034)
     - RFC 048 (checked contract metadata, Incan emit, and interrogation tooling)
-    - RFC 079 (`incan.pub` artifact graph)
+    - RFC 079 (`loaves.pub` artifact graph)
 - **Issue:** [#556](https://github.com/encero-systems/incan/issues/556)
 - **RFC PR:** —
 - **Written against:** v0.3

@@ -1,4 +1,4 @@
-# RFC 079: `incan.pub` artifact graph
+# RFC 079: `loaves.pub` artifact graph
 
 - **Status:** Planned
 - **Created:** 2026-04-26
@@ -21,7 +21,7 @@
 
 ## Summary
 
-This RFC defines the north-star model for `incan.pub` as an artifact graph rather than only a package file registry. Packages remain central, but the registry should also understand related templates, starters, mixes, docs, examples, actions, policies, advisories, workspaces, AI assets, evals, and agent guidance so users and tools can discover coherent project capabilities instead of isolated tarballs.
+This RFC defines the north-star model for `loaves.pub` as an artifact graph rather than only a package file registry. Packages remain central, but the registry should also understand related templates, starters, mixes, docs, examples, actions, policies, advisories, workspaces, AI assets, evals, and agent guidance so users and tools can discover coherent project capabilities instead of isolated tarballs.
 
 ## Core model
 
@@ -57,7 +57,7 @@ RFC 125 defines the Loaf registry foundation, superseding RFC 034, while RFC 117
 - Defining the registry transport protocol or signing mechanics, which RFC 125 owns.
 - Defining commercial marketplace ranking, billing, telemetry, or recommendation algorithms.
 - Replacing RFC 125 Loaf package identity, trust, or transport semantics, or RFC 117 project and dependency authority.
-- Letting `incan.pub` compute or apply receiver-side project mutation plans.
+- Letting `loaves.pub` compute or apply receiver-side project mutation plans.
 - Defining AI model execution semantics. RFC 080 owns AI asset metadata and execution constraints.
 
 ## Guide-level explanation
@@ -86,7 +86,7 @@ A user can discover by mix rather than package:
 
 ```text
 oven registry search kind:mix cli
-oven mix show cli --source incan.pub
+oven mix show cli --source loaves.pub
 ```
 
 The local CLI still owns the dry-run and mutation plan.
@@ -120,11 +120,11 @@ mutates = ["source", "script", "test", "agent-guidance"]
 quickstart = "docs/cli.md"
 ```
 
-Because the card is inside the Loaf, it is covered by the publisher's signature and the Loaf's digest. `incan.pub` reads it to build search entries and artifact pages, and each of those points back at the card's digest; the registry never keeps an editable copy that could drift from what the publisher signed. To correct a card for a version that is already published, such as fixing a typo, the publisher publishes a signed card update carrying the corrected card. The artifact itself does not change, and the registry shows the newest accepted card while keeping the earlier ones.
+Because the card is inside the Loaf, it is covered by the publisher's signature and the Loaf's digest. `loaves.pub` reads it to build search entries and artifact pages, and each of those points back at the card's digest; the registry never keeps an editable copy that could drift from what the publisher signed. To correct a card for a version that is already published, such as fixing a typo, the publisher publishes a signed card update carrying the corrected card. The artifact itself does not change, and the registry shows the newest accepted card while keeping the earlier ones.
 
 ### Who signs what
 
-Every change to registry state is an event. The publisher signs what they write; `incan.pub` countersigns every event it accepts, recording where it sits in the log; and the registry signs alone only for its own interventions:
+Every change to registry state is an event. The publisher signs what they write; `loaves.pub` countersigns every event it accepts, recording where it sits in the log; and the registry signs alone only for its own interventions:
 
 | Event | Publisher signs | Registry signs |
 | --- | --- | --- |
@@ -238,7 +238,7 @@ Signing identities, keyless signing, the transparency log, and registry key dele
 
 ### Private catalogs
 
-A private catalog must use the same descriptors, identities, card rules, event kinds, and signature rules as `incan.pub`. It differs only in visibility and authorization: who may read, publish, and administer its artifacts. A private artifact referencing a public one, or the reverse, must use the same relationship kinds and identities, and RFC 075's source-precedence rules govern which catalog provides an ambiguous id.
+A private catalog must use the same descriptors, identities, card rules, event kinds, and signature rules as `loaves.pub`. It differs only in visibility and authorization: who may read, publish, and administer its artifacts. A private artifact referencing a public one, or the reverse, must use the same relationship kinds and identities, and RFC 075's source-precedence rules govern which catalog provides an ambiguous id.
 
 ### Integrity and event log model
 
@@ -246,7 +246,7 @@ The artifact graph should be built from immutable artifact versions and signed r
 
 Registry state changes should be represented as signed events. Event kinds include publish, yank, unyank, supersede, ownership transfer, advisory attach, advisory resolve, revocation, compatibility assertion, and metadata/card update. The queryable artifact graph is then a projection over the accepted event stream plus the immutable artifact payloads it references.
 
-This keeps the useful properties usually sought from blockchain-style designs: tamper evidence, provenance, auditable state transitions, and independently verifiable artifact identity. It avoids making consensus, token economics, or irreversible public-chain writes part of the core `incan.pub` contract. Moderation, malware response, accidental secret publication, legal takedowns, private catalogs, and key rotation all require registry-controlled state transitions that remain auditable without pretending every piece of state should be globally immutable.
+This keeps the useful properties usually sought from blockchain-style designs: tamper evidence, provenance, auditable state transitions, and independently verifiable artifact identity. It avoids making consensus, token economics, or irreversible public-chain writes part of the core `loaves.pub` contract. Moderation, malware response, accidental secret publication, legal takedowns, private catalogs, and key rotation all require registry-controlled state transitions that remain auditable without pretending every piece of state should be globally immutable.
 
 The event log must be append-only from the registry's perspective, with corrections represented by later events rather than in-place rewrites. RFC 125's signed periodic checkpoints cover the log; anchoring them in an external transparency system is not required by the artifact graph.
 
@@ -272,7 +272,7 @@ AI assets become first-class graph nodes so model, dataset, prompt, adapter, eva
 
 ## Alternatives considered
 
-### Keep `incan.pub` package-only
+### Keep `loaves.pub` package-only
 
 Rejected because templates, mixes, actions, policies, and AI assets would then need parallel registries or ad-hoc package conventions.
 
@@ -286,7 +286,7 @@ Rejected because receiver-side mutation must remain local, reviewable, and polic
 
 ### Use a blockchain as the core registry ledger
 
-Rejected for the core `incan.pub` design. Blockchain infrastructure adds operational, cost, latency, governance, and user-experience complexity without matching the registry's primary trust boundary. `incan.pub` needs signed publishers, content-addressed artifacts, auditable registry events, moderation, yanking, recovery, private-catalog compatibility, and predictable EU-hosted operations. A signed append-only event log with optional external checkpoints provides the relevant integrity properties without binding the registry to a token, chain, or external consensus layer.
+Rejected for the core `loaves.pub` design. Blockchain infrastructure adds operational, cost, latency, governance, and user-experience complexity without matching the registry's primary trust boundary. `loaves.pub` needs signed publishers, content-addressed artifacts, auditable registry events, moderation, yanking, recovery, private-catalog compatibility, and predictable EU-hosted operations. A signed append-only event log with optional external checkpoints provides the relevant integrity properties without binding the registry to a token, chain, or external consensus layer.
 
 ## Drawbacks
 
@@ -298,11 +298,11 @@ Rejected for the core `incan.pub` design. Blockchain infrastructure adds operati
 
 The recommended implementation shape indexes package-provided relationships that already exist in descriptors and manifests, and adds explicit card metadata, artifact pages, advisory relationships, AI asset nodes, and richer graph queries on top of them.
 
-The local lifecycle does not depend on this RFC. RFC 074, RFC 075, RFC 076, and RFC 078 must be able to work with built-in descriptors and explicit local sources without `incan.pub` graph semantics.
+The local lifecycle does not depend on this RFC. RFC 074, RFC 075, RFC 076, and RFC 078 must be able to work with built-in descriptors and explicit local sources without `loaves.pub` graph semantics.
 
 ## Layers affected
 
-- **Registry / package integration:** `incan.pub` needs artifact kinds, relationship metadata, cards, advisories, and graph queries.
+- **Registry / package integration:** `loaves.pub` needs artifact kinds, relationship metadata, cards, advisories, and graph queries.
 - **CLI / tooling:** lifecycle commands need graph-backed discovery, status, audit, and source resolution.
 - **Manifest schema / configuration validation:** packages and descriptors need a way to declare graph relationships and cards.
 - **LSP / IDE tooling:** editor tooling may consume graph metadata for discovery, code actions, docs, and project diagnostics.
@@ -316,5 +316,5 @@ The local lifecycle does not depend on this RFC. RFC 074, RFC 075, RFC 076, and 
 - Publishers sign what they author; the registry countersigns every accepted event and signs alone only for its own interventions, such as takedowns and revocations, with a reason. Ownership transfers carry both owners' signatures. Signing mechanics are RFC 125's.
 - Every search result carries identity, kind, version, description, declared compatibility, provenance, and trust status. Ranking never becomes semantic authority.
 - Advisories are separately attributable signed records that reference immutable artifact versions, with explicit supersession; they never rewrite an artifact or its card.
-- Private catalogs use the same descriptors, identities, card rules, events, and signatures as `incan.pub`, with their own visibility and authorization.
+- Private catalogs use the same descriptors, identities, card rules, events, and signatures as `loaves.pub`, with their own visibility and authorization.
 - AI assets need immutable identities and typed relationships to their sources, profiles, and observations; a recommendation marketplace is not part of that need.

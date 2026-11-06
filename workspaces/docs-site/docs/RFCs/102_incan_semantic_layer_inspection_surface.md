@@ -11,7 +11,7 @@
     - RFC 076 (project mutation policy and recovery)
     - RFC 077 (workspace and multi-package projects)
     - RFC 078 (tool execution and typed workflow actions)
-    - RFC 079 (`incan.pub` artifact graph)
+    - RFC 079 (`loaves.pub` artifact graph)
     - RFC 080 (declared AI assets)
     - RFC 082 (checked API documentation generation)
     - RFC 085 (field metadata and type-shaped constraints)
@@ -71,7 +71,7 @@ This RFC therefore makes the integration surface explicit. Incan should provide 
 
 - This RFC does not define a new source syntax.
 - This RFC does not replace RFC 048 checked metadata, RFC 074 templates, RFC 075 capabilities, RFC 076 policy, RFC 077 workspaces, RFC 078 actions, RFC 079 registry graph semantics, or RFC 080 AI asset semantics.
-- This RFC does not require a public `incan.pub` registry to exist before local inspection works.
+- This RFC does not require a public `loaves.pub` registry to exist before local inspection works.
 - This RFC does not define the full LSP protocol mapping for every editor feature.
 - This RFC does not allow agents to bypass policy, approval, sandboxing, or user review.
 - This RFC does not require inspection commands to execute project code, run tools, fetch remote schemas, download models, or contact external services.
@@ -334,7 +334,7 @@ Rejected because it preserves fragmentation. Independent outputs can be useful, 
 
 Rejected because CI, docs tooling, registry tooling, and agents need the same facts outside an editor. LSP is the proving consumer, not the source of truth.
 
-### Put the semantic layer in `incan.pub`
+### Put the semantic layer in `loaves.pub`
 
 Rejected because local projects must remain inspectable without registry access, and local tooling owns receiver-side mutation plans and policy. Registry graph metadata can enrich inspection but must not be required for it.
 

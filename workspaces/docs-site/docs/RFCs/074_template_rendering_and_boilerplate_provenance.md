@@ -60,7 +60,7 @@ This RFC keeps the boundary narrow. It does not create a general template progra
 - Define a safe reset escape hatch for corrupted or heavily conflicted generated files.
 - Keep generated projects ordinary: rendered files are normal files, and templates do not participate in compilation unless the user explicitly keeps them as project data.
 - Allow templates to be resolved from source-agnostic catalogs such as built-in descriptors, local paths, git sources, public package registries, or private catalogs while keeping rendering and mutation local to the lifecycle CLI.
-- Let `incan.pub` packages distribute public templates, rendered locally under the same rules as built-in ones.
+- Let `loaves.pub` packages distribute public templates, rendered locally under the same rules as built-in ones.
 - Provide a tooling surface that IDEs, docs tooling, and agents can inspect without reimplementing template semantics.
 
 ## Non-Goals
@@ -357,7 +357,7 @@ The `.template` suffix is recommended for provider-side template files because i
 
 Template source kind affects discovery, provenance, trust, and upgrade metadata. It must not change rendering semantics. A template loaded from a private catalog, public registry, git reference, local path, package, or built-in source is rendered with the same placeholder validation, path safety, parse validation, overwrite rules, and provenance requirements.
 
-Implementations must support built-in templates, explicit local descriptor paths, templates owned by Loaf packages from `incan.pub`, git sources, and public and private catalog sources, all under the same descriptor semantics.
+Implementations must support built-in templates, explicit local descriptor paths, templates owned by Loaf packages from `loaves.pub`, git sources, and public and private catalog sources, all under the same descriptor semantics.
 
 Source metadata should answer these questions:
 
@@ -607,13 +607,13 @@ Template authors need to know whether a descriptor renders into a realistic proj
 - deterministic rendering, by rendering each template twice from the same values and comparing the bytes;
 - fixture renders: each declared fixture value set must render and pass target-language validation.
 
-With `--strict`, unused parameters without `allow_unused` are errors. The result must be reported in the versioned machine-readable form. Publishing a template package to `incan.pub` must require a passing strict result under RFC 125, and promotion to a higher trust tier may require stronger policy evidence. `validate` may also run a target-project harness that initializes a fixture project, applies the template, applies updates between template versions, runs local checks, and records the rendered diffs.
+With `--strict`, unused parameters without `allow_unused` are errors. The result must be reported in the versioned machine-readable form. Publishing a template package to `loaves.pub` must require a passing strict result under RFC 125, and promotion to a higher trust tier may require stronger policy evidence. `validate` may also run a target-project harness that initializes a fixture project, applies the template, applies updates between template versions, runs local checks, and records the rendered diffs.
 
 ### Security and trust
 
 Template rendering must not execute arbitrary code. It must not run shell commands, load dynamic plugins, fetch remote URLs, evaluate expressions, or inspect unrelated files in the project.
 
-Templates distributed through packages inherit the package trust story. If package templates are distributed through `incan.pub`, registry integrity, checksums, signed state changes, and publisher identity rules belong to RFC 125. Rendering remains local and must still validate paths and output.
+Templates distributed through packages inherit the package trust story. If package templates are distributed through `loaves.pub`, registry integrity, checksums, signed state changes, and publisher identity rules belong to RFC 125. Rendering remains local and must still validate paths and output.
 
 Procedural extension points are especially risky for upgradeable templates. If a template suite needs environment-derived defaults, optional slices, or target cleanup, those concerns should be represented as typed parameters, descriptor conditions, and mutation-plan rules rather than hidden Python, shell, or plugin hooks. Hooks, sandboxed or not, are not part of this design, because they make provenance and updates less reliable.
 
@@ -668,9 +668,9 @@ For versioned project concerns such as "move the `cli` capability from `1.3.0` t
 
 Templates that need compiler-visible configuration should generate ordinary Incan `ctx` declarations or source files that use `ctx` declarations. They should not invent a sidecar configuration system for values that the compiler should understand.
 
-### Relationship to catalogs and `incan.pub`
+### Relationship to catalogs and `loaves.pub`
 
-`incan.pub` is a natural public distribution point for package-owned templates because it already owns Loaf package identity and versioning under RFC 125 and RFC 117. This RFC does not require registry support. It only requires that templates loaded from packages, registries, git sources, local paths, or private catalogs be rendered locally with the same safety rules as built-in templates.
+`loaves.pub` is a natural public distribution point for package-owned templates because it already owns Loaf package identity and versioning under RFC 125 and RFC 117. This RFC does not require registry support. It only requires that templates loaded from packages, registries, git sources, local paths, or private catalogs be rendered locally with the same safety rules as built-in templates.
 
 When registry or catalog metadata is available, it can make template status and upgrade previews much more useful: it can expose latest compatible versions, yanked sources, integrity metadata, and precomputed source diffs between template versions. The catalog layer may help with discovery and trust. The local lifecycle CLI still owns project-specific planning, rendering, validation, conflict handling, and file mutation.
 
@@ -766,7 +766,7 @@ Rejected because generated project boilerplate should be reviewable, editable, a
 - **Formatter:** rendered Incan templates should be formatted before write and before `rendered_hash` is recorded when a formatter is available.
 - **Manifest schema / configuration validation:** `loaf.toml` gains the typed `[oven.templates]` intent table, and Oven writes the tool-owned `oven.provenance.toml` evidence file. `oven.lock` remains resolver state and must not become a general mutation-history store. Domain parameter kinds reuse the manifest's own validation rules.
 - **CLI / tooling:** lifecycle tooling must implement deterministic template rendering, literal regions, derived-value transforms, path validation, parameter validation, ownership handling, provenance recording, three-way merge proposals, and check/status/values-file/render/diff/update/reset/validate operations with versioned machine-readable output.
-- **Registry:** `incan.pub` publication requires a passing strict `oven template validate` result.
+- **Registry:** `loaves.pub` publication requires a passing strict `oven template validate` result.
 - **LSP / IDE tooling:** editor-facing tools should consume machine-readable template provenance and lifecycle diagnostics rather than reimplementing template rendering.
 - **Package integration:** package-provided templates must be loaded as package data and rendered locally under the same safety rules as built-in templates. Package or registry metadata may feed version-aware status and upgrade previews.
 - **Documentation:** user docs must explain the difference between provider-side templates, rendered project files, bootstrap files, managed files, and provenance records.
@@ -784,6 +784,6 @@ Rejected because generated project boilerplate should be reviewable, editable, a
 - `diff` and every other template command have a versioned `--format json` form carrying the same facts as the human output.
 - `status` works offline from local provenance and reports what it could not refresh as unknown or cached.
 - `reset` is an explicit, dry-runnable plan listing the exact edits it replaces, under confirmation policy; it never happens implicitly.
-- `oven template validate` checks schema, path safety, deterministic rendering and fixture renders. A passing strict result is required to publish to `incan.pub`; promotion may require more evidence.
+- `oven template validate` checks schema, path safety, deterministic rendering and fixture renders. A passing strict result is required to publish to `loaves.pub`; promotion may require more evidence.
 - `.incn.template` is the recommended suffix for Incan source templates. Descriptors stay authoritative and other names are allowed.
 - Later-phase placeholders are preserved only inside explicit `{% literal %}` … `{% endliteral %}` regions. Unknown placeholders elsewhere are diagnostics, and semantic tooling may explain changes but never decides rendering, resolves conflicts or authorizes overwrites.

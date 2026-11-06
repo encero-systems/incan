@@ -48,7 +48,7 @@ This RFC intentionally stays above hosting and registry transport. It captures t
 - Define approval semantics at a high level so local confirmation, explicit CLI flags, code-review approval, and automation-produced proposals are not conflated.
 - Define status and recovery behavior for yanked, revoked, vulnerable, suspicious, unknown, or source-switched templates and mixes.
 - Ensure policy and recovery surfaces are machine-readable so CLI, LSP, IDE, docs tooling, and agents can consume the same decision data.
-- Leave room for `incan.pub`, private catalogs, and organization tooling to provide advisory and trust metadata without letting remote services mutate projects directly.
+- Leave room for `loaves.pub`, private catalogs, and organization tooling to provide advisory and trust metadata without letting remote services mutate projects directly.
 
 ## Non-Goals
 
