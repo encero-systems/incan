@@ -377,6 +377,7 @@ impl TypeChecker {
         self.note_mut_param_method_call(call.base, base_ty, call.method);
         self.record_mutable_receiver_method_call(base_ty, call.method, call.span);
         if let Some(identity) = Self::compiler_builtin_method_identity(base_ty, call.method) {
+            self.note_lazy_result_member(&identity);
             self.type_info.record_resolved_identity(call.span, identity);
         }
     }

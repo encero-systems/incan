@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use incan_lang::lang::surface::iterator_methods::{self, IteratorMethodId};
 use incan_lang::lang::types::ownership::OwnershipMode;
 use incan_semantics_core::{HirSourceSpan, IncanInputAccess};
 
@@ -180,6 +181,91 @@ impl SourceAccesses<'_, '_> {
             .checked_input_copy_value(self.proof.canonical_owner(), ty)
     }
 
+    /// Return whether the producer retained an unclaimed source access at this expression.
+    fn has_access(&self, span: HirSourceSpan) -> bool {
+        self.by_span
+            .get(&span)
+            .is_some_and(|indices| indices.iter().any(|index| !self.claimed.contains(index)))
+    }
+
+    /// Replay a source whose lazy result may borrow a place, carry existing dependencies or own a temporary.
+    fn retained_source(&mut self, expression: &Spanned<Expr>, escaping: bool) -> Result<(), &'static str> {
+        if let Some((place, through)) = self.place(expression)? {
+            let moved = self.by_span.get(&expression.span).is_some_and(|indices| {
+                indices.iter().any(|index| {
+                    matches!(&self.proof.graph.nodes[*index].event,
+                        flow::Event::Access {
+                            place: actual,
+                            access: flow::Access::Move,
+                            through: actual_through,
+                        } if actual == &place && *actual_through == through)
+                })
+            });
+            if moved {
+                self.place_evaluation(expression)?;
+                return self.access(expression.span, &place, through, flow::Access::Move);
+            }
+            if self.has_access(expression.span) {
+                return self.expression(expression, false);
+            }
+            return self.place_evaluation(expression);
+        }
+        self.expression(expression, escaping)
+    }
+
+    /// Claim every lazy-result dependency read retained at one canonically selected terminal call.
+    fn terminal_dependencies(&mut self, span: HirSourceSpan) -> Result<(), &'static str> {
+        let dependencies = self
+            .by_span
+            .get(&span)
+            .into_iter()
+            .flatten()
+            .filter_map(|index| match &self.proof.graph.nodes[*index].event {
+                flow::Event::Access {
+                    place,
+                    access: flow::Access::Read,
+                    through: Some(loan),
+                } => Some((place.clone(), *loan)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        for (place, loan) in dependencies {
+            self.access(span, &place, Some(loan), flow::Access::Read)?;
+        }
+        Ok(())
+    }
+
+    /// Replay the producer policy for one canonical lazy-builtin call without inventing an explicit invocation.
+    fn retained_iterator_call(
+        &mut self,
+        receiver: &Spanned<Expr>,
+        arguments: &[CallArg],
+        method: IteratorMethodId,
+        span: HirSourceSpan,
+        escaping: bool,
+    ) -> Result<(), &'static str> {
+        self.retained_source(receiver, escaping)?;
+        for (index, argument) in arguments.iter().enumerate() {
+            let value = match argument {
+                CallArg::Positional(value) | CallArg::Named(_, value) => value,
+                _ => return Err("source access needs fixed iterator arguments"),
+            };
+            let carries_iterable = index == 0 && matches!(method, IteratorMethodId::Zip | IteratorMethodId::Chain);
+            if carries_iterable {
+                self.retained_source(value, false)?;
+            } else if !matches!(
+                self.proof.facts.expr_type(value.span),
+                Some(crate::symbols::ResolvedType::Function(..))
+            ) {
+                self.expression(value, false)?;
+            }
+        }
+        if iterator_methods::is_terminal(method) {
+            self.terminal_dependencies(span)?;
+        }
+        Ok(())
+    }
+
     /// Evaluate the index operands of one stored place without reading the place itself. Field and grouping
     /// projections add no runtime value evaluation, while every index expression runs once from left to right.
     fn place_evaluation(&mut self, expression: &Spanned<Expr>) -> Result<(), &'static str> {
@@ -292,6 +378,12 @@ impl SourceAccesses<'_, '_> {
                     };
                     self.expression(value, false)?;
                 }
+            }
+            Expr::MethodCall(receiver, _, _, arguments)
+                if let Some(method) =
+                    super::super::builtins::retained_iterator_method(self.proof.facts, expression.span) =>
+            {
+                self.retained_iterator_call(receiver, arguments, method, expression.span, consume)?;
             }
             // A builtin list method evaluates its arguments, then reads or writes its receiver place in place.
             Expr::MethodCall(receiver, method, _, arguments)

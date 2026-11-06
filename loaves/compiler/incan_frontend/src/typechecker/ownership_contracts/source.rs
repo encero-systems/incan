@@ -23,6 +23,7 @@ mod calls;
 mod closures;
 mod matches;
 mod operations;
+mod retained_results;
 mod values;
 
 /// A source shape whose access behavior has not been projected. The anchor is the unsupported operation itself.
@@ -348,6 +349,9 @@ impl Builder<'_> {
         incoming: Vec<usize>,
         consume: bool,
     ) -> Result<Vec<usize>, Unavailable> {
+        if let Some(result) = self.retained_result(expression, incoming.clone(), false)? {
+            return Ok(result.incoming);
+        }
         if self
             .checker
             .type_info

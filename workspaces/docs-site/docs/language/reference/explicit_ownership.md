@@ -15,6 +15,8 @@ Each annotation takes exactly one type argument. These are canonical prelude dec
 
 Owning a value does not erase the dependencies it holds: an owned value that retains a borrow keeps its source borrowed. Shared access follows the underlying type's checked interior-mutability operations; it is not a promise of deep immutability.
 
+This applies both to declared result-source relationships and to compiler-defined lazy results. `list.iter()` and a generator expression over a list place retain a shared dependency on that place; iterator adapters, aggregates, closures and builtin result carriers preserve it. A moved or temporary list transfers its storage to the lazy result instead. No form implicitly clones the complete list.
+
 ## Inputs
 
 A `Borrowed[T]` parameter receives shared access and a `BorrowedMut[T]` parameter exclusive access to the caller's storage; neither copies the argument. An `Owned[T]` parameter transfers a non-Copy argument, so the caller cannot use it afterward, and copies a Copy argument. A method's receiver is a borrowed input: `self` grants shared access and `mut self` exclusive, writable access. An explicit mode takes precedence over the parameter's inferred passing mode; the body cannot weaken it.

@@ -349,7 +349,7 @@ pub def generator_runtime_call(
     output: Place,
     span: SourceSpan,
 ) -> None:
-    """Retain one exact runtime signature, generic over the generator element, alongside its call."""
+    """Retain one exact Incan-runtime signature, generic over the generator element, alongside its call."""
     path = f"incan_native_runtime::{name}"
     builder.externals.append(
         ExternalFunction(path=path, type_arguments=[element], parameters=parameters, return_type=result, span=span),

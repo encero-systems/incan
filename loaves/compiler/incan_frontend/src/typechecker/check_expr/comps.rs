@@ -57,6 +57,7 @@ impl TypeChecker {
         generator: &GeneratorExpr,
         _span: Span,
     ) -> ResolvedType {
+        self.note_lazy_result_body();
         self.symbols.enter_scope(ScopeKind::Block);
         let mut previous_views = None;
 

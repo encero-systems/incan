@@ -140,6 +140,41 @@ impl Builder<'_> {
             let incoming = self.bind_closure(root.clone(), &assignment.value, incoming)?;
             return Ok((incoming, true));
         }
+        // A lazy builtin result owns its runtime cursor while retaining ordinary graph loans to every stored source.
+        let lazy_result = matches!(self.checker.type_info.expr_type(assignment.value.span),
+            Some(ResolvedType::Generic(name, _))
+                if incan_lang::lang::types::collections::from_str(name)
+                    == Some(incan_lang::lang::types::collections::CollectionTypeId::Generator))
+            || self
+                .checker
+                .type_info
+                .expr_type(assignment.value.span)
+                .is_some_and(|ty| ty.iterator_item_type().is_some());
+        if lazy_result && let Some(result) = self.retained_result(&assignment.value, incoming.clone(), false)? {
+            if result.loans.is_empty() {
+                return Ok((result.incoming, false));
+            }
+            if self.graph.dependent_locals.insert(root.clone(), result.loans).is_some() {
+                return Err(Unavailable {
+                    span: assignment.name_span,
+                    reason: "lazy result has more than one dependency destination".into(),
+                });
+            }
+            return Ok((result.incoming, true));
+        }
+        if let Some(result) = self.retained_carrier(&assignment.value, incoming.clone(), false)? {
+            if result.loans.is_empty() {
+                return Ok((result.incoming, false));
+            }
+            if self.graph.dependent_locals.insert(root.clone(), result.loans).is_some() {
+                return Err(Unavailable {
+                    span: assignment.name_span,
+                    reason: "lazy carrier has more than one dependency destination".into(),
+                });
+            }
+            self.graph.dependent_values.insert(assignment.value.span);
+            return Ok((result.incoming, true));
+        }
         // A new local initialized by a returned view aliases its substituted place under the call's result loan.
         if let Some(view) = self.view_source(&assignment.value)? {
             let (incoming, path) = self.evaluate_view_source(&assignment.value, view, incoming)?;
@@ -417,7 +452,15 @@ impl Builder<'_> {
         } else {
             self.optional_place(&loop_.iter)?
         };
-        let mut evaluated = self.expression(&loop_.iter, incoming, takes_items)?;
+        let retained = if takes_items {
+            None
+        } else {
+            self.retained_result(&loop_.iter, incoming.clone(), false)?
+        };
+        let mut evaluated = match &retained {
+            Some(result) => result.incoming.clone(),
+            None => self.expression(&loop_.iter, incoming, takes_items)?,
+        };
         let iteration = match iterable {
             Some(path) => {
                 let place = path.place.clone();
@@ -429,7 +472,7 @@ impl Builder<'_> {
         };
         let header = self.event(evaluated, Event::Nothing, span)[0];
         // The poll reads the iterable through its loan; exhaustion leaves the loop from here.
-        let poll = match iteration {
+        let mut poll = match iteration {
             Some((loan, place)) => self.event(
                 vec![header],
                 Event::Access {
@@ -441,6 +484,28 @@ impl Builder<'_> {
             ),
             None => vec![header],
         };
+        if let Some(result) = retained {
+            for loan in result.loans {
+                let source = self
+                    .graph
+                    .loans
+                    .get(loan.0)
+                    .map(|loan| loan.source.clone())
+                    .ok_or(Unavailable {
+                        span: loop_.iter.span,
+                        reason: "iterator loop has no retained source loan".into(),
+                    })?;
+                poll = self.event(
+                    poll,
+                    Event::Access {
+                        place: source,
+                        access: Access::Read,
+                        through: Some(loan),
+                    },
+                    loop_.iter.span,
+                );
+            }
+        }
         // Each poll declares the item afresh, as an initializer does: its root is registered, with no write event.
         self.root(&item, loop_.pattern.span)?;
         self.loops.push(LoopEdges {
@@ -529,7 +594,15 @@ impl Builder<'_> {
                         });
                     }
                     (Some(value), None, None) => {
-                        self.expression(value, incoming, true)?;
+                        if let Some(result) = self.retained_result(value, incoming.clone(), true)? {
+                            self.escape_retained_result(result, value.span)?;
+                        } else if let Some(result) = self.retained_carrier(value, incoming.clone(), true)? {
+                            self.escape_retained_result(result, value.span)?;
+                        } else if let Some(result) = self.stored_result(value, incoming.clone())? {
+                            self.escape_retained_result(result, value.span)?;
+                        } else {
+                            self.expression(value, incoming, true)?;
+                        }
                     }
                     (None, None, None) => {}
                     (_, Some(_), Some(_)) => {

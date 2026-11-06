@@ -1,5 +1,97 @@
-# behavior: a generator expression that changes the items of a list it reads, directly or through enumerate, is refused at check time, since it holds copies of them, even over a mut list
+# behavior: lazy list readers refuse item changes, live-source changes and escapes through borrowed storage (#2426)
 # expect-diagnostic: INCAN-T0001
+
+
+model Values:
+    items: list[int]
+
+
+def mutation_while_live() -> None:
+    """Refuse mutation before a retained iterator's terminal use."""
+    mut values = [1, 2, 3]
+    generated = values.iter().map((value) => value * 2)
+    values.append(4)
+    println(generated.sum())
+
+
+def replacement_while_live() -> None:
+    """Refuse replacing storage before a retained generator expression's use."""
+    mut values = [1, 2, 3]
+    generated = (value for value in values)
+    values = [4, 5]
+    println(generated.sum())
+
+
+def transfer_while_live() -> None:
+    """Refuse transferring storage before a retained adapter's use."""
+    values = [1, 2, 3]
+    generated = values.iter().take(2)
+    moved = values
+    println(len(moved))
+    println(generated.sum())
+
+
+def aggregate_while_live() -> None:
+    """Refuse mutation while a list aggregate still carries the retained iterator."""
+    mut values = [1, 2, 3]
+    carried = [values.iter()]
+    values.append(4)
+    println(carried[0].sum())
+
+
+def carrier_while_live() -> None:
+    """Refuse mutation while a builtin call result carries the retained iterator."""
+    mut values = [1, 2, 3]
+    carried = Some(values.iter())
+    values.append(4)
+    match carried:
+        Some(generated) => println(generated.sum())
+        None => pass
+
+
+def closure_while_live() -> None:
+    """Refuse mutation while a closure still captures the retained iterator."""
+    mut values = [1, 2, 3]
+    generated = values.iter()
+    total = () => generated.sum()
+    values.append(4)
+    println(total())
+
+
+def branch_while_live(selected: bool) -> None:
+    """Refuse only the path that changes the source before its later dependent use."""
+    mut values = [1, 2, 3]
+    generated = values.iter()
+    if selected:
+        values.append(4)
+    println(generated.sum())
+
+
+def loop_while_live() -> None:
+    """Refuse a loop mutation whose exit reaches the retained iterator's later use."""
+    mut values = [1, 2, 3]
+    generated = values.iter()
+    while len(values) < 4:
+        values.append(4)
+    println(generated.sum())
+
+
+def direct_loop_mutation() -> None:
+    """Refuse mutation from the body of a direct loop over the retained iterator."""
+    mut values = [1, 2, 3]
+    for value in values.iter():
+        values.append(value)
+
+
+def from_field(values: Values) -> Generator[int]:
+    """Refuse an escaping generator whose projected field remains owned by the parameter."""
+    return (item for item in values.items)
+
+
+def from_mut_parameter(mut values: list[int]) -> Generator[int]:
+    """Refuse moving caller-visible mutable storage into an escaping generator."""
+    return (item for item in values)
+
 
 def main() -> None:
     mut rows: list[list[int]] = [[1, 2], [3]]
@@ -8,3 +100,15 @@ def main() -> None:
         println(last)
     indexed = (row.pop() for i, row in enumerate(rows))
     println(len(rows))
+    mutation_while_live()
+    replacement_while_live()
+    transfer_while_live()
+    aggregate_while_live()
+    carrier_while_live()
+    closure_while_live()
+    branch_while_live(true)
+    loop_while_live()
+    direct_loop_mutation()
+    mut values = [1, 2, 3]
+    println(from_field(Values(items=[1, 2, 3])).sum())
+    println(from_mut_parameter(values).sum())

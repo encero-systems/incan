@@ -498,6 +498,9 @@ pub struct TypeChecker {
     body_open_diagnostics: Vec<CompileError>,
     /// Completed declaration/default/initializer outputs, separate from callable statement outputs.
     checked_declarations: Vec<std::sync::Arc<body_check::CheckedBodyView>>,
+    /// Callable bodies that produced a checked lazy result and therefore need retained-result ownership analysis.
+    /// The marker is consumed when that body's flow is finalized; it never becomes a published semantic fact.
+    lazy_result_bodies: HashSet<CanonicalSymbolId>,
     /// Nested producer diagnostic intervals used only while capturing independently owned outputs.
     diagnostic_owner_ranges: Vec<(std::ops::Range<usize>, std::ops::Range<usize>)>,
     /// Symbol table populated during the first pass.

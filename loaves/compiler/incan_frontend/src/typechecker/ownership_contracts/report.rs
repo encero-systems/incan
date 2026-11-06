@@ -6,15 +6,19 @@ use std::collections::{BTreeSet, VecDeque};
 use super::flow::{Access, Analysis, ConflictKind, Event, Graph, LoanId, Root};
 use crate::ast::Span;
 use crate::diagnostics::CompileError;
+use crate::typechecker::TypeCheckInfo;
 
 /// Render conflicts only from a successfully validated graph. The result retains structured locations for CLI,
 /// editor and serialized diagnostic projections; native storage selection is not involved.
-pub(super) fn conflicts(graph: &Graph, analysis: &Analysis) -> Vec<CompileError> {
+pub(super) fn conflicts(graph: &Graph, analysis: &Analysis, facts: &TypeCheckInfo) -> Vec<CompileError> {
     analysis
         .conflicts
         .iter()
         .map(|conflict| {
             let operation = &graph.nodes[conflict.node];
+            if let Some(loan) = builtin_conflict_loan(graph, analysis, facts, conflict) {
+                return builtin_result_conflict(graph, analysis, conflict.node, loan);
+            }
             let message = match conflict.kind {
                 ConflictKind::Permission => "This operation requires access not granted by its ownership contract",
                 ConflictKind::ActiveLoan(_) => "This operation conflicts with a live borrow of the same storage",
@@ -42,6 +46,94 @@ pub(super) fn conflicts(graph: &Graph, analysis: &Analysis) -> Vec<CompileError>
             }
         })
         .collect()
+}
+
+/// Select the retained builtin loan responsible for this conflict, including a permission or moved conflict emitted
+/// at the same synthetic escape boundary.
+fn builtin_conflict_loan(
+    graph: &Graph,
+    analysis: &Analysis,
+    facts: &TypeCheckInfo,
+    conflict: &super::flow::Conflict,
+) -> Option<LoanId> {
+    let direct = match conflict.kind {
+        ConflictKind::ActiveLoan(loan) | ConflictKind::UnavailableLoan(loan) => Some(loan),
+        ConflictKind::Permission | ConflictKind::Moved(_) => match graph.nodes[conflict.node].event {
+            Event::Access {
+                through: Some(loan), ..
+            } => Some(loan),
+            _ => analysis.conflicts.iter().find_map(|candidate| {
+                (candidate.node == conflict.node)
+                    .then_some(candidate)
+                    .and_then(|candidate| match candidate.kind {
+                        ConflictKind::ActiveLoan(loan) => Some(loan),
+                        _ => None,
+                    })
+            }),
+        },
+    }?;
+    let mut loan = Some(direct);
+    while let Some(id) = loan {
+        if super::builtins::lazy_result_loan(graph, facts, id) {
+            return Some(id);
+        }
+        loan = graph.loans.get(id.0)?.parent;
+    }
+    None
+}
+
+/// Explain a lazy builtin conflict using the source place, the conflicting action and the dependent later use.
+fn builtin_result_conflict(graph: &Graph, analysis: &Analysis, node: usize, loan: LoanId) -> CompileError {
+    let operation = &graph.nodes[node];
+    let retained = &graph.loans[loan.0];
+    let source = display_place(&retained.source);
+    let action = match operation.event {
+        Event::Borrow(_) => "borrow",
+        Event::Access {
+            access: Access::Read, ..
+        } => "read",
+        Event::Access {
+            access: Access::Write, ..
+        } => "mutate",
+        Event::Access {
+            access: Access::Replace,
+            ..
+        } => "replace",
+        Event::Access {
+            access: Access::Move, ..
+        } => "transfer",
+        Event::Nothing => "access",
+    };
+    let mut error = CompileError::type_error(
+        format!("Cannot {action} `{source}` while a lazy result still reads it"),
+        operation.span,
+    )
+    .with_stable_code("INCAN-T0001")
+    .with_related_span(retained.span, format!("the lazy result starts reading `{source}` here"));
+    if let Some(span) = dependent_use(graph, analysis, node, loan) {
+        error = error.with_related_span(span, "this later use keeps the lazy result live");
+    }
+    error.with_hint(format!(
+        "Finish the iteration before changing `{source}`, or write `{source}.clone()` to make an independent copy visible"
+    ))
+}
+
+/// Render a canonical source place without reconstructing it from source spelling.
+fn display_place(place: &super::flow::Place) -> String {
+    let mut value = match &place.root {
+        Root::Binding(identity) => identity.declaration_name.clone(),
+        Root::Temporary { .. } => "temporary".into(),
+    };
+    for projection in &place.projection {
+        match projection {
+            super::flow::Projection::Field(identity) => {
+                value.push('.');
+                value.push_str(&identity.declaration_name);
+            }
+            super::flow::Projection::Element(_) => value.push_str("[item]"),
+        }
+    }
+    value
 }
 
 /// Explain the exact source grant used for permission checking. A reborrow derives access from its parent rather

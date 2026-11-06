@@ -274,6 +274,19 @@ impl CheckedInputBody<'_> {
                     }
                 }
             }
+            // Canonical lazy-builtin calls are governed by their retained result loans rather than an explicit
+            // source invocation. Their receiver and fixed arguments still need complete expression coverage.
+            Expr::MethodCall(receiver, _, _, arguments)
+                if super::super::builtins::retained_iterator_method(self.facts, expression.span).is_some() =>
+            {
+                self.visit_operation_expression(receiver, parameters, execution, seen)?;
+                for argument in arguments {
+                    let (CallArg::Positional(value) | CallArg::Named(_, value)) = argument else {
+                        return Err("operation coverage needs fixed iterator arguments");
+                    };
+                    self.visit_operation_expression(value, parameters, execution, seen)?;
+                }
+            }
             // A builtin list method reads or changes its receiver place in place; it has no checked invocation.
             Expr::MethodCall(receiver, method, _, arguments)
                 if super::super::builtins::list_method_writes(self.facts, receiver, method, expression.span)
