@@ -103,8 +103,8 @@ There is no `incan bake` alias. Baking a loaf-shaped carrier packages a `*.loaf`
 
 ```text
 oven init
-oven add stdlib-web
-oven add --crate serde
+oven add acme/widgets
+oven add crates-io/serde
 oven check -p oven_model -p oven_store      # plan + check-only compile of selected members, no codegen or link
 oven check --workspace --exclude incan-lsp
 oven build --target aarch64-apple-ios
@@ -139,12 +139,12 @@ Both commands resolve the same underlying plan, policy decision, and receipt; th
 `oven add <pkg>` is the most common project-mutation operation, so it is a bare shorthand for `oven dependency add <pkg>`, the same ergonomic reasoning as `cargo add` or `npm install`. `dependency` is not special beyond earning that one shortcut: it still gets its own full, explicit, discoverable subcommand family, the same shape every other noun gets:
 
 ```text
-oven add stdlib-web              # shorthand for `oven dependency add stdlib-web`
-oven dependency add stdlib-web   # same operation, spelled explicitly
-oven dependency add --crate serde
+oven add acme/widgets            # shorthand for `oven dependency add acme/widgets`
+oven dependency add acme/widgets # same operation, spelled explicitly
+oven dependency add crates-io/serde
 oven dependency add --provider vision-runtime --version ">=2.0"
 oven dependency list
-oven dependency remove stdlib-web
+oven dependency remove acme/widgets
 
 oven mix add cli
 oven mix list

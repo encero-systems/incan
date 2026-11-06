@@ -389,7 +389,7 @@ Borrowed non-`Copy` callable parameters illustrate why implementation artifacts 
 - **Stdlib / Runtime (`incan_stdlib`)**: caller-facing runtime hooks, errors, logging, telemetry, async, and capability surfaces may need caller-compatible contracts.
 - **Oven / Tooling**: Oven must plan, materialize, inspect, and verify caller build units and `*.loaf` assets under RFC 117's project/asset contract, including the caller identity record and its Rust facet's link into the calling Rust-authored unit's own build unit (RFC 119); it must reject rather than publish a caller artifact with an unsupported export, and tooling must report diagnostics traceable to #986 execution receipts and the selected Oven build receipt.
 - **LSP / Docs tooling**: tooling should surface caller-visible exports, Rust-facing signatures, compatibility metadata, and unsupported-boundary diagnostics.
-- **Registry / Package metadata**: `incan.pub` (RFC 034, RFC 079) should advertise whether a published Incan package provides a Rust-hosted caller surface, which caller ABI version it requires, and its compiler/runtime/target compatibility range — not a Cargo/crates.io concern.
+- **Registry / Package metadata**: `incan.pub` (RFC 125, RFC 079) should advertise whether a published Incan package provides a Rust-hosted caller surface, which caller ABI version it requires, and its compiler/runtime/target compatibility range — not a Cargo/crates.io concern.
 
 ## Design decisions
 

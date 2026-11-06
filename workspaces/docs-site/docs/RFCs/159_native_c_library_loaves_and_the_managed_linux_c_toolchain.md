@@ -193,7 +193,7 @@ RFC 116's binding `link` value gains `c.loaf_library(loaf, configuration=...)`, 
 
 ### Registry adoption of C libraries
 
-1. `incan.pub` may adopt a C library from an upstream release (a published source archive and its checksum) as an external-source record under RFC 125, with the C facet written by the registry. The record binds the upstream location, version and checksum to the source Loaf digest.
+1. `incan.pub` may adopt a C library from an upstream release (a published source archive and its checksum) under RFC 125, with the C facet written by the registry. Its `adopt` event binds the upstream location, version and checksum to the source Loaf digest.
 2. `incan.pub` may also derive a Clove from the vendored sources of an adopted crates.io crate, when those sources are the library's and not crate-specific glue. The record names the crate version it was derived from.
 3. Adopted Cloves live under the registry-owned scope `c/`, with the upstream library's name and version, not the wrapping crate's.
 4. An upstream project that later publishes its library under its own owner scope does not take over `c/<name>`: published versions are immutable. The registry records a supersession event on `c/<name>` that names the owner's package, so that new versions come from the owner.
@@ -226,7 +226,7 @@ A Clove unit is an RFC 124 unit, and its identity includes everything that chang
 
 ### Interaction with RFC 125
 
-Cloves publish, index and serve as Loaves; their compiled units are assets. An external-source record for an upstream C library parallels RFC 125's record for a crates.io crate. The registry's catalog must show which crates bind which C-library configuration.
+Cloves publish, index and serve as Loaves; their compiled units are assets. Adopting an upstream C library parallels RFC 125's adoption of a crates.io package. The registry's catalog must show which crates bind which C-library configuration.
 
 ### Compatibility / migration
 
@@ -286,7 +286,7 @@ This is what RFC 116 selected. It leaves Apple with a second compiler, tied to e
 - **Oven planning and execution** — must plan Clove units through a `c` facet provider, resolve the toolchain release and the target's platform files from the Incan toolchain, compile publishable native units only with them, plan a shared Clove unit once per closure, refuse two configurations of one library in one link closure, and link Linux executables against the plan's sysroot.
 - **Build-fact record** — must accept a `link` record that names a Clove unit by Loaf, version and configuration, and must carry the toolchain release and platform-file identities in native records.
 - **Interop (RFC 116)** — must accept `c.loaf_library` as a static artifact source, verify against the library's headers with the archive's toolchain and platform files, and use the managed toolchain for Apple targets.
-- **`incan.pub`** — must publish and index Cloves and their units under `c/`, adopt upstream C libraries as external-source records, admit crate-to-library bindings only by the evidence rule, record supersession by an owner's package, and show bindings in its catalog.
+- **`incan.pub`** — must publish and index Cloves and their units under `c/`, adopt upstream C libraries, admit crate-to-library bindings only by the evidence rule, record supersession by an owner's package, and show bindings in its catalog.
 - **Toolchain distribution** — must build and publish each toolchain release for every supported build host, run the cross-host reproduction gate before publication, publish the Linux sysroots, and name the release in each Incan toolchain.
 - **Registry builders** — must hold licensed Apple and Windows SDKs, build those targets' native units with the managed toolchain, and record the platform-file identity of every unit.
 - **CLI / tooling** — inspection must show a unit's native work as library bindings and crate-owned records, with the toolchain release and platform-file identity of each.
