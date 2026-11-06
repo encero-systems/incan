@@ -65,7 +65,7 @@ pub(crate) fn native_roots(plan: &Plan) -> BTreeSet<&str> {
             )
         })
     }) {
-        roots.insert("incan_std_core");
+        roots.insert("incan_std_primitives");
     }
     for function in &plan.functions {
         let Some(callee) = &function.future_callee else {
@@ -109,6 +109,9 @@ impl<'ast> Visitor<'ast> for DeclarationRoots {
                 }
                 "incan_std_core" => {
                     self.roots.insert("incan_std_core");
+                }
+                "incan_std_primitives" => {
+                    self.roots.insert("incan_std_primitives");
                 }
                 _ => {}
             }

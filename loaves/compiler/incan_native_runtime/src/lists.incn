@@ -7,7 +7,7 @@ from rust::std::mem import replace
 from rust::std::cmp import Ordering
 from native_equality import equal_native
 from native_copying import clone_native
-from rust::incan_std_core::collections import (
+from rust::incan_std_primitives::collections import (
     list_concat as runtime_concat,
     list_contains as runtime_contains,
     list_count as runtime_count,
@@ -20,7 +20,7 @@ from rust::incan_std_core::collections import (
     list_repeat as runtime_repeat,
     list_slice as runtime_slice,
 )
-from rust::incan_std_core::collections::__private import list_pop as runtime_pop
+from rust::incan_std_primitives::collections::__private import list_pop as runtime_pop
 from std.derives.comparison import Eq, Ord
 
 

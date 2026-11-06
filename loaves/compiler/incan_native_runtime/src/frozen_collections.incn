@@ -1,6 +1,6 @@
 """Read-only observations and owned snapshots of the legacy static frozen carriers."""
 
-from rust::incan_std_core::frozen import (
+from rust::incan_std_primitives::frozen import (
     FrozenList as RuntimeFrozenList,
     FrozenSet as RuntimeFrozenSet,
     FrozenDict as RuntimeFrozenDict,
@@ -11,10 +11,10 @@ from rust::std::cmp import PartialEq
 from rust::std::convert import Into as RustInto
 from rust::std::borrow import Borrow
 from rust::std::primitive import str as RustStr
-from rust::incan_std_core::errors import raise_key_error
+from rust::incan_std_primitives::errors import raise_key_error
 from std.rust import Static
 from rust::std::vec import Vec
-from rust::incan_std_core::iter import nonnegative_count
+from rust::incan_std_primitives::iter import nonnegative_count
 from native_copying import clone_native
 from native_equality import equal_native
 

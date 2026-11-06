@@ -36,7 +36,7 @@
 
 """Retain generic instantiations, scalar and text loans, and a nonreturning native result in one case."""
 
-from rust::incan_std_core::strings import str_slice_byte_range
+from rust::incan_std_primitives::strings import str_slice_byte_range
 from rust::std::collections import HashMap, VecDeque
 from rust::std::convert import identity
 from rust::std::fmt import Display

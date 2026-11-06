@@ -18,6 +18,8 @@ The root `hexlify(data: bytes) -> str` operation returns lowercase hexadecimal t
 
 `std.primitives.collections` owns list, set and dictionary storage allocation, mutation, length observation and explicit copying. Its checked list-position operations accept nonnegative native positions and return ordinary errors; language index normalization, equality, display and canonical diagnostics remain in their existing adapters. Generated programs keep using the language runtime's own operations, because the runtime builds below the standard packages.
 
+The `incan_std_primitives` facet owns the native carriers and operations that compiler-emitted MIR still expresses through Rust types: panic-hosted errors, Rust strings, numeric carriers, Rust collections and iterators, and frozen program-lifetime values. The Incan runtime and higher standard packages call that one canonical facet; the former core-facet spellings are not parallel compiler identities.
+
 `std.primitives.output` writes complete UTF-8 lines and returns actual host write failures as text without depending on higher-level I/O errors. Generated stdout and panic-hook stderr keep their own paths in the language runtime.
 
 Other hashing algorithms, argument-vector policy and temporary directories remain in their existing standard packages. This package does not implement database storage, a Crumb format or ownership features merely by providing these algorithms.

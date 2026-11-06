@@ -383,7 +383,7 @@ def read_native_text_array(
             result = temporary(builder, result_type, span)
             instantiated_external_call(
                 builder,
-                "incan_std_core::collections::list_get",
+                "incan_std_primitives::collections::list_get",
                 [PlanType.StrRef],
                 [PlanType.SliceRef(elements), PlanType.Int],
                 result_type,
@@ -401,7 +401,7 @@ def read_text_element(mut builder: Builder, place: Place, index: Operand, span: 
     output = temporary(builder, PlanType.String, span)
     instantiated_external_call(
         builder,
-        "incan_std_core::strings::str_index",
+        "incan_std_primitives::strings::str_index",
         [PlanType.StringRef],
         [PlanType.StringRef, PlanType.Int],
         PlanType.String,

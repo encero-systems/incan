@@ -9,8 +9,8 @@
 from std.derives.collection import Iterator, ListIterator, ZipIterator
 from std.derives.copying import Clone
 from std.rust import Static
-from rust::incan_std_core::frozen import FrozenDict, FrozenList, FrozenBytes as NativeFrozenBytes
-from rust::incan_std_core::iter import Generator as NativeGenerator
+from rust::incan_std_primitives::frozen import FrozenDict, FrozenList, FrozenBytes as NativeFrozenBytes
+from rust::incan_std_primitives::iter import Generator as NativeGenerator
 from rust::std::cell import RefCell, RefMut
 from rust::std::clone import Clone as NativeClone
 from rust::std::cmp import Ordering

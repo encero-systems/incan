@@ -4,8 +4,8 @@ Entry-list maps for `std.collections`: counting, default-value, insertion-ordere
 The maps share one `_MapEntry` storage shape and its generic entry helpers, so they live in one module.
 """
 
-from rust::incan_std_core::errors import raise_key_error, raise_value_error
-from rust::incan_std_core::collections import list_get
+from rust::incan_std_primitives::errors import raise_key_error, raise_value_error
+from rust::incan_std_primitives::collections import list_get
 
 
 @derive(Clone)

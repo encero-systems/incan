@@ -2,7 +2,7 @@
 # expect-diagnostic: INCAN-P0001
 
 """The retired module facade cannot bind Rust implementations or macros."""
-rust.module("incan_std_core")
+rust.module("incan_std_primitives")
 
 
 def program_result() -> int:

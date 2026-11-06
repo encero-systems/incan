@@ -1,7 +1,7 @@
 """Source implementations used by the checked primitive OrdinalKey capability bridge."""
 
 from rust::std::string import String as RustString
-from rust::incan_std_core::num import Decimal128 as NativeDecimal
+from rust::incan_std_primitives::num import Decimal128 as NativeDecimal
 from collections import (
     OrdinalKey,
     OrdinalMapError,

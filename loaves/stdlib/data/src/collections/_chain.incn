@@ -1,7 +1,7 @@
 """Layered chain maps over insertion-ordered dictionaries for `std.collections`."""
 
-from rust::incan_std_core::errors import raise_key_error
-from rust::incan_std_core::collections import list_get
+from rust::incan_std_primitives::errors import raise_key_error
+from rust::incan_std_primitives::collections import list_get
 from crate.collections._values import _clone_referent
 from crate.collections._maps import _MapEntry, OrderedDict
 

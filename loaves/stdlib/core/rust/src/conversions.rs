@@ -3,11 +3,11 @@
 //! These helpers exist to ensure Python-like conversion errors (e.g. `int("x")`) produce canonical, typed exception
 //! messages rather than Rust's default `parse()` panic output.
 
-use crate::errors::raise;
 use incan_lang::{
     errors::IncanError,
     numeric_strings::{parse_float_string, parse_int_string},
 };
+use incan_std_primitives::errors::raise;
 
 /// Parse an Incan/Python-style `int` from a string.
 ///

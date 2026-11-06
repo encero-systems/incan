@@ -1,5 +1,7 @@
 //! Iteration helpers for Incan-generated Rust code.
 //!
+//! Rust remains necessary because the native plan represents generators as Rust iterators and thread-backed cursors.
+//!
 //! Most RFC 088 iterator adapter semantics are dogfooded in `std.derives.collection` as Incan protocol defaults.
 //! This Rust module remains the runtime boundary for behavior that the current backend still emits directly as Rust
 //! support:
@@ -82,6 +84,14 @@ impl<T> Generator<T> {
         I: Iterator<Item = T> + 'static,
     {
         Self { iter: Box::new(iter) }
+    }
+
+    /// Advance the private native iterator and return its concrete Incan element type.
+    ///
+    /// Incan cannot access the boxed Rust iterator field, and bootstrap compilers cannot normalize `Iterator::Item`
+    /// through the #2501 facet relocation. Keep this boundary narrow; adapter and collection behavior stays in Incan.
+    pub fn poll(&mut self) -> Option<T> {
+        self.iter.next()
     }
 
     /// Create a lazy generator from a compiler-emitted body closure.
@@ -196,7 +206,7 @@ impl<T> Iterator for Generator<T> {
     /// Return the next item from this iterator bridge.
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        self.iter.next()
+        self.poll()
     }
 }
 
@@ -260,6 +270,34 @@ pub fn nonnegative_count(n: i64) -> usize {
     }
 }
 
+/// Pair each generator item with its signed zero-based position.
+///
+/// Generic runtime `yield` bodies are not publishable yet, and Incan cannot name the relocated Rust `Zip` adapter
+/// without exposing its associated iterator type (#2501), so the native adapter remains inside the primitive facet.
+#[must_use]
+pub fn enumerate<Item>(values: Generator<Item>) -> Generator<(i64, Item)>
+where
+    Item: 'static,
+{
+    Generator::new((0_i64..).zip(values.iter))
+}
+
+/// Pair two lazy generators until either source is exhausted.
+///
+/// Generic runtime `yield` bodies are not publishable yet, and Incan cannot name the relocated Rust `Zip` adapter
+/// without exposing its associated iterator type (#2501), so the native adapter remains inside the primitive facet.
+#[must_use]
+pub fn zip<LeftItem, RightItem>(
+    left: Generator<LeftItem>,
+    right: Generator<RightItem>,
+) -> Generator<(LeftItem, RightItem)>
+where
+    LeftItem: 'static,
+    RightItem: 'static,
+{
+    Generator::new(left.iter.zip(right.iter))
+}
+
 /// Lazy fixed-size batch adapter used by generated Rust for RFC 088 `.batch(size)`.
 #[derive(Debug, Clone)]
 pub struct Batch<I> {
@@ -292,9 +330,9 @@ where
 /// The final non-empty batch is yielded even when it contains fewer than `size` items. Invalid sizes raise
 /// `ValueError: iterator batch size must be greater than zero`.
 #[inline]
-pub fn batch<I>(iter: I, size: i64) -> Batch<I::IntoIter>
+pub fn batch<I>(iter: I, size: i64) -> Batch<I>
 where
-    I: IntoIterator,
+    I: Iterator,
 {
     if size <= 0 {
         raise_value_error("iterator batch size must be greater than zero");
@@ -303,10 +341,7 @@ where
         Ok(value) => value,
         Err(_) => raise_value_error("iterator batch size is too large"),
     };
-    Batch {
-        iter: iter.into_iter(),
-        size,
-    }
+    Batch { iter, size }
 }
 
 #[cfg(test)]
@@ -340,6 +375,12 @@ mod tests {
             .collect();
 
         assert_eq!(values, vec![0, 6, 12, 18]);
+
+        let indexed = enumerate(Generator::new(vec!['a', 'b'].into_iter())).collect();
+        let paired = zip(Generator::new(0..3), Generator::new(vec!['a', 'b'].into_iter())).collect();
+
+        assert_eq!(indexed, vec![(0, 'a'), (1, 'b')]);
+        assert_eq!(paired, vec![(0, 'a'), (1, 'b')]);
     }
 
     #[test]

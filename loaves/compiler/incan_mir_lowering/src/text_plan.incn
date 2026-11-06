@@ -13,7 +13,7 @@ pub def format_parts(
     span: SourceSpan,
 ) -> None:
     """
-    Call `incan_std_core::strings::fstring(&[&str], &[String])`, the helper the legacy route's f-strings use.
+    Call `incan_std_primitives::strings::fstring(&[&str], &[String])`, the helper the native route's f-strings use.
 
     The literal texts and the displayed values become two fixed-size arrays, borrowed as slices for the call. The
     value array takes ownership of the displayed strings and is dropped after the call.
@@ -44,7 +44,7 @@ pub def format_parts(
     builder.emit(plan_assign(string_slice, RvalueKind.UnsizeSlice(read_place(string_reference, false, span)), span))
 
     slices = [read_place(literal_slice, false, span), read_place(string_slice, false, span)]
-    path = "incan_std_core::strings::fstring"
+    path = "incan_std_primitives::strings::fstring"
     external_call(builder, path, [PlanType.StrSlice, PlanType.StringSlice], PlanType.String, slices, destination, span)
     drop_owned(builder, strings.local, span)
 
@@ -78,7 +78,7 @@ pub def owned_literal(mut builder: Builder, text: str, span: SourceSpan) -> Plac
     """Allocate an owned string from literal text, through the same runtime concatenation the legacy route uses."""
     result = temporary(builder, PlanType.String, span)
     arguments = [text_literal(text, span), text_literal("", span)]
-    path = "incan_std_core::strings::str_concat"
+    path = "incan_std_primitives::strings::str_concat"
     external_call(builder, path, [PlanType.StrRef, PlanType.StrRef], PlanType.String, arguments, result, span)
     return result
 
@@ -88,7 +88,7 @@ pub def owned_slice_text(mut builder: Builder, value: Operand, span: SourceSpan)
     result = temporary(builder, PlanType.String, span)
     external_call(
         builder,
-        "incan_std_core::strings::str_concat",
+        "incan_std_primitives::strings::str_concat",
         [PlanType.StrRef, PlanType.StrRef],
         PlanType.String,
         [value, text_literal("", span)],

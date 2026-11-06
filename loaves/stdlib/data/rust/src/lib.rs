@@ -4,7 +4,7 @@
 //! compiler writes the checked `std.json` facade into every generated crate today, so in practice every program
 //! links it. It carries the serde-backed `ToJson`/`FromJson` traits and `JsonValue`, the `std.serde` namespace
 //! facade, and the xxh3 key helpers that the generated `OrdinalMap` splices in. Everything here builds on
-//! `incan_std_core`; nothing in the core facet depends on this one.
+//! `incan_std_primitives`; nothing in the primitive facet depends on this one.
 
 #![deny(clippy::unwrap_used)]
 

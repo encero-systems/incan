@@ -139,9 +139,9 @@ impl RuntimeCarrier {
     /// Return the canonical Rust definition supplying this builtin's physical storage.
     pub fn path(self) -> &'static str {
         match self {
-            Self::Decimal => "incan_std_core::num::Decimal128",
-            Self::FrozenStr => "incan_std_core::frozen::FrozenStr",
-            Self::FrozenBytes => "incan_std_core::frozen::FrozenBytes",
+            Self::Decimal => "incan_std_primitives::num::Decimal128",
+            Self::FrozenStr => "incan_std_primitives::frozen::FrozenStr",
+            Self::FrozenBytes => "incan_std_primitives::frozen::FrozenBytes",
             Self::ValidationError => "incan_std_core::validation::ValidationError",
         }
     }

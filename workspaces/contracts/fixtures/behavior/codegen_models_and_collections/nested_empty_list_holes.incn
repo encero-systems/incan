@@ -8,7 +8,7 @@
 #   0
 #   4
 
-from rust::incan_std_core::collections import list_concat
+from rust::incan_std_primitives::collections import list_concat
 
 def count_rows(rows: list[list[str]]) -> int:
     return len(rows)

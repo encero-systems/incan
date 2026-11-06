@@ -1,7 +1,7 @@
 """Monomorphic text boundaries retaining the legacy runtime semantics."""
 
 from rust::std::primitive import str as RustStr
-from rust::incan_std_core::strings import (
+from rust::incan_std_primitives::strings import (
     str_split as runtime_split,
     str_join as runtime_join,
     str_len as runtime_length_text,

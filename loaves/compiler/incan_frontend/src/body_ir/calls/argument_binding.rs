@@ -67,7 +67,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             None => return None,
         };
         if !path.iter().map(String::as_str).eq([
-            incan_lang::lang::stdlib::facets::CORE,
+            incan_lang::lang::stdlib::facets::PRIMITIVES,
             incan_lang::lang::stdlib::INCAN_STD_ERRORS_MODULE,
             "raise_value_error",
         ]) {

@@ -1,5 +1,7 @@
 //! Python-like numeric operations for Incan-generated Rust code.
 //!
+//! Rust remains necessary because compiler-emitted numeric calls use Rust integer, float, and native decimal carriers.
+//!
 //! This module provides:
 //! - Generic entry points (`py_div`, `py_mod`, `py_floor_div`) working across supported ints/floats.
 //! - Specialized suffixed helpers (`*_i64`, `*_f64`) kept for compatibility and tests.
@@ -16,7 +18,7 @@
 //! ## Examples
 //!
 //! ```rust
-//! use incan_std_core::num::{py_div, py_floor_div, py_mod};
+//! use incan_std_primitives::num::{py_div, py_floor_div, py_mod};
 //!
 //! assert_eq!(py_floor_div(7_i64, 3_i64), 2);
 //! assert!((py_mod(-7.0_f64, 3.0_f64) - 2.0).abs() < 1e-10);
@@ -30,7 +32,7 @@
 /// ## Examples
 ///
 /// ```
-/// use incan_std_core::num::py_floor_div_i64;
+/// use incan_std_primitives::num::py_floor_div_i64;
 /// assert_eq!(py_floor_div_i64(7, 3), 2);
 /// assert_eq!(py_floor_div_i64(-7, 3), -3); // Rust would give -2
 /// assert_eq!(py_floor_div_i64(7, -3), -3); // Rust would give -2
@@ -235,7 +237,7 @@ mod sealed {
 /// ```
 ///
 /// ```rust
-/// use incan_std_core::num::py_div;
+/// use incan_std_primitives::num::py_div;
 /// assert!((py_div(7_i64, 2_i64) - 3.5).abs() < 1e-10);
 /// assert!((py_div(7_i64, 2.0_f64) - 3.5).abs() < 1e-10);
 /// ```
@@ -302,7 +304,7 @@ pub fn py_div_f32(lhs: f32, rhs: f32) -> f32 {
 /// ```
 ///
 /// ```rust
-/// use incan_std_core::num::py_mod;
+/// use incan_std_primitives::num::py_mod;
 /// assert_eq!(py_mod(7_i64, 3_i64), 1);
 /// assert!((py_mod(-7.0_f64, 3.0_f64) - 2.0).abs() < 1e-10);
 /// ```
@@ -340,7 +342,7 @@ where
 /// ```
 ///
 /// ```rust
-/// use incan_std_core::num::py_floor_div;
+/// use incan_std_primitives::num::py_floor_div;
 /// assert_eq!(py_floor_div(7_i64, 3_i64), 2);
 /// assert!((py_floor_div(-7.0_f64, 3.0_f64) + 3.0).abs() < 1e-10);
 /// ```
@@ -471,7 +473,7 @@ pub fn py_floor_div_i64(a: i64, b: i64) -> i64 {
 /// ## Examples
 ///
 /// ```
-/// use incan_std_core::num::py_floor_div_f64;
+/// use incan_std_primitives::num::py_floor_div_f64;
 /// assert!((py_floor_div_f64(7.0, 3.0) - 2.0).abs() < 1e-10);
 /// assert!((py_floor_div_f64(-7.0, 3.0) - (-3.0)).abs() < 1e-10);
 /// assert!((py_floor_div_f64(7.0, -3.0) - (-3.0)).abs() < 1e-10);
@@ -502,7 +504,7 @@ pub fn py_floor_div_f32(a: f32, b: f32) -> f32 {
 /// ## Examples
 ///
 /// ```
-/// use incan_std_core::num::py_mod_i64;
+/// use incan_std_primitives::num::py_mod_i64;
 /// assert_eq!(py_mod_i64(7, 3), 1);
 /// assert_eq!(py_mod_i64(-7, 3), 2); // Rust % gives -1
 /// assert_eq!(py_mod_i64(7, -3), -2); // Rust % gives 1
@@ -523,7 +525,7 @@ pub fn py_mod_i64(a: i64, b: i64) -> i64 {
 /// ## Examples
 ///
 /// ```
-/// use incan_std_core::num::py_mod_f64;
+/// use incan_std_primitives::num::py_mod_f64;
 /// assert!((py_mod_f64(7.0, 3.0) - 1.0).abs() < 1e-10);
 /// assert!((py_mod_f64(-7.0, 3.0) - 2.0).abs() < 1e-10);
 /// assert!((py_mod_f64(7.0, -3.0) - (-2.0)).abs() < 1e-10);

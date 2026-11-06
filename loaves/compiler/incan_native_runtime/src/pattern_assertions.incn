@@ -3,7 +3,7 @@
 from std.derives.string import Debug
 from rust::incan_std_testing import fail_t
 from rust::std::panic import panic_any
-from rust::incan_std_core::frozen import FrozenStr as NativeFrozenStr
+from rust::incan_std_primitives::frozen import FrozenStr as NativeFrozenStr
 
 
 pub def missing_some() -> None:

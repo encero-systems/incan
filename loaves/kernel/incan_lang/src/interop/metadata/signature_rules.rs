@@ -22,7 +22,7 @@ pub struct RustFunctionSignatureRule {
 /// Authoritative signatures for compiler-owned runtime helpers whose source typing must be cache-independent.
 pub const COMPILER_OWNED_FUNCTION_SIGNATURE_RULES: &[RustFunctionSignatureRule] = &[
     RustFunctionSignatureRule {
-        path: "incan_std_core::strings::str_slice_byte_range",
+        path: "incan_std_primitives::strings::str_slice_byte_range",
         params: &[
             RustFunctionParamRule {
                 name: Some("s"),
@@ -42,7 +42,7 @@ pub const COMPILER_OWNED_FUNCTION_SIGNATURE_RULES: &[RustFunctionSignatureRule] 
         is_unsafe: false,
     },
     RustFunctionSignatureRule {
-        path: "incan_std_core::strings::str_slice_from_byte_offset",
+        path: "incan_std_primitives::strings::str_slice_from_byte_offset",
         params: &[
             RustFunctionParamRule {
                 name: Some("s"),

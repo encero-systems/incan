@@ -3,10 +3,14 @@
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
 pub mod channel;
+pub mod collections;
 pub mod errors;
 pub mod file;
 pub mod frozen;
+pub mod iter;
 pub mod mapping;
+pub mod num;
+pub mod strings;
 pub mod sync;
 pub mod task;
 pub mod time;

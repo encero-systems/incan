@@ -267,7 +267,7 @@ pub def generator_constructor(
         captures.append(read_place(parameter, true, span))
         # Legacy validates exact f32 ingress before constructing the deferred producer.
         if parameters[index].ty == PlanType.F32:
-            checked = Callee(kind=CalleeKind.External("incan_std_core::num::require_finite_f32"), span=span)
+            checked = Callee(kind=CalleeKind.External("incan_std_primitives::num::require_finite_f32"), span=span)
             blocks.append(
                 plan_block(
                     [],

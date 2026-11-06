@@ -6,10 +6,10 @@ The Incan standard library as SDK components, one directory per component, each 
 
 | Component | Namespace roots | Rust facet | Runtime crates |
 | --- | --- | --- | --- |
-| `core/` | `std.features`, `std.prelude`, `std.registry`, `std.result`, `std.reflection`, `std.this`, `std.derives`, `std.traits`, `std.runtime` | `incan_std_core` (mandatory: reflection, frozen constants, numerics, strings, collections, storage, validation, the version check) | — |
+| `core/` | `std.features`, `std.prelude`, `std.registry`, `std.result`, `std.reflection`, `std.this`, `std.derives`, `std.traits`, `std.runtime` | `incan_std_core` (reflection, storage, validation and the version check) | — |
 | `vocab/` | `std.vocab` | — | — |
 | `interop/` | `std.interop` | — | — |
-| `primitives/` | `std.primitives` | — | — |
+| `primitives/` | `std.primitives` | `incan_std_primitives` (foundational errors, text, numerics, collections, iterators, frozen values, async and file mechanisms) | crc32fast, hmac, memmap2, rustix, serde, serde_json, sha2, tempfile, tokio |
 | `system/` | `std.environ`, `std.io`, `std.tempfile`, `std.fs` | — | byteorder, encoding_rs, rustix, tempfile |
 | `codecs/` | `std.checksum`, `std.encoding` | — | crc32fast |
 | `compression/` | `std.compression` | — | flate2, zstd, bzip2, xz2, snap |

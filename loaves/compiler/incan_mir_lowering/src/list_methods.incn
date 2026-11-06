@@ -223,7 +223,7 @@ pub def borrowed_list_generator_call(
     slice_type = PlanType.SliceRef([element])
     slice_reference = list_slice_view(builder, reference, [element], false, span)?
     result = PlanType.Generator(leaf, depth - 1)
-    path = "incan_std_core::iter::borrowed_list"
+    path = "incan_std_primitives::iter::borrowed_list"
     builder.externals.append(
         ExternalFunction(path=path, type_arguments=[element], parameters=[slice_type], return_type=result, span=span),
     )
@@ -588,7 +588,7 @@ pub def lower_list_helper(
     output = call_destination(builder, destination, PlanType.Bool, span)?
     instantiated_external_call(
         builder,
-        "incan_std_core::collections::list_contains",
+        "incan_std_primitives::collections::list_contains",
         [element],
         [slice_type, needle_type],
         PlanType.Bool,

@@ -19,7 +19,7 @@
 #   1 1 1 1 1 1 1 1 1 1 1 1
 #   0.3
 
-from rust::incan_std_core::num import require_finite_f32
+from rust::incan_std_primitives::num import require_finite_f32
 
 
 pub def observe_exact(left: f32, right: f64) -> bool:

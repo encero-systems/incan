@@ -1,6 +1,6 @@
 """Publish generic source and native storage through one package boundary."""
 
-from rust::incan_std_core::frozen import FrozenList as NativeFrozenList
+from rust::incan_std_primitives::frozen import FrozenList as NativeFrozenList
 from rust::std::vec import Vec as NativeVec
 from std.rust import Static
 

@@ -276,11 +276,11 @@ fn metadata_free_function_signature_describes_stable_std_result_surfaces() -> Re
 fn compiler_owned_function_signatures_preserve_owned_stdlib_slice_results() -> Result<(), String> {
     let expected = [
         (
-            "incan_std_core::strings::str_slice_byte_range",
+            "incan_std_primitives::strings::str_slice_byte_range",
             vec![(Some("s"), "&str"), (Some("start"), "i64"), (Some("end"), "i64")],
         ),
         (
-            "incan_std_core::strings::str_slice_from_byte_offset",
+            "incan_std_primitives::strings::str_slice_from_byte_offset",
             vec![(Some("s"), "&str"), (Some("start"), "i64")],
         ),
     ];

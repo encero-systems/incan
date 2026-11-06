@@ -1,10 +1,10 @@
 """Scalar builtin contracts shared with legacy emission."""
 
-from rust::incan_std_core::strings import str_len
-from rust::incan_std_core::errors import raise_value_error
+from rust::incan_std_primitives::strings import str_len
+from rust::incan_std_primitives::errors import raise_value_error
 from rust::std::fs import read_to_string, write as native_write
 from integer_helpers import integer_power
-from rust::incan_std_core::collections::__private import (
+from rust::incan_std_primitives::collections::__private import (
     list_min_copy,
     list_max_copy,
     list_min_clone,

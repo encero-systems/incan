@@ -17,7 +17,7 @@ pub use incan_lang::lang::testing::{
 ///
 /// Always panics with the provided `msg`.
 pub fn fail_t<T>(msg: String) -> T {
-    incan_std_core::errors::__private::raise_runtime_misuse(&msg)
+    incan_std_primitives::errors::__private::raise_runtime_misuse(&msg)
 }
 
 /// Run `block` and return the text of the panic it raises, or `None` when it returns.
@@ -42,7 +42,7 @@ pub fn testing_marker_runtime_misuse_message(marker: &str) -> String {
 
 /// Report misuse of compile-time testing markers at runtime.
 fn marker_runtime_misuse(marker: &str) -> ! {
-    incan_std_core::errors::__private::raise_runtime_misuse(&testing_marker_runtime_misuse_message(marker));
+    incan_std_primitives::errors::__private::raise_runtime_misuse(&testing_marker_runtime_misuse_message(marker));
 }
 
 /// Marker runtime for `@std.testing.skip`.

@@ -2,10 +2,10 @@
 
 from model_values import display_value
 from integer_helpers import integer_power
-from rust::incan_std_core::strings import float_to_string
+from rust::incan_std_primitives::strings import float_to_string
 from rust::std::ops import Neg
 from rust::incan_std_core::conversions import int_from_str, float_from_str
-from rust::incan_std_core::num import (
+from rust::incan_std_primitives::num import (
     py_mod_signed,
     py_mod_unsigned,
     py_floor_div_signed,

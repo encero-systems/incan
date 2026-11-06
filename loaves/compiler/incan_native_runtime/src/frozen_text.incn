@@ -1,6 +1,6 @@
 """Text observation of the legacy frozen string carrier."""
 
-from rust::incan_std_core::frozen import FrozenStr as RuntimeFrozen, FrozenBytes as RuntimeFrozenBytes
+from rust::incan_std_primitives::frozen import FrozenStr as RuntimeFrozen, FrozenBytes as RuntimeFrozenBytes
 from rust::std::convert import Into as RustInto
 
 

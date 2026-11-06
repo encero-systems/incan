@@ -92,7 +92,7 @@ def shared_list_element(mut builder: Builder, container: Place, index: Operand, 
     borrowed = list_slice_view(builder, loan, [element], false, span)?
     instantiated_external_call(
         builder,
-        "incan_std_core::collections::list_get",
+        "incan_std_primitives::collections::list_get",
         [element],
         [PlanType.SliceRef([element]), PlanType.Int],
         reference,

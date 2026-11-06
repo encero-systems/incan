@@ -4,7 +4,7 @@
 """Native generic signatures retain their checked owner, element and declaration binders."""
 
 from rust::serde::de import DeserializeOwned as Owned
-from rust::incan_std_core::frozen import FrozenList
+from rust::incan_std_primitives::frozen import FrozenList
 from rust::std::boxed import Box
 from rust::std::clone import Clone as NativeClone
 from rust::std::convert import identity as native_identity

@@ -408,15 +408,15 @@ pub fn frozen_collection_type<'tcx>(
             "unsupported frozen collection {name} arity"
         )));
     }
-    let mut definition = crate::native_crates::root(tcx, "incan_std_core")
-        .ok_or_else(|| PlanError::UnknownCallee("incan_std_core".into()))?;
+    let mut definition = crate::native_crates::root(tcx, "incan_std_primitives")
+        .ok_or_else(|| PlanError::UnknownCallee("incan_std_primitives".into()))?;
     for segment in ["frozen", name] {
         definition = tcx
             .module_children(definition)
             .iter()
             .find(|child| child.ident.name.as_str() == segment && child.vis.is_public())
             .and_then(|child| child.res.opt_def_id())
-            .ok_or_else(|| PlanError::UnknownCallee(format!("incan_std_core::frozen::{name}")))?;
+            .ok_or_else(|| PlanError::UnknownCallee(format!("incan_std_primitives::frozen::{name}")))?;
     }
     let arguments = elements
         .iter()
@@ -428,18 +428,18 @@ pub fn frozen_collection_type<'tcx>(
     Ok(Ty::new_adt(tcx, tcx.adt_def(definition), tcx.mk_args(&arguments)))
 }
 
-/// Resolve the bound core dependency's actual generator ADT and retain its element type. Transitive copies do not
+/// Resolve the bound primitive dependency's actual generator ADT and retain its element type. Transitive copies do not
 /// replace the explicit crate alias used by the generator's declaration and runtime calls.
 pub fn generator_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str, leaf: &ListLeaf, depth: i64) -> Result<Ty<'tcx>, PlanError> {
-    let mut definition = crate::native_crates::root(tcx, "incan_std_core")
-        .ok_or_else(|| PlanError::UnknownCallee("incan_std_core".into()))?;
+    let mut definition = crate::native_crates::root(tcx, "incan_std_primitives")
+        .ok_or_else(|| PlanError::UnknownCallee("incan_std_primitives".into()))?;
     for segment in ["iter", name] {
         definition = tcx
             .module_children(definition)
             .iter()
             .find(|child| child.ident.name.as_str() == segment && child.vis.is_public())
             .and_then(|child| child.res.opt_def_id())
-            .ok_or_else(|| PlanError::UnknownCallee(format!("incan_std_core::iter::{name}")))?;
+            .ok_or_else(|| PlanError::UnknownCallee(format!("incan_std_primitives::iter::{name}")))?;
     }
     let element = if depth == 0 {
         collection_leaf_type(tcx, leaf)?

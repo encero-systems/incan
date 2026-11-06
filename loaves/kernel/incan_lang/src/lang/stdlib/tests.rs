@@ -399,7 +399,7 @@ fn stdlib_registry_keeps_phase_023_metadata() {
     assert!(!facets::namespace_is_facet_root("collections"));
     assert_eq!(facets::for_component("stdlib-web"), Some(facets::WEB));
     assert_eq!(facets::for_component("stdlib-system"), None);
-    assert!(facets::path_names_a_facet("incan_std_core::strings::str_len"));
+    assert!(facets::path_names_a_facet("incan_std_primitives::strings::str_len"));
     assert!(!facets::path_names_a_facet("incan_stdlib_core::anything"));
     assert_eq!(reflection_ns.map(|ns| ns.submodules.is_empty()), Some(true));
     assert_eq!(fs_ns.map(|ns| ns.submodules.contains(&"path")), Some(true));
