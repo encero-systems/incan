@@ -17,7 +17,7 @@
     - RFC 117 (`loaf.toml` and Oven's language-neutral project model)
     - RFC 118 (Incan and Oven command-line surfaces)
     - RFC 124 (Oven store unit identity)
-    - RFC 125 (`incan.pub` registry)
+    - RFC 125 (`loaves.pub` registry)
 - **Issue:** https://github.com/encero-systems/incan/issues/406
 - **RFC PR:** —
 - **Written against:** ~~v0.3~~ v0.5

@@ -18,7 +18,7 @@
     - RFC 121 (unified Incan/Rust type substrate)
     - RFC 123 (package executable representation)
     - RFC 124 (Oven store unit identity and cross-plan artifact sharing)
-    - RFC 125 (`incan.pub` Loaf registry and baked asset distribution)
+    - RFC 125 (`loaves.pub` Loaf registry and baked asset distribution)
     - #652 (v0.6 replacement-backend cutover)
     - #656 (Rust-facing ABI and Incan package compatibility direction)
     - #975 (Oven: Cargo-free Incan/Rust toolchain)

@@ -10,7 +10,7 @@
     - RFC 075 (starter profiles and mixes)
     - RFC 117 (`loaf.toml` and Oven's language-neutral project model)
     - RFC 118 (Incan and Oven command-line surfaces)
-    - RFC 125 (`incan.pub` registry and advisories)
+    - RFC 125 (`loaves.pub` registry and advisories)
 - **Issue:** https://github.com/encero-systems/incan/issues/404
 - **RFC PR:** —
 - **Written against:** ~~v0.3~~ v0.5

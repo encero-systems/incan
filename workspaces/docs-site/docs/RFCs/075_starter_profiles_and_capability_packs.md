@@ -10,7 +10,7 @@
     - RFC 031 (Incan library system phase 1)
     - RFC 033 (`ctx` typed configuration context)
     - RFC 118 (Oven command families and dependency addition)
-    - RFC 125 (`incan.pub` Loaf registry; supersedes RFC 034)
+    - RFC 125 (`loaves.pub` Loaf registry; supersedes RFC 034)
     - RFC 073 (environment matrices and toolchain constraints)
     - RFC 074 (template rendering and boilerplate provenance)
     - RFC 076 (project mutation policy and recovery)

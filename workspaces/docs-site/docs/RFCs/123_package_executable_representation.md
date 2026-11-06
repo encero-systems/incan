@@ -4,7 +4,7 @@
 - **Created:** 2026-09-05
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
-    - RFC 125 (`incan.pub` Loaf registry and baked asset distribution; supersedes RFC 034)
+    - RFC 125 (`loaves.pub` Loaf registry and baked asset distribution; supersedes RFC 034)
     - RFC 106 (compiler-backed agent context graph)
     - RFC 118 (Oven API and operational core)
     - RFC 120 (canonical source symbol identity)

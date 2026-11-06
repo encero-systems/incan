@@ -9,7 +9,7 @@
     - RFC 020 (offline, locked, and reproducible builds)
     - RFC 023 (compilable stdlib and Rust module binding)
     - RFC 031 (Incan library system)
-    - RFC 125 (`incan.pub` Loaf registry and baked asset distribution; supersedes RFC 034)
+    - RFC 125 (`loaves.pub` Loaf registry and baked asset distribution; supersedes RFC 034)
     - RFC 073 (environment matrices and toolchain constraints)
     - RFC 076 (project mutation policy and recovery)
     - RFC 077 (workspace and multi-package projects)

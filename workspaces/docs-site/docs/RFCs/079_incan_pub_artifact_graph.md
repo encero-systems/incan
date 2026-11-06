@@ -7,7 +7,7 @@
     - RFC 020 (Cargo offline and locked policy)
     - RFC 027 (incan-vocab and library metadata)
     - RFC 031 (Incan library system phase 1)
-    - RFC 125 (`incan.pub` Loaf registry; supersedes RFC 034)
+    - RFC 125 (`loaves.pub` Loaf registry; supersedes RFC 034)
     - RFC 074 (template rendering and boilerplate provenance)
     - RFC 075 (starter profiles and mixes)
     - RFC 076 (project mutation policy and recovery)

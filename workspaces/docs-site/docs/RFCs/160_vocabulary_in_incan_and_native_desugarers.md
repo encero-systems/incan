@@ -12,7 +12,7 @@
     - RFC 108 (import-scoped extensions, which add members rather than syntax)
     - RFC 117 (`loaf.toml` and Oven's language-neutral project model)
     - RFC 124 (Oven store unit identity and cross-plan artifact sharing)
-    - RFC 125 (`incan.pub` Loaf registry and baked asset distribution)
+    - RFC 125 (`loaves.pub` Loaf registry and baked asset distribution)
     - RFC 161 (the semantic core, SCIR)
     - RFC 162 (source surfaces: vocabularies, dialects and frontends)
 - **Issue:** [#2473](https://github.com/encero-systems/incan/issues/2473)

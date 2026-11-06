@@ -13,7 +13,7 @@
     - RFC 118 (Incan and Oven command-line surfaces)
     - RFC 119 (Oven-native Rust build facets and Cargo interoperation)
     - RFC 124 (Oven store unit identity and cross-plan artifact sharing)
-    - RFC 125 (`incan.pub` Loaf registry and baked asset distribution)
+    - RFC 125 (`loaves.pub` Loaf registry and baked asset distribution)
     - RFC 148 (must-use values and deliberate discard)
     - RFC 159 (Cloves and the managed C toolchain)
     - RFC 160 (vocabulary in Incan and native desugarers)

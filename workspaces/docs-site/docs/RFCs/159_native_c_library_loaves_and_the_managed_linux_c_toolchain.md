@@ -11,7 +11,7 @@
     - RFC 117 (`loaf.toml` and Oven's language-neutral project model)
     - RFC 119 (Oven-native Rust build facets and Cargo interoperation)
     - RFC 124 (Oven store unit identity and cross-plan artifact sharing)
-    - RFC 125 (`incan.pub` Loaf registry and baked asset distribution)
+    - RFC 125 (`loaves.pub` Loaf registry and baked asset distribution)
 - **Issue:** [#2458](https://github.com/encero-systems/incan/issues/2458)
 - **RFC PR:** —
 - **Written against:** v0.6 (in development)

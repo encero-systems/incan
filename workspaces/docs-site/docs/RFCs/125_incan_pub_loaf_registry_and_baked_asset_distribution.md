@@ -1,4 +1,4 @@
-# RFC 125: `incan.pub` Loaf registry and baked asset distribution
+# RFC 125: `loaves.pub` Loaf registry and baked asset distribution
 
 - **Status:** Draft
 - **Created:** 2026-09-09
@@ -21,7 +21,9 @@
 
 ## Summary
 
-`incan.pub` is the registry for Oven-built projects. Its unit of publication is the Loaf, whatever facets the Loaf carries, so an Incan library, a Rust-only crate that adopted `loaf.toml`, and a mixed project publish and resolve the same way. The registry stores two tiers of immutable, content-addressed artifacts: **source Loaves**, which are the authoritative publication signed by their publisher, and **baked assets**, which are the target-bound `*.loaf` outputs Oven already seals, each carrying its receipt and an attestation that binds it to a source digest and a toolchain. A consumer whose plan matches an available asset downloads it instead of compiling; when no asset matches, the consumer bakes from source. Discovery goes through a static sparse index of scoped names; integrity through per-artifact checksums; trust through keyless signing and trusted publishing; state changes through signed registry events. crates.io remains a consumption-only source reached through the same client, cache, and lockfile. This RFC supersedes RFC 034, which was written before Loaves existed.
+`loaves.pub` is the registry for Oven-built projects. Its unit of publication is the Loaf, whatever facets the Loaf carries, so an Incan library, a Rust-only crate that adopted `loaf.toml`, and a mixed project publish and resolve the same way. The registry stores two tiers of immutable, content-addressed artifacts: **source Loaves**, which are the authoritative publication signed by their publisher, and **baked assets**, which are the target-bound `*.loaf` outputs Oven already seals, each carrying its receipt and an attestation that binds it to a source digest and a toolchain. A consumer whose plan matches an available asset downloads it instead of compiling; when no asset matches, the consumer bakes from source. Discovery goes through a static sparse index of scoped names; integrity through per-artifact checksums; trust through keyless signing and trusted publishing; state changes through signed registry events. crates.io remains a consumption-only source reached through the same client, cache, and lockfile. This RFC supersedes RFC 034, which was written before Loaves existed.
+
+The public registry name is `loaves.pub`. Source identifiers recorded in existing lockfiles, receipts and attestations retain the spelling defined by their format version.
 
 ## Core model
 
@@ -33,7 +35,7 @@
 6. **Resolution executes nothing.** Resolving, fetching, verifying, and staging never run package-provided code, as RFC 117 already requires. Build-time code runs only through an explicitly selected host provider under RFC 119.
 7. **The registry is a key, not a hostname.** A registry is identified by a root public key and an id derived from it. Every registry statement, from events to index files to a periodic checkpoint, is signed by a key delegated from that root, and clients pin the id and root key through RFC 117 configuration. Hostnames are transport: any endpoint whose content verifies under the pinned root is the registry, and mirrors need no separate trust.
 8. **Assets are optional; the rest is not.** A build must be resolvable and bakeable from the index, manifests, event log, and source publications alone. An asset that cannot be fetched, for whatever reason, is inapplicable, and inapplicable means baking from source. No asset outage is a build failure.
-9. **One client, several sources.** `incan.pub` and crates.io are two index formats over one transport, one TLS policy, one store, and one lockfile. Registered compatible sources from RFC 117 configuration plug into the same client.
+9. **One client, several sources.** `loaves.pub` and crates.io are two index formats over one transport, one TLS policy, one store, and one lockfile. Registered compatible sources from RFC 117 configuration plug into the same client.
 
 ## Motivation
 
@@ -52,7 +54,7 @@ Second, the ecosystems Incan learns from have spent a decade discovering what a 
 - Define the static sparse index, the per-version asset manifest, and the scoped naming rules.
 - Define integrity, signing, trusted publishing, and consumer-side verification as normative behavior.
 - Define registry state as signed events over immutable artifacts, consistent with RFC 079.
-- Define how the same Oven client, cache, and lockfile serve `incan.pub`, crates.io, and registered compatible sources.
+- Define how the same Oven client, cache, and lockfile serve `loaves.pub`, crates.io, and registered compatible sources.
 - Define what the registry web surface shows, as a projection of the same data.
 - Define the degradation rule: an unavailable asset is a miss, never a build failure.
 - Define the registry's own identity and signing model, so that state assertions are verifiable independently of the host serving them.
@@ -101,7 +103,7 @@ serde   = { crate = "serde", version = "1", features = ["derive"] }
 ```text
 $ oven bake
   Resolving ...
-    encero/widgets 0.4.0  (incan.pub)
+    encero/widgets 0.4.0  (loaves.pub)
     serde 1.0.228         (crates.io)
   encero/widgets 0.4.0: asset aarch64-apple-darwin/release matches plan  → downloading
     integrity sha256:9a2f… ok · attestation github:encero/widgets@refs/tags/v0.4.0 ok
@@ -120,7 +122,7 @@ $ oven yank encero/widgets 0.4.0 --reason "panics on empty input, use 0.4.1"
 
 The archive stays. Locked consumers keep building and see the advisory through the recovery surfaces RFC 076 defines. New resolutions select 0.4.1.
 
-### What `incan.pub` shows
+### What `loaves.pub` shows
 
 A package page lists its versions, the facets each version carries, the scope and its owners, the trusted publishers configured for the scope, the asset matrix (which targets, toolchains, and profiles have attested assets, and who built them), the resolved dependency graph, rendered documentation when the publisher shipped a documentation asset, advisories and yank events with their reasons, and download counts. All of it is static content derived from the index, the event log, and the artifacts; nothing on the page requires a request to a live service.
 
@@ -136,7 +138,7 @@ A package name is either **scoped**, written `<scope>/<name>`, or **reserved uns
 
 Versions must be SemVer. A `(package, version)` pair is published at most once and is never overwritten, replaced, or deleted. The registry must reject a publish for an existing pair.
 
-The reservation of unscoped names for the toolchain is `incan.pub` policy. A registered compatible registry sets its own naming policy, so a private registry may serve unscoped names; a client must never treat a name as the same package across two registries. Package names on `incan.pub` and crate names on crates.io are distinct namespaces. A `loaf.toml` dependency selects the registry through its dependency key (`loaf` or `crate`) as RFC 117 defines; the registry must not attempt to disambiguate bare names across sources.
+The reservation of unscoped names for the toolchain is `loaves.pub` policy. A registered compatible registry sets its own naming policy, so a private registry may serve unscoped names; a client must never treat a name as the same package across two registries. Package names on `loaves.pub` and crate names on crates.io are distinct namespaces. A `loaf.toml` dependency selects the registry through its dependency key (`loaf` or `crate`) as RFC 117 defines; the registry must not attempt to disambiguate bare names across sources.
 
 ### Source Loaves
 
@@ -218,7 +220,7 @@ The Loaf store is the only cache and the only offline source. An offline mode mu
 
 ### crates.io and other sources
 
-`crate` dependencies resolve against the crates.io sparse index. `incan.pub` is the leading protocol: Oven's own registry client is designed for it, and crates.io is the secondary source it also reads. Acquisition of crates.io source archives may use the Cargo binary the Incan toolchain already provisions as a download tool and nothing more: Cargo fetches bytes into a location Oven controls, and Oven performs verification against the sparse index checksum, storage, lock recording, and everything after. Cargo must never resolve, plan, or build on this path. Oven may instead fetch crates.io archives directly through the same client that serves `incan.pub`, since the sparse protocol is the simpler of the two; the choice alters no contract in this RFC. Oven must parse a crate's manifest only as provider metadata under the constraints RFC 119 places on it. The registry must not mirror crates.io source. The registry may publish registry-built assets for crates.io crates at selected closures. Such an asset does not descend from a publisher-signed source Loaf and must not be presented as if it did. Instead it descends from a signed **external-source record** that binds the upstream registry identity, package name, version, and the crates.io checksum of the archive the bakery consumed, together with the registry's builder attestation. External-source records and their assets must be indexed separately from scoped packages at `external/<upstream-registry-id>/<name>`, keyed by upstream package name and version so that a client which has already resolved a `crate` dependency against crates.io can look up, by that identity, whether registry-built assets exist, and the consumer's selected source kind in `loaf.toml` remains authoritative: a `crate` dependency is always resolved against crates.io for its source of truth, and an `incan.pub` asset for it is only ever an admitted shortcut for units whose identities match.
+`crate` dependencies resolve against the crates.io sparse index. `loaves.pub` is the leading protocol: Oven's own registry client is designed for it, and crates.io is the secondary source it also reads. Acquisition of crates.io source archives may use the Cargo binary the Incan toolchain already provisions as a download tool and nothing more: Cargo fetches bytes into a location Oven controls, and Oven performs verification against the sparse index checksum, storage, lock recording, and everything after. Cargo must never resolve, plan, or build on this path. Oven may instead fetch crates.io archives directly through the same client that serves `loaves.pub`, since the sparse protocol is the simpler of the two; the choice alters no contract in this RFC. Oven must parse a crate's manifest only as provider metadata under the constraints RFC 119 places on it. The registry must not mirror crates.io source. The registry may publish registry-built assets for crates.io crates at selected closures. Such an asset does not descend from a publisher-signed source Loaf and must not be presented as if it did. Instead it descends from a signed **external-source record** that binds the upstream registry identity, package name, version, and the crates.io checksum of the archive the bakery consumed, together with the registry's builder attestation. External-source records and their assets must be indexed separately from scoped packages at `external/<upstream-registry-id>/<name>`, keyed by upstream package name and version so that a client which has already resolved a `crate` dependency against crates.io can look up, by that identity, whether registry-built assets exist, and the consumer's selected source kind in `loaf.toml` remains authoritative: a `crate` dependency is always resolved against crates.io for its source of truth, and a `loaves.pub` asset for it is only ever an admitted shortcut for units whose identities match.
 
 An external-source record's index line must additionally carry, for every binding its record declares, that binding and its status: `harvested` while the declaration rests on harvest evidence alone, `attested` once an `attest` event names it. A consumer may refuse `harvested` bindings by policy and must be able to decide that from the index line, before it fetches the record.
 
@@ -284,7 +286,7 @@ Nothing was published under RFC 034, so there is no migration. The constraints R
 - **Flat namespace.** Rejected. Rust-only Loaves guarantee collisions with crate names, and flat spaces are where squatting happens in every registry that has one. Reserving unscoped names for the toolchain keeps the common standard-library spelling short.
 - **`@scope/name` spelling.** Rejected in favor of `scope/name`. The `@` character is the conventional version separator in tool-run syntax (`tool@1.2`), and the slash form matches container and source-forge conventions.
 - **Assets built only by publishers.** Rejected as the sole path. Most publishers will not bake for every target; a registry bakery over signed source is what makes assets common rather than rare. Kept as one of three builder kinds with distinct trust.
-- **Proxying crates.io source through `incan.pub`.** Rejected. It adds a bandwidth cost the project cannot cap and a trust surface it does not need; the client can reach crates.io directly. Registry-built assets for crates are the useful subset and are permitted.
+- **Proxying crates.io source through `loaves.pub`.** Rejected. It adds a bandwidth cost the project cannot cap and a trust surface it does not need; the client can reach crates.io directly. Registry-built assets for crates are the useful subset and are permitted.
 - **Tokens first, signatures later.** Rejected. Long-lived publish tokens are the documented origin of the largest registry compromises elsewhere; trusted publishing is cheaper to start with than to retrofit.
 - **A mutable registry database as the source of truth.** Rejected, consistent with RFC 079: signed events over immutable artifacts are auditable, mirrorable, and static-site friendly.
 
@@ -313,7 +315,7 @@ Non-normative. The registry client belongs in Oven's build-system ring rather th
 ## Unresolved questions
 
 - Should Oven offer minimal-version resolution as an opt-in mode alongside the default maximal selection, and if so should the lockfile record which mode produced it?
-- How is a Rust-facet Loaf from `incan.pub` imported in Incan source? The dependency key selects the registry; whether `rust::` or `pub::` selects the surface needs a rule.
+- How is a Rust-facet Loaf from `loaves.pub` imported in Incan source? The dependency key selects the registry; whether `rust::` or `pub::` selects the surface needs a rule.
 - How are scopes claimed and verified: free claim on first publish, linked to a source-forge organization, or both with different display?
 - What is the retention policy for assets whose toolchain is no longer supported, given that source Loaves are retained forever?
 - Should running a published tool without a project (`oven run <scope>/<name>@<version>`) be defined here or in an RFC 118 amendment?

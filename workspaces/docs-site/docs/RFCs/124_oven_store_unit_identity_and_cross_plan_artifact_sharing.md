@@ -10,7 +10,7 @@
     - RFC 118 (Incan and Oven command-line surfaces)
     - RFC 119 (Oven-native Rust build facets and Cargo interoperation)
     - RFC 123 (package executable representation)
-    - RFC 125 (`incan.pub` Loaf registry and baked asset distribution)
+    - RFC 125 (`loaves.pub` Loaf registry and baked asset distribution)
 - **Issue:** [#2481](https://github.com/encero-systems/incan/issues/2481)
 - **RFC PR:** —
 - **Written against:** v0.6 (in development)

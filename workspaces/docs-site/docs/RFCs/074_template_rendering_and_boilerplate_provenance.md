@@ -7,7 +7,7 @@
     - RFC 015 (hatch-like tooling and project lifecycle CLI)
     - RFC 020 (Cargo offline and locked policy)
     - RFC 033 (`ctx` typed configuration context)
-    - RFC 125 (`incan.pub` Loaf registry; supersedes RFC 034)
+    - RFC 125 (`loaves.pub` Loaf registry; supersedes RFC 034)
     - RFC 075 (starter profiles and capability packs)
     - RFC 076 (project mutation policy and recovery)
     - RFC 117 (`loaf.toml` and Oven's language-neutral project model)

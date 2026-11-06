@@ -6,7 +6,7 @@
 - **Related:**
     - RFC 015 (project lifecycle and CLI tooling)
     - RFC 031 (library system phase 1)
-    - RFC 125 (`incan.pub` Loaf registry; supersedes RFC 034)
+    - RFC 125 (`loaves.pub` Loaf registry; supersedes RFC 034)
     - RFC 048 (checked contract metadata, Incan emit, and interrogation tooling)
     - RFC 079 (`incan.pub` artifact graph)
 - **Issue:** [#556](https://github.com/encero-systems/incan/issues/556)

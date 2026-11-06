@@ -11,7 +11,7 @@
     - RFC 104 (capabilities and receipts)
     - RFC 117 (`loaf.toml` and Oven's language-neutral project model)
     - RFC 124 (Oven store unit identity)
-    - RFC 125 (`incan.pub` registry)
+    - RFC 125 (`loaves.pub` registry)
 - **Issue:** https://github.com/encero-systems/incan/issues/408
 - **RFC PR:** —
 - **Written against:** v0.3
