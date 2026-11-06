@@ -113,7 +113,7 @@ impl Builder<'_> {
                     });
                 }
             };
-            if !matches!(
+            let copy_scalar = matches!(
                 self.checker.type_info.expr_type(value.span),
                 Some(
                     ResolvedType::Int
@@ -122,7 +122,8 @@ impl Builder<'_> {
                         | ResolvedType::Bool
                         | ResolvedType::Unit
                 )
-            ) {
+            );
+            if !copy_scalar && !self.allow_fresh_aggregate_elements {
                 return Err(Unavailable {
                     span: value.span,
                     reason: "list element needs checked retained-owner projection".into(),

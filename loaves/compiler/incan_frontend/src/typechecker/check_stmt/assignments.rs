@@ -77,12 +77,8 @@ impl TypeChecker {
         // this branch would turn every in-block `let` into a reassignment of the outer binding (#1072).
         let introduces_binding = Self::binding_introduces_name(assign.binding);
         if !introduces_binding {
-            self.refuse_iterated_place_replacement(
-                &Spanned::new(Expr::Ident(assign.name.clone()), target_span),
-                None,
-                target_span,
-            );
             self.record_write_target_identity(target_span, &assign.name);
+            self.note_iteration_binding_replacement(&assign.name, target_span);
         }
         let reassignment_ty = (!introduces_binding)
             .then(|| {
