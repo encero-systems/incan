@@ -27,7 +27,6 @@ Examples:
         Err(err) => println(err.message())
 """
 
-import std.primitives.async
 from std.rust import Send, Static
 from std.primitives.errors import Error
 from rust::incan_std_async::task import RuntimeFuture

@@ -8,7 +8,6 @@
 #   counter 6
 #   permit acquired
 
-import std.async
 from std.async.channel import channel
 from std.async.task import spawn
 from std.async.sync import Mutex, Semaphore

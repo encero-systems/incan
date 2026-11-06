@@ -1,17 +1,17 @@
-# behavior: await of a standard-library async function called through its module binding waits for it, as a directly imported one does, and a task spawned from one completes
+# behavior: import std.async binds the reserved module name through ordinary namespace lookup, so its timer runs beside a task spawned through the prelude binding
 # expect-stdout:
 #   slept
 #   spawned
 
-import std.async.time
+import std.async
 import std.async.prelude
 
 
 async def main() -> None:
-    await time.sleep(0.01)
-    await time.sleep_ms(1)
+    await async.sleep(0.01)
+    await async.sleep_ms(1)
     println("slept")
-    handle = prelude.spawn(time.sleep_ms(1))
+    handle = prelude.spawn(async.sleep_ms(1))
     match await handle:
         Ok(_) => println("spawned")
         Err(_) => println("failed")

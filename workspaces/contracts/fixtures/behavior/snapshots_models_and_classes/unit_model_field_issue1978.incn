@@ -2,7 +2,6 @@
 # expect-stdout:
 #   constructed
 
-import std.async
 from rust::incan_std_async::channel import (
     SendError as NativeSendError,
     Sender as NativeSender,

@@ -1,6 +1,5 @@
 """Async timing conveniences over foundational waits, timeouts, and task handles."""
 
-import std.async
 from std.rust import Send, Static
 pub from std.primitives.async.time import AsyncDuration as Duration, TimeoutError, sleep, sleep_ms, timeout, timeout_ms
 from rust::incan_std_async::task import JoinHandle

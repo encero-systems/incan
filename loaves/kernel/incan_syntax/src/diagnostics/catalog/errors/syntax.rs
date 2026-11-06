@@ -25,6 +25,15 @@ pub fn expected_identifier(found: &str, span: Span) -> CompileError {
     CompileError::syntax(format!("Expected identifier, found {found}"), span)
 }
 
+/// Report an always-reserved keyword where source would otherwise declare or bind a name.
+pub fn reserved_keyword_name(keyword: &str, span: Span) -> CompileError {
+    CompileError::syntax(
+        format!("`{keyword}` is a reserved word and cannot be declared as a name"),
+        span,
+    )
+    .with_hint("Choose a different name")
+}
+
 pub fn expected_string_literal(found: &str, span: Span) -> CompileError {
     CompileError::syntax(format!("Expected string literal, found {found}"), span)
 }

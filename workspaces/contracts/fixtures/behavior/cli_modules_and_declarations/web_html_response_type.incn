@@ -2,7 +2,6 @@
 # expect-stdout:
 #   rendered
 
-import std.async
 import std.web as web
 from std.web import Html, route, GET
 from std.web import Html as Page

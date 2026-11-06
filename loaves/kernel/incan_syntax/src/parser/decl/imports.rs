@@ -321,7 +321,7 @@ impl<'a> Parser<'a> {
             let name = if rust_item_names {
                 self.identifier_or_any_keyword()?
             } else {
-                self.identifier()?
+                self.identifier_or_reserved_module_keyword()?
             };
             let alias = if self.match_keyword(KeywordId::As) {
                 Some(self.identifier()?)

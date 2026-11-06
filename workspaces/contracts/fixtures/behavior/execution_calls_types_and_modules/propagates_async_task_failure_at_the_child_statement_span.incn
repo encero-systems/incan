@@ -4,7 +4,6 @@
 
 
 """Propagates async task failure at the child statement span, stopping the program."""
-import std.async
 
 async def child() -> int:
   """Fail the assertion when this callable is reached."""

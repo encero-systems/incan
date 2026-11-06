@@ -1,4 +1,4 @@
-# behavior: std.primitives.async alone activates async syntax, completes and cancels tasks, reports a timeout, and keeps guard access clone-based across suspension
+# behavior: primitive async task, lock and timer APIs complete and cancel tasks, report a timeout, and keep guard access clone-based across suspension
 # expect-stdout:
 #   completed 7
 #   cancelled
@@ -6,7 +6,6 @@
 #   snapshot ready
 #   guarded done
 
-import std.primitives.async
 from std.primitives.async.sync import Mutex
 from std.primitives.async.task import spawn, yield_now
 from std.primitives.async.time import sleep_ms, timeout_ms

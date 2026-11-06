@@ -4,7 +4,6 @@
 
 """A race whose second arm is a block takes the first ready arm in source order (parity corpus case 11)."""
 
-import std.async
 
 
 model RaceOwner:

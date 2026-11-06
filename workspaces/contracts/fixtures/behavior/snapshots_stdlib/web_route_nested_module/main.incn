@@ -3,7 +3,6 @@
 #   3
 #   4
 
-import std.async
 import api::routes
 from api.routes import create, search
 

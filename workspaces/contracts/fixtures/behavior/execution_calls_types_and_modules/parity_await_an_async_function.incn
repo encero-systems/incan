@@ -3,7 +3,6 @@
 #   42
 
 """An async function awaits another and returns its value (parity corpus row replacement-body-v0-018)."""
-import std.async
 
 async def answer() -> int:
     """Return `42` for this fixture."""

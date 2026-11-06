@@ -8,7 +8,6 @@
 
 from std.web import route, Json, Query, GET
 from std.serde import json
-import std.async
 
 
 @derive(json)

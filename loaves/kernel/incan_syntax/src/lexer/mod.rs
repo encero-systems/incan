@@ -683,8 +683,8 @@ mod tests {
     fn test_keywords() {
         let tokens = lex_ok("def async await class model trait");
         assert!(matches!(tokens[0].kind, TokenKind::Keyword(KeywordId::Def)));
-        assert!(matches!(&tokens[1].kind, TokenKind::Ident(name) if name == "async"));
-        assert!(matches!(&tokens[2].kind, TokenKind::Ident(name) if name == "await"));
+        assert!(matches!(tokens[1].kind, TokenKind::Keyword(KeywordId::Async)));
+        assert!(matches!(tokens[2].kind, TokenKind::Keyword(KeywordId::Await)));
         assert!(matches!(tokens[3].kind, TokenKind::Keyword(KeywordId::Class)));
         assert!(matches!(tokens[4].kind, TokenKind::Keyword(KeywordId::Model)));
         assert!(matches!(tokens[5].kind, TokenKind::Keyword(KeywordId::Trait)));

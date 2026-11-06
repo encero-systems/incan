@@ -4,7 +4,6 @@
 #   polled
 #   after
 
-import std.async
 from rust::incan_std_async::runtime import block_on
 from rust::incan_std_async::task import RuntimeFuture
 

@@ -11,6 +11,7 @@
 #   2 3
 #   0 0 0
 #   4 5
+#   1 2
 
 const FROZEN_TEXT: FrozenList[str] = ["x", "y"]
 const FROZEN_NUMBERS: FrozenSet[int] = {7, 8}
@@ -73,3 +74,5 @@ def main() -> None:
     keyed: dict[str, int] = {"k": 1, "j": 2}
     println(f"{list(FROZEN_TEXT):?} {len(list(FROZEN_NUMBERS))} {len(list(keyed))}")
     uniform_ranges()
+    races = [1, 2]
+    println(" ".join([str(race) for race in races]))

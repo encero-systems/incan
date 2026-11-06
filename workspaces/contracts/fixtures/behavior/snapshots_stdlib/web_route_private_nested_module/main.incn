@@ -2,7 +2,6 @@
 # expect-stdout:
 #   routes loaded
 
-import std.async
 import api::routes
 from std.web import App
 

@@ -188,6 +188,24 @@ import compression.prelude as compression_prelude
 from std.derives.string import Debug
 ```
 
-## Activate `async` and `await`
+## Import async library APIs
 
-Import `std.async`, or one of its modules such as `std.async.time`, before the first `async def` or `await` in the file. Without that import, `async` and `await` are refused (`INCAN-P0001`), and the diagnostic names the import to add.
+Write `async def`, `await`, and `race for <name>:` without an activation import. Import `std.async`, or a focused module such as `std.async.time`, only when the program uses its library APIs:
+
+```incan
+from std.async.time import sleep
+
+
+async def pause() -> None:
+    await sleep(0.1)
+```
+
+The root module may keep its own name:
+
+```incan
+from std import async
+
+
+async def pause() -> None:
+    await async.sleep(0.1)
+```

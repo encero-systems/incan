@@ -90,11 +90,12 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    /// Return the currently-active soft keyword id, if the current token is an active soft keyword spelling.
-    fn current_active_soft_keyword(&self) -> Option<KeywordId> {
+    /// Return the current registry keyword when its parser surface is globally reserved or active in this module.
+    fn current_active_surface_keyword(&self) -> Option<KeywordId> {
         match &self.peek().kind {
             TokenKind::Keyword(id)
-                if incan_lang::lang::keywords::is_soft(*id) && self.active_soft_keywords.contains(id) =>
+                if incan_lang::lang::keywords::is_hard(*id)
+                    || (incan_lang::lang::keywords::is_soft(*id) && self.active_soft_keywords.contains(id)) =>
             {
                 Some(*id)
             }
@@ -127,9 +128,9 @@ impl<'a> Parser<'a> {
         incan_lang::lang::keywords::supports_surface_kind(id, usage)
     }
 
-    /// Return the active soft keyword id if it is valid for the requested parser surface.
+    /// Return the globally reserved or module-active keyword when it is valid for the requested parser surface.
     fn current_surface_keyword(&self, usage: KeywordSurfaceKind) -> Option<KeywordId> {
-        let id = self.current_active_soft_keyword()?;
+        let id = self.current_active_surface_keyword()?;
         if self.keyword_supports_surface_usage(id, usage) {
             Some(id)
         } else {
@@ -137,14 +138,14 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Consume and return the active soft keyword id if it is valid for the requested parser surface.
+    /// Consume and return a globally reserved or module-active keyword valid for the requested parser surface.
     fn match_surface_keyword(&mut self, usage: KeywordSurfaceKind) -> Option<KeywordId> {
         let id = self.current_surface_keyword(usage)?;
         self.advance();
         Some(id)
     }
 
-    /// Whether the current token stream starts a function/method declaration (`[soft_kw ...] def`).
+    /// Whether the current token stream starts a function or method declaration (`[surface modifier ...] def`).
     fn starts_surface_function_decl(&self) -> bool {
         self.starts_surface_function_decl_at(self.pos)
     }
@@ -155,7 +156,7 @@ impl<'a> Parser<'a> {
             || (self.check_keyword(KeywordId::Pub) && self.starts_surface_function_decl_at(self.pos + 1))
     }
 
-    /// Whether the tokens from `start` begin a function/method declaration (`[soft_kw ...] def`).
+    /// Whether the tokens from `start` begin a function or method declaration (`[surface modifier ...] def`).
     fn starts_surface_function_decl_at(&self, start: usize) -> bool {
         if matches!(
             self.tokens.get(start).map(|t| &t.kind),
@@ -175,7 +176,7 @@ impl<'a> Parser<'a> {
             let Some(id) = id else {
                 break;
             };
-            if !self.active_soft_keywords.contains(&id)
+            if (!incan_lang::lang::keywords::is_hard(id) && !self.active_soft_keywords.contains(&id))
                 || !self.keyword_supports_surface_usage(id, KeywordSurfaceKind::DeclarationModifier)
             {
                 break;
@@ -399,11 +400,20 @@ impl<'a> Parser<'a> {
             || self.check_op(OperatorId::Minus)
     }
 
-    /// Return whether the current token starts an import-activated `race for` expression.
+    /// Return whether the current tokens spell the complete language-owned `race for <name>:` header.
+    ///
+    /// Requiring the binding and colon keeps `[race for race in races]` on the ordinary comprehension path.
     fn is_active_race_for_expr(&self) -> bool {
-        self.std_async_vocab_active
-            && matches!(&self.peek().kind, TokenKind::Ident(name) if name == "race")
+        matches!(&self.peek().kind, TokenKind::Ident(name) if name == "race")
             && self.peek_next().kind == TokenKind::Keyword(KeywordId::For)
+            && matches!(
+                self.tokens.get(self.pos + 2).map(|token| &token.kind),
+                Some(TokenKind::Ident(_))
+            )
+            && matches!(
+                self.tokens.get(self.pos + 3).map(|token| &token.kind),
+                Some(TokenKind::Punctuation(PunctuationId::Colon))
+            )
     }
 
     /// After consuming `Indent` into a `model` / `class` / `enum` body, optionally parse a leading `"""..."""`.

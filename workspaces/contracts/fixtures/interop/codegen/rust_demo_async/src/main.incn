@@ -5,7 +5,6 @@
 #   refused
 #   7
 
-import std.async
 from std.async import sleep
 from rust::demo_async import CsvReadOptions, Plan, SessionContext, State, consume, make_context, make_options
 

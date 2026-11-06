@@ -2,7 +2,6 @@
 # expect-stdout:
 #   1
 
-import std.async
 from std.async import sleep, spawn, JoinHandle, Mutex, RaceArm
 
 

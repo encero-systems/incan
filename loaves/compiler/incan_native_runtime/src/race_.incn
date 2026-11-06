@@ -1,6 +1,5 @@
 """Native source races use the SDK's source-order polling and cancellation boundary."""
 
-import std.async
 from std.rust import Send, Static
 from rust::incan_std_async::task import RuntimeFuture
 from rust::incan_std_async::race import RaceArm as NativeRaceArm, arm as native_arm, race as native_race

@@ -15,10 +15,7 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Ok(name)
             }
-            _ => Err(errors::expected_identifier(
-                &format!("{:?}", self.peek().kind),
-                self.current_span(),
-            )),
+            _ => Err(self.identifier_error()),
         }
     }
 
@@ -31,10 +28,7 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Ok(Spanned::new(name, span))
             }
-            _ => Err(errors::expected_identifier(
-                &format!("{:?}", self.peek().kind),
-                self.current_span(),
-            )),
+            _ => Err(self.identifier_error()),
         }
     }
 
@@ -51,10 +45,16 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Ok("None".to_string())
             }
-            _ => Err(errors::expected_identifier(
-                &format!("{:?}", self.peek().kind),
-                self.current_span(),
-            )),
+            _ => Err(self.identifier_error()),
+        }
+    }
+
+    /// Build the targeted reserved-word diagnostic for `async` and `await`, or the ordinary identifier diagnostic.
+    fn identifier_error(&self) -> CompileError {
+        match &self.peek().kind {
+            TokenKind::Keyword(KeywordId::Async) => errors::reserved_keyword_name("async", self.current_span()),
+            TokenKind::Keyword(KeywordId::Await) => errors::reserved_keyword_name("await", self.current_span()),
+            _ => errors::expected_identifier(&format!("{:?}", self.peek().kind), self.current_span()),
         }
     }
 
@@ -71,10 +71,7 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Ok(name)
             }
-            _ => Err(errors::expected_identifier(
-                &format!("{:?}", self.peek().kind),
-                self.current_span(),
-            )),
+            _ => Err(self.identifier_error()),
         }
     }
 
@@ -93,15 +90,11 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Ok("from".to_string())
             }
-            _ => Err(errors::expected_identifier(
-                &format!("{:?}", self.peek().kind),
-                self.current_span(),
-            )),
+            _ => Err(self.identifier_error()),
         }
     }
 
-    /// Parse an identifier in import/decorator paths, allowing specific keyword segments (e.g. `std.async`,
-    /// `rust.extern`).
+    /// Parse an identifier in import/decorator paths, allowing reserved module-path segments.
     fn identifier_or_import_keyword(&mut self) -> Result<Ident, CompileError> {
         match &self.peek().kind {
             TokenKind::Ident(name) => {
@@ -113,10 +106,29 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Ok("rust".to_string())
             }
+            TokenKind::Keyword(KeywordId::Async) => {
+                self.advance();
+                Ok("async".to_string())
+            }
+            TokenKind::Keyword(KeywordId::Await) => {
+                self.advance();
+                Ok("await".to_string())
+            }
             _ => Err(errors::expected_identifier(
                 &format!("{:?}", self.peek().kind),
                 self.current_span(),
             )),
+        }
+    }
+
+    /// Parse an imported item name, allowing the `async` module without allowing the word as an alias or source name.
+    fn identifier_or_reserved_module_keyword(&mut self) -> Result<Ident, CompileError> {
+        match &self.peek().kind {
+            TokenKind::Keyword(KeywordId::Async) => {
+                self.advance();
+                Ok("async".to_string())
+            }
+            _ => self.identifier(),
         }
     }
 

@@ -353,6 +353,10 @@ pub(super) fn lower_function_body(
     );
     builder.retain_empty_collection_context(&stmts);
 
+    if function.is_async() {
+        builder.record_runtime_requirement(AbiV0RuntimeRequirement::AsyncRuntime);
+    }
+
     let checked_input_profile = binding.and_then(|binding| binding.identity.as_ref()).and_then(|owner| {
         builder.checked_function_input_profile(owner, function, &params, hir_span(decl_span), &mut stmts)
     });
@@ -510,6 +514,9 @@ pub(super) fn lower_method_body(
         hir_span(decl_span),
     );
     builder.retain_empty_collection_context(&stmts);
+    if method.is_async() {
+        builder.record_runtime_requirement(AbiV0RuntimeRequirement::AsyncRuntime);
+    }
     let checked_input_profile = binding.and_then(|binding| binding.identity.as_ref()).and_then(|owner| {
         builder.checked_method_input_profile(owner, method, &params, hir_span(decl_span), &mut stmts)
     });

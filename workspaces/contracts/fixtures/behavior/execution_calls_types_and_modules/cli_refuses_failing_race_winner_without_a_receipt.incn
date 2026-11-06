@@ -3,7 +3,6 @@
 # expect-exit: 101
 
 """Cli refuses failing race winner without a receipt."""
-import std.async
 
 async def first() -> int:
   """Fail the assertion when this callable is reached."""

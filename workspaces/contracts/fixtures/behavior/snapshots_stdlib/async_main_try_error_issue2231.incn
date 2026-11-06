@@ -4,7 +4,6 @@
 #   awaited failure
 # expect-exit: 1
 
-import std.async
 from std.async.time import sleep
 
 

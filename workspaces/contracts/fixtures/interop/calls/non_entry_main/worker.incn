@@ -1,6 +1,5 @@
 """A module whose ordinary async function is spelled `main`."""
 
-import std.async
 
 
 pub async def main() -> int:

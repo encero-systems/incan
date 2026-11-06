@@ -3,7 +3,6 @@
 #   1
 
 """A race over two awaited calls takes the first arm in source order (parity corpus row replacement-body-v0-019)."""
-import std.async
 
 async def first() -> int:
     """Return `1` for this fixture."""

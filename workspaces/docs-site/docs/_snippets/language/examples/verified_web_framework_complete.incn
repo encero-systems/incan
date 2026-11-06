@@ -2,7 +2,6 @@
 
 from std.web import App, route, Response, Json, GET
 from std.serde import json
-import std.async
 
 
 @derive(Clone, json)

@@ -4,7 +4,6 @@
 
 
 """Race failure preserves the first arm span and cancels constructed losers."""
-import std.async
 
 async def first() -> int:
   """Fail the assertion when this callable is reached."""

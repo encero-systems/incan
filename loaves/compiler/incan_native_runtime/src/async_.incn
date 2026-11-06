@@ -1,6 +1,5 @@
 """Run direct native entry callbacks inside the canonical async executor."""
 
-import std.async
 from rust::incan_std_async::runtime import block_on, RuntimeInitError
 from rust::incan_std_async::task import RuntimeFuture
 from rust::std::io import stderr, Write

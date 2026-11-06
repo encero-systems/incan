@@ -1,7 +1,6 @@
 # behavior: in an async body, a borrow held across an await and a view returned by an awaited call each keep their source borrowed until last use, so an overlapping change is refused (#2500).
 # expect-diagnostic: INCAN-T0126
 
-import std.async
 
 
 class Buffer:

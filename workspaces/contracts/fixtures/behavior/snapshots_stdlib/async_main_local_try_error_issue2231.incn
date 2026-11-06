@@ -5,7 +5,6 @@
 #   local awaited failure
 # expect-exit: 1
 
-import std.async
 
 
 async def fail() -> Result[None, str]:

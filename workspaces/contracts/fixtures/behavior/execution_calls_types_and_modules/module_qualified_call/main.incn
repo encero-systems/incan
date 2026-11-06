@@ -34,7 +34,6 @@ import helper
 import helper as h
 import nested.provider
 import pkg
-import std.async
 from helper import Mode, Thing, preserve as direct_preserve
 from pkg import sub
 from std import web
