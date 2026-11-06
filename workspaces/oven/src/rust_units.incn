@@ -445,7 +445,9 @@ pub def library_compile_arguments(
     return Ok(
         arguments + outputs + ["--emit", f"link,dep-info={dependencies.0}"] + linking(facet, request, built, search)? + remap_arguments(
             facet.project,
-        ),
+            [],
+            Path(request.rustc).parent().parent().0,
+        )?,
     )
 
 

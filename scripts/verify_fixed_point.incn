@@ -55,7 +55,7 @@ pub def named_artifacts(context: NativeContext) -> list[Artifact]:
         Artifact(name="driver", path=driver.joinpath("rust/release/bin/incan-rustc-driver")),
         Artifact(name="runtime", path=runtime.joinpath("libincan_native_runtime.rlib")),
         Artifact(name="lowering", path=driver.joinpath("loaves/incan_mir_lowering/release/libincan_mir_lowering.rlib")),
-        Artifact(name="standard-primitives", path=primitives.joinpath("libincan_stdlib_primitives.rlib")),
+        Artifact(name="standard-floor", path=primitives.joinpath("libincan_stdlib_primitives.rlib")),
         Artifact(name="oven", path=context.lane.joinpath("oven-bin/incan")),
         Artifact(name="runner", path=context.lane.joinpath("contracts-bin/contracts")),
     ]
