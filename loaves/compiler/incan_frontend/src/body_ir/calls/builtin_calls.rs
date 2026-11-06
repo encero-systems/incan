@@ -3,34 +3,6 @@
 use super::*;
 
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
-    /// Retain registry-owned integer helpers in Body IR only.
-    ///
-    /// A source method already has its checked identity and never reaches this fallback. Numeric receivers are
-    /// admitted through the language registry. Generic Clone requires the checker's retained call-site identity and
-    /// must remain absent when that fact is cleared during synthetic resolution.
-    pub(super) fn direct_builtin_method_identity(
-        &self,
-        receiver: &IncanType,
-        method: &str,
-    ) -> Option<CanonicalSymbolId> {
-        use incan_lang::lang::types::numerics;
-        let numeric = match receiver {
-            IncanType::Primitive(IncanPrimitiveType::Int) => Some(numerics::NumericTypeId::I64),
-            IncanType::Primitive(IncanPrimitiveType::Numeric(kind)) => Some(*kind),
-            _ => None,
-        };
-        if let Some(numeric) = numeric {
-            let helper = numerics::integer_helper_from_str(method)?;
-            if numerics::supports_integer_helper(numeric, helper) {
-                return Some(crate::symbols::canonical_builtin_member_identity(
-                    numerics::as_str(numeric),
-                    helper.canonical,
-                ));
-            }
-        }
-        None
-    }
-
     /// Lower a method-shaped explicit builtin call from the typechecker's retained builtin selection.
     ///
     /// `std.builtins.len(value)` reaches the AST as a method call, but the namespace is not a runtime receiver. The

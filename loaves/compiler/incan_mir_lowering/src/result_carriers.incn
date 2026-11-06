@@ -48,6 +48,8 @@ from list_values import indexed_read, value_operand
 from list_methods import argument_place, call_destination
 from carrier_operands import boundary_operand
 from explicit_arguments import reference_contract
+from rust::incan_lang::lang::surface::option_methods import OptionMethodId as RustOptionMethodId
+from rust::incan_lang::lang::surface::result_methods import ResultMethodId as RustResultMethodId
 
 
 pub def lower_try_propagation(
@@ -149,12 +151,22 @@ pub def lower_carrier_method(
     _owner, declaration = carrier_layout(builder, place_type(builder.locals, source))?
     if method.intrinsic_carrier != carrier_name(declaration.carrier):
         return Err("invalid Body IR intrinsic carrier method identity")
-    name = str(method.name)
+    option_method = method.builtin_option()
+    result_method = method.builtin_result()
+    if (declaration.carrier == Carrier.Option and option_method is None) or (
+        declaration.carrier == Carrier.Result and result_method is None
+    ):
+        return Err("invalid Body IR intrinsic carrier operation")
     mut ty = PlanType.Bool
     mut fallback: Option[Operand] = None
     mut arity = 1
-    if name == "unwrap_or" or name == "unwrap":
-        if name == "unwrap_or":
+    unwrap = option_method in [Some(RustOptionMethodId.Unwrap), Some(RustOptionMethodId.UnwrapOr)] or result_method in [
+        Some(RustResultMethodId.Unwrap),
+        Some(RustResultMethodId.UnwrapOr),
+    ]
+    unwrap_or = option_method == Some(RustOptionMethodId.UnwrapOr) or result_method == Some(RustResultMethodId.UnwrapOr)
+    if unwrap:
+        if unwrap_or:
             arity = 2
         # The present payload lives in Option's `Some` slot one and Result's `Ok` slot zero.
         mut slot = 0
@@ -168,7 +180,7 @@ pub def lower_carrier_method(
             Some(value) => fallback = Some(boundary_operand(builder, value, ty, span)?)
             None => return Err("unsupported Body IR carrier fallback spread")
     target = call_destination(builder, destination, ty, span)?
-    return lower_carrier_method_plan(builder, name, source, target, fallback, span)
+    return lower_carrier_method_plan(builder, option_method, result_method, source, target, fallback, span)
 
 
 def carrier_receiver(

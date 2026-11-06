@@ -47,7 +47,7 @@ pub enum NumericFamily {
 }
 
 /// Stable identifier for an RFC 009 integer overflow-helper family.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum IntegerHelperFamily {
     /// Helpers that return `Option[T]` and report overflow as `None`.
     Checked,
@@ -58,7 +58,7 @@ pub enum IntegerHelperFamily {
 }
 
 /// Operation performed by an RFC 009 integer overflow helper.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum IntegerHelperOperation {
     /// Addition with an operand of the receiver's type.
     Add,
@@ -68,6 +68,19 @@ pub enum IntegerHelperOperation {
     Mul,
     /// Exponentiation with Rust's `u32` exponent contract.
     Pow,
+}
+
+/// Stable identifier for an RFC 009 numeric resize policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum NumericResizeMethodId {
+    /// Resize only when every source value is representable by the target.
+    Lossless,
+    /// Return `None` when the source value is outside the target range.
+    Try,
+    /// Resize with modular integer wrapping.
+    Wrapping,
+    /// Resize by clamping to the target integer range.
+    Saturating,
 }
 
 /// Metadata for one RFC 009 integer overflow helper.
@@ -383,6 +396,45 @@ pub fn is_binary_float(id: NumericTypeId) -> bool {
 /// Resolve an integer overflow-helper spelling to its registry entry.
 pub fn integer_helper_from_str(name: &str) -> Option<IntegerHelperInfo> {
     INTEGER_HELPERS.iter().copied().find(|helper| helper.canonical == name)
+}
+
+/// Return the canonical spelling for a selected integer overflow helper.
+pub fn integer_helper_as_str(family: IntegerHelperFamily, operation: IntegerHelperOperation) -> &'static str {
+    match (family, operation) {
+        (IntegerHelperFamily::Checked, IntegerHelperOperation::Add) => "checked_add",
+        (IntegerHelperFamily::Checked, IntegerHelperOperation::Sub) => "checked_sub",
+        (IntegerHelperFamily::Checked, IntegerHelperOperation::Mul) => "checked_mul",
+        (IntegerHelperFamily::Checked, IntegerHelperOperation::Pow) => "checked_pow",
+        (IntegerHelperFamily::Wrapping, IntegerHelperOperation::Add) => "wrapping_add",
+        (IntegerHelperFamily::Wrapping, IntegerHelperOperation::Sub) => "wrapping_sub",
+        (IntegerHelperFamily::Wrapping, IntegerHelperOperation::Mul) => "wrapping_mul",
+        (IntegerHelperFamily::Wrapping, IntegerHelperOperation::Pow) => "wrapping_pow",
+        (IntegerHelperFamily::Saturating, IntegerHelperOperation::Add) => "saturating_add",
+        (IntegerHelperFamily::Saturating, IntegerHelperOperation::Sub) => "saturating_sub",
+        (IntegerHelperFamily::Saturating, IntegerHelperOperation::Mul) => "saturating_mul",
+        (IntegerHelperFamily::Saturating, IntegerHelperOperation::Pow) => "saturating_pow",
+    }
+}
+
+/// Resolve a numeric resize spelling to its stable policy identifier.
+pub fn resize_method_from_str(name: &str) -> Option<NumericResizeMethodId> {
+    match name {
+        "resize" => Some(NumericResizeMethodId::Lossless),
+        "try_resize" => Some(NumericResizeMethodId::Try),
+        "wrapping_resize" => Some(NumericResizeMethodId::Wrapping),
+        "saturating_resize" => Some(NumericResizeMethodId::Saturating),
+        _ => None,
+    }
+}
+
+/// Return the canonical spelling for a numeric resize policy.
+pub const fn resize_method_as_str(method: NumericResizeMethodId) -> &'static str {
+    match method {
+        NumericResizeMethodId::Lossless => "resize",
+        NumericResizeMethodId::Try => "try_resize",
+        NumericResizeMethodId::Wrapping => "wrapping_resize",
+        NumericResizeMethodId::Saturating => "saturating_resize",
+    }
 }
 
 /// Return whether a numeric type supports a registered integer overflow helper.

@@ -130,11 +130,8 @@ impl TypeChecker {
         if let Some((id, result)) = selected {
             let owner = if is_frozen_str(base_ty) { "FrozenStr" } else { "str" };
             self.refuse_non_positional_builtin_args(&format!("{owner}.{}", string_methods::as_str(id)), call.args);
-            if call.type_args.is_empty()
-                && HelperOp::for_selected_string_method(id).is_some()
-                && self.validate_selected_string_helper_call(id, call.args, arg_types, call.span)
-            {
-                self.type_info.record_resolved_string_helper_call(call.span, id);
+            if call.type_args.is_empty() && HelperOp::for_selected_string_method(id).is_some() {
+                self.validate_selected_string_helper_call(id, call.args, arg_types, call.span);
             }
             return Some(result);
         }
@@ -144,6 +141,10 @@ impl TypeChecker {
             return Some(match id {
                 frozen_bytes_methods::FrozenBytesMethodId::Len => ResolvedType::Int,
                 frozen_bytes_methods::FrozenBytesMethodId::IsEmpty => ResolvedType::Bool,
+                frozen_bytes_methods::FrozenBytesMethodId::Decode => ResolvedType::Generic(
+                    "Result".to_string(),
+                    vec![ResolvedType::Str, ResolvedType::Named("ValidationError".to_string())],
+                ),
             });
         }
         None
@@ -235,6 +236,10 @@ impl TypeChecker {
                 Some(inner)
             }
             Some(option_methods::OptionMethodId::Unwrap) => Some(inner),
+            Some(option_methods::OptionMethodId::IsSome | option_methods::OptionMethodId::IsNone) => {
+                Some(ResolvedType::Bool)
+            }
+            Some(option_methods::OptionMethodId::Clone) => None,
             None => None,
         }
     }
@@ -282,6 +287,16 @@ impl TypeChecker {
                     ));
                 }
                 Some(ok_ty)
+            }
+            Some(result_methods::ResultMethodId::IsOk | result_methods::ResultMethodId::IsErr) => {
+                if !call.args.is_empty() {
+                    self.errors.push(errors::type_mismatch(
+                        "no arguments",
+                        &format!("{} argument(s)", call.args.len()),
+                        call.span,
+                    ));
+                }
+                Some(ResolvedType::Bool)
             }
             _ => None,
         }

@@ -99,14 +99,15 @@ impl TypeChecker {
     /// Mark the active callable when a selected builtin member returns or transforms a lazy iterator.
     pub(in crate::typechecker) fn note_lazy_result_member(
         &mut self,
-        identity: &CanonicalSymbolId,
         operation: Option<incan_lang::lang::builtins::BuiltinMethodId>,
     ) {
         let method = match operation {
             Some(incan_lang::lang::builtins::BuiltinMethodId::ListIter) => {
                 Some(incan_lang::lang::surface::iterator_methods::IteratorMethodId::Iter)
             }
-            _ => builtins::retained_iterator_member(identity),
+            Some(incan_lang::lang::builtins::BuiltinMethodId::Iterator(method))
+            | Some(incan_lang::lang::builtins::BuiltinMethodId::Generator(method)) => Some(method),
+            _ => None,
         };
         if method.is_some_and(|method| !incan_lang::lang::surface::iterator_methods::is_terminal(method)) {
             self.note_lazy_result_body();

@@ -120,7 +120,6 @@ pub(super) fn append_calls(target: &mut CallArtifacts, local: CallArtifacts) {
         resolved_method_calls,
         compiler_generated_member_identities,
         resolved_collection_constructors,
-        resolved_string_helper_calls,
         closure_holding_params,
         closure_returning_callables,
         capturing_callable_bindings,
@@ -180,7 +179,6 @@ pub(super) fn append_calls(target: &mut CallArtifacts, local: CallArtifacts) {
     target
         .resolved_collection_constructors
         .extend(resolved_collection_constructors);
-    target.resolved_string_helper_calls.extend(resolved_string_helper_calls);
     target.closure_holding_params.extend(closure_holding_params);
     target.closure_returning_callables.extend(closure_returning_callables);
     target.capturing_callable_bindings.extend(capturing_callable_bindings);

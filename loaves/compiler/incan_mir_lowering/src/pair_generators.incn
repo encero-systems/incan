@@ -1,6 +1,7 @@
 """The frame slots that hold a lazy generator of pairs rather than builtin `zip`'s list snapshot."""
 
-from rust::incan_semantics_core import IncanType as RustType, SymbolOrigin
+from rust::incan_semantics_core import IncanType as RustType
+from rust::incan_lang::lang::surface::iterator_methods import IteratorMethodId as RustIteratorMethodId
 from rust::incan_semantics_core::body_ir import (
     ArgumentElement as RustArgumentElement,
     Block as RustBlock,
@@ -94,14 +95,16 @@ def produces_pairs(body: &RustBody, callee: &RustCallee, arguments: &list[RustAr
 
 
 def is_pair_adapter(target: &MethodTarget) -> bool:
-    """Match the generator's and the iterator surface's `enumerate` and `zip` builtin member identities."""
-    match target.canonical:
-        Some(identity) =>
-            if identity.origin != SymbolOrigin.Builtin:
-                return false
-            name = str(identity.declaration_name)
-            return name in ["Generator.enumerate", "Iterator.enumerate", "Generator.zip", "Iterator.zip"]
-        None => return false
+    """Match checker-selected `enumerate` and `zip` operations on generators and iterator values."""
+    match target.builtin_iterator():
+        Some(RustIteratorMethodId.Enumerate) => return true
+        Some(RustIteratorMethodId.Zip) => return true
+        Some(_) => return false
+        None => pass
+    match target.builtin_generator():
+        Some(RustIteratorMethodId.Enumerate) => return true
+        Some(RustIteratorMethodId.Zip) => return true
+        _ => return false
 
 
 def zips_iterators(body: &RustBody, arguments: &list[RustArgumentElement]) -> bool:

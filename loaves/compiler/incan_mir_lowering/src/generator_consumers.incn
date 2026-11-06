@@ -8,27 +8,37 @@ from generator_adapters import adapter_callable
 from options import carrier_layout
 from calls import instantiated_external_call
 from table_views import borrowed_at
+from rust::incan_lang::lang::surface::iterator_methods import IteratorMethodId as RustIteratorMethodId
 
 
-pub def is_generator_consumer(method: str) -> bool:
-    """Name the iterator methods that drain their receiver into one value."""
-    return method in ["count", "sum", "fold", "reduce", "any", "all", "find", "for_each"]
+pub def is_generator_consumer(method: RustIteratorMethodId) -> bool:
+    """Report whether a checker-selected iterator operation drains its receiver into one value."""
+    return method in [
+        RustIteratorMethodId.Count,
+        RustIteratorMethodId.Sum,
+        RustIteratorMethodId.Fold,
+        RustIteratorMethodId.Reduce,
+        RustIteratorMethodId.Any,
+        RustIteratorMethodId.All,
+        RustIteratorMethodId.Find,
+        RustIteratorMethodId.ForEach,
+    ]
 
 
-pub def consumer_result(method: str, source: PlanType) -> PlanType:
+pub def consumer_result(method: RustIteratorMethodId, source: PlanType) -> PlanType:
     """Return the result a discarded consumer call still produces; `find`'s carrier comes from its destination."""
-    if method == "any" or method == "all":
+    if method in [RustIteratorMethodId.Any, RustIteratorMethodId.All]:
         return PlanType.Bool
-    if method == "for_each":
+    if method == RustIteratorMethodId.ForEach:
         return PlanType.Unit
-    if method == "sum" and source == PlanType.Generator(ListLeaf.Float, 0):
+    if method == RustIteratorMethodId.Sum and source == PlanType.Generator(ListLeaf.Float, 0):
         return PlanType.Float
     return PlanType.Int
 
 
 pub def generator_consumer(
     mut builder: Builder,
-    method: str,
+    method: RustIteratorMethodId,
     source: Operand,
     arguments: list[Operand],
     output: Place,
@@ -40,7 +50,7 @@ pub def generator_consumer(
         Some((leaf, depth)) =>
             if source_type != PlanType.Generator(leaf, depth):
                 return Err("unsupported Body IR borrowed generator consumer receiver")
-            if method == "count":
+            if method == RustIteratorMethodId.Count:
                 if len(arguments) != 0:
                     return Err("invalid Body IR generator count arguments")
                 element = generator_element(leaf, depth)
@@ -56,9 +66,9 @@ pub def generator_consumer(
                     span,
                 )
                 return Ok(None)
-            if source_type == PlanType.Generator(ListLeaf.Str, 0) and method == "any":
+            if source_type == PlanType.Generator(ListLeaf.Str, 0) and method == RustIteratorMethodId.Any:
                 return text_any(builder, source, source_type, arguments, output, span)
-            if source_type == PlanType.Generator(ListLeaf.Float, 0) and method == "sum":
+            if source_type == PlanType.Generator(ListLeaf.Float, 0) and method == RustIteratorMethodId.Sum:
                 return float_sum(builder, source, source_type, arguments, output, span)
             if source_type != PlanType.Generator(ListLeaf.Int, 0):
                 return Err("unsupported Body IR generator consumer element outside int")
@@ -121,7 +131,7 @@ def text_any(
 
 def int_consumer(
     mut builder: Builder,
-    method: str,
+    method: RustIteratorMethodId,
     source: Operand,
     arguments: list[Operand],
     output: Place,
@@ -129,32 +139,40 @@ def int_consumer(
 ) -> Result[None, str]:
     """Drain an integer generator; each function value takes its items by value, as legacy's callable ABI does."""
     generator = PlanType.Generator(ListLeaf.Int, 0)
-    if method == "sum":
+    if method == RustIteratorMethodId.Sum:
         if len(arguments) != 0:
             return Err("invalid Body IR generator sum arguments")
         return consume(builder, "sum_int_generator", [generator], PlanType.Int, [source], output, span)
-    if method == "fold" or method == "reduce":
+    if method in [RustIteratorMethodId.Fold, RustIteratorMethodId.Reduce]:
         return accumulate(builder, method, source, arguments, output, span)
     if len(arguments) != 1:
-        return Err(f"invalid Body IR generator {method} arguments")
+        return Err("invalid Body IR generator consumer arguments")
     mut returns = PlanType.Bool
-    if method == "for_each":
+    if method == RustIteratorMethodId.ForEach:
         returns = PlanType.Unit
     signature = [PlanType.Int, returns]
     callable = adapter_callable(builder, arguments[0], signature, span)?
     parameters = [generator, PlanType.FunctionPointer(signature)]
-    if method == "find":
+    if method == RustIteratorMethodId.Find:
         result = borrowed_at(builder.locals, output.local).ty
         _owner, declaration = carrier_layout(builder, result)?
         if declaration.carrier != Carrier.Option or declaration.variants[1].fields != [PlanType.Int]:
             return Err("unsupported Body IR generator find carrier")
         return consume(builder, "find_int_generator", parameters, result, [source, callable], output, span)
-    return consume(builder, f"{method}_int_generator", parameters, returns, [source, callable], output, span)
+    return consume(
+        builder,
+        int_consumer_name(method)?,
+        parameters,
+        returns,
+        [source, callable],
+        output,
+        span,
+    )
 
 
 def accumulate(
     mut builder: Builder,
-    method: str,
+    method: RustIteratorMethodId,
     source: Operand,
     arguments: list[Operand],
     output: Place,
@@ -162,19 +180,36 @@ def accumulate(
 ) -> Result[None, str]:
     """Combine the integer items from an initial value, as `fold` and `reduce` both do."""
     if len(arguments) != 2 or value_type(builder, arguments[0])? != PlanType.Int:
-        return Err(f"unsupported Body IR generator {method} arguments")
+        return Err("unsupported Body IR generator accumulator arguments")
     signature = [PlanType.Int, PlanType.Int, PlanType.Int]
     combine = adapter_callable(builder, arguments[1], signature, span)?
     parameters = [PlanType.Generator(ListLeaf.Int, 0), PlanType.Int, PlanType.FunctionPointer(signature)]
     return consume(
         builder,
-        f"{method}_int_generator",
+        accumulator_name(method)?,
         parameters,
         PlanType.Int,
         [source, arguments[0], combine],
         output,
         span,
     )
+
+
+def int_consumer_name(method: RustIteratorMethodId) -> Result[str, str]:
+    """Project one typed predicate consumer to its native runtime routine."""
+    match method:
+        RustIteratorMethodId.Any => return Ok("any_int_generator")
+        RustIteratorMethodId.All => return Ok("all_int_generator")
+        RustIteratorMethodId.ForEach => return Ok("for_each_int_generator")
+        _ => return Err("unsupported Body IR integer generator consumer")
+
+
+def accumulator_name(method: RustIteratorMethodId) -> Result[str, str]:
+    """Project one typed accumulator consumer to its native runtime routine."""
+    match method:
+        RustIteratorMethodId.Fold => return Ok("fold_int_generator")
+        RustIteratorMethodId.Reduce => return Ok("reduce_int_generator")
+        _ => return Err("unsupported Body IR integer generator accumulator")
 
 
 def consume(
