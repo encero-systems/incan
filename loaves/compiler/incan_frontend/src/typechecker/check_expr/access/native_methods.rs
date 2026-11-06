@@ -10,6 +10,7 @@ use crate::typechecker::{IdentKind, OpenRustGenericCall};
 use incan_lang::interop::{
     RustCollectionFamily, RustFunctionSig, RustItemKind, RustItemMetadata, RustMethodSig, RustTypeInfo,
 };
+use incan_lang::lang::surface::types as surface_types;
 use incan_lang::lang::types::numerics::{self, NumericTypeId};
 
 /// The signature and owner context selected before validating an inherent method's written arguments.
@@ -318,6 +319,17 @@ impl TypeChecker {
         )
     }
 
+    /// Normalize a compatibility facet's inspected impl owner to the declaration that actually owns the method.
+    fn canonical_runtime_method(selected: &RustMethodSig) -> RustMethodSig {
+        let mut canonical = selected.clone();
+        if let Some(template) = canonical.impl_self_type.as_deref()
+            && let Some(owner) = canonical_runtime_rust_display(template)
+        {
+            canonical.impl_self_type = Some(owner);
+        }
+        canonical
+    }
+
     /// Check receiver mutability, specialize the selected signature, validate arguments and retain that same callee.
     fn check_native_inherent_method(
         &mut self,
@@ -327,6 +339,8 @@ impl TypeChecker {
         receiver_is_type: bool,
         preserves_shape: bool,
     ) -> Option<ResolvedType> {
+        let selected = Self::canonical_runtime_method(selected);
+
         // ---- Receiver contract ----
         let errors_before = self.errors.len();
         let signature = &selected.signature;
@@ -388,7 +402,7 @@ impl TypeChecker {
             .map(|receiver| self.rust_closed_owner(&receiver, owner, call.rust_path))
             .map(|receiver| self.primitive_receiver(receiver, owner));
         let retained = self.retain_checked_rust_method(
-            selected,
+            &selected,
             if specialized.specializes_owner {
                 &[]
             } else {
@@ -680,4 +694,11 @@ impl TypeChecker {
         }
         native
     }
+}
+
+/// Preserve generic arguments while canonicalizing a runtime surface type's compatibility crate spelling.
+fn canonical_runtime_rust_display(display: &str) -> Option<String> {
+    let canonical = surface_types::canonical_runtime_rust_path(display)?;
+    let suffix = display.find('<').map_or("", |index| &display[index..]);
+    Some(format!("{canonical}{suffix}"))
 }

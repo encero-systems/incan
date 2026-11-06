@@ -89,6 +89,8 @@ pub const JSON_VALUE_RUST_PATH: &str = "incan_std_data::json::JsonValue";
 pub mod facets {
     /// The mandatory facet every generated program links.
     pub const CORE: &str = "incan_std_core";
+    /// Foundational native mechanisms owned by `std.primitives`.
+    pub const PRIMITIVES: &str = "incan_std_primitives";
     /// `std.json`, `std.serde` and the ordinal-map helpers behind `std.collections`.
     pub const DATA: &str = "incan_std_data";
     /// `std.async`.
@@ -98,7 +100,7 @@ pub mod facets {
     /// `std.testing`.
     pub const TESTING: &str = "incan_std_testing";
     /// Every facet, the mandatory one first.
-    pub const ALL: [&str; 5] = [CORE, DATA, ASYNC, WEB, TESTING];
+    pub const ALL: [&str; 6] = [CORE, PRIMITIVES, DATA, ASYNC, WEB, TESTING];
 
     /// The facet a namespace's generated code links: the namespace's own facet, or the mandatory core facet.
     pub fn for_namespace(namespace: &str) -> &'static str {

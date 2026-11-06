@@ -93,7 +93,9 @@ impl TypeChecker {
         method: &str,
         receiver_metadata: Option<&Arc<RustItemMetadata>>,
     ) -> Option<Arc<RustItemMetadata>> {
-        if let Some(metadata) = receiver_metadata {
+        let canonical = surface_types::canonical_runtime_rust_path(rust_path);
+        let compatibility_reexport = canonical.as_deref().is_some_and(|path| path != rust_path);
+        if !compatibility_reexport && let Some(metadata) = receiver_metadata {
             let is_authoritative = match &metadata.kind {
                 RustItemKind::Type(type_info) => {
                     type_info.methods.iter().any(|candidate| candidate.name == method)
@@ -106,7 +108,7 @@ impl TypeChecker {
                 return Some(metadata.clone());
             }
         }
-        self.rust_item_metadata_for_method_call(rust_path, method)
+        self.rust_item_metadata_for_method_call(canonical.as_deref().unwrap_or(rust_path), method)
     }
 
     /// Return the canonical Rust item path for a nominal receiver. Owner arguments remain on the receiver type;
