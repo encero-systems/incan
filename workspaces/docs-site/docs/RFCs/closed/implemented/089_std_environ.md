@@ -7,7 +7,7 @@
     - RFC 017 (validated newtypes with implicit coercion)
     - RFC 033 (`ctx` typed configuration context)
     - RFC 063 (`std.process` process spawning and command execution)
-    - RFC 067 (`std.ci` deterministic CI and automation scripting primitives)
+    - RFC 067 (retired proposal for CI-specific standard modules)
     - RFC 070 (Result combinators)
 - **Issue:** https://github.com/encero-systems/incan/issues/557
 - **RFC PR:** https://github.com/encero-systems/incan/pull/825
@@ -25,7 +25,7 @@ This RFC introduces `std.environ`, a small standard-library module for explicit 
 3. **Missing and malformed are distinct:** a missing variable is not the same as a present variable that cannot be parsed or validated.
 4. **Typed reads compose with the type system:** `get_as[T]` should parse supported primitive targets and should validate newtypes through their `from_underlying` hooks where applicable.
 5. **Application configuration remains higher-level:** ordinary programs may use `std.environ` directly, but structured app config should prefer RFC 033 `ctx` once available.
-6. **CI wrappers stay narrow:** RFC 067 `std.ci.env` may wrap or re-export this surface, but CI should not be the only route to reading environment variables.
+6. **CI scripts use ordinary environment access:** provider libraries can wrap this surface when they need runner-specific conventions.
 
 ## Motivation
 
@@ -57,7 +57,7 @@ The example is the desired distinction: the environment is runtime input, but th
 - Provide typed reads through `get_as[T]`.
 - Make typed reads compose with validated newtypes and `from_underlying`.
 - Keep secrets and diagnostics conservative.
-- Make `std.ci.env` and `ctx` able to build on or align with the same underlying semantics.
+- Let automation libraries and `ctx` build on the same underlying semantics.
 
 ## Non-Goals
 
@@ -258,9 +258,9 @@ RFC 033 `ctx` remains the preferred surface for typed application configuration.
 
 `ctx` may use `std.environ` semantics internally, but this RFC does not require a particular implementation relationship.
 
-### Relationship to `std.ci.env`
+### CI scripts and provider libraries
 
-RFC 067 `std.ci.env` is CI-oriented. It may wrap, re-export, or mirror `std.environ` functions, but CI should not be the only namespace where environment access exists.
+RFC 067 was retired. CI scripts use `std.environ` directly. External provider libraries may interpret their runner’s variable names and formats.
 
 Provider-specific behavior must remain outside `std.environ`. `std.environ` reads process environment variables; it does not know about GitHub Actions, GitLab CI, buildkite, or any other runner.
 
@@ -285,7 +285,7 @@ This feature is additive. Existing code using Rust interop, project lifecycle en
 ## Alternatives considered
 
 1. **Use only `ctx` for environment variables** — Rejected because `ctx` is a structured configuration feature. Programs and libraries still need a small runtime primitive for direct environment reads.
-2. **Use only `std.ci.env`** — Rejected because environment variables are not CI-specific. CI should be a specialized wrapper, not the only environment namespace.
+2. **Use only `std.ci.env`** — Rejected because environment variables are not CI-specific. Provider-specific wrappers can live in external Loaves.
 3. **Name the module `std.env`** — Rejected because `env` already appears heavily in project lifecycle terminology and RFC 033 axis examples. `std.environ` is more explicit and Python-familiar.
 4. **Single `get(key, default=...)` function** — Rejected because it blurs required, optional, defaulted, and typed access into one overloaded call shape. Separate helpers keep call sites obvious.
 5. **Return empty string for missing variables** — Rejected because it hides configuration mistakes and collapses absence into a valid value.
@@ -295,7 +295,7 @@ This feature is additive. Existing code using Rust interop, project lifecycle en
 
 ## Drawbacks
 
-- The surface adds another configuration-adjacent API next to `ctx`, project lifecycle environments, `std.ci.env`, and `std.process` env builders.
+- The surface adds another configuration-adjacent API next to `ctx`, project lifecycle environments, and `std.process` env builders.
 - `get_as[T]` introduces protocol complexity around parsing, newtypes, validation errors, and default handling.
 - A read-only environment API may frustrate users who expect Python-like mutation through `os.environ`.
 - Platform differences around key casing, encoding, and process environment mutation remain visible at the boundary.
@@ -397,5 +397,5 @@ This feature is additive. Existing code using Rust interop, project lifecycle en
 - `get_as[T]` uses the existing source-owned `TryFrom[str]` protocol. The compiler provides conformance for the primitive and validated-newtype families required here; user-defined targets opt in by implementing the trait.
 - `std.environ` intentionally exposes Unicode `str` values only. Platform byte-oriented access requires a separate proposal.
 - A default for a newtype target may use the underlying type when ordinary RFC 017 implicit checked construction permits that call-site coercion. Otherwise callers must pass an already constructed target value.
-- `std.ci.env` may retain CI-specific wrappers and diagnostics. This RFC requires semantic alignment, not direct reexports.
+- External CI libraries may provide provider-specific wrappers and diagnostics over the same environment semantics.
 - `get_optional` and `get_or` are deliberately lossy convenience functions. Precise host failure categories remain available through `get` and `get_as`.

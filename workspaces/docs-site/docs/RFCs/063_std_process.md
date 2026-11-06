@@ -208,9 +208,15 @@ Contract should state:
 - `kill()` is forceful;
 - platform differences are documented but API intent is stable.
 
+For a synchronous single-command `run` or `run_checked` whose deadline expires while its direct child is still running, the operation must request termination and wait for the direct child to be reaped. The typed timeout outcome must distinguish confirmed cleanup from a failed termination or wait, retaining the cleanup failure. If the process already exited, preserve its observed exit status. A spawn failure, a nonzero exit and an expired deadline are distinct outcomes. The release test drive covers the direct child only; process-tree management requires its own explicit policy.
+
 ### Stdio and composition with stdlib
 
 `std.fs.File` and `std.io.BytesIO` compose directly with process stdio binding. This avoids requiring additional abstractions just to wire common file and in-memory process flows.
+
+A caller must be able to bind stdin to a null source, open a log once, direct stdout to that open file, and direct stderr to the same destination. The child streams share the file position. Constructing or spawning the command must retain or transfer the necessary handles so the child can continue writing after the launching function returns. Redirection must not reopen the path, truncate the log a second time, or buffer the full output in memory. This guarantees preservation of writes to the shared destination; ordering between independently buffered writers depends on when the child actually writes.
+
+Two acceptance cases come from RFC 067's review. A release step must run a child with a chosen directory and environment, retain both output streams in its log, and report deadline cleanup. An Oven test launcher must return a live child immediately with the same redirection. Its caller may poll `try_wait()`, release a test's memory reservation when it finishes, and later read the log. Admission, release receipts and failure formatting remain project policy. Convenience method names for null stdin and merging streams are implementation choices.
 
 ### Error model
 
