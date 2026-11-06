@@ -10,13 +10,22 @@ pub mod types;
 
 use std::path::{Path, PathBuf};
 
-use discovery::{discover_test_file_candidates, discover_test_files_with_session};
+use discovery::{discover_test_file_candidates_observed, discover_test_files_with_session};
 
 use crate::session::CompilationSession;
 
 /// Discover a test inventory through a compilation session already owned by the caller.
 pub fn discover_test_files_with_compilation_session(path: &Path, session: &CompilationSession) -> Vec<PathBuf> {
-    let candidates = discover_test_file_candidates(path);
+    discover_test_files_with_observations(path, session, None)
+}
+
+/// Use the same discovery and ownership rules while optionally retaining its consulted input observations.
+pub(crate) fn discover_test_files_with_observations(
+    path: &Path,
+    session: &CompilationSession,
+    observations: Option<&mut oven_model::observed_inputs::InputObservations>,
+) -> Vec<PathBuf> {
+    let candidates = discover_test_file_candidates_observed(path, observations);
     let authority_root = session
         .manifest
         .as_ref()

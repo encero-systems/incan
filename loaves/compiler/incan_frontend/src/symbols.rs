@@ -167,6 +167,13 @@ pub fn canonical_builtin_function_identity(builtin: BuiltinFnId) -> Option<Canon
         .map(|entry| canonical_builtin_identity(entry.canonical))
 }
 
+/// Project the canonical identity of a builtin `Option` or `Result` constructor, the same identity symbol registration
+/// records for it, so checked-IR consumers can name a constructor the checker selected without reading source
+/// spelling. Source bindings and aliases cannot authorize a synthetic Option pattern through this finite registry.
+pub(crate) fn canonical_builtin_constructor_identity(constructor: constructors::ConstructorId) -> CanonicalSymbolId {
+    canonical_builtin_identity(constructors::as_str(constructor))
+}
+
 /// Build one canonical identity from a compiler-owned builtin registry entry.
 fn canonical_builtin_identity(canonical_name: &str) -> CanonicalSymbolId {
     CanonicalSymbolId {
@@ -174,6 +181,22 @@ fn canonical_builtin_identity(canonical_name: &str) -> CanonicalSymbolId {
         origin: SymbolOrigin::Builtin,
         declaration_name: canonical_name.to_string(),
         kind: SemanticSourceTargetKind::Builtin,
+        scope_discriminant: None,
+        declaration_span: HirSourceSpan::new(0, 0),
+    }
+}
+
+/// Build the canonical target of a member selected from a compiler-owned typed surface registry.
+///
+/// Builtin members have no source declaration span. The owner-qualified declaration key preserves their owner
+/// across checked-IR boundaries; callers must select the owner and member semantically, never from source spelling
+/// alone.
+pub(crate) fn canonical_builtin_member_identity(owner: &str, member: &str) -> CanonicalSymbolId {
+    CanonicalSymbolId {
+        namespace: SymbolNamespace::Member,
+        origin: SymbolOrigin::Builtin,
+        declaration_name: format!("{owner}.{member}"),
+        kind: SemanticSourceTargetKind::Method,
         scope_discriminant: None,
         declaration_span: HirSourceSpan::new(0, 0),
     }

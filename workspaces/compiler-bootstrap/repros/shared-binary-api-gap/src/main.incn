@@ -1,0 +1,8 @@
+"""Probe the store-backed binary transport needed by the Incan compiler bootstrap."""
+
+from rust::oven_rustc::rustc import bake_trusted_direct_rustc_run_in_store
+
+
+pub def main() -> None:
+    """Resolve the export itself; argument validation is a separate subsequent probe."""
+    bake_trusted_direct_rustc_run_in_store()

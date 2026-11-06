@@ -11,18 +11,24 @@ use incan_semantics_core::body_ir as bir;
 #[cfg(feature = "rust_inspect")]
 use std::fs;
 
-/// A temporary Cargo workspace holding one probe package, for tests that drive the inspector against real metadata.
+/// A temporary direct Loaf workspace holding one probe package for tests that seed or extract Rust metadata.
 #[cfg(feature = "rust_inspect")]
 pub fn seeded_rust_inspect_workspace() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
+    fs::create_dir_all(tmp.path().join("src"))?;
+    fs::write(tmp.path().join("src/lib.rs"), "")?;
     fs::write(
-        tmp.path().join("Cargo.toml"),
-        r#"[package]
+        tmp.path().join("loaf.toml"),
+        r#"[project]
 name = "ra_seeded_metadata_probe"
 version = "0.1.0"
+[rust]
+name = "ra_seeded_metadata_probe"
+type = "lib"
 edition = "2021"
 "#,
     )?;
+    fs::write(tmp.path().join(rust_inspect::OVEN_DIRECT_INSPECTION_MARKER), "")?;
     Ok(tmp)
 }
 

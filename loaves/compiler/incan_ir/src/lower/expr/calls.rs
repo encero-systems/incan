@@ -3118,12 +3118,16 @@ impl AstLowering {
         })
     }
 
-    /// Prefer monomorphized call-site type args from the typechecker (RFC 054); otherwise lower AST types.
+    /// Preserve Rust inference for calls without written type arguments; resolve explicit arguments through checked
+    /// facts (RFC 054).
     pub fn lower_call_site_type_args(
         &self,
         call_span: ast::Span,
         type_args: &[ast::Spanned<ast::Type>],
     ) -> Vec<IrType> {
+        if type_args.is_empty() {
+            return Vec::new();
+        }
         if let Some(info) = self.type_info.as_ref()
             && let Some(resolved) = info
                 .calls

@@ -1,0 +1,24 @@
+# behavior: projected nested structural lists match native
+# expect-stdout:
+#   one
+#   two
+#   13
+
+
+"""Projected nested structural lists match native."""
+def observe() -> int:
+  """Print labels and score zipped nested structural values."""
+  groups = [[(1, "one"), (2, "two")]]
+  labels = ([true, false], 0)
+  mut total = 0
+  for numbered_pair, flag in zip(groups[0], labels.0):
+    println(numbered_pair.1)
+    total += numbered_pair.0
+    if flag:
+      total += 10
+  return total
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(observe())

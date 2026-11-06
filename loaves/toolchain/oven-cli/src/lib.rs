@@ -8,8 +8,14 @@
 //! frontend (`tools`), which is why this crate depends on both. `incan` keeps mounting every command here under its
 //! own spellings, so scripts, CI and tests that say `incan oven bake --project .` are unchanged.
 
+pub mod binding_inspect;
 pub mod cli;
 pub mod commands;
+pub mod invocation_trace;
+pub mod project_owner;
+pub mod test_command;
+pub mod test_runner;
+pub mod workspace_scope;
 
 pub use cli::{
     LockArgs, OvenCommand, OvenGateCommand, OvenHarvestProfileArgument, OvenInteropAdapterArgument, OvenInteropCommand,
@@ -22,6 +28,41 @@ pub use incan_driver::error::{CliError, CliResult, ExitCode};
 /// Run one `oven` command family member.
 pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
     match command {
+        OvenCommand::Tests {
+            arguments,
+            incan_only,
+            rust_only,
+        } => {
+            use std::io::IsTerminal;
+            let languages = if incan_only {
+                test_runner::TestLanguages::Incan
+            } else if rust_only {
+                test_runner::TestLanguages::Rust
+            } else {
+                test_runner::TestLanguages::All
+            };
+            test_command::run(arguments, std::io::stdout().is_terminal(), languages)
+        }
+        OvenCommand::ConvertCargo { workspace, project } => commands::oven::convert_cargo::run(&workspace, &project),
+        OvenCommand::CompileClosure(arguments) => commands::oven::compile_closure::run(arguments),
+        OvenCommand::BootstrapCompiler {
+            compiler_root,
+            preparation_output,
+            output,
+            profile,
+            rustc,
+            store,
+        } => commands::oven::oven_bootstrap_compiler(
+            &compiler_root,
+            &preparation_output,
+            &output,
+            &rustc,
+            &store,
+            &profile,
+        ),
+        OvenCommand::PrepareStandardPackages { native_graph_output } => {
+            commands::oven::oven_prepare_standard_packages(&native_graph_output)
+        }
         OvenCommand::SdkHandoff { command } => commands::oven_sdk_handoff(command),
         OvenCommand::RetainSuiteOutput { clock, arguments } => commands::oven_retain_suite_output(clock, &arguments),
         OvenCommand::ReconcilePartitions { reports, summary } => {
@@ -33,8 +74,12 @@ pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
             package_features,
             format,
         } => commands::oven_bake_project(project, target, package_features.into(), format),
-        OvenCommand::SdkProviderStoreIdentity { compiler_root } => {
-            let identity = incan_provider::sdk_store::sdk_provider_store_identity_for_compiler_root(&compiler_root)?;
+        OvenCommand::SdkProviderStoreIdentity { compiler_root, inputs } => {
+            let identity = if inputs {
+                incan_provider::sdk_store::sdk_provider_input_identity_for_compiler_root(&compiler_root)?
+            } else {
+                incan_provider::sdk_store::sdk_provider_store_identity_for_compiler_root(&compiler_root)?
+            };
             println!("{identity}");
             Ok(ExitCode::SUCCESS)
         }
@@ -235,6 +280,7 @@ pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
             partition_index,
             partition_count,
             fixture_cargo,
+            explicit_bake_workspace,
             output,
             store,
             format,
@@ -247,10 +293,38 @@ pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
             partition_index,
             partition_count,
             fixture_cargo,
+            explicit_bake_workspace,
             output,
             store: store.into(),
             format,
         }),
+        OvenCommand::CompilerNativeTests {
+            compiler_root,
+            target,
+            declaration,
+            native_graph,
+            native_index,
+            native_blobs,
+            source_inputs,
+            exact_names,
+            output,
+            store,
+            explicit_bake_workspace,
+            rustc,
+        } => commands::oven::native_compiler_tests::run(
+            compiler_root,
+            target,
+            declaration,
+            native_graph,
+            native_index,
+            native_blobs,
+            source_inputs,
+            exact_names,
+            output,
+            store.into(),
+            explicit_bake_workspace,
+            rustc,
+        ),
         OvenCommand::Plan { command } => match command {
             OvenPlanCommand::Publish {
                 receipt,

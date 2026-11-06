@@ -1,0 +1,14 @@
+[project]
+name = "compiler_bootstrap"
+version = "0.1.0"
+private = true
+
+[dependencies]
+incan_driver = { loaf = "incan_driver", path = "../../loaves/compiler/incan_driver", default-features = false, features = ["cli", "rust_inspect", "std_async", "std_decorators", "std_testing"] }
+incan_cli = { loaf = "incan_cli", path = "../../loaves/toolchain/incan-cli", default-features = false, features = ["rust_inspect", "std_async", "std_decorators", "std_testing"] }
+incan_frontend = { loaf = "incan_frontend", path = "../../loaves/compiler/incan_frontend", default-features = false, features = ["rust_inspect", "std_async", "std_decorators", "std_testing"] }
+oven_cargo_compat = { loaf = "oven_cargo_compat", path = "../../loaves/oven/oven_cargo_compat" }
+oven_store = { loaf = "oven_store", path = "../../loaves/oven/oven_store" }
+oven_model = { loaf = "oven_model", path = "../../loaves/oven/oven_model" }
+oven_rustc = { loaf = "oven_rustc", path = "../../loaves/oven/oven_rustc" }
+tracing-subscriber = { loaf = "crates-io/tracing-subscriber", version = "0.3", features = ["env-filter"] }

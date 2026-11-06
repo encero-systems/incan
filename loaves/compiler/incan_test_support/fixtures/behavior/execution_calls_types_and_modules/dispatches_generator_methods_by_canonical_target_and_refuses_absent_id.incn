@@ -1,0 +1,15 @@
+# behavior: dispatches generator methods by canonical target and refuses absent identity, as the legacy route runs it
+# expect-stdout:
+#   70
+
+
+"""Dispatches generator methods by canonical target and refuses absent identity, as the legacy route runs it."""
+def program_result() -> int:
+  """Compute and return `values[0] + values[1]`."""
+  values = (value * 10 for value in range(1, 5) if value > 2).collect()
+  return values[0] + values[1]
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

@@ -115,9 +115,9 @@ pub fn inspect_providers(
     let provider_plan = context.session.provider_plan_for_modules(&context.modules)?;
     let sdk = context
         .session
-        .sdk_inventory
+        .sdk_inventory()
         .as_ref()
-        .zip(context.session.sdk_components.as_ref())
+        .zip(context.session.sdk_components().as_ref())
         .map(|(inventory, resolved)| SdkReport {
             identity: inventory.identity(),
             profile: resolved.profile.clone(),
@@ -155,7 +155,7 @@ pub fn inspect_features(
     let provider_plan = context.session.provider_plan_for_modules(&context.modules)?;
     let packages = context
         .session
-        .package_feature_plan
+        .package_feature_plan()
         .iter()
         .flat_map(|plan| plan.packages())
         .map(|package| PackageFeaturesReport {
@@ -170,7 +170,7 @@ pub fn inspect_features(
         .collect();
     let edges = context
         .session
-        .package_feature_plan
+        .package_feature_plan()
         .iter()
         .flat_map(|plan| plan.edges())
         .map(|edge| FeatureEdgeReport {

@@ -1537,6 +1537,7 @@ mod tests {
         fs::write(&archive_path, b"native archive")?;
         let archive_digest = selected_graph_sha256(b"native archive");
         let mut receipt = PublisherExecutionReceipt {
+            executable_runtime_files: Vec::new(),
             schema_version: PUBLISHER_EXECUTION_RECEIPT_SCHEMA_VERSION,
             identity: String::new(),
             role: "link".to_string(),
@@ -1547,7 +1548,9 @@ mod tests {
             toolchain: graph.graph().selection.intent.toolchain.clone(),
             executable_owner: selected_graph_sha256(b"compiler owner"),
             executable_digest: selected_graph_sha256(b"compiler"),
+            virtual_toolchain: None,
             objects: vec![PublisherExecutionObjectReceipt {
+                reads: Vec::new(),
                 name: "fixture.o".to_string(),
                 logical_argv: vec!["input:source".to_string(), "output:fixture.o".to_string()],
                 digest: selected_graph_sha256(b"fixture object"),
@@ -1563,6 +1566,17 @@ mod tests {
             }],
         };
         receipt.identity = publisher_execution_receipt_identity(&receipt)?;
+        let old_wire = serde_json::to_value(&receipt)?;
+        assert!(old_wire.get("executable_runtime_files").is_none());
+        let restored: PublisherExecutionReceipt = serde_json::from_value(old_wire)?;
+        assert_eq!(restored.identity, receipt.identity);
+        restored.verify_identity()?;
+        let mut changed_runtime = restored;
+        changed_runtime.executable_runtime_files = vec![oven_model::manifest::RustFactArtifactMember {
+            path: "runtime/libexample.so".to_string(),
+            digest: selected_graph_sha256(b"runtime library"),
+        }];
+        assert!(changed_runtime.verify_identity().is_err());
         let product = super::OvenPublisherLinkProduct {
             library_name: "fixture".to_string(),
             library_kind: RustFactLibraryKind::Static,
@@ -2263,6 +2277,7 @@ mod tests {
             producer: "isle-meta".to_string(),
             fact_owner: digest_bytes(b"cranelift source owner"),
             executable: RustFactExecutable {
+                runtime_files: Vec::new(),
                 name: "isle".to_string(),
                 owner: digest_bytes(b"isle executable owner"),
                 path: "bin/isle".to_string(),

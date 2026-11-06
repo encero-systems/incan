@@ -9,6 +9,7 @@
 
 pub mod composition;
 pub mod selection;
+pub mod shared;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -91,6 +92,35 @@ pub enum OvenDirectRustcPlanSelection {
 }
 
 impl OvenDirectRustcPlanSelection {
+    /// Enumerate one retained stored plan's original physical inputs without selecting another Store entry.
+    ///
+    /// Its owning process must keep this selection and all shared leases alive. The existing selector already matches
+    /// stored plans by build-unit identity and intent rather than consumer source identity. Other selection families
+    /// return false until their complete retained-input contract is represented; they keep ordinary selection.
+    pub fn visit_retained_inputs(&self, visit: &mut impl FnMut(&Path)) -> Result<bool, OvenRustcError> {
+        let Self::Stored(selected) = self else {
+            return Ok(false);
+        };
+        let entry = selected
+            .artifact_root
+            .parent()
+            .ok_or_else(|| OvenRustcError::InvalidInput {
+                field: "retained plan",
+                message: "stored plan has no entry root".to_string(),
+            })?;
+        for name in ["artifact.json", "loaf.json", "payload", "native-receipt.json"] {
+            visit(&entry.join(name));
+        }
+        visit(&selected.artifact_root);
+        for relative in crate::rustc::expected_artifacts(&selected.artifacts)?.keys() {
+            visit(&selected.physical_path(relative));
+        }
+        for owner in &selected._shared_owners {
+            owner.visit_admitted_native_inputs(visit);
+        }
+        Ok(true)
+    }
+
     /// Return the receipt-bound identity included in a normal-command build report.
     pub fn report_identity(&self) -> String {
         match self {
@@ -309,6 +339,23 @@ pub struct OvenStoredDirectRustcExecutionPlan {
     pub artifact_root: PathBuf,
     pub artifact_plan: OvenRustcArtifactPlan,
     _lease: OvenStoreLease,
+    /// Independent receipt-addressed native units retained for the entire consumer execution.
+    _shared_owners: Vec<std::sync::Arc<oven_store::store::OvenStoreExecutionPayload>>,
+    /// Logical coordinates bound to the original leased native owners or plan-owned facade files.
+    pub(crate) shared_paths: std::collections::BTreeMap<String, PathBuf>,
+}
+
+impl OvenStoredDirectRustcExecutionPlan {
+    /// Resolve a manifest-validated coordinate through its retained native owner or ordinary plan-owned root.
+    ///
+    /// Callers supply only coordinates from this selection's validated artifact or search-path declarations; this
+    /// lookup relocates existing authority and never discovers or admits another artifact.
+    pub(crate) fn physical_path(&self, relative: &str) -> PathBuf {
+        self.shared_paths
+            .get(relative)
+            .cloned()
+            .unwrap_or_else(|| self.artifact_root.join(relative))
+    }
 }
 
 /// Receipt-bound store entry that contributes only project-specific files to one exact compiler Loaf.
@@ -450,15 +497,15 @@ impl OvenPackagedProviderExecutionPlan {
                     )
                 }),
             ),
-            Self::Direct(packages) => retain_packaged_provider_fragment_dependency_search_paths(
-                plan,
-                packages.fragments.iter().map(|fragment| {
-                    (
-                        fragment.plan.artifact_root.as_path(),
-                        fragment.dependency_search_paths.as_slice(),
-                    )
-                }),
-            ),
+            Self::Direct(packages) => {
+                for fragment in &packages.fragments {
+                    for relative in &fragment.dependency_search_paths {
+                        plan.retain_caller_dependency_search_path(fragment.plan.physical_path(relative));
+                    }
+                }
+                plan.dependency_search_paths.sort();
+                plan.dependency_search_paths.dedup();
+            }
         }
     }
 

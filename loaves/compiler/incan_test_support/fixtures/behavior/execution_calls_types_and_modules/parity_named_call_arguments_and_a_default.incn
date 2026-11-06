@@ -1,0 +1,15 @@
+# behavior: a call binds keyword arguments by name and falls back to a default (parity corpus case 9)
+# expect-stdout:
+#   12
+#   10
+
+"""A call binds keyword arguments by name and falls back to a default (parity corpus case 9)."""
+def scale(value: int, factor: int = 2) -> int:
+    """Return the fixture expression `value * factor`."""
+    return value * factor
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(scale(factor=3, value=4))
+    println(scale(5))

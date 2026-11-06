@@ -1,0 +1,64 @@
+"""Close checked generated type metadata against the same retained nominal declaration used for storage."""
+
+from rust::incan_semantics_core import SemanticSourceTargetKind
+from rust::incan_semantics_core::body_ir import TypeMetadataTarget, TypeMetadataOperation, Place as RustPlace
+from pub::incan_mir_plan import PlanType, SourceSpan, Operand, Constant, RvalueKind
+from pub::incan_mir_plan import assign as plan_assign
+from frame import Builder, literal, place_type, drop_owned, track_rvalue_moves
+from models import model_type
+from type_parameters import substitute
+from text_plan import owned_literal
+from lowering import scalar_place
+from frame import read_place
+
+
+pub def lower_type_metadata(
+    mut builder: Builder,
+    target: &TypeMetadataTarget,
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Resolve only a frontend-approved pure metadata operation; missing layouts or reflection policies refuse."""
+    if target.member.kind != SemanticSourceTargetKind.Method:
+        return Err("unsupported Body IR type metadata without a generated method identity")
+    if target.owner.kind != SemanticSourceTargetKind.GenericBinder and target.owner.kind != SemanticSourceTargetKind.Model and target.owner.kind != SemanticSourceTargetKind.Class and target.owner.kind != SemanticSourceTargetKind.Newtype:
+        return Err("unsupported Body IR type metadata owner")
+    closed = substitute(target.receiver_type, builder.type_parameters, builder.type_arguments)?
+    ty = model_type(builder.nominals, closed)?
+    mut owner = -1
+    match ty:
+        PlanType.Model(index, _name) =>
+            owner = index
+        _ => return Err("unsupported Body IR type metadata without a retained nominal layout")
+    declaration = builder.nominals[owner]
+    if len(declaration.type_parameters) != 0:
+        return Err("unsupported Body IR type metadata on an unclosed nominal layout")
+    mut value = literal(Constant.Int(0), span)
+    mut result = PlanType.Int
+    match target.operation:
+        TypeMetadataOperation.ClassName =>
+            if target.member.declaration_name != "__class_name__" or declaration.canonical.kind != SemanticSourceTargetKind.Model and declaration.canonical.kind != SemanticSourceTargetKind.Class:
+                return Err("unsupported Body IR class-name metadata contract")
+            name = owned_literal(builder, str(declaration.canonical.declaration_name), span)
+            value = read_place(name, true, span)
+            result = PlanType.String
+        TypeMetadataOperation.FieldCount =>
+            if target.member.declaration_name != "__fields__":
+                return Err("unsupported Body IR field-count metadata contract")
+            match declaration.reflection_fields:
+                None => return Err("unsupported Body IR field-count metadata without checked visibility")
+                Some(fields) =>
+                    value = literal(Constant.Int(len(fields)), span)
+    match destination:
+        None => return Err("unsupported Body IR discarded type metadata")
+        Some(place) =>
+            output = scalar_place(builder, place, span)?
+            if place_type(builder.locals, output) != result:
+                return Err("invalid Body IR type metadata result carrier")
+            if result == PlanType.String:
+                drop_owned(builder, output.local, span)
+            track_rvalue_moves(builder, RvalueKind.Use(value))
+            builder.emit(plan_assign(output, RvalueKind.Use(value), span))
+            if result == PlanType.String:
+                builder.owned.append(output.local)
+    return Ok(None)

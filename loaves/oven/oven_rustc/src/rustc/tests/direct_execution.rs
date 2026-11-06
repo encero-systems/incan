@@ -2,6 +2,36 @@
 
 use super::*;
 
+use crate as native_oven;
+use crate::rustc as native_rustc;
+#[path = "../../../tests/common/generated_output_store_cases.rs"]
+mod generated_output_store_cases;
+
+/// Direct rebuilds preserve immutable aliases and leave admitted outputs intact on compilation failure.
+#[test]
+fn direct_binary_rebuild_replaces_readonly_output_and_preserves_failed_build() -> Result<(), Box<dyn std::error::Error>>
+{
+    generated_output_store_cases::direct_binary_rebuild_replaces_readonly_output_and_preserves_failed_build()
+}
+
+/// Harnesses execute edited behavior and reuse the earlier admitted binary after source restoration.
+#[test]
+fn generated_test_store_keeps_harness_identity_and_restored_sources() -> Result<(), Box<dyn std::error::Error>> {
+    generated_output_store_cases::generated_test_store_keeps_harness_identity_and_restored_sources()
+}
+
+/// Fresh outputs reuse the same admitted library and refuse stale source or environment.
+#[test]
+fn generated_library_store_reuses_across_outputs_and_refuses_stale_sources() -> Result<(), Box<dyn std::error::Error>> {
+    generated_output_store_cases::generated_library_store_reuses_across_outputs_and_refuses_stale_sources()
+}
+
+/// Shared binaries execute with correct permissions and preserve source, environment, linker and lease authority.
+#[test]
+fn generated_binary_store_reuses_executable_bytes_across_outputs() -> Result<(), Box<dyn std::error::Error>> {
+    generated_output_store_cases::generated_binary_store_reuses_executable_bytes_across_outputs()
+}
+
 #[test]
 fn failed_direct_rustc_report_keeps_the_bounded_invocation() {
     let mut command = Command::new("rustc");
@@ -355,6 +385,61 @@ fn transitive_caller_owned_library_keeps_its_search_path_and_reuse_evidence_priv
             .keys()
             .all(|key| key.starts_with("transitive:provider_child:"))
     );
+    Ok(())
+}
+
+/// Retained direct and transitive libraries cannot attach stale reuse evidence after their bytes change.
+#[test]
+fn caller_owned_attachment_refuses_changes_after_preparation() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let output = root.path().join("libprepared.rlib");
+    let original = b"prepared output";
+    fs::write(&output, original)?;
+    let empty_plan = OvenRustcArtifactPlan {
+        source_path_projection: None,
+        dependency_search_paths: Vec::new(),
+        native_search_paths: Vec::new(),
+        externs: Vec::new(),
+        compile_environment: BTreeMap::new(),
+        caller_owned_library_digests: BTreeMap::new(),
+    };
+    for expose_extern in [true, false] {
+        let library = OvenCallerOwnedRustcLibrary {
+            crate_name: "prepared".to_string(),
+            output: output.clone(),
+            digest: digest_bytes(original),
+            expose_extern,
+        };
+        let mut prepared_plan = empty_plan.clone();
+        attach_caller_owned_rustc_libraries(&mut prepared_plan, std::slice::from_ref(&library))?;
+        let mut repeated_plan = empty_plan.clone();
+        attach_caller_owned_rustc_libraries(&mut repeated_plan, std::slice::from_ref(&library))?;
+
+        // Preserve size and mtime: replacement-sensitive observations must still detect the changed bytes.
+        let modified = fs::metadata(&output)?.modified()?;
+        fs::write(&output, b"replaced output")?;
+        fs::File::options()
+            .write(true)
+            .open(&output)?
+            .set_times(fs::FileTimes::new().set_modified(modified))?;
+        let mut changed_plan = empty_plan.clone();
+        let refused = attach_caller_owned_rustc_libraries(&mut changed_plan, std::slice::from_ref(&library));
+        assert!(
+            matches!(refused, Err(OvenRustcError::InvalidInput { field: "caller-owned library", ref message })
+                if message.contains("differs from its prepared digest")),
+            "stale {expose_extern} attachment must refuse: {refused:?}"
+        );
+        assert!(changed_plan.externs.is_empty());
+        assert!(changed_plan.caller_owned_library_digests.is_empty());
+        assert!(changed_plan.dependency_search_paths.is_empty());
+
+        fs::write(&output, original)?;
+        let mut restored_plan = empty_plan.clone();
+        attach_caller_owned_rustc_libraries(&mut restored_plan, std::slice::from_ref(&library))?;
+        fs::remove_file(&output)?;
+        assert!(attach_caller_owned_rustc_libraries(&mut empty_plan.clone(), std::slice::from_ref(&library)).is_err());
+        fs::write(&output, original)?;
+    }
     Ok(())
 }
 
@@ -1038,6 +1123,7 @@ fn trusted_rustdoc_compiles_a_proc_macro_doctest_root() -> Result<(), Box<dyn st
     Ok(())
 }
 
+/// Bounded publication coexists with the held execution lease; pruning can reclaim the plan only after release.
 #[test]
 fn stored_receipt_bound_plan_runs_without_cargo_and_retains_its_lease() -> Result<(), Box<dyn std::error::Error>> {
     let project = tempfile::tempdir()?;
@@ -1109,14 +1195,35 @@ fn stored_receipt_bound_plan_runs_without_cargo_and_retains_its_lease() -> Resul
         materialized_files: Vec::new(),
         materialized_directories: Vec::new(),
     };
-    assert!(matches!(
-        bounded.publish(&replacement),
-        Err(oven_store::store::OvenStoreError::CapacityBlocked { .. })
-    ));
+    let replacement = bounded.publish(&replacement)?;
+    let inspection = bounded.inspect()?;
+    assert_eq!(inspection.entries.len(), 2);
+    assert!(
+        inspection
+            .entries
+            .iter()
+            .any(|entry| entry.manifest.identity == stored.identity)
+    );
+    assert!(inspection.active_lease_physical_bytes > 0);
+
+    // Retention targets permit bounded publications; an explicit zero-target sweep must still preserve the reader.
+    let pressure = OvenStore::new(store_root.path(), OvenStoreLimits::new(0, 128 * 1024, 64 * 1024));
+    let retained = pressure.prune()?;
+    assert!(retained.removed_entries.contains(&replacement.identity));
+    assert!(retained.skipped_active_entries.contains(&stored.identity));
+    assert!(!retained.removed_entries.contains(&stored.identity));
+    let inspection = pressure.inspect()?;
+    assert_eq!(inspection.entries.len(), 1);
+    assert_eq!(inspection.entries[0].manifest.identity, stored.identity);
     assert!(Command::new(&bake.output).status()?.success());
+
     drop(bake);
-    bounded.publish(&replacement)?;
-    assert_eq!(bounded.inspect()?.entries.len(), 1);
+    let released = pressure.prune()?;
+    assert!(released.removed_entries.contains(&stored.identity));
+    assert!(released.skipped_active_entries.is_empty());
+    let inspection = pressure.inspect()?;
+    assert!(inspection.entries.is_empty());
+    assert_eq!(inspection.active_lease_physical_bytes, 0);
     Ok(())
 }
 
@@ -1149,6 +1256,7 @@ fn receipt_selection_rejects_ambiguous_stored_direct_rustc_plans() -> Result<(),
     Ok(())
 }
 
+/// Bounded publication coexists with the held execution lease; pruning can reclaim the plan only after release.
 #[test]
 fn stored_receipt_bound_binary_runs_without_cargo_and_retains_its_lease() -> Result<(), Box<dyn std::error::Error>> {
     let project = tempfile::tempdir()?;
@@ -1212,14 +1320,35 @@ fn stored_receipt_bound_binary_runs_without_cargo_and_retains_its_lease() -> Res
         materialized_files: Vec::new(),
         materialized_directories: Vec::new(),
     };
-    assert!(matches!(
-        bounded.publish(&replacement),
-        Err(oven_store::store::OvenStoreError::CapacityBlocked { .. })
-    ));
+    let replacement = bounded.publish(&replacement)?;
+    let inspection = bounded.inspect()?;
+    assert_eq!(inspection.entries.len(), 2);
+    assert!(
+        inspection
+            .entries
+            .iter()
+            .any(|entry| entry.manifest.identity == stored.identity)
+    );
+    assert!(inspection.active_lease_physical_bytes > 0);
+
+    // Retention targets permit bounded publications; an explicit zero-target sweep must still preserve the reader.
+    let pressure = OvenStore::new(store_root.path(), OvenStoreLimits::new(0, 128 * 1024, 64 * 1024));
+    let retained = pressure.prune()?;
+    assert!(retained.removed_entries.contains(&replacement.identity));
+    assert!(retained.skipped_active_entries.contains(&stored.identity));
+    assert!(!retained.removed_entries.contains(&stored.identity));
+    let inspection = pressure.inspect()?;
+    assert_eq!(inspection.entries.len(), 1);
+    assert_eq!(inspection.entries[0].manifest.identity, stored.identity);
     assert!(Command::new(&bake.output).status()?.success());
+
     drop(bake);
-    bounded.publish(&replacement)?;
-    assert_eq!(bounded.inspect()?.entries.len(), 1);
+    let released = pressure.prune()?;
+    assert!(released.removed_entries.contains(&stored.identity));
+    assert!(released.skipped_active_entries.is_empty());
+    let inspection = pressure.inspect()?;
+    assert!(inspection.entries.is_empty());
+    assert_eq!(inspection.active_lease_physical_bytes, 0);
     Ok(())
 }
 
@@ -1395,4 +1524,125 @@ fn publisher_vocab_probe_refuses_a_target_unit_with_a_stale_host_dependency() ->
     assert!(message.contains("fixture_consumer"));
     assert!(message.contains("fixture_dependency"));
     Ok(())
+}
+
+/// Runner proof exercises receipt-bound binary and harness linking in two caller-owned roots.
+///
+/// Linux requires byte equality; the macOS scaffold checks identity and execution because executable debug maps
+/// retain output paths under the existing Apple policy. Source belongs inside the immutable artifact root.
+///
+/// The runner launches this test binary with hostile cc/ld on PATH; RUSTC remains an explicit toolchain path.
+/// Retained outputs let the runner compare normalized archives as well as receipt and output identities.
+fn native_binary_and_harness_proof(compare_artifacts: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let rustc = super::super::resolve_active_rustc()?;
+    let target = rustc_host_target(&rustc)?;
+    let link_identity =
+        super::super::pinned_link_closure_identity(&rustc, &target)?.ok_or("missing native link closure")?;
+    let temporary = tempfile::tempdir()?;
+    let base = std::env::var_os("INCAN_LINK_PROOF_OUT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| temporary.path().to_path_buf());
+    let mut records = Vec::new();
+    for name in ["a", "b"] {
+        let root = base.join(name);
+        let artifact_root = root.join("artifacts");
+        fs::create_dir_all(&artifact_root)?;
+        let source = artifact_root.join("probe.rs");
+        fs::write(
+            &source,
+            "fn main() { assert_eq!(2 + 2, 4); }\n#[test] fn runs() { main(); }\n",
+        )?;
+        let receipt = oven_store::receipt_with_build_unit_input(
+            &receipt_generated_project(
+                &OvenGeneratedProjectRequest::new(
+                    &root,
+                    "linux_probe",
+                    "1.0.0",
+                    &target,
+                    super::super::rustc_identity(&rustc)?,
+                    "debug",
+                    Vec::new(),
+                )
+                .with_generated_source("probe", &source),
+            )?,
+            "link-closure",
+            &link_identity,
+        )?;
+        let artifacts = empty_manifest(&receipt);
+        let binary = super::super::bake_direct_rustc_run(&super::super::OvenDirectRustcRunRequest {
+            receipt: receipt.clone(),
+            artifacts: artifacts.clone(),
+            artifact_root: artifact_root.clone(),
+            rustc: rustc.clone(),
+            source: source.clone(),
+            output: root.join("probe"),
+            crate_name: "linux_probe".to_string(),
+            edition: "2024".to_string(),
+            source_evidence_key: "probe".to_string(),
+        })?;
+        assert!(!binary.cargo_process_started);
+        assert!(Command::new(&binary.output).status()?.success());
+        let harness = bake_direct_rustc_test(&OvenDirectRustcTestRequest {
+            receipt: receipt.clone(),
+            artifacts,
+            artifact_root: artifact_root.clone(),
+            rustc: rustc.clone(),
+            source,
+            output: root.join("probe-test"),
+            crate_name: "linux_probe".to_string(),
+            edition: "2024".to_string(),
+            source_evidence_key: "probe".to_string(),
+        })?;
+        assert!(Command::new(&harness.output).status()?.success());
+        records.push(
+            serde_json::json!({"receipt": receipt.identity, "build": receipt.build_unit_identity,
+            "link": link_identity, "binary": binary.output_digest,
+            "harness": super::super::digest_bytes(&fs::read(harness.output)?)}),
+        );
+    }
+    for key in ["receipt", "build", "link"] {
+        assert_eq!(records[0][key], records[1][key]);
+    }
+    if compare_artifacts {
+        assert_eq!(records[0], records[1]);
+    }
+    fs::write(
+        base.join("binary-identities.json"),
+        serde_json::to_vec_pretty(&records)?,
+    )?;
+    Ok(())
+}
+
+/// Linux runner entry point refuses a different host rather than reporting an unrun Linux proof.
+#[test]
+#[ignore = "requires a native GNU Linux runner"]
+fn linux_native_binary_and_harness_proof() -> Result<(), Box<dyn std::error::Error>> {
+    let target = rustc_host_target(&super::super::resolve_active_rustc()?)?;
+    if !matches!(
+        target.as_str(),
+        "x86_64-unknown-linux-gnu" | "aarch64-unknown-linux-gnu"
+    ) {
+        return Err("this proof requires native GNU Linux".into());
+    }
+    native_binary_and_harness_proof(true)
+}
+
+/// Execute the same receipt-bound runner scaffold on macOS before handing it to Linux runners.
+#[test]
+#[cfg(target_os = "macos")]
+fn pinned_binary_receipt_proof() -> Result<(), Box<dyn std::error::Error>> {
+    native_binary_and_harness_proof(false)
+}
+
+/// External modules and include macros participate in native harness freshness and restored-output reuse.
+#[test]
+fn generated_test_store_tracks_external_consumed_inputs() -> Result<(), Box<dyn std::error::Error>> {
+    generated_output_store_cases::generated_test_store_tracks_external_consumed_inputs()
+}
+
+/// Generated executables keep their complete source observations through native publication and reuse.
+#[test]
+#[cfg(unix)]
+fn generated_binary_store_refuses_sibling_edits_before_publication() -> Result<(), Box<dyn std::error::Error>> {
+    generated_output_store_cases::generated_binary_store_refuses_sibling_edits_before_publication()
 }

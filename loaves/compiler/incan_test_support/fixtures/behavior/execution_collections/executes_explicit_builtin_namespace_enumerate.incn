@@ -1,0 +1,17 @@
+# behavior: executes explicit builtin namespace enumerate
+# expect-stdout:
+#   0
+
+
+"""Executes explicit builtin namespace enumerate."""
+def explicit_namespace_enumerate() -> int:
+  """Sum indices from explicitly namespaced enumeration."""
+  mut total = 0
+  for pair in std.builtins.enumerate([1]):
+    total += pair.0
+  return total
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(explicit_namespace_enumerate())

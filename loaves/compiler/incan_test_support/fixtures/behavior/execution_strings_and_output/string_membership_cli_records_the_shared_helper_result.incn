@@ -1,0 +1,13 @@
+# behavior: string membership cli records the shared helper result
+# expect-stdout:
+#   true
+
+"""String membership cli records the shared helper result."""
+def program_result() -> bool:
+    """Return the fixture expression `"a" in "abc"`."""
+    return "a" in "abc"
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

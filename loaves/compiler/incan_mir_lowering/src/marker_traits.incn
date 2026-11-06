@@ -1,0 +1,55 @@
+"""Empty native standard traits selected from complete checked canonical source adoptions."""
+
+from rust::incan_semantics_core import CanonicalSymbolId, SymbolOrigin, SymbolNamespace, SemanticSourceTargetKind
+from rust::incan_semantics_core::body_ir import NominalDeclaration
+from pub::incan_mir_plan import MarkerTrait
+
+
+pub def checked_marker_traits(declaration: &NominalDeclaration) -> Result[list[MarkerTrait], str]:
+    """Require the actual standard identity, empty checked slots and arguments, and its already retained serde derive."""
+    mut result: list[MarkerTrait] = []
+    for adoption in declaration.trait_adoptions:
+        match standard_marker(adoption.trait_identity):
+            None => pass
+            Some(marker) =>
+                if len(adoption.arguments) != 0:
+                    return Err("unsupported Body IR type arguments on a native TOML marker trait")
+                match adoption.methods:
+                    None => return Err("unsupported Body IR incomplete native TOML marker trait")
+                    Some(methods) =>
+                        if len(methods) != 0:
+                            return Err("unsupported Body IR methods on a native TOML marker trait")
+                if required_derive(marker) not in declaration.derives:
+                    return Err("unsupported Body IR native TOML marker without its serde derive")
+                if marker in result:
+                    return Err("unsupported Body IR duplicate native TOML marker adoption")
+                result.append(marker)
+    return Ok(result)
+
+
+def standard_marker(identity: &CanonicalSymbolId) -> Option[MarkerTrait]:
+    """Match the selected standard declaration rather than a source trait sharing its diagnostic spelling."""
+    if identity.kind != SemanticSourceTargetKind.Trait or identity.namespace != SymbolNamespace.OrdinaryLexical:
+        return None
+    if not standard_marker_origin(identity.origin):
+        return None
+    if identity.declaration_name == "TomlSerialize":
+        return Some(MarkerTrait.TomlSerialize)
+    if identity.declaration_name == "TomlDeserialize":
+        return Some(MarkerTrait.TomlDeserialize)
+    return None
+
+
+def standard_marker_origin(origin: &SymbolOrigin) -> bool:
+    """Authenticate the SDK origin through its explicit Rust type, retaining the struct-pattern import."""
+    match origin:
+        SymbolOrigin.Package(library=library, module_path=path) =>
+            return library == "incan_stdlib_data" and len(path) == 1 and path[0] == "toml"
+        _ => return false
+
+
+def required_derive(marker: MarkerTrait) -> str:
+    """Keep the native marker's existing serde supertrait requirement explicit."""
+    match marker:
+        MarkerTrait.TomlSerialize => return "serde::Serialize"
+        MarkerTrait.TomlDeserialize => return "serde::Deserialize"

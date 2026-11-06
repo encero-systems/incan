@@ -135,9 +135,22 @@ fn hash_dependency_spec_for_rust_inspect(hasher: &mut Sha256, spec: &DependencyS
     hasher.update(b"|dep|\0");
 }
 
+/// Fold a path dependency's source content into the fingerprint; an unreadable root folds its error text instead, so
+/// it still differs from any readable state.
+fn hash_path_dependency_content(hasher: &mut Sha256, crate_root: &Path) {
+    match digest_provider_artifact(crate_root) {
+        Ok(digest) => hasher.update(digest.as_bytes()),
+        Err(error) => hasher.update(error.to_string().as_bytes()),
+    }
+    hasher.update(b"\0");
+}
+
 /// Stable fingerprint for inputs that define one generated rust-inspect Cargo workspace.
+///
+/// `project_root` resolves the project's relative path dependencies, whose source content is part of the input.
 #[allow(clippy::too_many_arguments)]
 fn rust_inspect_workspace_fingerprint(
+    project_root: &Path,
     project_name: &str,
     cargo_package_name: &str,
     rust_edition: Option<&str>,
@@ -239,11 +252,7 @@ fn rust_inspect_workspace_fingerprint(
     for dependency in &sdk_paths {
         hash_dependency_spec_for_rust_inspect(&mut hasher, dependency);
         if let DependencySource::Path { path } = &dependency.source {
-            match digest_provider_artifact(path) {
-                Ok(digest) => hasher.update(digest.as_bytes()),
-                Err(error) => hasher.update(error.to_string().as_bytes()),
-            }
-            hasher.update(b"\0");
+            hash_path_dependency_content(&mut hasher, path);
         }
     }
     hasher.update(b"|\0");
@@ -256,6 +265,11 @@ fn rust_inspect_workspace_fingerprint(
     hasher.update(b"deps\0");
     for dep in &deps {
         hash_dependency_spec_for_rust_inspect(&mut hasher, dep);
+        // Inspection reads a path dependency's source, so its content is an input: editing it (adding a re-export,
+        // say) must invalidate the cached metadata, not only moving it.
+        if let DependencySource::Path { path } = &dep.source {
+            hash_path_dependency_content(&mut hasher, &project_root.join(path));
+        }
     }
     hasher.update(b"|\0");
 
@@ -534,6 +548,69 @@ pub fn ensure_rust_inspect_workspace(
     )
 }
 
+/// Prepare only an authored Loaf and Rust probe for the direct inspector, without generating Cargo metadata.
+///
+/// Selected source authority is installed separately by the caller. Dependencies are deliberately absent here:
+/// this stub cannot resolve them or replace the frozen closure's aliases, features, or source selections.
+#[cfg(feature = "rust_inspect")]
+pub fn ensure_direct_rust_inspect_workspace(
+    project_root: &Path,
+    project_name: &str,
+    edition: Option<&str>,
+    derive_paths: &[String],
+    selection_inputs: &std::collections::BTreeMap<String, String>,
+) -> CliResult<PathBuf> {
+    let declaration = toml::Value::Table(toml::map::Map::from_iter([
+        (
+            "project".to_string(),
+            toml::Value::Table(toml::map::Map::from_iter([
+                (
+                    "name".to_string(),
+                    toml::Value::String(format!("{project_name}_rust_inspect")),
+                ),
+                ("version".to_string(), toml::Value::String("0.0.0".to_string())),
+            ])),
+        ),
+        (
+            "rust".to_string(),
+            toml::Value::Table(toml::map::Map::from_iter([
+                (
+                    "name".to_string(),
+                    toml::Value::String(format!("{}_rust_inspect", project_name.replace('-', "_"))),
+                ),
+                ("type".to_string(), toml::Value::String("lib".to_string())),
+                (
+                    "edition".to_string(),
+                    toml::Value::String(edition.unwrap_or("2024").to_string()),
+                ),
+            ])),
+        ),
+    ]));
+    let declaration = toml::to_string(&declaration).map_err(|error| CliError::failure(error.to_string()))?;
+    let source = direct_rust_inspect_probe_source(derive_paths);
+    let selection = serde_json::to_string(selection_inputs).map_err(|error| CliError::failure(error.to_string()))?;
+    let fingerprint = oven_store::digest_bytes(format!("{declaration}\0{source}\0{selection}").as_bytes());
+    let root = rust_inspect_workspace_dir(project_root, project_name, &fingerprint);
+    fs::create_dir_all(root.join("src")).map_err(|error| CliError::failure(error.to_string()))?;
+    fs::write(root.join("loaf.toml"), declaration).map_err(|error| CliError::failure(error.to_string()))?;
+    fs::write(root.join("src/main.rs"), &source).map_err(|error| CliError::failure(error.to_string()))?;
+    fs::write(root.join("src/lib.rs"), source).map_err(|error| CliError::failure(error.to_string()))?;
+    fs::write(root.join(::rust_inspect::OVEN_LOAF_ONLY_INSPECTION_MARKER), "1\n")
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    Ok(root)
+}
+
+/// Render the direct inspection root from its requested derive probes, shared by generation and retained validation.
+#[cfg(feature = "rust_inspect")]
+pub(crate) fn direct_rust_inspect_probe_source(derive_paths: &[String]) -> String {
+    let mut source = String::new();
+    for (index, path) in derive_paths.iter().enumerate() {
+        source.push_str(&format!("#[derive({path})]\nstruct __IncanDeriveProbe{index};\n"));
+    }
+    source.push_str("fn main() {}\n");
+    source
+}
+
 /// Generate a rust-inspect workspace whose Cargo package identity matches the canonical lock owner.
 #[allow(clippy::too_many_arguments)]
 pub fn ensure_rust_inspect_workspace_with_cargo_package_name(
@@ -556,6 +633,7 @@ pub fn ensure_rust_inspect_workspace_with_cargo_package_name(
         project_rust_inspect_lock_projection(cargo_lock_payload, cargo_package_name, project_manifest.as_ref())?;
     let rust_derive_probe_paths = declared_rust_derive_probe_paths(resolved, rust_derive_probe_paths);
     let fingerprint = rust_inspect_workspace_fingerprint(
+        project_root,
         project_name,
         cargo_package_name,
         rust_edition.as_deref(),
@@ -779,6 +857,17 @@ pub fn collect_rust_inspect_query_paths_from_programs<'a>(
 /// `@rust.derive(...)` plus syntactically valid explicit Rust macro paths. The preparation boundary later limits those
 /// paths to declared dependency namespaces before generating the probe workspace.
 pub fn collect_rust_inspect_derive_probe_paths(modules: &[ParsedModule]) -> Vec<String> {
+    collect_rust_inspect_derive_probe_uses(modules)
+        .into_iter()
+        .map(|(path, _)| path)
+        .collect()
+}
+
+/// Retain canonical derive demand and its original argument span for the shared manifest dependency resolver.
+/// This collector identifies authored uses only; declaration and original native ownership remain separate checks.
+pub(crate) fn collect_rust_inspect_derive_probe_uses(
+    modules: &[ParsedModule],
+) -> Vec<(String, incan_frontend::ast::Span)> {
     use incan_frontend::ast::{Declaration, Decorator, DecoratorArg, Expr, Literal};
 
     /// Return decorators only for declarations that can emit a concrete Rust type.
@@ -815,7 +904,7 @@ pub fn collect_rust_inspect_derive_probe_paths(modules: &[ParsedModule]) -> Vec<
         })
     }
 
-    let mut probes = BTreeSet::new();
+    let mut probes = std::collections::BTreeMap::new();
     for module in modules {
         let mut imported_paths = HashMap::new();
         for declaration in &module.ast.declarations {
@@ -858,14 +947,14 @@ pub fn collect_rust_inspect_derive_probe_paths(modules: &[ParsedModule]) -> Vec<
                         (incan_lang::lang::decorators::DecoratorId::Derive, Expr::Ident(name))
                         | (incan_lang::lang::decorators::DecoratorId::RustDerive, Expr::Ident(name)) => {
                             if let Some(path) = imported_paths.get(name) {
-                                probes.insert(path.clone());
+                                probes.entry(path.clone()).or_insert(argument.span);
                             }
                         }
                         (
                             incan_lang::lang::decorators::DecoratorId::RustDerive,
                             Expr::Literal(Literal::String(path)),
                         ) if path.contains("::") && is_valid_rust_path(path) => {
-                            probes.insert(path.clone());
+                            probes.entry(path.clone()).or_insert(argument.span);
                         }
                         _ => {}
                     }
@@ -1243,6 +1332,7 @@ model RightValue:
             dev_dependencies: Vec::new(),
         };
         let fp_a = super::rust_inspect_workspace_fingerprint(
+            std::path::Path::new("."),
             "probe",
             "probe",
             Some("2021"),
@@ -1258,6 +1348,7 @@ model RightValue:
             &[],
         );
         let fp_b = super::rust_inspect_workspace_fingerprint(
+            std::path::Path::new("."),
             "probe",
             "probe",
             Some("2021"),
@@ -1273,6 +1364,7 @@ model RightValue:
             &[],
         );
         let workspace_fp = super::rust_inspect_workspace_fingerprint(
+            std::path::Path::new("."),
             "probe",
             "incan_workspace",
             Some("2021"),
@@ -1288,6 +1380,7 @@ model RightValue:
             &[],
         );
         let target_fp = super::rust_inspect_workspace_fingerprint(
+            std::path::Path::new("."),
             "probe",
             "probe",
             Some("2021"),
@@ -1316,6 +1409,7 @@ model RightValue:
             dev_dependencies: Vec::new(),
         };
         let fp_one = super::rust_inspect_workspace_fingerprint(
+            std::path::Path::new("."),
             "p",
             "p",
             None,
@@ -1331,6 +1425,7 @@ model RightValue:
             &[],
         );
         let fp_two = super::rust_inspect_workspace_fingerprint(
+            std::path::Path::new("."),
             "p",
             "p",
             None,
@@ -1357,6 +1452,7 @@ model RightValue:
         };
         let fingerprint = |probe: &str| {
             super::rust_inspect_workspace_fingerprint(
+                std::path::Path::new("."),
                 "p",
                 "p",
                 None,
@@ -1431,6 +1527,7 @@ checksum = "fixture-checksum"
             dev_dependencies: Vec::new(),
         };
         let fingerprint = super::rust_inspect_workspace_fingerprint(
+            std::path::Path::new("."),
             "policy_probe",
             "caller",
             None,
@@ -1492,6 +1589,7 @@ checksum = "fixture-checksum"
             dev_dependencies: Vec::new(),
         };
         let before = super::rust_inspect_workspace_fingerprint(
+            std::path::Path::new("."),
             "probe",
             "probe",
             None,
@@ -1508,6 +1606,7 @@ checksum = "fixture-checksum"
         );
         fs::write(artifact.join("src/lib.rs"), "pub fn value() -> u8 { 2 }\n")?;
         let after = super::rust_inspect_workspace_fingerprint(
+            std::path::Path::new("."),
             "probe",
             "probe",
             None,
@@ -1524,6 +1623,63 @@ checksum = "fixture-checksum"
         );
 
         assert_ne!(before, after);
+        Ok(())
+    }
+
+    /// Editing a project's own path dependency (a new re-export, say) changes what inspection sees, so the cached
+    /// inspection workspace must not be reused; the dependency is spelled relative to the project root.
+    #[test]
+    fn rust_inspect_fingerprint_tracks_project_path_dependency_content() -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = tempfile::tempdir()?;
+        let project = workspace.path().join("project");
+        let dependency = workspace.path().join("local_dep");
+        fs::create_dir_all(&project)?;
+        fs::create_dir_all(dependency.join("src"))?;
+        fs::write(
+            dependency.join("Cargo.toml"),
+            "[package]\nname = \"local_dep\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )?;
+        fs::write(dependency.join("src/lib.rs"), "pub enum Kind { A }\n")?;
+        let requirements = ProjectRequirements::default();
+        let resolved = ResolvedDependencies {
+            dependencies: vec![DependencySpec {
+                crate_name: "local_dep".to_string(),
+                version: None,
+                features: Vec::new(),
+                default_features: true,
+                source: DependencySource::Path {
+                    path: PathBuf::from("../local_dep"),
+                },
+                optional: false,
+                package: None,
+            }],
+            dev_dependencies: Vec::new(),
+        };
+        let fingerprint = || {
+            super::rust_inspect_workspace_fingerprint(
+                &project,
+                "probe",
+                "probe",
+                None,
+                &resolved,
+                &requirements.stdlib_facets,
+                &requirements.sdk_dependency_rebindings,
+                &requirements.sdk_path_dependencies,
+                &requirements.sdk_artifact_projections,
+                None,
+                None,
+                false,
+                &workspace.path().join("cargo-target"),
+                &[],
+            )
+        };
+        let before = fingerprint();
+        assert_eq!(before, fingerprint());
+        fs::write(
+            dependency.join("src/lib.rs"),
+            "pub enum Kind { A }\npub use Kind as Alias;\n",
+        )?;
+        assert_ne!(before, fingerprint());
         Ok(())
     }
 

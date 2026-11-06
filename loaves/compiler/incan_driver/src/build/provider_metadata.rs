@@ -66,6 +66,21 @@ pub fn synchronize_projected_provider_dependencies(
 
 /// Build transport-stable provider facts from the checked physical artifact projection.
 pub fn compiled_provider_metadata(inputs: CompiledProviderMetadataInputs<'_>) -> CliResult<CompiledProviderMetadata> {
+    provider_metadata(inputs, true)
+}
+
+/// Retain the same checked declaration and feature facts without granting compiled dependency or facet authority.
+pub(crate) fn checked_source_provider_metadata(
+    inputs: CompiledProviderMetadataInputs<'_>,
+) -> CliResult<CompiledProviderMetadata> {
+    provider_metadata(inputs, false)
+}
+
+/// Project public semantic facts once, freezing physical implementation edges only for an artifact publisher.
+fn provider_metadata(
+    inputs: CompiledProviderMetadataInputs<'_>,
+    materialized: bool,
+) -> CliResult<CompiledProviderMetadata> {
     let graph =
         PackageFeatureGraph::from_manifest(inputs.manifest).map_err(|error| CliError::failure(error.to_string()))?;
     let root_features = inputs
@@ -141,13 +156,21 @@ pub fn compiled_provider_metadata(inputs: CompiledProviderMetadataInputs<'_>) ->
     fact_requirements.sort();
     fact_requirements.dedup();
 
-    let provider_dependencies = compiled_provider_dependencies(
-        inputs.feature_plan,
-        inputs.library_manifest_index,
-        inputs.provider_plan,
-        inputs.artifact_root,
-    )?;
-    let implementation_facets = provider_implementation_facets(&namespace_claims);
+    let provider_dependencies = if materialized {
+        compiled_provider_dependencies(
+            inputs.feature_plan,
+            inputs.library_manifest_index,
+            inputs.provider_plan,
+            inputs.artifact_root,
+        )?
+    } else {
+        Vec::new()
+    };
+    let implementation_facets = if materialized {
+        provider_implementation_facets(&namespace_claims)?
+    } else {
+        Vec::new()
+    };
     let operation_descriptors = provider_operation_metadata_from_checked_type_info(inputs.checked_type_info_by_path)?;
     let semantic_source_inputs = inputs
         .modules
@@ -281,25 +304,54 @@ fn compiled_provider_dependencies(
                 metadata.crate_root.display()
             ))
         })?;
-        dependencies.push(ProviderDependencyMetadata {
-            kind: incan_frontend::library_manifest::ProviderDependencyKind::PrivateImplementation,
-            dependency_key: metadata.dependency_key.clone(),
-            provider_name: provider.identity.name.clone(),
-            provider_version: provider.identity.version.clone(),
-            artifact_digest,
-            relative_artifact_path: relative_provider_artifact_path(artifact_root, &metadata.crate_root)?,
-            requested_features: provider.identity.feature_projection.clone(),
-            default_features: false,
-            optional: false,
-        });
+        retain_private_provider_dependency(
+            &mut dependencies,
+            ProviderDependencyMetadata {
+                kind: incan_frontend::library_manifest::ProviderDependencyKind::PrivateImplementation,
+                dependency_key: metadata.dependency_key.clone(),
+                provider_name: provider.identity.name.clone(),
+                provider_version: provider.identity.version.clone(),
+                artifact_digest,
+                relative_artifact_path: relative_provider_artifact_path(artifact_root, &metadata.crate_root)?,
+                requested_features: provider.identity.feature_projection.clone(),
+                default_features: false,
+                optional: false,
+            },
+        )?;
     }
     dependencies.sort();
     dependencies.dedup();
     Ok(dependencies)
 }
 
+/// Keep a public edge when private implementation linkage selects the exact same physical owner and features.
+/// A shared dependency key with different identity, bytes, artifact coordinate, or features remains an error.
+fn retain_private_provider_dependency(
+    dependencies: &mut Vec<ProviderDependencyMetadata>,
+    private: ProviderDependencyMetadata,
+) -> CliResult<()> {
+    if let Some(public) = dependencies.iter().find(|edge| {
+        edge.kind == ProviderDependencyKind::PublicPackage && edge.dependency_key == private.dependency_key
+    }) {
+        if public.provider_name == private.provider_name
+            && public.provider_version == private.provider_version
+            && public.artifact_digest == private.artifact_digest
+            && public.relative_artifact_path == private.relative_artifact_path
+            && public.requested_features == private.requested_features
+        {
+            return Ok(());
+        }
+        return Err(CliError::failure(format!(
+            "private SDK dependency `{}` conflicts with its public artifact edge",
+            private.dependency_key
+        )));
+    }
+    dependencies.push(private);
+    Ok(())
+}
+
 /// Compute one normalized portable path between two existing provider artifact roots.
-fn relative_provider_artifact_path(from: &Path, to: &Path) -> CliResult<String> {
+pub(crate) fn relative_provider_artifact_path(from: &Path, to: &Path) -> CliResult<String> {
     let from = fs::canonicalize(from).map_err(|error| {
         CliError::failure(format!(
             "failed to canonicalize provider artifact root {}: {error}",
@@ -416,35 +468,44 @@ pub fn collect_unprojected_provider_modules(
 /// compiler-side stdlib module inventory. This bootstrap adapter can disappear once provider source can author the
 /// equivalent backend mappings directly. The dependencies of each namespace root come from
 /// [`incan_provider::inventory::stdlib_namespace_cargo_dependencies`].
-fn provider_implementation_facets(namespace_claims: &[ProviderModuleClaim]) -> Vec<ProviderImplementationFacet> {
+fn provider_implementation_facets(
+    namespace_claims: &[ProviderModuleClaim],
+) -> CliResult<Vec<ProviderImplementationFacet>> {
     if env::var_os(SDK_PROVIDER_BUILD_ENV).is_none() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
+    native_sdk_implementation_facets(namespace_claims)
+}
+
+/// Project namespace facet dependencies for an explicitly granted native SDK publisher.
+pub(crate) fn native_sdk_implementation_facets(
+    namespace_claims: &[ProviderModuleClaim],
+) -> CliResult<Vec<ProviderImplementationFacet>> {
     let roots = namespace_claims
         .iter()
         .filter_map(|claim| claim.module_path.first().cloned())
         .collect::<BTreeSet<_>>();
-    roots
-        .into_iter()
-        .filter_map(|root| {
-            let namespace = incan_lang::lang::stdlib::find_namespace(&root)?;
-            let required_modules = namespace_claims
-                .iter()
-                .filter(|claim| claim.module_path.first() == Some(&root))
-                .map(|claim| claim.module_path.clone())
-                .collect();
-            // A consumer that compiles this namespace from source links the same list, so both routes agree.
-            let cargo_dependencies = incan_provider::inventory::stdlib_namespace_cargo_dependencies(namespace);
-            let cargo_features = BTreeMap::new();
-            Some(ProviderImplementationFacet {
-                id: format!("rust_{root}"),
-                required_modules,
-                required_features: BTreeSet::new(),
-                cargo_features,
-                cargo_dependencies,
-            })
-        })
-        .collect()
+    let mut facets = Vec::new();
+    for root in roots {
+        let Some(namespace) = incan_lang::lang::stdlib::find_namespace(&root) else {
+            continue;
+        };
+        let required_modules = namespace_claims
+            .iter()
+            .filter(|claim| claim.module_path.first() == Some(&root))
+            .map(|claim| claim.module_path.clone())
+            .collect();
+        let cargo_dependencies = incan_provider::inventory::stdlib_namespace_cargo_dependencies(namespace)
+            .map_err(|error| CliError::failure(error.to_string()))?;
+        facets.push(ProviderImplementationFacet {
+            id: format!("rust_{root}"),
+            required_modules,
+            required_features: BTreeSet::new(),
+            cargo_features: BTreeMap::new(),
+            cargo_dependencies,
+        });
+    }
+    Ok(facets)
 }
 
 /// Return whether an already-linked SDK provider owns this emitted `__incan_std.*` module.
@@ -814,6 +875,71 @@ mod tests {
     use incan_provider::FeatureSelection;
     use oven_model::manifest::{DependencySource, DependencySpec};
 
+    /// The genuine SDK Core owner appears once when a component also declares it as a public dependency.
+    #[test]
+    #[ignore = "requires an explicitly selected matching native SDK publication"]
+    fn sdk_publication_dependencies_share_one_exact_core_owner() -> Result<(), Box<dyn std::error::Error>> {
+        let inventory =
+            incan_provider::inventory::discover_or_reuse_published_sdk_inventory()?.ok_or("SDK required")?;
+        let stdlib = oven_model::toolchain_layout::find_stdlib_root().ok_or("stdlib source required")?;
+        let catalog =
+            incan_provider::SdkSourceCatalog::read_from_path(&stdlib.join(incan_provider::SDK_SOURCE_CATALOG_FILE))?;
+        let data = catalog.components.get("stdlib-data").ok_or("data component missing")?;
+        let session = crate::session::CompilationSession::discover_for_native_sdk_component(
+            &data.project_root.join("src/lib.incn"),
+            &inventory,
+            &data.namespace_roots,
+            &BTreeSet::new(),
+        )?;
+        let index = session.native_sdk_publication_dependency_index(&inventory, &catalog)?;
+        let plan = session.provider_plan().project_module_usage(BTreeSet::from([vec![
+            "std".to_string(),
+            "traits".to_string(),
+            "convert".to_string(),
+        ]]));
+        assert!(
+            plan.sdk_link_roots()
+                .iter()
+                .any(|record| record.identity.name == "incan_stdlib_core")
+        );
+        let output = tempfile::tempdir()?;
+        let edges = compiled_provider_dependencies(
+            session.package_feature_plan().as_ref().ok_or("features absent")?,
+            &index,
+            &plan,
+            output.path(),
+        )?;
+        let core = edges
+            .iter()
+            .filter(|edge| edge.dependency_key == "incan_stdlib_core")
+            .collect::<Vec<_>>();
+        assert_eq!(core.len(), 1);
+        assert_eq!(core[0].kind, ProviderDependencyKind::PublicPackage);
+        let public = core[0].clone();
+        let mut private = public.clone();
+        private.kind = ProviderDependencyKind::PrivateImplementation;
+        private.default_features = false;
+        private.optional = false;
+        let mut selected = vec![public.clone()];
+        retain_private_provider_dependency(&mut selected, private.clone())?;
+        assert_eq!(selected, vec![public.clone()]);
+        let mut changed_digest = private.clone();
+        changed_digest.artifact_digest.push_str("-foreign");
+        assert!(retain_private_provider_dependency(&mut selected, changed_digest).is_err());
+        let mut changed_owner = private.clone();
+        changed_owner.provider_name.push_str("-foreign");
+        assert!(retain_private_provider_dependency(&mut selected, changed_owner).is_err());
+        let mut changed_path = private.clone();
+        changed_path.relative_artifact_path.push_str("-foreign");
+        assert!(retain_private_provider_dependency(&mut selected, changed_path).is_err());
+        let mut changed_features = private;
+        changed_features.requested_features.insert("foreign".to_string());
+        assert!(retain_private_provider_dependency(&mut selected, changed_features).is_err());
+        assert_eq!(selected, vec![public]);
+
+        Ok(())
+    }
+
     #[test]
     fn provider_operation_metadata_is_projected_from_checked_declaration_facts()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -1037,6 +1163,7 @@ pub model Nested:
         Ok(())
     }
 
+    /// Parser-only collection rejects unknown conditions even when their enclosing module is inactive.
     #[test]
     fn unprojected_provider_collection_rejects_unknown_features_in_inactive_modules()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -1054,7 +1181,7 @@ pub model Nested:
             "when feature(\"missing\"):\n    pub model Nested:\n        pub value: int\n",
         )?;
 
-        let session = crate::session::CompilationSession::discover_with_feature_selection(
+        let session = crate::session::CompilationSession::discover_for_collection_with_feature_selection(
             &entry_path,
             &FeatureSelection::default(),
         )?;

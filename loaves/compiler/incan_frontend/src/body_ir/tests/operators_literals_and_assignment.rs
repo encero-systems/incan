@@ -5,6 +5,184 @@
 
 use super::*;
 
+/// Result payload identities retain checked newtype leaves through aliases, collections and the error side.
+#[test]
+fn result_newtype_payloads_keep_complete_checked_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "@derive(Clone)\ntype Kind = newtype str\ntype Choice = Kind | str\n\ndef wrapped() -> Result[Kind, str]:\n    return Ok(Kind(\"wrapped\"))\n\ndef choice() -> Result[Choice, str]:\n    return Ok(Kind(\"choice\"))\n\ndef nested() -> Result[list[Choice], str]:\n    return Ok([Kind(\"nested\")])\n\ndef failed() -> Result[int, Kind]:\n    return Err(Kind(\"failed\"))\n",
+        &["newtype_results"],
+    )?;
+    let mut constructors = 0;
+    for body in &module.bodies {
+        for statement in &body.block.stmts {
+            if let bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::ResultVariant(variant),
+                ..
+            } = &statement.kind
+            {
+                constructors += 1;
+                assert_eq!(variant.canonical_types.len(), 1, "{variant:?}");
+                let identity = variant
+                    .canonical_types
+                    .values()
+                    .next()
+                    .ok_or("missing newtype identity")?;
+                assert_eq!(identity.kind, incan_semantics_core::SemanticSourceTargetKind::Newtype);
+                assert_eq!(identity.declaration_name, "Kind");
+                assert!(variant.has_complete_canonical_types(), "{variant:?}");
+            }
+        }
+    }
+    assert_eq!(constructors, 4);
+    Ok(())
+}
+
+/// Annotation spellings and inferred tuple literals have one recursively shared semantic type identity.
+#[test]
+fn tuple_annotations_share_canonical_semantic_shape() {
+    use crate::symbols::ResolvedType;
+
+    let elements = vec![ResolvedType::Int, ResolvedType::Str];
+    let inferred = semantic_type_from_resolved(&ResolvedType::Tuple(elements.clone()));
+    assert!(matches!(inferred, IncanType::Tuple(_)));
+    for spelling in ["tuple", "Tuple"] {
+        let annotated = ResolvedType::Generic(spelling.to_string(), elements.clone());
+        assert_eq!(semantic_type_from_resolved(&annotated), inferred);
+        for carrier in ["Result", "List"] {
+            let mut annotated_args = vec![annotated.clone()];
+            let mut inferred_args = vec![ResolvedType::Tuple(elements.clone())];
+            if carrier == "Result" {
+                annotated_args.push(ResolvedType::Str);
+                inferred_args.push(ResolvedType::Str);
+            }
+            let annotation = ResolvedType::Generic(carrier.to_string(), annotated_args);
+            let literal = ResolvedType::Generic(carrier.to_string(), inferred_args);
+            assert_eq!(
+                semantic_type_from_resolved(&annotation),
+                semantic_type_from_resolved(&literal)
+            );
+        }
+    }
+    let nominal = semantic_type_from_resolved(&ResolvedType::Generic("Box".to_string(), elements));
+    assert!(matches!(nominal, IncanType::Generic { base, .. } if base == "Box"));
+}
+
+/// A checked Result constructor and its annotated return use the same tuple payload carrier.
+#[test]
+fn tuple_result_construction_retains_one_checked_carrier() -> Result<(), Box<dyn std::error::Error>> {
+    for spelling in ["tuple", "Tuple"] {
+        let source = format!("def pair() -> Result[{spelling}[int, int], str]:\n    return Ok((20, 22))\n");
+        let module = build(&source, &["tuple_result_identity"])?;
+        let body = body_named(&module, "pair")?;
+        let IncanType::Generic { base, args } = &body.return_type else {
+            return Err(format!("expected checked Result return, got {:?}", body.return_type).into());
+        };
+        assert_eq!(base, "Result");
+        assert!(matches!(args.first(), Some(IncanType::Tuple(_))));
+        for local in &body.locals {
+            if matches!(&local.ty, IncanType::Generic { base, .. } if base == "Result") {
+                assert_eq!(local.ty, body.return_type);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Checked integer helpers retain concrete receiver and result types in Body IR.
+#[test]
+fn checked_integer_helper_locals_retain_types() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def main() -> None:\n    high: u8 = 250\n    value = high.checked_add(10u8)\n    println(high.wrapping_add(10u8))\n    wide: i16 = 300\n    resized = wide.try_resize[u8]()\n",
+        &["integer_helpers"],
+    )?;
+    for body in &module.bodies {
+        for local in &body.locals {
+            assert!(
+                !local.ty.to_string().contains('?'),
+                "unresolved local: {local:?}\n{}",
+                body.render_snapshot()
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Constructor temporaries use the open sides settled by their binding and in-place match contexts.
+#[test]
+fn settled_constructor_spans_retain_payload_types() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def main() -> None:\n    value = Ok(7)\n    match value:\n        Ok(number) => println(number)\n        Err(_) => pass\n    match Ok(8):\n        Ok(number) => println(number)\n        Err(_) => pass\n",
+        &["settled_constructors"],
+    )?;
+    for body in &module.bodies {
+        for local in &body.locals {
+            assert!(!local.ty.to_string().contains('?'), "unresolved local: {local:?}");
+        }
+    }
+    Ok(())
+}
+
+/// Nested intrinsic constructors retain the contextual payload types that their checked call parameters require.
+#[test]
+fn nested_carrier_arguments_retain_checked_payload_types() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def describe(value: Result[Option[int], str]) -> str:\n    match value:\n        Ok(Some(0)) => return \"zero\"\n        Ok(Some(n)) => return f\"{n}\"\n        Ok(None) => return \"empty\"\n        Err(message) => return message\n\ndef main() -> None:\n    println(describe(Ok(Some(7))))\n    println(describe(Ok(None)))\n    println(describe(Err(\"boom\")))\n";
+    let module = build(source, &["nested_carriers"])?;
+    for body in &module.bodies {
+        for local in &body.locals {
+            assert!(
+                !local.ty.to_string().contains('?'),
+                "unresolved local in {}: {local:?}",
+                body.name
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Empty nested literals carry the peer-proven storage types at every Body IR local.
+#[test]
+fn nested_empty_list_locals_retain_checked_element_types() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def main() -> None:\n    rows = [[], [\"x\"]]\n    deep = [[[]], [[\"y\"]]]\n",
+        &["nested_empty_lists"],
+    )?;
+    let body = body_named(&module, "main")?;
+    assert!(!body.locals.is_empty());
+    for local in &body.locals {
+        assert!(!local.ty.to_string().contains('?'), "unresolved local: {local:?}");
+    }
+    Ok(())
+}
+
+/// Operand and recursive place lowering retain checked tuple indices rather than temporary unary results.
+#[test]
+fn checked_negative_tuple_indices_remain_constant_projections() -> Result<(), Box<dyn std::error::Error>> {
+    for index in ["-1", "(-1)"] {
+        let source = format!("def answer() -> int:\n    pair = ((1, 2), (3, 4))\n    return pair[{index}][-2]\n");
+        let module = build(&source, &["tuple_indices"])?;
+        let body = body_named(&module, "answer")?;
+        let projection = body
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Return {
+                    value: Some(bir::Operand::Place(value)),
+                } => Some(&value.place.projection),
+                _ => None,
+            })
+            .ok_or("tuple return projection missing")?;
+        assert_eq!(
+            projection,
+            &[
+                bir::PlaceElem::Index(Box::new(bir::Operand::Constant(bir::Constant::Int(-1)))),
+                bir::PlaceElem::Index(Box::new(bir::Operand::Constant(bir::Constant::Int(-2)))),
+            ]
+        );
+    }
+    Ok(())
+}
+
 /// Both operand and recursively lowered place fields retain checked tuple structure without nominal identities.
 #[test]
 fn nested_source_tuple_fields_retain_checked_structural_projection() -> Result<(), Box<dyn std::error::Error>> {
@@ -144,6 +322,115 @@ fn exact_integer_arithmetic_keeps_the_checked_body_ir_width() -> Result<(), Box<
     Ok(())
 }
 
+/// Mixed arithmetic with a float result reads each operand at the checked result carrier: `int / int`, `int` with
+/// `float`, and `f32` with `int` or `float` all retain their promotion in Body IR instead of leaving it to a backend.
+#[test]
+fn mixed_float_arithmetic_retains_the_checked_operand_promotion() -> Result<(), Box<dyn std::error::Error>> {
+    for (parameters, expression) in [
+        ("left: int, right: float", "left + right"),
+        ("left: float, right: int", "left - right"),
+        ("left: int, right: int", "left / right"),
+        ("left: f32, right: float", "left * right"),
+        ("left: f32, right: int", "left // right"),
+        ("left: int, right: float", "left % right"),
+    ] {
+        let source = format!("def f({parameters}) -> float:\n  return {expression}\n");
+        let module = build(&source, &["m", "mixed_float"])?;
+        let body = body_named(&module, "f")?;
+        let (result, operands) = body
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Assign {
+                    place,
+                    rvalue: bir::Rvalue::BinaryOp(_, left, right),
+                } => Some((place, [left, right])),
+                _ => None,
+            })
+            .ok_or_else(|| format!("`{expression}` must lower as a primitive binary op"))?;
+        let local_type = |place: &bir::Place| match &place.root {
+            bir::PlaceRoot::Local(local) => body
+                .locals
+                .iter()
+                .find(|declaration| declaration.id == *local)
+                .map(|declaration| declaration.ty.to_string())
+                .unwrap_or_default(),
+            bir::PlaceRoot::Global(_) => String::new(),
+        };
+        assert_eq!(
+            local_type(result),
+            "float",
+            "`{expression}` must keep its checked float result"
+        );
+        for operand in operands {
+            let bir::Operand::Place(read) = operand else {
+                return Err(format!("`{expression}` must read its promoted operands from locals").into());
+            };
+            assert_eq!(
+                local_type(&read.place),
+                "float",
+                "`{expression}` must promote each operand to the checked float carrier: {}",
+                body.render_snapshot()
+            );
+        }
+    }
+    Ok(())
+}
+
+/// A mixed numeric comparison reads both operands at legacy's common carrier: two integer carriers at the narrowest
+/// integer type holding both, and any pair involving a float as `float`. Same-carrier comparisons keep their operands.
+#[test]
+fn mixed_numeric_comparison_reads_both_operands_at_the_common_carrier() -> Result<(), Box<dyn std::error::Error>> {
+    for (parameters, expression, carrier) in [
+        ("left: f32, right: f64", "left < right", "float"),
+        ("left: f32, right: int", "left == right", "float"),
+        ("left: int, right: float", "left >= right", "float"),
+        ("left: i8, right: i16", "left < right", "i16"),
+        ("left: i8, right: u8", "left != right", "i16"),
+        ("left: int, right: u64", "left > right", "i128"),
+        ("left: i32, right: int", "left <= right", "int"),
+        ("left: f32, right: f32", "left < right", "f32"),
+    ] {
+        let source = format!("def f({parameters}) -> bool:\n  return {expression}\n");
+        let module = build(&source, &["m", "mixed_compare"])?;
+        let body = body_named(&module, "f")?;
+        let operands = body
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Assign {
+                    rvalue: bir::Rvalue::BinaryOp(_, left, right),
+                    ..
+                } => Some([left, right]),
+                _ => None,
+            })
+            .ok_or_else(|| format!("`{expression}` must lower as a primitive comparison"))?;
+        for operand in operands {
+            let bir::Operand::Place(read) = operand else {
+                return Err(format!("`{expression}` must read its operands from locals").into());
+            };
+            let bir::PlaceRoot::Local(local) = &read.place.root else {
+                return Err(format!("`{expression}` must read function-frame locals").into());
+            };
+            let ty = body
+                .locals
+                .iter()
+                .find(|declaration| declaration.id == *local)
+                .map(|declaration| declaration.ty.to_string())
+                .unwrap_or_default();
+            assert_eq!(
+                ty,
+                carrier,
+                "`{expression}` over ({parameters}) must compare at {carrier}: {}",
+                body.render_snapshot()
+            );
+        }
+    }
+    Ok(())
+}
+
 /// RFC 009 suffixed literals lower as typed numeric constants without a destination annotation.
 #[test]
 fn suffixed_numeric_literals_keep_their_body_ir_types_numeric_contract() -> Result<(), Box<dyn std::error::Error>> {
@@ -260,6 +547,7 @@ fn lowers_negated_string_membership_as_its_own_helper_rather_than_a_wrapped_nega
     Ok(())
 }
 
+/// Preserve each container's helper identity and ownership contract for membership.
 #[test]
 fn lowers_collection_membership_as_a_helper_call_naming_its_own_container() -> Result<(), Box<dyn std::error::Error>> {
     // Each collection names its own helper rather than sharing one `contains`. A single variant would leave a
@@ -275,9 +563,8 @@ fn lowers_collection_membership_as_a_helper_call_naming_its_own_container() -> R
     ] {
         let source = format!("def f({container}) -> bool:\n  return v in xs\n");
         let rendered = rendered_f(&source, module_leaf)?;
-
         assert!(
-            rendered.contains(&format!("call helper:{helper}(move(_0, last_use)")),
+            rendered.contains(&format!("call helper:{helper}(clone(_0)")),
             "`in` over {container} must lower to {helper} with the container first: {rendered}"
         );
         assert!(
@@ -296,6 +583,7 @@ fn lowers_collection_membership_as_a_helper_call_naming_its_own_container() -> R
     Ok(())
 }
 
+/// Retain negated membership directly, cloning caller-owned collection parameter storage.
 #[test]
 fn lowers_negated_collection_membership_as_its_own_helper_per_container() -> Result<(), Box<dyn std::error::Error>> {
     // One source operator stays one Body IR operation, following the `str_contains`/`str_not_contains` pair: a
@@ -307,9 +595,8 @@ fn lowers_negated_collection_membership_as_its_own_helper_per_container() -> Res
     ] {
         let source = format!("def f({container}) -> bool:\n  return v not in xs\n");
         let rendered = rendered_f(&source, module_leaf)?;
-
         assert!(
-            rendered.contains(&format!("call helper:{helper}(move(_0, last_use)")),
+            rendered.contains(&format!("call helper:{helper}(clone(_0)")),
             "`not in` over {container} must lower to {helper}, container first: {rendered}"
         );
         assert!(
@@ -344,6 +631,7 @@ fn dict_membership_names_key_lookup_rather_than_element_lookup() -> Result<(), B
     Ok(())
 }
 
+/// Concatenation preserves both shared list parameters while returning a fresh list.
 #[test]
 fn lowers_list_concatenation_as_a_helper_call_rather_than_a_primitive_addition()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -358,7 +646,7 @@ fn lowers_list_concatenation_as_a_helper_call_rather_than_a_primitive_addition()
     )?;
 
     assert!(
-        rendered.contains("call helper:list_concat(move(_0, last_use), move(_1, last_use))"),
+        rendered.contains("call helper:list_concat(clone(_0), clone(_1))"),
         "list `+` must lower to the concatenation helper in source order: {rendered}"
     );
     assert!(
@@ -416,6 +704,96 @@ fn list_equality_stays_a_primitive_because_that_is_what_the_other_backend_emits(
         rendered.contains(" == "),
         "list equality must stay a primitive comparison rather than becoming a helper call: {rendered}"
     );
+    Ok(())
+}
+
+/// Equality borrows collection operands while a later final use still transfers the original binding.
+#[test]
+fn bytes_equality_retains_shared_reads_and_later_moves() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def buffers(left: bytes, right: bytes) -> bool:\n    return left == right\n\ndef retained_bytes() -> bytes:\n    values = b\"ab\"\n    same = values != b\"cd\"\n    return values\n",
+        &["byte_comparison_reads"],
+    )?;
+    for name in ["buffers", "retained_bytes"] {
+        let body = body_named(&module, name)?;
+        let operands = body
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Assign {
+                    rvalue: bir::Rvalue::BinaryOp(_, left, right),
+                    ..
+                } => Some([left, right]),
+                _ => None,
+            })
+            .ok_or("byte comparison missing")?;
+        for operand in operands {
+            let bir::Operand::Place(read) = operand else {
+                return Err("byte comparison must retain a place".into());
+            };
+            assert_eq!(read.fact, bir::OwnershipFact::Borrow);
+            assert!(!read.last_use);
+        }
+    }
+    let body = body_named(&module, "retained_bytes")?;
+    let returned = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Return {
+                value: Some(bir::Operand::Place(read)),
+            } => Some(read),
+            _ => None,
+        })
+        .ok_or("byte return missing")?;
+    assert_eq!(returned.fact, bir::OwnershipFact::Move);
+    Ok(())
+}
+
+/// Equality borrows collection operands while a later final use still transfers the original binding.
+#[test]
+fn collection_equality_retains_shared_reads_and_later_moves() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def lists(xs: list[int], ys: list[int]) -> bool:\n    return xs == ys\n\ndef sets(xs: Set[int], ys: Set[int]) -> bool:\n    return xs != ys\n\ndef maps(xs: dict[int, int], ys: dict[int, int]) -> bool:\n    return xs == ys\n\ndef retained() -> list[int]:\n    values = [1]\n    same = values == [1]\n    return values\n",
+        &["collection_reads"],
+    )?;
+    for name in ["lists", "sets", "maps", "retained"] {
+        let body = body_named(&module, name)?;
+        let operands = body
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Assign {
+                    rvalue: bir::Rvalue::BinaryOp(_, left, right),
+                    ..
+                } => Some([left, right]),
+                _ => None,
+            })
+            .ok_or("collection comparison missing")?;
+        for operand in operands {
+            let bir::Operand::Place(read) = operand else {
+                return Err("collection comparison must retain a place".into());
+            };
+            assert_eq!(read.fact, bir::OwnershipFact::Borrow);
+            assert!(!read.last_use);
+        }
+    }
+    let retained = body_named(&module, "retained")?;
+    let returned = retained
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Return {
+                value: Some(bir::Operand::Place(read)),
+            } => Some(read),
+            _ => None,
+        })
+        .ok_or("retained collection return missing")?;
+    assert_eq!(returned.fact, bir::OwnershipFact::Move);
     Ok(())
 }
 
@@ -521,8 +899,9 @@ fn protocol_hook_operators_reach_lowering_as_resolved_method_calls() -> Result<(
     ] {
         let rendered = body_named(&module, body_name)?.render_snapshot();
         assert!(
-            rendered.contains(&format!("call method:{method} unbound(borrow(_0), move(_1, last_use))")),
-            "`{spelling}` must lower as the method the typechecker resolved, receiver borrowed: {rendered}"
+            rendered.contains(&format!("call method:{method}(borrow(_0), move(_1, last_use))")),
+            "`{spelling}` must lower as the method the typechecker resolved, receiver borrowed and argument bound to \
+             its declared parameter: {rendered}"
         );
         assert!(
             !rendered.contains("unsupported("),
@@ -740,18 +1119,101 @@ fn a_user_defined_operator_lowers_to_the_method_the_typechecker_resolved() -> Re
     // method -- a wrong representation rather than an honest refusal, with no marker for a consumer to notice.
     let source = format!("{VEC2_SRC}def f(a: Vec2, b: Vec2) -> Vec2:\n  return a + b\n");
     let module = build(&source, &["m", "user_op"])?;
-    let rendered = body_named(&module, "f")?.render_snapshot();
+    let body = body_named(&module, "f")?;
+    let rendered = body.render_snapshot();
 
     assert!(
-        rendered.contains("call method:__add__ unbound(borrow(_0),"),
+        rendered.contains("call method:__add__(borrow(_0),"),
         "a user-defined operator must dispatch to its resolved method, with the left operand borrowed as the \
-             receiver: {rendered}"
+             receiver and bound to the declared parameter: {rendered}"
     );
     assert!(
         !rendered.contains("copy(_0) + copy(_1)") && !rendered.contains("move(_0, last_use) + "),
         "it must not also lower as a primitive operation: {rendered}"
     );
+    assert_eq!(
+        dunder_identity(body, "__add__"),
+        Some("__add__"),
+        "the dispatch must keep the method identity checking selected: {rendered}"
+    );
     Ok(())
+}
+
+/// Unary, index and index-assignment hooks call the dunder methods checking selected for them, in source order.
+#[test]
+fn unary_index_and_index_assignment_hooks_call_their_dunder_methods() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "model Row:\n  value: int\n\n  def __getitem__(self, index: int) -> int:\n    return self.value + index\n\n  def __setitem__(self, index: int, value: int) -> None:\n    println(value)\n\n  def __invert__(self) -> Row:\n    return Row(value=0 - self.value)\n\ndef main() -> None:\n  row = Row(value=4)\n  item = row[3]\n  row[3] = 9\n  flipped = ~row\n  println(item + flipped.value)\n";
+    let module = build(source, &["m", "operator_hooks"])?;
+    let body = body_named(&module, "main")?;
+    let rendered = body.render_snapshot();
+
+    assert!(
+        !rendered.contains("unsupported("),
+        "every operator hook must lower: {rendered}"
+    );
+    for method in ["__getitem__", "__setitem__", "__invert__"] {
+        assert_eq!(dunder_identity(body, method), Some(method), "{method}: {rendered}");
+    }
+    let get = rendered.find("method:__getitem__(").ok_or("missing __getitem__ call")?;
+    let set = rendered.find("method:__setitem__(").ok_or("missing __setitem__ call")?;
+    let invert = rendered.find("method:__invert__(").ok_or("missing __invert__ call")?;
+    assert!(get < set && set < invert, "hooks must run in source order: {rendered}");
+    Ok(())
+}
+
+/// A hook on a generic owner's instance calls its dunder, whose f-string displays the type-parameter operand as generic
+/// code displays it, through its type argument's own display.
+#[test]
+fn an_operator_hook_on_a_generic_owner_calls_its_dunder() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "model Column[T with Display]:\n  sql: str\n\n  def __mul__(self, other: T) -> Column[T]:\n    return Column[T](sql=f\"({self.sql} * {other})\")\n\ndef main() -> None:\n  amount = Column[float](sql=\"amount\")\n  println((amount * 2.0).sql)\n";
+    let module = build(source, &["m", "generic_operator_owner"])?;
+    let rendered = body_named(&module, "main")?.render_snapshot();
+    assert!(rendered.contains("call method:__mul__("), "{rendered}");
+    assert!(!rendered.contains("unsupported("), "{rendered}");
+    let hook = body_named(&module, "__mul__")?.render_snapshot();
+    assert!(hook.contains(":type_parameter_display"), "{hook}");
+    assert!(hook.contains(".sql):display"), "{hook}");
+    Ok(())
+}
+
+/// A `println` or `print` argument whose checked type is a type parameter prints its type argument's own display,
+/// while a concretely typed argument keeps its ordinary display.
+#[test]
+fn printing_a_type_parameter_value_displays_it_generically() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def announce[T with Display](value: T, label: str) -> None:\n  println(value)\n  print(label)\n";
+    let module = build(source, &["m", "generic_print"])?;
+    let rendered = body_named(&module, "announce")?.render_snapshot();
+    assert!(rendered.contains(":type_parameter_display)"), "{rendered}");
+    assert_eq!(rendered.matches(":type_parameter_display").count(), 1, "{rendered}");
+    Ok(())
+}
+
+/// A generic owner's hook retains its checked dispatch once its type-parameter formatting has a Body IR fact.
+#[test]
+fn an_operator_hook_on_a_generic_owner_retains_dispatch() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "model Column[T with Display]:\n  sql: str\n\n  def __mul__(self, other: T) -> Column[T]:\n    return Column[T](sql=f\"({self.sql} * {other})\")\n\ndef main() -> None:\n  amount = Column[float](sql=\"amount\")\n  println((amount * 2.0).sql)\n";
+    let module = build(source, &["m", "generic_operator_owner"])?;
+    let rendered = body_named(&module, "main")?.render_snapshot();
+    assert!(!rendered.contains("unsupported"), "{rendered}");
+    assert_eq!(
+        dunder_identity(body_named(&module, "main")?, "__mul__"),
+        Some("__mul__")
+    );
+    Ok(())
+}
+
+/// Return the checked identity name of the first call of `method` in `body`, when it carries one.
+fn dunder_identity<'body>(body: &'body bir::Body, method: &str) -> Option<&'body str> {
+    body.block.stmts.iter().find_map(|statement| match &statement.kind {
+        bir::StatementKind::Call {
+            callee: bir::Callee::Method(target),
+            ..
+        } if target.name == method => target
+            .canonical
+            .as_ref()
+            .map(|identity| identity.declaration_name.as_str()),
+        _ => None,
+    })
 }
 
 #[test]
@@ -901,5 +1363,98 @@ fn plain_multi_target_assignment_reuses_active_body_ir_locals() -> Result<(), Bo
             module.render_snapshot()
         );
     }
+    Ok(())
+}
+
+#[test]
+fn membership_in_a_frozen_constant_uses_the_collection_helper() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "const NAMES: FrozenList[str] = [\"alpha\", \"beta\"]\n\ndef main() -> bool:\n  return \"beta\" in NAMES\n",
+        &["m", "frozen_membership"],
+    )?;
+    let rendered = body_named(&module, "main")?.render_snapshot();
+    assert!(!rendered.contains("unsupported("), "{rendered}");
+    assert!(rendered.contains("helper:list_contains"), "{rendered}");
+    Ok(())
+}
+
+#[test]
+fn a_tuple_assignment_binds_a_new_name_beside_a_place() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def main() -> int:\n  mut items = [10, 20, 30]\n  items[0], fresh = (items[2], items[0])\n  return items[0] + fresh\n",
+        &["m", "tuple_assign_binding"],
+    )?;
+    let rendered = body_named(&module, "main")?.render_snapshot();
+    assert!(!rendered.contains("unsupported("), "{rendered}");
+    assert!(
+        rendered.contains(" fresh : int [binding]"),
+        "`fresh` must be a declared local: {rendered}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_module_constant_reads_its_global_place() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "import std.math\n\ndef main() -> float:\n  return math.PI\n",
+        &["m", "module_constant"],
+    )?;
+    let rendered = body_named(&module, "main")?.render_snapshot();
+    assert!(!rendered.contains("unsupported("), "{rendered}");
+    Ok(())
+}
+
+/// Retain evaluated source-local text constants while a same-spelled frame binding stays a place read.
+#[test]
+fn text_constants_retain_checked_values_without_shadowing_local_places() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "const TEXT: str = \"hello\" + \" world\"\n\ndef constant() -> str:\n    return TEXT\n\ndef local(TEXT: str) -> str:\n    return TEXT\n",
+        &["m", "text_constants"],
+    )?;
+    let constant = body_named(&module, "constant")?.render_snapshot();
+    assert!(constant.contains("hello world"), "{constant}");
+    let declaration = module.constant_declarations.first().ok_or("checked constant missing")?;
+    assert_eq!(declaration.canonical.declaration_name, "TEXT");
+    assert_eq!(declaration.value, bir::Constant::Str("hello world".into()));
+    let local = body_named(&module, "local")?.render_snapshot();
+    assert!(!local.contains("hello world"), "{local}");
+    assert!(local.contains("_0"), "{local}");
+    Ok(())
+}
+
+/// Frozen constants and checked literals keep their storage identity while ordinary text parameters stay places.
+#[test]
+fn frozen_text_operands_retain_the_checked_storage_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "const NAME: str = \"policy\"\nconst FROZEN: FrozenStr = \"frozen\"\n\ndef static_text() -> FrozenStr | str | int:\n    return NAME\n\ndef frozen_text() -> FrozenStr | str | int:\n    return FROZEN\n\ndef literal() -> FrozenStr:\n    return \"literal\"\n\ndef owned(value: str) -> FrozenStr | str | int:\n    return value\n",
+        &["m", "frozen_storage"],
+    )?;
+    for (name, expected) in [
+        ("static_text", "policy"),
+        ("frozen_text", "frozen"),
+        ("literal", "literal"),
+    ] {
+        let body = body_named(&module, name)?;
+        assert!(
+            body.block.stmts.iter().any(|statement| matches!(
+                &statement.kind,
+                bir::StatementKind::Return { value: Some(bir::Operand::Constant(bir::Constant::FrozenStr(text))) }
+                    if text == expected
+            )),
+            "{}",
+            body.render_snapshot()
+        );
+    }
+    let owned = body_named(&module, "owned")?;
+    assert!(
+        owned.block.stmts.iter().any(|statement| matches!(
+            &statement.kind,
+            bir::StatementKind::Return {
+                value: Some(bir::Operand::Place(_))
+            }
+        )),
+        "{}",
+        owned.render_snapshot()
+    );
     Ok(())
 }

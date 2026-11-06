@@ -7,6 +7,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use super::source_context::StdlibSourceInputs;
 use super::{StdlibModuleData, load_stdlib_module_data_inner};
 use crate::ast;
 use incan_lang::lang::stdlib;
@@ -22,6 +23,7 @@ pub(super) fn param_default_const_paths(
     program: &ast::Program,
     loading: &mut HashSet<String>,
     loaded: &mut HashMap<String, StdlibModuleData>,
+    source_inputs: &mut StdlibSourceInputs,
 ) -> HashMap<String, Vec<String>> {
     let mut paths = HashMap::new();
     for param in params {
@@ -31,7 +33,7 @@ pub(super) fn param_default_const_paths(
         if paths.contains_key(name) {
             continue;
         }
-        if let Some(path) = module_const_path(name, module_path, program, loading, loaded) {
+        if let Some(path) = module_const_path(name, module_path, program, loading, loaded, source_inputs) {
             paths.insert(name.clone(), path);
         }
     }
@@ -49,6 +51,7 @@ fn module_const_path(
     program: &ast::Program,
     loading: &mut HashSet<String>,
     loaded: &mut HashMap<String, StdlibModuleData>,
+    source_inputs: &mut StdlibSourceInputs,
 ) -> Option<Vec<String>> {
     let declares_const = program
         .declarations
@@ -76,7 +79,7 @@ fn module_const_path(
     })?;
     let key = source_module.join(".");
     if !loaded.contains_key(&key) {
-        load_stdlib_module_data_inner(&source_module, loading, loaded)?;
+        load_stdlib_module_data_inner(&source_module, loading, loaded, source_inputs)?;
     }
     let identity = loaded
         .get(&key)?

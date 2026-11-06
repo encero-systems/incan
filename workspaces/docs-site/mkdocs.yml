@@ -283,7 +283,6 @@ nav:
       - How-to:
           - Install/build/run: tooling/how-to/install_and_run.md
           - Managing dependencies: tooling/how-to/dependencies.md
-          - Execute a published package: tooling/how-to/execute_published_package.md
           - CI & automation: tooling/how-to/ci_and_automation.md
           - Troubleshooting: tooling/how-to/troubleshooting.md
           - Editor setup: tooling/how-to/editor_setup.md
@@ -330,6 +329,7 @@ nav:
           - Author library DSLs with incan_vocab: contributing/how-to/authoring_vocab_crates.md
           - Auditing generated Rust: contributing/how-to/auditing_generated_rust.md
           - Benchmarks & profiling (repository): contributing/how-to/benchmarks_and_profiling.md
+          - Trace compiler invocations: contributing/how-to/trace-compiler-invocations.md
           - Oven Alpha benchmark protocol: contributing/how-to/oven_alpha_benchmark.md
           - CI & automation (repository): contributing/how-to/ci_and_automation.md
           - Writing RFCs: contributing/how-to/writing_rfcs.md
@@ -346,7 +346,6 @@ nav:
           - "std.testing internals": contributing/explanation/stdlib_testing_internals.md
       - Reference:
           - Backend behavior inventory: contributing/reference/backend_behavior_inventory.md
-          - Replacement compatibility inventory: contributing/reference/replacement_compatibility_inventory.md
           - Test corpus inventory: contributing/reference/test_corpus_inventory.md
           - Generated Rust stdlib coverage: contributing/reference/generated_rust_stdlib_coverage.md
           - Hees.ai v0.5 dependency inventory: contributing/reference/hees_ai_v05_dependency_inventory.md
@@ -368,6 +367,8 @@ nav:
           - "DD-0001: GPU capability deferral": design_records/0001_gpu_target_capability_deferred.md
           - "DD-0002: Single pinned Rust version": design_records/0002_single_pinned_rust_version.md
           - "DD-0003: Replacement program output contract": design_records/0003_replacement_program_output_contract.md
+          - "DD-0004: Pinned native compiler driver": design_records/0004_native_route_through_the_pinned_rustc.md
+          - "DD-0005: Cargo-free development contract": design_records/0005_cargo_free_development_contract.md
       - Whitepapers:
           - Overview: whitepapers/index.md
           - Incan ecosystem north star: whitepapers/incan_ecosystem_north_star.md

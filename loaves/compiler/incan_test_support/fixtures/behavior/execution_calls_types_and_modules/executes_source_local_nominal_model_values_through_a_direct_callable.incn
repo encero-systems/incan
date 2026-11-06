@@ -1,0 +1,24 @@
+# behavior: executes source local nominal model values through a direct callable
+# expect-stdout:
+#   42
+
+
+"""Executes source local nominal model values through a direct callable."""
+model Pair:
+  """Hold left and right used by this fixture."""
+  left: int
+  right: int = 2
+
+def score(pair: Pair) -> int:
+  """Return the fixture expression `pair.left + pair.right`."""
+  return pair.left + pair.right
+
+def program_result() -> int:
+  """Compute and return `score(pair)`."""
+  pair = Pair(right=2, left=40)
+  return score(pair)
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

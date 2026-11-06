@@ -1,0 +1,31 @@
+# behavior: cli executes enumerate and zip without fallback
+# expect-stdout:
+#   0
+#   10
+#   1
+#   20
+#   10
+#   ten
+#   41
+
+
+"""Cli executes enumerate and zip without fallback."""
+def program_result() -> int:
+  """Traverse `for index, value in enumerate(values)` and return `total`."""
+  values = [10, 20]
+  labels = ["ten"]
+  mut total = 0
+  for index, value in enumerate(values):
+    println(index)
+    println(value)
+    total += index + value
+  for paired_value, label in zip(values, labels):
+    println(paired_value)
+    println(label)
+    total += paired_value
+  return total
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

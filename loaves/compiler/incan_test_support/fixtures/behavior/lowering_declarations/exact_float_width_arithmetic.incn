@@ -7,7 +7,7 @@
 #   f32 mul 0.3
 #   f32 div 0.33333334
 #   f64 div 0.3333333333333333
-#   f32 floordiv 3
+#   f32 floordiv 3.0
 #   f32 mod 0.20000005
 #   f32 pow 1.21
 

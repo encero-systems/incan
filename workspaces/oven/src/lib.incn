@@ -28,3 +28,6 @@ pub from source_inventory import (
     PackageSourceInventory,
 )
 pub from rust_policy_exchange import evaluate as evaluate_rust_policy_exchange
+pub from loaf_index import read_root_requests, read_index, decode_line, LoafVersion, LoafRustKind
+pub from loaf_resolve import resolve_requests, resolve, select_version, resolution_json, LoafDemand, ResolvedLoaf
+pub from loaf_facts import feature_name_closure, closure_violations

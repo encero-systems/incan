@@ -1,0 +1,92 @@
+"""The exclusive references `mut` text, model, enum and tuple parameters receive, built the way legacy passes each argument."""
+
+from pub::incan_mir_plan import Operand, OperandKind, Place, PlanType, Projection, RvalueKind, SourceSpan
+from pub::incan_mir_plan import assign as plan_assign
+from rust::incan_semantics_core::body_ir import Operand as RustOperand, OwnershipFact
+from frame import Builder, temporary, read_place, place_type
+from text_plan import clone_text
+from lowering import scalar_place, display_operand, clone_nominal_operand
+from lists import parameter_storage_type
+from tuples import is_tuple_type
+from options import clone_tuple_operand
+
+
+pub def mutable_argument(
+    mut builder: Builder,
+    value: &RustOperand,
+    reference: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """
+    Borrow the value a `mut` text, model, enum or tuple parameter receives, as an exclusive reference of type `reference`.
+
+    The caller's own value, or one it last uses, is borrowed in place, so the callee's changes reach it. A text literal,
+    a loop variable, or a value the checker reads by copy reaches the callee as a fresh owned copy, as legacy passes
+    `&mut value.clone()`; the copy drops when its scope ends.
+    """
+    source = argument_source(builder, value, referent(reference)?, span)?
+    exclusive = temporary(builder, reference, span)
+    builder.emit(plan_assign(exclusive, RvalueKind.MutBorrow(source), span))
+    return Ok(read_place(exclusive, true, span))
+
+
+def referent(reference: PlanType) -> Result[PlanType, str]:
+    """The value type an exclusive parameter reference names."""
+    match reference:
+        PlanType.StringMutRef => return Ok(PlanType.String)
+        PlanType.ModelMutRef(owner, name) => return Ok(PlanType.Model(owner, name))
+        PlanType.EnumMutRef(owner, name) => return Ok(PlanType.Enum(owner, name))
+        PlanType.TupleMutRef(elements) => return Ok(PlanType.Tuple(elements))
+        _ => return Err("invalid Body IR mutable parameter reference")
+
+
+def argument_source(mut builder: Builder, value: &RustOperand, ty: PlanType, span: SourceSpan) -> Result[Place, str]:
+    """Select the value to borrow: the argument itself when the caller hands it over, otherwise an owned copy."""
+    match value:
+        RustOperand.Place(read) =>
+            match read.place.global():
+                Some(_global) => return Err("unsupported Body IR mutable argument from a static")
+                None => pass
+            place = scalar_place(builder, read.place, span)?
+            # A `mut` parameter handed on to another one is reborrowed, so the changes still reach its own caller.
+            exclusive = parameter_storage_type(ty, true)
+            if place.projection == Projection.Whole and builder.locals[place.local].ty == exclusive:
+                handed_on = Place(local=place.local, projection=Projection.Deref(ty), span=span)
+                return checked_source(builder, handed_on, read.fact, span)
+            if place_type(builder.locals, place) != ty:
+                return Err("unsupported Body IR mutable argument of another type")
+            # A loop variable is a copy of its element or a view of it; legacy hands the callee a further copy.
+            if place.local in builder.borrowed_items or place.local in builder.in_place_items:
+                return copied_value(builder, place, span)
+            return checked_source(builder, place, read.fact, span)
+        RustOperand.Constant(_constant) =>
+            if ty != PlanType.String:
+                return Err("unsupported Body IR mutable argument constant")
+            return display_operand(builder, value, span)
+        _ => return Err("unsupported Body IR mutable argument")
+
+
+def checked_source(mut builder: Builder, place: Place, fact: &OwnershipFact, span: SourceSpan) -> Result[Place, str]:
+    """Borrow a value the checker hands over exclusively in place, and copy one it only reads."""
+    match builder.locals[place.local].ty:
+        PlanType.ModelRef(_owner, _name) => return Err("unsupported Body IR mutable argument through a shared receiver")
+        _ => pass
+    match fact:
+        OwnershipFact.MutBorrow => return Ok(place)
+        OwnershipFact.Move => return Ok(place)
+        OwnershipFact.Clone => return copied_value(builder, place, span)
+        OwnershipFact.Borrow => return copied_value(builder, place, span)
+        _ => return Err("unsupported Body IR mutable argument ownership")
+
+
+def copied_value(mut builder: Builder, place: Place, span: SourceSpan) -> Result[Place, str]:
+    """Clone text, a tuple, a model or an enum into a new owned temporary."""
+    if place_type(builder.locals, place) == PlanType.String:
+        return clone_text(builder, place, span)
+    if is_tuple_type(place_type(builder.locals, place)):
+        match clone_tuple_operand(builder, place, span)?.kind:
+            OperandKind.Move(copy) => return Ok(copy)
+            _ => return Err("invalid Body IR cloned tuple argument")
+    match clone_nominal_operand(builder, place, span)?.kind:
+        OperandKind.Move(copy) => return Ok(copy)
+        _ => return Err("invalid Body IR cloned argument")

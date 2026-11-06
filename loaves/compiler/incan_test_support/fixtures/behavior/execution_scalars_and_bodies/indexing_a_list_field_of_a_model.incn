@@ -1,0 +1,19 @@
+# behavior: indexing a list field of a model reads its element
+# expect-stdout:
+#   40
+
+"""Indexing a list field of a model reads its element."""
+model Bucket:
+    """Hold values used by this fixture."""
+    values: list[int]
+
+
+def program_result() -> int:
+    """Compute and return `bucket.values[0]`."""
+    bucket = Bucket(values=[40, 2])
+    return bucket.values[0]
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

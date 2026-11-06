@@ -1,0 +1,348 @@
+{
+  "deps": [
+    {
+      "name": "byteorder",
+      "loaf": "crates-io/byteorder",
+      "req": "1",
+      "features": [],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "encoding_rs",
+      "loaf": "crates-io/encoding_rs",
+      "req": "0.8",
+      "features": [],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "rustix",
+      "loaf": "crates-io/rustix",
+      "req": "1.1",
+      "features": [
+        "fs"
+      ],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "tempfile",
+      "loaf": "crates-io/tempfile",
+      "req": "3",
+      "features": [],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "crc32fast",
+      "loaf": "crates-io/crc32fast",
+      "req": "1",
+      "features": [],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "bzip2",
+      "loaf": "crates-io/bzip2",
+      "req": "0.6",
+      "features": [],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "flate2",
+      "loaf": "crates-io/flate2",
+      "req": "1",
+      "features": [],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "snap",
+      "loaf": "crates-io/snap",
+      "req": "1",
+      "features": [],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "xz2",
+      "loaf": "crates-io/xz2",
+      "req": "0.1",
+      "features": [
+        "static"
+      ],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "zstd",
+      "loaf": "crates-io/zstd",
+      "req": "0.13",
+      "features": [],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "blake2",
+      "loaf": "crates-io/blake2",
+      "req": "0.10",
+      "features": [],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "blake3",
+      "loaf": "crates-io/blake3",
+      "req": "1",
+      "features": [],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "hmac",
+      "loaf": "crates-io/hmac",
+      "req": "0.12",
+      "features": [
+        "reset"
+      ],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "libm",
+      "loaf": "crates-io/libm",
+      "req": "0.2",
+      "features": [],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "md5",
+      "loaf": "crates-io/md-5",
+      "req": "0.10",
+      "features": [],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "rand",
+      "loaf": "crates-io/rand",
+      "req": "0.8",
+      "features": [],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "regex",
+      "loaf": "crates-io/regex",
+      "req": "1.0",
+      "features": [],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "serde",
+      "loaf": "crates-io/serde",
+      "req": "1.0",
+      "features": [
+        "derive"
+      ],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "serde_json",
+      "loaf": "crates-io/serde_json",
+      "req": "1.0",
+      "features": [],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "serde_path_to_error",
+      "loaf": "crates-io/serde_path_to_error",
+      "req": "0.1",
+      "features": [],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "sha1",
+      "loaf": "crates-io/sha1",
+      "req": "0.10",
+      "features": [],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "sha2",
+      "loaf": "crates-io/sha2",
+      "req": "0.10",
+      "features": [],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "sha3",
+      "loaf": "crates-io/sha3",
+      "req": "0.10",
+      "features": [],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "toml",
+      "loaf": "crates-io/toml",
+      "req": "0.9",
+      "features": [],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "toml_edit",
+      "loaf": "crates-io/toml_edit",
+      "req": "0.25",
+      "features": [
+        "parse",
+        "serde"
+      ],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "xxhash_rust",
+      "loaf": "crates-io/xxhash-rust",
+      "req": "0.8",
+      "features": [
+        "xxh3",
+        "xxh32",
+        "xxh64"
+      ],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "tokio",
+      "loaf": "crates-io/tokio",
+      "req": "1",
+      "features": [
+        "macros",
+        "net",
+        "rt-multi-thread",
+        "sync",
+        "time"
+      ],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "axum",
+      "loaf": "crates-io/axum",
+      "req": "0.8",
+      "features": [],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "inventory",
+      "loaf": "crates-io/inventory",
+      "req": "0.3",
+      "features": [],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "tokio",
+      "loaf": "crates-io/tokio",
+      "req": "1",
+      "features": [
+        "net",
+        "rt-multi-thread"
+      ],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "serde",
+      "loaf": "crates-io/serde",
+      "req": "1.0",
+      "features": [
+        "derive"
+      ],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "syn",
+      "loaf": "crates-io/syn",
+      "req": "2.0",
+      "features": [
+        "full",
+        "parsing"
+      ],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "quote",
+      "loaf": "crates-io/quote",
+      "req": "1.0",
+      "features": [],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "syn",
+      "loaf": "crates-io/syn",
+      "req": "2.0",
+      "features": [
+        "full",
+        "parsing"
+      ],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "quote",
+      "loaf": "crates-io/quote",
+      "req": "1.0",
+      "features": [],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "proc_macro2",
+      "loaf": "crates-io/proc-macro2",
+      "req": "1.0",
+      "features": [],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "serde",
+      "loaf": "crates-io/serde",
+      "req": "1.0",
+      "features": [
+        "derive"
+      ],
+      "default-features": true,
+      "optional": true
+    },
+    {
+      "name": "serde_json",
+      "loaf": "crates-io/serde_json",
+      "req": "1.0",
+      "features": [],
+      "default-features": true,
+      "optional": true
+    }
+  ],
+  "target": "aarch64-apple-darwin",
+  "host": "aarch64-apple-darwin",
+  "host-projects": [
+    "derive/incan_derive/loaf.toml",
+    "derive/incan_web_macros/loaf.toml"
+  ]
+}

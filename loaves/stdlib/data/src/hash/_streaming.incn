@@ -6,7 +6,7 @@ matches on that enum so string validation, unsupported-width errors, and streami
 """
 
 from std.fs import File, Path
-from std.io import BinaryReader, IoError
+from std.io import BinaryReader
 from std.hash._core import (
     DEFAULT_CHUNK_SIZE,
     HashError,

@@ -25,6 +25,12 @@ use super::{IdentKind, TypeChecker};
 
 mod access;
 mod basics;
+mod body_ir_closure_parameters;
+mod body_ir_empty_lists;
+mod body_ir_nominals;
+mod body_ir_reexports;
+mod body_ir_string_slices;
+mod body_ir_values;
 mod builtin_method_args;
 mod calls;
 mod collections;
@@ -33,6 +39,7 @@ mod control_flow;
 mod dict_lookups;
 mod error_display;
 mod list_methods;
+mod literal_carriers;
 mod match_;
 mod match_coverage;
 mod ops;
@@ -542,6 +549,24 @@ impl TypeChecker {
         Some((name.clone(), info.path.clone()))
     }
 
+    /// The declaring identity of a callable reached through a module binding (`math.sqrt`), from its checked provider,
+    /// the module graph or the permitted source stdlib cache that resolved its signature.
+    ///
+    /// An active checked provider owns both the signature and identity; an absent export cannot fall back to source.
+    /// Source-backed stdlib bindings use the stdlib cache, which the dependency-member walk does not consult. Both
+    /// `import std.math` + `math.sqrt(..)` and `from std.math import sqrt` + `sqrt(..)` record the same declaration.
+    fn imported_module_callable_identity(
+        &mut self,
+        module_path: &[String],
+        member: &str,
+    ) -> Option<incan_semantics_core::CanonicalSymbolId> {
+        if self.checked_sdk_provider_owns_module(module_path) {
+            return self.sdk_provider_member_identity(&ImportPath::simple(module_path.to_vec()), member);
+        }
+        self.dependency_member_identity(&ImportPath::simple(module_path.to_vec()), member)
+            .or_else(|| self.stdlib_cache.lookup_identity(module_path, member))
+    }
+
     /// Resolve a function member from a stdlib or public-package module binding.
     fn resolve_imported_module_function_member(&mut self, module_path: &[String], member: &str) -> Option<SymbolKind> {
         self.resolve_imported_module_function_member_with_source(module_path, member)
@@ -549,11 +574,19 @@ impl TypeChecker {
     }
 
     /// Resolve an imported callable together with the authored module path used by lowering and codegraph facts.
+    /// Checked provider modules retain authority over missing exports instead of falling back to source declarations.
     fn resolve_imported_module_function_member_with_source(
         &mut self,
         module_path: &[String],
         member: &str,
     ) -> Option<(SymbolKind, Vec<String>)> {
+        // A checked provider owns its public module even when an export is missing. Never answer from source stubs
+        // or an unrelated source graph after its canonical dotted-key lookup refuses the member.
+        if self.checked_sdk_provider_owns_module(module_path) {
+            let kind = self.sdk_provider_member_symbol(&ImportPath::simple(module_path.to_vec()), member)?;
+            return matches!(kind, SymbolKind::Function(_) | SymbolKind::FunctionOverloads(_))
+                .then(|| (kind, module_path.to_vec()));
+        }
         if let Some(kind) = self.stdlib_cache.lookup_function_symbol(module_path, member) {
             return Some((kind, module_path.to_vec()));
         }
@@ -581,7 +614,8 @@ impl TypeChecker {
         module_path: &[String],
         member: &str,
     ) -> Option<(VariableInfo, Option<incan_semantics_core::CanonicalSymbolId>)> {
-        if let Some(info) = self.stdlib_cache.lookup_constant(module_path, member) {
+        let provider_owned = self.checked_sdk_provider_owns_module(module_path);
+        if !provider_owned && let Some(info) = self.stdlib_cache.lookup_constant(module_path, member) {
             let identity = self.stdlib_cache.lookup_identity(module_path, member);
             return Some((info, identity));
         }
@@ -603,8 +637,18 @@ impl TypeChecker {
                 _ => None,
             };
         }
-        let kind = self.dependency_member_symbol_for_path(&ImportPath::simple(module_path.to_vec()), member)?;
-        let identity = self.dependency_member_identity(&ImportPath::simple(module_path.to_vec()), member);
+        let path = ImportPath::simple(module_path.to_vec());
+        let (kind, identity) = if provider_owned {
+            (
+                self.sdk_provider_member_symbol(&path, member)?,
+                self.sdk_provider_member_identity(&path, member),
+            )
+        } else {
+            (
+                self.dependency_member_symbol_for_path(&path, member)?,
+                self.dependency_member_identity(&path, member),
+            )
+        };
         match kind {
             SymbolKind::Variable(info) => Some((info, identity)),
             SymbolKind::Static(info) => Some((
@@ -642,16 +686,22 @@ impl TypeChecker {
             Expr::Binary(left, op, right) => self.check_binary(left, *op, right, expr.span),
             Expr::Unary(op, operand) => self.check_unary(*op, operand, expr.span),
             Expr::Call(callee, type_args, args) => {
+                let errors_before = self.errors.len();
                 let ty = self.check_call(callee, type_args, args, expr.span);
+                self.retain_body_ir_reexport_call(expr, errors_before, &ty);
                 self.record_mut_arguments(MutArgumentCallee::Function(callee), expr.span, args);
+                self.retain_body_ir_empty_list_use(expr, errors_before);
                 ty
             }
             Expr::Index(base, index) => self.check_index(base, index, expr.span),
             Expr::Slice(base, slice) => self.check_slice(base, slice, expr.span),
             Expr::Field(base, field) => self.check_field(base, field, expr.span),
             Expr::MethodCall(base, method, type_args, args) => {
+                let errors_before = self.errors.len();
                 let ty = self.check_method_call(base, method, type_args, args, expr.span);
                 self.record_mut_arguments(MutArgumentCallee::Method { receiver: base, method }, expr.span, args);
+                self.retain_body_ir_empty_list_use(expr, errors_before);
+                self.retain_body_ir_string_slice_call(expr, errors_before);
                 ty
             }
             Expr::Partial(partial) => self.check_partial_expr(partial, expr.span),
@@ -731,6 +781,7 @@ impl TypeChecker {
 
         // Record for downstream stages (lowering/codegen).
         self.record_expr_type(expr.span, ty.clone());
+        self.retain_body_ir_result_value(expr, &ty);
         self.refuse_capturing_callables_held_in(expr);
         ty
     }
@@ -813,6 +864,11 @@ impl TypeChecker {
                 self.type_token_value_spans.pop();
                 ty
             }
+            // None constructs the Option its destination already proves. Retaining that type here also fixes
+            // an enclosing intrinsic constructor's payload type without downstream inference.
+            (Expr::Literal(Literal::None), Some(expected_ty)) if expected_ty.option_inner_type().is_some() => {
+                expected_ty.clone()
+            }
             (Expr::Literal(literal @ Literal::Int(value)), _) if value.suffix.is_some() => {
                 self.check_literal(literal, expr.span)
             }
@@ -866,14 +922,20 @@ impl TypeChecker {
             }
             (Expr::Try(inner), Some(expected_ty)) => self.check_try_with_expected(inner, expr.span, Some(expected_ty)),
             (Expr::Call(callee, type_args, args), Some(expected_ty)) => {
+                let errors_before = self.errors.len();
                 let ty = self.check_call_with_expected(callee, type_args, args, expr.span, Some(expected_ty));
+                self.retain_body_ir_reexport_call(expr, errors_before, &ty);
                 self.record_mut_arguments(MutArgumentCallee::Function(callee), expr.span, args);
+                self.retain_body_ir_empty_list_use(expr, errors_before);
                 ty
             }
             (Expr::MethodCall(base, method, type_args, args), Some(expected_ty)) => {
+                let errors_before = self.errors.len();
                 let ty =
                     self.check_method_call_with_expected(base, method, type_args, args, expr.span, Some(expected_ty));
                 self.record_mut_arguments(MutArgumentCallee::Method { receiver: base, method }, expr.span, args);
+                self.retain_body_ir_empty_list_use(expr, errors_before);
+                self.retain_body_ir_string_slice_call(expr, errors_before);
                 ty
             }
             (Expr::Tuple(items), Some(ResolvedType::Unit)) if items.is_empty() => ResolvedType::Unit,
@@ -896,6 +958,8 @@ impl TypeChecker {
             self.refuse_collection_literal_without_one_member(&ty, expected, expr.span);
         }
         self.record_expr_type(expr.span, ty.clone());
+        self.retain_body_ir_result_value(expr, &ty);
+        self.retain_body_ir_value_destination(expr, &ty, expected);
         self.refuse_capturing_callables_held_in(expr);
         ty
     }

@@ -728,7 +728,9 @@ impl Formatter {
         true
     }
 
-    /// Format a statement for inline expression contexts.
+    /// Format only statements accepted by the parser in inline match-arm contexts.
+    ///
+    /// `continue` requires an indented suite; collapsing it would make valid source unparseable.
     fn format_statement_inline(&mut self, stmt: &Statement) -> bool {
         match stmt {
             Statement::Expr(expr) => self.format_expr(&expr.node),
@@ -747,7 +749,6 @@ impl Formatter {
                     self.format_expr(&expr.node);
                 }
             }
-            Statement::Continue => self.writer.write("continue"),
             _ => return false,
         }
         true

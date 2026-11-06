@@ -4,7 +4,7 @@
 //! test dependencies -- as recorded for one schema version.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::artifact::OvenRustcRegistrySourcePackage;
 use super::{OvenRustcError, validate_project_inspection_authority_payload};
@@ -13,7 +13,7 @@ use oven_store::{OVEN_COMPILER_SUPPORT_ROOT_INTENT_BUILD_UNIT_INPUT, OvenReceipt
 use serde::{Deserialize, Serialize};
 
 /// Wire schema for one project-level Rust inspection authority.
-pub const OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION: u32 = 2;
+pub const OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION: u32 = 3;
 
 /// Wire schema for compiler-support root intent retained with one explicit publisher receipt.
 pub const OVEN_COMPILER_SUPPORT_ROOT_INTENT_SCHEMA_VERSION: u32 = 1;
@@ -102,12 +102,18 @@ pub struct OvenProjectInspectionTestProviderConstituent {
 
 /// Exact per-root evidence admitted by the generated native-test dependency envelope.
 ///
-/// Registry roots retain Cargo's locked package/source identity as well as the declared edge digest. Path and Git
+/// Registry roots retain either an original native record or the legacy Cargo package/source identity, alongside
+/// the declared edge digest. Path and Git
 /// roots carry their complete portable declaration/source digest; for paths that digest includes the source tree,
 /// never its machine-local spelling.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "source", rename_all = "snake_case")]
 pub enum OvenProjectInspectionTestDependencyRoot {
+    /// Registry declaration bound to an original native Loaf record, independently of Cargo package identities.
+    NativeRegistry {
+        dependency_digest: String,
+        record_identity: String,
+    },
     Registry {
         dependency_digest: String,
         locked: OvenProjectInspectionRootDependency,
@@ -120,6 +126,18 @@ pub enum OvenProjectInspectionTestDependencyRoot {
     },
 }
 
+/// Exact native declaration roots retained by one original direct-plan constituent.
+/// The constituent receipt seals this complete map, including mandatory support roots. Native records carry their
+/// own source and physical edges; these coordinates do not grant legacy registry-catalog or macro authority.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OvenProjectInspectionNativeRoots {
+    /// Original direct-plan constituent whose receipt binds the complete root map.
+    pub constituent_index: usize,
+    /// Consumer aliases mapped to exact native record identities.
+    pub roots: BTreeMap<String, String>,
+}
+
 /// Singular source authority published once by an explicit project bake.
 ///
 /// The authority owns one canonical publisher lock and exact normal/dev root-edge records. Its source catalog is a
@@ -127,6 +145,9 @@ pub enum OvenProjectInspectionTestDependencyRoot {
 /// constituent; normal commands never union independent locks or search the store by dependency compatibility.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OvenProjectInspectionAuthorityPayload {
+    /// Original native root authority for the ordinary producer; absent for legacy registry publication.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_roots: Option<OvenProjectInspectionNativeRoots>,
     pub schema_version: u32,
     pub project_identity: String,
     pub source_authority_digest: String,
@@ -206,6 +227,7 @@ pub struct OvenLoadedProjectInspectionAuthority {
     source_owner: OvenStoreExecutionPayload,
     pub payload: OvenProjectInspectionAuthorityPayload,
     pub stored_constituents: Vec<OvenStoreExecutionPayload>,
+    stored_constituent_roots: Vec<PathBuf>,
     pub(crate) lineage_leases: Vec<OvenStoreLease>,
 }
 
@@ -216,22 +238,71 @@ impl OvenLoadedProjectInspectionAuthority {
         payload: OvenProjectInspectionAuthorityPayload,
         stored_constituents: Vec<OvenStoreExecutionPayload>,
     ) -> Self {
+        let stored_constituent_roots = stored_constituents
+            .iter()
+            .map(|selected| selected.artifact_root().to_path_buf())
+            .collect();
         Self {
             source_owner,
             payload,
             stored_constituents,
+            stored_constituent_roots,
             lineage_leases: Vec::new(),
         }
     }
 
     /// Return the immutable Store identity that owns the authority payload and materialized files.
     pub fn identity(&self) -> &str {
-        &self.source_owner.manifest.identity
+        &self.source_owner.manifest().identity
     }
 
     /// Return the materialized root derived from the retained authority owner.
     pub fn artifact_root(&self) -> &Path {
-        &self.source_owner.artifact_root
+        self.source_owner.artifact_root()
+    }
+
+    /// Revalidate the original authority and every exact retained constituent without acquiring new owners.
+    ///
+    /// Public decoded fields cannot substitute another generation beneath this capability. Optional consumers use
+    /// this before classifying an incompatible native generation as a cache miss, so damage to an admitted owner
+    /// or mutation of the decoded authority remains an error rather than becoming a recoverable stale result.
+    pub fn verify(&self) -> Result<(), OvenRustcError> {
+        self.source_owner.verify_admitted_payload()?;
+        let original = super::receipt_selection::decode_project_inspection_authority(
+            self.identity(),
+            self.source_owner.payload(),
+        )?;
+        if original != self.payload {
+            return Err(OvenRustcError::InvalidStoredPlan {
+                identity: self.identity().to_string(),
+                message: "project inspection authority differs from its original admitted payload".to_string(),
+            });
+        }
+        validate_project_inspection_authority_payload(&original)?;
+        let stored_count = original
+            .constituents
+            .iter()
+            .filter(|constituent| matches!(constituent, OvenProjectInspectionConstituent::Stored { .. }))
+            .count();
+        if stored_count != self.stored_constituents.len() || stored_count != self.stored_constituent_roots.len() {
+            return Err(OvenRustcError::InvalidStoredPlan {
+                identity: self.identity().to_string(),
+                message: "project inspection authority has different retained constituents".to_string(),
+            });
+        }
+        for (selected, original_root) in self.stored_constituents.iter().zip(&self.stored_constituent_roots) {
+            selected.verify_admitted_payload()?;
+            if selected.artifact_root() != *original_root {
+                return Err(OvenRustcError::InvalidStoredPlan {
+                    identity: self.identity().to_string(),
+                    message: "project inspection constituent differs from its original admitted coordinate".to_string(),
+                });
+            }
+        }
+        super::receipt_selection::validate_selected_project_inspection_constituents(
+            &original,
+            &self.stored_constituents,
+        )
     }
 
     /// Retain completed-output leases for the complete inspection command.
@@ -588,7 +659,8 @@ fn exact_project_inspection_root_dependency<'a>(
             .and_then(|envelope| envelope.dependency_roots.get(alias))
             .and_then(|root| match root {
                 OvenProjectInspectionTestDependencyRoot::Registry { locked, .. } => Some(locked),
-                OvenProjectInspectionTestDependencyRoot::Path { .. }
+                OvenProjectInspectionTestDependencyRoot::NativeRegistry { .. }
+                | OvenProjectInspectionTestDependencyRoot::Path { .. }
                 | OvenProjectInspectionTestDependencyRoot::Git { .. } => None,
             })
             .ok_or_else(|| OvenRustcError::InvalidInput {
@@ -961,6 +1033,7 @@ mod selected_rust_facet_graph_tests {
             },
         };
         OvenProjectInspectionAuthorityPayload {
+            native_roots: None,
             schema_version: OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION,
             project_identity: selected_graph_sha256(b"fixture project"),
             source_authority_digest: selected_graph_sha256(b"fixture source authority"),

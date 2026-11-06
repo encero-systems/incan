@@ -1,0 +1,13 @@
+# behavior: scalar conversions do not admit float binary arithmetic, as the legacy route runs it
+# expect-stdout:
+#   3.0
+
+"""Scalar conversions do not admit float binary arithmetic, as the legacy route runs it."""
+def program_result() -> float:
+    """Return the fixture expression `float("1") + float("2")`."""
+    return float("1") + float("2")
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

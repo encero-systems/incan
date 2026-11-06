@@ -56,7 +56,7 @@ version = "0.1.0"
 [rust-dependencies]
 serde = { workspace = true, features = ["derive"] }
 
-[tool.incan.envs.ci]
+[envs.ci]
 extends = ["workspace:ci"]
 ```
 
@@ -110,7 +110,7 @@ Common sections:
 | `[dependencies]`           | Incan library dependencies                                                                    |
 | `[rust-dependencies]`      | Rust crate dependencies available to production code                                          |
 | `[rust-dev-dependencies]`  | Rust crate dependencies available only to tests                                               |
-| `[tool.incan.envs.<name>]` | Named lifecycle environments for `incan env`                                                  |
+| `[envs.<name>]` | Named lifecycle environments for `incan env`                                                  |
 | `[workspace]`              | Explicit multi-project topology, defaults, and exclusions                                     |
 | `[workspace.*]`            | Reusable dependency, environment, policy, and source declarations for workspace members      |
 
@@ -206,7 +206,7 @@ main = "src/main.incn"
 migrate = "src/migrate.incn"
 ```
 
-These are Incan entry points, not shell commands. Use `[tool.incan.envs.<name>.scripts]` for shell-style command argv lists.
+These are Incan entry points, not shell commands. Use `[envs.<name>.scripts]` for shell-style command argv lists.
 
 ## Source root
 
@@ -279,32 +279,32 @@ Subcommands:
 Example configuration:
 
 ```toml title="loaf.toml"
-[tool.incan.envs.default]
+[envs.default]
 env-vars = { INCAN_NO_BANNER = "1" }
 
-[tool.incan.envs.default.scripts]
+[envs.default.scripts]
 run = ["incan", "run"]
 test = ["incan", "test"]
 
-[tool.incan.envs.unit]
+[envs.unit]
 env-vars = { INCAN_FANCY_ERRORS = "1" }
 
-[tool.incan.envs.unit.scripts]
+[envs.unit.scripts]
 test = ["incan", "test", "tests/"]
 
-[tool.incan.envs.ci]
+[envs.ci]
 extends = ["unit"]
 requires-incan = ">=0.4,<0.5"
 
-[tool.incan.envs.ci.scripts]
+[envs.ci.scripts]
 test = ["incan", "test", "--locked", "tests/"]
 build = ["incan", "build", "src/main.incn", "--locked"]
 
-[tool.incan.envs.docs]
+[envs.docs]
 detached = true
 cwd = "workspaces/docs-site"
 
-[tool.incan.envs.docs.scripts]
+[envs.docs.scripts]
 build = ["python3", "-m", "mkdocs", "build", "--strict"]
 ```
 
@@ -326,7 +326,7 @@ incan env run unit test --dry-run -- -k "greet"
 
 Arguments after `--` are appended to the configured script argv.
 
-`incan env show` with no env name prints a compact overview table, similar to Hatch. `incan env show default` works even when `[tool.incan.envs.default]` is not declared. In that case, `default` exposes the project base overlay with no extra overrides.
+`incan env show` with no env name prints a compact overview table, similar to Hatch. `incan env show default` works even when `[envs.default]` is not declared. In that case, `default` exposes the project base overlay with no extra overrides.
 
 Typical pattern:
 
@@ -339,7 +339,7 @@ Typical pattern:
 
 | Field      | Type                  | Meaning                                                                     |
 | ---------- | --------------------- | --------------------------------------------------------------------------- |
-| `extends`  | list of strings       | Other environments to merge before this one                                 |
+| `extends`  | string or list of strings       | Other environments to merge before this one                                 |
 | `requires-incan` | string          | Additional Incan toolchain requirement for this env                         |
 | `detached` | bool                  | Do not include `default` automatically                                      |
 | `cwd`      | string                | Working directory for scripts, relative to the project root unless absolute |
@@ -353,7 +353,7 @@ RFC 073 also reserves declarative environment matrices, but matrix expansion is 
 Dependency overlay tables may also be used for environment-specific dependencies:
 
 ```toml
-[tool.incan.envs.integration.rust-dev-dependencies]
+[envs.integration.rust-dev-dependencies]
 testcontainers = "0.15"
 ```
 
@@ -374,7 +374,9 @@ Rules:
 | `cwd`        | Last configured value wins                                                |
 | Dependencies | Additive; same dependency key replaces version/source and unions features |
 
-`default` is always present conceptually; declaring `[tool.incan.envs.default]` customizes it rather than creating it from nothing. Duplicate environment inclusion and inheritance cycles are errors. Use `incan env show <env>` to debug the resolved overlay chain.
+The standard `dev`, `test`, `lint`, and `docs` environments always exist. Unless detached or given explicit parents, `test`, `lint`, and `docs` inherit `dev`. The ambient `default` environment remains available; `[envs.default]` customizes it. `extends` accepts one name or an ordered list. Duplicate inclusion and cycles are errors. The retired `[tool.incan.envs]` placement is rejected with a migration diagnostic. Use `incan env show <env>` to inspect the resolved chain.
+
+Rust roots selected by `oven tests` resolve the `test` dependency overlay through this environment model. The resulting dependencies are a command-local manifest view; they do not modify ordinary production dependencies on disk.
 
 Practical implications:
 

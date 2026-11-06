@@ -14,8 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::backend::project::generator::{GENERATED_CARGO_TARGET_DIR_ENV, cargo_config_identity};
-use oven_cargo_compat::cargo_process::cargo_executable;
+use crate::backend::project::generator::GENERATED_CARGO_TARGET_DIR_ENV;
 use oven_model::lock::CargoFeatureSelection;
 use oven_store::compiler_suite_env::OVEN_COMPILER_SUITE_RUSTC_ENV;
 
@@ -388,9 +387,9 @@ fn absolute_project_root(project_root: &Path) -> PathBuf {
     resolve_path(project_root)
 }
 
-/// Query the Rust backend identity for legacy generated-project paths.
+/// Query the active Rust compiler identity without invoking Cargo.
 ///
-/// A receipt-bound Oven child deliberately has no Cargo consumer. In that environment the Rustc identity remains
+/// Oven deliberately has no Cargo consumer. The Rustc identity remains
 /// authoritative, while the Cargo portions are explicit non-process sentinels so cache keys cannot accidentally
 /// describe a Cargo probe that the consumer never performed.
 pub fn rust_backend_identity(cargo_working_dir: &Path) -> io::Result<String> {
@@ -418,38 +417,10 @@ pub fn rust_backend_identity(cargo_working_dir: &Path) -> io::Result<String> {
             format!("{} -vV returned invalid UTF-8: {error}", rustc.to_string_lossy()),
         )
     })?;
-    if oven_suite_rustc.is_some() {
-        return Ok(format_oven_sealed_backend_identity(
-            &rustc.to_string_lossy(),
-            verbose_version.trim(),
-            rust_backend_identity_selectors(),
-        ));
-    }
-    let cargo = cargo_executable();
-    let cargo_output = Command::new(&cargo)
-        .arg("-vV")
-        .current_dir(&command_working_dir)
-        .output()?;
-    if !cargo_output.status.success() {
-        return Err(io::Error::other(format!(
-            "{} -vV failed with status {}",
-            cargo.to_string_lossy(),
-            cargo_output.status
-        )));
-    }
-    let cargo_verbose_version = String::from_utf8(cargo_output.stdout).map_err(|error| {
-        io::Error::new(
-            ErrorKind::InvalidData,
-            format!("{} -vV returned invalid UTF-8: {error}", cargo.to_string_lossy()),
-        )
-    })?;
-    Ok(format_complete_backend_identity(
+    Ok(format_oven_sealed_backend_identity(
         &rustc.to_string_lossy(),
         verbose_version.trim(),
         rust_backend_identity_selectors(),
-        &cargo.to_string_lossy(),
-        cargo_verbose_version.trim(),
-        &cargo_config_identity(cargo_working_dir),
     ))
 }
 

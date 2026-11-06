@@ -17,7 +17,9 @@ default = ["cli", "rust_inspect", "std_testing", "std_async", "std_decorators"]
 # The `clap::ValueEnum` derives on the driver's report and test-runner enums, for the binary that parses arguments,
 # plus the build pipeline and the generator's managed-cache lease, which the retired root crate gated the same way
 # and which have not yet been cut loose from it (#1479). The compatibility corpus's checked collection needs none of it.
-cli = ["dep:clap"]
+# The build pipeline requires metadata authority even when the caller disables default stdlib packs. Keep that
+# dependency explicit until #1479 separates the build lifecycle from the argument derives.
+cli = ["dep:clap", "rust_inspect"]
 rust_inspect = ["incan_frontend/rust_inspect", "incan_ir/rust_inspect", "incan_emit/rust_inspect", "incan_provider/rust_inspect", "rust_inspect/inspector"]
 std_testing = ["incan_frontend/std_testing", "incan_ir/std_testing", "incan_emit/std_testing", "incan_provider/std_testing"]
 std_async = ["incan_frontend/std_async", "incan_ir/std_async", "incan_emit/std_async", "incan_provider/std_async"]
@@ -43,11 +45,12 @@ oven_cargo_compat = { workspace = true }
 oven_interop = { workspace = true }
 oven_store = { workspace = true }
 rust_inspect = { workspace = true }
+# Caller selection tokenizes authored Rust source; the parity corpus uses the same token grammar.
+proc-macro2 = { workspace = true }
 rustix = { version = "1.1.4", features = ["fs"] }
 semver = "1.0.27"
 serde = { workspace = true }
 serde_json = { workspace = true }
-sha1 = "0.10"
 sha2 = "0.10.9"
 tempfile = "3"
 thiserror = { workspace = true }
@@ -60,8 +63,6 @@ incan_emit = { workspace = true, features = ["test_support"] }
 incan_frontend = { workspace = true, features = ["test_support"] }
 incan_provider = { workspace = true, features = ["test_support"] }
 incan_test_support = { workspace = true }
-# The parity corpus reads generated Rust as a token stream to locate projected declarations.
-proc-macro2 = { workspace = true }
 syn = { workspace = true, features = ["printing"] }
 oven_rustc = { workspace = true, features = ["test_support"] }
 oven_store = { workspace = true, features = ["test_support"] }

@@ -166,15 +166,58 @@ pub fn validate_project_inspection_authority_payload(
 ) -> Result<(), OvenRustcError> {
     validate_project_inspection_authority_identity(payload)?;
     validate_project_inspection_constituents(payload)?;
+    validate_project_inspection_native_roots(payload)?;
     validate_project_inspection_test_envelope(payload)?;
     validate_project_inspection_source_catalog(payload)
+}
+
+/// Bind ordinary native publication to the original direct-plan receipt without inventing Cargo source identities.
+fn validate_project_inspection_native_roots(
+    payload: &OvenProjectInspectionAuthorityPayload,
+) -> Result<(), OvenRustcError> {
+    let Some(native) = &payload.native_roots else {
+        return Ok(());
+    };
+    let invalid = || OvenRustcError::InvalidInput {
+        field: "project inspection native roots",
+        message: "must match one original direct-plan receipt and cannot carry a legacy registry catalog".to_string(),
+    };
+    let Some(OvenProjectInspectionConstituent::Stored {
+        artifact_kind: OvenArtifactKind::DirectRustcPlan,
+        receipt,
+        base_loaf_identity: None,
+        ..
+    }) = payload.constituents.get(native.constituent_index)
+    else {
+        return Err(invalid());
+    };
+    if !payload.registry_source_dependencies.is_empty()
+        || !payload.dev_registry_source_dependencies.is_empty()
+        || !payload.registry_sources.is_empty()
+        || payload.registry_lock_digest != oven_store::digest_bytes(&[])
+    {
+        return Err(invalid());
+    }
+    for (alias, identity) in &native.roots {
+        validate_rust_identifier(alias)?;
+        if identity.trim().is_empty() {
+            return Err(invalid());
+        }
+    }
+    let digest = crate::native_loaf::native_loaf_roots_digest(&native.roots).map_err(|_| invalid())?;
+    if receipt.sources.build_unit_inputs.get("ordinary-native-roots") != Some(&digest) {
+        return Err(invalid());
+    }
+    Ok(())
 }
 
 /// Validate the authority schema and required top-level identities.
 fn validate_project_inspection_authority_identity(
     payload: &OvenProjectInspectionAuthorityPayload,
 ) -> Result<(), OvenRustcError> {
-    if payload.schema_version != OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION {
+    if payload.schema_version != OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION
+        && !(payload.schema_version == 2 && payload.native_roots.is_none())
+    {
         return Err(OvenRustcError::InvalidInput {
             field: "project inspection authority",
             message: format!(
@@ -375,6 +418,23 @@ fn validate_project_inspection_test_envelope(
                     dependency_digest,
                     locked,
                 } => (dependency_digest, Some(locked)),
+                OvenProjectInspectionTestDependencyRoot::NativeRegistry {
+                    dependency_digest,
+                    record_identity,
+                } => {
+                    if payload.schema_version != OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION
+                        || payload.native_roots.as_ref().is_none_or(|native| {
+                            native.constituent_index != envelope.constituent_index
+                                || native.roots.get(alias) != Some(record_identity)
+                        })
+                    {
+                        return Err(OvenRustcError::InvalidInput {
+                            field: "project inspection native test root",
+                            message: format!("dependency alias `{alias}` differs from the original native constituent"),
+                        });
+                    }
+                    (dependency_digest, None)
+                }
                 OvenProjectInspectionTestDependencyRoot::Path { dependency_digest }
                 | OvenProjectInspectionTestDependencyRoot::Git { dependency_digest } => (dependency_digest, None),
             };

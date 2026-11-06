@@ -27,6 +27,7 @@ fn write_executable(root: &Path, body: &str) -> Result<RustFactExecutable, Box<d
     permissions.set_mode(0o755);
     fs::set_permissions(&path, permissions)?;
     Ok(RustFactExecutable {
+        runtime_files: Vec::new(),
         name: "isle-fixture".to_string(),
         owner: publisher_owner_identity(root, ["bin/isle-fixture"])?,
         path: "bin/isle-fixture".to_string(),

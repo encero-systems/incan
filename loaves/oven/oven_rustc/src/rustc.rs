@@ -5,17 +5,18 @@
 //! the selected Rust compiler and refuses hidden Cargo state.
 
 mod artifact;
+mod codegen;
 mod compiled_unit;
 mod diagnostics;
+pub mod driver_grant;
 mod inspection;
+mod inspection_toolchain;
+pub(crate) mod linking;
+pub use linking::{configure_pinned_native_link, pinned_driver_link_closure_identity, pinned_link_closure_identity};
+pub mod direct_compiler;
 mod manifest_cohort;
 mod manifest_materialize;
 mod manifest_source_roles;
-// `inspection_toolchain` is deliberately absent. It is the compiler/sysroot-closure-under-lease surface, and the
-// only thing here that needs `rust_inspect`'s selected-projection API, which this tree does not have; it lands
-// together with that port. Nothing in Gates 6 or 7 of RFC 119 depends on it, so its absence is what lets the four
-// runtime modules those gates do use compile on their own.
-pub mod direct_compiler;
 pub mod native_input;
 mod registry_leaf;
 mod runtime_closure;
@@ -31,6 +32,7 @@ mod toolchain;
 // and the rustc diagnostic report. Every path stays where callers expect it -- re-exported here rather than
 // re-homed -- so this is a move, not an interface change.
 pub use artifact::*;
+pub use codegen::OvenRustcCodegenOptions;
 #[allow(
     unused_imports,
     reason = "the native source publisher consumes compiled-unit identities in its next wiring slice"
@@ -39,6 +41,7 @@ pub use compiled_unit::*;
 pub use diagnostics::*;
 pub use direct_compiler::OvenPublisherLinkProduct;
 pub use inspection::*;
+pub use inspection_toolchain::{OvenRustInspectionToolchain, prepare_rust_inspection_toolchain};
 pub use registry_leaf::*;
 #[allow(
     unused_imports,
@@ -110,6 +113,8 @@ mod inspection_validation;
 mod invocation;
 mod manifest_validation;
 mod path_libraries;
+mod path_workspace;
+pub use path_workspace::effective_path_manifest;
 mod plan_building;
 mod receipt_selection;
 
@@ -131,9 +136,12 @@ pub use invocation::direct_rustc_source_extern_names;
 use invocation::*;
 pub use invocation::{
     bake_direct_rustc_run, bake_direct_rustc_test, bake_trusted_direct_rustc_dylib, bake_trusted_direct_rustc_library,
-    bake_trusted_direct_rustc_library_with_artifact_role, bake_trusted_direct_rustc_proc_macro,
-    bake_trusted_direct_rustc_proc_macro_with_artifact_role, bake_trusted_direct_rustc_run,
-    bake_trusted_direct_rustc_test, run_trusted_rustdoc_test, trusted_artifact_plan_for_source_evidence,
+    bake_trusted_direct_rustc_library_in_store, bake_trusted_direct_rustc_library_with_artifact_role,
+    bake_trusted_direct_rustc_proc_macro, bake_trusted_direct_rustc_proc_macro_with_artifact_role,
+    bake_trusted_direct_rustc_run, bake_trusted_direct_rustc_run_in_store,
+    bake_trusted_direct_rustc_run_in_store_with_generated_sources, bake_trusted_direct_rustc_run_with_artifact_role,
+    bake_trusted_direct_rustc_test, bake_trusted_direct_rustc_test_in_store, run_trusted_rustdoc_test,
+    trusted_artifact_plan_for_source_evidence,
 };
 use manifest_validation::*;
 #[cfg(test)]
@@ -343,8 +351,50 @@ pub struct OvenTrustedDirectRustcTargetRequest<'a> {
     pub source_evidence_key: &'a str,
     /// Resolved target feature set from the publisher's unit graph.
     pub features: &'a [String],
-    /// Whether Cargo's publisher compiled this libtest root with `-C prefer-dynamic`.
+    /// Whether this libtest root requires dynamic sysroot support, as declared by a procedural-macro library or its
+    /// published target inventory.
     pub prefer_dynamic: bool,
+}
+
+impl<'a> OvenTrustedDirectRustcTargetRequest<'a> {
+    /// Borrow a retained caller-owned target and composed plan through the Rust function interop boundary.
+    ///
+    /// Removable bridge for #872: stage zero treats this struct's borrowed slice field as an opaque Rust type and
+    /// rejects an Incan list during field construction and function calls. This constructor borrows the feature set
+    /// already declared by the receipt. The caller keeps the receipt, selected plan and leases alive for the complete
+    /// execution.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "mirrors the existing explicit trusted target request for #872"
+    )]
+    pub fn new(
+        receipt: &'a OvenReceipt,
+        artifacts: &'a OvenRustcArtifactManifest,
+        artifact_root: &'a Path,
+        artifact_plan: &'a OvenRustcArtifactPlan,
+        rustc: &'a Path,
+        source: &'a Path,
+        output: &'a Path,
+        crate_name: &'a str,
+        edition: &'a str,
+        source_evidence_key: &'a str,
+        prefer_dynamic: bool,
+    ) -> Self {
+        Self {
+            receipt,
+            artifacts,
+            artifact_root,
+            artifact_plan: Some(artifact_plan),
+            rustc,
+            source,
+            output,
+            crate_name,
+            edition,
+            source_evidence_key,
+            features: &receipt.intent.features,
+            prefer_dynamic,
+        }
+    }
 }
 
 /// Request to run one receipt-bound Rustdoc doctest root from an actively leased compiler-suite artifact.
@@ -404,6 +454,20 @@ pub struct OvenDirectRustcBake {
     pub reused: bool,
     /// Held for stored consumers until their caller finishes executing the native test binary.
     lease: Option<OvenStoreLease>,
+    /// Original immutable output protected by `lease`; never the writable caller projection (#2205).
+    stored_output: Option<PathBuf>,
+}
+
+impl OvenDirectRustcBake {
+    /// Borrow the original admitted output while this bake retains its Store lease.
+    ///
+    /// Direct outputs without Store publication return `None`. Consumers may use this source for immutable
+    /// publication, but must preserve a separate writable caller destination. Filesystem aliases may differ
+    /// between first publication and selection; the path names the original leased bytes and cannot be retargeted.
+    /// This is the bounded host handoff tracked by #2205, not another output lookup or cache.
+    pub fn stored_output_path(&self) -> Option<&Path> {
+        self.stored_output.as_deref()
+    }
 }
 
 /// The concrete caller-owned output Rustc must produce for one Oven materialization step.
@@ -441,6 +505,8 @@ fn default_direct_rustc_output_kind() -> String {
 struct OvenDirectRustcOutputReceipt {
     schema_version: u32,
     receipt_identity: String,
+    #[serde(default)]
+    link_closure_identity: Option<String>,
     artifact_manifest_digest: String,
     source_digest: String,
     crate_name: String,
@@ -464,6 +530,9 @@ struct OvenDirectRustcOutputRecord {
     #[serde(flatten)]
     inputs: OvenDirectRustcOutputReceipt,
     output_digest: String,
+    /// Rustc-consumed test inputs; pre-observation records deliberately miss native-test reuse.
+    #[serde(default)]
+    consumed_inputs: Option<invocation::consumed_inputs::NativeTestInputs>,
 }
 
 /// Backwards-compatible name for a direct-rustc libtest bake.

@@ -433,6 +433,7 @@ fn project_inspection_authority_reuses_a_compatible_direct_plan_across_receipts(
     let source_authority_digest = "sha256:source";
     let compiler_version = "0.5.1-test";
     let authority_payload = OvenProjectInspectionAuthorityPayload {
+        native_roots: None,
         schema_version: OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION,
         project_identity: project_identity.to_string(),
         source_authority_digest: source_authority_digest.to_string(),
@@ -574,6 +575,7 @@ fn project_inspection_authority_binds_the_requested_store_identity() -> Result<(
     let source_authority_digest = "sha256:source";
     let compiler_version = "0.5.1-test";
     let payload = OvenProjectInspectionAuthorityPayload {
+        native_roots: None,
         schema_version: OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION,
         project_identity: project_identity.to_string(),
         source_authority_digest: source_authority_digest.to_string(),
@@ -654,6 +656,7 @@ fn loaded_project_inspection_authority_retains_and_revalidates_its_store_owner()
     let source_authority_digest = "sha256:source";
     let compiler_version = "0.5.1-test";
     let payload = OvenProjectInspectionAuthorityPayload {
+        native_roots: None,
         schema_version: OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION,
         project_identity: project_identity.to_string(),
         source_authority_digest: source_authority_digest.to_string(),

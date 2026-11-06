@@ -469,6 +469,7 @@ def load_user(id: UserId) -> User:
     Ok(())
 }
 
+/// A comment at EOF stays outside the function suite and keeps its preceding source gap.
 #[test]
 fn test_format_source_trailing_comment_after_multiline_function_stays_after_suite() -> Result<(), FormatError> {
     let source = r#"def load_user(id: UserId) -> User:
@@ -479,9 +480,76 @@ fn test_format_source_trailing_comment_after_multiline_function_stays_after_suit
     let formatted = format_source(source)?;
     let expected = r#"def load_user(id: UserId) -> User:
     pass
+
 # TODO: split retries
 "#;
     assert_eq!(formatted, expected);
     let _ = program_from_source(&formatted)?;
+    Ok(())
+}
+
+/// Root-level section comments retain both gaps after a function with two paragraph docstring.
+#[test]
+fn test_top_level_comment_after_two_paragraph_docstring() -> Result<(), FormatError> {
+    let source = r#"def count() -> int:
+    """
+    First paragraph.
+
+    Second paragraph.
+    """
+    return 0
+
+
+# Section comment
+
+
+def other() -> int:
+    return 1
+"#;
+    let formatted = format_source(source)?;
+    assert_eq!(formatted, source);
+    assert_eq!(count_line_comments(&formatted), 1);
+    assert_eq!(format_source(&formatted)?, formatted);
+    for before in 0..=2 {
+        for after in 0..=2 {
+            let gap = format!("{}# Section comment{}", "\n".repeat(before + 1), "\n".repeat(after + 1));
+            let variant = source.replace("\n\n\n# Section comment\n\n\n", &gap);
+            let formatted = format_source(&variant)?;
+            assert_eq!(formatted, variant, "gaps: before={before}, after={after}");
+            assert_eq!(format_source(&formatted)?, formatted);
+        }
+    }
+    Ok(())
+}
+
+/// Root-level section comments retain both gaps after a function with nested match.
+#[test]
+fn test_top_level_comment_after_nested_match() -> Result<(), FormatError> {
+    let source = r#"def count(items: list[int]) -> int:
+    mut total = 0
+    for item in items:
+        match item:
+            0 => total += 1
+            _ => pass
+    return total
+
+
+# A comment after a function whose body ends in a nested for and match.
+
+
+def other() -> int:
+    return 1
+"#;
+    for source in [source.to_string(), source.replace("    return total\n", "")] {
+        let formatted = format_source(&source)?;
+        // Assignment arms expand into block form under the existing formatter contract.
+        let expected = source.replace(
+            "            0 => total += 1",
+            "            0 =>\n                total += 1",
+        );
+        assert_eq!(formatted, expected);
+        assert_eq!(count_line_comments(&formatted), 1);
+        assert_eq!(format_source(&formatted)?, formatted);
+    }
     Ok(())
 }

@@ -11,7 +11,9 @@ use std::path::{Path, PathBuf};
 
 use incan_frontend::ast::Span;
 use incan_frontend::diagnostics::CompileError;
-use incan_lang::lang::stdlib::{self, StdlibExtraCrateSource};
+use incan_lang::lang::stdlib;
+#[cfg(test)]
+use incan_lang::lang::stdlib::StdlibExtraCrateSource;
 use oven_model::lock::CargoFeatureSelection;
 use oven_model::manifest::{DependencySource, DependencySpec, ProjectManifest};
 use oven_model::manifest::{rust_version_requirements_match, validate_cargo_version_req};
@@ -37,6 +39,54 @@ pub struct DependencyError {
 pub struct ResolvedDependencies {
     pub dependencies: Vec<DependencySpec>,
     pub dev_dependencies: Vec<DependencySpec>,
+}
+
+impl ResolvedDependencies {
+    /// Project the canonical public feature closure onto already resolved native Loaf requirements.
+    /// Incan provider edges and legacy Rust interop declarations retain their own contracts. This projection
+    /// preserves aliases, versions, source identity, declared features and dev dependencies; it neither resolves
+    /// features again nor grants target-selection authority. Conditional native edges require an evaluated target.
+    pub fn apply_package_features(
+        &mut self,
+        manifest: &ProjectManifest,
+        features: &crate::ResolvedPackageFeatures,
+    ) -> Result<(), Vec<DependencyError>> {
+        let errors = manifest
+            .loaf_dependencies
+            .iter()
+            .filter_map(|(name, alternatives)| {
+                let active = alternatives.iter().any(|edge| !edge.spec.optional)
+                    || features.active_optional_dependencies.contains(name);
+                (active && alternatives.iter().any(|edge| edge.target.is_some())).then(|| DependencyError {
+                    file_path: manifest.path().to_path_buf(),
+                    error: CompileError::new(
+                        format!(
+                            "Loaf dependency `{name}` requires selected target cfg evidence before Rust projection"
+                        ),
+                        Span::default(),
+                    ),
+                })
+            })
+            .collect::<Vec<_>>();
+        if !errors.is_empty() {
+            return Err(errors);
+        }
+        self.dependencies.retain_mut(|dependency| {
+            if !manifest.loaf_dependencies.contains_key(&dependency.crate_name) {
+                return true;
+            }
+            if dependency.optional && !features.active_optional_dependencies.contains(&dependency.crate_name) {
+                return false;
+            }
+            if let Some(requested) = features.dependency_features.get(&dependency.crate_name) {
+                dependency.features.extend(requested.iter().cloned());
+                dependency.features.sort();
+                dependency.features.dedup();
+            }
+            true
+        });
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,6 +142,7 @@ fn resolve_dependencies_with_scope(
     scope: ManifestDependencyScope,
 ) -> Result<ResolvedDependencies, Vec<DependencyError>> {
     let mut errors = Vec::new();
+    require_selected_loaf_targets(manifest, inline_imports, &mut errors);
 
     let (mut manifest_deps, mut manifest_dev_deps, library_dep_names) = match manifest {
         Some(manifest) => (
@@ -164,12 +215,20 @@ fn resolve_dependencies_with_scope(
 
     if errors.is_empty() {
         Ok(ResolvedDependencies {
-            dependencies: resolved_deps.into_values().collect(),
-            dev_dependencies: resolved_dev_deps.into_values().collect(),
+            dependencies: ordered_specs(resolved_deps),
+            dev_dependencies: ordered_specs(resolved_dev_deps),
         })
     } else {
         Err(errors)
     }
+}
+
+/// Preserve deterministic dependency request identity across independent parses of the same declarations.
+/// Sorting changes only order: versions, aliases, source paths and normalized feature requirements remain intact.
+fn ordered_specs(specs: HashMap<String, DependencySpec>) -> Vec<DependencySpec> {
+    let mut specs = specs.into_values().collect::<Vec<_>>();
+    specs.sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
+    specs
 }
 
 // ============================================================================
@@ -216,35 +275,8 @@ fn merge_inline_imports(
         }
 
         let has_inline_spec = import.version.is_some() || !import.features.is_empty();
-        if let Some(version) = &import.version {
-            if version.trim().is_empty() {
-                errors.push(DependencyError {
-                    file_path: import.file_path.clone(),
-                    error: with_rust_import_context(
-                        CompileError::new(
-                            format!(
-                                "Rust import for `{}` has an empty version requirement",
-                                import.crate_name
-                            ),
-                            import.span,
-                        )
-                        .with_hint("Use a non-empty Cargo SemVer requirement string."),
-                        import,
-                    ),
-                });
-                continue;
-            }
-
-            if let Err(msg) = validate_cargo_version_req(version) {
-                errors.push(DependencyError {
-                    file_path: import.file_path.clone(),
-                    error: with_rust_import_context(
-                        CompileError::new(format!("Rust import for `{}`: {msg}", import.crate_name), import.span),
-                        import,
-                    ),
-                });
-                continue;
-            }
+        if !validate_inline_requirement(import, errors) {
+            continue;
         }
 
         let manifest_dep_match = matching_dep_spec(manifest_deps, &import.crate_name);
@@ -254,23 +286,7 @@ fn merge_inline_imports(
             && manifest_dep_match.is_none()
             && manifest_dev_dep_match.is_none()
         {
-            errors.push(DependencyError {
-                file_path: import.file_path.clone(),
-                error: with_rust_import_context(
-                    CompileError::new(
-                        format!(
-                            "Rust crate `{}` is declared under `[dependencies]`, which is reserved for Incan library dependencies",
-                            import.crate_name
-                        ),
-                        import.span,
-                    )
-                    .with_hint(format!(
-                        "Move `{}` to `[rust-dependencies]` in loaf.toml for `rust::` imports.",
-                        import.crate_name
-                    )),
-                    import,
-                ),
-            });
+            diagnose_incan_library_import(import, errors);
             continue;
         }
 
@@ -354,11 +370,90 @@ fn merge_inline_imports(
         }
     }
 
+    let resolved = apply_declared_defaults(merged, errors);
+
+    InlineMergeResult {
+        inline_specs: resolved,
+        manifest_dependency_keys,
+        manifest_dev_dependency_keys,
+    }
+}
+
+/// Explain the boundary when a Rust import names an Incan source-library edge.
+fn diagnose_incan_library_import(import: &InlineRustImport, errors: &mut Vec<DependencyError>) {
+    errors.push(DependencyError {
+                file_path: import.file_path.clone(),
+                error: with_rust_import_context(
+                    CompileError::new(
+                        format!(
+                            "Rust crate `{}` is declared under `[dependencies]`, as an Incan library Loaf rather than a Rust compilation input",
+                            import.crate_name
+                        ),
+                        import.span,
+                    )
+                    .with_hint(format!(
+                        "Declare `{}` as a scoped `loaf` dependency in loaf.toml for `rust::` imports.",
+                        import.crate_name
+                    )),
+                    import,
+                ),
+            });
+}
+
+/// Refuse conditional authored edges until the consumer supplies selected target cfg evidence.
+fn require_selected_loaf_targets(
+    manifest: Option<&ProjectManifest>,
+    inline_imports: &[InlineRustImport],
+    errors: &mut Vec<DependencyError>,
+) {
+    if let Some(manifest) = manifest {
+        for import in inline_imports {
+            if manifest
+                .loaf_dependencies
+                .get(&import.crate_name)
+                .is_some_and(|entries| entries.iter().any(|entry| entry.target.is_some()))
+            {
+                errors.push(DependencyError {
+                    file_path: import.file_path.clone(),
+                    error: with_rust_import_context(
+                        CompileError::new(
+                            format!(
+                                "Loaf dependency `{}` requires selected target cfg evidence before Rust projection",
+                                import.crate_name
+                            ),
+                            import.span,
+                        ),
+                        import,
+                    ),
+                });
+            }
+        }
+    }
+}
+
+/// Fill versionless imports from admitted stdlib declarations and retain original-site error context.
+fn apply_declared_defaults(
+    merged: HashMap<String, InlineMergedSpec>,
+    errors: &mut Vec<DependencyError>,
+) -> HashMap<String, InlineMergedSpec> {
     // Fill in known-good defaults for version-less specs.
     let mut resolved = HashMap::new();
     for (crate_name, mut merged_spec) in merged {
         if merged_spec.spec.version.is_none() {
-            let Some(default) = known_good_spec(&crate_name) else {
+            let default = match known_good_spec(&crate_name) {
+                Ok(default) => default,
+                Err(error) => {
+                    errors.push(DependencyError {
+                        file_path: merged_spec.first_site.file_path.clone(),
+                        error: with_rust_import_context(
+                            CompileError::new(error.to_string(), merged_spec.first_site.span),
+                            &merged_spec.first_site,
+                        ),
+                    });
+                    continue;
+                }
+            };
+            let Some(default) = default else {
                 errors.push(DependencyError {
                     file_path: merged_spec.first_site.file_path.clone(),
                     error: with_rust_import_context(
@@ -387,11 +482,43 @@ fn merge_inline_imports(
         resolved.insert(crate_name, merged_spec);
     }
 
-    InlineMergeResult {
-        inline_specs: resolved,
-        manifest_dependency_keys,
-        manifest_dev_dependency_keys,
+    resolved
+}
+
+/// Validate an inline requirement before it can override manifest or stdlib declaration policy.
+fn validate_inline_requirement(import: &InlineRustImport, errors: &mut Vec<DependencyError>) -> bool {
+    if let Some(version) = &import.version {
+        if version.trim().is_empty() {
+            errors.push(DependencyError {
+                file_path: import.file_path.clone(),
+                error: with_rust_import_context(
+                    CompileError::new(
+                        format!(
+                            "Rust import for `{}` has an empty version requirement",
+                            import.crate_name
+                        ),
+                        import.span,
+                    )
+                    .with_hint("Use a non-empty Cargo SemVer requirement string."),
+                    import,
+                ),
+            });
+            return false;
+        }
+
+        if let Err(msg) = validate_cargo_version_req(version) {
+            errors.push(DependencyError {
+                file_path: import.file_path.clone(),
+                error: with_rust_import_context(
+                    CompileError::new(format!("Rust import for `{}`: {msg}", import.crate_name), import.span),
+                    import,
+                ),
+            });
+            return false;
+        }
     }
+
+    true
 }
 
 /// Select manifest dependencies that are relevant to the active build scope.
@@ -568,15 +695,12 @@ fn validate_optional_imports(
 // ============================================================================
 
 /// Return a conservative dependency specification for a known-good crate.
-fn known_good_spec(crate_name: &str) -> Option<DependencySpec> {
-    if let Some(spec) = known_good_spec_from_stdlib(crate_name) {
-        return Some(spec);
+fn known_good_spec(crate_name: &str) -> crate::error::ProviderResult<Option<DependencySpec>> {
+    if let Some(spec) = known_good_spec_from_stdlib(crate_name)? {
+        return Ok(Some(spec));
     }
 
     let (version, features): (&str, Vec<&str>) = match crate_name {
-        "serde" => ("1.0", vec!["derive"]),
-        "serde_json" => ("1.0", vec![]),
-        "tokio" => ("1", vec!["rt-multi-thread", "macros", "time", "sync"]),
         "time" => ("0.3", vec!["formatting", "macros"]),
         "chrono" => ("0.4", vec!["serde"]),
         "reqwest" => ("0.11", vec!["json"]),
@@ -591,10 +715,10 @@ fn known_good_spec(crate_name: &str) -> Option<DependencySpec> {
         "futures" => ("0.3", vec![]),
         "bytes" => ("1.0", vec![]),
         "itertools" => ("0.12", vec![]),
-        _ => return None,
+        _ => return Ok(None),
     };
 
-    Some(
+    Ok(Some(
         DependencySpec {
             crate_name: crate_name.to_string(),
             version: Some(version.to_string()),
@@ -605,32 +729,12 @@ fn known_good_spec(crate_name: &str) -> Option<DependencySpec> {
             package: None,
         }
         .normalized(),
-    )
+    ))
 }
 
-/// Look up a known-good spec for crates declared as `extra_crate_deps` in any stdlib namespace.
-///
-/// This makes the stdlib registry the single source of truth for stdlib-managed crate versions. When a stdlib `.incn`
-/// file writes `from rust::axum import ...` without an inline version annotation, the resolver finds the version here
-/// rather than requiring a duplicate hardcoded entry in `known_good_spec`.
-fn known_good_spec_from_stdlib(crate_name: &str) -> Option<DependencySpec> {
-    let dep = stdlib::extra_crate_deps()
-        .find(|dep| dep.crate_name == crate_name && matches!(dep.source, StdlibExtraCrateSource::Version(_)))?;
-    let StdlibExtraCrateSource::Version(version) = dep.source else {
-        return None;
-    };
-    Some(
-        DependencySpec {
-            crate_name: crate_name.to_string(),
-            version: Some(version.to_string()),
-            features: dep.features.iter().map(|feature| (*feature).to_string()).collect(),
-            default_features: true,
-            source: DependencySource::Registry,
-            optional: false,
-            package: stdlib::extra_crate_package_alias(crate_name).map(str::to_string),
-        }
-        .normalized(),
-    )
+/// Resolve default requirements from the stdlib's authored Loaf dependencies.
+fn known_good_spec_from_stdlib(crate_name: &str) -> crate::error::ProviderResult<Option<DependencySpec>> {
+    crate::requirements::declared_stdlib_dependency(crate_name)
 }
 
 #[cfg(test)]
@@ -696,6 +800,147 @@ mod tests {
         errors
             .first()
             .ok_or_else(|| std::io::Error::other("expected at least one dependency error").into())
+    }
+
+    /// Reopening identical authored dependencies must preserve ordered native preparation requests.
+    #[test]
+    fn reloaded_manifest_preserves_dependency_request_order() -> TestResult {
+        let source = r#"
+[project]
+name = "ordered_dependencies"
+version = "0.1.0"
+[dependencies]
+zeta = { loaf = "crates-io/zeta", version = "1" }
+alpha = { loaf = "crates-io/alpha", version = "2", features = ["second", "first"] }
+middle = { loaf = "crates-io/middle", version = "3", default-features = false }
+"#;
+        for _ in 0..16 {
+            let manifest = parse_manifest(source)?;
+            let resolved = resolve_ok(Some(&manifest), &[], true, &default_cargo_features())?;
+            let names = resolved
+                .dependencies
+                .iter()
+                .map(|dependency| dependency.crate_name.as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(names, ["alpha", "middle", "zeta"]);
+            assert_eq!(resolved.dependencies[0].features, ["first", "second"]);
+            assert!(!resolved.dependencies[1].default_features);
+            let imports = [
+                inline("zeta_dev", Some("1"), &[], true),
+                inline("alpha_dev", Some("1"), &[], true),
+            ];
+            let resolved = resolve_ok(None, &imports, true, &default_cargo_features())?;
+            let names = resolved
+                .dev_dependencies
+                .iter()
+                .map(|dependency| dependency.crate_name.as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(names, ["alpha_dev", "zeta_dev"]);
+        }
+        Ok(())
+    }
+
+    /// Public Loaf feature projection selects optional native requirements and unions forwarded features.
+    #[test]
+    fn native_loaf_features_preserve_resolved_dependency_identity() -> TestResult {
+        let manifest = parse_manifest(
+            r#"
+[project.features]
+default = ["json"]
+json = ["dep:serializer", "serializer/derive", "serializer/alloc"]
+[dependencies]
+serializer = { loaf = "crates-io/serde", version = "1", optional = true, default-features = false, features = ["alloc"] }
+unused = { loaf = "crates-io/unused", version = "2", optional = true }
+"#,
+        )?;
+        let fixture = manifest_with_test_dependency()?;
+        let manifest = manifest.with_effective_dependencies(
+            [],
+            manifest
+                .rust_dependencies()
+                .iter()
+                .map(|(name, spec)| (name.clone(), spec.clone())),
+            fixture
+                .rust_dev_dependencies()
+                .iter()
+                .map(|(name, spec)| (name.clone(), spec.clone())),
+        );
+        let features =
+            crate::PackageFeatureGraph::from_manifest(&manifest)?.resolve(&crate::FeatureSelection::default())?;
+        let mut resolved = resolve_ok(Some(&manifest), &[], true, &default_cargo_features())?;
+        let original = dependency(&resolved.dependencies, "serializer")?.clone();
+        resolved
+            .apply_package_features(&manifest, &features)
+            .map_err(|errors| format!("{errors:?}"))?;
+        assert_eq!(resolved.dependencies.len(), 1);
+        let selected = dependency(&resolved.dependencies, "serializer")?;
+        assert_eq!(selected.features, ["alloc", "derive"]);
+        assert_eq!(selected.source, original.source);
+        assert_eq!(selected.version, original.version);
+        assert_eq!(selected.package, original.package);
+        assert!(!selected.default_features);
+        assert_eq!(
+            dependency(&resolved.dev_dependencies, "test_lib")?.version.as_deref(),
+            Some("0.5")
+        );
+        let mut disabled = resolve_ok(Some(&manifest), &[], true, &default_cargo_features())?;
+        let features = crate::PackageFeatureGraph::from_manifest(&manifest)?.resolve(&crate::FeatureSelection {
+            no_default_features: true,
+            ..crate::FeatureSelection::default()
+        })?;
+        disabled
+            .apply_package_features(&manifest, &features)
+            .map_err(|errors| format!("{errors:?}"))?;
+        assert!(disabled.dependencies.is_empty());
+        assert_eq!(disabled.dev_dependencies.len(), 1);
+        Ok(())
+    }
+
+    /// Unselected conditional edges stay inactive, while active ones cannot silently disappear without target facts.
+    #[test]
+    fn native_loaf_features_require_target_evidence() -> TestResult {
+        let manifest = parse_manifest(
+            r#"
+[project.features]
+platform = ["dep:platform"]
+[dependencies]
+platform = [{ loaf = "crates-io/libc", version = "0.2", optional = true, target = "aarch64-apple-darwin" }]
+"#,
+        )?;
+        let graph = crate::PackageFeatureGraph::from_manifest(&manifest)?;
+        let mut resolved = resolve_ok(Some(&manifest), &[], true, &default_cargo_features())?;
+        resolved
+            .apply_package_features(&manifest, &graph.resolve(&crate::FeatureSelection::default())?)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let errors = resolved
+            .apply_package_features(&manifest, &graph.resolve(&crate::FeatureSelection::new(["platform"]))?)
+            .err()
+            .ok_or("active conditional native edge disappeared")?;
+        assert!(
+            first_error(&errors)?
+                .error
+                .message
+                .contains("selected target cfg evidence")
+        );
+        Ok(())
+    }
+
+    /// Public package features do not reinterpret optional legacy Rust interop requirements.
+    #[test]
+    fn native_loaf_feature_projection_preserves_legacy_requirements() -> TestResult {
+        let manifest = parse_manifest(
+            r#"
+[rust-dependencies]
+legacy = { version = "1", optional = true, features = ["explicit"] }
+"#,
+        )?;
+        let mut resolved = resolve_ok(Some(&manifest), &[], true, &default_cargo_features())?;
+        let before = resolved.dependencies.clone();
+        resolved
+            .apply_package_features(&manifest, &crate::ResolvedPackageFeatures::default())
+            .map_err(|errors| format!("{errors:?}"))?;
+        assert_eq!(resolved.dependencies, before);
+        Ok(())
     }
 
     // ---- Phase 2: Feature union across multiple import sites ----
@@ -871,13 +1116,31 @@ serde = "1.0"
 
     // ---- Phase 3: Dev-dep gating (test context only) ----
 
+    /// Exercise the retained environment projection independently of forbidden authored dev dependency tables.
+    fn manifest_with_test_dependency() -> TestResult<ProjectManifest> {
+        Ok(
+            parse_manifest("[project]\nname = 'test'\n")?.with_effective_dependencies(
+                [],
+                [],
+                [(
+                    "test_lib".to_string(),
+                    DependencySpec {
+                        crate_name: "test_lib".to_string(),
+                        version: Some("0.5".to_string()),
+                        features: Vec::new(),
+                        default_features: true,
+                        source: DependencySource::Registry,
+                        optional: false,
+                        package: None,
+                    },
+                )],
+            ),
+        )
+    }
+
     #[test]
     fn dev_dep_in_production_code_is_error() -> TestResult {
-        let toml_str = r#"
-[rust-dev-dependencies]
-test_lib = "0.5"
-"#;
-        let manifest = parse_manifest(toml_str)?;
+        let manifest = manifest_with_test_dependency()?;
         // Import from production code (is_test_context = false)
         let imports = vec![inline("test_lib", None, &[], false)];
 
@@ -902,17 +1165,34 @@ test_lib = "0.5"
 
     #[test]
     fn dev_dep_in_test_context_is_ok() -> TestResult {
-        let toml_str = r#"
-[rust-dev-dependencies]
-test_lib = "0.5"
-"#;
-        let manifest = parse_manifest(toml_str)?;
+        let manifest = manifest_with_test_dependency()?;
         // Import from test code (is_test_context = true)
         let imports = vec![inline("test_lib", None, &[], true)];
 
         let resolved = resolve_ok(Some(&manifest), &imports, true, &default_cargo_features())?;
         let test_lib = dependency(&resolved.dev_dependencies, "test_lib")?;
         assert_eq!(test_lib.version.as_deref(), Some("0.5"));
+        Ok(())
+    }
+
+    /// Conditional declarations must not disappear into an unconditioned known-good fallback.
+    #[test]
+    fn amended_loaf_conditional_inputs_require_selected_target_evidence() -> TestResult {
+        let manifest = parse_manifest(
+            r#"
+[dependencies]
+regex = [{ loaf = "crates-io/regex", version = "1", target = "aarch64-apple-darwin" }]
+"#,
+        )?;
+        let imports = [inline("regex", None, &[], false)];
+        let errors = resolve_dependencies(Some(&manifest), &imports, false, &default_cargo_features())
+            .err()
+            .ok_or("conditional declaration was silently projected without target evidence")?;
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.error.message.contains("selected target cfg evidence"))
+        );
         Ok(())
     }
 
@@ -945,10 +1225,10 @@ test_lib = "0.5"
     fn stdlib_registry_version_dependencies_drive_known_good_defaults() -> TestResult {
         for ns in stdlib::STDLIB_NAMESPACES {
             for dep in ns.extra_crate_deps {
-                let StdlibExtraCrateSource::Version(version) = dep.source else {
+                let StdlibExtraCrateSource::Declared = dep.source else {
                     continue;
                 };
-                let spec = known_good_spec(dep.crate_name).ok_or_else(|| {
+                let spec = known_good_spec(dep.crate_name)?.ok_or_else(|| {
                     std::io::Error::other(format!(
                         "expected registry dependency `{}` to resolve as a known-good default",
                         dep.crate_name
@@ -956,16 +1236,17 @@ test_lib = "0.5"
                 })?;
                 assert_eq!(
                     spec.version.as_deref(),
-                    Some(version),
+                    crate::requirements::declared_stdlib_dependency(dep.crate_name)?
+                        .and_then(|spec| spec.version)
+                        .as_deref(),
                     "dependency resolver drifted from stdlib registry metadata for `{}`",
                     dep.crate_name
                 );
                 assert_eq!(
                     spec.features,
-                    dep.features
-                        .iter()
-                        .map(|feature| (*feature).to_string())
-                        .collect::<Vec<_>>(),
+                    crate::requirements::declared_stdlib_dependency(dep.crate_name)?
+                        .ok_or("missing declaration")?
+                        .features,
                     "dependency resolver drifted from stdlib registry feature metadata for `{}`",
                     dep.crate_name
                 );
@@ -1160,13 +1441,13 @@ legacy_rust = { path = "../legacy_rust" }
         assert!(!err.is_empty());
         let err = first_error(&err)?;
         assert!(
-            err.error.message.contains("reserved for Incan library dependencies"),
+            err.error.message.contains("Incan library Loaf"),
             "expected migration diagnostic, got: {}",
             err.error.message
         );
         assert!(
-            err.error.hints.iter().any(|h| h.contains("[rust-dependencies]")),
-            "expected rust-dependencies migration hint, got: {:?}",
+            err.error.hints.iter().any(|h| h.contains("scoped `loaf`")),
+            "expected scoped Loaf migration hint, got: {:?}",
             err.error.hints
         );
         Ok(())

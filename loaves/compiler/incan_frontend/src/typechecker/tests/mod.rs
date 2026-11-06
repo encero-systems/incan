@@ -56,6 +56,7 @@ use std::sync::Arc;
 mod helpers;
 
 mod async_and_iteration;
+mod body_ir_adoption_arguments;
 mod bounds_and_derives;
 mod builtin_collection_method_arity;
 mod calls_decorators_and_builtins;

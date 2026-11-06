@@ -1,0 +1,28 @@
+"""Exchange one explicit native runtime identity request with the compiler transport."""
+
+from rust::std::env import args
+from rust::std::process import exit
+from std.fs import Path
+from runtime_inputs import project
+
+
+def exchange(request_path: str, response_path: str) -> Result[None, str]:
+    """Read and publish only the two caller-owned exchange files; project() reads no ambient metadata."""
+    source = Path(request_path).read_text("utf-8", "strict").map_err((error) => error.message())?
+    response = project(source)?
+    return Path(response_path).write_text(response, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+pub def main() -> None:
+    """Refuse malformed or incomplete requests without producing a usable response."""
+    mut arguments: list[str] = []
+    for argument in args():
+        arguments.append(argument)
+    if len(arguments) != 3:
+        println("usage: native_runtime_inputs REQUEST RESPONSE")
+        exit(2)
+    match exchange(arguments[1], arguments[2]):
+        Ok(_) => return
+        Err(error) =>
+            println(error)
+            exit(1)

@@ -145,7 +145,17 @@ fn enclosing_manifest_root(path: &Path) -> Option<PathBuf> {
 /// directory may discover sibling projects, but keeps them as separate authorities so command planning can reject the
 /// ambiguous invocation before selecting a session from whichever file happens to sort first.
 pub fn discover_test_file_candidates(path: &Path) -> TestFileCandidates {
+    discover_test_file_candidates_observed(path, None)
+}
+
+/// Record the existing discovery walk's actual source reads and directory/boundary probes when retaining a lock.
+/// Unsupported links retain canonical discovery behavior but cannot authorize a later unchanged hit.
+pub(crate) fn discover_test_file_candidates_observed(
+    path: &Path,
+    observations: Option<&mut oven_model::observed_inputs::InputObservations>,
+) -> TestFileCandidates {
     struct CandidateCollector<'a> {
+        observations: Option<&'a mut oven_model::observed_inputs::InputObservations>,
         selected_manifest_root: Option<&'a Path>,
         fallback_root: &'a Path,
         paths: Vec<PathBuf>,
@@ -157,12 +167,33 @@ pub fn discover_test_file_candidates(path: &Path) -> TestFileCandidates {
     impl CandidateCollector<'_> {
         /// Collect test candidates below one path while preserving its active manifest authority.
         fn collect(&mut self, path: &Path, active_manifest_root: Option<&Path>) {
+            // ---- Observe discovery inputs before consulting them ----
+            if let Some(inputs) = self.observations.as_deref_mut() {
+                match fs::symlink_metadata(path) {
+                    Ok(metadata) => {
+                        if metadata.is_dir() || metadata.file_type().is_symlink() || is_incan_source_file(path) {
+                            inputs.observe(path);
+                        }
+                        if metadata.is_dir() {
+                            inputs.observe(&path.join("loaf.toml"));
+                        }
+                    }
+                    Err(_) => inputs.disable_retention(),
+                }
+            }
+            // ---- Conventional and inline test sources ----
             if path.is_file() {
                 let is_named = is_named_test_file(path);
                 let inline_source = if !is_named && is_incan_source_file(path) {
-                    fs::read_to_string(path)
-                        .ok()
-                        .filter(|source| source_may_contain_inline_test_module(source))
+                    match fs::read_to_string(path) {
+                        Ok(source) => Some(source).filter(|source| source_may_contain_inline_test_module(source)),
+                        Err(_) => {
+                            if let Some(inputs) = self.observations.as_deref_mut() {
+                                inputs.disable_retention();
+                            }
+                            None
+                        }
+                    }
                 } else {
                     None
                 };
@@ -184,6 +215,7 @@ pub fn discover_test_file_candidates(path: &Path) -> TestFileCandidates {
                 return;
             }
 
+            // ---- Directory ownership and child discovery ----
             let canonical_dir = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
             let local_manifest_root = path.join("loaf.toml").is_file().then_some(canonical_dir.as_path());
             let active_manifest_root = match (self.selected_manifest_root, active_manifest_root, local_manifest_root) {
@@ -195,9 +227,21 @@ pub fn discover_test_file_candidates(path: &Path) -> TestFileCandidates {
             };
 
             let Ok(entries) = fs::read_dir(path) else {
+                if let Some(inputs) = self.observations.as_deref_mut() {
+                    inputs.disable_retention();
+                }
                 return;
             };
-            for entry in entries.flatten() {
+            for entry in entries {
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(_) => {
+                        if let Some(inputs) = self.observations.as_deref_mut() {
+                            inputs.disable_retention();
+                        }
+                        continue;
+                    }
+                };
                 let entry_path = entry.path();
                 if entry_path.is_dir() {
                     let name = entry_path.file_name().and_then(|name| name.to_str()).unwrap_or("");
@@ -220,6 +264,7 @@ pub fn discover_test_file_candidates(path: &Path) -> TestFileCandidates {
         }
     });
     let mut collector = CandidateCollector {
+        observations,
         selected_manifest_root: selected_manifest_root.as_deref(),
         fallback_root: &fallback_root,
         paths: Vec::new(),

@@ -19,7 +19,9 @@ use incan_frontend::library_manifest::{LibraryManifest, ProviderDependencyKind, 
 use incan_frontend::library_manifest_index::LibraryArtifactMetadata;
 use incan_lang::lang::{rust_keywords, stdlib};
 use incan_provider::compiled_sdk::CompiledSdkModules;
-use incan_provider::{ProviderPlan, SDK_PROVIDER_BUILD_ENV, SdkArtifactProjection, SdkDependencyRebinding};
+use incan_provider::{
+    ProviderPlan, ProviderProvenance, SDK_PROVIDER_BUILD_ENV, SdkArtifactProjection, SdkDependencyRebinding,
+};
 use oven_model::manifest::{DependencySource, DependencySpec};
 use sha2::{Digest as _, Sha256};
 use toml_edit::{DocumentMut, Item, value};
@@ -276,6 +278,8 @@ pub struct ProjectGenerator {
     pub(crate) package_license: Option<String>,
     /// Whether this is a binary (true) or library (false)
     pub(crate) is_binary: bool,
+    /// Native SDK publication emits Rust source without compatibility Cargo manifests or locks.
+    pub(crate) native_sdk_publication: bool,
     /// Whether this binary's generated Cargo manifest also needs a publisher-only library target at `src/main.rs`.
     pub(crate) companion_library_target: bool,
     /// The standard library facets this program reaches beyond the ones every generated project links (see
@@ -321,18 +325,39 @@ pub struct ProjectGenerator {
     pub(crate) sdk_artifact_projections: Vec<SdkArtifactProjection>,
     /// Checked public namespace facades keyed by their source-module path.
     pub(crate) public_namespace_facades: Option<BTreeMap<Vec<String>, BTreeSet<String>>>,
+    /// Exact root already carrying the ordinary publisher's verified own and dependency namespace facade.
+    projected_standard_namespace_root: Option<[u8; 32]>,
 }
 
-/// Cargo profile used for `incan run`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Executable compilation profile shared by preparation, completed-output selection and execution.
+///
+/// Build requests default to release for compatibility; Run callers select debug explicitly unless requested otherwise.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum RunProfile {
-    /// `cargo build` (debug profile).
+    /// Unoptimized executable with debug information.
     Debug,
-    /// `cargo build --release` (optimized profile).
+    /// Optimized executable; the established default for Build requests.
+    #[default]
     Release,
 }
 
+impl RunProfile {
+    /// Return the canonical profile spelling used in existing Oven requests and output identities.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Debug => "debug",
+            Self::Release => "release",
+        }
+    }
+}
+
 impl ProjectGenerator {
+    /// Select source-only generation for a checked native SDK publisher.
+    pub(crate) fn set_native_sdk_publication(&mut self) {
+        self.native_sdk_publication = true;
+    }
+
     /// Create a project generator for an Incan build target.
     pub fn new(output_dir: impl AsRef<Path>, name: &str, is_binary: bool) -> Self {
         Self {
@@ -342,6 +367,7 @@ impl ProjectGenerator {
             package_version: None,
             package_license: None,
             is_binary,
+            native_sdk_publication: false,
             companion_library_target: false,
             stdlib_facets: Vec::new(),
             dependencies: Vec::new(),
@@ -365,6 +391,7 @@ impl ProjectGenerator {
             sdk_path_dependencies: Vec::new(),
             sdk_artifact_projections: Vec::new(),
             public_namespace_facades: None,
+            projected_standard_namespace_root: None,
         }
     }
 
@@ -575,13 +602,19 @@ impl ProjectGenerator {
     }
 
     /// Configure generated Rust facade links from the shared compiler provider plan.
+    ///
+    /// Ordinary standard publications are already selected native dependencies, including core support invoked by
+    /// generated code without an authored import. Reuse their checked artifact facade without adding SDK paths or
+    /// synthetic source imports. Legacy SDK catalogs keep their existing semantic link-root selection.
     pub fn set_provider_plan(&mut self, plan: &ProviderPlan) {
+        self.projected_standard_namespace_root = None;
         self.compiled_provider_modules.clear();
         self.compiled_sdk_modules = CompiledSdkModules::from_provider_plan(plan);
         self.sdk_dependency_rebindings = plan.sdk_dependency_rebindings().to_vec();
         self.sdk_artifact_projections = plan.sdk_artifact_projections().to_vec();
         self.set_sdk_path_dependencies(
             plan.active_sdk_records()
+                .filter(|provider| matches!(provider.provenance, ProviderProvenance::Sdk { .. }))
                 .filter_map(|provider| {
                     provider
                         .artifact
@@ -590,7 +623,10 @@ impl ProjectGenerator {
                 })
                 .collect(),
         );
-        for provider in plan.sdk_link_roots() {
+        for provider in plan.sdk_link_roots().into_iter().chain(
+            plan.active_sdk_records()
+                .filter(|provider| matches!(provider.provenance, ProviderProvenance::StandardPublication { .. })),
+        ) {
             let Some(artifact) = provider.artifact.as_ref() else {
                 continue;
             };
@@ -654,7 +690,10 @@ impl ProjectGenerator {
     /// SDK Cargo path and relocatable descriptor projected onto the logically equivalent active inventory artifact.
     pub(crate) fn dependencies_with_sdk_rebindings(&self) -> io::Result<(Vec<DependencySpec>, Vec<DependencySpec>)> {
         if self.sdk_artifact_projections.is_empty() {
-            return Ok((self.dependencies.clone(), self.dev_dependencies.clone()));
+            return Ok((
+                self.project_body_ir_dependencies(self.dependencies.clone())?,
+                self.project_body_ir_dependencies(self.dev_dependencies.clone())?,
+            ));
         }
         let projected = self.sdk_projection_shadow_roots()?;
         let mut materialized = BTreeSet::new();
@@ -676,7 +715,10 @@ impl ProjectGenerator {
                 })
                 .collect()
         };
-        Ok((redirect(&self.dependencies), redirect(&self.dev_dependencies)))
+        Ok((
+            self.project_body_ir_dependencies(redirect(&self.dependencies))?,
+            self.project_body_ir_dependencies(redirect(&self.dev_dependencies))?,
+        ))
     }
 
     /// Return the exact normal dependency specifications used by generated Cargo metadata after SDK projection.
@@ -1362,7 +1404,8 @@ impl ProjectGenerator {
             facade.push_str(&format!("    pub use crate::{escaped_module};\n"));
         }
         for crate_name in self.compiled_provider_modules.keys() {
-            let escaped_crate = rust_keywords::escape_keyword(crate_name);
+            let crate_name = crate_name.replace('-', "_");
+            let escaped_crate = rust_keywords::escape_keyword(&crate_name);
             // A provider's compatibility facade includes the provider modules of its component dependencies. Reuse
             // that checked artifact projection so compiler-generated paths such as `crate::__incan_std::traits` keep
             // working without making transitive component crates direct Cargo dependencies of the consumer.
@@ -1370,6 +1413,49 @@ impl ProjectGenerator {
         }
         facade.push_str("}\n");
         facade
+    }
+
+    /// Include compiler bridge paths in the emitted root before its backend identity is recorded.
+    ///
+    /// An ordinary source publication owns its modules at crate root. Only its retained source capability can map
+    /// those same emitted modules into the compiler's standard namespace; other local modules gain no such alias.
+    pub(crate) fn project_owned_standard_namespace(
+        &mut self,
+        crate_root: &mut String,
+        modules: &HashMap<Vec<String>, String>,
+        plan: &ProviderPlan,
+    ) -> io::Result<()> {
+        self.projected_standard_namespace_root = None;
+        let Some(source) = plan.standard_source_publication() else {
+            return Ok(());
+        };
+        plan.verify_standard_source_publication()
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+        let roots = modules
+            .keys()
+            .filter_map(|path| path.first())
+            .filter(|root| source.namespace_roots().contains(&root.as_str()))
+            .cloned()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        if roots.is_empty() {
+            return Ok(());
+        }
+        if self.is_binary
+            || modules
+                .keys()
+                .any(|path| path.first().map(String::as_str) == Some(stdlib::INCAN_STD_NAMESPACE))
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "own-source standard namespace conflicts with the emitted project",
+            ));
+        }
+        crate_root.push('\n');
+        crate_root.push_str(&self.compiled_provider_facade(&roots));
+        self.projected_standard_namespace_root = Some(Sha256::digest(crate_root.as_bytes()).into());
+        Ok(())
     }
 
     /// Keep Rust implementation lints from leaking through compiled Incan provider crates.
@@ -1390,12 +1476,12 @@ impl ProjectGenerator {
         crate_root.insert_str(insertion, PROVIDER_LINTS);
     }
 
-    /// Return whether this generated project links at least one compiled SDK provider.
+    /// Return whether this generated project links a compiled standard-library artifact.
     ///
     /// The artifact preserves a narrow `__incan_std` facade for compiler-generated compatibility paths. Consumers
     /// re-export that facade instead of regenerating any stdlib source; the bridge can be removed once every emitted
     /// compiler path is artifact-qualified.
-    fn links_compiled_sdk_provider(&self) -> bool {
+    fn links_compiled_standard_provider(&self) -> bool {
         !self.compiled_provider_modules.is_empty()
     }
 
@@ -1406,16 +1492,21 @@ impl ProjectGenerator {
         self.remember_generated_source_identity(vec![("main.rs".to_string(), rust_code)]);
 
         // Write Cargo.toml
-        let cargo_toml = self.generate_cargo_toml()?;
-        changed |= Self::write_file_if_changed(&self.output_dir.join("Cargo.toml"), &cargo_toml)?;
-        changed |= self.write_cargo_lock_if_needed(&cargo_toml)?;
+        if !self.native_sdk_publication {
+            let cargo_toml = self.generate_cargo_toml()?;
+            changed |= Self::write_file_if_changed(&self.output_dir.join("Cargo.toml"), &cargo_toml)?;
+            changed |= self.write_cargo_lock_if_needed(&cargo_toml)?;
+        }
 
         // Single-file consumers need the same artifact-backed compatibility namespace as nested projects. Compiler
         // bridges still use `crate::__incan_std` while they are migrated to canonical artifact paths; re-exporting
         // the artifact's facade keeps those bridges out of a regenerated source stdlib tree.
         let mut full_main = rust_code.to_string();
-        self.add_sdk_provider_crate_lints(&mut full_main, is_sdk_provider_build());
-        if self.links_compiled_sdk_provider() && !is_sdk_provider_build() && !full_main.contains("mod __incan_std") {
+        self.add_sdk_provider_crate_lints(&mut full_main, self.native_sdk_publication || is_sdk_provider_build());
+        if self.links_compiled_standard_provider()
+            && !(self.native_sdk_publication || is_sdk_provider_build())
+            && !full_main.contains("mod __incan_std")
+        {
             let facade = self.compiled_provider_facade(&[]);
             if let Some(marker_pos) = full_main.find(MOD_INSERT_MARKER) {
                 let line_end = full_main[marker_pos..]
@@ -1469,9 +1560,11 @@ impl ProjectGenerator {
         }
 
         // Write Cargo.toml
-        let cargo_toml = self.generate_cargo_toml()?;
-        changed |= Self::write_file_if_changed(&self.output_dir.join("Cargo.toml"), &cargo_toml)?;
-        changed |= self.write_cargo_lock_if_needed(&cargo_toml)?;
+        if !self.native_sdk_publication {
+            let cargo_toml = self.generate_cargo_toml()?;
+            changed |= Self::write_file_if_changed(&self.output_dir.join("Cargo.toml"), &cargo_toml)?;
+            changed |= self.write_cargo_lock_if_needed(&cargo_toml)?;
+        }
 
         // Write each module file
         for (module_name, module_code) in modules {
@@ -1484,7 +1577,7 @@ impl ProjectGenerator {
         // after any crate attributes.
         let mut full_main = String::new();
         full_main.push_str(main_code);
-        self.add_sdk_provider_crate_lints(&mut full_main, is_sdk_provider_build());
+        self.add_sdk_provider_crate_lints(&mut full_main, self.native_sdk_publication || is_sdk_provider_build());
 
         if !modules.is_empty() {
             // Add mod declarations for each module (sorted for deterministic output)
@@ -1553,9 +1646,11 @@ impl ProjectGenerator {
         self.remember_generated_source_identity(identity_sources);
 
         // Write Cargo.toml
-        let cargo_toml = self.generate_cargo_toml()?;
-        changed |= Self::write_file_if_changed(&self.output_dir.join("Cargo.toml"), &cargo_toml)?;
-        changed |= self.write_cargo_lock_if_needed(&cargo_toml)?;
+        if !self.native_sdk_publication {
+            let cargo_toml = self.generate_cargo_toml()?;
+            changed |= Self::write_file_if_changed(&self.output_dir.join("Cargo.toml"), &cargo_toml)?;
+            changed |= self.write_cargo_lock_if_needed(&cargo_toml)?;
+        }
 
         // ---- RFC 023: Transform stdlib paths to __incan_std ----
         let mut transformed_modules: HashMap<Vec<String>, String> = HashMap::new();
@@ -1741,12 +1836,13 @@ impl ProjectGenerator {
         // declarations at the backend marker after any crate attributes.
         let mut full_main = String::new();
         full_main.push_str(main_code);
-        self.add_sdk_provider_crate_lints(&mut full_main, is_sdk_provider_build());
+        self.add_sdk_provider_crate_lints(&mut full_main, self.native_sdk_publication || is_sdk_provider_build());
 
         let mut sorted_top: Vec<_> = top_level_modules.into_iter().collect();
         sorted_top.sort();
-        let consumer_stdlib_facade = self.links_compiled_sdk_provider()
-            && !is_sdk_provider_build()
+        let consumer_stdlib_facade = self.links_compiled_standard_provider()
+            && !(self.native_sdk_publication || is_sdk_provider_build())
+            && self.projected_standard_namespace_root != Some(Sha256::digest(main_code.as_bytes()).into())
             && !sorted_top.iter().any(|module| module == "__incan_std");
         if !sorted_top.is_empty() || consumer_stdlib_facade {
             let visibility = if self.is_binary { "" } else { "pub " };
@@ -1767,7 +1863,7 @@ impl ProjectGenerator {
                 mods.push('\n');
             }
 
-            if !self.is_binary && is_sdk_provider_build() {
+            if !self.is_binary && (self.native_sdk_publication || is_sdk_provider_build()) {
                 mods.push('\n');
                 mods.push_str(&self.compiled_provider_facade(&sorted_top));
             } else if consumer_stdlib_facade {

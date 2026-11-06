@@ -14,10 +14,11 @@ use oven_model::toolchain_layout::development_support_crate_dir;
 use super::{
     CliError, CliResult, CompilerSuiteFoundationExecution, CompilerSuiteShardExecution, LoafTemporaryDirectory,
     OVEN_COMPILER_SUITE_CAPABILITY_ENV, OVEN_COMPILER_SUITE_EXPLICIT_BAKE_CARGO_ENV,
-    OVEN_COMPILER_SUITE_EXPLICIT_BAKE_HOME_ENV, OVEN_COMPILER_SUITE_FIXTURE_CARGO_LOG_ENV,
-    OVEN_COMPILER_SUITE_FIXTURE_CARGO_REAL_ENV, OVEN_COMPILER_SUITE_FIXTURE_RUSTC_REAL_ENV,
-    OVEN_COMPILER_SUITE_RUSTC_ENV, OVEN_COMPILER_SUITE_VOCAB_CAPABILITY_ENV, OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION,
-    OvenBuildIntent, OvenCallerOwnedRustcLibrary, OvenCompilerSuiteCapability, OvenCompilerSuiteTargetCapabilities,
+    OVEN_COMPILER_SUITE_EXPLICIT_BAKE_HOME_ENV, OVEN_COMPILER_SUITE_EXPLICIT_BAKE_WORKSPACE_ENV,
+    OVEN_COMPILER_SUITE_FIXTURE_CARGO_LOG_ENV, OVEN_COMPILER_SUITE_FIXTURE_CARGO_REAL_ENV,
+    OVEN_COMPILER_SUITE_FIXTURE_RUSTC_REAL_ENV, OVEN_COMPILER_SUITE_RUSTC_ENV,
+    OVEN_COMPILER_SUITE_VOCAB_CAPABILITY_ENV, OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION, OvenBuildIntent,
+    OvenCallerOwnedRustcLibrary, OvenCompilerSuiteCapability, OvenCompilerSuiteTargetCapabilities,
     OvenCompilerTestSuiteFoundationReference, OvenCompilerWorkspaceLibrary, OvenCompilerWorkspaceLibraryKey,
     OvenReceipt, OvenRustcArtifactPlan, OvenTrustedDirectRustcTargetRequest, PhaseProgress, PreparedCompilerSuiteChild,
     attach_caller_owned_rustc_libraries, attach_compiler_suite_target_workspace_libraries,
@@ -214,7 +215,7 @@ pub(crate) fn compiler_suite_environment_with_vocab(
     environment.insert(dynamic_library_environment_name, dynamic_library_environment_value);
     append_compiler_suite_direct_rustc_environment(
         &mut environment,
-        OVEN_COMPILER_SUITE_VOCAB_CAPABILITY_ENV,
+        &[OVEN_COMPILER_SUITE_VOCAB_CAPABILITY_ENV],
         rustc,
         vocab_extraction_artifacts,
     )?;
@@ -294,14 +295,14 @@ pub(crate) fn compiler_suite_environment_path(path: &Path) -> CliResult<PathBuf>
         })
 }
 
-/// Export a second, named direct-Rustc closure for compiler-internal vocab companion extraction.
+/// Export one checked direct-Rustc closure under its existing consumer capability names.
 ///
 /// The generated-code warning checker and the compiler CLI can legitimately use different dependency closures. Keep
 /// them separate instead of merging same-named Rust crates from independent receipt-bound foundations into an
 /// ambiguous `--extern` list.
 pub(crate) fn append_compiler_suite_direct_rustc_environment(
     environment: &mut BTreeMap<String, String>,
-    variable: &str,
+    variables: &[&str],
     rustc: &Path,
     artifacts: &oven_rustc::rustc::OvenRustcArtifactPlan,
 ) -> CliResult<()> {
@@ -318,7 +319,10 @@ pub(crate) fn append_compiler_suite_direct_rustc_environment(
             .map(|(crate_name, path)| Ok((crate_name.clone(), compiler_suite_environment_path(path)?)))
             .collect::<CliResult<BTreeMap<_, _>>>()?,
     );
-    environment.insert(variable.to_string(), capability.encode().map_err(CliError::failure)?);
+    let encoded = capability.encode().map_err(CliError::failure)?;
+    for variable in variables {
+        environment.insert((*variable).to_string(), encoded.clone());
+    }
     Ok(())
 }
 
@@ -431,9 +435,9 @@ pub(crate) fn bake_compiler_suite_warning_check_artifacts(
         let workspace_outputs = bake_planned_compiler_suite_workspace_libraries(
             &warning_check_libraries,
             &shard.payload.artifact_closure,
-            &shard.stored.manifest.intent,
+            &shard.stored.manifest().intent,
             receipt,
-            &shard.stored.artifact_root,
+            shard.stored.artifact_root(),
             rustc,
             compiler_root,
             &output_directory.join("warning-check").join(facet),
@@ -463,12 +467,12 @@ pub(crate) fn bake_compiler_suite_warning_check_artifacts(
     let artifacts = core_shard
         .payload
         .artifact_closure
-        .manifest_for_workspace_library(core, core_shard.stored.manifest.intent.clone());
+        .manifest_for_workspace_library(core, core_shard.stored.manifest().intent.clone());
     let mut artifact_plan = compiler_suite_composed_artifact_plan(
         &artifacts,
         &core_shard.payload.foundation_references,
         foundations,
-        &core_shard.stored.manifest.intent,
+        &core_shard.stored.manifest().intent,
     )?;
     attach_caller_owned_rustc_libraries(&mut artifact_plan, &attached).map_err(oven_error)?;
     Ok(artifact_plan)
@@ -580,6 +584,8 @@ pub(crate) struct CompilerSuiteFixtureCargoProxy {
     pub(crate) real_rustc: PathBuf,
     pub(crate) home: PathBuf,
     pub(crate) log: PathBuf,
+    /// Checkout-owned workspace kept across runs, divided per explicit-bake root; `None` keeps fresh fixtures.
+    pub(crate) explicit_bake_workspace: Option<PathBuf>,
 }
 
 impl CompilerSuiteFixtureCargoProxy {
@@ -685,6 +691,7 @@ pub(crate) fn prepare_compiler_suite_fixture_cargo_proxy(
         real_rustc,
         home: compiler_suite_environment_path(&home)?,
         log: compiler_suite_environment_path(&log)?,
+        explicit_bake_workspace: None,
     })
 }
 
@@ -855,6 +862,15 @@ pub(crate) fn apply_compiler_suite_target_capabilities(
             OVEN_COMPILER_SUITE_EXPLICIT_BAKE_HOME_ENV.to_string(),
             fixture_cargo.home.display().to_string(),
         );
+        // One subdirectory per root, named after its source path, so parallel roots never share fixture state.
+        if let Some(workspace) = &fixture_cargo.explicit_bake_workspace {
+            let root = target.source_relative_path.trim_end_matches(".rs").replace('/', "__");
+            let workspace = compiler_suite_environment_path(&workspace.join(root))?;
+            environment.insert(
+                OVEN_COMPILER_SUITE_EXPLICIT_BAKE_WORKSPACE_ENV.to_string(),
+                workspace.display().to_string(),
+            );
+        }
     }
     Ok(())
 }

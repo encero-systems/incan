@@ -1,5 +1,4 @@
-//! The `incan lock` command: discover the project, apply the Cargo feature selection, and publish its lock through
-//! the driver.
+//! The `incan lock` command: normalize command selections and submit lock preparation to the existing project owner.
 //!
 //! Resolution, workspace collection, registry-source authorities and the rust-inspect workspace all live in
 //! `incan_driver::lock`; this file only turns arguments into one request.
@@ -7,11 +6,8 @@
 use std::path::PathBuf;
 
 use crate::{CliError, CliResult, ExitCode};
-use incan_driver::cargo_policy::enforce_project_toolchain_constraint;
-use incan_driver::lock::resolution::prepare_sdk_and_publish_project_lock;
 use incan_provider::FeatureSelection;
 use oven_model::lock::CargoFeatureSelection;
-use oven_model::manifest::ProjectManifest;
 
 /// Generate or update oven.lock for a project.
 pub fn lock_project(
@@ -25,24 +21,22 @@ pub fn lock_project(
     let start_dir = entry_file
         .and_then(|p| p.parent().map(|p| p.to_path_buf()))
         .unwrap_or_else(|| PathBuf::from("."));
-    let manifest = ProjectManifest::discover(&start_dir)
-        .map_err(|e| CliError::failure(e.to_string()))?
-        .ok_or_else(|| CliError::failure("No loaf.toml found (run `incan init`)"))?;
-    enforce_project_toolchain_constraint(&manifest)?;
-
     let cargo_features = CargoFeatureSelection {
         cargo_features,
         cargo_no_default_features,
         cargo_all_features,
     }
     .normalized();
-    let _ = prepare_sdk_and_publish_project_lock(
-        &manifest,
-        entry_file.map(PathBuf::as_path),
-        &cargo_features,
-        package_features,
-        sdk_profile_override,
-    )?;
+    crate::project_owner::prepare_lock(incan_driver::build::lock_preparation::LockPreparationRequest {
+        directory: std::path::absolute(&start_dir).map_err(|error| CliError::failure(error.to_string()))?,
+        entry: entry_file
+            .map(std::path::absolute)
+            .transpose()
+            .map_err(|error| CliError::failure(error.to_string()))?,
+        features: package_features.clone(),
+        sdk_profile: sdk_profile_override.map(str::to_owned),
+        cargo_features,
+    })?;
 
     Ok(ExitCode::SUCCESS)
 }

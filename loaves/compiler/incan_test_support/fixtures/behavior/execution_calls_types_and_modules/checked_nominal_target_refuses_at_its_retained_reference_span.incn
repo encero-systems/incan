@@ -1,0 +1,17 @@
+# behavior: checked nominal target refuses at its retained reference span, as the legacy route runs it
+# expect-stdout:
+#   false
+
+"""Checked nominal target refuses at its retained reference span, as the legacy route runs it."""
+model Marker:
+  """Hold value used by this fixture."""
+  value: int
+
+def probe(value: Marker | str) -> bool:
+  """Return the fixture expression `isinstance(value, Marker)`."""
+  return isinstance(value, Marker)
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(probe("text"))

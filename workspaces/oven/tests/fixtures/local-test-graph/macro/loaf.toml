@@ -1,0 +1,7 @@
+[project]
+name='macros'
+version='1.0.0'
+[dependencies]
+helper={loaf='helper',path='../helper',version='1'}
+[rust]
+type='proc-macro'

@@ -8,6 +8,61 @@
 
 use super::*;
 
+/// Constructor and nested collection spans retain only the carrier parts their peers and binding settle.
+#[test]
+fn settled_and_peer_carrier_literals_retain_span_types() -> Result<(), String> {
+    let source = "def main() -> None:\n    xs = [Ok(1), Err(\"x\")]\n    nested = [[Ok(2)], [Err(\"y\")]]\n    maybes = [None, Some(3)]\n    d = {\"a\": Ok(4), \"b\": Err(\"z\")}\n    single = Ok(5)\n";
+    let checker = checked(source)?;
+    let result = collection(CollectionTypeId::Result, vec![ResolvedType::Int, ResolvedType::Str]);
+    for (after, text) in [
+        ("xs =", "Ok(1)"),
+        ("xs =", "Err(\"x\")"),
+        ("nested =", "Ok(2)"),
+        ("d =", "Ok(4)"),
+    ] {
+        assert_eq!(recorded_type(&checker, source, after, text)?, &result);
+    }
+    assert_eq!(
+        recorded_type(&checker, source, "nested =", "[Ok(2)]")?,
+        &collection(CollectionTypeId::List, vec![result])
+    );
+    assert_eq!(
+        recorded_type(&checker, source, "maybes =", "None")?,
+        &option(ResolvedType::Int)
+    );
+    assert_eq!(
+        recorded_type(&checker, source, "single =", "Ok(5)")?,
+        &collection(CollectionTypeId::Result, vec![ResolvedType::Int, ResolvedType::Unit])
+    );
+    Ok(())
+}
+
+/// A None payload retains the Option type proven by its intrinsic constructor's destination.
+#[test]
+fn contextual_none_payloads_retain_option_types() -> Result<(), String> {
+    let source = "def take(value: Result[Option[int], str]) -> None:\n    pass\n\ndef main() -> None:\n    take(Ok(None))\n    nested: Option[Option[int]] = Some(None)\n";
+    let checker = checked(source)?;
+    let optional_int = option(ResolvedType::Int);
+    assert_eq!(recorded_type(&checker, source, "take(Ok", "None")?, &optional_int);
+    assert_eq!(
+        recorded_type(&checker, source, "nested:", "Some(None)")?,
+        &option(optional_int.clone())
+    );
+    assert_eq!(recorded_type(&checker, source, "Some(", "None")?, &optional_int);
+    Ok(())
+}
+
+/// Peer-proven nested list holes are retained on the inner literal spans used by Body IR.
+#[test]
+fn nested_empty_list_spans_retain_peer_types() -> Result<(), String> {
+    let source = "def main() -> None:\n    rows = [[], [\"x\"]]\n    deep = [[[]], [[\"y\"]]]\n";
+    let checker = checked(source)?;
+    let strings = collection(CollectionTypeId::List, vec![ResolvedType::Str]);
+    assert_eq!(recorded_type(&checker, source, "rows =", "[]")?, &strings);
+    assert_eq!(recorded_type(&checker, source, "deep =", "[]")?, &strings);
+    Ok(())
+}
+
 /// Parse and check `source`, which the checker must accept, and return the checker.
 fn checked(source: &str) -> Result<TypeChecker, String> {
     let tokens = lexer::lex(source).map_err(|errors| format!("lex failed: {errors:?}"))?;

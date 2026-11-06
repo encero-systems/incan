@@ -40,6 +40,21 @@ Using `rust::std` types means working with their Rust behavior; for common file 
 > **Note:** `rust::core::...` and `rust::alloc::...` are reserved for future `no_std`/target work and are not yet
 > supported. The compiler will tell you to use `rust::std::...` instead.
 
+### Check a project that uses only Rust's standard library
+
+For a project with no declared Rust dependencies, use `rust::std::` imports without adding a crate dependency. Install the selected Rust toolchain's `rust-src` component, then bake the project once:
+
+```bash
+incan oven bake --project .
+incan check src/main.incn
+incan run src/main.incn
+incan test
+```
+
+The bake derives inspection metadata from that toolchain's sysroot without running Cargo. Comment-only edits preserve the baked source authority, so you can check and run again without rebaking. Changes to executable tokens, literals, or indentation still change source authority.
+
+If the project declares Rust dependencies, the bake needs an existing sealed Loaf source resolution. An unresolved dependency is reported by name, for example "Rust dependency `semver` needs a Loaf resolution"; the bake does not ask Cargo to resolve it.
+
 ### Paths and names that match Incan keywords
 
 Rust modules and items sometimes use names that are reserved in Incan (`type`, `async`, and others). In `rust::` paths and in `from rust::... import ...` item lists, those spellings are still accepted. When you import a keyword-named symbol, bind it with `as` so you have a normal identifier in Incan source:
@@ -406,6 +421,8 @@ Body-less `rusttype` adoption is only accepted when Rust metadata proves that th
 When a library exposes Rust-backed items, run `incan build --lib` before another project consumes it through `pub::`. The generated `.incnlib` embeds a versioned Rust ABI payload containing the canonical Rust item signatures captured during the producer build.
 
 Consumers load that shipped ABI metadata first for Rust-backed imported symbols. `rust_inspect` remains available for producer capture, local workspace imports, and explicit fallback/debug paths, but a packaged dependency should not require consumer-side workspace inspection for signatures that were already published in its `.incnlib`.
+
+Producer capture includes successful metadata lookups made while checking function bodies, in addition to explicit imports and `rust.extern` backing items. A Rust factory's inferred return receiver can therefore carry its checked ABI without a separate type import. Complete ABI records already shipped by dependencies are reused; other requested type records are completed before shipping them. Partial fast-inspection records are insufficient. Repeated queries are deduplicated, and unsuccessful speculative lookups do not become ABI requirements.
 
 A library can deliberately publish a checked Rust import:
 

@@ -33,11 +33,47 @@ pub fn select_receipt_direct_rustc_execution_plan(
     store: &OvenStore,
     receipt: &OvenReceipt,
 ) -> OvenPlanResult<Option<OvenStoredDirectRustcExecutionPlan>> {
+    select_receipt_direct_rustc_execution_plan_with_native_owners(store, receipt, None)
+}
+
+/// Select the ordinary receipt-compatible plan while sharing exact command-admitted native execution leases.
+///
+/// Receipt matching and local facade validation remain canonical. Supplied owners cannot enlarge a plan's member
+/// inventory, and a missing reference refuses instead of admitting a different generation behind the caller.
+pub fn select_receipt_direct_rustc_execution_plan_with_native_owners(
+    store: &OvenStore,
+    receipt: &OvenReceipt,
+    admitted: Option<&super::shared::OvenSharedNativeOwners>,
+) -> OvenPlanResult<Option<OvenStoredDirectRustcExecutionPlan>> {
+    select_receipt_direct_rustc_execution_plan_with_owner_scope(store, receipt, admitted, None)
+}
+
+/// Reuse admitted owners only for one publisher's plan domain; other plan families retain canonical acquisition.
+///
+/// A command can admit an SDK-only set while also selecting caller-owned plans whose private owners are outside
+/// that set. The domain limits this reuse optimization; it adds no receipt or artifact authority.
+pub fn select_receipt_direct_rustc_execution_plan_with_native_owners_for_domain(
+    store: &OvenStore,
+    receipt: &OvenReceipt,
+    admitted: &super::shared::OvenSharedNativeOwners,
+    domain: &str,
+) -> OvenPlanResult<Option<OvenStoredDirectRustcExecutionPlan>> {
+    select_receipt_direct_rustc_execution_plan_with_owner_scope(store, receipt, Some(admitted), Some(domain))
+}
+
+/// Apply domain-scoped reuse after canonical receipt matching and before physical materialization.
+fn select_receipt_direct_rustc_execution_plan_with_owner_scope(
+    store: &OvenStore,
+    receipt: &OvenReceipt,
+    admitted: Option<&super::shared::OvenSharedNativeOwners>,
+    domain: Option<&str>,
+) -> OvenPlanResult<Option<OvenStoredDirectRustcExecutionPlan>> {
     let Some(selected) = select_direct_rustc_plan_for_execution(store, receipt)? else {
         return Ok(None);
     };
     let (stored_manifest, artifact_root, payload, lease) = selected.into_parts();
     let plan_identity = &stored_manifest.identity;
+    let admitted = admitted.filter(|_| domain.is_none_or(|domain| stored_manifest.domain == domain));
     if stored_manifest.kind != OvenArtifactKind::DirectRustcPlan
         || stored_manifest.build_unit_identity != receipt.build_unit_identity
         || stored_manifest.intent != receipt.intent
@@ -53,18 +89,30 @@ pub fn select_receipt_direct_rustc_execution_plan(
     })?;
     // The entry is content-addressed and leased, so its closure proof lives beside the store under its identity
     // (#1546): the first process walks every file, the rest read one small record.
-    let artifact_plan = artifacts.materialize_proven_store(
-        &artifact_root,
-        &receipt.intent,
-        plan_identity,
-        &OvenClosureProof::path(store.root(), plan_identity),
-    )?;
+    let (artifact_plan, shared_owners, shared_paths) = if let Some(shared) =
+        super::shared::materialize_with_owners(&payload, &artifacts, &artifact_root, &receipt.intent, admitted)?
+    {
+        shared
+    } else {
+        (
+            artifacts.materialize_proven_store(
+                &artifact_root,
+                &receipt.intent,
+                plan_identity,
+                &OvenClosureProof::path(store.root(), plan_identity),
+            )?,
+            Vec::new(),
+            std::collections::BTreeMap::new(),
+        )
+    };
     Ok(Some(OvenStoredDirectRustcExecutionPlan {
         identity: plan_identity.clone(),
         artifacts,
         artifact_root,
         artifact_plan,
         _lease: lease,
+        _shared_owners: shared_owners,
+        shared_paths,
     }))
 }
 
@@ -81,12 +129,15 @@ pub fn select_exact_receipt_direct_rustc_execution_plan(
         .verify_identity()
         .map_err(|error| OvenPlanError::selection(format!("invalid caller-owned provider receipt: {error}")))?;
     let mut selected = store
-        .select_payloads_matching_for_execution(|manifest| {
-            manifest.kind == OvenArtifactKind::DirectRustcPlan
-                && manifest.receipt_identity == receipt.identity
-                && manifest.build_unit_identity == receipt.build_unit_identity
-                && manifest.intent == receipt.intent
-        })
+        .select_payloads_matching_for_execution(
+            |manifest| {
+                manifest.kind == OvenArtifactKind::DirectRustcPlan
+                    && manifest.receipt_identity == receipt.identity
+                    && manifest.build_unit_identity == receipt.build_unit_identity
+                    && manifest.intent == receipt.intent
+            },
+            |_, _| true,
+        )
         .map_err(|error| OvenPlanError::selection(format!("failed to select caller-owned provider plan: {error}")))?;
     if selected.len() > 1 {
         return Err(OvenPlanError::selection(format!(
@@ -104,18 +155,29 @@ pub fn select_exact_receipt_direct_rustc_execution_plan(
             "selected caller-owned provider direct-Rustc plan has an invalid payload: {error}"
         ))
     })?;
-    let artifact_plan = artifacts.materialize_proven_store(
-        &artifact_root,
-        &receipt.intent,
-        plan_identity,
-        &OvenClosureProof::path(store.root(), plan_identity),
-    )?;
+    let (artifact_plan, shared_owners, shared_paths) =
+        if let Some(shared) = super::shared::materialize(&payload, &artifacts, &artifact_root, &receipt.intent)? {
+            shared
+        } else {
+            (
+                artifacts.materialize_proven_store(
+                    &artifact_root,
+                    &receipt.intent,
+                    plan_identity,
+                    &OvenClosureProof::path(store.root(), plan_identity),
+                )?,
+                Vec::new(),
+                std::collections::BTreeMap::new(),
+            )
+        };
     Ok(Some(OvenStoredDirectRustcExecutionPlan {
         identity: stored_manifest.identity,
         artifacts,
         artifact_root,
         artifact_plan,
         _lease: lease,
+        _shared_owners: shared_owners,
+        shared_paths,
     }))
 }
 
@@ -133,13 +195,16 @@ pub fn select_packaged_direct_rustc_execution_plan(
         .verify_identity()
         .map_err(|error| OvenPlanError::selection(format!("invalid packaged Oven receipt: {error}")))?;
     let mut selected = store
-        .select_payloads_matching_for_execution(|manifest| {
-            manifest.identity == required_identity
-                && manifest.kind == OvenArtifactKind::DirectRustcPlan
-                && manifest.receipt_identity == receipt.identity
-                && manifest.build_unit_identity == receipt.build_unit_identity
-                && manifest.intent == receipt.intent
-        })
+        .select_payloads_matching_for_execution(
+            |manifest| {
+                manifest.identity == required_identity
+                    && manifest.kind == OvenArtifactKind::DirectRustcPlan
+                    && manifest.receipt_identity == receipt.identity
+                    && manifest.build_unit_identity == receipt.build_unit_identity
+                    && manifest.intent == receipt.intent
+            },
+            |_, _| true,
+        )
         .map_err(|error| {
             OvenPlanError::selection(format!("failed to select packaged Oven direct-plan Loaf: {error}"))
         })?;
@@ -151,6 +216,31 @@ pub fn select_packaged_direct_rustc_execution_plan(
     let Some(selected) = selected.pop() else {
         return Ok(None);
     };
+    packaged_direct_rustc_plan_from_selected(selected, receipt, required_identity).map(Some)
+}
+
+/// Materialize an exact published package closure while retaining its original execution lease.
+/// Both writable and immutable Store selection enter this boundary; receipt and entry identity must agree before
+/// any physical artifact paths are exposed. No consumer-side copy or replacement publication is required.
+pub fn packaged_direct_rustc_plan_from_selected(
+    selected: OvenStoreExecutionPayload,
+    receipt: &OvenReceipt,
+    required_identity: &str,
+) -> OvenPlanResult<OvenStoredDirectRustcExecutionPlan> {
+    receipt
+        .verify_identity()
+        .map_err(|error| OvenPlanError::selection(error.to_string()))?;
+    let stored = selected.manifest();
+    if stored.identity != required_identity
+        || stored.kind != OvenArtifactKind::DirectRustcPlan
+        || stored.receipt_identity != receipt.identity
+        || stored.build_unit_identity != receipt.build_unit_identity
+        || stored.intent != receipt.intent
+    {
+        return Err(OvenPlanError::selection(
+            "published package closure differs from its exact receipt or identity",
+        ));
+    }
     let (manifest, artifact_root, payload, lease) = selected.into_parts();
     let artifacts = serde_json::from_slice::<OvenRustcArtifactManifest>(&payload).map_err(|error| {
         OvenPlanError::selection(format!(
@@ -158,14 +248,25 @@ pub fn select_packaged_direct_rustc_execution_plan(
             manifest.identity
         ))
     })?;
-    let artifact_plan = artifacts.materialize_trusted_store(&artifact_root, &receipt.intent)?;
-    Ok(Some(OvenStoredDirectRustcExecutionPlan {
+    let (artifact_plan, shared_owners, shared_paths) =
+        if let Some(shared) = super::shared::materialize(&payload, &artifacts, &artifact_root, &receipt.intent)? {
+            shared
+        } else {
+            (
+                artifacts.materialize_trusted_store(&artifact_root, &receipt.intent)?,
+                Vec::new(),
+                std::collections::BTreeMap::new(),
+            )
+        };
+    Ok(OvenStoredDirectRustcExecutionPlan {
         identity: manifest.identity,
         artifacts,
         artifact_root,
         artifact_plan,
         _lease: lease,
-    }))
+        _shared_owners: shared_owners,
+        shared_paths,
+    })
 }
 
 /// Drop project extensions whose base Loaf the active toolchain does not ship, when at least one candidate's base
@@ -197,21 +298,24 @@ pub fn select_receipt_project_extension_execution_plan(
     required_identity: Option<&str>,
 ) -> OvenPlanResult<Option<OvenProjectExtensionExecutionPlan>> {
     let selected = store
-        .select_payloads_matching_for_execution(|manifest| {
-            manifest.kind == OvenArtifactKind::ProjectPayload
-                && manifest.receipt_identity == receipt.identity
-                && manifest.build_unit_identity == receipt.build_unit_identity
-                && manifest.intent == receipt.intent
-                && required_identity.is_none_or(|identity| manifest.identity == identity)
-        })
+        .select_payloads_matching_for_execution(
+            |manifest| {
+                manifest.kind == OvenArtifactKind::ProjectPayload
+                    && manifest.receipt_identity == receipt.identity
+                    && manifest.build_unit_identity == receipt.build_unit_identity
+                    && manifest.intent == receipt.intent
+                    && required_identity.is_none_or(|identity| manifest.identity == identity)
+            },
+            |_, _| true,
+        )
         .map_err(|error| OvenPlanError::selection(error.to_string()))?;
     let mut selected = selected
         .into_iter()
         .filter_map(|candidate| {
-            let payload = serde_json::from_slice::<OvenProjectExtensionPayload>(&candidate.payload).map_err(|error| {
+            let payload = serde_json::from_slice::<OvenProjectExtensionPayload>(candidate.payload()).map_err(|error| {
                 OvenPlanError::selection(format!(
                     "selected Oven project extension Loaf `{}` has an invalid payload: {error}",
-                    candidate.manifest.identity
+                    candidate.manifest().identity
                 ))
             });
             match payload {
@@ -254,7 +358,7 @@ pub fn select_receipt_project_extension_execution_plan(
     if selected.len() != 1 {
         let identities = selected
             .iter()
-            .map(|(candidate, _)| candidate.manifest.identity.as_str())
+            .map(|(candidate, _)| candidate.manifest().identity.as_str())
             .collect::<Vec<_>>()
             .join(", ");
         let first_payload = &selected[0].1;
@@ -263,7 +367,7 @@ pub fn select_receipt_project_extension_execution_plan(
             // Independent projects can therefore publish byte-identical extensions concurrently. They are
             // interchangeable; choose the stable content address rather than rejecting a correct shared closure as
             // ambiguous.
-            selected.sort_by(|(left, _), (right, _)| left.manifest.identity.cmp(&right.manifest.identity));
+            selected.sort_by(|(left, _), (right, _)| left.manifest().identity.cmp(&right.manifest().identity));
         } else {
             return Err(OvenPlanError::selection(format!(
                 "multiple distinct receipt-compatible Oven project extension Loafs are available: {identities}"
@@ -380,12 +484,21 @@ pub fn project_test_dependency_plan_from_constituent(
     selected: OvenStoreExecutionPayload,
     receipt: &OvenReceipt,
 ) -> OvenPlanResult<OvenDirectRustcPlanSelection> {
-    if !project_inspection_constituent_matches_receipt(&selected.manifest, selected.manifest.kind, receipt) {
+    project_test_dependency_plan_from_constituent_with_native_owners(selected, receipt, None)
+}
+
+/// Materialize an exact retained test constituent with optional already admitted owners from its enclosing command.
+pub fn project_test_dependency_plan_from_constituent_with_native_owners(
+    selected: OvenStoreExecutionPayload,
+    receipt: &OvenReceipt,
+    admitted: Option<&super::shared::OvenSharedNativeOwners>,
+) -> OvenPlanResult<OvenDirectRustcPlanSelection> {
+    if !project_inspection_constituent_matches_receipt(selected.manifest(), selected.manifest().kind, receipt) {
         return Err(OvenPlanError::selection(
             "project inspection test dependency constituent changed kind, receipt, build unit, or intent",
         ));
     }
-    match selected.manifest.kind {
+    match selected.manifest().kind {
         OvenArtifactKind::DirectRustcPlan => {
             let (manifest, artifact_root, payload, lease) = selected.into_parts();
             let artifacts = serde_json::from_slice::<OvenRustcArtifactManifest>(&payload).map_err(|error| {
@@ -394,7 +507,17 @@ pub fn project_test_dependency_plan_from_constituent(
                     manifest.identity
                 ))
             })?;
-            let artifact_plan = artifacts.materialize_trusted_store(&artifact_root, &receipt.intent)?;
+            let (artifact_plan, shared_owners, shared_paths) = if let Some(shared) =
+                super::shared::materialize_with_owners(&payload, &artifacts, &artifact_root, &receipt.intent, admitted)?
+            {
+                shared
+            } else {
+                (
+                    artifacts.materialize_trusted_store(&artifact_root, &receipt.intent)?,
+                    Vec::new(),
+                    std::collections::BTreeMap::new(),
+                )
+            };
             Ok(OvenDirectRustcPlanSelection::Stored(Box::new(
                 OvenStoredDirectRustcExecutionPlan {
                     identity: manifest.identity,
@@ -402,14 +525,16 @@ pub fn project_test_dependency_plan_from_constituent(
                     artifact_root,
                     artifact_plan,
                     _lease: lease,
+                    _shared_owners: shared_owners,
+                    shared_paths,
                 },
             )))
         }
         OvenArtifactKind::ProjectPayload => {
-            let payload = serde_json::from_slice::<OvenProjectExtensionPayload>(&selected.payload).map_err(|error| {
+            let payload = serde_json::from_slice::<OvenProjectExtensionPayload>(selected.payload()).map_err(|error| {
                 OvenPlanError::selection(format!(
                     "project inspection test dependency constituent `{}` has an invalid project-extension payload: {error}",
-                    selected.manifest.identity
+                    selected.manifest().identity
                 ))
             })?;
             if payload.schema_version != OVEN_PROJECT_EXTENSION_PAYLOAD_SCHEMA_VERSION {

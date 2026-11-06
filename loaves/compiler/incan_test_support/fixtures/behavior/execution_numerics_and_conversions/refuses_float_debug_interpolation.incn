@@ -1,0 +1,15 @@
+# behavior: refuses float debug interpolation, as the legacy route runs it
+# expect-stdout:
+#   1.5
+
+
+"""Refuses float debug interpolation, as the legacy route runs it."""
+def program_result() -> str:
+  """Compute and return `f"{value:?}"`."""
+  value: float = 1.5
+  return f"{value:?}"
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

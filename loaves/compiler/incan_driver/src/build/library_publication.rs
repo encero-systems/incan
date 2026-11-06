@@ -34,12 +34,12 @@ impl LibraryPublication {
 
     /// Capture recovery material for the precise caller projection that the operation can change.
     fn begin_mode(project: &Path, output: &Path, receipts: Vec<PathBuf>, replace_artifact: bool) -> CliResult<Self> {
-        let project = fs::canonicalize(project).map_err(io_error)?;
+        let project = fs::canonicalize(project).map_err(|error| io_error("resolve project", project, error))?;
         let parent = output
             .parent()
             .ok_or_else(|| CliError::failure("library output has no parent directory"))?;
-        fs::create_dir_all(parent).map_err(io_error)?;
-        let parent = fs::canonicalize(parent).map_err(io_error)?;
+        fs::create_dir_all(parent).map_err(|error| io_error("create output parent", parent, error))?;
+        let parent = fs::canonicalize(parent).map_err(|error| io_error("resolve output parent", parent, error))?;
         let output = parent.join(
             output
                 .file_name()
@@ -53,7 +53,7 @@ impl LibraryPublication {
         let metadata = match fs::symlink_metadata(&output) {
             Ok(metadata) => Some(metadata),
             Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-            Err(error) => return Err(io_error(error)),
+            Err(error) => return Err(io_error("inspect previous output", &output, error)),
         };
         let previous = metadata.is_some() && replace_artifact;
         if let Some(metadata) = metadata {
@@ -63,7 +63,10 @@ impl LibraryPublication {
                 ));
             }
             if output != project.join(LIBRARY_ARTIFACT_DIRECTORY)
-                && fs::read_dir(&output).map_err(io_error)?.next().is_some()
+                && fs::read_dir(&output)
+                    .map_err(|error| io_error("inspect custom output", &output, error))?
+                    .next()
+                    .is_some()
                 && !owned_library_output(&output)?
             {
                 return Err(CliError::failure(format!(
@@ -78,7 +81,7 @@ impl LibraryPublication {
                 let bytes = match fs::read(&path) {
                     Ok(bytes) => Some(bytes),
                     Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-                    Err(error) => return Err(io_error(error)),
+                    Err(error) => return Err(io_error("read previous receipt", &path, error)),
                 };
                 Ok((path, bytes))
             })
@@ -93,7 +96,7 @@ impl LibraryPublication {
             match fs::create_dir(&path) {
                 Ok(()) => break path,
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
-                Err(error) => return Err(io_error(error)),
+                Err(error) => return Err(io_error("create rollback directory", &path, error)),
             }
         };
         // Keep recovery bytes on disk until every restoration succeeds, including receipts outside the output tree.
@@ -113,11 +116,11 @@ impl LibraryPublication {
         })();
         if let Err(error) = recovery {
             let _ = fs::remove_dir_all(&backup);
-            return Err(io_error(error));
+            return Err(io_error("prepare rollback receipts", &backup, error));
         }
         if previous && let Err(error) = fs::rename(&output, backup.join("artifact")) {
             let _ = fs::remove_dir_all(&backup);
-            return Err(io_error(error));
+            return Err(io_error("preserve previous output", &output, error));
         }
         let publication = Self {
             output,
@@ -129,7 +132,8 @@ impl LibraryPublication {
             carried_package_cache: false,
         };
         if replace_artifact && let Err(error) = fs::create_dir(&publication.output) {
-            return publication.finish::<Self>(Err(io_error(error)));
+            let failure = io_error("create new output", &publication.output, error);
+            return publication.finish::<Self>(Err(failure));
         }
         Ok(publication)
     }
@@ -170,14 +174,17 @@ impl LibraryPublication {
             if self.previous {
                 // Retain unrelated custom-output files, while never resurrecting an obsolete generated module,
                 // semantic surface, or native profile from a different successful generation.
-                copy_unrelated(&self.backup.join("artifact"), &self.output).map_err(io_error)?;
+                copy_unrelated(&self.backup.join("artifact"), &self.output)
+                    .map_err(|error| io_error("carry unrelated output", &self.backup.join("artifact"), error))?;
                 let previous_cache = self.backup.join("artifact/oven/loafs");
                 let current_cache = self.output.join("oven/loafs");
                 if self.retain_package_cache && previous_cache.exists() && !current_cache.exists() {
-                    fs::create_dir_all(self.output.join("oven")).map_err(io_error)?;
+                    fs::create_dir_all(self.output.join("oven"))
+                        .map_err(|error| io_error("create package cache parent", &self.output.join("oven"), error))?;
                     // This is the last fallible commit step. A failed rename leaves the backup intact; success
                     // moves immutable cache bytes without duplicating them or reviving old native profiles.
-                    fs::rename(previous_cache, current_cache).map_err(io_error)?;
+                    fs::rename(&previous_cache, &current_cache)
+                        .map_err(|error| io_error("retain package cache", &previous_cache, error))?;
                 }
             }
             Ok(value)
@@ -203,6 +210,22 @@ impl LibraryPublication {
                 Err(original)
             }
         }
+    }
+
+    /// Restore provider state after inspection, including successful inspections that emitted elsewhere.
+    ///
+    /// Returned values must own their evidence or refer to output outside this transaction's artifact root. Recovery
+    /// bytes remain available if restoration fails; an inspection error is retained in the combined diagnostic.
+    pub(crate) fn finish_inspection<T>(self, result: CliResult<T>) -> CliResult<T> {
+        self.restore().map_err(|error| {
+            let original = result.as_ref().err().map_or(String::new(), |error| format!("{error}; "));
+            CliError::failure(format!(
+                "{original}provider inspection restoration failed: {error}. Inspect output {} and retained recovery directory {}",
+                self.output.display(),
+                self.backup.display()
+            ))
+        })?;
+        result
     }
 
     /// A cache miss after provisional materialization must restore the prior generation before a fresh bake starts.
@@ -286,8 +309,8 @@ fn owned_library_output(path: &Path) -> CliResult<bool> {
     if !path.join("Cargo.toml").is_file() || !path.join("src/lib.rs").is_file() {
         return Ok(false);
     }
-    for entry in fs::read_dir(path).map_err(io_error)? {
-        let entry = entry.map_err(io_error)?;
+    for entry in fs::read_dir(path).map_err(|error| io_error("inspect owned output", path, error))? {
+        let entry = entry.map_err(|error| io_error("read owned output entry", path, error))?;
         if entry
             .path()
             .extension()
@@ -383,9 +406,9 @@ fn copy_symlink(source: &Path, target: &Path) -> io::Result<()> {
     }
 }
 
-/// Keep filesystem context visible in the CLI's ordinary failure path.
-fn io_error(error: io::Error) -> CliError {
-    CliError::failure(format!("library publication: {error}"))
+/// Identify the failed publication operation and its path without discarding the operating-system error.
+fn io_error(operation: &str, path: &Path, error: io::Error) -> CliError {
+    CliError::failure(format!("library publication: {operation} {}: {error}", path.display()))
 }
 
 #[cfg(test)]
@@ -395,6 +418,42 @@ mod tests {
 
     use super::LibraryPublication;
     use crate::error::CliError;
+
+    /// Nonpublishing inspection restores existing and absent receipt pointers on success and error.
+    #[test]
+    fn inspection_restores_receipts_without_replacing_artifacts() -> Result<(), Box<dyn Error>> {
+        let project = tempfile::tempdir()?;
+        let output = project.path().join("target/lib");
+        fs::create_dir_all(&output)?;
+        fs::write(output.join("admitted"), "native provider")?;
+        let receipt = project.path().join("receipt.json");
+        let absent = project.path().join("absent.json");
+        fs::write(&receipt, "original receipt")?;
+        for fails in [false, true] {
+            let publication =
+                LibraryPublication::begin_receipt_update(project.path(), vec![receipt.clone(), absent.clone()])?;
+            fs::write(&receipt, "inspection receipt")?;
+            fs::write(&absent, "temporary receipt")?;
+            let result = if fails {
+                Err(CliError::failure("inspection failed"))
+            } else {
+                Ok(7)
+            };
+            let result = publication.finish_inspection(result);
+            if fails {
+                let Err(error) = result else {
+                    return Err("failed inspection unexpectedly succeeded".into());
+                };
+                assert!(error.to_string().contains("inspection failed"));
+            } else {
+                assert_eq!(result?, 7);
+            }
+            assert_eq!(fs::read_to_string(&receipt)?, "original receipt");
+            assert!(!absent.exists());
+            assert_eq!(fs::read_to_string(output.join("admitted"))?, "native provider");
+        }
+        Ok(())
+    }
 
     /// A failure after overwriting one native profile restores Rust, metadata, stale files and external receipts.
     #[test]

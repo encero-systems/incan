@@ -1,0 +1,13 @@
+# behavior: float bool remains an original call span refusal, as the legacy route runs it
+# expect-stdout:
+#   true
+
+"""Float bool remains an original call span refusal, as the legacy route runs it."""
+def observe() -> bool:
+  """Return the fixture expression `bool(0.5)`."""
+  return bool(0.5)
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(observe())

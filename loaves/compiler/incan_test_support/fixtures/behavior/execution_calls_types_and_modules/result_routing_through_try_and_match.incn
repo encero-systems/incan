@@ -1,0 +1,65 @@
+# behavior: `?` routes an Err to the caller, `match` dispatches Ok and Err, and a tuple payload matches Ok
+# expect-stdout:
+#   2
+#   0
+#   42
+
+"""`?` routes an Err to the caller, `match` dispatches Ok and Err, and a tuple payload matches Ok."""
+enum Failure:
+    """Represent the Odd alternatives in this fixture."""
+    Odd
+
+
+def half(value: int) -> Result[int, Failure]:
+    """Halve an even value or return the odd-value error."""
+    if value % 2 != 0:
+        return Err(Failure.Odd)
+    return Ok(value // 2)
+
+
+def quarter(value: int) -> Result[int, Failure]:
+    """Apply checked halving twice, propagating either error."""
+    half_value = half(value)?
+    return half(half_value)
+
+
+def routed() -> int:
+    """Match the fixture alternatives and return the selected result."""
+    match quarter(8):
+        case Ok(value):
+            return value
+        case Err(_):
+            return 0
+    return 0
+
+
+def failed() -> int:
+    """Match the fixture alternatives and return the selected result."""
+    match quarter(5):
+        case Ok(value):
+            return value
+        case Err(_):
+            return 0
+    return 0
+
+
+def pair_result() -> Result[tuple[int, int], Failure]:
+    """Return the fixture expression `Ok((20, 22))`."""
+    return Ok((20, 22))
+
+
+def tuple_payload() -> int:
+    """Match the fixture alternatives and return the selected result."""
+    match pair_result():
+        case Ok(_):
+            return 42
+        case Err(_):
+            return 0
+    return 0
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(routed())
+    println(failed())
+    println(tuple_payload())

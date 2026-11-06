@@ -1,0 +1,23 @@
+[dependencies]
+hex = { loaf = "crates-io/hex", version = "0.4.3" }
+oven_model = { loaf = "oven_model", path = "../oven_model", version = "0.6.0-dev.5" }
+oven_rustc = { loaf = "oven_rustc", path = "../oven_rustc", version = "0.6.0-dev.5" }
+oven_store = { loaf = "oven_store", path = "../oven_store", version = "0.6.0-dev.5" }
+rustix = { features = ["fs"], loaf = "crates-io/rustix", version = "1.1.4" }
+semver = { loaf = "crates-io/semver", version = "1.0.27" }
+serde = { features = ["derive"], loaf = "crates-io/serde", version = "1.0" }
+serde_json = { loaf = "crates-io/serde_json", version = "1.0" }
+sha2 = { loaf = "crates-io/sha2", version = "0.10.9" }
+tempfile = { loaf = "crates-io/tempfile", version = "3" }
+
+[project]
+description = "Oven's native interop: receipt-bound shim compilation, carriers and interop bundles over direct rustc"
+license = "Apache-2.0"
+name = "oven_interop"
+private = true
+version = "0.6.0-dev.5"
+
+[rust]
+edition = "2024"
+name = "oven_interop"
+type = "lib"

@@ -347,7 +347,7 @@ Each published version may carry **documents**, such as its README, license, lic
 
 The registry must publish a **catalog**: an index of all packages and one document per package, generated from the index, event log, and artifacts. The web surface must be generated from the catalog and must show, per package: versions and yank state with reasons, facets, scope owners and trusted publishers, the asset matrix with builder kinds, the declared dependencies of each version, advisories, documents, and the reference where one exists. It may show descriptive metadata such as license, keywords, and repository, and download counts where the host can provide them as a published projection. It must not depend on a live service for reads.
 
-The registry must also publish a per-package README projection at `<scope>/<name>/README.md` (for adopted packages, `crates-io/<name>/README.md`). It lists the package's upstream page when adopted and every version with its adoption or publication date, license, recorded build facts, and admitted units, and is regenerated from the event log like every other projection. Package hosts that cannot show a per-package README, such as an OCI registry, link to it from the package description.
+The registry must also publish, beside each package's index file, a per-package README projection at `<scope>/<name>/README.md` (for adopted packages, `crates-io/<name>/README.md`). It lists the package's upstream page when adopted and every version with its adoption or publication date, license, recorded build facts, and admitted units, and is regenerated from the event log like every other projection. Package hosts that cannot show a per-package README, such as an OCI registry, link to it from the package description.
 
 ### Mirrors
 

@@ -5,7 +5,10 @@ use std::path::{Path, PathBuf};
 use std::{fs, io};
 
 use crate::build::bake::discover_oven_executable_entrypoints;
-use crate::build::package_loafs::read_packaged_library_loaf_manifest;
+use crate::build::output_paths::validate_packaged_library_metadata_files;
+use crate::build::package_loafs::{
+    decode_packaged_library_loaf_manifest, read_packaged_library_loaf_manifest, validated_packaged_library_loaf_profile,
+};
 use crate::build::{
     OvenBakeProjectTarget, OvenProjectPlanMode, ProjectSourceAuthorityDigester, oven_bake_project_target_identity,
 };
@@ -22,12 +25,336 @@ use oven_interop::{
 use oven_model::lock::{IncanLock, LOCK_FILENAME};
 use oven_model::manifest::{DependencySource, GitReference, LOAF_MANIFEST_FILENAME, ProjectManifest};
 use oven_model::oven_interop::locked_oven_interop_targets;
-use oven_store::{digest_bytes, digest_project_source_tree};
+use oven_store::{digest_bytes, digest_source_tree};
+
+/// Bind exact compiler bytes independently of release compatibility and source authority.
+pub(super) fn current_compiler_identity_digest() -> CliResult<String> {
+    let executable = std::env::current_exe().map_err(|error| CliError::failure(error.to_string()))?;
+    super::file_freshness::digest_file(&executable).map_err(|error| CliError::failure(error.to_string()))
+}
+
+/// Bind ordinary preparation to the current compiler and explicit process configuration without entering a session.
+///
+/// Paths conservatively distinguish source/SDK selections. Named inventory and graph files additionally bind their
+/// bytes, the graph's canonical owner and its referenced resolution through the existing freshness store. Diagnostic
+/// and tracing switches are excluded because they do not affect generated code. No local observation is itself compiler
+/// authority.
+pub fn ordinary_preparation_identity_digest() -> CliResult<String> {
+    ordinary_preparation_identity_for_compiler(current_compiler_identity_digest()?)
+}
+
+/// Bind a caller-selected publisher to the same preparation inputs used by ordinary commands.
+/// A bootstrap client is a different executable from the compiler that published its selected output;
+/// it must supply that exact compiler identity without changing the configuration or validation domain.
+pub(super) fn ordinary_preparation_identity_for_compiler(compiler: String) -> CliResult<String> {
+    ordinary_preparation_identity_from_values(compiler, |name| std::env::var_os(name))
+}
+
+/// Bind an ordinary library to its compiler and native producer inputs through the shared freshness store.
+/// The ordinary publisher consumes no SDK inventory, so an absent or changed inventory cannot invalidate this
+/// route. Explicit producer admissions supply their original graph coordinate rather than an ambient SDK graph;
+/// configured output reuse observes the current configured graph. Both use the same identity observer and domain.
+pub(super) fn ordinary_library_preparation_identity_digest(
+    native: Option<&super::ordinary_library_native::OrdinaryLibraryNativeProfiles>,
+) -> CliResult<String> {
+    let explicit_graph = native
+        .map(|native| {
+            let mut requests = native.metadata().observations().values();
+            let graph = requests
+                .next()
+                .ok_or_else(|| CliError::failure("ordinary preparation has no original native request"))?
+                .resolved_graph_path();
+            if requests.any(|request| request.resolved_graph_path() != graph) {
+                return Err(CliError::failure(
+                    "ordinary preparation profiles disagree on their original graph coordinate",
+                ));
+            }
+            Ok(graph)
+        })
+        .transpose()?;
+    ordinary_library_preparation_identity_from_values(current_compiler_identity_digest()?, explicit_graph, |name| {
+        std::env::var_os(name)
+    })
+}
+
+/// Apply the ordinary library domain while retaining the canonical preparation input observer.
+/// An outer `None` uses configured inputs; `Some(None)` represents an explicit direct request without a graph.
+fn ordinary_library_preparation_identity_from_values(
+    compiler: String,
+    explicit_graph: Option<Option<&Path>>,
+    value: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> CliResult<String> {
+    ordinary_preparation_identity_from_values(format!("ordinary-library:{compiler}"), |name| match name {
+        "INCAN_SDK_INVENTORY" => None,
+        "INCAN_SDK_NATIVE_COMPILER_GRAPH" => explicit_graph.map_or_else(
+            || value(name),
+            |graph| graph.map(|path| path.as_os_str().to_os_string()),
+        ),
+        _ => value(name),
+    })
+}
+
+/// Observe explicit preparation inputs through the existing freshness store without changing global configuration.
+/// Referenced resolution bytes and the canonical graph owner matter even when the graph document itself is unchanged.
+fn ordinary_preparation_identity_from_values(
+    compiler: String,
+    value: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> CliResult<String> {
+    let mut records = BTreeMap::from([("compiler".to_string(), compiler)]);
+    for name in [
+        "INCAN_SOURCE_ROOT",
+        "INCAN_STDLIB",
+        "INCAN_STDLIB_DIR",
+        "INCAN_SDK_INVENTORY",
+        "INCAN_SDK_NATIVE_COMPILER_GRAPH",
+        "INCAN_SDK_NATIVE_INDEX",
+        "INCAN_SDK_NATIVE_BLOBS",
+        "INCAN_OVEN_MIRRORS",
+        "RUSTUP_TOOLCHAIN",
+        "RUSTFLAGS",
+        "RUSTC",
+        "INCAN_OVEN_LINK_OWNERS",
+    ] {
+        if let Some(value) = value(name) {
+            records.insert(name.to_string(), digest_bytes(value.as_os_str().as_encoded_bytes()));
+            if matches!(name, "INCAN_SDK_INVENTORY" | "INCAN_SDK_NATIVE_COMPILER_GRAPH") {
+                let digest = super::file_freshness::digest_file(Path::new(&value))
+                    .map_err(|error| CliError::failure(format!("cannot observe {name}: {error}")))?;
+                if name == "INCAN_SDK_NATIVE_COMPILER_GRAPH" {
+                    let (owner, lock) = oven_rustc::native_loaf::resolved_native_graph_coordinates(Path::new(&value))
+                        .map_err(|error| {
+                        CliError::failure(format!("cannot observe native graph inputs: {error}"))
+                    })?;
+                    records.insert(
+                        format!("{name}:owner"),
+                        digest_bytes(owner.as_os_str().as_encoded_bytes()),
+                    );
+                    records.insert(
+                        format!("{name}:resolution"),
+                        super::file_freshness::digest_file(&lock)
+                            .map_err(|error| CliError::failure(format!("cannot observe native resolution: {error}")))?,
+                    );
+                    if super::file_freshness::digest_file(Path::new(&value))
+                        .map_err(|error| CliError::failure(error.to_string()))?
+                        != digest
+                    {
+                        return Err(CliError::failure(
+                            "native graph changed during preparation identity observation",
+                        ));
+                    }
+                }
+                records.insert(format!("{name}:content"), digest);
+            }
+        }
+    }
+    serde_json::to_vec(&records)
+        .map(|bytes| digest_bytes(&bytes))
+        .map_err(|error| CliError::failure(error.to_string()))
+}
+
+/// Hash Incan token content without source positions, preserving literals and indentation.
+///
+/// Comments do not affect generated code or the Rust query surface. Other authority files remain byte-exact,
+/// and sources requiring contextual vocabulary retain byte-exact authority rather than losing raw fragment content.
+#[track_caller]
+fn digest_project_authority_file(path: &Path, bytes: &[u8]) -> CliResult<String> {
+    let caller = std::panic::Location::caller();
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::digest_project_authority_file", input = %path.display(), caller_file = caller.file(), caller_line = u64::from(caller.line())).entered();
+    if path.extension().is_none_or(|extension| extension != "incn") {
+        return Ok(digest_bytes(bytes));
+    }
+    let source = std::str::from_utf8(bytes)
+        .map_err(|error| CliError::failure(format!("invalid Incan source {}: {error}", path.display())))?;
+    let Ok(tokens) = incan_frontend::lexer::lex(source) else {
+        return Ok(digest_bytes(bytes));
+    };
+    if incan_frontend::parser::parse(&tokens).is_err() {
+        return Ok(digest_bytes(bytes));
+    }
+    let mut content = String::from("incan-token-authority-v1\n");
+    for token in tokens {
+        let mut kind = token.kind;
+        if let incan_frontend::lexer::TokenKind::FString(parts) = &mut kind {
+            for part in parts {
+                if let incan_frontend::lexer::FStringPart::Expr { offset, .. } = part {
+                    *offset = 0;
+                }
+            }
+        }
+        content.push_str(&format!("{kind:?}\n"));
+    }
+    Ok(digest_bytes(content.as_bytes()))
+}
 
 impl ProjectSourceAuthorityDigester {
+    /// Retain the original authored Incan file/listing and model generations for cold emission.
+    ///
+    /// Existing native command owners independently guard Rust source/declaration and provider artifact inputs.
+    /// This optional witness supplements, rather than replaces, canonical source and dependency content identities.
+    pub(super) fn observing_authored_sources() -> Self {
+        Self {
+            source_observations: Some(Default::default()),
+            ..Default::default()
+        }
+    }
+
+    /// Reject changed-and-restored authored inputs before consuming or publishing cold generated output.
+    pub(super) fn ensure_original_sources_current(&self) -> CliResult<()> {
+        let current = self
+            .source_observations
+            .as_ref()
+            .is_some_and(|inputs| inputs.supports_retention() && inputs.current());
+        if !current {
+            return Err(CliError::failure(
+                "original authored inputs changed during cold compilation",
+            ));
+        }
+        self.retained_inputs.ensure_original_models_current()
+    }
+
+    /// Start a new request without carrying command-local graph digests into another input generation.
+    pub(super) fn begin_request(&mut self) {
+        if self.source_observations.is_some() {
+            self.source_observations = Some(Default::default());
+        }
+        self.project_digests.clear();
+        self.rust_crate_digests.clear();
+        self.rust_source_closure_digests.clear();
+        #[cfg(test)]
+        self.project_scan_counts.clear();
+    }
+
+    /// Reconcile retained workspace authority, then borrow the current canonical typed lock's fingerprint.
+    pub(super) fn lock_fingerprint(&mut self, root: &Path) -> CliResult<Option<String>> {
+        let path = self.retained_inputs.lock_path(root)?;
+        self.retained_inputs.fingerprint(&path)
+    }
+
     /// Digest the exact build-input graph for one project without observing generated or unrelated files.
     pub fn digest(&mut self, project_root: &Path) -> CliResult<String> {
         self.digest_project_node(project_root, &mut HashSet::new())
+    }
+
+    /// Reconcile dependency inputs with the existing graph while excluding only this root's own Incan bodies.
+    ///
+    /// Child identities and typed canonical locks remain in the same owner. The root's completed-output identity is
+    /// restored after this projection, including on failure: dependency reuse must never authorize stale root output.
+    pub(super) fn dependency_generation(&mut self, project_root: &Path) -> CliResult<String> {
+        let root = fs::canonicalize(project_root).map_err(|error| CliError::failure(error.to_string()))?;
+        let full_identity = self.project_digests.remove(&root);
+        let previous_root = self.development_root.replace(root.clone());
+        let result = self.digest(&root);
+        self.project_digests.remove(&root);
+        self.development_root = previous_root;
+        if let Some(identity) = full_identity {
+            self.project_digests.insert(root, identity);
+        }
+        result
+    }
+
+    /// Borrow the dependency session selected by the current canonical oven.lock and reconciled inputs.
+    ///
+    /// Compiler/configuration, feature/profile selection, manifest and child changes invalidate this generation.
+    /// Consumer source collection remains fresh and chooses through the retained session's existing module-use map.
+    /// Parser-only collection and artifact preparation have distinct identities and cannot reuse each other's session.
+    pub(super) fn compilation_session(
+        &mut self,
+        root: &Path,
+        entry: &Path,
+        features: &incan_provider::FeatureSelection,
+        sdk_profile: Option<&str>,
+        purpose: super::retained_inputs::SessionPurpose,
+    ) -> CliResult<std::sync::Arc<crate::session::CompilationSession>> {
+        let _trace =
+            tracing::trace_span!(target: "incan::invocation", "incan_driver::retain_dependency_session").entered();
+        let root = fs::canonicalize(root).map_err(|error| CliError::failure(error.to_string()))?;
+        let identity = match self.session_identity(&root, features, sdk_profile, purpose) {
+            Ok(identity) => identity,
+            Err(error) if purpose == super::retained_inputs::SessionPurpose::CheckMetadata => {
+                // An execution-oriented identity may not admit a metadata-only project. Fall back before discovery;
+                // errors produced by actual checking must propagate once, without starting the same check again.
+                tracing::trace!(target: "incan::invocation", decision = "check_session_unretained", reason = %error.message);
+                return crate::session::CompilationSession::discover_for_check(entry, features, sdk_profile)
+                    .map(std::sync::Arc::new);
+            }
+            Err(error) => return Err(error),
+        };
+        let session =
+            self.retained_inputs
+                .compilation_session(&root, entry, identity.clone(), features, sdk_profile, purpose)?;
+        if purpose == super::retained_inputs::SessionPurpose::CheckMetadata {
+            self.begin_request();
+            match self.session_identity(&root, features, sdk_profile, purpose) {
+                Ok(current) if current == identity => {}
+                result => {
+                    self.retained_inputs.discard_compilation_session(&root, purpose);
+                    result?;
+                    return Err(CliError::failure(
+                        "check dependency inputs changed during session preparation",
+                    ));
+                }
+            }
+        }
+        Ok(session)
+    }
+
+    /// Bind one retained session to the existing dependency graph, lock, compiler and explicit selection.
+    /// Internal model observations cannot create extra user-visible diagnostics for checking or parser-only collection.
+    fn session_identity(
+        &mut self,
+        root: &Path,
+        features: &incan_provider::FeatureSelection,
+        sdk_profile: Option<&str>,
+        purpose: super::retained_inputs::SessionPurpose,
+    ) -> CliResult<String> {
+        let mut identity = || {
+            let bytes = serde_json::to_vec(&(
+                self.dependency_generation(root)?,
+                self.lock_fingerprint(root)?,
+                ordinary_preparation_identity_digest()?,
+                features,
+                sdk_profile,
+                purpose,
+            ))
+            .map_err(|error| CliError::failure(error.to_string()))?;
+            Ok(digest_bytes(&bytes))
+        };
+        if purpose != super::retained_inputs::SessionPurpose::Artifacts {
+            crate::diagnostics::capture_warning_output(identity).0
+        } else {
+            identity()
+        }
+    }
+
+    /// Access completed metadata-only reports through the existing reconciled project/session owner.
+    pub(super) fn check_report(
+        &mut self,
+        root: &Path,
+        session: &std::sync::Arc<crate::session::CompilationSession>,
+    ) -> Option<&mut Option<super::check::CompletedCheck>> {
+        let root = fs::canonicalize(root).ok()?;
+        self.retained_inputs.check_report(&root, session)
+    }
+
+    /// Borrow the original native plan only from a dependency session reconciled by this request.
+    pub(super) fn take_executable_dependencies(
+        &mut self,
+        root: &Path,
+    ) -> CliResult<Option<super::retained_inputs::RetainedExecutableDependencies>> {
+        let root = fs::canonicalize(root).map_err(|error| CliError::failure(error.to_string()))?;
+        Ok(self.retained_inputs.take_executable_dependencies(&root))
+    }
+
+    /// Keep a successful native plan inside the existing canonical project's dependency session.
+    pub(super) fn remember_executable_dependencies(
+        &mut self,
+        root: &Path,
+        dependencies: super::retained_inputs::RetainedExecutableDependencies,
+    ) -> CliResult<()> {
+        let root = fs::canonicalize(root).map_err(|error| CliError::failure(error.to_string()))?;
+        self.retained_inputs
+            .remember_executable_dependencies(&root, dependencies);
+        Ok(())
     }
 
     /// Drop every memoized project-tree digest so the next scan re-reads each project from disk.
@@ -62,38 +389,58 @@ impl ProjectSourceAuthorityDigester {
     #[cfg(not(test))]
     pub fn record_project_scan(&mut self, _canonical_root: &Path) {}
 
-    /// Digest one local Rust package together with only the Cargo-workspace facts that it actually inherits.
+    /// Bind a Loaf's declared Rust source closure, or retain conservative authority for a legacy Cargo-only package.
+    ///
+    /// A neighboring Cargo manifest never contributes to a Loaf. The SDK publisher owns Rust source geometry,
+    /// including compiler-embedded inputs; this boundary adds named normal path edges without resolving versions.
     pub fn digest_rust_path_crate_authority(
         package_root: &Path,
-        rust_source_closure_digests: &mut BTreeMap<PathBuf, String>,
+        memo: &mut BTreeMap<PathBuf, String>,
     ) -> CliResult<String> {
-        let source_tree =
-            digest_cargo_path_source_tree_with_cache(package_root, rust_source_closure_digests).map_err(|error| {
+        let declaration = package_root.join(LOAF_MANIFEST_FILENAME);
+        match fs::symlink_metadata(&declaration) {
+            Ok(_) => {
+                return super::rust_source_freshness::digest_loaf(package_root, memo, |nodes| {
+                    digest_rust_loaf_node(package_root, nodes, &mut HashSet::new())
+                });
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(CliError::failure(error.to_string())),
+        }
+        super::rust_source_freshness::digest(package_root, memo, |rust_source_closure_digests| {
+            let source_tree = digest_cargo_path_source_tree_with_cache(package_root, rust_source_closure_digests)
+                .map_err(|error| {
+                    CliError::failure(format!(
+                        "Oven Alpha cannot digest Rust path dependency source authority at {}: {error}",
+                        package_root.display()
+                    ))
+                })?;
+            let mut records = BTreeMap::from([("package-source-tree", source_tree)]);
+            if let Some(workspace_authority) =
+                digest_local_cargo_workspace_authority(package_root).map_err(|error| {
+                    CliError::failure(format!(
+                        "Oven Alpha cannot resolve Rust path dependency workspace authority at {}: {error}",
+                        package_root.display()
+                    ))
+                })?
+            {
+                records.insert("inherited-cargo-workspace", workspace_authority);
+            }
+            let payload = serde_json::to_vec(&records).map_err(|error| {
                 CliError::failure(format!(
-                    "Oven Alpha cannot digest Rust path dependency source authority at {}: {error}",
+                    "failed to serialize Rust path dependency source authority at {}: {error}",
                     package_root.display()
                 ))
             })?;
-        let mut records = BTreeMap::from([("package-source-tree", source_tree)]);
-        if let Some(workspace_authority) = digest_local_cargo_workspace_authority(package_root).map_err(|error| {
-            CliError::failure(format!(
-                "Oven Alpha cannot resolve Rust path dependency workspace authority at {}: {error}",
-                package_root.display()
-            ))
-        })? {
-            records.insert("inherited-cargo-workspace", workspace_authority);
-        }
-        let payload = serde_json::to_vec(&records).map_err(|error| {
-            CliError::failure(format!(
-                "failed to serialize Rust path dependency source authority at {}: {error}",
-                package_root.display()
-            ))
-        })?;
-        Ok(digest_bytes(&payload))
+            Ok(digest_bytes(&payload))
+        })
     }
 
     /// Digest one reachable Incan node and its named dependency edges.
+    #[track_caller]
     pub fn digest_project_node(&mut self, root: &Path, visiting: &mut HashSet<PathBuf>) -> CliResult<String> {
+        let caller = std::panic::Location::caller();
+        let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::digest_project_node", input = %root.display(), caller_file = caller.file(), caller_line = u64::from(caller.line())).entered();
         let canonical_root = fs::canonicalize(root).map_err(|error| {
             CliError::failure(format!(
                 "Oven Alpha cannot resolve project source authority at {}: {error}",
@@ -110,21 +457,29 @@ impl ProjectSourceAuthorityDigester {
             )));
         }
         self.record_project_scan(&canonical_root);
-        let manifest = effective_project_manifest_for_exact_root(&canonical_root)?;
+        let project = self.retained_inputs.project(&canonical_root)?;
+        let manifest = &project.manifest;
         let mut records = BTreeMap::from([
             (
                 "project-build-inputs".to_string(),
-                digest_baked_project_build_tree(&canonical_root, &manifest)?,
+                digest_baked_project_build_tree(
+                    &canonical_root,
+                    manifest,
+                    self.development_root.as_ref() == Some(&canonical_root),
+                    &mut self.retained_inputs,
+                    &mut self.source_observations,
+                )?,
             ),
             (
                 "project-dependency-selections".to_string(),
-                digest_baked_project_dependency_selections(&manifest)?,
+                digest_baked_project_dependency_selections(manifest)?,
             ),
         ]);
         let mut library_dependencies = manifest.library_dependencies().iter().collect::<Vec<_>>();
         library_dependencies.sort_by_key(|(name, _)| *name);
         for (name, dependency) in library_dependencies {
             let child_manifest = dependency.path.join(LOAF_MANIFEST_FILENAME);
+            observe_authored_input(&mut self.source_observations, &child_manifest);
             let child_digest = match fs::symlink_metadata(&child_manifest) {
                 Ok(_) => self.digest_project_node(&dependency.path, visiting)?,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -207,17 +562,85 @@ impl ProjectSourceAuthorityDigester {
             CliError::failure(format!("failed to serialize Oven project source authority: {error}"))
         })?;
         let digest = digest_bytes(&payload);
+        self.retained_inputs.ensure_current_project(&canonical_root, &project)?;
         visiting.remove(&canonical_root);
         self.project_digests.insert(canonical_root, digest.clone());
         Ok(digest)
     }
 }
 
-/// Bind a materialized provider's stable package content into its consumer's completed-output authority.
+/// Recursively bind every authored normal Rust path alternative, retaining alias and target identity.
 ///
-/// Authored source remains independently bound above. This additional record ensures a genuinely different sealed
-/// native provider invalidates warm consumer reuse, while the provider digest itself excludes package-store access
-/// bookkeeping that cannot affect execution.
+/// Development source trees of dependencies do not affect their library facet. Their declarations remain bound by
+/// the publisher snapshot. Inherited selection metadata is bound separately after the existing workspace projection.
+fn digest_rust_loaf_node(
+    root: &Path,
+    memo: &mut BTreeMap<PathBuf, String>,
+    visiting: &mut HashSet<PathBuf>,
+) -> CliResult<String> {
+    let root = fs::canonicalize(root).map_err(|error| CliError::failure(error.to_string()))?;
+    if let Some(digest) = memo.get(&root) {
+        return Ok(digest.clone());
+    }
+    if !visiting.insert(root.clone()) {
+        return Err(CliError::failure(format!(
+            "Rust Loaf source authority contains a cyclic path dependency at {}",
+            root.display()
+        )));
+    }
+    let manifest = effective_project_manifest_for_exact_root(&root)?;
+    let source = oven_rustc::sdk_closure::local_sdk_facet_source_digest_with(&root, |path| {
+        Ok(super::file_freshness::digest_file(path)?)
+    })
+    .map_err(|error| CliError::failure(format!("cannot bind Rust Loaf source at {}: {error}", root.display())))?;
+    let mut records = BTreeMap::from([
+        ("loaf-rust-source-v1".to_string(), source),
+        (
+            "effective-selections".to_string(),
+            digest_baked_project_dependency_selections(&manifest)?,
+        ),
+    ]);
+    let mut edges = BTreeMap::new();
+    for (alias, dependency) in manifest.rust_dependencies() {
+        if !manifest.loaf_dependencies.contains_key(alias)
+            && let DependencySource::Path { path } = &dependency.source
+        {
+            edges.insert(format!("normal:{alias}"), path);
+        }
+    }
+    for (alias, alternatives) in &manifest.loaf_dependencies {
+        for dependency in alternatives {
+            if let DependencySource::Path { path } = &dependency.spec.source {
+                let key = serde_json::to_string(&(alias, &dependency.loaf, &dependency.target))
+                    .map_err(|error| CliError::failure(error.to_string()))?;
+                if edges.insert(key, path).is_some() {
+                    return Err(CliError::failure("duplicate Rust Loaf source-authority edge"));
+                }
+            }
+        }
+    }
+    for (edge, path) in edges {
+        let digest = match fs::symlink_metadata(path.join(LOAF_MANIFEST_FILENAME)) {
+            Ok(_) => digest_rust_loaf_node(path, memo, visiting)?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                ProjectSourceAuthorityDigester::digest_rust_path_crate_authority(path, memo)?
+            }
+            Err(error) => return Err(CliError::failure(error.to_string())),
+        };
+        records.insert(format!("rust-edge:{edge}"), digest);
+    }
+    let payload = serde_json::to_vec(&records).map_err(|error| CliError::failure(error.to_string()))?;
+    let digest = digest_bytes(&payload);
+    visiting.remove(&root);
+    memo.insert(root, digest.clone());
+    Ok(digest)
+}
+
+/// Bind a materialized provider's execution inputs into its consumer's completed-output authority.
+///
+/// Authored source remains independently bound above. A sealed native handoff binds its checked metadata, generated
+/// source, receipts and native bytes; generated Cargo projections and store bookkeeping are outside that contract.
+/// Older handoffs without complete generated-source evidence retain conservative physical artifact authority.
 fn append_provider_artifact_authority(
     dependency_name: &str,
     dependency_root: &Path,
@@ -227,14 +650,90 @@ fn append_provider_artifact_authority(
     if !artifact_root.is_dir() {
         return Ok(());
     }
-    let artifact_digest = digest_provider_artifact(&artifact_root).map_err(|error| {
-        CliError::failure(format!(
-            "Oven Alpha cannot digest the packaged provider for pub::{dependency_name} at {}: {error}",
-            artifact_root.display()
-        ))
-    })?;
+    let artifact_digest = match sealed_provider_artifact_authority(dependency_name, &artifact_root)? {
+        Some(digest) => digest,
+        None => digest_provider_artifact(&artifact_root).map_err(|error| {
+            CliError::failure(format!(
+                "Oven Alpha cannot digest the packaged provider for pub::{dependency_name} at {}: {error}",
+                artifact_root.display()
+            ))
+        })?,
+    };
     records.insert(format!("incan-provider-artifact:{dependency_name}"), artifact_digest);
     Ok(())
+}
+
+/// Validate an existing native package seal before using it as the additional provider authority.
+///
+/// This does not resolve dependencies or authorize execution: the normal package importer still owns receipt selection
+/// and leases. The caller separately binds authored dependency sources, so this check does not recurse back into the
+/// consumer graph. Incomplete legacy evidence falls back to the physical digest; present but invalid evidence always
+/// refuses.
+fn sealed_provider_artifact_authority(dependency_name: &str, artifact_root: &Path) -> CliResult<Option<String>> {
+    if !incan_frontend::library_manifest::published_layout::packaged_library_loaf_manifest_path(artifact_root).is_file()
+    {
+        return Ok(None);
+    }
+    let artifact = match load_provider_dependency_artifact(dependency_name, artifact_root) {
+        LibraryManifestIndexEntry::Loaded { metadata, .. } if metadata.kind == LibraryArtifactKind::Materialized => {
+            metadata
+        }
+        LibraryManifestIndexEntry::Loaded { .. } => {
+            return Err(CliError::failure(format!(
+                "Oven Alpha cannot bind pub::{dependency_name}: its sealed provider artifact is not materialized"
+            )));
+        }
+        LibraryManifestIndexEntry::Failed(failure) => {
+            return Err(CliError::failure(format!(
+                "Oven Alpha cannot bind pub::{dependency_name} at {}: {failure}",
+                artifact_root.display()
+            )));
+        }
+    };
+    let Some((_, _, package)) = decode_packaged_library_loaf_manifest(&artifact)? else {
+        return Ok(None);
+    };
+    validate_packaged_library_metadata_files(&artifact, &package)?;
+    let generated_root =
+        digest_bytes(&fs::read(&artifact.crate_lib_path).map_err(|error| CliError::failure(error.to_string()))?);
+    let generated_tree =
+        digest_source_tree(&artifact_root.join("src")).map_err(|error| CliError::failure(error.to_string()))?;
+    let mut complete_source_evidence = !package.profiles.is_empty();
+    for (profile, candidate) in &package.profiles {
+        if validated_packaged_library_loaf_profile(
+            &artifact,
+            &package,
+            profile,
+            &candidate.receipt.intent.target,
+            &candidate.receipt.intent.toolchain,
+        )?
+        .is_none()
+        {
+            return Err(CliError::failure(format!(
+                "Oven Alpha refuses pub::{dependency_name}: its sealed profile `{profile}` has inconsistent intent"
+            )));
+        }
+        for (key, actual) in [
+            ("generated-root", &generated_root),
+            ("generated-source-tree", &generated_tree),
+        ] {
+            match candidate.receipt.sources.supplemental_digests.get(key) {
+                Some(sealed) if sealed != actual => {
+                    return Err(CliError::failure(format!(
+                        "Oven Alpha refuses pub::{dependency_name}: `{profile}` {key} changed after its package Loaf was baked"
+                    )));
+                }
+                Some(_) => {}
+                None => complete_source_evidence = false,
+            }
+        }
+    }
+    if !complete_source_evidence {
+        return Ok(None);
+    }
+    let payload = serde_json::to_vec(&("incan-sealed-provider-authority/1", package))
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    Ok(Some(digest_bytes(&payload)))
 }
 
 /// Digest the exact build-input graph for a completed project output without observing generated or unrelated files.
@@ -242,6 +741,19 @@ fn append_provider_artifact_authority(
 /// Each ordinary call owns a fresh memo, preserving the existing behavior outside explicit project bake orchestration.
 pub fn digest_baked_project_source_authority(project_root: &Path) -> CliResult<String> {
     ProjectSourceAuthorityDigester::default().digest(project_root)
+}
+
+/// Hash the baked dependency closure while excluding only this project's own Incan source files.
+///
+/// Manifests, locks, path-provider sources, vocabulary and other inputs remain exact. This digest authorizes fresh
+/// development compilation against the retained inspection closure, never replay of a stale native project output.
+pub fn digest_project_development_dependencies(project_root: &Path) -> CliResult<String> {
+    let root = fs::canonicalize(project_root).map_err(|error| CliError::failure(error.to_string()))?;
+    ProjectSourceAuthorityDigester {
+        development_root: Some(root),
+        ..Default::default()
+    }
+    .digest(project_root)
 }
 
 /// Digest one effective project's portable dependency selections without walking dependency source twice.
@@ -311,6 +823,7 @@ fn digest_baked_project_dependency_selections(manifest: &ProjectManifest) -> Cli
 /// Workspace members share the root RFC 077 lock. Reading a member-local file instead would let a stale side file
 /// hide changes to the real workspace authority, or make equivalent members disagree about the lock they consumed.
 pub fn canonical_baked_project_lock_path(project_root: &Path) -> CliResult<PathBuf> {
+    let _discovery = tracing::trace_span!(target: "incan::invocation", "incan_driver::canonical_project_lock_path", input = %project_root.display()).entered();
     let workspace = oven_model::workspace::WorkspaceGraph::discover(project_root)
         .map_err(|error| CliError::failure(format!("failed to resolve Oven project workspace: {error}")))?;
     Ok(workspace
@@ -320,13 +833,8 @@ pub fn canonical_baked_project_lock_path(project_root: &Path) -> CliResult<PathB
 
 /// Load the derived dependency fingerprint from the canonical project or workspace lock, when present.
 pub fn baked_project_lock_dependencies_fingerprint(project_root: &Path) -> CliResult<Option<String>> {
-    let lock_path = canonical_baked_project_lock_path(project_root)?;
-    if !lock_path.is_file() {
-        return Ok(None);
-    }
-    IncanLock::load(&lock_path)
-        .map(|lock| Some(lock.deps_fingerprint))
-        .map_err(|error| CliError::failure(error.to_string()))
+    super::retained_inputs::RetainedProjectInputs::default()
+        .fingerprint(&canonical_baked_project_lock_path(project_root)?)
 }
 
 /// Hash the canonical lock fields that can change build meaning while excluding derived and structural fields.
@@ -340,9 +848,12 @@ pub fn baked_project_lock_dependencies_fingerprint(project_root: &Path) -> CliRe
 /// refuses every previously baked provider in the workspace and makes staged member bakes impossible (#1414). A member
 /// that has no entry yet is digested as if the lock were absent, so its authority is the same before and after the
 /// root lock first appears without it.
-fn digest_baked_project_lock_authority(lock_path: &Path, project_root: &Path) -> CliResult<Option<String>> {
-    let lock = IncanLock::load(lock_path).map_err(|error| CliError::failure(error.to_string()))?;
-    let mut semantic = lock.semantic;
+pub(super) fn project_lock_authority(
+    lock: &IncanLock,
+    lock_path: &Path,
+    project_root: &Path,
+) -> CliResult<Option<String>> {
+    let mut semantic = lock.semantic.clone();
     if !semantic.workspace_members.is_empty() {
         let workspace_root = lock_path.parent().unwrap_or(lock_path);
         let member_root = oven_model::lock::portable_project_path(workspace_root, project_root);
@@ -382,10 +893,29 @@ fn digest_baked_project_lock_authority(lock_path: &Path, project_root: &Path) ->
         .map_err(|error| CliError::failure(format!("failed to serialize canonical Oven lock authority: {error}")))
 }
 
+/// Record one original authored input while preserving the canonical traversal and optional ordinary fast path.
+fn observe_authored_input(observations: &mut Option<oven_model::observed_inputs::InputObservations>, path: &Path) {
+    if let Some(inputs) = observations {
+        inputs.observe(path);
+    }
+}
+
 /// Hash only the declared Incan project inputs that can affect a normal build.
-fn digest_baked_project_build_tree(project_root: &Path, manifest: &ProjectManifest) -> CliResult<String> {
+fn digest_baked_project_build_tree(
+    project_root: &Path,
+    manifest: &ProjectManifest,
+    omit_incan_sources: bool,
+    inputs: &mut super::retained_inputs::RetainedProjectInputs,
+    observations: &mut Option<oven_model::observed_inputs::InputObservations>,
+) -> CliResult<String> {
     /// Record one regular authority file under a caller-selected portable key.
-    fn append_named_file(path: &Path, record_key: String, records: &mut BTreeMap<String, String>) -> CliResult<()> {
+    fn append_named_file(
+        path: &Path,
+        record_key: String,
+        records: &mut BTreeMap<String, String>,
+        observations: &mut Option<oven_model::observed_inputs::InputObservations>,
+    ) -> CliResult<()> {
+        observe_authored_input(observations, path);
         let metadata = fs::symlink_metadata(path).map_err(|error| {
             CliError::failure(format!(
                 "Oven Alpha cannot read project build authority at {}: {error}",
@@ -398,12 +928,15 @@ fn digest_baked_project_build_tree(project_root: &Path, manifest: &ProjectManife
                 path.display()
             )));
         }
-        let digest = digest_bytes(&fs::read(path).map_err(|error| {
+        let digest = super::file_freshness::digest_file_with(path, "project-token-authority-v1", |bytes| {
+            digest_project_authority_file(path, bytes).map_err(|error| io::Error::other(error.to_string()))
+        })
+        .map_err(|error| {
             CliError::failure(format!(
                 "Oven Alpha cannot hash project build authority at {}: {error}",
                 path.display()
             ))
-        })?);
+        })?;
         if records.insert(record_key.clone(), digest).is_some() {
             return Err(CliError::failure(format!(
                 "Oven Alpha project build authority contains duplicate path `{record_key}`"
@@ -413,13 +946,18 @@ fn digest_baked_project_build_tree(project_root: &Path, manifest: &ProjectManife
     }
 
     /// Record one regular project input by its portable path and content digest.
-    fn append_file(root: &Path, path: &Path, records: &mut BTreeMap<String, String>) -> CliResult<()> {
+    fn append_file(
+        root: &Path,
+        path: &Path,
+        records: &mut BTreeMap<String, String>,
+        observations: &mut Option<oven_model::observed_inputs::InputObservations>,
+    ) -> CliResult<()> {
         let relative = path
             .strip_prefix(root)
             .map_err(|_| CliError::failure(format!("project build authority escaped {}", root.display())))?
             .to_string_lossy()
             .replace('\\', "/");
-        append_named_file(path, relative, records)
+        append_named_file(path, relative, records, observations)
     }
 
     /// Traverse a regular source directory deterministically and record its input files.
@@ -433,24 +971,17 @@ fn digest_baked_project_build_tree(project_root: &Path, manifest: &ProjectManife
         directory: &Path,
         records: &mut BTreeMap<String, String>,
         already_recorded: &HashSet<PathBuf>,
+        omit_incan_sources: bool,
+        observations: &mut Option<oven_model::observed_inputs::InputObservations>,
     ) -> CliResult<()> {
-        let mut entries = fs::read_dir(directory)
-            .map_err(|error| {
-                CliError::failure(format!(
-                    "Oven Alpha cannot read project build authority at {}: {error}",
-                    directory.display()
-                ))
-            })?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| {
-                CliError::failure(format!(
-                    "Oven Alpha cannot read project build authority at {}: {error}",
-                    directory.display()
-                ))
-            })?;
-        entries.sort_by_key(|entry| entry.file_name());
-        for entry in entries {
-            let path = entry.path();
+        observe_authored_input(observations, directory);
+        let (entries, before) = super::file_freshness::directory_entries(directory).map_err(|error| {
+            CliError::failure(format!(
+                "Oven Alpha cannot reconcile project build authority at {}: {error}",
+                directory.display()
+            ))
+        })?;
+        for path in entries {
             let metadata = fs::symlink_metadata(&path).map_err(|error| {
                 CliError::failure(format!(
                     "Oven Alpha cannot read project build authority at {}: {error}",
@@ -474,10 +1005,19 @@ fn digest_baked_project_build_tree(project_root: &Path, manifest: &ProjectManife
                 ) {
                     continue;
                 }
-                collect_directory(root, &path, records, already_recorded)?;
-            } else if !already_recorded.contains(&path) {
-                append_file(root, &path, records)?;
+                collect_directory(root, &path, records, already_recorded, omit_incan_sources, observations)?;
+            } else if !already_recorded.contains(&path)
+                && !(omit_incan_sources && path.extension().is_some_and(|extension| extension == "incn"))
+            {
+                append_file(root, &path, records, observations)?;
             }
+        }
+        if super::file_freshness::stat_directory(directory).map_err(|error| CliError::failure(error.to_string()))?
+            != before
+        {
+            return Err(CliError::failure(
+                "project source directory changed during authority reconciliation",
+            ));
         }
         Ok(())
     }
@@ -485,13 +1025,14 @@ fn digest_baked_project_build_tree(project_root: &Path, manifest: &ProjectManife
     let mut records = BTreeMap::new();
     let mut already_recorded = HashSet::new();
     let manifest_path = project_root.join(LOAF_MANIFEST_FILENAME);
-    append_file(project_root, &manifest_path, &mut records)?;
+    append_file(project_root, &manifest_path, &mut records, observations)?;
     already_recorded.insert(manifest_path);
-    let lockfile = canonical_baked_project_lock_path(project_root)?;
+    let lockfile = inputs.lock_path(project_root)?;
+    observe_authored_input(observations, &lockfile);
+    if let Some(authority) = inputs.authority(&lockfile, project_root)? {
+        records.insert(LOCK_FILENAME.to_string(), authority);
+    }
     if lockfile.is_file() {
-        if let Some(authority) = digest_baked_project_lock_authority(&lockfile, project_root)? {
-            records.insert(LOCK_FILENAME.to_string(), authority);
-        }
         already_recorded.insert(lockfile);
     }
     let source_root = resolve_source_root(project_root, Some(manifest));
@@ -520,11 +1061,36 @@ fn digest_baked_project_build_tree(project_root: &Path, manifest: &ProjectManife
         ))
     })?;
     if canonical_source_root.starts_with(&canonical_project_root) {
-        collect_directory(project_root, &source_root, &mut records, &already_recorded)?;
+        collect_directory(
+            project_root,
+            &source_root,
+            &mut records,
+            &already_recorded,
+            omit_incan_sources,
+            observations,
+        )?;
+    } else if omit_incan_sources {
+        let mut configured_records = BTreeMap::new();
+        collect_directory(
+            &canonical_source_root,
+            &canonical_source_root,
+            &mut configured_records,
+            &HashSet::new(),
+            true,
+            observations,
+        )?;
+        let payload = serde_json::to_vec(&configured_records).map_err(|error| {
+            CliError::failure(format!("failed to serialize configured dependency authority: {error}"))
+        })?;
+        records.insert("configured-source-root".to_string(), digest_bytes(&payload));
     } else {
         records.insert(
             "configured-source-root".to_string(),
-            digest_project_source_tree(&canonical_source_root).map_err(|error| {
+            oven_store::project_source_tree_evidence_observed(&canonical_source_root, &mut |path| {
+                observe_authored_input(observations, path)
+            })
+            .and_then(|evidence| evidence.digest())
+            .map_err(|error| {
                 CliError::failure(format!(
                     "Oven Alpha cannot digest configured source authority at {}: {error}",
                     canonical_source_root.display()
@@ -550,7 +1116,14 @@ fn digest_baked_project_build_tree(project_root: &Path, manifest: &ProjectManife
                 entrypoint.display()
             )));
         }
-        append_named_file(&entrypoint, format!("declared-executable:{relative}"), &mut records)?;
+        if !omit_incan_sources {
+            append_named_file(
+                &entrypoint,
+                format!("declared-executable:{relative}"),
+                &mut records,
+                observations,
+            )?;
+        }
     }
 
     if let Some(configured_path) = manifest.vocab.as_ref().and_then(|vocab| vocab.crate_path.as_deref()) {
@@ -565,7 +1138,11 @@ fn digest_baked_project_build_tree(project_root: &Path, manifest: &ProjectManife
                 companion_root.display()
             ))
         })?;
-        let companion_digest = digest_project_source_tree(&companion_root).map_err(|error| {
+        let companion_digest = oven_store::project_source_tree_evidence_observed(&companion_root, &mut |path| {
+            observe_authored_input(observations, path)
+        })
+        .and_then(|evidence| evidence.digest())
+        .map_err(|error| {
             CliError::failure(format!(
                 "Oven Alpha cannot digest vocabulary companion source authority at {}: {error}",
                 companion_root.display()
@@ -580,7 +1157,12 @@ fn digest_baked_project_build_tree(project_root: &Path, manifest: &ProjectManife
         } else {
             project_root.join(configured_path)
         };
-        append_named_file(&path, format!("contract-model-bundle:{index}"), &mut records)?;
+        append_named_file(
+            &path,
+            format!("contract-model-bundle:{index}"),
+            &mut records,
+            observations,
+        )?;
     }
 
     let locked_interop_targets = locked_oven_interop_targets(manifest).map_err(|error| {
@@ -601,6 +1183,7 @@ fn digest_baked_project_build_tree(project_root: &Path, manifest: &ProjectManife
         );
 
         let receipt_path = default_interop_execution_receipt_path(project_root, &target.target);
+        observe_authored_input(observations, &receipt_path);
         let receipt_metadata = match fs::symlink_metadata(&receipt_path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
@@ -746,6 +1329,313 @@ mod tests {
     use oven_store::store::{OvenArtifactKind, OvenArtifactPublishRequest, OvenStore};
     use oven_store::{OvenGeneratedProjectRequest, digest_bytes, receipt_generated_project, write_receipt};
 
+    /// External resolution edits invalidate ordinary reuse even when graph and project input bytes stay equal.
+    #[test]
+    fn ordinary_preparation_identity_binds_external_native_resolution() -> Result<(), Box<dyn std::error::Error>> {
+        let inputs = tempfile::tempdir()?;
+        let graph = inputs.path().join("graph.json");
+        let lock = inputs.path().join("lock.json");
+        fs::write(
+            &graph,
+            r#"{"index_commit":"fixture","registry_lock":"lock.json","facets":[]}"#,
+        )?;
+        fs::write(&lock, b"original resolution")?;
+        let identity = || {
+            ordinary_preparation_identity_from_values("compiler".to_string(), |name| {
+                (name == "INCAN_SDK_NATIVE_COMPILER_GRAPH").then(|| graph.as_os_str().to_os_string())
+            })
+        };
+        let original = identity()?;
+        assert_eq!(identity()?, original);
+        fs::write(&lock, b"modified resolution")?;
+        assert_ne!(identity()?, original);
+        fs::write(&lock, b"original resolution")?;
+        assert_eq!(identity()?, original);
+        fs::remove_file(&lock)?;
+        assert!(identity().is_err());
+        fs::write(&lock, b"original resolution")?;
+        fs::write(&graph, b"invalid graph")?;
+        assert!(identity().is_err());
+        Ok(())
+    }
+
+    /// Identical graph text under a different canonical owner can select different relative native facets.
+    #[cfg(unix)]
+    #[test]
+    fn ordinary_preparation_identity_binds_canonical_native_graph_owner() -> Result<(), Box<dyn std::error::Error>> {
+        let inputs = tempfile::tempdir()?;
+        let lock = inputs.path().join("shared-lock.json");
+        fs::write(&lock, b"shared resolution")?;
+        let document = serde_json::to_vec(&serde_json::json!({
+            "index_commit":"fixture", "registry_lock":lock,
+            "facets":[{"project":"relative-facet", "features":[], "domain":"target"}]
+        }))?;
+        for name in ["first", "second"] {
+            fs::create_dir(inputs.path().join(name))?;
+            fs::write(inputs.path().join(name).join("graph.json"), &document)?;
+        }
+        let selected = inputs.path().join("selected.json");
+        std::os::unix::fs::symlink(inputs.path().join("first/graph.json"), &selected)?;
+        let identity = || {
+            ordinary_preparation_identity_from_values("compiler".to_string(), |name| {
+                (name == "INCAN_SDK_NATIVE_COMPILER_GRAPH").then(|| selected.as_os_str().to_os_string())
+            })
+        };
+        let first = identity()?;
+        fs::remove_file(&selected)?;
+        std::os::unix::fs::symlink(inputs.path().join("second/graph.json"), &selected)?;
+        assert_ne!(identity()?, first);
+        Ok(())
+    }
+
+    /// SDK inventory bytes are not an input to the ordinary library route; compiler bytes remain an input.
+    #[test]
+    fn ordinary_library_preparation_identity_excludes_unconsumed_sdk() -> Result<(), Box<dyn std::error::Error>> {
+        let inputs = tempfile::tempdir()?;
+        let inventory = inputs.path().join("absent-sdk.json");
+        let identity = |compiler: &str| {
+            ordinary_library_preparation_identity_from_values(compiler.to_string(), None, |name| {
+                (name == "INCAN_SDK_INVENTORY").then(|| inventory.as_os_str().to_os_string())
+            })
+        };
+        let original = identity("compiler")?;
+        fs::write(&inventory, b"unused SDK")?;
+        assert_eq!(identity("compiler")?, original);
+        assert_ne!(identity("another compiler")?, original);
+        assert_ne!(
+            ordinary_preparation_identity_from_values("compiler".to_string(), |_| None)?,
+            original
+        );
+
+        // ---- Explicit native request: observe its graph, preserving external resolution freshness ----
+        let graph = inputs.path().join("ordinary-graph.json");
+        let lock = inputs.path().join("ordinary-lock.json");
+        let ambient = inputs.path().join("forged-sdk-graph.json");
+        fs::write(
+            &graph,
+            r#"{"index_commit":"fixture","registry_lock":"ordinary-lock.json","facets":[]}"#,
+        )?;
+        fs::write(&lock, b"original resolution")?;
+        fs::write(&ambient, b"not a resolved native graph")?;
+        let explicit = |selected| {
+            ordinary_library_preparation_identity_from_values("compiler".into(), selected, |name| {
+                (name == "INCAN_SDK_NATIVE_COMPILER_GRAPH").then(|| ambient.as_os_str().to_os_string())
+            })
+        };
+        let observed = explicit(Some(Some(graph.as_path())))?;
+        fs::write(&ambient, b"another unconsumed SDK graph")?;
+        assert_eq!(explicit(Some(Some(graph.as_path())))?, observed);
+        fs::write(&lock, b"changed resolution")?;
+        assert_ne!(explicit(Some(Some(graph.as_path())))?, observed);
+        fs::remove_file(&lock)?;
+        assert!(explicit(Some(Some(graph.as_path()))).is_err());
+        assert!(
+            explicit(Some(None)).is_ok(),
+            "an explicit direct request consumes no graph document"
+        );
+        assert!(
+            explicit(None).is_err(),
+            "configured reuse must still refuse its malformed graph"
+        );
+        Ok(())
+    }
+
+    /// A changed or absent compiler identity misses before inspection; an exact identity proceeds to authority
+    /// validation even when source-equivalent outputs from older compiler generations coexist in the store.
+    #[test]
+    fn upfront_project_reuse_requires_the_exact_compiler_identity() -> Result<(), Box<dyn std::error::Error>> {
+        let expected = current_compiler_identity_digest()?;
+        for identity in [None, Some(digest_bytes(b"another compiler")), Some(expected.clone())] {
+            let project = tempfile::tempdir()?;
+            fs::create_dir(project.path().join("src"))?;
+            fs::write(project.path().join("loaf.toml"), "[project]\nname = \"fixture\"\n")?;
+            fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
+            let store_root = tempfile::tempdir()?;
+            let store = OvenStore::new(
+                store_root.path(),
+                oven_store::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+            );
+            let entrypoint = project.path().join("src/main.incn");
+            for profile in crate::build::plan_authority::explicit_bake_profiles() {
+                let (receipt, mut payload, files) =
+                    fixture_project_output_publication(project.path(), profile, "compiler_identity")?;
+                payload.compiler_identity_digest = identity.clone();
+                write_receipt(
+                    &receipt,
+                    project_bake_receipt_path(project.path(), OvenBakeProjectTarget::Executable, &entrypoint, profile)?,
+                )?;
+                let published = publish_project_output_loaf(&store, &receipt, &payload, &files)?;
+                let locator =
+                    project_bake_receipt_path(project.path(), OvenBakeProjectTarget::Executable, &entrypoint, profile)?
+                        .with_extension("output.json");
+                fs::write(&locator, serde_json::to_vec(&published.identity)?)?;
+                if identity.as_deref() == Some(&expected) {
+                    for generation in 0..8 {
+                        let mut older_payload = payload.clone();
+                        older_payload.compiler_identity_digest =
+                            Some(digest_bytes(format!("older compiler {generation}").as_bytes()));
+                        let older = publish_project_output_loaf(&store, &receipt, &older_payload, &files)?;
+                        fs::write(&locator, serde_json::to_vec(&older.identity)?)?;
+                    }
+                }
+            }
+            let targets = vec![(OvenBakeProjectTarget::Executable, entrypoint)];
+            let result = try_reuse_baked_project(
+                project.path(),
+                &targets,
+                &store,
+                &FeatureSelection::default(),
+                None,
+                &mut OvenProjectBakeAuthorityContext::default(),
+            );
+            if identity.as_deref() == Some(&expected) {
+                assert!(
+                    result.is_err(),
+                    "exact compiler must reach the deliberately missing inspection authority"
+                );
+            } else {
+                assert!(
+                    result?.is_none(),
+                    "another compiler or an older unbound output must replan"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Measure actual compiler Loaf source-authority scans independently of SDK preparation and output selection.
+    #[test]
+    #[ignore = "diagnostic timing over the checked-out compiler source graph"]
+    fn fixture_source_authority_reports_cold_and_warm_probe_times() -> Result<(), Box<dyn std::error::Error>> {
+        let repo = incan_test_support::repo_root();
+        let projects = [
+            repo.join("loaves/compiler/incan_mir_plan"),
+            repo.join("loaves/compiler/incan_mir_lowering"),
+            repo.join("loaves/toolchain/incan-rustc-driver"),
+            repo.join("loaves/compiler/incan_native_runtime"),
+        ];
+        let started = std::time::Instant::now();
+        let identities = projects
+            .iter()
+            .map(|project| digest_baked_project_source_authority(project))
+            .collect::<CliResult<Vec<_>>>()?;
+        let cold = started.elapsed();
+        let started = std::time::Instant::now();
+        for (project, expected) in projects.iter().zip(&identities) {
+            let probe = std::time::Instant::now();
+            assert_eq!(*expected, digest_baked_project_source_authority(project)?);
+            eprintln!(
+                "source authority {}: {:.3} ms",
+                project.file_name().ok_or("project has no name")?.to_string_lossy(),
+                probe.elapsed().as_secs_f64() * 1000.0
+            );
+        }
+        eprintln!(
+            "fixture source authority only: four projects, cold {:.3} ms, warm {:.3} ms",
+            cold.as_secs_f64() * 1000.0,
+            started.elapsed().as_secs_f64() * 1000.0
+        );
+        Ok(())
+    }
+
+    /// Development authority excludes caller Incan sources but retains provider and non-Incan content.
+    #[test]
+    fn development_dependencies_bind_provider_sources_and_assets() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let provider = tempfile::tempdir()?;
+        fs::create_dir(project.path().join("src"))?;
+        fs::create_dir(provider.path().join("src"))?;
+        fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
+        fs::write(project.path().join("src/config.json"), "{}")?;
+        fs::write(provider.path().join("loaf.toml"), "[project]\nname='provider'\n")?;
+        fs::write(
+            provider.path().join("src/lib.incn"),
+            "pub def value() -> int:\n    return 1\n",
+        )?;
+        fs::write(
+            project.path().join("loaf.toml"),
+            format!(
+                "[project]\nname='consumer'\n[dependencies]\nprovider={{path='{}'}}\n",
+                provider.path().display()
+            ),
+        )?;
+        let initial = digest_project_development_dependencies(project.path())?;
+        fs::write(
+            project.path().join("src/main.incn"),
+            "def main() -> None:\n    print(42)\n",
+        )?;
+        assert_eq!(initial, digest_project_development_dependencies(project.path())?);
+        fs::write(
+            provider.path().join("src/lib.incn"),
+            "pub def value() -> int:\n    return 2\n",
+        )?;
+        let changed_provider = digest_project_development_dependencies(project.path())?;
+        assert_ne!(initial, changed_provider);
+        fs::write(project.path().join("src/config.json"), "{\"changed\":true}")?;
+        assert_ne!(
+            changed_provider,
+            digest_project_development_dependencies(project.path())?
+        );
+        Ok(())
+    }
+
+    /// Configured external source roots remain caller sources; their assets still bind development authority.
+    #[test]
+    fn development_dependencies_support_external_source_roots() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let source = tempfile::tempdir()?;
+        fs::write(
+            project.path().join("loaf.toml"),
+            format!(
+                "[project]\nname='consumer'\n[build]\nsource-root='{}'\n",
+                source.path().display()
+            ),
+        )?;
+        fs::write(source.path().join("main.incn"), "def main() -> None:\n    pass\n")?;
+        fs::write(source.path().join("config.json"), "{}")?;
+        let dependencies = digest_project_development_dependencies(project.path())?;
+        let authored = digest_baked_project_source_authority(project.path())?;
+        fs::write(source.path().join("main.incn"), "def main() -> None:\n    print(42)\n")?;
+        assert_eq!(dependencies, digest_project_development_dependencies(project.path())?);
+        assert_ne!(authored, digest_baked_project_source_authority(project.path())?);
+        fs::write(source.path().join("config.json"), "{\"changed\":true}")?;
+        assert_ne!(dependencies, digest_project_development_dependencies(project.path())?);
+        Ok(())
+    }
+
+    /// Comment edits preserve authority while literals and executable tokens remain inputs.
+    #[test]
+    fn incan_authority_ignores_comments_but_preserves_executable_content() -> Result<(), Box<dyn std::error::Error>> {
+        let path = Path::new("src/main.incn");
+        let source = b"def main() -> None:\n    print(\"# literal\")\n";
+        let initial = digest_project_authority_file(path, source)?;
+        assert_eq!(
+            initial,
+            digest_project_authority_file(
+                path,
+                b"# header\ndef main() -> None:\n    print(\"# literal\") # inline\n# trailing\n"
+            )?
+        );
+        assert_ne!(
+            initial,
+            digest_project_authority_file(path, b"def main() -> None:\n    print(\"changed\")\n")?
+        );
+        assert_ne!(
+            initial,
+            digest_project_authority_file(path, b"def main() -> None:\n    pass\nprint(\"# literal\")\n")?
+        );
+        let incomplete = b"def main() -> None:\n    print(\"";
+        assert_eq!(
+            digest_project_authority_file(path, incomplete)?,
+            digest_bytes(incomplete)
+        );
+        assert_ne!(
+            digest_project_authority_file(Path::new("input.txt"), b"one")?,
+            digest_project_authority_file(Path::new("input.txt"), b"two")?
+        );
+        Ok(())
+    }
+
     #[test]
     fn caller_owned_provider_authority_prefers_the_explicit_library_receipt() -> Result<(), Box<dyn std::error::Error>>
     {
@@ -831,6 +1721,57 @@ mod tests {
         Ok(())
     }
 
+    /// Dependency-session identity excludes root bodies while preserving named child and canonical lock inputs.
+    #[test]
+    fn dependency_generation_preserves_root_authority_and_tracks_child_and_lock()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let provider = project.path().join("provider");
+        fs::create_dir_all(project.path().join("src"))?;
+        fs::create_dir_all(provider.join("src"))?;
+        fs::write(
+            project.path().join("loaf.toml"),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nprovider = { path = \"provider\" }\n",
+        )?;
+        let source = project.path().join("src/main.incn");
+        fs::write(&source, "def main() -> None:\n    println(1)\n")?;
+        fs::write(provider.join("loaf.toml"), "[project]\nname = \"provider\"\n")?;
+        let child = provider.join("src/lib.incn");
+        fs::write(&child, "pub def value() -> int:\n    return 1\n")?;
+        let mut authority = ProjectSourceAuthorityDigester::default();
+        let full = authority.digest(project.path())?;
+        let dependencies = authority.dependency_generation(project.path())?;
+        assert_eq!(authority.digest(project.path())?, full);
+        fs::write(&source, "def main() -> None:\n    println(2)\n")?;
+        authority.begin_request();
+        assert_ne!(authority.digest(project.path())?, full);
+        assert_eq!(authority.dependency_generation(project.path())?, dependencies);
+        fs::write(&child, "pub def value() -> int:\n    return 2\n")?;
+        authority.begin_request();
+        let changed_child = authority.dependency_generation(project.path())?;
+        assert_ne!(changed_child, dependencies);
+        let lock_path = project.path().join("oven.lock");
+        let lock = IncanLock::new(
+            INCAN_VERSION,
+            "selected dependencies".into(),
+            CargoFeatureSelection::default(),
+            "".into(),
+        );
+        lock.write(&lock_path)?;
+        authority.begin_request();
+        let locked = authority.dependency_generation(project.path())?;
+        assert_ne!(locked, changed_child);
+        let full = authority.digest(project.path())?;
+        fs::write(&lock_path, "invalid lock")?;
+        assert!(authority.dependency_generation(project.path()).is_err());
+        assert!(authority.development_root.is_none());
+        assert_eq!(authority.digest(project.path())?, full);
+        lock.write(&lock_path)?;
+        authority.begin_request();
+        assert_eq!(authority.dependency_generation(project.path())?, locked);
+        Ok(())
+    }
+
     /// Consumer reuse ignores provider-store access bookkeeping but misses when declared provider content changes.
     #[test]
     fn consumer_bake_authority_reseals_after_real_provider_content_change_issue1979()
@@ -869,13 +1810,20 @@ mod tests {
         fs::write(bookkeeping.join("last-used"), "200")?;
         assert_eq!(initial, digest_baked_project_source_authority(consumer.path())?);
 
-        fs::write(&artifact.crate_lib_path, "pub fn provider() -> i32 { 2 }\n")?;
-        let changed = digest_baked_project_source_authority(consumer.path())?;
+        let authored_source = provider.path().join("src/lib.incn");
+        let authored_initial = fs::read(&authored_source)?;
+        fs::write(&authored_source, "pub def provider() -> int:\n    return 2\n")?;
         assert_ne!(
-            initial, changed,
-            "changed provider content must invalidate consumer bake reuse"
+            initial,
+            digest_baked_project_source_authority(consumer.path())?,
+            "changed authored provider content must invalidate consumer bake reuse"
         );
+        fs::write(&authored_source, authored_initial)?;
+        assert_eq!(initial, digest_baked_project_source_authority(consumer.path())?);
 
+        fs::write(&artifact.crate_lib_path, "pub fn provider() -> i32 { 2 }\n")?;
+        let refused = digest_baked_project_source_authority(consumer.path());
+        assert!(refused.is_err(), "changed sealed provider output must refuse authority");
         fs::write(&artifact.crate_lib_path, initial_provider_bytes)?;
         assert_eq!(initial, digest_baked_project_source_authority(consumer.path())?);
         Ok(())
@@ -929,12 +1877,46 @@ mod tests {
             digest_baked_project_source_authority(project.path())?
         );
         let direct_source_changed = digest_baked_project_source_authority(project.path())?;
+        let leaf_modified = fs::metadata(rust_leaf.join("src/lib.rs"))?.modified()?;
         fs::write(rust_leaf.join("src/lib.rs"), "pub fn leaf() -> i64 { 2 }\n")?;
+        fs::File::options()
+            .write(true)
+            .open(rust_leaf.join("src/lib.rs"))?
+            .set_times(fs::FileTimes::new().set_modified(leaf_modified))?;
         assert_ne!(
             direct_source_changed,
             digest_baked_project_source_authority(project.path())?,
             "a transitive sibling Cargo path dependency must remain part of the project source authority"
         );
+        Ok(())
+    }
+
+    /// An explicit sibling workspace contributes inherited values even when it is outside the package's ancestors.
+    #[test]
+    fn rust_source_freshness_tracks_an_explicit_sibling_workspace() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let package = root.path().join("package");
+        let workspace = root.path().join("workspace");
+        fs::create_dir_all(package.join("src"))?;
+        fs::create_dir_all(&workspace)?;
+        fs::write(
+            package.join("Cargo.toml"),
+            "[package]\nname = \"helper\"\nversion.workspace = true\nworkspace = \"../workspace\"\nedition = \"2024\"\n",
+        )?;
+        fs::write(package.join("src/lib.rs"), "pub fn value() -> i64 { 1 }\n")?;
+        fs::write(
+            workspace.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"../package\"]\n[workspace.package]\nversion = \"0.1.0\"\n",
+        )?;
+        let digest =
+            || ProjectSourceAuthorityDigester::digest_rust_path_crate_authority(&package, &mut BTreeMap::new());
+        let initial = digest()?;
+        assert_eq!(initial, digest()?);
+        fs::write(
+            workspace.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"../package\"]\n[workspace.package]\nversion = \"0.2.0\"\n",
+        )?;
+        assert_ne!(initial, digest()?);
         Ok(())
     }
 
@@ -1782,6 +2764,8 @@ headers = ["interop/include/bridge.h"]
             source_authority_digest: digest_baked_project_source_authority(project.path())?,
             compiler_version: INCAN_VERSION.to_string(),
             metadata_files: packaged_library_metadata_files(&library_manifest_path, &library_manifest, &artifact_root)?,
+            checked_metadata: None,
+            checked_generation: None,
             profiles,
         };
         write_packaged_library_loaf_manifest(&artifact_root, &manifest)?;

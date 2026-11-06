@@ -1,0 +1,380 @@
+"""Canonical standard derive calls and inferred Clone requirements through their concrete native implementations."""
+
+from rust::incan_semantics_core import CanonicalSymbolId, SymbolOrigin, SemanticSourceTargetKind
+from rust::incan_semantics_core::body_ir import (
+    BodyIrModule,
+    BinOp,
+    MethodTarget,
+    ArgumentElement as RustArgumentElement,
+    Operand as RustOperand,
+    Place as RustPlace,
+    Rvalue as RustRvalue,
+)
+from pub::incan_mir_plan import CalleeKind, Operand, OperandKind, Place, PlanType, Projection, RvalueKind, SourceSpan
+from pub::incan_mir_plan import assign as plan_assign
+from frame import Builder, place_type, read_place, temporary, drop_owned, forget_owned, track_rvalue_moves
+from lowering import scalar_place, lower_callable_result, lower_assignment, binary_operator
+from numerics import numeric_carrier
+from trait_links import contains
+from options import carrier_payload_value, clone_tuple_operand
+from tuples import is_tuple_type
+from text_plan import clone_text
+
+
+pub def is_derived_clone(target: &MethodTarget) -> bool:
+    """Recognize `clone` of the standard library's Clone in source and compiled SDK identities, never a same-name method."""
+    return is_std_derive_method(target, "copying", "clone")
+
+
+pub def is_derived_display(target: &MethodTarget) -> bool:
+    """Recognize `__str__` of the standard library's Display, never a same-name method."""
+    return is_std_derive_method(target, "string", "__str__")
+
+
+pub def is_std_callable_call(target: &MethodTarget) -> bool:
+    """Recognize `__call__` of the standard library's callable traits, through which a callable bound is called."""
+    return is_std_core_method(target, "traits", "callable", "__call__")
+
+
+def is_std_derive_method(target: &MethodTarget, module: str, name: str) -> bool:
+    """Whether the checker selected `name` of a trait declared by the standard library's `std.derives.<module>`."""
+    return is_std_core_method(target, "derives", module, name)
+
+
+def is_std_core_method(target: &MethodTarget, section: str, module: str, name: str) -> bool:
+    """Whether the checker selected `name` of `std.<section>.<module>`, in source or compiled SDK identities."""
+    match target.canonical:
+        Some(identity) =>
+            if identity.kind != SemanticSourceTargetKind.Method or identity.declaration_name != name:
+                return false
+            match identity.origin:
+                SymbolOrigin.Module(path) =>
+                    return len(path) == 3 and path[0] == "std" and path[1] == section and path[2] == module
+                SymbolOrigin.Package(library=library, module_path=path) =>
+                    return library == "incan_stdlib_core" and len(path) == 2 and path[0] == section and path[1] == module
+                _ => return false
+        None => return false
+
+
+pub def lower_derived_clone(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Clone a standard or inferred Clone receiver through its concrete native representation.
+
+    Scalars copy and owned strings clone through the runtime. Models and classes always derive Clone; a source enum's checked derives must name it. Builtin aggregates and synthetic union, Option, and Result carriers use the same native cloning path as a borrowed payload read.
+    """
+    if len(arguments) != 1:
+        return Err("invalid Body IR Clone arguments")
+    match arguments[0].as_one():
+        Some(value) =>
+            match value:
+                RustOperand.Place(read) =>
+                    source = scalar_place(builder, read.place, span)?
+                    return clone_place(builder, source, destination, span)
+                _ => return Err("unsupported Body IR Clone of a nonplace receiver")
+        None => return Err("unsupported Body IR Clone spread receiver")
+
+
+def clone_place(
+    mut builder: Builder,
+    source: Place,
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Select copying, owned text cloning, or the nominal's own Clone implementation from its native carrier."""
+    ty = place_type(builder.locals, source)
+    if numeric_carrier(ty) or ty == PlanType.Bool or ty == PlanType.Unit or ty == PlanType.FrozenStr:
+        return copy_clone_into(builder, source, ty, destination, span)
+    if ty == PlanType.String:
+        return clone_string_into(builder, source, destination, span)
+    match ty:
+        PlanType.Model(index, name) =>
+            reference = PlanType.ModelRef(index, name)
+            return clone_into(builder, source, reference, CalleeKind.CloneModel(index, name), ty, destination, span)
+        PlanType.Enum(index, name) =>
+            if index >= len(builder.enums):
+                return clone_builtin_place(builder, source, destination, span)
+            if index < 0 or "Clone" not in builder.enums[index].derives:
+                return Err("unsupported Body IR enum Clone without a derived Clone")
+            reference = PlanType.EnumRef(index, name)
+            return clone_into(builder, source, reference, CalleeKind.CloneEnum(index, name), ty, destination, span)
+        _ => return clone_builtin_place(builder, source, destination, span)
+
+
+def copy_clone_into(
+    mut builder: Builder,
+    source: Place,
+    ty: PlanType,
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Copy an admitted scalar or frozen string without consuming the receiver; a discarded copy has no effect."""
+    match destination:
+        Some(place) =>
+            output = scalar_place(builder, place, span)?
+            if place_type(builder.locals, output) != ty:
+                return Err("unsupported Body IR Clone destination carrier mismatch")
+            builder.emit(plan_assign(output, RvalueKind.Use(read_place(source, false, span)), span))
+        None => pass
+    return Ok(None)
+
+
+def clone_string_into(
+    mut builder: Builder,
+    source: Place,
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Borrow the source, replace a whole owned text destination after cloning, or immediately drop a discarded clone."""
+    match destination:
+        Some(place) =>
+            output = scalar_place(builder, place, span)?
+            if output.projection != Projection.Whole or place_type(builder.locals, output) != PlanType.String:
+                return Err("unsupported Body IR Clone projected or nontext destination")
+            cloned = clone_text(builder, source, span)?
+            drop_owned(builder, output.local, span)
+            forget_owned(builder, cloned.local)
+            builder.emit(plan_assign(output, RvalueKind.Use(read_place(cloned, true, span)), span))
+            builder.owned.append(output.local)
+        None =>
+            cloned = clone_text(builder, source, span)?
+            drop_owned(builder, cloned.local, span)
+    return Ok(None)
+
+
+def clone_builtin_place(
+    mut builder: Builder,
+    source: Place,
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Copy builtin scalars and clone the owned storage of carriers through the existing borrowed payload operation."""
+    mut value = read_place(source, false, span)
+    if is_tuple_type(place_type(builder.locals, source)):
+        value = clone_tuple_operand(builder, source, span)?
+    else:
+        value = carrier_payload_value(builder, source, span)?
+    match destination:
+        Some(place) =>
+            output = scalar_place(builder, place, span)?
+            if output.projection != Projection.Whole:
+                return Err("unsupported Body IR projected builtin Clone destination")
+            mut owned = false
+            match value.kind:
+                OperandKind.Move(_source) =>
+                    owned = true
+                _ => pass
+            if owned:
+                drop_owned(builder, output.local, span)
+            track_rvalue_moves(builder, RvalueKind.Use(value))
+            builder.emit(plan_assign(output, RvalueKind.Use(value), span))
+            if owned:
+                builder.owned.append(output.local)
+        None => pass
+    return Ok(None)
+
+
+def clone_into(
+    mut builder: Builder,
+    source: Place,
+    reference_type: PlanType,
+    callee: CalleeKind,
+    ty: PlanType,
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Borrow the receiver and write the owned copy to the call's destination, replacing what it held."""
+    reference = temporary(builder, reference_type, span)
+    builder.emit(plan_assign(reference, RvalueKind.Borrow(source), span))
+    mut output = source
+    match destination:
+        Some(place) =>
+            output = scalar_place(builder, place, span)?
+        None =>
+            output = temporary(builder, ty, span)
+    return lower_callable_result(builder, callee, [read_place(reference, false, span)], output, ty, span)
+
+
+pub def comparison_dunder(target: &MethodTarget) -> Option[BinOp]:
+    """Select the operator a dunder of the standard library's Eq or Ord names, never a same-name method."""
+    if is_std_derive_method(target, "comparison", "__eq__"):
+        return Some(BinOp.Eq)
+    if is_std_derive_method(target, "comparison", "__ne__"):
+        return Some(BinOp.Ne)
+    if is_std_derive_method(target, "comparison", "__lt__"):
+        return Some(BinOp.Lt)
+    if is_std_derive_method(target, "comparison", "__le__"):
+        return Some(BinOp.Le)
+    if is_std_derive_method(target, "comparison", "__gt__"):
+        return Some(BinOp.Gt)
+    if is_std_derive_method(target, "comparison", "__ge__"):
+        return Some(BinOp.Ge)
+    return None
+
+
+pub def lower_comparison_dunder(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    operator: BinOp,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Lower an explicit standard comparison dunder as the operator it names, through that operator's own lowering.
+
+    A derived Eq or Ord implements each dunder as its operator, so `a.__ge__(b)` is `a >= b`; a number or a bool
+    compares by value. A source comparison adopter must retain its complete native forwarding frame; any other receiver with its own comparison methods keeps refusing.
+    """
+    if len(arguments) != 2:
+        return Err("invalid Body IR comparison dunder arguments")
+    left = single_operand(arguments[0])?
+    right = single_operand(arguments[1])?
+    if compare_scalars(builder, operator, left, right, destination, span)?:
+        return Ok(None)
+    if declares_own_comparison(module, builder, left, span)? and not has_native_comparison(builder, left, operator, span)?:
+        return Err("unsupported Body IR comparison dunder on a type with its own comparison methods")
+    match destination:
+        Some(place) =>
+            comparison: RustRvalue = RustRvalue.BinaryOp(operator, left, right)
+            return lower_assignment(module, builder, place, comparison, span)
+        None => return Err("unsupported Body IR discarded comparison dunder")
+
+
+def has_native_comparison(
+    builder: Builder,
+    value: &RustOperand,
+    operator: BinOp,
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """Require the already validated native comparison frame before an explicit standard default forwards to an operator."""
+    match value:
+        RustOperand.Place(read) =>
+            source = scalar_place(builder, read.place, span)?
+            match place_type(builder.locals, source):
+                PlanType.Model(owner, _name) =>
+                    mut count = 5
+                    if operator == BinOp.Eq or operator == BinOp.Ne:
+                        count = 1
+                    return Ok(len(builder.comparison_functions[owner]) >= count)
+                _ => pass
+        _ => pass
+    return Ok(false)
+
+
+def compare_scalars(
+    mut builder: Builder,
+    operator: BinOp,
+    left: &RustOperand,
+    right: &RustOperand,
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """
+    Compare two places of one numeric or boolean carrier by value, as a closed type-parameter instance reaches them.
+
+    The receiver is borrowed for the method call the checker selected, but a number or a bool is copied freely, so the
+    comparison reads both values; any other carrier is left to the operator's own lowering.
+    """
+    match left:
+        RustOperand.Place(left_read) =>
+            match right:
+                RustOperand.Place(right_read) =>
+                    first = scalar_place(builder, left_read.place, span)?
+                    second = scalar_place(builder, right_read.place, span)?
+                    ty = place_type(builder.locals, first)
+                    if ty != place_type(builder.locals, second) or not (numeric_carrier(ty) or ty == PlanType.Bool):
+                        return Ok(false)
+                    match destination:
+                        Some(place) =>
+                            output = scalar_place(builder, place, span)?
+                            left_value = Operand(kind=OperandKind.Copy(first), span=span)
+                            right_value = Operand(kind=OperandKind.Copy(second), span=span)
+                            comparison = RvalueKind.Binary(binary_operator(operator)?, left_value, right_value)
+                            builder.emit(plan_assign(output, comparison, span))
+                            return Ok(true)
+                        None => return Err("unsupported Body IR discarded comparison dunder")
+                _ => return Ok(false)
+        _ => return Ok(false)
+
+
+def single_operand(argument: &RustArgumentElement) -> Result[RustOperand, str]:
+    """Read one positional argument's checked operand, refusing a spread."""
+    match argument.as_one():
+        Some(value) => return Ok(value.clone())
+        None => return Err("unsupported Body IR comparison dunder spread argument")
+
+
+def declares_own_comparison(
+    module: &BodyIrModule,
+    builder: Builder,
+    receiver: &RustOperand,
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """Whether the receiver's source nominal or enum declares a comparison dunder or fills one from a source trait."""
+    dunders = ["__eq__", "__ne__", "__lt__", "__le__", "__gt__", "__ge__"]
+    return declares_own_method(module, builder, receiver, dunders, span)
+
+
+pub def slot_name(target: &MethodTarget) -> str:
+    """The checker-selected slot's declared name, empty for an unproven target."""
+    match target.canonical:
+        Some(identity) => return str(identity.declaration_name)
+        None => return ""
+
+
+pub def receiver_declares_method(
+    module: &BodyIrModule,
+    builder: Builder,
+    receiver: &RustArgumentElement,
+    name: str,
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """
+    Whether a method call's receiver type declares a method of `name` itself or fills that slot from a source trait.
+
+    A standard derive's behavior stands in for a slot only where the type supplies no method of its own for it.
+    """
+    match receiver.as_one():
+        Some(value) => return declares_own_method(module, builder, value, [name], span)
+        None => return Ok(false)
+
+
+def declares_own_method(
+    module: &BodyIrModule,
+    builder: Builder,
+    receiver: &RustOperand,
+    names: list[str],
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """Whether the receiver's source nominal or enum declares a method of one of `names` or fills one from a trait."""
+    match receiver:
+        RustOperand.Place(read) =>
+            source = scalar_place(builder, read.place, span)?
+            match place_type(builder.locals, source):
+                PlanType.Model(index, _name) => return Ok(owns_method(module, builder.nominals[index].canonical, names))
+                PlanType.Enum(index, _name) =>
+                    if index >= 0 and index < len(builder.enums):
+                        return Ok(owns_method(module, builder.enums[index].canonical, names))
+                    return Ok(false)
+                _ => return Ok(false)
+        _ => return Ok(false)
+
+
+def owns_method(module: &BodyIrModule, owner: &CanonicalSymbolId, names: list[str]) -> bool:
+    """Whether a body inside the owner's declaration, or a trait slot recorded for it, has one of `names`."""
+    for body in module.bodies:
+        match body.canonical:
+            Some(identity) =>
+                name = str(identity.declaration_name)
+                if identity.origin == owner.origin and contains(owner, identity) and name in names:
+                    return true
+            None => pass
+    for implementation in module.trait_implementations:
+        if implementation.owner == owner.clone() and str(implementation.method.declaration_name) in names:
+            return true
+    return false

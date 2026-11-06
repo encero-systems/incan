@@ -120,7 +120,7 @@ def _compress_bytesio_stream(
     mut reader = BzEncoder.new(Read.by_ref(handle), compression)
     while true:
         mut chunk: bytes = b""
-        match reader.by_ref().take(chunk_size).read_to_end(chunk):
+        match reader.by_ref().take(chunk_size.saturating_resize[u64]()).read_to_end(chunk):
             Ok(_) =>
                 if len(chunk) == 0:
                     return Ok(None)
@@ -141,7 +141,7 @@ def _compress_file_stream(
     mut reader = BzEncoder.new(Read.by_ref(handle), compression)
     while true:
         mut chunk: bytes = b""
-        match reader.by_ref().take(chunk_size).read_to_end(chunk):
+        match reader.by_ref().take(chunk_size.saturating_resize[u64]()).read_to_end(chunk):
             Ok(_) =>
                 if len(chunk) == 0:
                     return Ok(None)
@@ -161,7 +161,7 @@ def _decompress_bytesio_stream(
     mut reader = BzDecoder.new(Read.by_ref(handle))
     while true:
         mut chunk: bytes = b""
-        match reader.by_ref().take(chunk_size).read_to_end(chunk):
+        match reader.by_ref().take(chunk_size.saturating_resize[u64]()).read_to_end(chunk):
             Ok(_) =>
                 if len(chunk) == 0:
                     return Ok(None)
@@ -181,7 +181,7 @@ def _decompress_file_stream(
     mut reader = BzDecoder.new(Read.by_ref(handle))
     while true:
         mut chunk: bytes = b""
-        match reader.by_ref().take(chunk_size).read_to_end(chunk):
+        match reader.by_ref().take(chunk_size.saturating_resize[u64]()).read_to_end(chunk):
             Ok(_) =>
                 if len(chunk) == 0:
                     return Ok(None)

@@ -1,0 +1,14 @@
+# behavior: a bytes literal is passed to a bytes parameter (parity corpus case 15)
+# expect-stdout:
+#   1
+
+"""A bytes literal is passed to a bytes parameter (parity corpus case 15)."""
+def send(payload: bytes) -> int:
+    """Return `1` for this fixture."""
+    return 1
+
+
+def main() -> None:
+    """Print `send(greeting)` after preparing the fixture inputs."""
+    greeting = b"hi"
+    println(send(greeting))

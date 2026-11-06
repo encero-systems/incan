@@ -23,8 +23,8 @@ jobs:
       matrix:
         include:
           - id: linux-rust-1-98
-            name: ubuntu-latest, Rust 1.98.0
-            runner: ubuntu-latest
+            name: ubuntu-24.04, Rust 1.98.0
+            runner: ubuntu-24.04
             toolchain: 1.98.0
             benchmark: true
           - id: macos-rust-1-98

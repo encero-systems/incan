@@ -1,0 +1,13 @@
+# behavior: a source outside the replacement profile stays unavailable, as the legacy route runs it
+# expect-stdout:
+#   [(1, 2)]
+
+"""A source outside the replacement profile stays unavailable, as the legacy route runs it."""
+def pairs() -> list[tuple[int, int]]:
+    """Return the fixture expression `[(1, 2)]`."""
+    return [(1, 2)]
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(pairs())

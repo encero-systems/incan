@@ -18,6 +18,23 @@ pub(super) fn result_type_parts(ty: &IncanType) -> Option<(&IncanType, &IncanTyp
         _ => None,
     }
 }
+/// Return the member types of `ty` when it is the builtin collection `kind` (a list's or set's element type, a dict's
+/// key and value types).
+pub(super) fn collection_member_types(ty: &IncanType, kind: CollectionTypeId) -> Option<&[IncanType]> {
+    let IncanType::Generic { base, args } = ty else {
+        return None;
+    };
+    (collections::from_str(base) == Some(kind)).then_some(args.as_slice())
+}
+/// Report whether a checked type is an optional union (`int | str | None`): an intrinsic `Option` whose payload is a
+/// union, so a member pattern over it selects `Some` and then the member of that payload.
+pub(super) fn is_optional_union(ty: &IncanType) -> bool {
+    let IncanType::Generic { base, args } = ty else {
+        return false;
+    };
+    collections::from_str(base) == Some(CollectionTypeId::Option)
+        && matches!(args.as_slice(), [IncanType::Generic { base, .. }] if base == "Union")
+}
 /// Return just the checked error channel for an intrinsic `Result` carrier.
 pub(super) fn result_error_type(ty: &IncanType) -> Option<&IncanType> {
     result_type_parts(ty).map(|(_, error_type)| error_type)
@@ -80,6 +97,35 @@ fn builtin_collection_id(ty: &IncanType) -> Option<CollectionTypeId> {
         _ => None,
     }
 }
+
+/// Collection and byte-buffer equality invoke shared `PartialEq` receivers in legacy emission; neither operand is
+/// cloned or consumed.
+pub(super) fn collection_equality_borrows(op: ast::BinaryOp, lhs_ty: &IncanType, rhs_ty: &IncanType) -> bool {
+    matches!(op, ast::BinaryOp::Eq | ast::BinaryOp::NotEq)
+        && shared_equality_operand(lhs_ty)
+        && shared_equality_operand(rhs_ty)
+}
+
+/// Recognize checked equality operands with owned collection storage, including bytes' primitive spelling.
+fn shared_equality_operand(ty: &IncanType) -> bool {
+    builtin_collection_id(ty).is_some() || matches!(ty, IncanType::Primitive(IncanPrimitiveType::Bytes))
+}
+/// The mutable collection a `FrozenList`, `FrozenSet` or `FrozenDict` type answers membership like, or `None`.
+fn frozen_collection_counterpart(ty: &IncanType) -> Option<CollectionTypeId> {
+    let IncanType::Generic { base, args } = ty else {
+        return None;
+    };
+    if args.is_empty() {
+        return None;
+    }
+    match collections::from_str(base)? {
+        CollectionTypeId::FrozenList => Some(CollectionTypeId::List),
+        CollectionTypeId::FrozenSet => Some(CollectionTypeId::Set),
+        CollectionTypeId::FrozenDict => Some(CollectionTypeId::Dict),
+        _ => None,
+    }
+}
+
 /// Map a binary operator over a builtin collection to its compiler-owned helper operation, or `None` when the
 /// operator has no collection meaning.
 ///
@@ -115,7 +161,13 @@ pub(super) fn collection_helper_for_binop(
         ast::BinaryOp::In | ast::BinaryOp::NotIn => rhs_ty,
         _ => lhs_ty,
     };
-    let collection = builtin_collection_id(container_ty)?;
+    // A frozen collection answers membership exactly as its mutable counterpart does (`"beta" in NAMES` for a
+    // `const NAMES: FrozenList[str]`), so membership maps it to the same helper. No other operator does: `+` on a
+    // frozen list is not concatenation.
+    let collection = match (op, frozen_collection_counterpart(container_ty)) {
+        (ast::BinaryOp::In | ast::BinaryOp::NotIn, Some(counterpart)) => counterpart,
+        _ => builtin_collection_id(container_ty)?,
+    };
     match (op, collection) {
         (ast::BinaryOp::In, CollectionTypeId::List) => Some(bir::HelperOp::ListContains),
         (ast::BinaryOp::NotIn, CollectionTypeId::List) => Some(bir::HelperOp::ListNotContains),
@@ -200,15 +252,19 @@ pub(super) fn lower_literal(lit: &ast::Literal) -> bir::Constant {
     }
 }
 
-/// Lower a numeric literal with the canonical type selected by the typechecker.
+/// Lower a literal with the numeric or frozen storage identity selected by the typechecker.
 ///
 /// Ordinary `int` and `float` keep their compact compatibility variants, and an integer literal the checker typed as
 /// a `float` (which `f64` is, RFC 009) becomes the float constant of the same value. Explicit sized numerics and
 /// decimals use [`bir::Constant::TypedNumeric`] so wide integer magnitude, `f32` rounding, and decimal scale cannot be
 /// lost before a replacement backend sees them.
+/// Checked frozen literals retain their static Copy storage rather than becoming ordinary owned text.
 pub(super) fn lower_checked_literal(lit: &ast::Literal, ty: &IncanType) -> bir::Constant {
     use incan_lang::lang::types::numerics::{NumericFamily, NumericTypeId, info_for};
 
+    if let (ast::Literal::String(value), IncanType::Primitive(IncanPrimitiveType::FrozenStr)) = (lit, ty) {
+        return bir::Constant::FrozenStr(value.clone());
+    }
     if let (ast::Literal::Int(value), IncanType::Primitive(IncanPrimitiveType::Float)) = (lit, ty) {
         return bir::Constant::Float((value.magnitude as f64).to_string());
     }
@@ -271,6 +327,14 @@ pub(super) fn lower_checked_negative_literal(lit: &ast::Literal, ty: &IncanType)
 
     if let (ast::Literal::Int(value), IncanType::Primitive(IncanPrimitiveType::Float)) = (lit, ty) {
         return Some(bir::Constant::Float((-(value.magnitude as f64)).to_string()));
+    }
+    // `int`'s most negative value is only spellable negated: its magnitude does not fit `i64`, so the literal's
+    // `value` saturates and a runtime negation of it would yield `-i64::MAX`. Fold it to `i64::MIN`, as legacy does.
+    if let (ast::Literal::Int(value), IncanType::Primitive(IncanPrimitiveType::Int)) = (lit, ty)
+        && value.suffix.is_none()
+        && value.magnitude == 1_u128 << 63
+    {
+        return Some(bir::Constant::Int(i64::MIN));
     }
     let value = match (lit, ty) {
         (ast::Literal::Int(value), IncanType::Primitive(IncanPrimitiveType::Numeric(kind)))

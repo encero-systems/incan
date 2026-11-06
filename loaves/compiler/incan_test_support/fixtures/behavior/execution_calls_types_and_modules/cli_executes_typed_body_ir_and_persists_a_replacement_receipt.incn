@@ -1,0 +1,17 @@
+# behavior: cli executes typed body ir and persists a replacement receipt
+# expect-stdout:
+#   42
+
+"""Cli executes typed body ir and persists a replacement receipt."""
+def program_result() -> int:
+  """Return the sum when left is larger; otherwise return right."""
+  left = 40
+  right = 2
+  if left > right:
+    return left + right
+  return right
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

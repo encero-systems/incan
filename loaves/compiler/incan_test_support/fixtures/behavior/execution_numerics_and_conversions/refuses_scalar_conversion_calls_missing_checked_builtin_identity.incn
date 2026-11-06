@@ -1,0 +1,14 @@
+# behavior: refuses scalar conversion calls missing checked builtin identity, as the legacy route runs it
+# expect-stdout:
+#   42
+
+
+"""Refuses scalar conversion calls missing checked builtin identity, as the legacy route runs it."""
+def program_result() -> str:
+  """Return the fixture expression `str(42)`."""
+  return str(42)
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

@@ -1,0 +1,15 @@
+# behavior: refuses f string interpolation it cannot render identically, as the legacy route runs it
+# expect-stdout:
+#   [1, 2]
+
+
+"""Refuses f string interpolation it cannot render identically, as the legacy route runs it."""
+def program_result() -> str:
+  """Compute and return `f"{values}"`."""
+  values = [1, 2]
+  return f"{values}"
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

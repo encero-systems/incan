@@ -1,0 +1,13 @@
+# behavior: selected string helpers preserve shared edge semantics
+# expect-stdout:
+#   -é-
+
+"""Selected string helpers preserve shared edge semantics."""
+def result() -> str:
+    """Return the fixture expression `"é".replace("", "-")`."""
+    return "é".replace("", "-")
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(result())

@@ -1,0 +1,13 @@
+# behavior: scalar set key kinds execute
+# expect-stdout:
+#   true
+
+"""Scalar set key kinds execute."""
+def program_result() -> bool:
+  """Return the fixture expression `2 in {1, 2}`."""
+  return 2 in {1, 2}
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

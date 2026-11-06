@@ -1,4 +1,4 @@
-# behavior: exact f32 values and f64 values are observed through println, str() and f-strings (an integral f32 prints as 4 where an f64, which is a float, prints as 1.0), an extern finite check passes a finite f32 through, scalars extracted from a model field, an Option field and a list are finite, and a NaN parsed into an f64 return flows on as the float it is
+# behavior: exact f32 values and f64 values are observed through println, str() and f-strings (integral floats keep their decimal point without changing their carrier width), an extern finite check passes a finite f32 through, scalars extracted from a model field, an Option field and a list are finite, and a NaN parsed into an f64 return flows on as the float it is
 # retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::exact_float_public_and_rust_ingress_is_guarded_before_observation
 # retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::exact_float_scalars_extracted_from_aggregates_are_guarded_before_use
 # expect-stdout:
@@ -8,9 +8,9 @@
 #   true
 #   nan
 #   false
-#   4
+#   4.0
 #   1.0
-#   4
+#   4.0
 #   false
 #   true
 #   2.5

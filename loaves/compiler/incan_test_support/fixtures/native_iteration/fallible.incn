@@ -1,0 +1,41 @@
+model Stream:
+    """Expose item, exhaustion and error outcomes through a checked fallible hook."""
+
+    pub left: int
+    pub fail: bool
+
+    def __iter__(self) -> Stream:
+        """Return the stream value used for this iteration."""
+        return self
+
+    def __next__(mut self) -> Result[Option[int], str]:
+        """Yield decreasing integers, then exhaust or fail according to the input."""
+        if self.left <= 0:
+            if self.fail:
+                return Err("stop")
+            return Ok(None)
+        self.left -= 1
+        return Ok(Some(self.left))
+
+
+def drain(stream: Stream) -> Result[int, str]:
+    """Propagate the first failed poll and sum every successful item."""
+    mut total = 0
+    for value in stream?:
+        println(value)
+        total += value
+    return Ok(total)
+
+
+def show(left: int, fail: bool) -> None:
+    """Observe both the yielded items and the terminal result."""
+    match drain(Stream(left=left, fail=fail)):
+        Ok(total) => println(f"ok={total}")
+        Err(error) => println(f"err={error}")
+
+
+def main() -> None:
+    """Exercise successful, failed and initially empty streams."""
+    show(3, false)
+    show(2, true)
+    show(0, false)

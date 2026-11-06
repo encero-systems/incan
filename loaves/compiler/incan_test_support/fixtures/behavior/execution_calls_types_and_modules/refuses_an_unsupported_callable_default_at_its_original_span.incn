@@ -1,0 +1,19 @@
+# behavior: refuses an unsupported callable default at its original span, as the legacy route runs it
+# expect-stdout:
+#   1
+
+
+"""Refuses an unsupported callable default at its original span, as the legacy route runs it."""
+def keep(payload: bytes = b"x") -> bytes:
+  """Return `payload` for this fixture."""
+  return payload
+
+def program_result() -> int:
+  """Compute and return `1`."""
+  keep()
+  return 1
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

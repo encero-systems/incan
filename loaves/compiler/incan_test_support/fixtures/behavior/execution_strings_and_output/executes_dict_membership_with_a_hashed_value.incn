@@ -1,0 +1,15 @@
+# behavior: executes dict membership with a hashed value
+# expect-stdout:
+#   true
+
+
+"""Executes dict membership with a hashed value."""
+def program_result() -> bool:
+  """Compute and return `"a" in d`."""
+  d = {"a": 1}
+  return "a" in d
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

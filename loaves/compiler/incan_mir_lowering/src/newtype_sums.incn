@@ -1,0 +1,72 @@
+"""Execute retained numeric-newtype item projections and post-exhaustion hook-result extraction."""
+
+from rust::incan_semantics_core::body_ir import ArgumentElement, Place as RustPlace
+from pub::incan_mir_plan import PlanType, SourceSpan
+from frame import Builder, place_type, external_call
+from options import result_layout
+from lowering import argument_type, scalar_place, instantiated_external_call, fixed_arguments
+
+
+pub def lower_newtype_sum_add(
+    mut builder: Builder,
+    arguments: &list[ArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Add already projected integer payloads through the frozen release wrapping operation."""
+    if len(arguments) != 2:
+        return Err("unsupported Body IR NewtypeSumAdd arity")
+    match destination:
+        None => return Err("unsupported Body IR newtype sum addition without a destination")
+        Some(place) =>
+            output = scalar_place(builder, place, span)?
+            if place_type(builder.locals, output) != PlanType.Int:
+                return Err("unsupported Body IR newtype sum accumulator type")
+            for index in range(2):
+                if argument_type(builder, arguments, index, span)? != PlanType.Int:
+                    return Err("unsupported Body IR newtype sum addition operand")
+            operands = fixed_arguments(builder, arguments, span)?
+            external_call(
+                builder,
+                "incan_native_runtime::add_newtype_sum",
+                [PlanType.Int, PlanType.Int],
+                PlanType.Int,
+                operands,
+                output,
+                span,
+            )
+            return Ok(None)
+
+
+pub def lower_newtype_sum_extract(
+    mut builder: Builder,
+    arguments: &list[ArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Extract the already selected final hook's Result with the retained frozen sum failure message."""
+    if len(arguments) != 2:
+        return Err("unsupported Body IR NewtypeSumExtract arity")
+    match destination:
+        None => return Err("unsupported Body IR newtype sum extraction without a destination")
+        Some(place) =>
+            output = scalar_place(builder, place, span)?
+            target = place_type(builder.locals, output)
+            input = argument_type(builder, arguments, 0, span)?
+            _owner, declaration = result_layout(builder, input)?
+            if len(declaration.variants[0].fields) != 1 or declaration.variants[0].fields[0] != target:
+                return Err("unsupported Body IR newtype sum extraction payload")
+            if len(declaration.variants[1].fields) != 1 or argument_type(builder, arguments, 1, span)? != PlanType.String:
+                return Err("unsupported Body IR newtype sum extraction error or message")
+            error = declaration.variants[1].fields[0]
+            operands = fixed_arguments(builder, arguments, span)?
+            return instantiated_external_call(
+                builder,
+                "incan_native_runtime::checked_sum_result",
+                [target, error],
+                [input, PlanType.String],
+                target,
+                operands,
+                output,
+                span,
+            )

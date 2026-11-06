@@ -1,0 +1,14 @@
+# behavior: a str returned unchanged keeps its trailing newline
+# expect-stdout:
+#   [line
+#   ]
+
+"""A str returned unchanged keeps its trailing newline."""
+def echo(text: str) -> str:
+    """Return `text` for this fixture."""
+    return text
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(f"[{echo("line\n")}]")

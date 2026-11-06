@@ -1,0 +1,8 @@
+"""Canonical language error primitives for native plans with no normal continuation."""
+
+from rust::incan_std_core::errors import raise_value_error as core_value_error
+
+
+pub def raise_value_error(message: str) -> None:
+    """Raise the frozen core ValueError with the original message; this function never returns normally."""
+    core_value_error(message)

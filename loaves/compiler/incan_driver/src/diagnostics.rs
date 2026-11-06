@@ -5,6 +5,8 @@
 //! in this move; it is the driver's type. The CLI renders it, the LSP maps it to publish-diagnostics, codegraph
 //! records it — none of them shape it.
 
+use std::cell::RefCell;
+
 use crate::error::CliError;
 use incan_frontend::ast::Span;
 use incan_frontend::diagnostics;
@@ -106,14 +108,60 @@ pub fn typecheck_diagnostic_phase(module: &ParsedModule, span: Span) -> diagnost
     diagnostics::phase_for_typecheck_span(&module.ast, span)
 }
 
-/// Render one module's non-fatal diagnostics to stderr in the shared CLI format.
+thread_local! {
+    /// Request-local warning output for a service caller; ordinary commands continue writing directly to stderr.
+    static WARNING_OUTPUT: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
+}
+
+/// Restore an enclosing request's warning sink even if the operation unwinds.
+struct WarningOutputScope {
+    previous: Option<Vec<String>>,
+}
+
+impl Drop for WarningOutputScope {
+    /// Restore the previous scope without leaking one request's diagnostics into another request.
+    fn drop(&mut self) {
+        WARNING_OUTPUT.with(|output| output.replace(self.previous.take()));
+    }
+}
+
+/// Capture the existing formatted warnings for one synchronous driver operation, preserving nested request scopes.
+///
+/// The operation's result is unchanged, including failures. Service clients replay the returned strings through
+/// their request's stderr channel; direct callers that do not enter this scope retain immediate stderr output.
+pub fn capture_warning_output<T>(operation: impl FnOnce() -> T) -> (T, Vec<String>) {
+    let scope = WarningOutputScope {
+        previous: WARNING_OUTPUT.with(|output| output.replace(Some(Vec::new()))),
+    };
+    let result = operation();
+    let warnings = WARNING_OUTPUT
+        .with(|output| output.borrow_mut().take())
+        .unwrap_or_default();
+    drop(scope);
+    (result, warnings)
+}
+
+/// Deliver already formatted warning text to the current request or ordinary command stderr.
+/// This also carries manifest diagnostics, which must not disappear into an owner's private log.
+pub(crate) fn emit_warning_output(rendered: String) {
+    WARNING_OUTPUT.with(|output| {
+        if let Some(warnings) = output.borrow_mut().as_mut() {
+            warnings.push(rendered);
+        } else {
+            eprint!("{rendered}");
+        }
+    });
+}
+
+/// Render one module's non-fatal diagnostics through the current request's warning sink.
 ///
 /// Warnings never fail a command, so they are shown the moment they are produced rather than held until a
 /// machine-readable report is assembled: `run`, `build`, and `fmt` invocations that never emit JSON must still
 /// surface them.
 pub fn render_module_warnings(file_path: &str, source: &str, warnings: &[diagnostics::CompileError]) {
     for warning in warnings {
-        eprint!("{}", diagnostics::format_error(file_path, source, warning));
+        let rendered = diagnostics::format_error(file_path, source, warning);
+        emit_warning_output(rendered);
     }
 }
 

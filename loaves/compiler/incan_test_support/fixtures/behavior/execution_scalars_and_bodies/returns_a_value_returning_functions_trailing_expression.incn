@@ -1,0 +1,31 @@
+# behavior: returns a value returning functions trailing expression (#2025)
+# pending: the legacy route emits Rust that rustc rejects; the direct route (#1337 stage 4)
+# expect-stdout:
+#   212
+
+"""Returns a value returning functions trailing expression (#2025)."""
+def pick(n: int) -> int:
+  """Match the fixture alternatives and return the selected result."""
+  match n:
+    1 => 10
+    _ => 20
+
+def next(n: int) -> int:
+  """Return the incremented argument as a trailing expression."""
+  n + 1
+
+def choose(n: int) -> int:
+  """Return the selected branch as a trailing expression."""
+  if n == 1:
+    100
+  else:
+    200
+
+def program_result() -> int:
+  """Return the fixture expression `pick(1) + next(1) + choose(2)`."""
+  return pick(1) + next(1) + choose(2)
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

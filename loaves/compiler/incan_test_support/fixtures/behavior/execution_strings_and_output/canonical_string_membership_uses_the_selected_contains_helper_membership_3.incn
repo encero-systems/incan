@@ -1,0 +1,13 @@
+# behavior: canonical string membership uses the selected contains helper
+# expect-stdout:
+#   true
+
+"""Canonical string membership uses the selected contains helper."""
+def membership(needle: str, haystack: str) -> bool:
+    """Return the fixture expression `needle in haystack`."""
+    return needle in haystack
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(membership("", ""))

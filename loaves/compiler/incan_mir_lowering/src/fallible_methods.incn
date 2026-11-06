@@ -1,0 +1,136 @@
+"""Complete native fallible-iterator contracts selected from checked standard slots."""
+
+from rust::incan_semantics_core import (
+    CanonicalSymbolId,
+    SymbolOrigin,
+    SemanticSourceTargetKind,
+    SymbolNamespace,
+    IncanType as RustType,
+    generic,
+)
+from rust::incan_semantics_core::body_ir import BodyIrModule, Body
+from pub::incan_mir_plan import FallibleIteratorMethods, EnumDeclaration, PlanType
+from classes import frame_type, function_name
+from unions import native_source_type, collect_unions
+from trait_links import contains
+from native_arguments import uses_native_argument
+from decls import library_item
+
+
+pub def fallible_methods(
+    module: &BodyIrModule,
+    owner: int,
+    intrinsics: list[EnumDeclaration],
+) -> Result[Option[FallibleIteratorMethods], str]:
+    """Grant the native protocol only for source layouts occurring inside a retained SDK instantiation."""
+    declaration = module.nominal_declarations[owner]
+    if library_item(declaration) != "" or not uses_native_argument(module, str(declaration.name))?:
+        return Ok(None)
+    for protocol in module.trait_declarations:
+        if not standard_protocol(protocol):
+            continue
+        mut arguments: list[RustType] = []
+        mut next: Option[CanonicalSymbolId] = None
+        mut slots: list[str] = []
+        for implementation in module.trait_implementations:
+            if implementation.owner != declaration.canonical or implementation.method.origin != protocol.origin or not contains(
+                protocol,
+                implementation.method,
+            ):
+                continue
+            name = str(implementation.method.declaration_name)
+            if name in slots:
+                return Err("unsupported Body IR ambiguous native fallible iterator slot")
+            slots.append(name)
+            if name == "__next__":
+                if implementation.implementation == implementation.method:
+                    return Err("unsupported Body IR native fallible iterator without source poll")
+                next = Some(implementation.implementation.clone())
+                continue
+            if implementation.implementation != implementation.method:
+                return Err(f"unsupported Body IR native fallible iterator override {name}")
+            if not published_default(module, implementation.method):
+                return Err(f"unsupported Body IR unavailable published native fallible iterator default {name}")
+            mut current: list[RustType] = []
+            for binding in implementation.type_arguments:
+                current.append(binding.argument.clone())
+            if len(current) != 2:
+                return Err("unsupported Body IR native fallible iterator default arguments")
+            if len(arguments) == 0:
+                arguments = current
+            elif arguments != current:
+                return Err("unsupported Body IR inconsistent native fallible iterator arguments")
+        if len(slots) == 0:
+            continue
+        for name in ["__iter__", "__next__", "map", "filter", "flat_map", "take", "inspect", "map_err", "inspect_err", "collect", "fold"]:
+            if name not in slots:
+                return Err(f"unsupported Body IR incomplete native fallible iterator slot {name}")
+        if len(slots) != 11 or len(arguments) != 2:
+            return Err("unsupported Body IR native fallible iterator contract shape")
+        match next:
+            None => return Err("unsupported Body IR native fallible iterator without checked poll")
+            Some(identity) =>
+                for body in module.bodies:
+                    if body.canonical == Some(identity.clone()) and poll_abi(module, body, owner, arguments, intrinsics)?:
+                        return Ok(
+                            Some(
+                                FallibleIteratorMethods(
+                                    item=native_source_type(
+                                        module.nominal_declarations,
+                                        module.enum_declarations,
+                                        collect_unions(module),
+                                        arguments[0],
+                                        intrinsics,
+                                    )?,
+                                    error=native_source_type(
+                                        module.nominal_declarations,
+                                        module.enum_declarations,
+                                        collect_unions(module),
+                                        arguments[1],
+                                        intrinsics,
+                                    )?,
+                                    next=function_name(module, body),
+                                ),
+                            ),
+                        )
+        return Err("unsupported Body IR unavailable native fallible iterator poll body")
+    return Ok(None)
+
+
+def published_default(module: &BodyIrModule, identity: &CanonicalSymbolId) -> bool:
+    """Require a complete published body; original owning modules were validated before their contexts were joined."""
+    for body in module.bodies:
+        if body.canonical != Some(identity.clone()):
+            continue
+        match body.first_representation_gap():
+            None => return true
+            Some(_gap) => return false
+    return false
+
+
+pub def standard_protocol(identity: &CanonicalSymbolId) -> bool:
+    """Authenticate the declaring standard trait, including its enclosing span, rather than a matching member name."""
+    if identity.kind != SemanticSourceTargetKind.Trait or identity.namespace != SymbolNamespace.OrdinaryLexical or identity.declaration_name != "FallibleIterator":
+        return false
+    match identity.origin:
+        SymbolOrigin.Package(library=library, module_path=path) =>
+            return library == "incan_stdlib_core" and path == ["derives", "collection"]
+        SymbolOrigin.Module(path) => return path == ["std", "derives", "collection"]
+        _ => return false
+
+
+def poll_abi(
+    module: &BodyIrModule,
+    body: &Body,
+    owner: int,
+    arguments: list[RustType],
+    intrinsics: list[EnumDeclaration],
+) -> Result[bool, str]:
+    """Require the selected concrete mutable receiver and its exact Result[Option[item], error] contract."""
+    if len(body.type_parameters) != 0 or len(body.params) != 1:
+        return Ok(false)
+    reference = PlanType.ModelMutRef(owner, str(module.nominal_declarations[owner].name))
+    if frame_type(module, body.locals[int(body.params[0].local.index())], intrinsics)? != reference:
+        return Ok(false)
+    expected = generic("Result", [generic("Option", [arguments[0].clone()]), arguments[1].clone()])
+    return Ok(body.return_type == expected)

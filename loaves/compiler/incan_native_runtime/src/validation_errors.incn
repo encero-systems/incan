@@ -1,0 +1,18 @@
+"""Construct and borrow the dependency-owned validation error without replacing its runtime contract."""
+
+from rust::incan_std_core::validation import ValidationError as NativeValidationError
+
+
+pub def make_validation_error(message: str) -> NativeValidationError:
+    """Use the existing runtime's message-only constructor."""
+    return NativeValidationError.new(message)
+
+
+pub def make_coded_validation_error(message: str, code: str) -> NativeValidationError:
+    """Use the existing runtime's message and machine-readable code constructor."""
+    return NativeValidationError.with_code(message, code)
+
+
+pub def format_validation_error(value: &NativeValidationError) -> str:
+    """Borrow the actual runtime Display so later reads retain the error's owned payload."""
+    return str(value)

@@ -1,0 +1,16 @@
+# behavior: a call into a sibling module that also declares a class returns its result
+# expect-stdout:
+#   42
+
+"""A call into a sibling module that also declares a class returns its result."""
+from helper import bump
+
+
+def program_result() -> int:
+    """Return the fixture expression `bump(41)`."""
+    return bump(41)
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

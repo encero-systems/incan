@@ -1,0 +1,4 @@
+"""Provide the sibling declarations used by the fixture."""
+pub def provide() -> int:
+    """Return `7` for this fixture."""
+    return 7

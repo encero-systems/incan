@@ -1,0 +1,226 @@
+{
+  "index_commit": "358c85ef164ea7daf2d2a636c88df17fe459a27a",
+  "registry_lock": "compiler-suite-native-linux-lock.json",
+  "facets": [
+    {
+      "domain": "target",
+      "features": [
+        "cli",
+        "rust_inspect",
+        "std_async",
+        "std_decorators",
+        "std_testing"
+      ],
+      "project": "../../loaves/compiler/incan_driver",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "domain": "target",
+      "features": [
+        "rust_inspect",
+        "std_async",
+        "std_decorators",
+        "std_testing"
+      ],
+      "project": "../../loaves/compiler/incan_emit",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/compiler/incan_format",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "domain": "target",
+      "features": [
+        "rust_inspect",
+        "std_async",
+        "std_decorators",
+        "std_testing"
+      ],
+      "project": "../../loaves/compiler/incan_frontend",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "domain": "target",
+      "features": [
+        "rust_inspect",
+        "std_async",
+        "std_decorators",
+        "std_testing"
+      ],
+      "project": "../../loaves/compiler/incan_ir",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/compiler/incan_oven_facet",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "domain": "target",
+      "features": [
+        "rust_inspect",
+        "std_async",
+        "std_decorators",
+        "std_testing"
+      ],
+      "project": "../../loaves/compiler/incan_provider",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "domain": "target",
+      "features": [
+        "default",
+        "std_async",
+        "std_decorators",
+        "std_testing"
+      ],
+      "project": "../../loaves/compiler/incan_semantics_stdlib",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "project": "../../loaves/compiler/incan_test_support",
+      "domain": "target",
+      "features": [],
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "domain": "target",
+      "features": [
+        "inspector"
+      ],
+      "project": "../../loaves/compiler/rust_inspect",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/kernel/incan_codegraph",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/kernel/incan_lang",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/kernel/incan_semantics_core",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/kernel/incan_syntax",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "domain": "target",
+      "features": [
+        "default",
+        "serde"
+      ],
+      "project": "../../loaves/kernel/incan_vocab",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/oven/oven_cargo_compat",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/oven/oven_interop",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/oven/oven_model",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/oven/oven_rustc",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/oven/oven_store",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/stdlib/async",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/stdlib/core",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/stdlib/data",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "domain": "host",
+      "features": [],
+      "project": "../../loaves/stdlib/derive/incan_derive",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "domain": "host",
+      "features": [],
+      "project": "../../loaves/stdlib/derive/incan_web_macros",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/stdlib/testing",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/stdlib/web",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "project": "../../loaves/toolchain/incan-cli",
+      "domain": "target",
+      "features": [
+        "rust_inspect",
+        "std_async",
+        "std_decorators",
+        "std_testing"
+      ],
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "project": "../../loaves/toolchain/oven-cli",
+      "domain": "target",
+      "features": [
+        "rust_inspect",
+        "std_async",
+        "std_decorators",
+        "std_testing"
+      ],
+      "target": "x86_64-unknown-linux-gnu"
+    }
+  ]
+}

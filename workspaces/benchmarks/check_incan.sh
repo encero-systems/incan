@@ -14,7 +14,8 @@ echo "  root:  $PROJECT_ROOT"
 echo ""
 
 cd "$PROJECT_ROOT"
-INCAN="$PROJECT_ROOT/target/release/incan"
+TARGET_DIR="${CARGO_TARGET_DIR:-$PROJECT_ROOT/target}"
+INCAN="$TARGET_DIR/release/incan"
 if [[ ! -x "$INCAN" ]]; then
   cargo build --release --quiet
 fi

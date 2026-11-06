@@ -1,0 +1,139 @@
+"""A generator expression's later `for` clauses, each of which a step expands through a nested chain of its own."""
+
+from rust::incan_semantics_core::body_ir import (
+    Block as RustBlock,
+    Operand as RustOperand,
+    Place as RustPlace,
+    Rvalue as RustRvalue,
+    StatementKind as RustStatementKind,
+)
+from lists import is_builtin_iteration
+
+
+pub def later_clauses(block: &RustBlock) -> list[tuple[int, int, list[int]]]:
+    """
+    Find each later `for` clause of one step body: its iterator local, its source local, and the locals bound before it.
+
+    The step body follows its item's poll. Clauses nest, so a later clause ends its step, directly or under the step's
+    filters, and its loop yields; the locals bound on that path are what the clause's own step may read besides its item.
+    A loop that never yields, such as a comprehension inside the element, is not a clause.
+    """
+    mut clauses: list[tuple[int, int, list[int]]] = []
+    visit_block(block, 1, [], clauses)
+    return clauses
+
+
+pub def clause_iterator(body: &RustBlock) -> int:
+    """Read the whole iterator local a loop polls first, or -1."""
+    if len(body.stmts) == 0:
+        return -1
+    return builtin_poll(body.stmts[0].kind)[0]
+
+
+pub def clause_item(body: &RustBlock) -> int:
+    """Read the whole local a loop's first poll fills, or -1."""
+    if len(body.stmts) == 0:
+        return -1
+    return builtin_poll(body.stmts[0].kind)[1]
+
+
+def visit_block(block: &RustBlock, start: int, bound: list[int], mut clauses: list[tuple[int, int, list[int]]]) -> None:
+    """Walk one block in order, recording each clause with the locals bound before it, and descend into filters."""
+    mut assigned: list[int] = []
+    assigned.extend(bound)
+    mut iterator = -1
+    mut source = -1
+    for index in range(start, len(block.stmts)):
+        if iterator >= 0 and opens_clause(block.stmts[index].kind, iterator):
+            mut environment: list[int] = []
+            environment.extend(assigned)
+            clauses.append((iterator, source, environment))
+        visit_filters(block.stmts[index].kind, assigned, clauses)
+        initialized = iterator_initialization(block.stmts[index].kind)
+        iterator = initialized[0]
+        source = initialized[1]
+        local = assigned_local(block.stmts[index].kind)
+        if local >= 0 and local not in assigned:
+            assigned.append(local)
+
+
+def visit_filters(kind: &RustStatementKind, bound: list[int], mut clauses: list[tuple[int, int, list[int]]]) -> None:
+    """Descend into a filter's branches with the locals bound so far."""
+    match kind:
+        RustStatementKind.If(cond=_condition, then_block=then_body, else_block=else_body) =>
+            visit_block(then_body, 0, bound, clauses)
+            match else_body:
+                Some(nested) => visit_block(nested, 0, bound, clauses)
+                None => pass
+        _ => pass
+
+
+def opens_clause(kind: &RustStatementKind, iterator: int) -> bool:
+    """Recognize a loop that polls the iterator the previous statement initialized and yields."""
+    match kind:
+        RustStatementKind.Loop(body=body) => return clause_iterator(body) == iterator and yields(body)
+        _ => return false
+
+
+def yields(block: &RustBlock) -> bool:
+    """Report whether a block yields, directly or in a nested filter or loop."""
+    for statement in block.stmts:
+        if statement_yields(statement.kind):
+            return true
+    return false
+
+
+def statement_yields(kind: &RustStatementKind) -> bool:
+    """Find a yield in one statement or the blocks it nests."""
+    match kind:
+        RustStatementKind.Yield(value=_value) => return true
+        RustStatementKind.Loop(body=body) => return yields(body)
+        RustStatementKind.If(cond=_condition, then_block=then_body, else_block=else_body) =>
+            if yields(then_body):
+                return true
+            match else_body:
+                Some(nested) => return yields(nested)
+                None => return false
+        _ => return false
+
+
+def builtin_poll(kind: &RustStatementKind) -> tuple[int, int]:
+    """Read a builtin poll's whole iterator and destination locals, or (-1, -1)."""
+    match kind:
+        RustStatementKind.IterNext(destination=destination, iterator=iterator, protocol=protocol) =>
+            if not is_builtin_iteration(protocol):
+                return (-1, -1)
+            match iterator:
+                RustOperand.Place(read) => return (whole_local(read.place), whole_local(destination))
+                _ => return (-1, -1)
+        _ => return (-1, -1)
+
+
+def iterator_initialization(kind: &RustStatementKind) -> tuple[int, int]:
+    """Read an iterator's initialization from a whole source local, or (-1, -1)."""
+    match kind:
+        RustStatementKind.Assign(place=place, rvalue=value) =>
+            match value:
+                RustRvalue.Use(RustOperand.Place(read)) => return (whole_local(place), whole_local(read.place))
+                _ => return (-1, -1)
+        _ => return (-1, -1)
+
+
+def assigned_local(kind: &RustStatementKind) -> int:
+    """Read the whole local an assignment or a call fills, or -1."""
+    match kind:
+        RustStatementKind.Assign(place=place, rvalue=_value) => return whole_local(place)
+        RustStatementKind.Call(destination=destination, callee=_callee, args=_arguments, may_panic=_may_panic) =>
+            match destination:
+                Some(place) => return whole_local(place)
+                None => return -1
+        _ => return -1
+
+
+pub def whole_local(place: &RustPlace) -> int:
+    """Read a whole Body IR local's index, or -1 for a projection or a global."""
+    if len(place.projection) != 0:
+        return -1
+    match place.local_id():
+        Some(local) => return int(local.index())
+        None => return -1

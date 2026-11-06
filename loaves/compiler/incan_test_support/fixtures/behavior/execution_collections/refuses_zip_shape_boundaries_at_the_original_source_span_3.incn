@@ -1,0 +1,10 @@
+# behavior: the checker refuses zip shape boundaries at the original source span
+# expect-diagnostic: INCAN-T0001
+
+
+"""The checker refuses zip shape boundaries at the original source span."""
+def zip_spread_boundary() -> int:
+  """Attempt a zip call with spread list arguments."""
+  inputs = [[1], [2]]
+  pairs = zip(*inputs)
+  return 0

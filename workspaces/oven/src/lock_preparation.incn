@@ -1,0 +1,200 @@
+"""
+Decide lock preparation from observations held by the original project owner.
+
+The host observes paths, sessions and published bytes and executes the selected operation. This policy owns
+fallback, reuse and retention decisions. A response carries no lease, creates no cache and grants no filesystem
+authority; the host must retain the original session and bind each answer to its exact request.
+"""
+
+from std.json import JsonValue, parse
+from std.hash import sha256
+from std.encoding.hex import hexlify
+from plan_json import exact_object, field, text_field
+
+const SCHEMA: str = "incan.oven.lock-preparation/1"
+
+
+pub model RouteInputs:
+    """Observed layout before selecting retained or canonical project collection."""
+
+    pub paths_absolute: bool
+    pub workspace: bool
+    pub entries_owned: bool
+    pub has_entry: bool
+
+
+pub model ReuseInputs:
+    """Current source identity and evidence from the original session's successful publication."""
+
+    pub session_available: bool
+    pub request: str
+    pub source: Option[str]
+    pub retained_request: Option[str]
+    pub retained_source: Option[str]
+    pub discovery_current: bool
+    pub publication_current: bool
+
+
+pub model RetentionInputs:
+    """Observations surrounding publication; absence and source races prohibit retention."""
+
+    pub source_before: Option[str]
+    pub source_after: Option[str]
+    pub discovery_current: bool
+    pub publication_current: bool
+    pub session_bound: bool
+
+
+pub enum RouteDecision(str):
+    """Closed collection routes; relative paths refuse before any retained or canonical preparation."""
+
+    RelativePaths = "relative_paths"
+    CanonicalPrepared = "canonical_prepared"
+    MissingEntry = "missing_entry"
+    Observe = "observe"
+
+
+pub enum ReuseDecision(str):
+    """Canonical collection, exact retained reuse, or publication after observing the original session."""
+
+    CanonicalCollect = "canonical_collect"
+    Reuse = "reuse"
+    Publish = "publish"
+
+
+pub enum RetentionDecision(str):
+    """Retain a bound unchanged publication, or complete without retaining reusable evidence."""
+
+    Retain = "retain"
+    Complete = "complete"
+
+
+pub def route(inputs: RouteInputs) -> RouteDecision:
+    """Keep unsupported layouts on the existing canonical path without weakening absolute-path admission."""
+    if not inputs.paths_absolute:
+        return RouteDecision.RelativePaths
+    if not inputs.entries_owned or (inputs.workspace and not inputs.has_entry):
+        return RouteDecision.CanonicalPrepared
+    if not inputs.has_entry:
+        return RouteDecision.MissingEntry
+    return RouteDecision.Observe
+
+
+pub def reuse(inputs: ReuseInputs) -> ReuseDecision:
+    """Reuse only the exact request and source with live discovery and original published bytes."""
+    if not inputs.session_available:
+        return ReuseDecision.CanonicalCollect
+    if let Some(source) = inputs.source:
+        if inputs.retained_request == Some(inputs.request) and inputs.retained_source == Some(source):
+            if inputs.discovery_current and inputs.publication_current:
+                return ReuseDecision.Reuse
+    return ReuseDecision.Publish
+
+
+pub def retain(inputs: RetentionInputs) -> RetentionDecision:
+    """Successful publication can be retained only in its original unchanged session generation."""
+    if let Some(source) = inputs.source_before:
+        if inputs.source_after == Some(source):
+            if inputs.discovery_current and inputs.publication_current and inputs.session_bound:
+                return RetentionDecision.Retain
+    return RetentionDecision.Complete
+
+
+def flag(value: JsonValue, name: str) -> Result[bool, str]:
+    """Decode a required observation without a permissive missing-value default."""
+    return field(value, name, ["facts"]).map_err((e) => e.message())?.expect_bool().map_err((e) => e.message())
+
+
+def identity(value: JsonValue, name: str) -> Result[Option[str], str]:
+    """Null explicitly denotes unavailable evidence; empty or incorrectly typed identities refuse."""
+    entry = field(value, name, ["facts"]).map_err((e) => e.message())?
+    if entry.is_null():
+        return Ok(None)
+    text = entry.expect_str().map_err((e) => e.message())?
+    if text == "":
+        return Err(f"empty lock identity: {name}")
+    return Ok(Some(text))
+
+
+def select(document: JsonValue) -> Result[str, str]:
+    """Decode exactly one phase's complete facts before running its typed policy."""
+    exact_object(document, ["schema", "phase", "facts"], []).map_err((e) => e.message())?
+    if text_field(document, "schema", []).map_err((e) => e.message())? != SCHEMA:
+        return Err("unsupported lock preparation schema")
+    phase = text_field(document, "phase", []).map_err((e) => e.message())?
+    facts = field(document, "facts", []).map_err((e) => e.message())?
+    if phase == "route":
+        exact_object(facts, ["paths_absolute", "workspace", "entries_owned", "has_entry"], ["facts"]).map_err(
+            (e) => e.message(),
+        )?
+        return Ok(
+            route(
+                RouteInputs(
+                    paths_absolute=flag(facts, "paths_absolute")?,
+                    workspace=flag(facts, "workspace")?,
+                    entries_owned=flag(facts, "entries_owned")?,
+                    has_entry=flag(facts, "has_entry")?,
+                ),
+            ).value(),
+        )
+    if phase == "reuse":
+        exact_object(
+            facts,
+            ["session_available", "request", "source", "retained_request", "retained_source", "discovery_current", "publication_current"],
+            ["facts"],
+        ).map_err((e) => e.message())?
+        match identity(facts, "request")?:
+            None => return Err("missing lock request identity")
+            Some(request) =>
+                return Ok(
+                    reuse(
+                        ReuseInputs(
+                            session_available=flag(facts, "session_available")?,
+                            request=request,
+                            source=identity(facts, "source")?,
+                            retained_request=identity(facts, "retained_request")?,
+                            retained_source=identity(facts, "retained_source")?,
+                            discovery_current=flag(facts, "discovery_current")?,
+                            publication_current=flag(facts, "publication_current")?,
+                        ),
+                    ).value(),
+                )
+    if phase == "retain":
+        exact_object(
+            facts,
+            ["source_before", "source_after", "discovery_current", "publication_current", "session_bound"],
+            ["facts"],
+        ).map_err((e) => e.message())?
+        return Ok(
+            retain(
+                RetentionInputs(
+                    source_before=identity(facts, "source_before")?,
+                    source_after=identity(facts, "source_after")?,
+                    discovery_current=flag(facts, "discovery_current")?,
+                    publication_current=flag(facts, "publication_current")?,
+                    session_bound=flag(facts, "session_bound")?,
+                ),
+            ).value(),
+        )
+    return Err("unsupported lock preparation phase")
+
+
+pub def evaluate(source: str) -> JsonValue:
+    """Bind selected and refused decisions to every byte of the host's request."""
+    mut result: Result[str, str] = Err("invalid lock preparation JSON")
+    match parse(source):
+        Ok(document) =>
+            result = select(document)
+        Err(error) =>
+            result = Err(error.message())
+    mut response = {"schema": JsonValue.string(SCHEMA), "request_digest": JsonValue.string(
+        "sha256:" + hexlify(sha256.digest(source.encode("utf-8"))),
+    )}
+    match result:
+        Ok(action) =>
+            response["status"] = JsonValue.string("selected")
+            response["action"] = JsonValue.string(action)
+        Err(reason) =>
+            response["status"] = JsonValue.string("refused")
+            response["reason"] = JsonValue.string(reason)
+    return JsonValue.object(response)

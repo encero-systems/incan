@@ -106,6 +106,7 @@ impl CompilerAuthority {
             .and_then(std::ffi::OsStr::to_str)
             .ok_or_else(|| "compiler executable name is not portable UTF-8".to_string())?;
         Ok(RustFactExecutable {
+            runtime_files: Vec::new(),
             name: name.to_string(),
             owner,
             path: self.executable_path.clone(),

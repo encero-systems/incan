@@ -1,15 +1,19 @@
 //! Package Loafs: exporting, copying, publishing, reading and validating the Loaf a public library package
 //! carries beside its artifact.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::build::library_outputs::packaged_library_loaf_store_root;
-use crate::build::output_paths::{validate_packaged_library_metadata_files, validated_project_output_relative_path};
+use crate::build::output_paths::{
+    packaged_library_metadata_files, validate_packaged_library_metadata_files, validated_project_output_relative_path,
+};
 use crate::build::source_authority::digest_baked_project_source_authority;
 use crate::build::{
     CheckedPackagedProviderProfile, OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION, OvenPackagedLibraryLoafManifest,
-    OvenPackagedLibraryLoafProfile,
+    OvenPackagedLibraryLoafProfile, PreparedLibraryProject,
 };
 use crate::error::{CliError, CliResult, oven_rustc_error};
 use incan_frontend::library_manifest::published_layout::packaged_library_loaf_manifest_path;
@@ -21,53 +25,113 @@ use oven_rustc::rustc::select_direct_rustc_plan_for_execution;
 use oven_store::digest_bytes;
 use oven_store::store::{
     OvenArtifactKind, OvenArtifactMaterializedDirectory, OvenArtifactMaterializedFile, OvenArtifactPublishRequest,
-    OvenStore, PublishedOvenStore,
+    OvenStore, OvenStoreExecutionPayload, PublishedOvenStore,
 };
+
+/// Exported ordinary package descriptors with every exact destination owner retained through publication.
+///
+/// Source selections lease a different Store. These original destination leases prevent later member/profile or
+/// metadata publication from reclaiming the entries the final package index will reference (#1337/#1698).
+#[must_use = "retain exported destination owners until the complete package publication finishes"]
+pub struct ExportedPackageLoafs {
+    entries: Vec<OvenPackagedLibraryLoafEntry>,
+    _owners: Vec<OvenStoreExecutionPayload>,
+}
+
+impl ExportedPackageLoafs {
+    /// Borrow the portable descriptors without releasing their original destination owners.
+    pub fn entries(&self) -> &[OvenPackagedLibraryLoafEntry] {
+        &self.entries
+    }
+}
+
+/// Collapse repeated dependency edges only when their complete immutable-entry descriptors agree.
+///
+/// Package closures can reach one owner through multiple dependencies. Preserve first-occurrence order and every
+/// receipt, kind and base-owner contract; conflicting descriptions of one identity refuse before Store selection.
+/// The Store continues to require unique execution identities and retains responsibility for validating owner bytes.
+fn canonical_package_entries(
+    entries: &[OvenPackagedLibraryLoafEntry],
+) -> CliResult<Vec<&OvenPackagedLibraryLoafEntry>> {
+    let mut by_identity: BTreeMap<&str, &OvenPackagedLibraryLoafEntry> = BTreeMap::new();
+    let mut canonical = Vec::new();
+    for entry in entries {
+        if let Some(previous) = by_identity.get(entry.identity.as_str()) {
+            if *previous != entry {
+                return Err(CliError::failure(format!(
+                    "package Loaf has conflicting descriptors for immutable entry `{}`",
+                    entry.identity
+                )));
+            }
+        } else {
+            by_identity.insert(&entry.identity, entry);
+            canonical.push(entry);
+        }
+    }
+    Ok(canonical)
+}
 
 /// Copy one already selected project Loaf into the public provider artifact through normal immutable-store admission.
 ///
-/// This is intentionally an explicit-bake operation. The source store selection retains its active lease while the
-/// package store validates every file and performs its atomic publication, so a package can never point to a
-/// mutable cache directory or a half-copied third-party closure.
+/// Each destination entry is selected immediately after publication, before exporting another member. The caller
+/// must retain the returned owning result through every later profile and the final atomic package publication.
 pub fn export_selected_package_loaf(
     source_store: &OvenStore,
     package_store_root: &Path,
     receipt: &oven_store::OvenReceipt,
     selection: &OvenDirectRustcPlanSelection,
-) -> CliResult<Vec<OvenPackagedLibraryLoafEntry>> {
+) -> CliResult<ExportedPackageLoafs> {
     let package_store = OvenStore::new(package_store_root, *source_store.limits());
-    selection
-        .package_entries(receipt)
-        .into_iter()
-        .map(|entry| {
-            let exported = copy_receipted_oven_store_entry(
-                source_store,
-                &package_store,
-                &entry.receipt,
-                &entry.identity,
-                entry.kind,
-                "package export",
-            )?;
-            if exported.kind != entry.kind
-                || exported.receipt_identity != entry.receipt.identity
-                || exported.build_unit_identity != entry.receipt.build_unit_identity
-                || exported.intent != entry.receipt.intent
-            {
-                return Err(CliError::failure(
-                    "package Loaf changed its receipt-bound execution contract during immutable export",
-                ));
-            }
-            // A shared direct plan can be byte-identical to a plan first sealed under another compatible receipt.
-            // The package store must still publish that verified content under this library output's receipt, so its
-            // portable entry identity is the destination publication rather than the reusable source entry.
-            Ok(OvenPackagedLibraryLoafEntry {
-                receipt: entry.receipt,
-                identity: exported.identity,
-                kind: entry.kind,
-                base_loaf_identity: entry.base_loaf_identity,
-            })
-        })
-        .collect()
+    let mut entries = Vec::new();
+    let mut owners = Vec::new();
+    let source_entries = selection.package_entries(receipt);
+    for entry in canonical_package_entries(&source_entries)? {
+        let exported = copy_receipted_oven_store_entry(
+            source_store,
+            &package_store,
+            &entry.receipt,
+            &entry.identity,
+            entry.kind,
+            "package export",
+        )?;
+        if exported.kind != entry.kind
+            || exported.receipt_identity != entry.receipt.identity
+            || exported.build_unit_identity != entry.receipt.build_unit_identity
+            || exported.intent != entry.receipt.intent
+        {
+            return Err(CliError::failure(
+                "package Loaf changed its receipt-bound execution contract during immutable export",
+            ));
+        }
+        let mut selected = package_store
+            .select_payloads_for_execution(std::slice::from_ref(&exported.identity))
+            .map_err(|error| CliError::failure(format!("failed to retain exported package Loaf: {error}")))?;
+        if selected.len() != 1 {
+            return Err(CliError::failure(
+                "exported package Loaf original destination owner is missing",
+            ));
+        }
+        let owner = selected.remove(0);
+        if owner.manifest() != &exported {
+            return Err(CliError::failure(
+                "exported package Loaf destination owner changed before retention",
+            ));
+        }
+        // A shared direct plan may have originated under another compatible receipt. The destination publication
+        // above binds this output's exact receipt; transport its actual identity while keeping that owner leased.
+        entries.push(OvenPackagedLibraryLoafEntry {
+            receipt: entry.receipt.clone(),
+            identity: exported.identity,
+            kind: entry.kind,
+            base_loaf_identity: entry.base_loaf_identity.clone(),
+        });
+        owners.push(owner);
+    }
+    let entries = canonical_package_entries(&entries)?.into_iter().cloned().collect();
+    Ok(ExportedPackageLoafs {
+        entries,
+        _owners: owners,
+    })
 }
 
 /// Copy one selected immutable entry, or its receipt-compatible direct-plan equivalent, through destination validation.
@@ -86,13 +150,14 @@ pub fn copy_receipted_oven_store_entry(
         return Ok(existing);
     }
     let mut selected = source_store
-        .select_payloads_matching_for_execution(|manifest| {
-            manifest.identity == entry_identity
-                && manifest.kind == entry_kind
-                && manifest.build_unit_identity == receipt.build_unit_identity
-                && manifest.intent == receipt.intent
-        })
-        .map_err(|error| CliError::failure(format!("failed to select provider Loaf for {operation}: {error}")))?;
+        .try_select_payloads_for_execution(&[entry_identity.to_string()])
+        .map_err(|error| CliError::failure(format!("failed to select provider Loaf for {operation}: {error}")))?
+        .unwrap_or_default();
+    selected.retain(|owner| {
+        owner.manifest().kind == entry_kind
+            && owner.manifest().build_unit_identity == receipt.build_unit_identity
+            && owner.manifest().intent == receipt.intent
+    });
     if selected.is_empty() && entry_kind == OvenArtifactKind::DirectRustcPlan {
         // Direct plans are reusable by their verified build unit and intent. A semantically inert source edit can
         // change the caller receipt while preserving the exact sealed Rust closure, leaving its source-store identity
@@ -129,21 +194,18 @@ fn existing_provider_loaf(
     operation: &str,
 ) -> CliResult<Option<oven_store::store::OvenArtifactManifest>> {
     let existing = destination_store
-        .select_payloads_matching_for_execution(|manifest| {
-            manifest.identity == entry_identity
-                && manifest.kind == entry_kind
-                && manifest.receipt_identity == receipt.identity
-                && manifest.build_unit_identity == receipt.build_unit_identity
-                && manifest.intent == receipt.intent
-        })
+        .try_select_payloads_for_execution(&[entry_identity.to_string()])
         .map_err(|error| CliError::failure(format!("failed to inspect provider Loaf before {operation}: {error}")))?;
-    if existing.len() > 1 {
-        return Err(CliError::failure(format!(
-            "expected at most one existing provider Loaf `{entry_identity}` before {operation}, found {}",
-            existing.len()
-        )));
-    }
-    Ok(existing.into_iter().next().map(|payload| payload.manifest))
+    Ok(existing
+        .unwrap_or_default()
+        .into_iter()
+        .find(|owner| {
+            owner.manifest().kind == entry_kind
+                && owner.manifest().receipt_identity == receipt.identity
+                && owner.manifest().build_unit_identity == receipt.build_unit_identity
+                && owner.manifest().intent == receipt.intent
+        })
+        .map(|owner| owner.manifest().clone()))
 }
 
 /// Import a leased, verified source entry through the destination store's ordinary bounded publication.
@@ -220,6 +282,75 @@ fn publish_selected_provider_loaf(
     Ok(exported)
 }
 
+/// Finalize an ordinary library package after its actual profile outputs and final source authority are published.
+///
+/// This shared producer boundary preserves the ordinary bake handoff. The caller retains the checked preparation and
+/// its profile selections through publication, exports every profile closure before entering, and supplies its final
+/// source authority after lock publication. The metadata and generation leases remain held through atomic index
+/// publication. The returned original generation lease must survive completed-output publication. Real profile
+/// outputs are required; source freshness is verified before the association is sealed.
+pub(crate) fn publish_checked_library_package(
+    prepared: &PreparedLibraryProject,
+    source_authority_digest: &str,
+    profiles: BTreeMap<String, OvenPackagedLibraryLoafProfile>,
+    store: &OvenStore,
+) -> CliResult<Option<Arc<super::library_generation::SelectedLibraryGeneration>>> {
+    let metadata_files =
+        packaged_library_metadata_files(&prepared.manifest_path, &prepared.library_manifest, &prepared.out_dir)?;
+    let package_store = OvenStore::with_release(
+        packaged_library_loaf_store_root(&prepared.out_dir),
+        *store.limits(),
+        &incan_oven_facet::compiler_identity(),
+    );
+    let checked_metadata = prepared
+        .metadata_owner
+        .as_ref()
+        .map(|owner| {
+            owner.verify_materialization(&prepared.out_dir)?;
+            if owner.checked_files() != metadata_files {
+                return Err(CliError::failure(
+                    "ordinary package metadata differs from its original checked owner",
+                ));
+            }
+            owner.export_into(&package_store)
+        })
+        .transpose()?;
+    let exported_metadata_owner = checked_metadata
+        .as_ref()
+        .map(|reference| super::library_metadata::select_library_metadata_reference(&package_store, reference))
+        .transpose()?;
+    let generation_owner = prepared
+        .metadata_owner
+        .as_ref()
+        .map(|owner| {
+            super::library_generation::publish_library_generation(
+                store,
+                &prepared.project_root,
+                source_authority_digest,
+                owner,
+            )
+        })
+        .transpose()?;
+    // Keep the exact association in the primary Store as well as its portable package export. A completed output
+    // can then restore both original owners after the replaceable package projection is removed.
+    if let Some(generation) = &generation_owner {
+        generation.export_into(&package_store)?;
+    }
+    let manifest = OvenPackagedLibraryLoafManifest {
+        schema_version: OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION,
+        source_authority_digest: source_authority_digest.to_string(),
+        compiler_version: INCAN_VERSION.to_string(),
+        metadata_files,
+        checked_metadata,
+        checked_generation: generation_owner.as_ref().map(|owner| owner.reference()),
+        profiles,
+    };
+    write_packaged_library_loaf_manifest(&prepared.out_dir, &manifest)?;
+    // The destination lease protects the imported metadata while generation publication may prune this Store.
+    drop(exported_metadata_owner);
+    Ok(generation_owner)
+}
+
 /// Atomically publish the package-local index only after every referenced Loaf and library output exists.
 pub fn write_packaged_library_loaf_manifest(
     artifact_root: &Path,
@@ -269,7 +400,7 @@ pub fn decode_packaged_library_loaf_manifest(
             path.display()
         ))
     })?;
-    if manifest.schema_version != OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION {
+    if manifest.schema_version != OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION && manifest.schema_version != 6 {
         return Err(CliError::failure(format!(
             "Oven Alpha cannot use pub::{} package Loaf manifest at {}: schema {} is unsupported; rebake the provider with this Incan release",
             artifact.dependency_key,
@@ -345,7 +476,7 @@ pub fn read_packaged_library_loaf_manifest(
 }
 
 /// Resolve one package-owned native output without permitting a symlink escape from its artifact root.
-fn validated_packaged_library_output_path(
+pub(super) fn validated_packaged_library_output_path(
     artifact: &LibraryArtifactMetadata,
     relative_path: &str,
     profile: &str,
@@ -402,7 +533,8 @@ fn packaged_library_loaf_profile(
     validated_packaged_library_loaf_profile(artifact, &manifest, profile, target, toolchain)
 }
 
-/// Validate one profile against an already admitted provider manifest.
+/// Validate one profile against an already admitted provider manifest and return unique execution descriptors.
+/// Equal repeated edges remain valid serialized input; only the command-local checked profile is normalized.
 pub fn validated_packaged_library_loaf_profile(
     artifact: &LibraryArtifactMetadata,
     manifest: &OvenPackagedLibraryLoafManifest,
@@ -425,7 +557,8 @@ pub fn validated_packaged_library_loaf_profile(
     {
         return Ok(None);
     }
-    for entry in &candidate.entries {
+    let entries = canonical_package_entries(&candidate.entries)?;
+    for entry in &entries {
         entry.receipt.verify_identity().map_err(|error| {
             CliError::failure(format!(
                 "Oven Alpha refuses package Loaf for pub::{} because entry `{}` has an invalid receipt: {error}",
@@ -459,34 +592,91 @@ pub fn validated_packaged_library_loaf_profile(
             artifact.dependency_key, candidate.library_digest
         )));
     }
-    Ok(Some(candidate.clone()))
+    Ok(Some(OvenPackagedLibraryLoafProfile {
+        receipt: candidate.receipt.clone(),
+        entries: entries.into_iter().cloned().collect(),
+        library_relative_path: candidate.library_relative_path.clone(),
+        library_digest: candidate.library_digest.clone(),
+    }))
 }
 
 /// Return whether a store already contains every exact immutable entry required by one package profile.
 ///
-/// This is intentionally receipt-bound rather than an identity-only cache probe: an unrelated artifact with the
-/// same digest-shaped name cannot become a substitute for a provider's sealed Rust dependency closure.
-fn has_complete_packaged_library_loaf(store: &OvenStore, entries: &[OvenPackagedLibraryLoafEntry]) -> CliResult<bool> {
-    for entry in entries {
-        let selected = store
-            .select_payloads_matching_for_execution(|stored| {
-                stored.identity == entry.identity
-                    && stored.kind == entry.kind
-                    && stored.receipt_identity == entry.receipt.identity
-                    && stored.build_unit_identity == entry.receipt.build_unit_identity
-                    && stored.intent == entry.receipt.intent
-            })
-            .map_err(|error| {
-                CliError::failure(format!(
-                    "failed to inspect package Loaf `{}` before consumer import: {error}",
-                    entry.identity
-                ))
-            })?;
-        if selected.len() != 1 {
-            return Ok(false);
+/// Select only the retained identities, under one Store admission. Receipt checks remain mandatory: an unrelated
+/// artifact cannot replace a provider's sealed closure. Absent entries return false; damaged selected owners refuse.
+pub(super) fn has_complete_packaged_library_loaf(
+    store: &OvenStore,
+    entries: &[OvenPackagedLibraryLoafEntry],
+) -> CliResult<bool> {
+    if entries.is_empty() {
+        return Ok(true);
+    }
+    let entries = canonical_package_entries(entries)?;
+    let identities = entries.iter().map(|entry| entry.identity.clone()).collect::<Vec<_>>();
+    let Some(selected) = store.try_select_payloads_for_execution(&identities).map_err(|error| {
+        CliError::failure(format!(
+            "failed to inspect pinned package Loafs before consumer import: {error}"
+        ))
+    })?
+    else {
+        return Ok(false);
+    };
+    Ok(entries.iter().zip(&selected).all(|(entry, owner)| {
+        owner.manifest().kind == entry.kind
+            && owner.manifest().receipt_identity == entry.receipt.identity
+            && owner.manifest().build_unit_identity == entry.receipt.build_unit_identity
+            && owner.manifest().intent == entry.receipt.intent
+    }))
+}
+
+/// Select ordinary dependency closures directly from their published package Stores, preserving original leases.
+/// Exact package coordinates and receipts remain authoritative. Locally restored outputs without an exported Store
+/// use the same exact selection from the primary Store; neither path imports or copies dependency payloads (#2216).
+pub fn select_ordinary_packaged_provider_plans(
+    primary_store: &OvenStore,
+    checked_profiles: &[CheckedPackagedProviderProfile],
+    profile: &str,
+) -> CliResult<oven_rustc::plan::selection::SelectedPackagedProviderPlans> {
+    let mut plans = oven_rustc::plan::selection::SelectedPackagedProviderPlans::default();
+    for checked in checked_profiles.iter().filter(|checked| checked.profile == profile) {
+        let root = packaged_library_loaf_store_root(&checked.artifact_root);
+        let published = root
+            .try_exists()
+            .map_err(|error| CliError::failure(format!("cannot inspect package Store: {error}")))?;
+        for entry in canonical_package_entries(&checked.package.entries)? {
+            if entry.kind != OvenArtifactKind::DirectRustcPlan || entry.base_loaf_identity.is_some() {
+                return Err(CliError::failure(
+                    "ordinary package requires a self-contained direct closure",
+                ));
+            }
+            let plan = if published {
+                let mut owners = PublishedOvenStore::new(&root)
+                    .select_payloads_for_execution(std::slice::from_ref(&entry.identity))
+                    .map_err(|error| CliError::failure(format!("cannot select published package closure: {error}")))?;
+                if owners.len() != 1 {
+                    return Err(CliError::failure(
+                        "published package closure has no unique original owner",
+                    ));
+                }
+                oven_rustc::plan::selection::packaged_direct_rustc_plan_from_selected(
+                    owners.remove(0),
+                    &entry.receipt,
+                    &entry.identity,
+                )
+                .map_err(crate::error::oven_plan_error)?
+            } else {
+                oven_rustc::plan::selection::select_packaged_direct_rustc_execution_plan(
+                    primary_store,
+                    &entry.receipt,
+                    &entry.identity,
+                )
+                .map_err(crate::error::oven_plan_error)?
+                .ok_or_else(|| CliError::failure("ordinary package closure is missing from its primary Store"))?
+            };
+            plans.direct.push((checked.dependency_key.clone(), entry.clone(), plan));
         }
     }
-    Ok(true)
+    Ok(plans)
 }
 
 /// Import a compatible public provider closure into the consumer's bounded Oven store without running Cargo.
@@ -500,6 +690,7 @@ pub fn import_checked_packaged_library_loaf(
     checked: &CheckedPackagedProviderProfile,
 ) -> CliResult<()> {
     let package_profile = &checked.package;
+    let entries = canonical_package_entries(&package_profile.entries)?;
     let package_store_root = packaged_library_loaf_store_root(&checked.artifact_root);
     let package_store_exists = package_store_root.try_exists().map_err(|error| {
         CliError::failure(format!(
@@ -509,27 +700,29 @@ pub fn import_checked_packaged_library_loaf(
     })?;
     if package_store_exists {
         let selected = PublishedOvenStore::new(&package_store_root)
-            .select_payloads_matching_for_execution(|stored| {
-                package_profile.entries.iter().any(|entry| {
-                    stored.identity == entry.identity
-                        && stored.kind == entry.kind
-                        && stored.receipt_identity == entry.receipt.identity
-                        && stored.build_unit_identity == entry.receipt.build_unit_identity
-                        && stored.intent == entry.receipt.intent
-                })
-            })
+            .select_payloads_matching_for_execution(
+                |stored| {
+                    entries.iter().any(|entry| {
+                        stored.identity == entry.identity
+                            && stored.kind == entry.kind
+                            && stored.receipt_identity == entry.receipt.identity
+                            && stored.build_unit_identity == entry.receipt.build_unit_identity
+                            && stored.intent == entry.receipt.intent
+                    })
+                },
+                |_, _| true,
+            )
             .map_err(|error| {
                 CliError::failure(format!(
                     "failed to read published package Loaf for pub::{}: {error}",
                     checked.dependency_key
                 ))
             })?;
-        if selected.len() == package_profile.entries.len() {
+        if selected.len() == entries.len() {
             for payload in selected {
-                let identity = payload.manifest.identity.clone();
-                let kind = payload.manifest.kind;
-                let entry = package_profile
-                    .entries
+                let identity = payload.manifest().identity.clone();
+                let kind = payload.manifest().kind;
+                let entry = entries
                     .iter()
                     .find(|entry| entry.identity == identity)
                     .ok_or_else(|| CliError::failure("selected package Loaf is absent from its checked profile"))?;
@@ -557,7 +750,7 @@ pub fn import_checked_packaged_library_loaf(
             checked.artifact_root.display()
         )));
     }
-    for entry in &package_profile.entries {
+    for entry in entries {
         let imported = copy_receipted_oven_store_entry(
             consumer_store,
             consumer_store,
@@ -606,6 +799,288 @@ mod tests {
     use oven_store::store::{OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore};
     use oven_store::{OvenGeneratedProjectRequest, digest_bytes, receipt_generated_project, write_receipt};
     use sha2::Digest as _;
+
+    /// Publish and select an actual validated direct-plan Store record without invoking a native compiler.
+    fn exportable_profile_fixture(
+        root: &Path,
+        profile: &str,
+        store: &OvenStore,
+    ) -> Result<(oven_store::OvenReceipt, OvenDirectRustcPlanSelection), Box<dyn std::error::Error>> {
+        let source = root.join("src/lib.rs");
+        fs::create_dir_all(source.parent().ok_or("profile source has no parent")?)?;
+        fs::write(&source, format!("pub fn {profile}() {{}}\n"))?;
+        let receipt = receipt_generated_project(
+            &OvenGeneratedProjectRequest::new(
+                root,
+                "provider",
+                "0.1.0",
+                "aarch64-apple-darwin",
+                "rustc fixture",
+                profile,
+                Vec::new(),
+            )
+            .with_generated_source("generated-root", &source),
+        )?;
+        let mut artifacts =
+            package_loaf_manifest(receipt.intent.clone(), "provider", &digest_bytes(profile.as_bytes()));
+        let mut files = Vec::new();
+        for (index, artifact) in artifacts.externs.iter_mut().enumerate() {
+            let source = root.join(format!("sealed-{index}.rlib"));
+            fs::write(&source, format!("sealed {profile} {} artifact", artifact.crate_name))?;
+            artifact.digest = digest_bytes(&fs::read(&source)?);
+            files.push(OvenArtifactMaterializedFile {
+                source_path: source,
+                relative_path: artifact.relative_path.clone(),
+            });
+        }
+        recapture_package_loaf_closure(&mut artifacts);
+        store.publish(&OvenArtifactPublishRequest {
+            receipt: receipt.clone(),
+            domain: "exported-profile-fixture".into(),
+            kind: OvenArtifactKind::DirectRustcPlan,
+            payload: serde_json::to_vec(&artifacts)?,
+            materialized_files: files,
+            materialized_directories: Vec::new(),
+        })?;
+        let selected = oven_rustc::plan::selection::select_receipt_direct_rustc_execution_plan(store, &receipt)?
+            .ok_or("actual profile plan was not selected")?;
+        Ok((receipt, OvenDirectRustcPlanSelection::Stored(Box::new(selected))))
+    }
+
+    /// A pinned destination remains reusable without inspecting unrelated Store records.
+    #[test]
+    fn pinned_package_loaf_ignores_unrelated_store_entries() -> Result<(), Box<dyn std::error::Error>> {
+        let source = tempfile::tempdir()?;
+        let destination = tempfile::tempdir()?;
+        let projects = tempfile::tempdir()?;
+        let limits = oven_store::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024);
+        let source_store = OvenStore::new(source.path(), limits);
+        let destination_store = OvenStore::new(destination.path(), limits);
+        let (receipt, plan) = exportable_profile_fixture(projects.path(), "debug", &source_store)?;
+        let exported = export_selected_package_loaf(&source_store, destination.path(), &receipt, &plan)?;
+        let entry = exported.entries().first().ok_or("exported profile has no entry")?;
+        let unrelated = destination.path().join("entries/unrelated-entry");
+        fs::create_dir_all(&unrelated)?;
+        fs::write(unrelated.join("artifact.json"), b"malformed unrelated manifest")?;
+
+        assert!(has_complete_packaged_library_loaf(
+            &destination_store,
+            exported.entries()
+        )?);
+        let existing = copy_receipted_oven_store_entry(
+            &source_store,
+            &destination_store,
+            &entry.receipt,
+            &entry.identity,
+            entry.kind,
+            "pinned destination regression",
+        )?;
+        assert_eq!(existing.identity, entry.identity);
+        Ok(())
+    }
+
+    /// A cold destination copies the exact pinned source without enumerating its unrelated records.
+    #[test]
+    fn pinned_provider_copy_ignores_unrelated_source_entries() -> Result<(), Box<dyn std::error::Error>> {
+        let source = tempfile::tempdir()?;
+        let destination = tempfile::tempdir()?;
+        let projects = tempfile::tempdir()?;
+        let limits = oven_store::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024);
+        let source_store = OvenStore::new(source.path(), limits);
+        let destination_store = OvenStore::new(destination.path(), limits);
+        let (receipt, plan) = exportable_profile_fixture(projects.path(), "debug", &source_store)?;
+        let entries = plan.package_entries(&receipt);
+        let entry = entries.first().ok_or("source profile has no entry")?;
+        let unrelated = source.path().join("entries/unrelated-entry");
+        fs::create_dir_all(&unrelated)?;
+        fs::write(unrelated.join("artifact.json"), b"malformed unrelated manifest")?;
+
+        let copied = copy_receipted_oven_store_entry(
+            &source_store,
+            &destination_store,
+            &entry.receipt,
+            &entry.identity,
+            entry.kind,
+            "pinned source regression",
+        )?;
+        assert_eq!(copied.identity, entry.identity);
+        assert!(has_complete_packaged_library_loaf(&destination_store, &entries)?);
+        Ok(())
+    }
+
+    /// Exact lookup preserves receipt checks, reports absence and refuses a damaged selected owner.
+    #[test]
+    fn pinned_package_loaf_requires_matching_receipt_and_intact_owner() -> Result<(), Box<dyn std::error::Error>> {
+        let source = tempfile::tempdir()?;
+        let projects = tempfile::tempdir()?;
+        let limits = oven_store::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024);
+        let store = OvenStore::new(source.path(), limits);
+        let (receipt, plan) = exportable_profile_fixture(&projects.path().join("debug"), "debug", &store)?;
+        let entries = plan.package_entries(&receipt);
+        assert!(has_complete_packaged_library_loaf(&store, &entries)?);
+        let repeated = [entries.clone(), entries.clone()].concat();
+        assert!(has_complete_packaged_library_loaf(&store, &repeated)?);
+        let repeated_ids = repeated.iter().map(|entry| entry.identity.clone()).collect::<Vec<_>>();
+        assert!(
+            store.try_select_payloads_for_execution(&repeated_ids).is_err(),
+            "package reference normalization must not weaken the Store's unique batch contract"
+        );
+
+        let mut missing = entries.clone();
+        missing[0].identity = digest_bytes(b"absent pinned provider");
+        assert!(!has_complete_packaged_library_loaf(&store, &missing)?);
+        let (release, _release_plan) = exportable_profile_fixture(&projects.path().join("release"), "release", &store)?;
+        let mut mismatched = entries.clone();
+        mismatched[0].receipt = release;
+        assert!(!has_complete_packaged_library_loaf(&store, &mismatched)?);
+        let mut wrong_kind = entries[0].clone();
+        wrong_kind.kind = OvenArtifactKind::Engine;
+        let mut wrong_base = entries[0].clone();
+        wrong_base.base_loaf_identity = Some(digest_bytes(b"different sealed base"));
+        for conflicting in [mismatched[0].clone(), wrong_kind, wrong_base] {
+            for pair in [
+                [entries[0].clone(), conflicting.clone()],
+                [conflicting.clone(), entries[0].clone()],
+            ] {
+                assert!(
+                    has_complete_packaged_library_loaf(&store, &pair)
+                        .is_err_and(|error| error.message.contains("conflicting")),
+                    "same identity with incompatible descriptors must refuse in either order"
+                );
+            }
+        }
+
+        let owners = store.select_payloads_for_execution(std::slice::from_ref(&entries[0].identity))?;
+        let root = owners[0]
+            .artifact_root()
+            .parent()
+            .ok_or("selected owner has no entry root")?;
+        let manifest_path = root.join("loaf.json");
+        fs::remove_file(&manifest_path)?;
+        fs::write(&manifest_path, b"damaged selected manifest")?;
+        assert!(has_complete_packaged_library_loaf(&store, &entries).is_err());
+        assert!(has_complete_packaged_library_loaf(&store, &repeated).is_err());
+        Ok(())
+    }
+
+    /// Exact destination leases survive later profiles/metadata pressure; idle entries are reclaimed independently.
+    #[test]
+    fn exported_package_profiles_retain_destination_owners_under_aggregate_pressure()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = tempfile::tempdir()?;
+        let destination = tempfile::tempdir()?;
+        let projects = tempfile::tempdir()?;
+        let generous = oven_store::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024);
+        let source_store = OvenStore::new(source.path(), generous);
+        let (debug_receipt, debug_plan) =
+            exportable_profile_fixture(&projects.path().join("debug"), "debug", &source_store)?;
+        let (release_receipt, release_plan) =
+            exportable_profile_fixture(&projects.path().join("release"), "release", &source_store)?;
+        // Aggregate retention is deliberately below every real record; per-request/domain allowance stays valid.
+        let tight = oven_store::store::OvenStoreLimits::new(1, 1024 * 1024, 1024 * 1024);
+        let source_handle = OvenStore::new(source.path(), tight);
+        let package_store = OvenStore::new(destination.path(), tight);
+        let debug = export_selected_package_loaf(&source_handle, destination.path(), &debug_receipt, &debug_plan)?;
+        assert_eq!(debug.entries().len(), 1);
+        let debug_identity = debug.entries()[0].identity.clone();
+        let idle = package_store.publish(&OvenArtifactPublishRequest {
+            receipt: debug_receipt.clone(),
+            domain: "ordinary-metadata-pressure-fixture".into(),
+            kind: OvenArtifactKind::Engine,
+            payload: b"idle checked-output fixture".to_vec(),
+            materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
+        })?;
+        let release =
+            export_selected_package_loaf(&source_handle, destination.path(), &release_receipt, &release_plan)?;
+        assert_eq!(release.entries().len(), 1);
+        let release_identity = release.entries()[0].identity.clone();
+        assert_ne!(debug_identity, release_identity);
+        let inspection = package_store.inspect()?;
+        assert!(
+            inspection
+                .entries
+                .iter()
+                .any(|entry| entry.manifest.identity == debug_identity)
+        );
+        assert!(
+            inspection
+                .entries
+                .iter()
+                .any(|entry| entry.manifest.identity == release_identity)
+        );
+        assert!(
+            !inspection
+                .entries
+                .iter()
+                .any(|entry| entry.manifest.identity == idle.identity)
+        );
+        package_store.publish(&OvenArtifactPublishRequest {
+            receipt: release_receipt.clone(),
+            domain: "ordinary-generation-pressure-fixture".into(),
+            kind: OvenArtifactKind::Engine,
+            payload: b"later immutable generation publication fixture".to_vec(),
+            materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
+        })?;
+        for entry in debug.entries().iter().chain(release.entries()) {
+            let mut owners = package_store.select_payloads_for_execution(std::slice::from_ref(&entry.identity))?;
+            assert_eq!(owners.len(), 1);
+            let owner = owners.remove(0);
+            owner.verify_admitted_payload()?;
+            assert_eq!(owner.manifest().receipt_identity, entry.receipt.identity);
+            assert_eq!(owner.manifest().kind, entry.kind);
+            assert_eq!(owner.manifest().intent, entry.receipt.intent);
+        }
+        let oversized = package_store.publish(&OvenArtifactPublishRequest {
+            receipt: release_receipt,
+            domain: "oversized-generation-fixture".into(),
+            kind: OvenArtifactKind::Engine,
+            payload: vec![0; 2 * 1024 * 1024],
+            materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
+        });
+        assert!(matches!(
+            oversized,
+            Err(oven_store::store::OvenStoreError::CapacityBlocked { .. })
+        ));
+        package_store.prune()?;
+        let held = package_store.inspect()?;
+        assert!(
+            held.entries
+                .iter()
+                .any(|entry| entry.manifest.identity == debug_identity)
+        );
+        assert!(
+            held.entries
+                .iter()
+                .any(|entry| entry.manifest.identity == release_identity)
+        );
+        drop((debug, release));
+        package_store.prune()?;
+        let released = package_store.inspect()?;
+        assert!(
+            !released
+                .entries
+                .iter()
+                .any(|entry| entry.manifest.identity == debug_identity)
+        );
+        assert!(
+            !released
+                .entries
+                .iter()
+                .any(|entry| entry.manifest.identity == release_identity)
+        );
+        // Original source selections remain held: their independent leases could not protect these destination IDs.
+        assert!(
+            source_store
+                .inspect()?
+                .entries
+                .iter()
+                .any(|entry| entry.manifest.identity == debug_plan.package_entries(&debug_receipt)[0].identity)
+        );
+        Ok(())
+    }
 
     #[test]
     fn direct_plan_package_loaf_composes_from_provider_into_consumer() -> Result<(), Box<dyn std::error::Error>> {
@@ -674,7 +1149,10 @@ mod tests {
             materialized_files,
             materialized_directories: Vec::new(),
         })?;
-        let checked = CheckedPackagedProviderProfile {
+        let output = artifact_root.join("oven/debug/libprovider.rlib");
+        fs::create_dir_all(output.parent().ok_or("provider library has no parent")?)?;
+        fs::write(&output, b"sealed provider library")?;
+        let mut checked = CheckedPackagedProviderProfile {
             dependency_key: "provider".to_string(),
             artifact_root,
             source_available: false,
@@ -688,9 +1166,11 @@ mod tests {
                     base_loaf_identity: None,
                 }],
                 library_relative_path: "oven/debug/libprovider.rlib".to_string(),
-                library_digest: "sha256:provider-library".to_string(),
+                library_digest: digest_bytes(&fs::read(&output)?),
             },
         };
+        // A diamond dependency exports the same exact core descriptor through both parent fragments.
+        checked.package.entries.push(checked.package.entries[0].clone());
         let consumer_store_root = tempfile::tempdir()?;
         let consumer_store = OvenStore::new(consumer_store_root.path(), limits);
         let (entry, lease) = package_store.select(&stored.identity)?;
@@ -699,9 +1179,22 @@ mod tests {
         let entry_root = entry.path;
         drop(lease);
         fs::write(entry_root.join("last-used"), b"1\n")?;
+        let observed = |root: &Path| -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
+            let mut paths = Vec::new();
+            incan_frontend::library_manifest::visit_provider_artifact_inputs(root, &mut |path| {
+                paths.push(path.to_path_buf())
+            })?;
+            Ok(paths)
+        };
+        let before_paths = observed(&checked.artifact_root)?;
         let published_digest = digest_provider_artifact(&checked.artifact_root)?;
         import_checked_packaged_library_loaf(&consumer_store, &checked)?;
-        assert_eq!(digest_provider_artifact(&checked.artifact_root)?, published_digest);
+        assert_eq!(
+            digest_provider_artifact(&checked.artifact_root)?,
+            published_digest,
+            "before: {before_paths:?}; after: {:?}",
+            observed(&checked.artifact_root)?
+        );
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -725,7 +1218,30 @@ mod tests {
         import_checked_packaged_library_loaf(&consumer_store, &checked)?;
         assert_eq!(digest_provider_artifact(&checked.artifact_root)?, published_digest);
         assert_eq!(fs::read(entry_root.join("last-used"))?, b"1\n");
-        let checked = [checked];
+        let artifact = LibraryArtifactMetadata::from_crate_root("provider", "provider", &checked.artifact_root);
+        let manifest = OvenPackagedLibraryLoafManifest {
+            schema_version: OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION,
+            source_authority_digest: String::new(),
+            compiler_version: INCAN_VERSION.to_string(),
+            metadata_files: Vec::new(),
+            checked_metadata: None,
+            checked_generation: None,
+            profiles: BTreeMap::from([("debug".to_string(), checked.package.clone())]),
+        };
+        checked.package = validated_packaged_library_loaf_profile(
+            &artifact,
+            &manifest,
+            "debug",
+            "aarch64-apple-darwin",
+            "rustc fixture",
+        )?
+        .ok_or("the repeated package profile should be admitted")?;
+        assert_eq!(checked.package.entries.len(), 1);
+        assert_eq!(manifest.profiles["debug"].entries.len(), 2);
+        // Two admitted dependency paths may still share this owner; export must transport it only once.
+        let mut other_dependency = checked.clone();
+        other_dependency.dependency_key = "other_provider".to_string();
+        let checked = [checked, other_dependency];
         let candidates = packaged_provider_candidates(&checked, "debug");
         let inputs = select_packaged_provider_plans(&consumer_store, &candidates)?;
         let selected = compose_selected_packaged_provider_plan(inputs, &candidates, &consumer_receipt)?
@@ -744,6 +1260,22 @@ mod tests {
             BTreeSet::from(["incan_std_core", "provider"])
         );
         assert!(packages.report_identity().contains(&stored.identity));
+        let destination = tempfile::tempdir()?;
+        let exported = export_selected_package_loaf(
+            &consumer_store,
+            destination.path(),
+            &consumer_receipt,
+            &OvenDirectRustcPlanSelection::PackagedProvider(packages),
+        )?;
+        assert_eq!(
+            exported.entries().len(),
+            1,
+            "one immutable owner travels once in the exported closure"
+        );
+        assert!(has_complete_packaged_library_loaf(
+            &OvenStore::new(destination.path(), limits),
+            exported.entries(),
+        )?);
         Ok(())
     }
 
@@ -824,6 +1356,8 @@ mod tests {
             source_authority_digest: digest_baked_project_source_authority(package.path())?,
             compiler_version: INCAN_VERSION.to_string(),
             metadata_files: packaged_library_metadata_files(&library_manifest_path, &library_manifest, &artifact_root)?,
+            checked_metadata: None,
+            checked_generation: None,
             profiles: BTreeMap::from([
                 (
                     "debug".to_string(),
@@ -888,11 +1422,15 @@ mod tests {
         assert!(sidecar_error.to_string().contains("declared sidecars"));
         fs::write(&sidecar, sealed_sidecar)?;
 
-        manifest.schema_version = OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION - 1;
+        // Schema 6 carries the same complete native contract, but supplies no checked-metadata replay authority.
+        manifest.schema_version = 6;
+        write_packaged_library_loaf_manifest(&artifact_root, &manifest)?;
+        assert!(packaged_library_loaf_profile(&artifact, "debug", "aarch64-apple-darwin", "rustc fixture")?.is_some());
+        manifest.schema_version = 5;
         write_packaged_library_loaf_manifest(&artifact_root, &manifest)?;
         let schema_error = packaged_library_loaf_profile(&artifact, "debug", "aarch64-apple-darwin", "rustc fixture")
             .err()
-            .ok_or("a package manifest from the previous package release-cohort schema must fail closed")?;
+            .ok_or("a package manifest lacking the current native release-cohort contract must fail closed")?;
         assert!(schema_error.to_string().contains("schema"));
         manifest.schema_version = OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION;
 

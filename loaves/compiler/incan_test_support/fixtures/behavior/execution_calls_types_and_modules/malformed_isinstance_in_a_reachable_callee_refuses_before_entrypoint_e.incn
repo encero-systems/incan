@@ -1,0 +1,19 @@
+# behavior: malformed isinstance in a reachable callee refuses before entrypoint effects, as the legacy route runs it
+# expect-stdout:
+#   must not run
+#   true
+
+"""Malformed isinstance in a reachable callee refuses before entrypoint effects, as the legacy route runs it."""
+def broken(value: int | str) -> bool:
+  """Return the fixture expression `isinstance(value, int)`."""
+  return isinstance(value, int)
+
+def probe() -> bool:
+  """Emit the pre-check marker before testing the value."""
+  println("must not run")
+  return broken(1)
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(probe())

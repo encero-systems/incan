@@ -1,0 +1,13 @@
+# behavior: missing bool identity refuses instead of guessing from its name, as the legacy route runs it
+# expect-stdout:
+#   true
+
+"""Missing bool identity refuses instead of guessing from its name, as the legacy route runs it."""
+def observe() -> bool:
+  """Return the fixture expression `bool(1)`."""
+  return bool(1)
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(observe())

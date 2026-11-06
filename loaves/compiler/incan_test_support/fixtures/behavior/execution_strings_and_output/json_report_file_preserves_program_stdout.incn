@@ -1,0 +1,15 @@
+# behavior: json report file preserves program stdout
+# expect-stdout:
+#   program output
+#   42
+
+"""Json report file preserves program stdout."""
+def program_result() -> int:
+    """Compute and return `42`."""
+    println("program output")
+    return 42
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

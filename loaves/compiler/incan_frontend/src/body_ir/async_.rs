@@ -23,7 +23,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let hir_span_value = hir_span(span);
         let operand = self.lower_expr_to_operand(awaited, scope, out);
         self.record_runtime_requirement(AbiV0RuntimeRequirement::AsyncRuntime);
-        let ty = self.resolve_ty(span);
+        let ty = self
+            .retained_await_output(&operand)
+            .unwrap_or_else(|| self.resolve_ty(span));
+        self.settled_types.insert((span.start, span.end), ty.clone());
         let destination = self.new_temp(ty.clone(), scope, hir_span_value);
         out.push(bir::Statement {
             kind: bir::StatementKind::Await {

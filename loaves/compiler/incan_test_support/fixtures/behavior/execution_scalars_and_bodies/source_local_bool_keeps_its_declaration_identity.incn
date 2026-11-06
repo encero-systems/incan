@@ -1,0 +1,17 @@
+# behavior: source local bool keeps its declaration identity
+# expect-stdout:
+#   42
+
+"""Source local bool keeps its declaration identity."""
+def bool(value: int) -> int:
+  """Return the fixture expression `value + 1`."""
+  return value + 1
+
+def observe() -> int:
+  """Return the fixture expression `bool(41)`."""
+  return bool(41)
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(observe())

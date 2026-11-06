@@ -1,0 +1,17 @@
+# behavior: refuses corrupted enumerate iter next destinations in top level and deferred frames
+# pending: the legacy route emits Rust that rustc rejects; the direct route (#1337 stage 4)
+# expect-stdout:
+#   6
+
+
+"""Refuses corrupted enumerate iter next destinations in top level and deferred frames."""
+def closure_enumerate_entry() -> int:
+  """Collect enumerated values inside a closure and return the first."""
+  closure_values: () -> list[int] = () => (closure_value.1 for closure_value in enumerate([6])).collect()
+  closure_result = closure_values()
+  return closure_result[0]
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(closure_enumerate_entry())

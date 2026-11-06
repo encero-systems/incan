@@ -146,7 +146,8 @@ impl TypeChecker {
         dict_ty(key_ty, val_ty)
     }
 
-    /// Type-check a closure expression and return a function type.
+    /// Check a closure expression, retaining separately validated implicit parameter storage for Body IR.
+    /// The returned function keeps legacy's parameter types; private requirements never replace its lexical symbols.
     pub(in crate::typechecker::check_expr) fn check_closure(
         &mut self,
         params: &[Spanned<Param>],
@@ -183,6 +184,7 @@ impl TypeChecker {
             })
             .collect();
 
+        let errors_before_body = self.errors.len();
         self.enter_mut_param_closure();
         let return_ty = self.check_expr(body);
         self.exit_mut_param_closure();
@@ -192,6 +194,9 @@ impl TypeChecker {
         self.in_async_body = prev_in_async_body;
         self.symbols.exit_scope();
 
+        if self.errors.len() == errors_before_body {
+            self.retain_body_ir_implicit_closure_parameters(params, &param_types, &return_ty, body, span);
+        }
         ResolvedType::Function(param_types, Box::new(return_ty))
     }
 
@@ -248,6 +253,7 @@ impl TypeChecker {
 
         self.enter_mut_param_closure();
         let return_ty = self.check_expr_with_expected(body, Some(expected_ret));
+        let executable_return = self.body_ir_checked_value_type(body.span).unwrap_or(&return_ty).clone();
         self.exit_mut_param_closure();
         if !matches!(return_ty, ResolvedType::Unknown) && !self.types_compatible(&return_ty, expected_ret) {
             self.errors.push(errors::type_mismatch(
@@ -271,6 +277,7 @@ impl TypeChecker {
         // A side the body's `Ok(...)` or `Err(...)` leaves open and the expected type does not fix, such as the error
         // side of an `or_else` callback's `Ok(...)`, is built with a type all the same (#1561).
         let resolved_return = self.settle_open_closure_result_side(body, resolved_return, Some(expected_ret));
+        self.retain_body_ir_closure_type(span, &param_types, &resolved_return, &executable_return);
         ResolvedType::Function(param_types, Box::new(resolved_return))
     }
 }

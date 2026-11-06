@@ -1,0 +1,15 @@
+# behavior: a closure stored in a typed local captures a local and is called (parity corpus row replacement-body-v0-008)
+# expect-stdout:
+#   42
+
+"""A closure stored in a typed local captures a local and is called (parity corpus row replacement-body-v0-008)."""
+def stored_closure() -> int:
+    """Call a stored closure that adds its captured offset."""
+    offset = 2
+    add: (int) -> int = (value) => value + offset
+    return add(40)
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(stored_closure())

@@ -170,6 +170,50 @@ pub enum ToolsMetadataCommand {
 /// Explicit Oven Alpha lifecycle commands.
 #[derive(Subcommand, Debug)]
 pub enum OvenCommand {
+    /// Run project tests through the shared owner
+    Tests {
+        /// Collect only Incan source tests
+        #[arg(long, conflicts_with = "rust_only")]
+        incan_only: bool,
+        /// Collect only Rust source tests
+        #[arg(long, conflicts_with = "incan_only")]
+        rust_only: bool,
+        #[command(flatten)]
+        arguments: TestArgs,
+    },
+    /// Convert selected Cargo workspace library closures into authored Loaf declarations once
+    ConvertCargo {
+        /// Workspace owning Cargo.toml and Cargo.lock; read only during this explicit adoption
+        #[arg(long, default_value = ".")]
+        workspace: PathBuf,
+        /// Library project directories relative to the workspace; may be repeated
+        #[arg(long, required = true)]
+        project: Vec<PathBuf>,
+    },
+    /// Compile a pinned adopted-Loaf closure without Cargo or build-script execution
+    CompileClosure(CompileClosureArgs),
+    /// Prepare the fixed source bootstrap and build its receipt-bound compiler from an admitted SDK
+    #[command(hide = true)]
+    BootstrapCompiler {
+        /// Compiler checkout owning the fixed bootstrap source projects
+        #[arg(long)]
+        compiler_root: PathBuf,
+        /// Caller-owned directory for the first three generated bootstrap programs
+        #[arg(long)]
+        preparation_output: PathBuf,
+        /// Destination for the source-built compiler and its bound companions
+        #[arg(long)]
+        output: PathBuf,
+        /// Compiler and native dependency optimization profile; support engines retain their independent profiles
+        #[arg(long, default_value = "debug", value_parser = ["debug", "release"])]
+        profile: String,
+        /// Explicit Rust compiler executable for the native bootstrap
+        #[arg(long)]
+        rustc: PathBuf,
+        /// Existing Oven store used for preparation and the compiler build
+        #[arg(long)]
+        store: PathBuf,
+    },
     /// Transfer one compiler-selected SDK between CI jobs under a bound envelope
     #[command(hide = true)]
     SdkHandoff {
@@ -195,6 +239,13 @@ pub enum OvenCommand {
         #[arg(long, value_name = "PATH")]
         summary: Option<PathBuf>,
     },
+    /// Prepare compiler-owned ordinary standard packages for a delivered toolchain
+    #[command(hide = true)]
+    PrepareStandardPackages {
+        /// Persisted normal native graph subsequently selected by ordinary commands
+        #[arg(long)]
+        native_graph_output: PathBuf,
+    },
     /// Explicitly materialize or reuse sealed toolchain Loafs for an Incan project
     Bake {
         /// Project root containing loaf.toml and src/lib.incn and/or src/main.incn
@@ -210,12 +261,15 @@ pub enum OvenCommand {
         #[arg(long = "format", value_enum, default_value = "text")]
         format: OvenOutputFormat,
     },
-    /// Emit the compiler-owned SDK provider source identity for repository automation.
+    /// Emit the compiler-owned SDK provider identity for repository automation.
     #[command(hide = true)]
     SdkProviderStoreIdentity {
         /// Compiler source checkout that owns the built-in standard library
         #[arg(long = "compiler-root", value_name = "PATH", default_value = ".")]
         compiler_root: PathBuf,
+        /// Emit the identity of the preparation inputs instead of the sealed store, so it is known before preparation
+        #[arg(long = "inputs")]
+        inputs: bool,
     },
     /// Import frozen Cargo declarations as receipt evidence without launching Cargo
     Import {
@@ -342,6 +396,45 @@ pub enum OvenCommand {
         #[command(subcommand)]
         command: OvenLegacyCargoCommand,
     },
+    /// Run one authored compiler test root against ordinary declaration-selected native Loafs
+    #[command(hide = true)]
+    CompilerNativeTests {
+        /// Source checkout owning the test root and its authored Loaf dependencies
+        #[arg(long, default_value = ".")]
+        compiler_root: PathBuf,
+        /// Checkout-relative Rust libtest source
+        #[arg(long)]
+        target: PathBuf,
+        /// Authored dependency declaration; defaults to the source's sibling `.loaf.toml`
+        #[arg(long)]
+        declaration: Option<PathBuf>,
+        /// Explicit resolved registry selection and local facet policy, without a standard-library publication
+        #[arg(long)]
+        native_graph: Option<PathBuf>,
+        /// Registry index containing the exact revision declared by the native graph
+        #[arg(long)]
+        native_index: Option<PathBuf>,
+        /// Digest-addressed source archives needed by the native graph
+        #[arg(long)]
+        native_blobs: Option<PathBuf>,
+        /// Additional checkout-owned compiled or embedded source input, repeated for separate files or trees
+        #[arg(long = "input")]
+        source_inputs: Vec<PathBuf>,
+        /// Exact inventory-verified case, including explicitly selected ignored cases
+        #[arg(long = "exact")]
+        exact_names: Vec<String>,
+        /// Caller-owned output; kept outputs reuse the receipt-bound executable
+        #[arg(long)]
+        output: PathBuf,
+        #[command(flatten)]
+        store: OvenStoreCliFlags,
+        /// Persistent source workspaces for explicit native fixture bakes
+        #[arg(long)]
+        explicit_bake_workspace: PathBuf,
+        /// Compiler executable matching the selected native Loafs
+        #[arg(long)]
+        rustc: PathBuf,
+    },
     /// Compile and run the stored compiler workspace native suite through a direct-rustc plan
     CompilerLibtests {
         /// Repository root containing the compiler Cargo package and src/lib.rs
@@ -378,6 +471,14 @@ pub enum OvenCommand {
         /// Explicit Cargo for compiler-suite roots that deliberately exercise the Loaf baker
         #[arg(long = "fixture-cargo", value_name = "PATH", hide = true)]
         fixture_cargo: Option<PathBuf>,
+        /// Checkout-owned directory, kept across runs, where explicit-bake roots reuse their baked fixtures
+        #[arg(
+            long = "explicit-bake-workspace",
+            value_name = "PATH",
+            requires = "fixture_cargo",
+            hide = true
+        )]
+        explicit_bake_workspace: Option<PathBuf>,
         /// Caller-owned direct-rustc libtest output path
         #[arg(long, value_name = "PATH")]
         output: Option<PathBuf>,
@@ -467,6 +568,35 @@ pub enum OvenCommand {
         #[arg(long = "format", value_enum, default_value = "text")]
         format: OvenOutputFormat,
     },
+}
+
+/// Physical inputs and policy for the shared adopted-closure executor.
+#[derive(Args, Debug)]
+pub struct CompileClosureArgs {
+    /// Index checkout whose committed files supply facts
+    #[arg(long)]
+    pub pin: PathBuf,
+    /// Full index commit identity, used for every read
+    #[arg(long)]
+    pub index_commit: String,
+    /// JSON root requests with target and host triples
+    #[arg(long)]
+    pub roots: PathBuf,
+    /// Compilation profile
+    #[arg(long, value_parser = ["debug", "release"])]
+    pub profile: String,
+    /// Closure result JSON destination
+    #[arg(long)]
+    pub out: PathBuf,
+    /// Optional existing resolution; omission runs the Incan resolver at the supplied index commit
+    #[arg(long)]
+    pub lock: Option<PathBuf>,
+    /// Digest-addressed source archive directory
+    #[arg(long)]
+    pub blobs: Option<PathBuf>,
+    /// Selected compiler; defaults to the active pinned compiler
+    #[arg(long)]
+    pub rustc: Option<PathBuf>,
 }
 
 /// CI-only SDK provider-store transport operations.
@@ -795,4 +925,114 @@ pub struct LockArgs {
     /// Enable all Cargo features
     #[arg(long = "cargo-all-features")]
     pub cargo_all_features: bool,
+}
+
+/// Shared project test options used by both entry points.
+#[derive(clap::Args, Debug)]
+pub struct TestArgs {
+    /// Path to test file or directory
+    #[arg(value_name = "PATH", default_value = ".")]
+    pub path: PathBuf,
+    /// Select Incan package features for collection and generated test batches
+    #[command(flatten)]
+    pub package_features: PackageFeatureCliFlags,
+    /// Select a non-persistent SDK profile for collection and generated test batches
+    #[command(flatten)]
+    pub sdk_profile: SdkProfileCliFlags,
+    /// Verbose output
+    #[arg(short, long)]
+    pub verbose: bool,
+    /// Stop on first failure
+    #[arg(short = 'x', long = "exitfirst")]
+    pub stop_on_fail: bool,
+    /// Include slow tests
+    #[arg(long)]
+    pub slow: bool,
+    /// Filter tests by keyword expression
+    #[arg(short = 'k', value_name = "EXPR")]
+    pub filter: Option<String>,
+    /// Filter tests by marker expression
+    #[arg(short = 'm', long = "markers", value_name = "EXPR")]
+    pub marker_expr: Option<String>,
+    /// Treat unknown marker names as collection errors
+    #[arg(long = "strict-markers")]
+    pub strict_markers: bool,
+    /// Total test worker budget, shared by native test threads and isolated execution units
+    #[arg(short = 'j', long = "jobs", value_name = "N", default_value_t = 4)]
+    pub jobs: usize,
+    /// Run Rust test cases in separate processes; Incan fixture groups preserve their existing scope
+    #[arg(long)]
+    pub isolate: bool,
+    /// Enable a collection-time testing feature for std.testing.feature("name")
+    #[arg(long = "feature", value_name = "NAME")]
+    pub test_features: Vec<String>,
+    /// Default generated test-batch timeout, such as 250ms, 5s, or 2m
+    #[arg(long = "timeout", value_name = "DURATION")]
+    pub timeout: Option<String>,
+    /// Show test stdout/stderr even when tests pass
+    #[arg(long = "nocapture")]
+    pub no_capture: bool,
+    /// Fail if no tests are collected
+    #[arg(long = "fail-on-empty")]
+    pub fail_on_empty: bool,
+    /// List collected tests after filtering and do not execute them
+    #[arg(long = "list")]
+    pub list_only: bool,
+    /// Output format
+    #[arg(long = "format", value_enum, default_value = "console")]
+    pub report_format: crate::test_runner::TestOutputFormat,
+    /// Write a JUnit XML report to this path
+    #[arg(long = "junit", value_name = "PATH")]
+    pub junit_path: Option<PathBuf>,
+    /// Show the slowest N test durations after the run
+    #[arg(long = "durations", value_name = "N")]
+    pub durations: Option<usize>,
+    /// Shuffle test execution order
+    #[arg(long)]
+    pub shuffle: bool,
+    /// Seed used with --shuffle
+    #[arg(long, value_name = "N")]
+    pub seed: Option<u64>,
+    /// Run xfail tests as ordinary tests
+    #[arg(long = "run-xfail")]
+    pub run_xfail: bool,
+    /// Require up-to-date oven.lock; does not authorize a Cargo command
+    #[arg(long, hide = true)]
+    pub locked: bool,
+    /// Disable INCAN_LOCKED for this invocation
+    #[arg(long = "no-locked", conflicts_with_all = ["locked", "frozen"], hide = true)]
+    pub no_locked: bool,
+    /// Require offline-compatible locked inputs; does not authorize a Cargo command
+    #[arg(long, hide = true)]
+    pub offline: bool,
+    /// Disable INCAN_OFFLINE for this invocation
+    #[arg(long = "no-offline", conflicts_with_all = ["offline", "frozen"], hide = true)]
+    pub no_offline: bool,
+    /// Require an up-to-date frozen oven.lock; does not authorize a Cargo command
+    #[arg(long, hide = true)]
+    pub frozen: bool,
+    /// Disable INCAN_FROZEN for this invocation
+    #[arg(long = "no-frozen", conflicts_with = "frozen", hide = true)]
+    pub no_frozen: bool,
+    /// Retired Cargo argument surface; normal Oven commands reject it
+    #[arg(long = "cargo-args", value_name = "ARG", num_args = 1.., allow_hyphen_values = true, hide = true)]
+    pub cargo_args: Vec<String>,
+    /// Retired Cargo feature surface; normal Oven commands reject it
+    #[arg(long = "cargo-features", value_delimiter = ',', hide = true)]
+    pub cargo_features: Vec<String>,
+    /// Retired Cargo feature surface; normal Oven commands reject it
+    #[arg(long = "cargo-no-default-features", hide = true)]
+    pub cargo_no_default_features: bool,
+    /// Retired Cargo feature surface; normal Oven commands reject it
+    #[arg(long = "cargo-all-features", hide = true)]
+    pub cargo_all_features: bool,
+    /// Select every member in the active workspace
+    #[arg(long, conflicts_with = "members")]
+    pub workspace: bool,
+    /// Select one workspace member by name or root-relative path; may be repeated
+    #[arg(long = "member", value_name = "NAME_OR_PATH", conflicts_with = "workspace")]
+    pub members: Vec<String>,
+    /// Retired Cargo passthrough surface; normal Oven commands reject it
+    #[arg(last = true, hide = true)]
+    pub cargo_passthrough: Vec<String>,
 }

@@ -122,6 +122,68 @@ pub fn rust_extern_report_paths(contexts: &[RustExternDeclContext]) -> Vec<Strin
     paths
 }
 
+/// Resolve an ordinary source publisher's extern ABI demand to the native item its existing backend actually calls.
+///
+/// Canonical `Deserialize.from_json` is a compiler-provided trait default calling `parse_or_error`, not a free
+/// function in `rust.module`. Only the original Data source issuer, its registered JSON member and the exact
+/// parsed trait method can select that helper. Diagnostic labels and legacy ABI collection remain unchanged.
+pub(crate) fn ordinary_rust_extern_abi_path(
+    context: &RustExternDeclContext,
+    modules: &[ParsedModule],
+    plan: &incan_provider::ProviderPlan,
+) -> crate::error::CliResult<String> {
+    use incan_lang::lang::stdlib::{self, StdlibJsonTraitId};
+
+    let original = format!("{}::{}", context.rust_module_path, context.item_name);
+    let Some(owner) = plan.standard_source_publication() else {
+        return Ok(original);
+    };
+    if context.rust_module_path != format!("{}::serde", stdlib::facets::DATA)
+        || context.item_name != "from_json"
+        || !owner.namespace_roots().contains(&stdlib::STDLIB_SERDE)
+    {
+        return Ok(original);
+    }
+    let module_path = [stdlib::STDLIB_ROOT, stdlib::STDLIB_SERDE, stdlib::STDLIB_JSON].map(str::to_string);
+    let member = owner
+        .open_source_module(&module_path)
+        .map_err(|error| crate::error::CliError::failure(error.to_string()))?;
+    if context.file_path != member.path() {
+        return Ok(original);
+    }
+    if context.source.as_bytes()
+        != member
+            .verified_bytes()
+            .map_err(|error| crate::error::CliError::failure(error.to_string()))?
+    {
+        return Err(crate::error::CliError::failure(
+            "ordinary JSON extern source differs from its original owned member",
+        ));
+    }
+    let canonical_method = modules
+        .iter()
+        .filter(|module| module.file_path == context.file_path)
+        .any(|module| {
+            module.ast.declarations.iter().any(|declaration| {
+                let Declaration::Trait(trait_decl) = &declaration.node else {
+                    return false;
+                };
+                stdlib::stdlib_json_trait_id_for_identity(&module_path, &trait_decl.name)
+                    == Some(StdlibJsonTraitId::Deserialize)
+                    && trait_decl.methods.iter().any(|method| {
+                        method.span == context.span
+                            && method.node.name == context.item_name
+                            && has_rust_extern_decorator(&method.node.decorators)
+                    })
+            })
+        });
+    if canonical_method {
+        Ok(format!("{}::json::__private::parse_or_error", stdlib::facets::DATA))
+    } else {
+        Ok(original)
+    }
+}
+
 /// Content-derived identity of the source modules about to be compiled, computed before codegen runs.
 ///
 /// Ordered by file path rather than collection order so the identity does not depend on module discovery order. Used as

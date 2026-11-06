@@ -1,0 +1,316 @@
+"""
+Result's builtin combinators, lowered as one branch on the receiver's active variant.
+
+`map`, `and_then` and `inspect` call their callback on the `Ok` payload, and `map_err`, `or_else` and `inspect_err` on
+the `Err` payload. The callback is a function item, a function pointer, a closure, or a model whose own `__call__`
+method makes it callable. The other variant passes through unchanged, as the standard library's own bodies do.
+"""
+
+from rust::incan_semantics_core::body_ir import (
+    BodyIrModule,
+    ArgumentElement as RustArgumentElement,
+    Operand as RustOperand,
+    OwnershipFact,
+    Place as RustPlace,
+)
+from pub::incan_mir_plan import (
+    CalleeKind,
+    EnumDeclaration,
+    Operand,
+    Place,
+    PlanType,
+    Projection,
+    RvalueKind,
+    SourceSpan,
+    TerminatorKind,
+)
+from pub::incan_mir_plan import assign as plan_assign
+from frame import Builder, forget_owned, place_type, read_place, temporary, track_rvalue_moves
+from options import assign_carrier, carrier_layout, carrier_payload_value, replace_owned_destination, variant_condition
+from classes import frame_type, function_name
+from closures import callable_signature
+from layout_types import native_source_type
+from lowering import scalar_place, lower_callable_result, call_closure
+from trait_links import contains
+
+
+pub model Combinator:
+    """
+    What one builtin Result combinator does.
+
+    `slot` is the variant whose payload the callback receives: zero for `Ok`, one for `Err`. `effect` is `wrap` when
+    the callback's result becomes that variant's new payload, `chain` when the callback's result is the whole new
+    Result, and `observe` when the callback only sees the payload and the receiver is returned unchanged.
+    """
+
+    pub slot: int
+    pub effect: str
+
+
+pub def result_combinator(member: str) -> Option[Combinator]:
+    """Select the combinator a builtin Result member names; any other member is not one."""
+    if member == "Result.map":
+        return Some(Combinator(slot=0, effect="wrap"))
+    if member == "Result.map_err":
+        return Some(Combinator(slot=1, effect="wrap"))
+    if member == "Result.and_then":
+        return Some(Combinator(slot=0, effect="chain"))
+    if member == "Result.or_else":
+        return Some(Combinator(slot=1, effect="chain"))
+    if member == "Result.inspect":
+        return Some(Combinator(slot=0, effect="observe"))
+    if member == "Result.inspect_err":
+        return Some(Combinator(slot=1, effect="observe"))
+    return None
+
+
+pub def lower_result_combinator(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    combinator: Combinator,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Take the receiver as an owned carrier, then branch on its active variant and call the callback on one side."""
+    if len(arguments) != 2:
+        return Err("invalid Body IR Result combinator arity")
+    source = owned_receiver(builder, arguments[0], span)?
+    _owner, input = carrier_layout(builder, place_type(builder.locals, source))?
+    if input.carrier != "Result":
+        return Err("unsupported Body IR Result combinator on another carrier")
+    callback = callback_place(builder, arguments[1], span)?
+    if combinator.effect == "observe":
+        output = output_place(builder, destination, place_type(builder.locals, source), span)?
+        return observe(module, builder, combinator.slot, input, source, callback, output, span)
+    match destination:
+        Some(place) =>
+            output = scalar_place(builder, place, span)?
+            return transform(module, builder, combinator, input, source, callback, output, span)
+        None => return Err("unsupported Body IR discarded Result combinator result")
+
+
+def owned_receiver(mut builder: Builder, argument: &RustArgumentElement, span: SourceSpan) -> Result[Place, str]:
+    """
+    Hold the receiver in a fresh owned temporary.
+
+    A moved receiver is taken whole. A receiver the source reads again is cloned, so the original stays usable.
+    """
+    match argument.as_one():
+        Some(RustOperand.Place(read)) =>
+            place = scalar_place(builder, read.place, span)?
+            ty = place_type(builder.locals, place)
+            mut value = read_place(place, true, span)
+            match read.fact:
+                OwnershipFact.Move =>
+                    if place.projection != Projection.Whole:
+                        return Err("unsupported Body IR partial Result combinator receiver move")
+                OwnershipFact.Clone =>
+                    value = carrier_payload_value(builder, place, span)?
+                OwnershipFact.Borrow =>
+                    value = carrier_payload_value(builder, place, span)?
+                _ => return Err("unsupported Body IR Result combinator receiver ownership")
+            source = temporary(builder, ty, span)
+            track_rvalue_moves(builder, RvalueKind.Use(value))
+            builder.emit(plan_assign(source, RvalueKind.Use(value), span))
+            builder.owned.append(source.local)
+            return Ok(source)
+        Some(_value) => return Err("unsupported Body IR Result combinator nonplace receiver")
+        None => return Err("unsupported Body IR Result combinator spread receiver")
+
+
+def callback_place(mut builder: Builder, argument: &RustArgumentElement, span: SourceSpan) -> Result[Place, str]:
+    """The local holding the callback; a callback is only ever borrowed or copied, never consumed."""
+    match argument.as_one():
+        Some(RustOperand.Place(read)) =>
+            if read.fact == OwnershipFact.Unknown or read.fact == OwnershipFact.MutBorrow:
+                return Err("unsupported Body IR Result combinator callback ownership")
+            return scalar_place(builder, read.place, span)
+        Some(_value) => return Err("unsupported Body IR Result combinator nonplace callback")
+        None => return Err("unsupported Body IR Result combinator spread callback")
+
+
+def output_place(
+    mut builder: Builder,
+    destination: &Option[RustPlace],
+    ty: PlanType,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """The checked destination, or a typed temporary for a discarded result."""
+    match destination:
+        Some(place) => return scalar_place(builder, place, span)
+        None => return Ok(temporary(builder, ty, span))
+
+
+def observe(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    slot: int,
+    input: EnumDeclaration,
+    source: Place,
+    callback: Place,
+    output: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Call the callback with a copy of the selected payload, then return the receiver unchanged.
+
+    Legacy hands the callback a borrow of the payload. A callback cannot change or keep its parameter, so a copy, or
+    a clone of an owned payload, is observed identically.
+    """
+    payload_type = input.variants[slot].fields[0]
+    selected = builder.new_block(span)
+    join = builder.new_block(span)
+    owners = builder.owned
+    condition = variant_condition(builder, source, slot, span)
+    builder.finish(TerminatorKind.SwitchBool(condition, join, selected), span)
+    builder.current = selected
+    payload = Place(local=source.local, projection=Projection.VariantField(slot, 0, payload_type), span=span)
+    argument = carrier_payload_value(builder, payload, span)?
+    unit = temporary(builder, PlanType.Unit, span)
+    call_callback(module, builder, callback, argument, payload_type, unit, PlanType.Unit, span)?
+    builder.finish(TerminatorKind.Goto(join), span)
+    builder.current = join
+    builder.owned = owners
+    forget_owned(builder, source.local)
+    replace_owned_destination(builder, output, RvalueKind.Use(read_place(source, true, span)), span)
+    return Ok(None)
+
+
+def transform(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    combinator: Combinator,
+    input: EnumDeclaration,
+    source: Place,
+    callback: Place,
+    output: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Move the active payload out of the receiver: the selected side goes to the callback, the other side is rewrapped.
+
+    `wrap` rewraps the callback's result in the selected variant; `chain` returns the callback's Result as it is.
+    """
+    slot = combinator.slot
+    output_type = place_type(builder.locals, output)
+    owner, result = carrier_layout(builder, output_type)?
+    if result.carrier != "Result" or result.variants[1 - slot].fields != input.variants[1 - slot].fields:
+        return Err("unsupported Body IR Result combinator changing the untouched side")
+    payload_type = input.variants[slot].fields[0]
+    mut callback_result = output_type
+    if combinator.effect == "wrap":
+        callback_result = result.variants[slot].fields[0]
+    selected = builder.new_block(span)
+    other = builder.new_block(span)
+    join = builder.new_block(span)
+    condition = variant_condition(builder, source, slot, span)
+    builder.finish(TerminatorKind.SwitchBool(condition, other, selected), span)
+    # The carrier has one active payload. Both edges move it, so neither drops the emptied carrier.
+    forget_owned(builder, source.local)
+    owners = builder.owned
+    builder.current = other
+    kept_type = input.variants[1 - slot].fields[0]
+    kept = Place(local=source.local, projection=Projection.VariantField(1 - slot, 0, kept_type), span=span)
+    assign_carrier(builder, output, owner, 1 - slot, [read_place(kept, true, span)], span)
+    retained = builder.owned
+    builder.finish(TerminatorKind.Goto(join), span)
+    builder.current = selected
+    builder.owned = owners
+    payload = Place(local=source.local, projection=Projection.VariantField(slot, 0, payload_type), span=span)
+    argument = read_place(payload, true, span)
+    if combinator.effect == "wrap":
+        value = temporary(builder, callback_result, span)
+        call_callback(module, builder, callback, argument, payload_type, value, callback_result, span)?
+        assign_carrier(builder, output, owner, slot, [read_place(value, true, span)], span)
+    else:
+        call_callback(module, builder, callback, argument, payload_type, output, callback_result, span)?
+    builder.finish(TerminatorKind.Goto(join), span)
+    builder.current = join
+    builder.owned = retained
+    return Ok(None)
+
+
+def call_callback(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    callback: Place,
+    argument: Operand,
+    payload: PlanType,
+    output: Place,
+    result: PlanType,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Call the held callback on one payload, requiring exactly the payload's input and the expected result."""
+    ty = place_type(builder.locals, callback)
+    match ty:
+        PlanType.Model(index, _name) =>
+            return call_callable_model(module, builder, index, callback, argument, payload, output, result, span)
+        _ => pass
+    signature = callable_signature(ty)?
+    if len(signature) != 2 or signature[0] != payload or signature[1] != result:
+        return Err("unsupported Body IR Result combinator callback signature")
+    match ty:
+        PlanType.Closure(_held) => return call_closure(builder, callback, signature, [argument], output, span)
+        PlanType.ClosureRef(_held) => return call_closure(builder, callback, signature, [argument], output, span)
+        _ => pass
+    return lower_callable_result(
+        builder,
+        CalleeKind.Value(read_place(callback, false, span)),
+        [argument],
+        output,
+        result,
+        span,
+    )
+
+
+def call_callable_model(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    index: int,
+    callback: Place,
+    argument: Operand,
+    payload: PlanType,
+    output: Place,
+    result: PlanType,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Call a model's own `__call__` method on a shared borrow of the model, as legacy calls the callable object."""
+    owner = builder.nominals[index].canonical
+    mut found: list[int] = []
+    for position in range(len(module.bodies)):
+        match module.bodies[position].canonical:
+            Some(identity) =>
+                if identity.origin == owner.origin and contains(owner, identity) and str(identity.declaration_name) == "__call__":
+                    found.append(position)
+            None => pass
+    if len(found) != 1:
+        return Err("unsupported Body IR Result combinator callback without one own __call__ method")
+    body = module.bodies[found[0]]
+    if len(body.type_parameters) != 0 or len(body.params) != 2 or body.params[1].mutable:
+        return Err("unsupported Body IR Result combinator callback __call__ shape")
+    receiver_type = frame_type(module, body.locals[0], builder.intrinsics)?
+    match receiver_type:
+        PlanType.ModelRef(_owner, _name) => pass
+        _ => return Err("unsupported Body IR Result combinator callback __call__ receiver")
+    parameter = native_source_type(
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        body.params[1].ty,
+        builder.intrinsics,
+    )?
+    returned = native_source_type(builder.nominals, builder.enums, builder.unions, body.return_type, builder.intrinsics)?
+    if parameter != payload or returned != result:
+        return Err("unsupported Body IR Result combinator callback signature")
+    reference = temporary(builder, receiver_type, span)
+    builder.emit(plan_assign(reference, RvalueKind.Borrow(callback), span))
+    operands = [read_place(reference, true, span), argument]
+    return lower_callable_result(
+        builder,
+        CalleeKind.Planned(function_name(module, body)),
+        operands,
+        output,
+        result,
+        span,
+    )

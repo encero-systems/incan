@@ -1,0 +1,21 @@
+# behavior: a partial binding one keyword argument is called with the default kept and with every argument overridden (parity corpus row replacement-body-v0-009)
+# expect-stdout:
+#   868
+
+"""A partial binding one keyword argument is called with the default kept and with every argument overridden (parity corpus row replacement-body-v0-009)."""
+def route(method: int, path: int, content_type: int = 3) -> int:
+    """Return the fixture expression `method * 100 + path * 10 + content_type`."""
+    return method * 100 + path * 10 + content_type
+
+def partial_defaults() -> int:
+    """Combine calls with bound keywords and explicit default overrides."""
+    method = 1
+    get = partial route(method=method)
+    normal = get(4)
+    overridden = get(method=7, path=2, content_type=5)
+    return normal + overridden
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(partial_defaults())

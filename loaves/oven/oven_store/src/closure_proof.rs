@@ -64,16 +64,16 @@ impl OvenClosureProof {
             .then_some(proof)
     }
 
-    /// Write the proof atomically: a sibling temporary file renamed into place, so a concurrent reader sees either
-    /// no proof or a whole one, and two writers racing on the same proof leave identical content.
+    /// Write the proof atomically through a private sibling temporary file. Same-process workers and separate
+    /// processes never share staging, so readers see a complete proof and identical writers may safely replace it.
     pub fn write(&self, path: &Path) -> io::Result<()> {
         let parent = path
             .parent()
             .ok_or_else(|| io::Error::other("closure proof path has no parent"))?;
         fs::create_dir_all(parent)?;
-        let staged = parent.join(format!(".{}.{}", std::process::id(), "proof.tmp"));
-        fs::write(&staged, serde_json::to_vec_pretty(self).map_err(io::Error::other)?)?;
-        fs::rename(&staged, path)
+        let mut staged = tempfile::Builder::new().prefix(".proof-").tempfile_in(parent)?;
+        serde_json::to_writer_pretty(staged.as_file_mut(), self).map_err(io::Error::other)?;
+        staged.persist(path).map(|_| ()).map_err(|error| error.error)
     }
 }
 
@@ -102,5 +102,60 @@ mod tests {
         )?;
         assert!(OvenClosureProof::read_matching(&path, "sha256:abc", 3).is_none());
         Ok(())
+    }
+
+    /// Writers in the same process must never share staged bytes, even when publishing different closures.
+    #[test]
+    fn concurrent_closure_proofs_keep_their_own_bytes() -> Result<(), Box<dyn std::error::Error>> {
+        concurrent_writers(false)
+    }
+
+    /// Concurrent identical proofs can replace each other atomically without losing their temporary file.
+    #[test]
+    fn concurrent_identical_closure_proofs_publish_without_missing_staging() -> Result<(), Box<dyn std::error::Error>> {
+        concurrent_writers(true)
+    }
+
+    /// Exercise both shared and distinct proof destinations under simultaneous same-process publication.
+    fn concurrent_writers(same_closure: bool) -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let barrier = std::sync::Barrier::new(8);
+        std::thread::scope(|scope| -> Result<(), Box<dyn std::error::Error>> {
+            let workers: Vec<_> = (0..8)
+                .map(|worker| {
+                    let root = root.path();
+                    let barrier = &barrier;
+                    scope.spawn(move || -> io::Result<()> {
+                        barrier.wait();
+                        for round in 0..32 {
+                            let identity = if same_closure {
+                                "sha256:shared".to_string()
+                            } else {
+                                format!("sha256:{worker}-{round}")
+                            };
+                            let proof = OvenClosureProof {
+                                schema_version: OVEN_CLOSURE_PROOF_SCHEMA_VERSION,
+                                closure_identity: identity,
+                                artifact_count: 3,
+                            };
+                            let path = OvenClosureProof::path(root, &proof.closure_identity);
+                            proof.write(&path)?;
+                            if OvenClosureProof::read_matching(&path, &proof.closure_identity, 3).as_ref()
+                                != Some(&proof)
+                            {
+                                return Err(io::Error::other(
+                                    "concurrent proof publication mixed or lost closure bytes",
+                                ));
+                            }
+                        }
+                        Ok(())
+                    })
+                })
+                .collect();
+            for worker in workers {
+                worker.join().map_err(|_| io::Error::other("proof writer panicked"))??;
+            }
+            Ok(())
+        })
     }
 }

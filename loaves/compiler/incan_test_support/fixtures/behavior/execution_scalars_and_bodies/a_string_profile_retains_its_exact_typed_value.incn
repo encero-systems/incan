@@ -1,0 +1,13 @@
+# behavior: a string profile retains its exact typed value
+# expect-stdout:
+#   hello, Ada
+
+"""A string profile retains its exact typed value."""
+def greet(name: str) -> str:
+    """Return the fixture expression `"hello, " + name`."""
+    return "hello, " + name
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(greet("Ada"))

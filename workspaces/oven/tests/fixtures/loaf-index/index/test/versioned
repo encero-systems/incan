@@ -1,0 +1,3 @@
+{"name":"test/versioned","vers":"1.0.0","cksum":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","yanked":false,"rust":{"name":"versioned","type":"lib","edition":"2021"},"deps":[],"features":{"one":[],"two":[]},"facts":[]}
+{"name":"test/versioned","vers":"1.2.0","cksum":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","yanked":false,"rust":{"name":"versioned","type":"lib","edition":"2021"},"deps":[],"features":{"one":[],"two":[]},"facts":[]}
+{"name":"test/versioned","vers":"2.0.0","cksum":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","yanked":false,"rust":{"name":"versioned","type":"lib","edition":"2021"},"deps":[],"features":{"one":[],"two":[]},"facts":[]}

@@ -33,6 +33,24 @@ pub const OVEN_COMPILED_RUST_UNIT_IDENTITY_DOMAIN: &str = "incan.oven.compiled-r
 pub struct OvenCompiledRustUnitIdentity(String);
 
 impl OvenCompiledRustUnitIdentity {
+    /// Bind the effective native closure and rebuilt dependency identities before output publication.
+    ///
+    /// Materialization computes the source recipe without launching a compiler. The executor adds actual pinned
+    /// link inputs and already rebuilt child identities here so changed linker bytes propagate through dependents.
+    pub(super) fn with_execution_inputs(
+        &self,
+        link: Option<&str>,
+        dependencies: &[(String, String)],
+    ) -> Result<Self, OvenRustcError> {
+        let bytes = serde_json::to_vec(&("incan.oven.linked-execution/1", self.as_str(), link, dependencies)).map_err(
+            |error| OvenRustcError::InvalidInput {
+                field: "compiled Rust execution identity",
+                message: error.to_string(),
+            },
+        )?;
+        Ok(Self(digest_bytes(&bytes)))
+    }
+
     /// Return the canonical SHA-256 identity.
     pub fn as_str(&self) -> &str {
         &self.0
@@ -373,6 +391,20 @@ fn compiled_linked_library<'a>(
 
 #[cfg(test)]
 mod tests {
+    /// Linker and rebuilt-child changes invalidate execution identities independently of source coordinates.
+    #[test]
+    fn execution_identity_binds_link_closure_and_dependencies() -> Result<(), Box<dyn std::error::Error>> {
+        let base = super::OvenCompiledRustUnitIdentity(super::digest_bytes(b"source recipe"));
+        let children = vec![("macro".to_string(), super::digest_bytes(b"macro-a"))];
+        let first = base.with_execution_inputs(Some("link-a"), &children)?;
+        assert_eq!(first, base.with_execution_inputs(Some("link-a"), &children)?);
+        assert_ne!(first, base.with_execution_inputs(Some("link-b"), &children)?);
+        assert_ne!(first, base.with_execution_inputs(None, &children)?);
+        let changed = vec![("macro".to_string(), super::digest_bytes(b"macro-b"))];
+        assert_ne!(first, base.with_execution_inputs(Some("link-a"), &changed)?);
+        Ok(())
+    }
+
     use std::collections::BTreeMap;
 
     use super::*;

@@ -1,0 +1,8 @@
+pub enum Packet:
+    Value(int)
+    Empty
+
+
+pub enum Other:
+    Empty
+    Value(int)

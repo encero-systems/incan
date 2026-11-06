@@ -107,6 +107,7 @@ pub(super) fn count_reads_in_condition(name: &str, cond: &ast::Condition) -> usi
 pub(super) fn count_reads_in_expr(name: &str, expr: &ast::Expr) -> usize {
     match expr {
         ast::Expr::Ident(id) => usize::from(id == name),
+        ast::Expr::SelfExpr => usize::from(name == "self"),
         ast::Expr::Binary(l, _, r) => count_reads_in_expr(name, &l.node) + count_reads_in_expr(name, &r.node),
         ast::Expr::Unary(_, e) => count_reads_in_expr(name, &e.node),
         ast::Expr::Call(callee, _, args) => {
@@ -137,6 +138,30 @@ pub(super) fn count_reads_in_expr(name: &str, expr: &ast::Expr) -> usize {
                     .unwrap_or(0)
         }
         ast::Expr::Paren(e) | ast::Expr::Try(e) => count_reads_in_expr(name, &e.node),
+        // The supported async surface lowers these operands too; omitting them would select a premature move.
+        ast::Expr::Surface(surface) => match (&surface.key, &surface.payload) {
+            (SurfaceFeatureKey::SoftKeyword(KeywordId::Await), ast::SurfaceExprPayload::PrefixUnary(value)) => {
+                count_reads_in_expr(name, &value.node)
+            }
+            (
+                SurfaceFeatureKey::ScopedDslSurface {
+                    dependency_key,
+                    descriptor_key,
+                },
+                ast::SurfaceExprPayload::RaceFor(race),
+            ) if dependency_key == "std.async" && descriptor_key == "race_for" => race
+                .arms
+                .iter()
+                .map(|arm| {
+                    count_reads_in_expr(name, &arm.awaitable.node)
+                        + match &arm.body {
+                            ast::RaceForBody::Expr(value) => count_reads_in_expr(name, &value.node),
+                            ast::RaceForBody::Block(body) => count_reads_in_stmts(name, body),
+                        }
+                })
+                .sum(),
+            _ => 0,
+        },
         ast::Expr::Tuple(items) | ast::Expr::Set(items) => {
             items.iter().map(|i| count_reads_in_expr(name, &i.node)).sum()
         }
@@ -271,5 +296,46 @@ pub(super) fn count_reads_in_call_arg(name: &str, arg: &ast::CallArg) -> usize {
         | ast::CallArg::Named(_, e)
         | ast::CallArg::PositionalUnpack(e)
         | ast::CallArg::KeywordUnpack(e) => count_reads_in_expr(name, &e.node),
+    }
+}
+
+#[cfg(test)]
+mod async_read_tests {
+    use super::*;
+
+    /// A later awaited receiver remains a read when an earlier ordinary call considers moving the binding.
+    #[test]
+    fn awaited_receiver_counts_toward_last_use() {
+        let receiver = ast::Spanned::new(ast::Expr::Ident("counter".into()), ast::Span::default());
+        let call = ast::Spanned::new(
+            ast::Expr::MethodCall(Box::new(receiver), "lock".into(), Vec::new(), Vec::new()),
+            ast::Span::default(),
+        );
+        let awaited = ast::Expr::Surface(Box::new(ast::SurfaceExpr {
+            key: SurfaceFeatureKey::SoftKeyword(KeywordId::Await),
+            payload: ast::SurfaceExprPayload::PrefixUnary(Box::new(call)),
+        }));
+        assert_eq!(count_reads_in_expr("counter", &awaited), 1);
+        assert_eq!(count_reads_in_expr("unrelated", &awaited), 0);
+    }
+
+    /// Both the awaited source and the selected arm body contribute conservative reads inside a race.
+    #[test]
+    fn race_source_and_body_count_toward_last_use() {
+        let reference = ast::Spanned::new(ast::Expr::Ident("counter".into()), ast::Span::default());
+        let race = ast::Expr::Surface(Box::new(ast::SurfaceExpr {
+            key: SurfaceFeatureKey::ScopedDslSurface {
+                dependency_key: "std.async".into(),
+                descriptor_key: "race_for".into(),
+            },
+            payload: ast::SurfaceExprPayload::RaceFor(Box::new(ast::RaceForExpr {
+                binding: ast::Spanned::new("winner".into(), ast::Span::default()),
+                arms: vec![ast::RaceForArm {
+                    awaitable: reference.clone(),
+                    body: ast::RaceForBody::Expr(reference),
+                }],
+            })),
+        }));
+        assert_eq!(count_reads_in_expr("counter", &race), 2);
     }
 }

@@ -9,3 +9,5 @@ crate = "vocab_companion"
 
 [sdk]
 profile = "minimal"
+
+[dependencies]

@@ -25,10 +25,14 @@
 use incan_lang::lang::decorators::DecoratorId;
 use incan_lang::lang::keywords::KeywordId;
 
+/// Canonical numeric identities shared by the checker and native lowering.
+pub use incan_lang::lang::types::numerics::NumericTypeId;
+
 pub mod dependencies;
 
 pub mod authority;
 pub mod body_ir;
+mod body_ir_identity;
 pub mod closure_digest;
 pub mod emitted_symbol;
 pub mod executable_representation;
@@ -56,7 +60,8 @@ pub use hir::{
 };
 pub use types::{
     AbiV0Ownership, AbiV0Representation, AbiV0ReservedFacts, AbiV0RuntimeRequirement, AbiV0TypeFacts,
-    AbiV0TypeIdentity, IncanCallableParam, IncanCallableParamKind, IncanPrimitiveType, IncanType, rust_tuple_arity,
+    AbiV0TypeIdentity, IncanCallableParam, IncanCallableParamKind, IncanPrimitiveType, IncanType, RuntimeBuiltinType,
+    function_type, generic, rust_tuple_arity,
 };
 
 /// Stable feature key used by parser handoff and semantics dispatch.

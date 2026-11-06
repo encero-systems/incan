@@ -1,0 +1,15 @@
+# behavior: abs and sum overflow are always checked, as the legacy route runs it
+# expect-stdout:
+#   before sum
+# expect-exit: 101
+
+"""Abs and sum overflow are always checked, as the legacy route runs it."""
+def overflowing_sum() -> int:
+    """Print the marker before summing values that overflow."""
+    println("before sum")
+    return sum([9223372036854775807, 1])
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(overflowing_sum())

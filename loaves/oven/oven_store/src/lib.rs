@@ -26,6 +26,7 @@ pub mod process;
 pub mod progress;
 pub mod publisher_execution;
 pub mod publisher_owner;
+pub mod source_archive;
 pub mod store;
 pub mod store_mirror;
 #[cfg(any(test, feature = "test_support"))]
@@ -57,9 +58,9 @@ pub fn digest_dependency_specs(
             // edges its generated manifest still spells out: those point at the producer's private Rust sources,
             // which an admitted package does not need and a source-free consumer does not have (#1469).
             //
-            // Any other path dependency is selected by its recursive Cargo-semantic source closure, not by compiler
-            // output or unrelated repository files. Sharing the package memo also avoids rescanning a common sibling
-            // reached through several top-level dependencies.
+            // Authored native Loaves use their producer's source mapping. Remaining legacy path crates use their
+            // recursive Cargo-semantic source closure. Neither identity depends on compiler output; the legacy
+            // package memo avoids rescanning a common sibling reached through several top-level dependencies.
             DependencySource::Path { path } => match provider_hooks.packaged_provider_digest(path) {
                 Some(digest) => {
                     let digest = digest.map_err(|source| OvenError::ProviderHook {
@@ -69,13 +70,16 @@ pub fn digest_dependency_specs(
                     format!("packaged-provider:{digest}")
                 }
                 None => {
-                    let digest = digest_cargo_path_source_tree_with_cache(path, &mut resolved_path_packages).map_err(
-                        |error| OvenError::InvalidProjectSource {
-                            path: path.clone(),
-                            message: error.to_string(),
-                        },
-                    )?;
-                    format!("path-tree:{digest}")
+                    if let Some(digest) = provider_hooks.authored_native_source_digest(dependency) {
+                        format!("authored-native-tree:{}", digest?)
+                    } else {
+                        let digest = digest_cargo_path_source_tree_with_cache(path, &mut resolved_path_packages)
+                            .map_err(|error| OvenError::InvalidProjectSource {
+                                path: path.clone(),
+                                message: error.to_string(),
+                            })?;
+                        format!("path-tree:{digest}")
+                    }
                 }
             },
         };
@@ -115,6 +119,14 @@ pub trait OvenProviderHooks: Send + Sync {
     /// The sealed artifact digest of a packaged provider at `dependency_root`, or `None` when the path is an
     /// authored crate and the caller should digest its source tree instead.
     fn packaged_provider_digest(&self, dependency_root: &Path) -> Option<Result<String, OvenProviderHookError>>;
+
+    /// The portable source closure of an authored native Loaf, or `None` for legacy path crates.
+    ///
+    /// The native producer owns source geometry and feature activation. The returned identity must include current
+    /// transitive path inputs and reject unavailable or unsupported sources rather than falling back to Cargo.
+    fn authored_native_source_digest(&self, _dependency: &DependencySpec) -> Option<Result<String, OvenError>> {
+        None
+    }
 }
 
 /// The compiler's own error type behind a hook failure, kept whole so a caller can still reach it through
@@ -702,6 +714,25 @@ pub fn receipt_generated_project(request: &OvenGeneratedProjectRequest) -> Resul
     receipt_generated_project_with_source_evidence(request, &source_evidence)
 }
 
+/// Receipt generated source while retaining the existing physical observations through native execution.
+///
+/// The same canonical file/tree reader supplies both content identity and its original metadata witnesses. A caller
+/// must require `supports_retention()` and `current()` before consuming or publishing outputs; changed-and-restored
+/// files cannot be certified by a later content hash alone.
+pub fn receipt_generated_project_with_observations(
+    request: &OvenGeneratedProjectRequest,
+) -> Result<(OvenReceipt, oven_model::observed_inputs::InputObservations), OvenError> {
+    let mut observations = oven_model::observed_inputs::InputObservations::default();
+    let names = generated_source_evidence_names(request)?;
+    let supplemental_digests = generated_source_evidence_observed(request, &mut |path| observations.observe(path))?;
+    let evidence = OvenGeneratedProjectSourceEvidence {
+        names,
+        supplemental_digests,
+    };
+    let receipt = receipt_generated_project_with_source_evidence(request, &evidence)?;
+    Ok((receipt, observations))
+}
+
 /// Derive one reusable generated-source proof for profile-specific receipts in the current command.
 ///
 /// This reads and verifies every requested source exactly once. The opaque result can be supplied only to a request
@@ -1182,9 +1213,18 @@ fn normalized_build_unit_inputs(inputs: &BTreeMap<String, String>) -> Result<BTr
 
 /// Digest every generated source input while rejecting symlinks and duplicate evidence keys.
 fn generated_source_evidence(request: &OvenGeneratedProjectRequest) -> Result<BTreeMap<String, String>, OvenError> {
+    generated_source_evidence_observed(request, &mut |_| {})
+}
+
+/// Observe the exact regular files and directory listings consumed by canonical generated-source receipt creation.
+fn generated_source_evidence_observed(
+    request: &OvenGeneratedProjectRequest,
+    observe: &mut impl FnMut(&Path),
+) -> Result<BTreeMap<String, String>, OvenError> {
     let mut digests = BTreeMap::new();
     for (name, path) in &request.generated_sources {
         let name = normalized_generated_source_name(name)?;
+        observe(path);
         let digest = digest_generated_source_file(path)?;
         if digests.insert(name.clone(), digest).is_some() {
             return Err(OvenError::InvalidGeneratedSource {
@@ -1195,7 +1235,7 @@ fn generated_source_evidence(request: &OvenGeneratedProjectRequest) -> Result<BT
     }
     for (name, path) in &request.generated_source_trees {
         let name = normalized_generated_source_name(name)?;
-        let digest = digest_source_tree(path)?;
+        let digest = digest_source_tree_observed(path, observe)?;
         if digests.insert(name.clone(), digest).is_some() {
             return Err(OvenError::InvalidGeneratedSource {
                 path: path.clone(),
@@ -1454,6 +1494,12 @@ fn collect_compiler_suite_source_tree(
 /// This is shared by generated-source receipt evidence and the compiler/SDK runtime inputs that select reusable Oven
 /// build units across clean worktrees.
 pub fn digest_source_tree(root: &Path) -> Result<String, OvenError> {
+    digest_source_tree_observed(root, &mut |_| {})
+}
+
+/// Bind directory observations to the same traversal that computes portable generated-source content identity.
+fn digest_source_tree_observed(root: &Path, observe: &mut impl FnMut(&Path)) -> Result<String, OvenError> {
+    observe(root);
     let metadata = fs::symlink_metadata(root).map_err(|error| OvenError::InvalidGeneratedSource {
         path: root.to_path_buf(),
         message: error.to_string(),
@@ -1465,7 +1511,7 @@ pub fn digest_source_tree(root: &Path) -> Result<String, OvenError> {
         });
     }
     let mut records = BTreeMap::new();
-    collect_generated_source_tree(root, root, &mut records)?;
+    collect_generated_source_tree(root, root, &mut records, observe)?;
     if records.is_empty() {
         return Err(OvenError::InvalidGeneratedSource {
             path: root.to_path_buf(),
@@ -1484,6 +1530,110 @@ pub fn digest_source_tree(root: &Path) -> Result<String, OvenError> {
 /// Excluding them makes the identity stable across valid local reuse without overlooking any authored file outside
 /// those reserved output locations.
 pub fn digest_project_source_tree(root: &Path) -> Result<String, OvenError> {
+    project_source_tree_evidence(root)?.digest()
+}
+
+/// Opaque authored file evidence observed through the same canonical validator as project-source digests.
+#[derive(Debug, Clone)]
+pub struct OvenProjectSourceTreeEvidence {
+    records: BTreeMap<String, String>,
+}
+
+impl OvenProjectSourceTreeEvidence {
+    /// Return the unchanged canonical project-source digest, retaining the existing serialization contract.
+    pub fn digest(&self) -> Result<String, OvenError> {
+        let payload = serde_json::to_vec(&self.records).map_err(|error| OvenError::Serialize(error.to_string()))?;
+        Ok(digest_bytes(&payload))
+    }
+
+    /// Hash this observation apart from one exact coordinate bound independently by the caller's full recipe.
+    ///
+    /// The coordinate is part of this projection's identity, including before the file exists. This digest alone
+    /// cannot authorize a file change; callers must also retain and validate the complete source observation.
+    pub fn digest_except_exact_file(&self, relative: &Path) -> Result<String, OvenError> {
+        let key = source_evidence_relative_file(relative)?;
+        let remaining = self
+            .records
+            .iter()
+            .filter(|(path, _)| *path != &key)
+            .collect::<BTreeMap<_, _>>();
+        if remaining.is_empty() {
+            return Err(OvenError::InvalidProjectSource {
+                path: relative.to_path_buf(),
+                message: "source projection must retain authored input beyond the excluded file".into(),
+            });
+        }
+        let payload = serde_json::to_vec(&("incan-source-exact-file-projection-v1", key, remaining))
+            .map_err(|error| OvenError::Serialize(error.to_string()))?;
+        Ok(digest_bytes(&payload))
+    }
+
+    /// Hash this observation apart from exact coordinates bound independently by their owners' full recipes.
+    ///
+    /// The sorted coordinate set participates even before its files exist. Order and duplicate coordinates do not
+    /// change identity. This projection grants no mutation authority and never changes the full observed evidence.
+    pub fn digest_except_exact_files(&self, relatives: &[PathBuf]) -> Result<String, OvenError> {
+        let keys = relatives
+            .iter()
+            .map(|relative| source_evidence_relative_file(relative))
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        if keys.is_empty() {
+            return self.digest();
+        }
+        let remaining = self
+            .records
+            .iter()
+            .filter(|(path, _)| !keys.contains(*path))
+            .collect::<BTreeMap<_, _>>();
+        if remaining.is_empty() {
+            return Err(OvenError::InvalidProjectSource {
+                path: PathBuf::new(),
+                message: "source projection must retain authored input beyond the excluded files".into(),
+            });
+        }
+        let payload = serde_json::to_vec(&("incan-source-exact-files-projection-v1", keys, remaining))
+            .map_err(|error| OvenError::Serialize(error.to_string()))?;
+        Ok(digest_bytes(&payload))
+    }
+
+    /// Compare complete observed trees allowing only one explicit safe file coordinate to differ.
+    /// At least one snapshot must contain that file; missing knowledge never proves an authorized empty change.
+    pub fn unchanged_except_exact_file(&self, later: &Self, relative: &Path) -> Result<bool, OvenError> {
+        let key = source_evidence_relative_file(relative)?;
+        if !self.records.contains_key(&key) && !later.records.contains_key(&key) {
+            return Err(OvenError::InvalidProjectSource {
+                path: relative.to_path_buf(),
+                message: "excluded file is absent from both source observations".into(),
+            });
+        }
+        Ok(self
+            .records
+            .iter()
+            .filter(|(path, _)| *path != &key)
+            .eq(later.records.iter().filter(|(path, _)| *path != &key)))
+    }
+
+    /// Borrow exact observed file content evidence, without acquiring missing or substituted filesystem input.
+    pub fn file_digest(&self, relative: &Path) -> Result<Option<&str>, OvenError> {
+        let key = source_evidence_relative_file(relative)?;
+        Ok(self.records.get(&key).map(String::as_str))
+    }
+}
+
+/// Observe complete authored file evidence without changing the existing project-source identity or exclusions.
+pub fn project_source_tree_evidence(root: &Path) -> Result<OvenProjectSourceTreeEvidence, OvenError> {
+    project_source_tree_evidence_observed(root, &mut |_| {})
+}
+
+/// Observe original file and directory generations through the canonical authored-source traversal.
+///
+/// The callback runs before each retained input is consumed; excluded tool output is not observed. Callers retain
+/// and verify their observations before using the returned evidence. The portable content identity is unchanged.
+pub fn project_source_tree_evidence_observed(
+    root: &Path,
+    observe: &mut impl FnMut(&Path),
+) -> Result<OvenProjectSourceTreeEvidence, OvenError> {
+    observe(root);
     let metadata = fs::symlink_metadata(root).map_err(|error| OvenError::InvalidProjectSource {
         path: root.to_path_buf(),
         message: error.to_string(),
@@ -1495,19 +1645,44 @@ pub fn digest_project_source_tree(root: &Path) -> Result<String, OvenError> {
         });
     }
     let mut records = BTreeMap::new();
-    collect_project_source_tree(root, root, &mut records)?;
+    collect_project_source_tree(root, root, &mut records, observe)?;
     if records.is_empty() {
         return Err(OvenError::InvalidProjectSource {
             path: root.to_path_buf(),
             message: "must contain at least one authored regular file".to_string(),
         });
     }
-    let payload = serde_json::to_vec(&records).map_err(|error| OvenError::Serialize(error.to_string()))?;
-    Ok(digest_bytes(&payload))
+    Ok(OvenProjectSourceTreeEvidence { records })
+}
+
+/// Require an exact portable relative file, rejecting traversal and normalization-dependent exclusions.
+fn source_evidence_relative_file(relative: &Path) -> Result<String, OvenError> {
+    let text = relative.to_str().ok_or_else(|| OvenError::InvalidProjectSource {
+        path: relative.to_path_buf(),
+        message: "source evidence file must be UTF-8".into(),
+    })?;
+    if text.is_empty()
+        || text.contains('\\')
+        || text
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+        || relative
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(OvenError::InvalidProjectSource {
+            path: relative.to_path_buf(),
+            message: "source evidence file must be an exact safe relative coordinate".into(),
+        });
+    }
+    Ok(text.into())
 }
 
 /// Whether a directory is compiler, VCS, or test-runner output rather than authored dependency source.
-fn is_mutable_project_output_directory(path: &Path) -> bool {
+///
+/// This classifies only the reserved basename and never follows the path. Each source traversal retains its own
+/// file-kind policy: the ordinary project collector refuses links; SDK publication leaves ignored cache links inert.
+pub fn is_mutable_project_output_directory(path: &Path) -> bool {
     matches!(
         path.file_name().and_then(|name| name.to_str()),
         Some(".git" | ".incan" | ".ralph-cache" | "target")
@@ -1519,7 +1694,9 @@ fn collect_project_source_tree(
     root: &Path,
     current: &Path,
     records: &mut BTreeMap<String, String>,
+    observe: &mut impl FnMut(&Path),
 ) -> Result<(), OvenError> {
+    observe(current);
     let mut entries = fs::read_dir(current)
         .map_err(|error| OvenError::InvalidProjectSource {
             path: current.to_path_buf(),
@@ -1540,6 +1717,7 @@ fn collect_project_source_tree(
         if metadata.is_dir() && is_mutable_project_output_directory(&path) {
             continue;
         }
+        observe(&path);
         if metadata.file_type().is_symlink() {
             return Err(OvenError::InvalidProjectSource {
                 path,
@@ -1547,7 +1725,7 @@ fn collect_project_source_tree(
             });
         }
         if metadata.is_dir() {
-            collect_project_source_tree(root, &path, records)?;
+            collect_project_source_tree(root, &path, records, observe)?;
             continue;
         }
         if !metadata.is_file() {
@@ -1586,7 +1764,9 @@ fn collect_generated_source_tree(
     root: &Path,
     current: &Path,
     records: &mut BTreeMap<String, String>,
+    observe: &mut impl FnMut(&Path),
 ) -> Result<(), OvenError> {
+    observe(current);
     let mut entries = fs::read_dir(current)
         .map_err(|error| OvenError::InvalidGeneratedSource {
             path: current.to_path_buf(),
@@ -1600,6 +1780,7 @@ fn collect_generated_source_tree(
     entries.sort_by_key(|entry| entry.file_name());
     for entry in entries {
         let path = entry.path();
+        observe(&path);
         let metadata = fs::symlink_metadata(&path).map_err(|error| OvenError::InvalidGeneratedSource {
             path: path.clone(),
             message: error.to_string(),
@@ -1611,7 +1792,7 @@ fn collect_generated_source_tree(
             });
         }
         if metadata.is_dir() {
-            collect_generated_source_tree(root, &path, records)?;
+            collect_generated_source_tree(root, &path, records, observe)?;
             continue;
         }
         if !metadata.is_file() {
@@ -1801,6 +1982,80 @@ mod tests {
                 source: Box::new(CompilerSideFailure),
             }))
         }
+    }
+
+    /// Native source observations run once per dependency and cannot silently fall back to adjacent Cargo metadata.
+    #[test]
+    fn authored_native_dependency_hook_runs_once_and_preserves_refusals() -> Result<(), Box<dyn std::error::Error>> {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct NativeHooks {
+            calls: AtomicUsize,
+            source_ok: bool,
+        }
+
+        impl OvenProviderHooks for NativeHooks {
+            fn sdk_provider_root(&self, inventory: Option<&Path>) -> Result<PathBuf, OvenProviderHookError> {
+                super::NoProviderHooks.sdk_provider_root(inventory)
+            }
+
+            fn sdk_inventory_file(&self) -> &'static str {
+                super::NoProviderHooks.sdk_inventory_file()
+            }
+
+            fn refresh_staged_sdk_provider_digests(&self, root: &Path) -> Result<(), OvenProviderHookError> {
+                super::NoProviderHooks.refresh_staged_sdk_provider_digests(root)
+            }
+
+            fn packaged_provider_digest(&self, _root: &Path) -> Option<Result<String, OvenProviderHookError>> {
+                None
+            }
+
+            fn authored_native_source_digest(&self, dependency: &DependencySpec) -> Option<Result<String, OvenError>> {
+                self.calls.fetch_add(1, Ordering::Relaxed);
+                Some(if self.source_ok {
+                    Ok(digest_bytes(b"complete native source identity"))
+                } else {
+                    Err(OvenError::InvalidProjectSource {
+                        path: match &dependency.source {
+                            DependencySource::Path { path } => path.clone(),
+                            _ => PathBuf::new(),
+                        },
+                        message: "native source refused".to_string(),
+                    })
+                })
+            }
+        }
+
+        let root = tempfile::tempdir()?;
+        fs::write(root.path().join("Cargo.toml"), "invalid adjacent Cargo declaration")?;
+        let dependency = DependencySpec {
+            crate_name: "native_leaf".into(),
+            version: None,
+            features: Vec::new(),
+            default_features: true,
+            source: DependencySource::Path {
+                path: root.path().to_path_buf(),
+            },
+            optional: false,
+            package: None,
+        };
+        for source_ok in [true, false] {
+            let hooks = NativeHooks {
+                calls: AtomicUsize::new(0),
+                source_ok,
+            };
+            let result = super::digest_dependency_specs(std::slice::from_ref(&dependency), &hooks);
+            assert_eq!(hooks.calls.load(Ordering::Relaxed), 1);
+            if source_ok {
+                result?;
+            } else {
+                assert!(
+                    matches!(result, Err(OvenError::InvalidProjectSource { message, .. }) if message == "native source refused")
+                );
+            }
+        }
+        Ok(())
     }
 
     #[test]
@@ -2305,5 +2560,121 @@ mod tests {
         fs::create_dir_all(root.join("src/nested"))?;
         fs::write(root.join("src/main.rs"), main)?;
         fs::write(root.join("src/nested/mod.rs"), "pub fn helper() {}\n")
+    }
+}
+
+#[cfg(test)]
+mod project_source_evidence_controls {
+    use super::{digest_bytes, digest_project_source_tree, project_source_tree_evidence};
+    use std::fs;
+    use std::path::Path;
+
+    /// Exact coordinate sets are stable across absent files, ordering and duplicates without hiding other inputs.
+    #[test]
+    fn source_evidence_exact_file_set_preserves_full_observation() -> Result<(), Box<dyn std::error::Error>> {
+        // ---- Full evidence and a canonical set before either owned file exists ----
+        let root = tempfile::tempdir()?;
+        fs::write(root.path().join("source.incn"), "original source")?;
+        let first = project_source_tree_evidence(root.path())?;
+        let coordinates = ["first.lock", "second.lock"].map(std::path::PathBuf::from);
+        let projected = first.digest_except_exact_files(&coordinates)?;
+        assert_eq!(first.digest()?, first.digest_except_exact_files(&[])?);
+        assert_eq!(
+            projected,
+            first.digest_except_exact_files(&[
+                coordinates[1].clone(),
+                coordinates[0].clone(),
+                coordinates[0].clone()
+            ])?
+        );
+
+        // ---- Projected identity is stable while full evidence retains both lock changes ----
+        for coordinate in &coordinates {
+            fs::write(root.path().join(coordinate), "new publication")?;
+            let current = project_source_tree_evidence(root.path())?;
+            assert_ne!(first.digest()?, current.digest()?);
+            assert_eq!(projected, current.digest_except_exact_files(&coordinates)?);
+        }
+        assert_ne!(projected, first.digest_except_exact_files(&coordinates[..1])?);
+        fs::write(root.path().join("source.incn"), "changed source")?;
+        let changed = project_source_tree_evidence(root.path())?;
+        assert_ne!(projected, changed.digest_except_exact_files(&coordinates)?);
+
+        // ---- Unsafe coordinates and projections with no remaining authored input refuse ----
+        for unsafe_path in ["", "../first.lock", "/first.lock", "./first.lock", "nested//first.lock"] {
+            assert!(first.digest_except_exact_files(&[unsafe_path.into()]).is_err());
+        }
+        assert!(first.digest_except_exact_files(&["source.incn".into()]).is_err());
+        Ok(())
+    }
+
+    /// A tool-owned first lock can be isolated without hiding any preserved-mtime authored source change.
+    #[test]
+    fn source_evidence_exact_lock_transition_preserves_other_inputs() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        fs::write(root.path().join("loaf.toml"), "[project]\nname='fixture'\n")?;
+        fs::write(root.path().join("source.incn"), "value = 1\n")?;
+        let first = project_source_tree_evidence(root.path())?;
+        assert_eq!(first.digest()?, digest_project_source_tree(root.path())?);
+        assert!(
+            first
+                .unchanged_except_exact_file(&first, Path::new("oven.lock"))
+                .is_err()
+        );
+        fs::write(root.path().join("oven.lock"), "published lock")?;
+        let later = project_source_tree_evidence(root.path())?;
+        assert_ne!(first.digest()?, later.digest()?);
+        assert_eq!(
+            first.digest_except_exact_file(Path::new("oven.lock"))?,
+            later.digest_except_exact_file(Path::new("oven.lock"))?
+        );
+        assert_ne!(
+            first.digest_except_exact_file(Path::new("oven.lock"))?,
+            first.digest_except_exact_file(Path::new("different.lock"))?
+        );
+        assert!(first.unchanged_except_exact_file(&later, Path::new("oven.lock"))?);
+        assert_eq!(
+            later.file_digest(Path::new("oven.lock"))?,
+            Some(digest_bytes(b"published lock").as_str())
+        );
+        for unsafe_path in ["", "../oven.lock", "/oven.lock", "./oven.lock", "nested//oven.lock"] {
+            assert!(first.digest_except_exact_file(Path::new(unsafe_path)).is_err());
+            assert!(
+                first
+                    .unchanged_except_exact_file(&later, Path::new(unsafe_path))
+                    .is_err()
+            );
+        }
+        let source = root.path().join("source.incn");
+        let modified = fs::metadata(&source)?.modified()?;
+        fs::write(&source, "value = 2\n")?;
+        fs::File::options().write(true).open(&source)?.set_modified(modified)?;
+        let changed = project_source_tree_evidence(root.path())?;
+        assert!(!first.unchanged_except_exact_file(&changed, Path::new("oven.lock"))?);
+        assert_ne!(
+            first.digest_except_exact_file(Path::new("oven.lock"))?,
+            changed.digest_except_exact_file(Path::new("oven.lock"))?
+        );
+        let only_lock = tempfile::tempdir()?;
+        fs::write(only_lock.path().join("oven.lock"), "published lock")?;
+        assert!(
+            project_source_tree_evidence(only_lock.path())?
+                .digest_except_exact_file(Path::new("oven.lock"))
+                .is_err()
+        );
+        Ok(())
+    }
+
+    /// A symlink cannot replace either an authored file or the one explicitly compared lock coordinate.
+    #[cfg(unix)]
+    #[test]
+    fn source_evidence_refuses_symlink_transition() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let external = tempfile::tempdir()?;
+        fs::write(root.path().join("loaf.toml"), "[project]\nname='fixture'\n")?;
+        fs::write(external.path().join("lock"), "external lock")?;
+        std::os::unix::fs::symlink(external.path().join("lock"), root.path().join("oven.lock"))?;
+        assert!(project_source_tree_evidence(root.path()).is_err());
+        Ok(())
     }
 }

@@ -410,6 +410,19 @@ impl TypeChecker {
                     let arg_ty = self.check_expr(arg_expr);
                     if self.is_user_operator_receiver(&arg_ty) {
                         let _ = self.resolve_len_dunder(&arg_ty, call_span);
+                    } else if matches!(
+                        arg_ty,
+                        ResolvedType::Int
+                            | ResolvedType::Float
+                            | ResolvedType::Numeric(_)
+                            | ResolvedType::Bool
+                            | ResolvedType::Unit
+                    ) {
+                        self.errors.push(errors::type_mismatch(
+                            "value with a length",
+                            &arg_ty.to_string(),
+                            arg_expr.span,
+                        ));
                     }
                     Some(ResolvedType::Int)
                 }

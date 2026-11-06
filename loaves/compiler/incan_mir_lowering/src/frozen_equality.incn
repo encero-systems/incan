@@ -1,0 +1,107 @@
+"""Frozen equality borrows the actual static wrappers and delegates to their PartialEq contract."""
+
+from rust::incan_semantics_core::body_ir import (
+    Operand as RustOperand,
+    Constant as RustConstant,
+    PlaceElem,
+    BinOp,
+    ArgumentElement as RustArgumentElement,
+    Place as RustPlace,
+)
+from pub::incan_mir_plan import PlanType, Place, Operand, OperandKind, RvalueKind, SourceSpan
+from pub::incan_mir_plan import assign as plan_assign
+from frame import Builder, temporary, place_type, read_place
+from lowering import scalar_place, value_operand, instantiated_external_call, computed_static_root
+
+
+pub def frozen_place(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Option[Place], str]:
+    """Keep a frozen owner or field; a bare baked aggregate gets its existing typed temporary."""
+    match value:
+        RustOperand.Place(read) =>
+            for projection in read.place.projection:
+                match projection:
+                    PlaceElem.Index(_index) => return Ok(None)
+                    PlaceElem.Slice(start=_start, end=_end, step=_step) => return Ok(None)
+                    _ => pass
+            place = frozen_storage_place(builder, read.place, span)?
+            match place_type(builder.locals, place):
+                PlanType.FrozenCollection(_name, _elements) => return Ok(Some(place))
+                _ => return Ok(None)
+        RustOperand.Constant(RustConstant.FrozenAggregate(_ty, _values)) =>
+            operand = value_operand(builder, value, span)?
+            match operand.kind:
+                OperandKind.Copy(place) => return Ok(Some(place))
+                OperandKind.Move(place) => return Ok(Some(place))
+                _ => return Err("unsupported Body IR frozen equality literal storage")
+        _ => return Ok(None)
+
+
+def frozen_storage_place(
+    mut builder: Builder,
+    value: &RustPlace,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Read a computed static's exact field through its snapshot; ordinary local places retain their checked projection."""
+    match computed_static_root(builder, value, span)?:
+        Some(snapshot) => return Ok(snapshot)
+        None => return scalar_place(builder, value, span)
+
+
+pub def frozen_reference_type(ty: PlanType) -> Result[PlanType, str]:
+    """Keep a shared view's complete wrapper name and element storage types."""
+    match ty:
+        PlanType.FrozenCollection(name, elements) => return Ok(PlanType.FrozenCollectionRef(name, elements))
+        _ => return Err("unsupported Body IR frozen reference carrier")
+
+
+pub def borrow_frozen_argument(
+    mut builder: Builder,
+    argument: &RustArgumentElement,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Borrow one checked frozen argument without inventing a value for a spread or missing carrier."""
+    match argument.as_one():
+        Some(value) =>
+            match frozen_place(builder, value, span)?:
+                Some(storage) => return borrow_frozen(builder, storage, span)
+                None => return Err("unsupported Body IR frozen argument storage")
+        None => return Err("unsupported Body IR spread frozen argument")
+
+
+pub def borrow_frozen(mut builder: Builder, value: Place, span: SourceSpan) -> Result[Operand, str]:
+    """Create a shared view of exact baked storage, including non-Copy model elements."""
+    match place_type(builder.locals, value):
+        PlanType.FrozenCollection(name, elements) =>
+            reference = temporary(builder, PlanType.FrozenCollectionRef(name, elements), span)
+            builder.emit(plan_assign(reference, RvalueKind.Borrow(value), span))
+            return Ok(read_place(reference, false, span))
+        _ => return Err("unsupported Body IR frozen equality carrier")
+
+
+pub def compare_frozen(
+    mut builder: Builder,
+    operator: &BinOp,
+    left: &RustOperand,
+    right: &RustOperand,
+    span: SourceSpan,
+) -> Result[Option[Operand], str]:
+    """Compare identical checked wrappers through native PartialEq; other operations retain their named refusal."""
+    if operator != BinOp.Eq and operator != BinOp.Ne:
+        return Ok(None)
+    first = frozen_place(builder, left, span)?
+    second = frozen_place(builder, right, span)?
+    match (first, second):
+        (None, None) => return Ok(None)
+        (Some(first_place), Some(second_place)) =>
+            ty = place_type(builder.locals, first_place)
+            if ty != place_type(builder.locals, second_place):
+                return Err("unsupported Body IR frozen equality across different layouts")
+            references = [borrow_frozen(builder, first_place, span)?, borrow_frozen(builder, second_place, span)?]
+            mut path = "incan_native_runtime::equal_model"
+            if operator == BinOp.Ne:
+                path = "incan_native_runtime::unequal_model"
+            output = temporary(builder, PlanType.Bool, span)
+            parameters = [frozen_reference_type(ty)?, frozen_reference_type(ty)?]
+            instantiated_external_call(builder, path, [ty], parameters, PlanType.Bool, references, output, span)?
+            return Ok(Some(read_place(output, false, span)))
+        _ => return Err("unsupported Body IR mixed frozen equality")

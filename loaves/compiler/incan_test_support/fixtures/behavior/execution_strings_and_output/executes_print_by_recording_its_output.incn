@@ -1,0 +1,11 @@
+# behavior: executes print by recording its output
+# expect-stdout:
+#   hello
+#   count 3 true
+
+
+"""Executes print by recording its output."""
+def main() -> None:
+  """Print the fixture values in the expected order."""
+  println("hello")
+  println("count", 3, true)

@@ -266,6 +266,7 @@ impl TypeChecker {
         }
 
         // ---- Context: the ordinary decorator application, then the receiver of the shape it produced ----
+        let input_type = binding_ty.clone();
         let result = self.apply_decorator_callable(&display, callable_ty, binding_ty, method_name, decorator.span);
         let result = self.expand_type_aliases(result);
         if let Some(slot) = callable_receiver_slot(&result)
@@ -280,7 +281,35 @@ impl TypeChecker {
             ));
             return ResolvedType::Unknown;
         }
+        self.retain_body_ir_identity_method_application(decorator.span, &input_type, receiver);
         result
+    }
+
+    /// Give the validated generic identity binder the method's actual passing receiver, exclusively in Body IR.
+    /// This uses the pre-substitution identity relation; equal result signatures alone never authorize a rewrite.
+    fn retain_body_ir_identity_method_application(
+        &mut self,
+        span: Span,
+        input: &ResolvedType,
+        receiver: &DecoratedMethodReceiver,
+    ) {
+        let key = (span.start, span.end);
+        if !self
+            .type_info
+            .declarations
+            .generic_identity_decorator_applications
+            .contains(&key)
+        {
+            return;
+        }
+        let Some(application) = self.type_info.declarations.body_ir_decorator_applications.get_mut(&key) else {
+            return;
+        };
+        for binding in application.type_bindings.values_mut() {
+            if binding == input {
+                *binding = receiver.with_passing_receiver(input.clone());
+            }
+        }
     }
 
     /// Say why lowering cannot pass a shared receiver to the declaration a method decorator resolved to, and what to

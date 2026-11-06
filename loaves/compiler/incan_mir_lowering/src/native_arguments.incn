@@ -1,0 +1,34 @@
+"""Checked native storage uses that require source nominal ABI implementations."""
+
+from rust::incan_semantics_core import IncanType as RustType
+from rust::incan_semantics_core::body_ir import BodyIrModule
+from nominal_instances import instance_arguments
+from decls import library_item
+
+
+pub def uses_native_argument(module: &BodyIrModule, name: str) -> Result[bool, str]:
+    """Find a normalized source carrier in actual SDK storage arguments, keeping source-only adopters independent."""
+    for declaration in module.nominal_declarations:
+        if library_item(declaration) == "":
+            continue
+        mut arguments: list[RustType] = []
+        for argument in declaration.native_type_arguments:
+            arguments.append(argument.clone())
+        if len(arguments) == 0:
+            arguments = instance_arguments(module, declaration)?
+        for argument in arguments:
+            if contains_name(argument, name):
+                return Ok(true)
+    return Ok(false)
+
+
+def contains_name(ty: &RustType, name: str) -> bool:
+    """Inspect checked argument trees after canonical project-name qualification has resolved aliases."""
+    match ty:
+        RustType.Named(value) => return str(value) == name
+        RustType.Generic(base=_base, args=arguments) =>
+            for argument in arguments:
+                if contains_name(argument, name):
+                    return true
+        _ => pass
+    return false

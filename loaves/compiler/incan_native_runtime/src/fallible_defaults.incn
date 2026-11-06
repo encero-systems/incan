@@ -1,0 +1,121 @@
+"""Native ABI targets for checked standard fallible-iterator defaults."""
+
+from std.derives.collection import (
+    FallibleIterator,
+    MapFallibleIterator,
+    FilterFallibleIterator,
+    FlatMapFallibleIterator,
+    TakeFallibleIterator,
+    InspectFallibleIterator,
+    MapErrFallibleIterator,
+    InspectErrFallibleIterator,
+)
+from std.derives.copying import Clone
+from std.traits.callable import Callable1, Callable2
+
+
+pub def fallible_map[T with Clone, E with Clone, Source with (Clone, FallibleIterator[T, E]), U with Clone, Mapper with (Clone, Callable1[T, U])](
+    source: Source,
+    f: Mapper,
+) -> MapFallibleIterator[T, E, Source, U, Mapper]:
+    """Construct the standard mapped carrier without polling the cloned source."""
+    return MapFallibleIterator[T, E, Source, U, Mapper](
+        source=source,
+        f=f,
+        input_marker=None,
+        output_marker=None,
+        error_marker=None,
+    )
+
+
+pub def fallible_filter[T with Clone, E with Clone, Source with (Clone, FallibleIterator[T, E]), Predicate with (Clone, Callable1[T, bool])](
+    source: Source,
+    f: Predicate,
+) -> FilterFallibleIterator[T, E, Source, Predicate]:
+    """Construct the standard filtered carrier without calling its predicate."""
+    return FilterFallibleIterator[T, E, Source, Predicate](source=source, f=f, item_marker=None, error_marker=None)
+
+
+pub def fallible_flat_map[T with Clone, E with Clone, Source with (Clone, FallibleIterator[T, E]), U with Clone, Expand with (Clone, Callable1[T, list[U]])](
+    source: Source,
+    f: Expand,
+) -> FlatMapFallibleIterator[T, E, Source, U, Expand]:
+    """Construct the standard expanding carrier with its initially empty current batch."""
+    return FlatMapFallibleIterator[T, E, Source, U, Expand](
+        source=source,
+        f=f,
+        current=[],
+        index=0,
+        input_marker=None,
+        error_marker=None,
+    )
+
+
+pub def fallible_take[T with Clone, E with Clone, Source with (Clone, FallibleIterator[T, E])](
+    source: Source,
+    count: int,
+) -> TakeFallibleIterator[T, E, Source]:
+    """Retain the signed limit so the SDK's own poll implementation decides exhaustion."""
+    return TakeFallibleIterator[T, E, Source](source=source, remaining=count, item_marker=None, error_marker=None)
+
+
+pub def fallible_inspect[T with Clone, E with Clone, Source with (Clone, FallibleIterator[T, E]), Observer with (Clone, Callable1[T, None])](
+    source: Source,
+    f: Observer,
+) -> InspectFallibleIterator[T, E, Source, Observer]:
+    """Construct the standard observing carrier without invoking the observer."""
+    return InspectFallibleIterator[T, E, Source, Observer](source=source, f=f, item_marker=None, error_marker=None)
+
+
+pub def fallible_map_err[T with Clone, E with Clone, Source with (Clone, FallibleIterator[T, E]), F with Clone, Mapper with (Clone, Callable1[E, F])](
+    source: Source,
+    f: Mapper,
+) -> MapErrFallibleIterator[T, E, Source, F, Mapper]:
+    """Construct the standard error mapper without changing item or source-error identity."""
+    return MapErrFallibleIterator[T, E, Source, F, Mapper](
+        source=source,
+        f=f,
+        item_marker=None,
+        source_error_marker=None,
+        mapped_error_marker=None,
+    )
+
+
+pub def fallible_inspect_err[T with Clone, E with Clone, Source with (Clone, FallibleIterator[T, E]), Observer with (Clone, Callable1[E, None])](
+    source: Source,
+    f: Observer,
+) -> InspectErrFallibleIterator[T, E, Source, Observer]:
+    """Construct the standard error observer without polling or observing eagerly."""
+    return InspectErrFallibleIterator[T, E, Source, Observer](source=source, f=f, item_marker=None, error_marker=None)
+
+
+pub def fallible_collect[T with Clone, E with Clone, Source with FallibleIterator[T, E]](
+    mut source: Source,
+) -> Result[list[T], E]:
+    """Poll the borrowed original until exhaustion, discarding partial output on the first error."""
+    mut items: list[T] = []
+    while true:
+        match source.__next__():
+            Ok(Some(item)) => items.append(item)
+            Ok(None) => return Ok(items)
+            Err(error) => return Err(error)
+
+
+pub def fallible_fold[T with Clone, E with Clone, Source with FallibleIterator[T, E], U with Clone, Folder with (Clone, Callable2[U, T, U])](
+    mut source: Source,
+    initial: U,
+    f: Folder,
+) -> Result[U, E]:
+    """Update the accumulator in source order and stop before calling the folder on a failing poll."""
+    mut accumulator = initial
+    while true:
+        match source.__next__():
+            Ok(Some(item)) =>
+                accumulator = f(accumulator, item)
+            Ok(None) => return Ok(accumulator)
+            Err(error) => return Err(error)
+
+
+pub def fallible_next[T with Clone, E with Clone, Source with (Clone, FallibleIterator[T, E])](mut source: Source) -> Result[Option[T], E]:
+    """Poll the selected native iterator implementation through its exact mutable receiver and concrete carriers."""
+    return source.__next__()

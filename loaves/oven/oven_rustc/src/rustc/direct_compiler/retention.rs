@@ -200,13 +200,16 @@ pub fn retain_direct_rustc_compiler(
         return Err(OvenRustcError::IntentMismatch);
     }
     let toolchain = receipt.intent.toolchain.clone();
-    let mut selected = match store.select_payloads_matching_for_execution(|manifest| {
-        manifest.kind == OvenArtifactKind::NativeCompilerClosure
-            && manifest.intent.target == target
-            && manifest.intent.toolchain == toolchain
-    }) {
+    let mut selected = match store.select_payloads_matching_for_execution(
+        |manifest| {
+            manifest.kind == OvenArtifactKind::NativeCompilerClosure
+                && manifest.intent.target == target
+                && manifest.intent.toolchain == toolchain
+        },
+        |_, _| true,
+    ) {
         Ok(mut selected) => {
-            selected.sort_by(|left, right| left.manifest.identity.cmp(&right.manifest.identity));
+            selected.sort_by(|left, right| left.manifest().identity.cmp(&right.manifest().identity));
             selected
         }
         Err(error) => {
@@ -337,18 +340,19 @@ pub(crate) fn matching_direct_rustc_compiler_owner_payload(
     toolchain: &str,
     host: Option<&str>,
 ) -> Option<OvenDirectRustcCompilerOwnerPayload> {
-    if owner.manifest.kind != OvenArtifactKind::NativeCompilerClosure
-        || owner.manifest.intent.target != target
-        || owner.manifest.intent.toolchain != toolchain
+    if owner.manifest().kind != OvenArtifactKind::NativeCompilerClosure
+        || owner.manifest().intent.target != target
+        || owner.manifest().intent.toolchain != toolchain
     {
         return None;
     }
-    let payload = serde_json::from_slice::<OvenDirectRustcCompilerOwnerPayload>(&owner.payload).ok()?;
+    let payload = serde_json::from_slice::<OvenDirectRustcCompilerOwnerPayload>(owner.payload()).ok()?;
     if payload.schema_version != OVEN_DIRECT_RUSTC_COMPILER_OWNER_SCHEMA_VERSION
         || payload.target != target
         || payload.toolchain != toolchain
         || host.is_some_and(|host| payload.host != host)
-        || direct_rustc_compiler_domain(&payload.closure_digest).ok().as_deref() != Some(owner.manifest.domain.as_str())
+        || direct_rustc_compiler_domain(&payload.closure_digest).ok().as_deref()
+            != Some(owner.manifest().domain.as_str())
     {
         return None;
     }
@@ -382,16 +386,16 @@ pub(crate) fn admit_direct_rustc_compiler_owner(
         return Ok(None);
     }
     let mut member_digests = BTreeMap::new();
-    let mut members = Vec::with_capacity(owner.manifest.materialized_files.len());
+    let mut members = Vec::with_capacity(owner.manifest().materialized_files.len());
     let mut rustc = None;
-    for member in &owner.manifest.materialized_files {
+    for member in &owner.manifest().materialized_files {
         if member_digests
             .insert(member.relative_path.clone(), member.digest.clone())
             .is_some()
         {
             return Ok(None);
         }
-        let source_path = owner.artifact_root.join(&member.relative_path);
+        let source_path = owner.artifact_root().join(&member.relative_path);
         if member.relative_path == "bin/rustc" {
             if !member.executable || member.digest != payload.binary_digest {
                 return Ok(None);
@@ -410,7 +414,7 @@ pub(crate) fn admit_direct_rustc_compiler_owner(
     let Some(rustc) = rustc else {
         return Ok(None);
     };
-    let sysroot = match fs::canonicalize(&owner.artifact_root) {
+    let sysroot = match fs::canonicalize(owner.artifact_root()) {
         Ok(sysroot) => sysroot,
         Err(_) => return Ok(None),
     };

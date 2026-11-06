@@ -157,12 +157,15 @@ pub fn select_direct_rustc_plan_for_execution(
             message: error.to_string(),
         })?;
     let mut matches = Vec::new();
-    for selected in store.select_payloads_matching_for_execution(|manifest| {
-        manifest.kind == OvenArtifactKind::DirectRustcPlan
-            && manifest.build_unit_identity == receipt.build_unit_identity
-            && manifest.intent == receipt.intent
-    })? {
-        let Ok(plan) = serde_json::from_slice::<OvenRustcArtifactManifest>(&selected.payload) else {
+    for selected in store.select_payloads_matching_for_execution(
+        |manifest| {
+            manifest.kind == OvenArtifactKind::DirectRustcPlan
+                && manifest.build_unit_identity == receipt.build_unit_identity
+                && manifest.intent == receipt.intent
+        },
+        |_, _| true,
+    )? {
+        let Ok(plan) = serde_json::from_slice::<OvenRustcArtifactManifest>(selected.payload()) else {
             continue;
         };
         // A prior Alpha publisher may have retained a payload whose `--extern` identifiers no longer satisfy the
@@ -180,7 +183,7 @@ pub fn select_direct_rustc_plan_for_execution(
             .skip(1)
             .all(|candidate| reusable_direct_rustc_entry(&matches[0], candidate)) =>
         {
-            matches.sort_by(|left, right| left.manifest.identity.cmp(&right.manifest.identity));
+            matches.sort_by(|left, right| left.manifest().identity.cmp(&right.manifest().identity));
             Ok(Some(matches.remove(0)))
         }
         _ => Err(OvenRustcError::PlanSelection {
@@ -189,7 +192,7 @@ pub fn select_direct_rustc_plan_for_execution(
                 "multiple compatible stored direct-rustc plans are available: {}",
                 matches
                     .iter()
-                    .map(|entry| entry.manifest.identity.as_str())
+                    .map(|entry| entry.manifest().identity.as_str())
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
@@ -199,9 +202,9 @@ pub fn select_direct_rustc_plan_for_execution(
 
 /// Return whether two receipt-compatible selections retain precisely the same reusable immutable closure.
 pub(super) fn reusable_direct_rustc_entry(left: &OvenStoreExecutionPayload, right: &OvenStoreExecutionPayload) -> bool {
-    left.manifest.domain == right.manifest.domain
-        && left.manifest.payload == right.manifest.payload
-        && left.manifest.materialized_files == right.manifest.materialized_files
+    left.manifest().domain == right.manifest().domain
+        && left.manifest().payload == right.manifest().payload
+        && left.manifest().materialized_files == right.manifest().materialized_files
 }
 
 /// Select the unique stored direct-rustc plan identity authorized by a generated-project receipt.
@@ -211,7 +214,7 @@ pub(super) fn reusable_direct_rustc_entry(left: &OvenStoreExecutionPayload, righ
 /// plan before the caller starts using it.
 pub fn select_direct_rustc_plan_identity(store: &OvenStore, receipt: &OvenReceipt) -> Result<String, OvenRustcError> {
     select_direct_rustc_plan_for_execution(store, receipt)?
-        .map(|selected| selected.manifest.identity)
+        .map(|selected| selected.manifest().identity.clone())
         .ok_or_else(|| OvenRustcError::PlanSelection {
             receipt_identity: receipt.identity.clone(),
             message: "no compatible stored direct-rustc plan is available".to_string(),
@@ -235,7 +238,7 @@ pub(super) fn preflight_project_inspection_authority_schema(
             message: format!("payload has no valid project inspection authority header: {error}"),
         }
     })?;
-    if header.schema_version != OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION {
+    if header.schema_version != OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION && header.schema_version != 2 {
         return Err(OvenRustcError::UnsupportedProjectInspectionAuthoritySchema {
             found: header.schema_version,
             expected: OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION,
@@ -262,6 +265,7 @@ pub(super) fn decode_project_inspection_authority(
 /// Selection never searches by dependency compatibility. The authority entry is exact, and all of its store-owned
 /// constituents are acquired in one batch before any source is projected. Release-Loaf constituents are resolved
 /// separately by the caller against the active immutable toolchain generation.
+/// Missing Store owners retain their typed I/O error so a cache-owning caller can refresh an evicted authority.
 pub fn load_project_inspection_authority(
     store: &OvenStore,
     authority_ref: &OvenProjectInspectionAuthorityRef,
@@ -295,12 +299,19 @@ fn select_project_inspection_source(
 ) -> Result<(OvenStoreExecutionPayload, OvenProjectInspectionAuthorityPayload), OvenRustcError> {
     let mut selected = store
         .select_payloads_for_execution(std::slice::from_ref(&authority_ref.identity))
-        .map_err(|error| OvenRustcError::PlanSelection {
-            receipt_identity: authority_ref.receipt_identity.clone(),
-            message: format!(
-                "source-current project output cannot select exact project inspection authority `{}`: {error}",
-                authority_ref.identity
-            ),
+        .map_err(|error| {
+            if matches!(&error, oven_store::store::OvenStoreError::Io { source, .. }
+                if source.kind() == std::io::ErrorKind::NotFound)
+            {
+                return OvenRustcError::Store(error);
+            }
+            OvenRustcError::PlanSelection {
+                receipt_identity: authority_ref.receipt_identity.clone(),
+                message: format!(
+                    "source-current project output cannot select exact project inspection authority `{}`: {error}",
+                    authority_ref.identity
+                ),
+            }
         })?;
     let source_owner = selected.pop().ok_or_else(|| OvenRustcError::PlanSelection {
         receipt_identity: authority_ref.receipt_identity.clone(),
@@ -309,7 +320,7 @@ fn select_project_inspection_source(
             authority_ref.identity
         ),
     })?;
-    let manifest = &source_owner.manifest;
+    let manifest = source_owner.manifest();
     if manifest.identity != authority_ref.identity
         || manifest.kind != OvenArtifactKind::ProjectInspectionAuthority
         || manifest.receipt_identity != authority_ref.receipt_identity
@@ -321,9 +332,9 @@ fn select_project_inspection_source(
                 .to_string(),
         });
     }
-    preflight_project_inspection_authority_schema(&manifest.identity, &source_owner.payload)?;
+    preflight_project_inspection_authority_schema(&manifest.identity, source_owner.payload())?;
     source_owner.verify_materialized_files()?;
-    let payload = decode_project_inspection_authority(&manifest.identity, &source_owner.payload)?;
+    let payload = decode_project_inspection_authority(&manifest.identity, source_owner.payload())?;
     validate_project_inspection_authority_payload(&payload)?;
     if payload.project_identity != project_identity
         || payload.source_authority_digest != source_authority_digest
@@ -336,7 +347,9 @@ fn select_project_inspection_source(
         });
     }
     if !payload.registry_sources.is_empty() {
-        let lock = source_owner.artifact_root.join(OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH);
+        let lock = source_owner
+            .artifact_root()
+            .join(OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH);
         let lock_bytes = fs::read(&lock).map_err(|source| OvenRustcError::Io {
             path: lock.clone(),
             source,
@@ -375,7 +388,7 @@ fn select_project_inspection_constituents(
 }
 
 /// Revalidate every selected constituent against its sealed receipt, kind, and release base.
-fn validate_selected_project_inspection_constituents(
+pub(super) fn validate_selected_project_inspection_constituents(
     payload: &OvenProjectInspectionAuthorityPayload,
     stored_constituents: &[OvenStoreExecutionPayload],
 ) -> Result<(), OvenRustcError> {
@@ -397,9 +410,9 @@ fn validate_selected_project_inspection_constituents(
                 message: format!("project inspection authority lost constituent `{identity}` during batch selection"),
             })?;
         selected_index += 1;
-        if selected.manifest.identity != *identity
-            || selected.manifest.kind != *artifact_kind
-            || !project_inspection_constituent_matches_receipt(&selected.manifest, *artifact_kind, receipt)
+        if selected.manifest().identity != *identity
+            || selected.manifest().kind != *artifact_kind
+            || !project_inspection_constituent_matches_receipt(selected.manifest(), *artifact_kind, receipt)
         {
             return Err(OvenRustcError::InvalidStoredPlan {
                 identity: identity.clone(),
@@ -409,17 +422,18 @@ fn validate_selected_project_inspection_constituents(
         }
         match artifact_kind {
             OvenArtifactKind::DirectRustcPlan => {
-                let plan = serde_json::from_slice::<OvenRustcArtifactManifest>(&selected.payload).map_err(|error| {
-                    OvenRustcError::InvalidStoredPlan {
-                        identity: identity.clone(),
-                        message: format!("direct-plan constituent payload is invalid: {error}"),
-                    }
-                })?;
+                let plan =
+                    serde_json::from_slice::<OvenRustcArtifactManifest>(selected.payload()).map_err(|error| {
+                        OvenRustcError::InvalidStoredPlan {
+                            identity: identity.clone(),
+                            message: format!("direct-plan constituent payload is invalid: {error}"),
+                        }
+                    })?;
                 plan.validate_shape(&receipt.intent)?;
             }
             OvenArtifactKind::ProjectPayload => {
                 let extension =
-                    serde_json::from_slice::<OvenProjectExtensionPayload>(&selected.payload).map_err(|error| {
+                    serde_json::from_slice::<OvenProjectExtensionPayload>(selected.payload()).map_err(|error| {
                         OvenRustcError::InvalidStoredPlan {
                             identity: identity.clone(),
                             message: format!("project-extension constituent payload is invalid: {error}"),
@@ -577,7 +591,8 @@ pub fn project_inspection_test_dependency_envelope_mismatch(
                 }
             })?;
         let (expected, source_matches) = match root {
-            OvenProjectInspectionTestDependencyRoot::Registry { dependency_digest, .. } => (
+            OvenProjectInspectionTestDependencyRoot::NativeRegistry { dependency_digest, .. }
+            | OvenProjectInspectionTestDependencyRoot::Registry { dependency_digest, .. } => (
                 dependency_digest,
                 matches!(dependency.source, DependencySource::Registry),
             ),

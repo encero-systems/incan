@@ -1,0 +1,19 @@
+# behavior: cli executes exact std async activation with task receipts
+# expect-stdout:
+#   7
+
+"""Cli executes exact std async activation with task receipts."""
+import std.async
+
+async def child() -> int:
+  """Return `7` for this fixture."""
+  return 7
+
+async def program_result() -> int:
+  """Return the fixture expression `await child()`."""
+  return await child()
+
+
+async def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(await program_result())

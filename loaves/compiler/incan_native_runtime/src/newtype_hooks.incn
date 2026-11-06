@@ -1,0 +1,11 @@
+"""Fail-fast extraction of a checker-selected newtype validation hook's result."""
+
+from std.derives.string import Display
+from rust::incan_std_core::validation import raise_validation_error
+
+
+pub def checked_newtype_result[T, E with Display](result: Result[T, E], target: str, hook: str) -> T:
+    """Return the checked wrapper, or raise the same validation error through the governed core helper as legacy."""
+    match result:
+        Ok(value) => return value
+        Err(error) => raise_validation_error(target, hook, error)

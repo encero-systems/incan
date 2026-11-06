@@ -70,12 +70,42 @@ pub fn project_relative_entrypoint(project_root: &Path, entrypoint: &Path) -> Op
 /// This avoids assuming a conventional `src/` layout: a custom source root is still an exact project bake, while a
 /// standalone file intentionally remains on the normal explicit-preparation path.
 pub fn project_root_for_completed_output(entrypoint: &Path) -> CliResult<Option<PathBuf>> {
+    project_root_for_completed_output_with_inputs(
+        entrypoint,
+        &mut super::retained_inputs::RetainedProjectInputs::default(),
+    )
+}
+
+/// Find the nearest project without reparsing an already observed effective manifest or workspace.
+///
+/// Nested-command overrides keep their established discovery boundary. Ordinary requests probe manifest location,
+/// then borrow the same guarded model used for source authority and canonical lock selection. Single-file requests
+/// remain outside completed-project reuse.
+pub(super) fn project_root_for_completed_output_with_inputs(
+    entrypoint: &Path,
+    inputs: &mut super::retained_inputs::RetainedProjectInputs,
+) -> CliResult<Option<PathBuf>> {
     let inferred_root = resolve_project_root(entrypoint);
-    let Some(manifest) = discover_effective_project_manifest(&inferred_root)? else {
+    if std::env::var_os(oven_model::manifest::INTERNAL_MANIFEST_OVERRIDE_ENV).is_some()
+        || std::env::var_os(oven_model::manifest::INTERNAL_PROJECT_ROOT_OVERRIDE_ENV).is_some()
+    {
+        let Some(manifest) = discover_effective_project_manifest(&inferred_root)? else {
+            return Ok(None);
+        };
+        enforce_project_toolchain_constraint(&manifest)?;
+        return Ok(Some(manifest.project_root().to_path_buf()));
+    }
+    let Some(manifest_path) =
+        oven_model::manifest::find_manifest(&inferred_root).map_err(|error| CliError::failure(error.to_string()))?
+    else {
         return Ok(None);
     };
-    enforce_project_toolchain_constraint(&manifest)?;
-    Ok(Some(manifest.project_root().to_path_buf()))
+    let root = manifest_path
+        .parent()
+        .ok_or_else(|| CliError::failure("project manifest has no parent directory"))?;
+    let project = inputs.project(root)?;
+    enforce_project_toolchain_constraint(&project.manifest)?;
+    Ok(Some(root.to_path_buf()))
 }
 
 /// Reject a store- or caller-relative path that could escape its declared root.
@@ -96,15 +126,13 @@ pub fn validated_project_output_relative_path(relative_path: &str, role: &str) -
     Ok(relative.to_path_buf())
 }
 
-/// Add one regular file physically below the project root to the completed-Loaf publication set.
+/// Resolve one regular output file and its path relative to its physical artifact root.
 ///
 /// Resolve ancestor aliases on both sides before checking containment, while refusing a symlink at the file itself.
-fn append_project_output_bake_file(
+pub(super) fn canonical_output_file_relative_to_root(
     project_root: &Path,
     source_path: &Path,
-    output_relative_path: String,
-    files: &mut Vec<OvenProjectOutputBakeFile>,
-) -> CliResult<()> {
+) -> CliResult<(PathBuf, String)> {
     let metadata = fs::symlink_metadata(source_path).map_err(|error| {
         CliError::failure(format!(
             "cannot retain generated Oven project output {}: {error}",
@@ -140,10 +168,21 @@ fn append_project_output_bake_file(
         })?
         .to_string_lossy()
         .replace('\\', "/");
+    let _ = validated_project_output_relative_path(&caller_relative_path, "caller output")?;
+    Ok((canonical_source, caller_relative_path))
+}
+
+/// Add one regular file physically below the project root to the completed-Loaf publication set.
+fn append_project_output_bake_file(
+    project_root: &Path,
+    source_path: &Path,
+    output_relative_path: String,
+    files: &mut Vec<OvenProjectOutputBakeFile>,
+) -> CliResult<()> {
+    let (canonical_source, caller_relative_path) = canonical_output_file_relative_to_root(project_root, source_path)?;
     let output_relative_path = validated_project_output_relative_path(&output_relative_path, "stored output")?
         .to_string_lossy()
         .replace('\\', "/");
-    let _ = validated_project_output_relative_path(&caller_relative_path, "caller output")?;
     files.push(OvenProjectOutputBakeFile {
         source_path: canonical_source,
         caller_relative_path,
@@ -751,13 +790,15 @@ pub(crate) fn project_inspection_root_dependencies(
     Ok(roots)
 }
 
-/// Bind every promoted test dependency to its portable declaration/source digest and, for registry roots, Cargo's
-/// exact locked package identity from the selected publisher closure.
+/// Bind every promoted test dependency to its portable declaration/source digest and exact publisher root.
+/// Ordinary registry dependencies use the original receipt-bound native map; legacy publishers use their checked
+/// Cargo source catalog. Native maps must come from declaration selection, never an alias/name search.
 pub fn project_inspection_test_dependency_roots(
     dependencies: &[DependencySpec],
     dependency_root_digests: &BTreeMap<String, String>,
     registry_source_dependencies: &[OvenProjectInspectionRootDependency],
     dev_registry_source_dependencies: &[OvenProjectInspectionRootDependency],
+    native_roots: Option<&BTreeMap<String, String>>,
 ) -> CliResult<BTreeMap<String, OvenProjectInspectionTestDependencyRoot>> {
     let mut roots = BTreeMap::new();
     for dependency in dependencies {
@@ -768,6 +809,17 @@ pub fn project_inspection_test_dependency_roots(
             ))
         })?;
         let root = match dependency.source {
+            DependencySource::Registry if native_roots.is_some() => {
+                let record_identity = native_roots.and_then(|roots| roots.get(&alias)).ok_or_else(|| {
+                    CliError::failure(format!(
+                        "project inspection test dependency `{alias}` has no original native root"
+                    ))
+                })?;
+                OvenProjectInspectionTestDependencyRoot::NativeRegistry {
+                    dependency_digest,
+                    record_identity: record_identity.clone(),
+                }
+            }
             DependencySource::Registry => {
                 let mut matching = registry_source_dependencies
                     .iter()

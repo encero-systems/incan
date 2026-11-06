@@ -1,0 +1,322 @@
+"""Semantic-version precedence and Rust-compatible comma-conjoined requirements, without foreign dependencies."""
+
+const MAX_COMPARATORS: int = 32
+const MAX_VERSION_COMPONENT: str = "18446744073709551615"
+
+
+pub model Version:
+    """Validated unsigned components remain decimal strings to preserve the full semver u64 range."""
+
+    pub major: str
+    pub minor: str
+    pub patch: str
+    pub prerelease: list[str]
+    pub build: list[str]
+
+
+@derive(Eq)
+pub enum Operator:
+    Exact
+    Greater
+    GreaterEqual
+    Less
+    LessEqual
+    Caret
+    Tilde
+    Wildcard
+
+
+pub model Comparator:
+    """Missing minor and patch components have operator-specific partial-version meaning."""
+
+    pub operator: Operator
+    pub parts: list[str]
+    pub prerelease: list[str]
+
+
+pub model VersionReq:
+    """All comparators must hold; pre-release eligibility is checked across the complete conjunction."""
+
+    pub comparators: list[Comparator]
+
+
+def numeric(value: str) -> bool:
+    """ASCII decimal only; Unicode digits do not belong to the SemVer grammar."""
+    if value == "":
+        return false
+    for character in value:
+        if character not in "0123456789":
+            return false
+    return true
+
+
+def number_compare(left: str, right: str) -> int:
+    """Compare validated nonnegative decimal numbers without narrowing them to a machine integer."""
+    if len(left) != len(right):
+        if len(left) < len(right):
+            return -1
+        return 1
+    if left < right:
+        return -1
+    if left > right:
+        return 1
+    return 0
+
+
+def component(value: str) -> Result[str, str]:
+    """Reject leading zeros and values beyond the replaced semver crate's unsigned 64-bit components."""
+    if not numeric(value) or (len(value) > 1 and value.startswith("0")):
+        return Err(f"invalid numeric version component: {value}")
+    if number_compare(value, MAX_VERSION_COMPONENT) > 0:
+        return Err(f"version component exceeds u64: {value}")
+    return Ok(value)
+
+
+def identifiers(value: str, prerelease: bool) -> Result[list[str], str]:
+    """Build identifiers permit leading zeros; numeric pre-release identifiers do not."""
+    parts = value.split(".")
+    for part in parts:
+        if part == "":
+            return Err("empty version identifier")
+        for character in part:
+            if character not in "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-":
+                return Err(f"invalid version identifier: {part}")
+        if prerelease and numeric(part) and len(part) > 1 and part.startswith("0"):
+            return Err(f"leading zero in pre-release identifier: {part}")
+    return Ok(parts)
+
+
+def split_version(value: str) -> Result[Version, str]:
+    """Parse the suffixes once; callers separately require either complete or partial core components."""
+    build_parts = value.split("+")
+    if len(build_parts) > 2:
+        return Err("multiple build metadata separators")
+    mut build: list[str] = []
+    if len(build_parts) == 2:
+        build = identifiers(build_parts[1], false)?
+    core_and_pre = build_parts[0]
+    mut core = core_and_pre
+    mut pre: list[str] = []
+    for index in range(len(core_and_pre)):
+        if core_and_pre[index] == "-":
+            core = core_and_pre[:index]
+            pre = identifiers(core_and_pre[index + 1:], true)?
+            break
+    parts = core.split(".")
+    if len(parts) > 3 or len(parts) == 0:
+        return Err("version needs major.minor.patch")
+    mut checked: list[str] = []
+    for part in parts:
+        checked.append(component(part)?)
+    if len(parts) < 3 and (len(pre) > 0 or len(build) > 0):
+        return Err("version suffix requires major.minor.patch")
+    while len(checked) < 3:
+        checked.append("")
+    return Ok(Version(major=checked[0], minor=checked[1], patch=checked[2], prerelease=pre, build=build))
+
+
+pub def parse_version(value: str) -> Result[Version, str]:
+    """Parse an exact SemVer 2.0 version; whitespace and partial versions are refused."""
+    version = split_version(value)?
+    if version.minor == "" or version.patch == "":
+        return Err("version needs major.minor.patch")
+    return Ok(version)
+
+
+def pre_compare(left: list[str], right: list[str]) -> int:
+    """A release outranks every pre-release; numeric identifiers rank below alphanumeric identifiers."""
+    if len(left) == 0 and len(right) == 0:
+        return 0
+    if len(left) == 0:
+        return 1
+    if len(right) == 0:
+        return -1
+    for index in range(min([len(left), len(right)])):
+        a = left[index]
+        b = right[index]
+        if a == b:
+            continue
+        if numeric(a) and numeric(b):
+            return number_compare(a, b)
+        if numeric(a):
+            return -1
+        if numeric(b):
+            return 1
+        if a < b:
+            return -1
+        return 1
+    if len(left) < len(right):
+        return -1
+    if len(left) > len(right):
+        return 1
+    return 0
+
+
+pub def compare_versions(left: Version, right: Version) -> int:
+    """SemVer precedence ignores build metadata, including when a resolver selects the highest version."""
+    for pair in [[left.major, right.major], [left.minor, right.minor], [left.patch, right.patch]]:
+        compared = number_compare(pair[0], pair[1])
+        if compared != 0:
+            return compared
+    return pre_compare(left.prerelease, right.prerelease)
+
+
+def parse_comparator(value: str) -> Result[Comparator, str]:
+    """Parse one operator and up to three components; wildcard positions must form a trailing suffix."""
+    for character in value:
+        if character not in "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .-+*^~<>=":
+            return Err("invalid character or non-space whitespace in comparator")
+    mut source = value.strip()
+    mut operator = Operator.Caret
+    mut explicit = false
+    for prefix in [">=", "<=", ">", "<", "=", "^", "~"]:
+        if source.startswith(prefix):
+            explicit = true
+            source = source[len(prefix):].strip()
+            match prefix:
+                ">=" =>
+                    operator = Operator.GreaterEqual
+                "<=" =>
+                    operator = Operator.LessEqual
+                ">" =>
+                    operator = Operator.Greater
+                "<" =>
+                    operator = Operator.Less
+                "=" =>
+                    operator = Operator.Exact
+                "^" =>
+                    operator = Operator.Caret
+                "~" =>
+                    operator = Operator.Tilde
+                _ => pass
+            break
+    raw = source.split(".")
+    mut parts: list[str] = []
+    mut wildcard = false
+    for part in raw:
+        if part in ["*", "x", "X"]:
+            wildcard = true
+        elif wildcard:
+            return Err("numeric component after wildcard")
+        else:
+            parts.append(part)
+    if wildcard:
+        if len(raw) > 3 or "+" in source or "-" in source:
+            return Err("invalid wildcard comparator")
+        if len(parts) == 0 and (explicit or len(raw) != 1):
+            return Err("operator on major wildcard")
+        for part in parts:
+            component(part)?
+        if not explicit:
+            operator = Operator.Wildcard
+        return Ok(Comparator(operator=operator, parts=parts, prerelease=[]))
+    version = split_version(source)?
+    mut checked = [version.major]
+    if version.minor != "":
+        checked.append(version.minor)
+    if version.patch != "":
+        checked.append(version.patch)
+    return Ok(Comparator(operator=operator, parts=checked, prerelease=version.prerelease))
+
+
+pub def parse_requirement(value: str) -> Result[VersionReq, str]:
+    """Parse comma-conjoined comparators; disjunctions, empty members and hyphen ranges are refused."""
+    members = value.split(",")
+    if len(members) > MAX_COMPARATORS:
+        return Err("requirement exceeds 32 comparators")
+    mut comparators: list[Comparator] = []
+    for member in members:
+        comparator = parse_comparator(member)?
+        if len(comparator.parts) == 0 and len(members) != 1:
+            return Err("major wildcard must be the only comparator")
+        comparators.append(comparator)
+    return Ok(VersionReq(comparators=comparators))
+
+
+def comparator_matches(comparator: Comparator, version: Version) -> bool:
+    """Apply partial-version bounds without inventing a missing patch or overflowing an upper bound."""
+    parts = comparator.parts
+    if len(parts) == 0:
+        return true
+    actual = [version.major, version.minor, version.patch]
+    mut compared = 0
+    for index in range(len(parts)):
+        if compared == 0:
+            compared = number_compare(actual[index], parts[index])
+    if compared == 0 and len(parts) == 3:
+        compared = pre_compare(version.prerelease, comparator.prerelease)
+    exact = compared == 0 and version.prerelease == comparator.prerelease
+    match comparator.operator:
+        Operator.Exact => return exact
+        Operator.Wildcard => return exact
+        Operator.Greater => return compared > 0
+        Operator.GreaterEqual => return exact or compared > 0
+        Operator.Less => return compared < 0
+        Operator.LessEqual => return exact or compared < 0
+        Operator.Tilde =>
+            if version.major != parts[0] or compared < 0:
+                return false
+            return (len(parts) == 1 or version.minor == parts[1]) and (len(parts) == 3 or pre_compare(
+                version.prerelease,
+                comparator.prerelease,
+            ) >= 0)
+        Operator.Caret =>
+            if version.major != parts[0] or compared < 0:
+                return false
+            if parts[0] != "0" or len(parts) == 1:
+                return true
+            if version.minor != parts[1]:
+                return false
+            if parts[1] != "0" or len(parts) == 2:
+                return true
+            return version.patch == parts[2]
+
+
+pub def requirement_matches(requirement: VersionReq, version: Version) -> bool:
+    """A pre-release needs a comparator naming its exact core with an explicit pre-release suffix."""
+    mut eligible = len(version.prerelease) == 0
+    for comparator in requirement.comparators:
+        if not comparator_matches(comparator, version):
+            return false
+        if len(comparator.prerelease) > 0 and comparator.parts == [version.major, version.minor, version.patch]:
+            eligible = true
+    return eligible
+
+
+def trim_zeros(value: str) -> str:
+    """Normalize build numbers for comparison while retaining the original width as a tie-breaker."""
+    mut cursor = 0
+    while cursor < len(value) and value[cursor] == "0":
+        cursor += 1
+    return value[cursor:]
+
+
+pub def compare_version_order(left: Version, right: Version) -> int:
+    """Preserve semver::Version's total order for resolver ties; build metadata never affects requirements."""
+    precedence = compare_versions(left, right)
+    if precedence != 0:
+        return precedence
+    for index in range(min([len(left.build), len(right.build)])):
+        a = left.build[index]
+        b = right.build[index]
+        if a == b:
+            continue
+        if numeric(a) and numeric(b):
+            order = number_compare(trim_zeros(a), trim_zeros(b))
+            if order != 0:
+                return order
+            if len(a) < len(b):
+                return -1
+            return 1
+        if numeric(a):
+            return -1
+        if numeric(b):
+            return 1
+        if a < b:
+            return -1
+        return 1
+    if len(left.build) < len(right.build):
+        return -1
+    if len(left.build) > len(right.build):
+        return 1
+    return 0

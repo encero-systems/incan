@@ -1,0 +1,13 @@
+# behavior: method len str executes unicode scalar rows
+# expect-stdout:
+#   0
+
+"""Method len str executes unicode scalar rows."""
+def length(value: str) -> int:
+    """Return the fixture expression `value.len()`."""
+    return value.len()
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(length(""))

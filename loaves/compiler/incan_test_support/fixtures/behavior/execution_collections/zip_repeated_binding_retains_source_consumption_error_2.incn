@@ -1,0 +1,18 @@
+# behavior: zip repeated binding retains source consumption error
+# expect-diagnostic: INCAN-T0001
+
+"""Zip repeated binding retains source consumption error."""
+def observe() -> int:
+    """Attempt to consume the same zip binding twice."""
+    pairs = zip([1], [2])
+    mut total = 0
+    for left, right in pairs:
+        total += left + right
+    for other_left, other_right in pairs:
+        total += other_left + other_right
+    return total
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(observe())

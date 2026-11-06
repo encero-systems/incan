@@ -1,0 +1,14 @@
+# behavior: cli refuses unsupported source without legacy generation, as the legacy route runs it
+# expect-stdout:
+#   0
+
+"""Cli refuses unsupported source without legacy generation, as the legacy route runs it."""
+def program_result() -> int:
+  """Compute and return `0`."""
+  values = {**{"first": 1}}
+  return 0
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

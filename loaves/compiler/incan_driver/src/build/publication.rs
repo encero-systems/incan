@@ -466,13 +466,33 @@ pub(crate) fn publish_project_inspection_authority(
         dependency_authority.locked_registry_packages,
         &owner_locked_registry_packages,
     )?;
+    let native_roots = test_dependency_envelope
+        .native_roots
+        .as_ref()
+        .map(|roots| {
+            test_dependency_constituent_index
+                .map(
+                    |constituent_index| oven_rustc::rustc::OvenProjectInspectionNativeRoots {
+                        constituent_index,
+                        roots: roots.clone(),
+                    },
+                )
+                .ok_or_else(|| {
+                    CliError::failure("ordinary inspection publication lost its original native constituent")
+                })
+        })
+        .transpose()?;
+    // Release-only publication still owns its exact inspection constituent. It cannot advertise a debug test
+    // envelope: future tests need an independently prepared debug plan, rather than accepting release artifacts.
     let test_dependency_envelope = test_dependency_constituent_index
+        .filter(|_| receipt.intent.profile == "debug")
         .map(|constituent_index| {
             project_inspection_test_dependency_roots(
                 &test_dependency_envelope.dependencies,
                 &test_dependency_envelope.dependency_root_digests,
                 &registry_source_dependencies,
                 &dev_registry_source_dependencies,
+                test_dependency_envelope.native_roots.as_ref(),
             )
             .map(|dependency_roots| OvenProjectInspectionTestDependencyEnvelope {
                 constituent_index,
@@ -542,6 +562,7 @@ pub(crate) fn publish_project_inspection_authority(
         }
     }
     let payload = OvenProjectInspectionAuthorityPayload {
+        native_roots,
         schema_version: OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION,
         project_identity: baked_project_owner_identity(project_root)?,
         source_authority_digest: source_authority_digest.to_string(),
@@ -591,6 +612,12 @@ pub(crate) fn publish_project_inspection_authority(
         ));
     }
     Ok(PublishedProjectInspectionAuthority {
+        snapshot: crate::build::OvenProjectInspectionSnapshot {
+            manifest: selected.clone(),
+            receipt: receipt.clone(),
+            payload: String::from_utf8(request.payload)
+                .map_err(|error| CliError::failure(format!("inspection metadata is not UTF-8: {error}")))?,
+        },
         reference: OvenProjectInspectionAuthorityRef {
             identity: selected.identity,
             receipt_identity: selected.receipt_identity,
@@ -658,6 +685,7 @@ pub fn publish_project_output_loaf(
         || payload.receipt_identity != receipt.identity
         || payload.build_unit_identity != receipt.build_unit_identity
         || payload.plan_identity.trim().is_empty()
+        || (payload.inspection_authority.is_none() && payload.preparation_identity_digest.is_none())
         || payload.files.is_empty()
         || payload
             .build_report
@@ -683,13 +711,11 @@ pub fn publish_project_output_loaf(
                 "cannot publish Oven project-output Loaf whose payload omits a source file",
             ));
         };
+        let (logical_bytes, digest) =
+            super::output_materialization::digest_project_output_projection_file(&source.source_path)?;
         if source.caller_relative_path != file.caller_relative_path
-            || digest_bytes(&fs::read(&source.source_path).map_err(|error| {
-                CliError::failure(format!(
-                    "cannot publish missing Oven project output {}: {error}",
-                    source.source_path.display()
-                ))
-            })?) != file.digest
+            || logical_bytes != file.logical_bytes
+            || digest != file.digest
         {
             return Err(CliError::failure(
                 "cannot publish Oven project output whose source differs from its payload",
@@ -698,7 +724,7 @@ pub fn publish_project_output_loaf(
     }
     let payload_bytes = serde_json::to_vec(payload)
         .map_err(|error| CliError::failure(format!("failed to serialize Oven project-output Loaf: {error}")))?;
-    let request = OvenArtifactPublishRequest {
+    let mut request = OvenArtifactPublishRequest {
         receipt: receipt.clone(),
         domain: format!("incan-release-{INCAN_VERSION}"),
         kind: OvenArtifactKind::ProjectOutput,
@@ -712,6 +738,8 @@ pub fn publish_project_output_loaf(
             .collect(),
         materialized_directories: Vec::new(),
     };
+    let _inspection_owner = super::inspection_snapshot::retain_inspection_snapshot(store, payload, &mut request)
+        .map_err(oven_rustc_error)?;
     let deadline = Instant::now() + OVEN_PROJECT_OUTPUT_PUBLICATION_WAIT;
     let manifest = loop {
         match store.publish(&request) {
@@ -778,20 +806,28 @@ pub fn stored_project_output_from_parts(
             manifest.identity
         )));
     }
-    let inspection_authority = payload.inspection_authority.as_ref().ok_or_else(|| {
-        CliError::failure(format!(
-            "selected Oven project-output Loaf `{}` has no project inspection authority",
-            manifest.identity
-        ))
-    })?;
-    if inspection_authority.identity.trim().is_empty()
-        || inspection_authority.receipt_identity.trim().is_empty()
-        || inspection_authority.build_unit_identity.trim().is_empty()
-    {
-        return Err(CliError::failure(format!(
-            "selected Oven project-output Loaf `{}` has an incomplete project inspection authority",
-            manifest.identity
-        )));
+    match payload.inspection_authority.as_ref() {
+        Some(authority)
+            if authority.identity.trim().is_empty()
+                || authority.receipt_identity.trim().is_empty()
+                || authority.build_unit_identity.trim().is_empty() =>
+        {
+            return Err(CliError::failure(format!(
+                "selected Oven project-output Loaf `{}` has an incomplete project inspection authority",
+                manifest.identity
+            )));
+        }
+        None if payload
+            .preparation_identity_digest
+            .as_ref()
+            .is_none_or(|identity| identity.trim().is_empty()) =>
+        {
+            return Err(CliError::failure(format!(
+                "selected Oven project-output Loaf `{}` has neither inspection nor ordinary preparation authority",
+                manifest.identity
+            )));
+        }
+        _ => {}
     }
     let native_outputs = payload
         .files
@@ -882,22 +918,12 @@ pub fn project_output_payload_for_bake(
         .files
         .into_iter()
         .map(|file| {
-            let bytes = fs::read(&file.source_path).map_err(|error| {
-                CliError::failure(format!(
-                    "failed to digest completed Oven project output {}: {error}",
-                    file.source_path.display()
-                ))
-            })?;
-            let logical_bytes = u64::try_from(bytes.len()).map_err(|_| {
-                CliError::failure(format!(
-                    "completed Oven project output {} is too large to account",
-                    file.source_path.display()
-                ))
-            })?;
+            let (logical_bytes, digest) =
+                super::output_materialization::digest_project_output_projection_file(&file.source_path)?;
             Ok(OvenProjectOutputFile {
                 caller_relative_path: file.caller_relative_path,
                 output_relative_path: file.output_relative_path,
-                digest: digest_bytes(&bytes),
+                digest,
                 logical_bytes,
             })
         })
@@ -912,10 +938,11 @@ pub fn project_output_payload_for_bake(
             "completed Oven project-output Loaf must contain exactly one native output",
         ));
     }
-    if request.inspection_authority.identity.trim().is_empty()
-        || request.inspection_authority.receipt_identity.trim().is_empty()
-        || request.inspection_authority.build_unit_identity.trim().is_empty()
-    {
+    if request.inspection_authority.as_ref().is_some_and(|authority| {
+        authority.identity.trim().is_empty()
+            || authority.receipt_identity.trim().is_empty()
+            || authority.build_unit_identity.trim().is_empty()
+    }) {
         return Err(CliError::failure(
             "completed Oven project output must name one exact project inspection authority",
         ));
@@ -957,14 +984,20 @@ pub fn project_output_payload_for_bake(
         target_identity,
         project_identity: baked_project_owner_identity(request.project_root)?,
         source_authority_digest: request.source_authority_digest.to_string(),
+        dependency_authority_digest: Some(super::source_authority::digest_project_development_dependencies(
+            request.project_root,
+        )?),
         lock_dependencies_fingerprint: request.lock_dependencies_fingerprint,
+        compiler_identity_digest: Some(super::source_authority::current_compiler_identity_digest()?),
+        preparation_identity_digest: None,
         compiler_version: INCAN_VERSION.to_string(),
         entrypoint_relative_path,
         build_unit_identity: request.receipt.build_unit_identity.clone(),
         receipt_identity: request.receipt.identity.clone(),
         plan_identity: request.plan_identity,
         backend_receipt: request.backend_receipt,
-        inspection_authority: Some(request.inspection_authority),
+        inspection_authority: request.inspection_authority,
+        inspection_authority_snapshot: None,
         files,
         required_project_loafs,
         package_loaf_store_relative_path: request.package_loaf_store_relative_path,
@@ -981,9 +1014,49 @@ mod tests {
 
     use oven_store::store::OvenStore;
 
+    /// Publication must reject changed bytes and inconsistent lengths even after payload generation warmed the
+    /// observer.
     #[test]
-    fn project_output_publication_retains_the_complete_set_under_tight_policy() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn publication_rechecks_changed_sources_and_payload_lengths() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        fs::create_dir(project.path().join("src"))?;
+        fs::write(project.path().join("loaf.toml"), "[project]\nname='fixture'\n")?;
+        fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
+        let (receipt, payload, files) = fixture_project_output_publication(project.path(), "debug", "observed")?;
+        let source = &files.first().ok_or("fixture output missing")?.source_path;
+        let original = fs::read(source)?;
+        let modified = fs::metadata(source)?.modified()?;
+        let mut changed = original.clone();
+        let first = changed.first_mut().ok_or("fixture output is empty")?;
+        *first ^= 1;
+        fs::write(source, changed)?;
+        fs::File::options()
+            .write(true)
+            .open(source)?
+            .set_times(fs::FileTimes::new().set_modified(modified))?;
+        let root = tempfile::tempdir()?;
+        let store = OvenStore::new(
+            root.path(),
+            oven_store::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+        );
+        assert!(publish_project_output_loaf(&store, &receipt, &payload, &files).is_err());
+        fs::write(source, original)?;
+        let mut wrong_length = payload.clone();
+        wrong_length
+            .files
+            .first_mut()
+            .ok_or("fixture payload missing")?
+            .logical_bytes += 1;
+        assert!(publish_project_output_loaf(&store, &receipt, &wrong_length, &files).is_err());
+        let selected = publish_project_output_loaf(&store, &receipt, &payload, &files)?;
+        assert_eq!(selected.payload.files, payload.files);
+        Ok(())
+    }
+
+    /// Store budgets sweep idle entries; bounded publication preserves every leased project sibling above the target.
+    #[test]
+    fn project_output_publication_preserves_leased_siblings_above_retention_target()
+    -> Result<(), Box<dyn std::error::Error>> {
         let project = tempfile::tempdir()?;
         fs::create_dir(project.path().join("src"))?;
         fs::write(project.path().join("loaf.toml"), "[project]\nname = \"fixture\"\n")?;
@@ -1018,13 +1091,11 @@ mod tests {
         assert_eq!(complete.reclaimable_physical_bytes, 0);
 
         let overflow = fixture_project_output_publication(project.path(), "debug", "overflow")?;
-        let result = publish_project_output_loaf(&tight, &overflow.0, &overflow.1, &overflow.2);
-        let Err(error) = result else {
-            return Err("tight policy admitted a third output by pruning a leased project sibling".into());
-        };
-        assert!(error.message.contains("policy cannot admit"));
+        let retained_overflow = publish_project_output_loaf(&tight, &overflow.0, &overflow.1, &overflow.2)?;
         let after = tight.inspect()?;
-        assert_eq!(after.entries.len(), 2);
+        assert_eq!(after.entries.len(), 3);
+        assert_eq!(after.active_lease_physical_bytes, after.physical_bytes);
+        assert_eq!(after.reclaimable_physical_bytes, 0);
         let identities = after
             .entries
             .iter()
@@ -1032,6 +1103,7 @@ mod tests {
             .collect::<BTreeSet<_>>();
         assert!(identities.contains(retained_debug.identity.as_str()));
         assert!(identities.contains(retained_release.identity.as_str()));
+        assert!(identities.contains(retained_overflow.identity.as_str()));
         Ok(())
     }
 }

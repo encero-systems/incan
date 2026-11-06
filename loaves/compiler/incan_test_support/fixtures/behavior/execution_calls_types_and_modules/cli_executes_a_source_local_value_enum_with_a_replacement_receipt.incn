@@ -1,0 +1,22 @@
+# behavior: cli executes a source local value enum with a replacement receipt
+# expect-stdout:
+#   404
+
+"""Cli executes a source local value enum with a replacement receipt."""
+enum HttpStatus(int):
+  """Represent the Ok, NotFound alternatives in this fixture."""
+  Ok = 200
+  NotFound = 404
+
+def status_code() -> int:
+  """Return the fixture expression `HttpStatus.NotFound.value()`."""
+  return HttpStatus.NotFound.value()
+
+def program_result() -> int:
+  """Return the fixture expression `status_code()`."""
+  return status_code()
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

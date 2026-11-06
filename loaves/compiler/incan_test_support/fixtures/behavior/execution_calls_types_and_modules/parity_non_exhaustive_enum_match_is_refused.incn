@@ -1,0 +1,23 @@
+# behavior: a match over an enum that leaves a variant uncovered is refused (parity corpus case 1)
+# expect-diagnostic: INCAN-T0001
+
+"""A match over an enum that leaves a variant uncovered is refused (parity corpus case 1)."""
+enum Color:
+    """Represent the Red, Green, Blue alternatives in this fixture."""
+    Red
+    Green
+    Blue
+
+
+def name(c: Color) -> str:
+    """Match the fixture alternatives and return the selected result."""
+    match c:
+        case Color.Red:
+            return "red"
+        case Color.Green:
+            return "green"
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(name(Color.Blue))

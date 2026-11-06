@@ -1,0 +1,15 @@
+# behavior: string len output is delivered exactly once
+# expect-stdout:
+#   é
+#   1
+
+"""String len output is delivered exactly once."""
+def length(value: str) -> int:
+    """Print the string before returning its length."""
+    println(value)
+    return value.len()
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(length("é"))

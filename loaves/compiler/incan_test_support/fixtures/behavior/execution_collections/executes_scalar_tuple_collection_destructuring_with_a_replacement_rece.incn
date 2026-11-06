@@ -1,0 +1,19 @@
+# behavior: executes scalar tuple collection destructuring with a replacement receipt
+# pending: the legacy route emits Rust that rustc rejects; the direct route (#1337 stage 4)
+# expect-stdout:
+#   45
+
+
+"""Executes scalar tuple collection destructuring with a replacement receipt."""
+def program_result() -> int:
+  """Traverse `for a, b in pairs` and return `0`."""
+  pairs = [(1, 2), (4, 5)]
+  for a, b in pairs:
+    if a == 4:
+      return a * 10 + b
+  return 0
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

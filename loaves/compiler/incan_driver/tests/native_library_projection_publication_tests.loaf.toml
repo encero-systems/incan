@@ -1,0 +1,18 @@
+# Compiler-owned libtest dependency contract. Prepared against the native compiler graph, debug only.
+[project]
+name = "incan-driver-library-projection-tests"
+version = "0.6.0-dev.6"
+private = true
+
+[dependencies]
+incan_driver = { loaf = "incan_driver", path = ".." }
+incan_provider = { loaf = "incan_provider", path = "../../incan_provider" }
+incan_test_support = { loaf = "incan_test_support", path = "../../incan_test_support" }
+oven_model = { loaf = "oven_model", path = "../../../oven/oven_model" }
+oven_rustc = { loaf = "oven_rustc", path = "../../../oven/oven_rustc" }
+oven_store = { loaf = "oven_store", path = "../../../oven/oven_store" }
+serde = { loaf = "crates-io/serde", version = "1.0", features = ["derive"] }
+serde_json = { loaf = "crates-io/serde_json", version = "1.0" }
+tempfile = { loaf = "crates-io/tempfile", version = "3" }
+incan_frontend = { loaf = "incan_frontend", path = "../../incan_frontend" }
+incan_lang = { loaf = "incan_lang", path = "../../../kernel/incan_lang" }

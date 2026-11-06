@@ -1,0 +1,71 @@
+"""Pure feature-table closure checks independent of Rust inspection and source selection."""
+
+from loaf_facts import feature_name_closure, closure_violations, applicable_optional_aliases, FactDependency
+
+
+pub def test_feature_closure_does_not_infer_defaults() -> None:
+    """A declared default is enabled only by explicit recorded membership."""
+    features = {"default": ["std"], "std": [], "derive": ["dep:derive", "derive?/full"]}
+    assert feature_name_closure(features, ["derive"]) == ["derive"]
+    assert feature_name_closure(features, ["default"]) == ["default", "std"]
+
+
+pub def test_cycles_terminate_and_duplicate_bindings_are_reported() -> None:
+    """Closure is set-shaped, but distinct recorded bindings keep separate violation lines."""
+    features = {"first": ["second"], "second": ["first"]}
+    assert feature_name_closure(features, ["first"]) == ["first", "second"]
+    violations = closure_violations("test/cycle", "1.0.0", features, [["first"], ["first"]])
+    assert len(violations) == 2
+    assert violations[0] == violations[1]
+
+
+pub def test_closed_recorded_set_passes_unchanged() -> None:
+    """Dependency tokens never enter a local cfg feature closure."""
+    assert closure_violations("test/closed", "1.0.0", {"std": ["other/std"]}, [["std"]]) == []
+
+
+pub def test_strong_forwarding_enables_only_applicable_optional_feature() -> Result[None, str]:
+    """Multiple declarations use any applicable optional slot, while required and inactive slots add nothing."""
+    declarations = [FactDependency(alias="child", optional=true, target=Some("cfg(windows)")), FactDependency(
+        alias="child",
+        optional=true,
+        target=Some("cfg(unix)"),
+    ), FactDependency(alias="required", optional=false, target=None), FactDependency(
+        alias="inactive",
+        optional=true,
+        target=Some("cfg(windows)"),
+    )]
+    aliases = applicable_optional_aliases(declarations, "aarch64-apple-darwin", ["unix"], {})?
+    assert aliases == ["child"]
+    features = {"use": ["child/full", "required/full", "inactive/full"], "child": ["extra"], "extra": [], "required": [], "inactive": []}
+    assert feature_name_closure(features, ["use"], aliases) == ["child", "extra", "use"]
+    assert len(closure_violations("test/strong", "1.0.0", features, [["use"]], aliases)) == 1
+    assert closure_violations("test/strong", "1.0.0", features, [["child", "extra", "use"]], aliases) == []
+    return Ok(None)
+
+
+pub def test_dependency_and_weak_members_never_enable_alias_feature() -> None:
+    """dep:x and x?/f do not imply the feature x even when an optional declaration applies."""
+    features = {"explicit": ["dep:child"], "weak": ["child?/full"], "child": ["extra"], "extra": []}
+    assert feature_name_closure(features, ["explicit", "weak"], ["child"]) == ["explicit", "weak"]
+
+
+pub def test_exact_triple_and_malformed_inactive_construct() -> Result[None, str]:
+    """An exact triple uses the supplied binding, and an invalid cfg branch never hides behind inactivity."""
+    aliases = applicable_optional_aliases(
+        [FactDependency(alias="child", optional=true, target=Some("aarch64-apple-darwin"))],
+        "x86_64-pc-windows-msvc",
+        ["unix"],
+        {},
+    )?
+    assert aliases == []
+    match applicable_optional_aliases(
+        [FactDependency(alias="child", optional=true, target=Some("cfg(any(unix, wrong()))"))],
+        "aarch64-apple-darwin",
+        ["unix"],
+        {},
+    ):
+        Err(_) => pass
+        Ok(_) =>
+            assert false
+    return Ok(None)

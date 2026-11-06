@@ -1,0 +1,15 @@
+# behavior: a call spreads a list into a rest parameter and a dict into a keyword-rest parameter (parity corpus case 13)
+# expect-stdout:
+#   1
+
+"""A call spreads a list into a rest parameter and a dict into a keyword-rest parameter (parity corpus case 13)."""
+def log(a: int, b: int, *items: int, **fields: int) -> None:
+    """Print the leading positional argument while accepting rest arguments."""
+    println(a)
+
+
+def main() -> None:
+    """Call `log(1, *xs, b=2, **kw)` with the fixture inputs."""
+    xs = [3, 4]
+    kw = {"k": 5}
+    log(1, *xs, b=2, **kw)

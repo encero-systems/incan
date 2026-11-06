@@ -196,20 +196,20 @@ fn tuple_for_pattern_bindings_are_readable_inside_the_loop_body() -> Result<(), 
     Ok(())
 }
 
+/// Tuple bindings keep their checked item projection while selected protocol methods drive polling.
 #[test]
 fn lowers_a_tuple_for_pattern_over_a_user_defined_iteration_protocol() -> Result<(), Box<dyn std::error::Error>> {
     let source = "model PairIter:\n  value: int\n\n  def __next__(self) -> Option[tuple[int, int]]:\n    return Some((self.value, self.value))\n\nmodel Pairs:\n  def __iter__(self) -> PairIter:\n    return PairIter(value=0)\n\ndef total() -> int:\n  mut acc = 0\n  for a, b in Pairs():\n    acc = acc + a + b\n  return acc\n";
     let module = build(source, &["m", "protocol_tuple_for"])?;
     let snapshot = module.render_snapshot();
 
-    // Scoped to the loop-pattern refusal specifically: this source's `PairIter(value=0)` constructor also
-    // trips Body IR's separate, pre-existing "call with named or unpack arguments" gap, which #1125 does not own.
+    // The checked constructor and tuple bindings remain independent of the selected polling hook.
     assert!(
         !snapshot.contains("unsupported(for-loop pattern"),
         "protocol-driven tuple iteration must lower to real bindings: {snapshot}"
     );
     assert!(
-        snapshot.contains("user_defined(__next__)"),
+        snapshot.contains("call method:__next__") && !snapshot.contains("try?("),
         "the resolved protocol must still drive the poll: {snapshot}"
     );
     assert!(

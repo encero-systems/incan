@@ -3,7 +3,7 @@
 //! This module keeps the call-expression coordinator (`foo(...)`) thin and delegates argument binding, constructor
 //! handling, generic inference, builtin dispatch, and Rust boundary validation to focused child modules.
 
-use crate::ast::{CallArg, Expr, ImportPath, ParamKind, Span, Spanned, Type};
+use crate::ast::{CallArg, Expr, ParamKind, Span, Spanned, Type};
 use crate::diagnostics::errors::TypeArgumentOrigin;
 use crate::diagnostics::{CompileError, errors};
 use crate::resolved_type_subst::substitute_resolved_type;
@@ -31,6 +31,8 @@ use std::collections::{HashMap, HashSet};
 use super::TypeChecker;
 
 mod args;
+mod body_ir_factories;
+mod body_ir_generics;
 mod builtins;
 mod constructors;
 mod generic_bounds;
@@ -58,6 +60,26 @@ fn rust_path_last_segment_looks_like_type(path: &str) -> bool {
 }
 
 impl TypeChecker {
+    /// Retain a nongeneric variant's checked positional payload signature for both constructor call spellings.
+    ///
+    /// Generic variants need a concrete instantiation before they can claim declaration-slot types.
+    pub(in crate::typechecker::check_expr) fn checked_enum_variant_parameters(
+        &self,
+        enum_name: &str,
+        variant: &str,
+    ) -> Option<Vec<CallableParam>> {
+        let TypeInfo::Enum(info) = self.lookup_semantic_type_info(enum_name)? else {
+            return None;
+        };
+        if !info.type_params.is_empty() {
+            return None;
+        }
+        let canonical = info.variant_aliases.get(variant).map(String::as_str).unwrap_or(variant);
+        info.variant_fields
+            .get(canonical)
+            .map(|fields| fields.iter().cloned().map(CallableParam::positional).collect())
+    }
+
     /// Record the identity already attached to the active direct callee binding.
     ///
     /// This deliberately reads the symbol table's resolution result instead of deriving an identity from the written
@@ -177,11 +199,16 @@ impl TypeChecker {
                     || enum_info.variant_aliases.contains_key(member_name))
             {
                 let variant_identity = enum_info.variant_identities.get(member_name).cloned();
+                let variant_params = self.checked_enum_variant_parameters(enum_name, member_name);
                 if !type_args.is_empty() {
                     self.errors
                         .push(errors::explicit_call_site_type_args_not_supported(span));
                 }
                 self.check_call_args(args);
+                // Retain the checked positional payload surface for Body IR's declaration-slot binder.
+                if let Some(parameters) = variant_params {
+                    self.type_info.record_call_site_callable_params_exact(span, &parameters);
+                }
                 if let Some(identity) = variant_identity {
                     self.type_info.record_resolved_identity(callee.span, identity);
                 }
@@ -228,8 +255,7 @@ impl TypeChecker {
             } else {
                 self.resolve_imported_module_function_member_with_source(&module_path, method.as_str())
                     .map(|(kind, source_module_path)| {
-                        let canonical =
-                            self.dependency_member_identity(&ImportPath::simple(module_path.clone()), method);
+                        let canonical = self.imported_module_callable_identity(&module_path, method);
                         (kind, canonical, source_module_path, method.clone(), None)
                     })
             };
@@ -261,6 +287,7 @@ impl TypeChecker {
                 }
                 return match (kind, public_library) {
                     (SymbolKind::Function(info), _) => {
+                        let errors_before_call = self.errors.len();
                         let result = self.validate_stdlib_module_function_call(
                             callable.as_str(),
                             &info,
@@ -271,6 +298,7 @@ impl TypeChecker {
                         );
                         let identity = self.type_info.resolved_identity(callee.span).cloned();
                         self.check_capturing_call_arguments(identity.as_ref(), &callable, &info.params, args);
+                        self.retain_body_ir_async_call_target(&info, span, callee.span, errors_before_call);
                         result
                     }
                     (SymbolKind::FunctionOverloads(overloads), _) => self
@@ -361,6 +389,7 @@ impl TypeChecker {
                 && self.lookup_symbol(name).is_some_and(
                     |symbol| matches!(&symbol.kind, SymbolKind::Function(info) if !info.type_params.is_empty()),
                 );
+            let errors_before_builtin = self.errors.len();
             if !explicit_generic_surface_call
                 && let Some(result) = self.check_builtin_call(name, args, span, expected_return_ty)
             {
@@ -373,7 +402,12 @@ impl TypeChecker {
                     && let Some(identity) = self.symbols.builtin_function_identity(builtin)
                 {
                     self.type_info.record_resolved_identity(callee.span, identity);
+                } else if incan_lang::lang::surface::constructors::from_str(name).is_some() {
+                    // Constructor checking has already excluded source shadowing; retain that selected builtin binding
+                    // for Body IR.
+                    self.record_direct_callee_identity(name, callee.span);
                 }
+                self.retain_body_ir_surface_call_arguments(name, args, span, errors_before_builtin);
                 return result;
             }
 
@@ -422,6 +456,7 @@ impl TypeChecker {
                                 return self.check_json_query_constructor_call(tid, args, span);
                             }
                             if matches!(tid, SurfaceTypeId::Html) {
+                                self.record_body_ir_html_constructor(args, span);
                                 // The value is typed by the binding the call spells, so `Page(...)` under
                                 // `from std.web import Html as Page` is a `Page`, as its annotations are.
                                 return ResolvedType::Named(name.clone());
@@ -478,8 +513,18 @@ impl TypeChecker {
                                 field.ty = substitute_resolved_type(&field.ty, type_bindings);
                             }
                         }
+                        let errors_before_constructor = self.errors.len();
                         let constructor_ty =
                             self.check_model_or_class_constructor_call(name, name, &fields, args, span);
+                        if self.errors.len() == errors_before_constructor {
+                            self.retain_body_ir_constructor_type(
+                                name,
+                                &type_info,
+                                constructor_context.as_ref(),
+                                args,
+                                span,
+                            );
+                        }
                         self.record_expr_type(callee.span, ResolvedType::Named(name.clone()));
                         self.type_info
                             .expressions
@@ -511,6 +556,7 @@ impl TypeChecker {
                         let result =
                             self.validate_function_call(name, &func_info, type_args, args, span, expected_return_ty);
                         self.check_capturing_call_arguments(declaration.as_ref(), name, &func_info.params, args);
+                        self.retain_body_ir_async_call_target(&func_info, span, callee.span, first_error);
                         if let Some(declaration) = declaration {
                             self.attach_related_declaration_to_new_errors(first_error, &declaration);
                         }
@@ -661,6 +707,7 @@ impl TypeChecker {
                     return self.check_json_query_constructor_call(tid, args, span);
                 }
                 if matches!(tid, SurfaceTypeId::Html) {
+                    self.record_body_ir_html_constructor(args, span);
                     return ResolvedType::Named(name.clone());
                 }
             }
@@ -699,6 +746,7 @@ impl TypeChecker {
                         return self.check_json_query_constructor_call(tid, args, span);
                     }
                     if matches!(tid, SurfaceTypeId::Html) {
+                        self.record_body_ir_html_constructor(args, span);
                         return ResolvedType::Named(name.clone());
                     }
                 }
@@ -1885,6 +1933,10 @@ impl TypeChecker {
         span: Span,
         callee_span: Span,
     ) -> ResolvedType {
+        self.type_info
+            .calls
+            .body_ir_module_constructor_bindings
+            .remove(&(span.start, span.end));
         let PublicModuleConstructorContext {
             display_name,
             canonical_name: type_name,
@@ -1913,6 +1965,7 @@ impl TypeChecker {
             return ResolvedType::Unknown;
         }
 
+        let errors_before_constructor = self.errors.len();
         let constructor_ty = match type_info {
             TypeInfo::Newtype(newtype) => {
                 let [CallArg::Positional(value)] = args else {
@@ -1950,6 +2003,9 @@ impl TypeChecker {
             }
             _ => ResolvedType::Unknown,
         };
+        if self.errors.len() == errors_before_constructor && args.is_empty() {
+            self.retain_body_ir_defaulted_module_class(type_info, span);
+        }
         let result = explicit_ty.unwrap_or(constructor_ty);
         self.record_expr_type(callee_span, result.clone());
         self.type_info
@@ -2391,7 +2447,8 @@ impl TypeChecker {
         ResolvedType::Unknown
     }
 
-    /// Validate one Rust import call and record its callable semantics when validation succeeds.
+    /// Validate one Rust import call and record its callable semantics when validation succeeds. Synchronous safe
+    /// diverging calls additionally retain their selected path for Body IR; legacy reference identities stay intact.
     fn validate_and_record_rust_import_function_call(
         &mut self,
         path: &str,
@@ -2404,6 +2461,12 @@ impl TypeChecker {
         let error_count_before = self.errors.len();
         let result = self.validate_rust_function_call_with_expected(path, signature, args, span, expected_return_ty);
         if self.errors.len() == error_count_before {
+            if result == ResolvedType::Never && !signature.is_async && !signature.is_unsafe {
+                self.type_info
+                    .rust
+                    .body_ir_diverging_import_calls
+                    .insert((span.start, span.end), path.split("::").map(str::to_owned).collect());
+            }
             self.record_expr_type(
                 callee_span,
                 self.resolved_function_type_from_rust_sig_for_owner_path(signature, false, path),

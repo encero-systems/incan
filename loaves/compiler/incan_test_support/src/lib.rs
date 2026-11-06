@@ -3,17 +3,16 @@
 //! fixture builders and artifact readers the roots compose.
 //!
 //! This crate is a dev-dependency of every ring whose integration tests launch the compiler or read the checkout, so a
-//! root can live in the package it exercises and still share one harness. It links ring crates only; the parity
-//! corpus's two helpers (`parity_corpus`, `shadow_capability`) live beside the driver's roots, which are the only ones
-//! that use them. The behavior-fixture family (`fixtures/behavior/`, run by `behavior_fixtures`) is the route-agnostic
-//! twin corpus of the #1561 cutover.
+//! root can live in the package it exercises and still share one harness. It links ring crates only. The
+//! behavior-fixture family (`fixtures/behavior/`, run by `behavior_fixtures`) is the route-agnostic twin corpus of the
+//! #1561 cutover.
 
 pub mod behavior_fixtures;
+pub mod behavior_roots;
 pub mod builtin_stdlib;
 pub mod canonical_projection;
 pub mod cli_project;
 pub mod emitted_symbol_artifact;
-pub mod package_boundary_probe;
 pub mod package_project;
 
 use std::path::{Path, PathBuf};
@@ -23,14 +22,37 @@ use std::time::Instant;
 
 /// Locate the checkout from the test package, including after it moves into a Loaves ring.
 ///
-/// The checkout has a lockfile and the Loaves directory; no caller working directory or mutable environment override
-/// participates in source discovery. A missing checkout is a test setup error rather than a relative-path fallback.
+/// The native harness supplies an explicit source root or the selected test package's runtime manifest directory,
+/// because receipt-bound helper dependencies have no checkout ancestor. Explicit roots take precedence; otherwise
+/// package ancestry is checked using the runtime anchor before the compiled package path. Both routes require a
+/// lockfile and the Loaves directory. An invalid supplied anchor cannot fall back to another checkout or the cwd.
 pub fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+    let selected = std::env::var_os("INCAN_INTERNAL_TEST_SOURCE_ROOT").map(PathBuf::from);
+    let runtime_package = std::env::var_os("CARGO_MANIFEST_DIR").map(PathBuf::from);
+    checkout_root(
+        Path::new(env!("CARGO_MANIFEST_DIR")),
+        selected.as_deref(),
+        runtime_package.as_deref(),
+    )
+    .unwrap_or_else(|| panic!("integration test package has no authorized Incan checkout"))
+}
+
+/// Resolve an explicit checkout exactly, then the selected runtime package, then the compiled package's ancestry.
+/// A supplied runtime package must exist; failure never retries the compiled path or current working directory.
+fn checkout_root(package: &Path, selected: Option<&Path>, runtime_package: Option<&Path>) -> Option<PathBuf> {
+    let is_checkout = |candidate: &Path| candidate.join("Cargo.lock").is_file() && candidate.join("loaves").is_dir();
+    if let Some(root) = selected {
+        return is_checkout(root).then(|| root.to_path_buf());
+    }
+    let package = match runtime_package {
+        Some(runtime) if runtime.is_dir() => runtime,
+        Some(_) => return None,
+        None => package,
+    };
+    package
         .ancestors()
-        .find(|candidate| candidate.join("Cargo.lock").is_file() && candidate.join("loaves").is_dir())
+        .find(|candidate| is_checkout(candidate))
         .map(Path::to_path_buf)
-        .unwrap_or_else(|| panic!("integration test package has no ancestor Incan checkout"))
 }
 
 /// The fixtures several rings' roots share: Incan programs, invalid inputs, boundary-parity and Oven bake projects.
@@ -111,6 +133,39 @@ pub fn report_build_phase_timing(label: &str, output: &Output) {
             "phase_timings_ms": phase_timings_ms,
         })
     );
+}
+
+/// Run one exact test from the existing checkout-relative compiler source layout.
+///
+/// The parent creates a uniquely owned hard link to its current libtest executable under the selected checkout's
+/// `target/compiler-development/bin`. The child preserves the runner's compiler binding, native plan and environment;
+/// production source discovery still validates its actual executable and pinned declarations. No source tree or test
+/// binary is copied. Cross-filesystem linking refuses instead of silently duplicating a large harness. Returns `true`
+/// after the parent has verified the child passed; the selected child returns `false` so the original test body runs.
+pub fn in_compiler_source_layout(test_name: &str) -> std::io::Result<bool> {
+    const CHILD: &str = "INCAN_TEST_COMPILER_SOURCE_LAYOUT";
+    if std::env::var(CHILD).ok().as_deref() == Some(test_name) {
+        return Ok(false);
+    }
+    let directory = repo_root().canonicalize()?.join("target/compiler-development/bin");
+    std::fs::create_dir_all(&directory)?;
+    let source = std::env::current_exe()?;
+    let executable = tempfile::Builder::new()
+        .prefix("incan-source-test-")
+        .make_in(&directory, |path| std::fs::hard_link(&source, path))?;
+    let output = Command::new(executable.path())
+        .args(["--exact", test_name, "--nocapture", "--test-threads=1"])
+        .env(CHILD, test_name)
+        .output()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !output.status.success() || !stdout.contains("1 passed") {
+        return Err(std::io::Error::other(format!(
+            "compiler-source test `{test_name}` failed or selected no test:\n{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+    print!("{stdout}");
+    Ok(true)
 }
 
 /// Return the Incan CLI built alongside the current integration-test executable.
@@ -210,27 +265,43 @@ pub fn oven_compiler_suite_is_active() -> bool {
             && std::env::var_os("INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT").is_some_and(|value| !value.is_empty()))
 }
 
-/// Apply the compiler-suite's narrowly injected publisher authority to one explicit Oven bake command.
+/// Select the persistent fixture home shared by compiler workspaces and test invocations.
 ///
-/// The suite must not set `CARGO` for an entire libtest root: that would let an accidental normal-command fallback
-/// evade the outer exit-97 guard. Callers therefore opt in only for `incan oven bake`, the named publisher boundary.
-/// The command deliberately retains the suite-selected consumer `RUSTC`: publisher Cargo may differ, but the
-/// produced Loaf must be compatible with the direct-Rustc consumer that will select it.
-pub fn configure_explicit_oven_bake_command(command: &mut Command) -> std::io::Result<()> {
-    if !oven_compiler_suite_is_active() {
-        return Ok(());
+/// Mutable fixture sources remain temporary. Only receipt-validated Oven entries survive between runs, outside
+/// compiler-build identities and child scratch directories. An explicit harness override takes precedence; the
+/// default is a sibling of the selected Cargo target, so sibling workspaces share it without using developer state.
+pub fn oven_fixture_home() -> std::io::Result<PathBuf> {
+    if let Some(home) = std::env::var_os("INCAN_TEST_OVEN_FIXTURE_HOME").filter(|value| !value.is_empty()) {
+        return Ok(anchor_harness_path(PathBuf::from(home)));
     }
-    let required = |name: &str| {
-        std::env::var_os(name).filter(|value| !value.is_empty()).ok_or_else(|| {
-            std::io::Error::other(format!(
-                "compiler-suite explicit Oven bake has no injected {name} authority"
-            ))
-        })
-    };
+    let target = selected_harness_path("CARGO_TARGET_DIR", "target");
+    let parent = target
+        .parent()
+        .ok_or_else(|| std::io::Error::other("compiler target has no parent"))?;
+    Ok(parent.join("incan-oven-fixture-home"))
+}
+
+/// Configure a Cargo-free fixture bake against the persistent store and the debug profile.
+///
+/// Retain the selected consumer Rustc and SDK authority. Removing `CARGO` ensures any accidental compatibility
+/// fallback reaches the outer PATH guard rather than a separately injected publisher executable.
+pub fn configure_explicit_oven_bake_command(command: &mut Command) -> std::io::Result<()> {
     command
-        .env("CARGO", required("INCAN_INTERNAL_OVEN_EXPLICIT_BAKE_CARGO")?)
-        .env("HOME", required("INCAN_INTERNAL_OVEN_EXPLICIT_BAKE_HOME")?);
+        .env_remove("CARGO")
+        .env("INCAN_HOME", oven_fixture_home()?)
+        .env("INCAN_OVEN_BAKE_PROFILES", "debug");
     Ok(())
+}
+
+/// Return the checkout-owned directory, kept across suite runs, that the suite grants this explicit-bake root.
+///
+/// A root that bakes the same fixture graph on every run bakes into this directory so Oven reuses the previous run's
+/// state, the way Cargo reuses a target directory. `None` outside the suite or without the grant: callers then bake
+/// into a fresh temporary directory.
+pub fn explicit_bake_workspace() -> Option<PathBuf> {
+    std::env::var_os("INCAN_INTERNAL_OVEN_EXPLICIT_BAKE_WORKSPACE")
+        .filter(|value| !value.is_empty())
+        .map(|value| anchor_harness_path(PathBuf::from(value)))
 }
 
 /// Return the generated Cargo target selected by the outer test harness.
@@ -298,5 +369,97 @@ fn anchor_harness_path(selected: PathBuf) -> PathBuf {
         selected
     } else {
         std::env::current_dir().unwrap_or_else(|_| repo_root()).join(selected)
+    }
+}
+
+#[cfg(test)]
+mod fixture_bake_tests {
+    use super::{checkout_root, configure_explicit_oven_bake_command, oven_fixture_home};
+    use std::collections::BTreeMap;
+    use std::ffi::OsStr;
+    use std::process::Command;
+
+    /// The relocated exact test sees the genuine checkout source layout without changing production discovery.
+    #[test]
+    fn compiler_source_layout_selects_actual_checkout() -> Result<(), Box<dyn std::error::Error>> {
+        if super::in_compiler_source_layout("fixture_bake_tests::compiler_source_layout_selects_actual_checkout")? {
+            return Ok(());
+        }
+        let layout = oven_model::toolchain_layout::CompilerOwnedSourceLayout::discover()?
+            .ok_or("test executable has no compiler source layout")?;
+        assert_eq!(
+            layout.verified_source_root()?,
+            super::repo_root().join("loaves/stdlib").canonicalize()?
+        );
+        layout.verify()?;
+        Ok(())
+    }
+
+    /// A successful libtest process with zero selected tests must not become a passing fixture result.
+    #[test]
+    fn compiler_source_layout_refuses_empty_selection() -> std::io::Result<()> {
+        let result = super::in_compiler_source_layout("incan_test_support_missing_source_layout_case");
+        assert!(result.is_err(), "an absent exact test was accepted");
+        Ok(())
+    }
+
+    /// A sealed dependency path needs the selected native checkout; invalid anchors cannot select an ancestor instead.
+    #[test]
+    fn native_checkout_anchor_is_exact() -> std::io::Result<()> {
+        let root = tempfile::tempdir()?;
+        std::fs::write(root.path().join("Cargo.lock"), "")?;
+        std::fs::create_dir(root.path().join("loaves"))?;
+        let sealed = std::path::Path::new("/oven/sealed-source");
+        assert_eq!(
+            checkout_root(sealed, Some(root.path()), None),
+            Some(root.path().to_path_buf())
+        );
+        let runtime_package = root.path().join("loaves/package");
+        std::fs::create_dir(&runtime_package)?;
+        assert_eq!(
+            checkout_root(sealed, None, Some(&runtime_package)),
+            Some(root.path().to_path_buf())
+        );
+        let other = tempfile::tempdir()?;
+        assert_eq!(checkout_root(root.path(), None, Some(other.path())), None);
+        assert_eq!(
+            checkout_root(root.path(), None, Some(&other.path().join("missing"))),
+            None
+        );
+        let invalid = root.path().join("missing");
+        assert_eq!(checkout_root(root.path(), Some(&invalid), None), None);
+        assert_eq!(
+            checkout_root(&root.path().join("loaves/package"), None, None),
+            Some(root.path().to_path_buf())
+        );
+        Ok(())
+    }
+
+    /// Fixture publication cannot retain a separately injected Cargo executable or change its consumer authority.
+    #[test]
+    fn fixture_bake_preserves_consumer_authority_without_cargo() -> std::io::Result<()> {
+        let mut command = Command::new("incan");
+        command
+            .env("CARGO", "publisher-cargo")
+            .env("RUSTC", "selected-rustc")
+            .env("INCAN_SDK_INVENTORY", "selected-sdk");
+        configure_explicit_oven_bake_command(&mut command)?;
+        let environment = command.get_envs().collect::<BTreeMap<_, _>>();
+        assert_eq!(environment.get(OsStr::new("CARGO")), Some(&None));
+        assert_eq!(
+            environment.get(OsStr::new("RUSTC")),
+            Some(&Some(OsStr::new("selected-rustc")))
+        );
+        assert_eq!(
+            environment.get(OsStr::new("INCAN_SDK_INVENTORY")),
+            Some(&Some(OsStr::new("selected-sdk")))
+        );
+        assert_eq!(
+            environment.get(OsStr::new("INCAN_OVEN_BAKE_PROFILES")),
+            Some(&Some(OsStr::new("debug")))
+        );
+        let home = oven_fixture_home()?;
+        assert_eq!(environment.get(OsStr::new("INCAN_HOME")), Some(&Some(home.as_os_str())));
+        Ok(())
     }
 }

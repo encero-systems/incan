@@ -26,7 +26,7 @@ from rust::std::os::unix::fs import MetadataExt, symlink
 from rust::std::path import Path as RustPath
 from rust::std::rc import Rc
 from rust::std::time import SystemTime
-from rust::rustix::fs @ "1.1" with ["fs"] import statvfs
+from rust::rustix::fs import statvfs
 from std.fs.file import File, _decode_text, _encode_text, _open_file, _validate_open_options
 from std.fs.glob import matches
 from std.fs.locking import FileLock, exclusive as lock_exclusive, shared as lock_shared, try_exclusive as try_lock_exclusive, try_shared as try_lock_shared

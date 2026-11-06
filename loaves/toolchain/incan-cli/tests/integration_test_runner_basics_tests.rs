@@ -7,6 +7,73 @@ include!("support/integration_tests_root.rs");
 mod test_runner_e2e {
     include!("support/integration_tests_test_runner_e2e.rs");
 
+    /// Both source adapters share selection and reports, while every invocation executes fresh native test bodies.
+    #[test]
+    fn e2e_mixed_oven_tests_preserve_selection_capture_and_fresh_results() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        std::fs::create_dir_all(dir.path().join("tests"))?;
+        std::fs::write(
+            dir.path().join("loaf.toml"),
+            "[project]\nname = \"mixed_test_runner\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(
+            dir.path().join("tests/test_values.incn"),
+            "def test_incan() -> None:\n    assert True\n",
+        )?;
+        std::fs::write(
+            dir.path().join("tests/native.rs"),
+            r#"
+#[test]
+fn native_passes() { println!("NATIVE_CAPTURE"); }
+#[test]
+fn native_runtime_data() { assert!(!std::path::Path::new("fail-rust").exists()); }
+#[test]
+#[ignore]
+fn ignored_native() { panic!("must stay ignored"); }
+"#,
+        )?;
+        // The outer test root may require reuse; this fresh project deliberately needs its first native harness.
+        let invoke = |arguments: &[&str]| {
+            incan_command()
+                .env_remove("INCAN_TEST_REQUIRE_STORED_NATIVE_REUSE")
+                .args(arguments)
+                .current_dir(dir.path())
+                .output()
+        };
+        let incan = invoke(&["test", "--list"])?;
+        let wrapper = invoke(&["oven", "tests", "--incan-only", "--list"])?;
+        assert!(incan.status.success() && wrapper.status.success());
+        assert_eq!(incan.stdout, wrapper.stdout);
+        let mixed = invoke(&["oven", "tests", "--format", "json"])?;
+        assert!(mixed.status.success(), "{}", String::from_utf8_lossy(&mixed.stderr));
+        let records = String::from_utf8(mixed.stdout)?
+            .lines()
+            .map(serde_json::from_str::<serde_json::Value>)
+            .collect::<Result<Vec<_>, _>>()?;
+        let summary = records
+            .iter()
+            .find_map(|record| record.get("summary"))
+            .ok_or("missing mixed summary")?;
+        assert_eq!(summary["passed"], 3);
+        assert_eq!(summary["skipped"], 1);
+        assert_eq!(summary["failed"], 0);
+        std::fs::write(dir.path().join("fail-rust"), "fail")?;
+        let failed = invoke(&["oven", "tests", "--rust-only"])?;
+        assert!(!failed.status.success());
+        let selected = invoke(&["oven", "tests", "--rust-only", "-k", "native_passes", "--nocapture"])?;
+        assert!(
+            selected.status.success(),
+            "{}",
+            String::from_utf8_lossy(&selected.stderr)
+        );
+        assert!(String::from_utf8(selected.stdout)?.contains("NATIVE_CAPTURE"));
+        let empty = invoke(&["oven", "tests", "--rust-only", "-k", "no_such_case", "--fail-on-empty"])?;
+        assert!(!empty.status.success());
+        let conflict = invoke(&["oven", "tests", "--incan-only", "--rust-only"])?;
+        assert!(!conflict.status.success());
+        Ok(())
+    }
+
     // ---- Passing test ----
 
     /// Issue #815: generic and `Self`-returning Index adoptions must compile in the generated test package.

@@ -1,0 +1,19 @@
+# behavior: executes mut shadowing by local identity
+# expect-stdout:
+#   11
+
+
+"""Executes mut shadowing by local identity."""
+def program_result() -> int:
+  """Compute and return `total + x`."""
+  mut total = 0
+  mut x = 4
+  if true:
+    mut x = 7
+    total += x
+  return total + x
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

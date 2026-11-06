@@ -6,8 +6,8 @@
 //! imported types resolved.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::fs;
 use std::path::{Path, PathBuf};
-use std::{env, fs};
 
 use incan_lang::lang::stdlib;
 use incan_lang::lang::surface::result_methods;
@@ -24,9 +24,7 @@ use incan_frontend::module::{
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::{ast_walk, diagnostics, typechecker};
 use incan_provider::dependency_resolver::{DependencyError, InlineRustImport};
-use incan_provider::inventory::sdk_provider_bootstrap_namespace_roots;
-use incan_provider::{FeatureSelection, ProviderModuleResolution, ProviderPlan, SDK_PROVIDER_BUILD_ENV};
-use oven_model::manifest::ProjectManifest;
+use incan_provider::{FeatureSelection, ProviderModuleResolution, ProviderPlan};
 /// Return whether a parsed module uses RFC 088 iterator surface methods that require stdlib adapter modules.
 pub fn uses_iterator_adapter_surface(program: &Program) -> bool {
     ast_walk::any_expr_in_program(program, |expr| match expr {
@@ -89,6 +87,22 @@ fn sdk_catalog_claims_module_for_collection(provider_plan: &ProviderPlan, module
     )
 }
 
+/// Resolve source publication through its original capability; admitted consumers never use ambient stdlib sources.
+fn resolve_session_stdlib_source(session: &CompilationSession, module_path: &[String]) -> CliResult<PathBuf> {
+    if let Some(source) = session.provider_plan().standard_source_publication() {
+        return source
+            .verified_module_source_path(module_path)
+            .map_err(|error| CliError::failure(error.to_string()));
+    }
+    if session.has_admitted_library_dependencies() {
+        return Err(CliError::failure(format!(
+            "ordinary session module `{}` lacks admitted checked dependency metadata",
+            module_path.join(".")
+        )));
+    }
+    resolve_stdlib_module_source_path(module_path)
+}
+
 /// Collect and parse the entry file and all its dependencies, preserving structured diagnostic context.
 pub fn collect_modules_detailed(entry_path: &str) -> Result<Vec<ParsedModule>, CliDiagnosticFailure> {
     collect_modules_detailed_with_feature_selection(entry_path, &FeatureSelection::default())
@@ -145,6 +159,9 @@ pub fn collect_modules_detailed_with_session(
     path: PathBuf,
     session: &CompilationSession,
 ) -> Result<Vec<ParsedModule>, CliDiagnosticFailure> {
+    let _invocation =
+        tracing::trace_span!(target: "incan::invocation", "incan_driver::collect_modules", input = %path.display())
+            .entered();
     collect_modules_detailed_with_session_at_path(path, session, vec!["main".to_string()])
 }
 
@@ -208,16 +225,12 @@ pub fn library_source_seeds(
     source_files.sort();
 
     let entry_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let sdk_namespace_roots = if env::var_os(SDK_PROVIDER_BUILD_ENV).is_some() {
-        let project_root = session
-            .manifest
-            .as_ref()
-            .map(ProjectManifest::project_root)
-            .unwrap_or_else(|| path.parent().unwrap_or(Path::new(".")));
-        Some(sdk_provider_bootstrap_namespace_roots(project_root)?)
-    } else {
-        None
-    };
+    let granted_roots = session
+        .provider_plan()
+        .bootstrap_sdk_namespace_roots()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let sdk_namespace_roots = (!granted_roots.is_empty()).then_some(granted_roots);
     let mut logical_sources = BTreeMap::<Vec<String>, PathBuf>::new();
     let mut seeds = vec![(path.to_path_buf(), "main".to_string(), vec!["main".to_string()])];
     for source_file in source_files {
@@ -303,12 +316,17 @@ fn collect_modules_detailed_from_seeds(
     session: &CompilationSession,
     mut to_process: Vec<(String, String, Vec<String>)>,
 ) -> Result<Vec<ParsedModule>, CliDiagnosticFailure> {
+    session
+        .provider_plan()
+        .verify_standard_source_publication()
+        .map_err(CliError::failure)?;
     let base_dir = path.parent().unwrap_or(Path::new("."));
     let mut modules = Vec::new();
     let mut processed = HashSet::new();
     let mut dependency_edges: HashMap<String, HashSet<String>> = HashMap::new();
     let mut incan_source_stdlib_module_paths: HashMap<String, PathBuf> = HashMap::new();
-    let compiling_sdk_provider = env::var_os(SDK_PROVIDER_BUILD_ENV).is_some();
+    let compiling_sdk_provider = session.provider_plan().bootstrap_sdk_namespace_roots().next().is_some()
+        || session.provider_plan().standard_source_publication().is_some();
     let stdlib_module_segments = |module_path: &[String]| {
         if compiling_sdk_provider {
             module_path.iter().skip(1).cloned().collect()
@@ -356,8 +374,8 @@ fn collect_modules_detailed_from_seeds(
                 "derives".to_string(),
                 "collection".to_string(),
             ];
-            if !sdk_catalog_claims_module_for_collection(&session.provider_plan, &module_path) {
-                let source_path = resolve_stdlib_module_source_path(&module_path)?;
+            if !sdk_catalog_claims_module_for_collection(session.provider_plan(), &module_path) {
+                let source_path = resolve_session_stdlib_source(session, &module_path)?;
                 let module_segments = stdlib_module_segments(&module_path);
                 let module_name = module_segments.join("_");
                 let dep_path_str = source_path.to_string_lossy().to_string();
@@ -370,8 +388,8 @@ fn collect_modules_detailed_from_seeds(
         }
         if uses_result_combinator_surface(&ast) {
             let module_path = vec![stdlib::STDLIB_ROOT.to_string(), "result".to_string()];
-            if !sdk_catalog_claims_module_for_collection(&session.provider_plan, &module_path) {
-                let source_path = resolve_stdlib_module_source_path(&module_path)?;
+            if !sdk_catalog_claims_module_for_collection(session.provider_plan(), &module_path) {
+                let source_path = resolve_session_stdlib_source(session, &module_path)?;
                 let module_segments = stdlib_module_segments(&module_path);
                 let module_name = module_segments.join("_");
                 let dep_path_str = source_path.to_string_lossy().to_string();
@@ -389,14 +407,14 @@ fn collect_modules_detailed_from_seeds(
                     if stdlib::stdlib_stub_path(&module_path).is_none() {
                         continue;
                     }
-                    if sdk_catalog_claims_module_for_collection(&session.provider_plan, &module_path) {
+                    if sdk_catalog_claims_module_for_collection(session.provider_plan(), &module_path) {
                         continue;
                     }
                     let stdlib_key = module_path.join(".");
                     let source_path = if let Some(cached_path) = incan_source_stdlib_module_paths.get(&stdlib_key) {
                         cached_path.clone()
                     } else {
-                        let resolved = resolve_stdlib_module_source_path(&module_path)?;
+                        let resolved = resolve_session_stdlib_source(session, &module_path)?;
                         incan_source_stdlib_module_paths.insert(stdlib_key, resolved.clone());
                         resolved
                     };
@@ -658,6 +676,40 @@ pub fn collect_rust_dependency_uses(module: &ParsedModule, is_test_context: bool
         is_test_context,
     ));
     imports
+}
+
+/// Select derive-only dependency demands from the original manifest, without granting roots from quoted names.
+/// Existing imports already carry their own resolver inputs. Undeclared quotes stay outside the declared roots and
+/// are refused by ordinary macro admission; the resolver still validates versions, features and conditional edges.
+#[cfg(feature = "rust_inspect")]
+pub fn collect_declared_rust_derive_dependency_uses(
+    module: &ParsedModule,
+    manifest: Option<&oven_model::manifest::ProjectManifest>,
+    is_test_context: bool,
+) -> Vec<InlineRustImport> {
+    let Some(manifest) = manifest else {
+        return Vec::new();
+    };
+    crate::rust_inspect_workspace::collect_rust_inspect_derive_probe_uses(std::slice::from_ref(module))
+        .into_iter()
+        .filter_map(|(path, span)| {
+            let root = path.split("::").next()?;
+            let (alias, _) = manifest
+                .rust_dependencies()
+                .iter()
+                .chain(manifest.rust_dev_dependencies().iter())
+                .find(|(alias, _)| alias.replace('-', "_") == root)?;
+            Some(build_inline_rust_import(
+                alias,
+                format!("rust.derive(\"{path}\")"),
+                &None,
+                &[],
+                span,
+                &module.file_path,
+                is_test_context,
+            ))
+        })
+        .collect()
 }
 
 /// Build a map of file paths to source contents for error reporting.

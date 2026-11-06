@@ -341,6 +341,7 @@ impl TypeChecker {
                 self.type_info.declarations.function_bindings.insert(
                     local_name.to_string(),
                     FunctionBindingInfo {
+                        is_async: info.is_async,
                         params: info.params.clone(),
                         return_type: info.return_type.clone(),
                         identity,
@@ -474,18 +475,24 @@ impl TypeChecker {
                 .collect(),
             external_library: None,
         });
-        self.type_info.declarations.function_bindings.insert(
-            partial.name.clone(),
-            FunctionBindingInfo {
-                identity: Some(self.symbols.module_declaration_identity(
-                    &partial.name,
-                    SemanticSourceTargetKind::Partial,
-                    span,
-                )),
-                params,
-                return_type,
-            },
-        );
+        let binding = FunctionBindingInfo {
+            is_async,
+            identity: Some(self.symbols.module_declaration_identity(
+                &partial.name,
+                SemanticSourceTargetKind::Partial,
+                span,
+            )),
+            params,
+            return_type,
+        };
+        self.type_info
+            .declarations
+            .function_bindings_by_span
+            .insert((span.start, span.end), binding.clone());
+        self.type_info
+            .declarations
+            .function_bindings
+            .insert(partial.name.clone(), binding);
     }
 
     /// Resolve the callable surface that a top-level partial declaration projects from an already-resolved symbol.
@@ -1900,6 +1907,7 @@ impl TypeChecker {
             .iter()
             .map(|p| {
                 let ty = self.resolve_type_checked(&p.node.ty);
+                self.record_mutable_rust_parameter_projection(&p.node);
                 let is_mut = self.def_param_shows_changes_to_caller(&p.node, &ty);
                 CallableParam::named_with_default(p.node.name.clone(), ty, p.node.kind, p.node.default.is_some())
                     .with_mut(is_mut)
@@ -1907,6 +1915,7 @@ impl TypeChecker {
             .collect();
         let return_type = self.resolve_type_checked(&func.return_type);
         let binding = FunctionBindingInfo {
+            is_async: func.is_async(),
             params: params.clone(),
             return_type: return_type.clone(),
             identity: Some(self.symbols.module_declaration_identity(

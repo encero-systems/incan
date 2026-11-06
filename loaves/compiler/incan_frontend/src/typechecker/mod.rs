@@ -42,6 +42,7 @@
 //! - [`symbols`](super::symbols) – symbol table and scope management
 //! - [`diagnostics`](super::diagnostics) – error types and pretty printing
 
+mod body_ir_classes;
 mod capturing_callables;
 mod check_decl;
 mod check_expr;
@@ -58,6 +59,7 @@ mod helpers;
 mod json_member_requirements;
 mod mut_arguments;
 mod mut_marker;
+mod native_newtype_facts;
 mod nominal_type_param_bounds;
 mod reachability;
 mod receiver_change;
@@ -70,6 +72,10 @@ mod validate_rust_module;
 mod web_routes;
 
 pub use const_eval::ConstValue;
+pub use type_info::{
+    BodyIrIterationHooksInfo, BodyIrPropertyBindingInfo, BodyIrProtocolCallInfo, ClassFieldDefaultInfo,
+    semantic_type_from_resolved,
+};
 pub use type_info::{
     CAbiInteropArtifacts, CAbiOutputSlot, CAbiSpan, CAbiSpanAccess, CAbiSpanAccessKind, CAbiSpanKind, CBindingBuffer,
     CBindingDescriptor, CBindingEnum, CBindingEnumVariant, CBindingFacade, CBindingFunctionCall, CBindingOutcome,
@@ -85,13 +91,12 @@ pub use type_info::{
     ValidatedNewtypeCoercionInfo, ValidatedNewtypeCoercionMode, ValidatedNewtypeCoercionStep,
     c_binding_descriptor_identity,
 };
-pub use type_info::{ClassFieldDefaultInfo, semantic_type_from_resolved};
 #[cfg(test)]
 mod identity_surface_tests;
 #[cfg(test)]
 pub mod tests;
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeSet, HashMap, HashSet};
 #[cfg(feature = "rust_inspect")]
 use std::path::PathBuf;
@@ -609,6 +614,9 @@ pub struct TypeChecker {
     current_module_public_declarations: HashSet<String>,
     /// What method-decorator receiver planning (#1790) gathers while bodies are checked.
     receiver_plan_inputs: decorated_method_receivers::ReceiverPlanInputs,
+    /// Exact factory call currently collecting partial type arguments for Body IR. Ordinary calls and synthesized
+    /// probes never publish into the decorator snapshot; the enclosing value is restored after factory checking.
+    body_ir_decorator_factory_span: Option<Span>,
     /// Function symbols collected in the current module pass, keyed by source name.
     ///
     /// The checker imports dependency modules into one ambient symbol table. Same-name overload grouping is
@@ -701,6 +709,9 @@ pub struct TypeChecker {
     /// of naming the facade. Stored as the written import path plus the original name, resolved with the facade's own
     /// module path as the resolution base.
     pub dependency_member_reexports: HashMap<String, HashMap<String, (ImportPath, String)>>,
+    /// Public-library re-export links omitted by the frozen source-member cache; only private Body IR call checking
+    /// follows these links. Direct source declarations and ordinary import resolution remain authoritative.
+    body_ir_dependency_pub_reexports: HashMap<String, HashMap<String, (ImportPath, String)>>,
     /// True module path segments for a registered dependency, keyed by its flattened cache name.
     ///
     /// The cache name is the underscore-joined spelling that also names the emitted Rust module, so it is not
@@ -856,6 +867,11 @@ pub struct TypeChecker {
     /// Lossless numeric widening converts one value, so it applies only at depth zero; see
     /// [`TypeChecker::nested_types_compatible`].
     nested_type_compatibility_depth: Cell<usize>,
+    /// Successful canonical Rust ABI lookups made by this checker, including inferred receiver and return types.
+    rust_metadata_queries: RefCell<BTreeSet<String>>,
+    /// Actual complete-type lookup requests observed by this isolated checker in demand regression tests.
+    #[cfg(test)]
+    rust_complete_type_lookup_requests: Cell<usize>,
     /// Feature-gated cache for rust-inspect semantic metadata extraction (RFC 041).
     #[cfg(feature = "rust_inspect")]
     pub rust_inspect_cache: RustMetadataCache,
@@ -954,6 +970,7 @@ impl TypeChecker {
             local_function_decls: HashMap::new(),
             current_module_public_declarations: HashSet::new(),
             receiver_plan_inputs: Default::default(),
+            body_ir_decorator_factory_span: None,
             current_module_function_symbols: HashMap::new(),
             type_aliases: HashMap::new(),
             rejected_member_bindings: HashSet::new(),
@@ -977,6 +994,7 @@ impl TypeChecker {
             dependency_direct_member_type_aliases: HashMap::new(),
             dependency_direct_member_identities: HashMap::new(),
             dependency_member_reexports: HashMap::new(),
+            body_ir_dependency_pub_reexports: HashMap::new(),
             dependency_module_path_segments: HashMap::new(),
             nominal_declarations: union_member_identity::NominalDeclarationContext::default(),
             dependency_direct_member_partial_projections: HashMap::new(),
@@ -1013,6 +1031,9 @@ impl TypeChecker {
             pending_trait_supertraits: Vec::new(),
             type_compatibility_depth: Cell::new(0),
             nested_type_compatibility_depth: Cell::new(0),
+            rust_metadata_queries: RefCell::new(BTreeSet::new()),
+            #[cfg(test)]
+            rust_complete_type_lookup_requests: Cell::new(0),
             #[cfg(feature = "rust_inspect")]
             rust_inspect_cache: RustMetadataCache::new(),
             #[cfg(feature = "rust_inspect")]
@@ -1187,9 +1208,42 @@ impl TypeChecker {
         self.rust_inspect_manifest_dir = Some(dir);
     }
 
+    /// Return canonical Rust metadata queries successfully resolved by this checker.
+    ///
+    /// Library publication uses these paths in addition to explicit imports so inferred return receivers and other
+    /// transitive ABI lookups survive the source-to-Loaf boundary. Failed speculative lookups are not requirements.
+    pub fn observed_rust_metadata_queries(&self) -> BTreeSet<String> {
+        self.rust_metadata_queries.borrow().clone()
+    }
+
+    /// Retain a successful lookup's nominal query spelling without turning missing speculative paths into demands.
+    fn record_rust_metadata_query(&self, canonical_path: &str) {
+        let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
+        if let Some(lookup_path) = Self::rust_metadata_lookup_path(canonical_path) {
+            let mut queries = self.rust_metadata_queries.borrow_mut();
+            if !queries.contains(lookup_path) {
+                queries.insert(lookup_path.to_string());
+            }
+        }
+    }
+
+    /// Resolve Rust metadata through the selected shipped ABI or inspection authority and retain successful demand.
+    pub fn rust_item_metadata_for_path(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+        let metadata = self.lookup_rust_item_metadata_for_path(canonical_path)?;
+        self.record_rust_metadata_query(canonical_path);
+        Some(metadata)
+    }
+
+    /// Resolve a demanded Rust item, allowing the selected inspection authority to extract missing metadata.
+    pub fn rust_item_metadata_for_path_blocking(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+        let metadata = self.lookup_rust_item_metadata_for_path_blocking(canonical_path)?;
+        self.record_rust_metadata_query(canonical_path);
+        Some(metadata)
+    }
+
     #[cfg(feature = "rust_inspect")]
     /// Return Rust item metadata, preferring shipped dependency ABI over rust-inspect cache reads.
-    pub fn rust_item_metadata_for_path(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+    fn lookup_rust_item_metadata_for_path(&self, canonical_path: &str) -> Option<RustItemMetadata> {
         let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
         let lookup_path = Self::rust_metadata_lookup_path(canonical_path)?;
         if let Some(metadata) = self.provider_plan.library_manifest_index().rust_abi_item(lookup_path) {
@@ -1223,7 +1277,9 @@ impl TypeChecker {
             RustInspectRegistrySourceAuthority::Sealed(roots) => self
                 .rust_inspect_cache
                 .get_cached_or_extract_fast_with_registry_src_roots(dir, lookup_path, roots.as_slice()),
-            RustInspectRegistrySourceAuthority::Invalid => unreachable!("invalid authority returned above"),
+            RustInspectRegistrySourceAuthority::Invalid => {
+                unreachable!("invalid authority returned above")
+            }
         };
         match metadata {
             Ok(Some(hit)) => Some((*hit.metadata).clone()),
@@ -1241,7 +1297,7 @@ impl TypeChecker {
 
     #[cfg(feature = "rust_inspect")]
     /// Return Rust item metadata, falling back to extraction only after shipped ABI and cache-only reads miss.
-    pub fn rust_item_metadata_for_path_blocking(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+    fn lookup_rust_item_metadata_for_path_blocking(&self, canonical_path: &str) -> Option<RustItemMetadata> {
         let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
         let lookup_path = Self::rust_metadata_lookup_path(canonical_path)?;
         if !Self::rust_identity_metadata_base_should_probe(lookup_path) {
@@ -1289,7 +1345,9 @@ impl TypeChecker {
                     RustInspectRegistrySourceAuthority::Sealed(roots) => self
                         .rust_inspect_cache
                         .get_or_extract_with_registry_src_roots(dir, lookup_path, roots.as_slice(), &|_| ()),
-                    RustInspectRegistrySourceAuthority::Invalid => unreachable!("invalid authority returned above"),
+                    RustInspectRegistrySourceAuthority::Invalid => {
+                        unreachable!("invalid authority returned above")
+                    }
                 };
                 match extracted {
                     Ok(hit) => Some((*hit).clone()),
@@ -1320,6 +1378,9 @@ impl TypeChecker {
     /// Fast source metadata can prove public inherent methods but not trait implementations. Escalate only when a
     /// consumer explicitly needs a full type record so ordinary method calls retain their source-only fast path.
     pub fn rust_item_metadata_for_complete_type(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+        #[cfg(test)]
+        self.rust_complete_type_lookup_requests
+            .set(self.rust_complete_type_lookup_requests.get() + 1);
         let metadata = self.rust_item_metadata_for_path(canonical_path)?;
         let RustItemKind::Type(type_info) = &metadata.kind else {
             return Some(metadata);
@@ -1391,7 +1452,7 @@ impl TypeChecker {
 
     #[cfg(not(feature = "rust_inspect"))]
     /// Return Rust item metadata from shipped dependency ABI when rust-inspect support is not compiled in.
-    pub fn rust_item_metadata_for_path(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+    fn lookup_rust_item_metadata_for_path(&self, canonical_path: &str) -> Option<RustItemMetadata> {
         let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
         let lookup_path = Self::rust_metadata_lookup_path(canonical_path)?;
         self.provider_plan.library_manifest_index().rust_abi_item(lookup_path)
@@ -1406,13 +1467,16 @@ impl TypeChecker {
     #[cfg(not(feature = "rust_inspect"))]
     /// Return complete type metadata from shipped dependency ABI when rust-inspect support is not compiled in.
     pub fn rust_item_metadata_for_complete_type(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+        #[cfg(test)]
+        self.rust_complete_type_lookup_requests
+            .set(self.rust_complete_type_lookup_requests.get() + 1);
         self.rust_item_metadata_for_path(canonical_path)
     }
 
     #[cfg(not(feature = "rust_inspect"))]
     /// Return Rust item metadata from shipped dependency ABI when rust-inspect support is not compiled in.
-    pub fn rust_item_metadata_for_path_blocking(&self, canonical_path: &str) -> Option<RustItemMetadata> {
-        self.rust_item_metadata_for_path(canonical_path)
+    fn lookup_rust_item_metadata_for_path_blocking(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+        self.lookup_rust_item_metadata_for_path(canonical_path)
     }
 
     /// Split top-level generic arguments from a Rust display type.
@@ -2642,16 +2706,21 @@ impl TypeChecker {
 
     /// Set the loaded dependency library manifests used for `pub::` import resolution.
     pub fn set_library_manifest_index(&mut self, index: LibraryManifestIndex) {
-        self.provider_plan = Arc::new(ProviderPlan::for_library_index(index));
+        let plan = Arc::new(ProviderPlan::for_library_index(index));
+        self.stdlib_cache.bind_provider_plan(&plan);
+        self.provider_plan = plan;
     }
 
     /// Set shared dependency library manifests used for `pub::` import resolution.
     pub fn set_library_manifest_index_shared(&mut self, index: Arc<LibraryManifestIndex>) {
-        self.provider_plan = Arc::new(ProviderPlan::for_library_index((*index).clone()));
+        let plan = Arc::new(ProviderPlan::for_library_index((*index).clone()));
+        self.stdlib_cache.bind_provider_plan(&plan);
+        self.provider_plan = plan;
     }
 
     /// Set the immutable provider plan consumed by import resolution and semantic checking.
     pub fn set_provider_plan(&mut self, plan: Arc<ProviderPlan>) {
+        self.stdlib_cache.bind_provider_plan(&plan);
         self.provider_plan = plan;
         self.seed_sdk_provider_symbols();
     }
@@ -3583,6 +3652,91 @@ impl TypeChecker {
         result
     }
 
+    /// Record each source trait adoption clause's checked type arguments by the clause's span.
+    ///
+    /// An owner's collected adoptions list its `with` clauses first and in source order, followed by derive-implied
+    /// adoptions, so the clauses pair with that prefix. A clause whose paired adoption names a different trait or a
+    /// different number of arguments records nothing.
+    fn record_trait_adoption_arguments_for_lowering(&mut self, program: &Program) {
+        let mut recorded = Vec::new();
+        for declaration in &program.declarations {
+            let (name, clauses) = match &declaration.node {
+                Declaration::Model(model) => (&model.name, &model.traits),
+                Declaration::Class(class) => (&class.name, &class.traits),
+                Declaration::Newtype(newtype) => (&newtype.name, &newtype.traits),
+                Declaration::Enum(value) => (&value.name, &value.traits),
+                _ => continue,
+            };
+            let adoptions = match self.lookup_type_info(name) {
+                Some(TypeInfo::Model(info)) => &info.trait_adoptions,
+                Some(TypeInfo::Class(info)) => &info.trait_adoptions,
+                Some(TypeInfo::Newtype(info)) => &info.trait_adoptions,
+                Some(TypeInfo::Enum(info)) => &info.trait_adoptions,
+                _ => continue,
+            };
+            for (clause, adoption) in clauses.iter().zip(adoptions) {
+                if clause.node.type_args.is_empty()
+                    || adoption.name != clause.node.name
+                    || adoption.type_args.len() != clause.node.type_args.len()
+                {
+                    continue;
+                }
+                recorded.push(((clause.span.start, clause.span.end), adoption.type_args.clone()));
+            }
+        }
+        self.type_info.traits.adoption_type_args = recorded.into_iter().collect();
+    }
+
+    /// Retain bare source adoptions' implicit arguments for Body IR without changing legacy's explicit snapshot.
+    /// Clauses pair with the checked owner's source-ordered adoption prefix, and repeated trait names stay unproven
+    /// rather than borrowing another clause's instantiation. The existing semantic helper owns positional mapping and
+    /// exact arity; no lowering consumer reconstructs it from parameter spellings.
+    fn record_body_ir_bare_adoption_arguments(&mut self, program: &Program) {
+        let mut recorded = HashMap::new();
+        for declaration in &program.declarations {
+            let (name, clauses) = match &declaration.node {
+                Declaration::Model(model) => (&model.name, &model.traits),
+                Declaration::Class(class) => (&class.name, &class.traits),
+                Declaration::Newtype(newtype) => (&newtype.name, &newtype.traits),
+                Declaration::Enum(value) => (&value.name, &value.traits),
+                _ => continue,
+            };
+            // ---- Declared owner parameter witnesses ----
+            let Some((parameters, adoptions)) = self.semantic_type_params_and_adoptions(name) else {
+                continue;
+            };
+            let owner_arguments: Vec<_> = parameters
+                .iter()
+                .map(|name| ResolvedType::TypeVar(name.clone()))
+                .collect();
+
+            // ---- Bare clauses at one checked instantiation ----
+            for (clause, adoption) in clauses.iter().zip(adoptions) {
+                if !clause.node.type_args.is_empty() || adoption.name != clause.node.name {
+                    continue;
+                }
+                if adoptions
+                    .iter()
+                    .filter(|candidate| self.trait_name_matches(&candidate.name, &adoption.name))
+                    .count()
+                    != 1
+                {
+                    continue;
+                }
+                let Some(arguments) = self.instantiated_trait_args_for_type(name, &owner_arguments, &adoption.name)
+                else {
+                    continue;
+                };
+                if !arguments.is_empty() {
+                    recorded.insert((clause.span.start, clause.span.end), arguments);
+                }
+            }
+        }
+
+        // ---- Body IR-only snapshot ----
+        self.type_info.traits.body_ir_adoption_type_args = recorded;
+    }
+
     /// Snapshot declaration metadata into [`TypeCheckInfo`] for backend lowering.
     ///
     /// This records all visible trait and method-alias symbols (local and imported), not just declarations in the
@@ -3592,6 +3746,7 @@ impl TypeChecker {
         self.type_info.traits.direct_supertraits.clear();
         self.type_info.traits.type_params.clear();
         self.type_info.traits.method_identities.clear();
+        self.type_info.traits.default_method_identities.clear();
         self.type_info.declarations.type_method_rebindings.clear();
         self.type_info.declarations.newtype_construction.clear();
         self.type_info.derivations.derivable_modules = self.dependency_derivable_modules.clone();
@@ -3611,12 +3766,7 @@ impl TypeChecker {
                         .type_params
                         .insert(sym.name.clone(), info.type_params.clone());
                     for (method_name, method) in &info.methods {
-                        if let Some(identity) = &method.identity {
-                            self.type_info
-                                .traits
-                                .method_identities
-                                .insert((sym.name.clone(), method_name.clone()), identity.clone());
-                        }
+                        self.type_info.traits.record_method(&sym.name, method_name, method);
                     }
                     method_rebindings.push((sym.name.clone(), info.method_aliases.clone()));
                 }
@@ -3655,39 +3805,28 @@ impl TypeChecker {
                     continue;
                 };
                 let local_name = item.alias.as_ref().unwrap_or(&item.name);
-                for (method_name, method) in info.methods {
-                    if let Some(identity) = method.identity {
-                        self.type_info
-                            .traits
-                            .method_identities
-                            .insert((local_name.clone(), method_name), identity);
-                    }
+                for (method_name, method) in &info.methods {
+                    self.type_info.traits.record_method(local_name, method_name, method);
                 }
             }
         }
         for (qualified_trait_name, info) in &self.dependency_module_traits {
             for (method_name, method) in &info.methods {
-                if let Some(identity) = &method.identity {
-                    self.type_info
-                        .traits
-                        .method_identities
-                        .insert((qualified_trait_name.clone(), method_name.clone()), identity.clone());
-                }
+                self.type_info
+                    .traits
+                    .record_method(qualified_trait_name, method_name, method);
             }
         }
         for adoption in adopted_traits {
             let Some(info) = self.lookup_trait_adoption_info(&adoption).cloned() else {
                 continue;
             };
-            for (method_name, method) in info.methods {
-                if let Some(identity) = method.identity {
-                    self.type_info
-                        .traits
-                        .method_identities
-                        .insert((adoption.name.clone(), method_name), identity);
-                }
+            for (method_name, method) in &info.methods {
+                self.type_info.traits.record_method(&adoption.name, method_name, method);
             }
         }
+        self.record_sdk_trait_methods();
+        self.record_provider_slot_identities();
         for (type_name, aliases) in method_rebindings {
             if !aliases.is_empty() {
                 self.type_info
@@ -3715,10 +3854,19 @@ impl TypeChecker {
                 .and_then(|constructor| info.methods.get(constructor))
                 .and_then(|method| method.identity.clone());
             let automatic_derives = self.newtype_automatic_derive_names(&name, &info);
+            let mut explicit_derives = info.derives.clone();
+            Self::append_implied_derives(&mut explicit_derives);
+            // Legacy forwards a std.serde.json protocol the newtype adopts into its derives after the explicit ones.
+            for derive in self.adopted_json_derives(&info.trait_adoptions) {
+                if !explicit_derives.iter().any(|existing| existing == derive) {
+                    explicit_derives.push(derive.to_owned());
+                }
+            }
             self.type_info.declarations.newtype_construction.insert(
                 name.clone(),
                 crate::typechecker::type_info::NewtypeConstructionInfo {
                     automatic_derives,
+                    explicit_derives,
                     type_params: info.type_params.clone(),
                     underlying: info.underlying.clone(),
                     checked_constructor,
@@ -3729,6 +3877,57 @@ impl TypeChecker {
                 },
             );
         }
+    }
+
+    /// Record, for Body IR only, the provider identity of each standard-library trait slot a call reached through the
+    /// stdlib source cache, after the provider slots are recorded.
+    ///
+    /// The provider slot is the one the active SDK declares in the same module, under the same name, member namespace
+    /// and declaration span as the source slot: both come from one stdlib source declaration. A call whose slot no
+    /// active provider declares gets no record. The call's resolved identity is left as it is.
+    fn record_provider_slot_identities(&mut self) {
+        let traits = &self.type_info.traits;
+        let mut provider_slots = HashMap::new();
+        for (span, identity) in &self.type_info.references.resolved_identities {
+            let SymbolOrigin::Module(path) = &identity.origin else {
+                continue;
+            };
+            if identity.kind != SemanticSourceTargetKind::Method || path.first().map(String::as_str) != Some("std") {
+                continue;
+            }
+            let provider = traits.sdk_method_identities.iter().find(|candidate| {
+                matches!(&candidate.origin, SymbolOrigin::Package { module_path, .. } if module_path[..] == path[1..])
+                    && candidate.declaration_name == identity.declaration_name
+                    && candidate.namespace == identity.namespace
+                    && candidate.kind == identity.kind
+                    && candidate.declaration_span == identity.declaration_span
+            });
+            if let Some(provider) = provider {
+                provider_slots.insert(*span, provider.clone());
+            }
+        }
+        self.type_info.traits.provider_slot_identities = provider_slots;
+    }
+
+    /// Record which visible trait slots the active compiled SDK providers declare, after every slot is recorded.
+    ///
+    /// Aliases and facade imports keep a slot's provider identity, so the identity's origin decides; a slot of an
+    /// ordinary package dependency stays eligible for project trait implementations.
+    fn record_sdk_trait_methods(&mut self) {
+        let provider_plan = &self.provider_plan;
+        self.type_info.traits.sdk_method_identities = self
+            .type_info
+            .traits
+            .method_identities
+            .values()
+            .filter(|identity| match &identity.origin {
+                SymbolOrigin::Package { library, .. } => provider_plan
+                    .active_sdk_records()
+                    .any(|provider| &provider.identity.name == library),
+                _ => false,
+            })
+            .cloned()
+            .collect();
     }
 
     /// Snapshot checked class layouts for backend lowering.
@@ -5605,7 +5804,6 @@ impl TypeChecker {
             &|arg| self.canonicalize_public_library_nominals(arg),
             &|segments| self.qualified_type_annotation_resolved_type(segments),
         );
-        self.record_mutable_rust_type_argument_projection(ty);
         let resolved = self.normalize_union_member_identity(resolved);
         let resolved = self.expand_type_aliases(resolved);
         // Only the checking pass sees every declaration's derives; collection may resolve a name declared further on.
@@ -5623,6 +5821,16 @@ impl TypeChecker {
         self.type_info
             .qualified_type_reference(&segments.join("."))
             .map(|reference| self.qualified_reference_member_spelling(reference.resolved.clone(), &reference.identity))
+    }
+
+    /// Demand foreign generic ownership projection only for an explicitly mutable source parameter (#1698).
+    ///
+    /// Direct Rust handles keep an owned outer ABI, so their CallableParam mut marker can be false even when this
+    /// source marker requires mutable-reference arguments. Non-parameter annotations have no projection consumer.
+    fn record_mutable_rust_parameter_projection(&mut self, param: &Param) {
+        if param.is_mut {
+            self.record_mutable_rust_type_argument_projection(&param.ty);
+        }
     }
 
     /// Preserve a metadata-directed mutable-reference projection for one imported Rust generic annotation.
@@ -5643,6 +5851,11 @@ impl TypeChecker {
         if matches!(info.binding, RustImportBindingKind::CrateRoot) {
             return;
         }
+        tracing::debug!(
+            query = %info.path,
+            mutable_parameter_complete_metadata_requests = 1,
+            "source mutable Rust generic projection demanded metadata"
+        );
         let Some(metadata) = self.rust_item_metadata_for_complete_type(&info.path) else {
             return;
         };
@@ -6801,8 +7014,12 @@ impl TypeChecker {
         }
 
         let message = match kind {
-            MemberBindingKind::MethodAlias => format!("Duplicate method alias '{}' on '{}'", name, owner),
-            MemberBindingKind::MethodPartial => format!("Duplicate method partial '{}.{}'", owner, name),
+            MemberBindingKind::MethodAlias => {
+                format!("Duplicate method alias '{}' on '{}'", name, owner)
+            }
+            MemberBindingKind::MethodPartial => {
+                format!("Duplicate method partial '{}.{}'", owner, name)
+            }
             _ => format!(
                 "Duplicate member '{}.{}' declared as both {} and {}",
                 owner,
@@ -6981,6 +7198,12 @@ impl TypeChecker {
         self.type_info = TypeCheckInfo::default();
         self.warnings.clear();
         self.errors.clear();
+        if let Err(error) = self.stdlib_cache.verify_retained_sources() {
+            return Err(vec![CompileError::new(
+                format!("retained standard source metadata refused: {error}"),
+                Span::default(),
+            )]);
+        }
         self.pending_uncopyable_dict_lookups.clear();
         self.mutable_bindings.clear();
         self.static_alias_bindings.clear();
@@ -7047,6 +7270,10 @@ impl TypeChecker {
         // can be decided before any call or body is checked (#1561).
         self.plan_closure_holding_callables(program);
 
+        // Direct-route call facts need the already collected native owners while checking their arguments and
+        // results. Keep this snapshot private; the ordinary nominal tables retain their final successful-check timing.
+        self.type_info.declarations.body_ir_native_type_identities = self.checked_native_nominal_type_identities();
+
         // Second pass: check consts first so their resolved types are available to later checks.
         self.validate_source_type_names = true;
         for decl in &program.declarations {
@@ -7067,8 +7294,11 @@ impl TypeChecker {
             .resolve_checked_facades(self.current_module_path.as_deref());
 
         self.record_trait_metadata_for_lowering(program);
+        self.record_trait_adoption_arguments_for_lowering(program);
+        self.record_body_ir_bare_adoption_arguments(program);
         self.record_model_field_visibilities_for_lowering(program);
         self.record_class_layouts_for_lowering(program);
+        self.record_body_ir_class_inheritance(program);
         self.record_method_decorator_receiver_slots(program);
 
         // ---- RFC 023: validate rust.module() and @rust.extern rules ----
@@ -7099,6 +7329,12 @@ impl TypeChecker {
                 }
             }
         }
+        if let Err(error) = self.stdlib_cache.verify_retained_sources() {
+            self.errors.push(CompileError::new(
+                format!("retained standard source metadata refused: {error}"),
+                Span::default(),
+            ));
+        }
         // Split fatal errors from non-fatal diagnostics.
         let all = std::mem::take(&mut self.errors);
         let (fatal, non_fatal): (Vec<_>, Vec<_>) = all
@@ -7108,6 +7344,8 @@ impl TypeChecker {
 
         if fatal.is_empty() {
             self.record_public_type_bridge_roots(program);
+            self.type_info.body_ir_newtypes = native_newtype_facts::project(program, &self.type_info);
+            self.publish_body_ir_empty_lists();
             Ok(())
         } else {
             Err(fatal)
@@ -7160,11 +7398,92 @@ impl TypeChecker {
         self.type_info.declarations.public_type_bridge_roots = roots;
         self.type_info.declarations.foreign_pub_type_remappings = self.foreign_pub_type_remappings.clone();
         self.type_info.declarations.named_type_origins = self.checked_nominal_type_origins();
-        self.type_info.declarations.named_type_identities = self
+        self.type_info.declarations.named_type_identities = self.checked_nominal_type_identities();
+        self.type_info.declarations.body_ir_native_type_identities = self.checked_native_nominal_type_identities();
+        self.type_info.body_ir_runtime_types = self.checked_body_ir_runtime_types();
+    }
+
+    /// Retain active native builtin owners once for opaque nominal storage and checked runtime operations, without
+    /// changing legacy lookup. Active rusttype aliases retain their checked source owner for native enum contracts.
+    /// Web placeholders use their checked surface binding and original Rust re-export;
+    /// the kernel whitelist validates identities and source shadows yield nothing.
+    fn checked_native_nominal_type_identities(&mut self) -> std::collections::BTreeMap<String, CanonicalSymbolId> {
+        let mut identities = self
+            .symbols
+            .all_symbols()
+            .iter()
+            .enumerate()
+            .filter_map(|(id, symbol)| {
+                if symbol.scope != 0 || !self.symbols.is_active_lookup_binding(id) {
+                    return None;
+                }
+                let identity = self.symbols.identity_of(id)?;
+                if identity.kind == SemanticSourceTargetKind::Rusttype {
+                    return Some((symbol.name.clone(), identity.clone()));
+                }
+                if identity.origin != incan_semantics_core::SymbolOrigin::Builtin {
+                    return None;
+                }
+                incan_semantics_core::body_ir::native_carrier_nominal(identity)?;
+                Some((symbol.name.clone(), identity.clone()))
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        for (name, (surface, symbol)) in &self.surface_type_import_bindings {
+            if self.symbols.lookup(name) == Some(*symbol)
+                && let Some(identity) = self.stdlib_cache.native_web_identity(*surface)
+            {
+                identities.insert(name.clone(), identity);
+            }
+        }
+        identities
+    }
+
+    /// Preserve accepted root builtin bindings solely for direct-route storage; existing nominal and legacy facts stay
+    /// unchanged.
+    fn checked_body_ir_runtime_types(&self) -> std::collections::BTreeMap<String, CanonicalSymbolId> {
+        self.symbols
+            .all_symbols()
+            .iter()
+            .enumerate()
+            .filter(|(id, symbol)| symbol.scope == 0 && self.symbols.is_active_lookup_binding(*id))
+            .filter_map(|(id, symbol)| {
+                let identity = self.symbols.identity_of(id)?;
+                incan_semantics_core::RuntimeBuiltinType::from_identity(identity)?;
+                Some((symbol.name.clone(), identity.clone()))
+            })
+            .collect()
+    }
+
+    /// Retain active module-scope nominal bindings from both source modules and admitted packages.
+    ///
+    /// Imported source types already carry their declaring identity in the symbol table. Body IR must retain that
+    /// fact before publication; recovering it from a spelling in lowering would lose aliases and module ownership.
+    fn checked_nominal_type_identities(&self) -> std::collections::BTreeMap<String, CanonicalSymbolId> {
+        let mut identities = self
             .public_library_type_identities
             .iter()
             .filter_map(|(name, identity)| Some((name.clone(), identity.canonical.clone()?)))
-            .collect();
+            .collect::<std::collections::BTreeMap<_, _>>();
+        for (id, symbol) in self.symbols.all_symbols().iter().enumerate() {
+            if symbol.scope != 0 || !self.symbols.is_active_lookup_binding(id) {
+                continue;
+            }
+            let Some(identity) = self.symbols.identity_of(id) else {
+                continue;
+            };
+            if matches!(
+                identity.kind,
+                SemanticSourceTargetKind::Model
+                    | SemanticSourceTargetKind::Class
+                    | SemanticSourceTargetKind::Enum
+                    | SemanticSourceTargetKind::Newtype
+            ) {
+                identities
+                    .entry(symbol.name.clone())
+                    .or_insert_with(|| identity.clone());
+            }
+        }
+        identities
     }
 
     /// Turn collisions from the shared symbol-registration mechanism into source diagnostics.
@@ -7447,6 +7766,7 @@ impl TypeChecker {
 
     /// Cache exact member symbols exported by one dependency module for source `from ... import ...` resolution.
     fn cache_dependency_member_symbols(&mut self, module_name: &str, module_ast: &Program, public_only: bool) {
+        self.retain_body_ir_dependency_pub_reexports(module_name, module_ast, public_only);
         let mut member_symbols = HashMap::new();
         let mut member_type_aliases = HashMap::new();
         let mut member_projections = HashMap::new();
@@ -8502,6 +8822,7 @@ impl TypeChecker {
         self.dependency_direct_member_type_aliases.clear();
         self.dependency_direct_member_identities.clear();
         self.dependency_member_reexports.clear();
+        self.body_ir_dependency_pub_reexports.clear();
         self.dependency_direct_member_partial_projections.clear();
         self.dependency_derivable_modules.clear();
         self.dependency_module_traits.clear();
@@ -8556,6 +8877,7 @@ impl TypeChecker {
         self.dependency_direct_member_type_aliases.clear();
         self.dependency_direct_member_identities.clear();
         self.dependency_member_reexports.clear();
+        self.body_ir_dependency_pub_reexports.clear();
         self.dependency_direct_member_partial_projections.clear();
         self.dependency_derivable_modules.clear();
         self.dependency_module_traits.clear();

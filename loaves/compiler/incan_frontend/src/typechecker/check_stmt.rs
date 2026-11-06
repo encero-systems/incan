@@ -1002,6 +1002,7 @@ impl TypeChecker {
         }
         self.record_read_only_binding(is_mutable, target_span);
         self.record_write_target_identity(target_span, &assign.name);
+        self.retain_body_ir_assignment_value(assign);
         self.note_function_value_binding(target_span, &assign.value);
         self.bind_c_abi_output_slot_assignment(&assign.name, assign.value.span);
         self.bind_c_abi_span_assignment(&assign.name, assign.value.span);
@@ -2278,6 +2279,9 @@ impl TypeChecker {
         iter_ty: &ResolvedType,
     ) -> ResolvedType {
         self.note_mut_param_iteration(iter_expr, iter_ty);
+        if iter_ty.iterator_item_type().is_some() {
+            self.retain_body_ir_iterator_hooks(iter_ty, iter_expr.span);
+        }
         if iter_ty.iterator_item_type().is_some()
             && let Expr::Ident(name) = &iter_expr.node
         {

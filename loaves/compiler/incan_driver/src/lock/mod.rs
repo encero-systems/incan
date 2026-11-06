@@ -8,6 +8,7 @@
 #[cfg(feature = "rust_inspect")]
 pub mod registry_sources;
 pub mod resolution;
+pub(crate) mod reuse;
 #[cfg(feature = "rust_inspect")]
 pub mod rust_inspect;
 pub mod test_inputs;
@@ -20,13 +21,12 @@ use std::collections::BTreeMap;
 #[cfg(test)]
 use std::fs;
 use std::path::Path;
-#[cfg(any(feature = "rust_inspect", test))]
 use std::path::PathBuf;
 #[cfg(feature = "rust_inspect")]
 use std::sync::Arc;
 
 use crate::cargo_policy::CargoPolicy;
-use crate::error::CliError;
+use crate::error::{CliError, CliResult};
 #[cfg(feature = "rust_inspect")]
 use crate::generated_cache::GeneratedCacheLease;
 use incan_frontend::ParsedModule;
@@ -211,18 +211,24 @@ pub struct RustInspectTypecheckRequest<'a> {
     pub provider_plan: &'a ProviderPlan,
 }
 
+/// Typecheck projection retaining its generated-cache lease and complete original source, toolchain and native
+/// owners until the caller finishes semantic analysis. A path alone cannot preserve those capabilities.
 #[cfg(feature = "rust_inspect")]
 pub struct PreparedRustInspectTypecheckWorkspace {
-    manifest_dir: PathBuf,
+    workspace: PreparedRustInspectWorkspace,
     _cache_lease: Option<GeneratedCacheLease>,
-    _source_loaf: Option<OvenToolchainLoaf>,
 }
 
 #[cfg(feature = "rust_inspect")]
 impl PreparedRustInspectTypecheckWorkspace {
-    /// Return the generated Cargo workspace used for rust-inspect typechecking.
+    /// Return the projection while retaining every original source, compiler and native owner.
     pub fn manifest_dir(&self) -> &Path {
-        &self.manifest_dir
+        self.workspace.manifest_dir()
+    }
+
+    /// Revalidate original native inputs before and after semantic consumption of this projection.
+    pub fn verify_ordinary_native(&self) -> CliResult<()> {
+        self.workspace.verify_ordinary_native()
     }
 }
 
@@ -274,6 +280,12 @@ pub struct PreparedRustInspectWorkspace {
     manifest_dir: PathBuf,
     _source_loaf: Option<OvenToolchainLoaf>,
     _project_source_authorities: Option<Arc<PreparedOvenProjectRegistrySourceAuthorities>>,
+    /// Native SDK leases protect the frozen graph's immutable source roots throughout inspection.
+    _sdk_native: Vec<Arc<oven_store::store::OvenStoreExecutionPayload>>,
+    /// Complete original ordinary request retained across checked metadata preparation and final ABI extraction.
+    _ordinary_native: Option<oven_rustc::native_loaf::NativeLoafRequestObservation>,
+    /// Original compiler-bound Rust source owner retained through final semantic metadata extraction.
+    _ordinary_toolchain: Option<Arc<oven_rustc::rustc::OvenRustInspectionToolchain>>,
 }
 
 /// Command-local source authority shared by every parallel native-test unit.
@@ -282,6 +294,8 @@ pub struct PreparedRustInspectWorkspace {
 /// batch performs only an in-memory exact-root check and projects the one already validated source catalog and lock.
 #[cfg(feature = "rust_inspect")]
 pub struct PreparedOvenProjectRegistrySourceAuthorities {
+    /// Native admission shared with the test command that prepared this exact source authority.
+    native_sdk_context: Option<Arc<crate::build::NativeSdkCommandContext>>,
     authority: OvenLoadedProjectInspectionAuthority,
     sources: Vec<::rust_inspect::OvenInspectionRegistrySource>,
     registry_lock_source: Option<PathBuf>,
@@ -294,9 +308,34 @@ pub struct PreparedOvenProjectRegistrySourceAuthorities {
 
 #[cfg(feature = "rust_inspect")]
 impl PreparedRustInspectWorkspace {
+    /// Borrow a transaction-owned frozen graph; its enclosing publisher retains all native leases.
+    pub(crate) fn from_retained_sdk_graph(manifest_dir: PathBuf) -> Self {
+        Self {
+            manifest_dir,
+            _source_loaf: None,
+            _project_source_authorities: None,
+            _sdk_native: Vec::new(),
+            _ordinary_native: None,
+            _ordinary_toolchain: None,
+        }
+    }
+
     /// Return the compiler-authored manifest directory while this workspace retains its source Loaf.
     pub fn manifest_dir(&self) -> &Path {
         &self.manifest_dir
+    }
+
+    /// Revalidate complete original ordinary inputs at semantic handoffs without selecting new source owners.
+    pub fn verify_ordinary_native(&self) -> CliResult<()> {
+        if let Some(native) = &self._ordinary_native {
+            native.verify().map_err(|error| CliError::failure(error.to_string()))?;
+        }
+        if let Some(toolchain) = &self._ordinary_toolchain {
+            toolchain
+                .verify()
+                .map_err(|error| CliError::failure(error.to_string()))?;
+        }
+        Ok(())
     }
 }
 
@@ -333,6 +372,9 @@ pub struct WorkspaceLockResolutionRequest<'a> {
 
 /// Fully collected dependency inputs that define a project or workspace lock's freshness surface.
 pub struct ProjectLockContext {
+    /// Canonical test discovery observations for every contributing project, including all workspace members.
+    #[cfg(feature = "cli")]
+    pub(crate) test_discovery: Vec<oven_model::observed_inputs::InputObservations>,
     resolved: ResolvedDependencies,
     project_requirements: ProjectRequirements,
     semantic: SemanticLockState,
@@ -344,12 +386,47 @@ pub struct ProjectLockContext {
 /// still contains every member, but a member's inspection and test plans must never adopt sibling dependencies.
 pub struct PublishedOvenProjectLock {
     dependency_surface: ResolvedDependencies,
+    publication: PublishedLockFile,
+}
+
+/// Exact bytes and canonical location observed by the lock writer while holding its publication guard.
+pub(crate) struct PublishedLockFile {
+    pub(crate) canonical_path: PathBuf,
+    pub(crate) content_digest: String,
 }
 
 impl PublishedOvenProjectLock {
     /// Return the exact normal and test dependency surface used to publish the canonical lock.
     pub fn dependency_surface(&self) -> &ResolvedDependencies {
         &self.dependency_surface
+    }
+
+    /// Return the canonical file actually written, including the workspace root when applicable.
+    pub(crate) fn canonical_lock_path(&self) -> &Path {
+        &self.publication.canonical_path
+    }
+
+    /// Return the digest captured by the writer before releasing the publication guard.
+    pub(crate) fn published_content_digest(&self) -> &str {
+        &self.publication.content_digest
+    }
+
+    /// Refuse replacement, removal or changed bytes before accepting a producer-owned lock transition.
+    pub(crate) fn verify_published_file(&self) -> CliResult<()> {
+        let path = self.canonical_lock_path();
+        let metadata = std::fs::symlink_metadata(path).map_err(|error| CliError::failure(error.to_string()))?;
+        if !metadata.file_type().is_file() {
+            return Err(CliError::failure(
+                "published canonical lock is no longer a regular file",
+            ));
+        }
+        let bytes = std::fs::read(path).map_err(|error| CliError::failure(error.to_string()))?;
+        if oven_store::digest_bytes(&bytes) != self.published_content_digest() {
+            return Err(CliError::failure(
+                "published canonical lock changed before metadata finalization",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -389,6 +466,9 @@ pub struct WorkspaceLockCollection {
 
 /// Test-file dependency inputs that must participate in the same project lock fingerprint as normal scripts.
 pub struct TestLockInputs {
+    /// Consulted source files, directory membership and nested manifest boundaries from canonical discovery.
+    #[cfg(feature = "cli")]
+    discovery_inputs: oven_model::observed_inputs::InputObservations,
     inline_imports: Vec<InlineRustImport>,
     project_requirement_modules: Vec<ParsedModule>,
 }
@@ -429,6 +509,7 @@ mod tests {
         assert!(!exact.clear_existing);
     }
 
+    /// One lock collection retains imports from every script and test in the ordinary dependency surface.
     #[test]
     fn explicit_oven_lock_publication_collects_once_and_retains_the_whole_dependency_surface()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -446,12 +527,10 @@ version = "0.1.0"
 main = "src/main.incn"
 worker = "src/worker.incn"
 
-[rust-dependencies]
-semver = "1"
-serde_json = "1"
-
-[rust-dev-dependencies]
-regex = "1"
+[dependencies]
+semver = { loaf = "crates-io/semver", version = "1" }
+serde_json = { loaf = "crates-io/serde_json", version = "1" }
+regex = { loaf = "crates-io/regex", version = "1" }
 "#,
         )?;
         let main = project_root.join("src/main.incn");
@@ -495,7 +574,7 @@ regex = "1"
             "one explicit publication must read one session authority and project one aggregate provider plan across every manifest entry",
         );
         assert!(
-            normal_dependencies.is_superset(&BTreeSet::from(["semver", "serde_json"])),
+            normal_dependencies.is_superset(&BTreeSet::from(["regex", "semver", "serde_json"])),
             "normal dependencies: {normal_dependencies:?}"
         );
         // `std.testing` brings its component and, since facets became demand-driven, the Rust facet it names.
@@ -504,15 +583,15 @@ regex = "1"
                 "incan_std_testing",
                 "incan_stdlib_core",
                 "incan_stdlib_testing",
+                "regex",
                 "semver",
                 "serde_json",
             ])),
             "normal dependencies: {normal_dependencies:?}"
         );
-        assert_eq!(
-            dev_dependencies,
-            BTreeSet::from(["regex"]),
-            "dev dependencies: {dev_dependencies:?}"
+        assert!(
+            dev_dependencies.is_empty(),
+            "ordinary test dependencies: {dev_dependencies:?}"
         );
         let lock = IncanLock::load(&project_root.join("oven.lock"))?;
         assert!(!lock.deps_fingerprint.is_empty());

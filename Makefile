@@ -19,13 +19,28 @@ INCAN_TEST_CARGO_BUILD_JOBS ?= $(shell n=$$(( $(INCAN_HOST_CPUS) * 3 / 4 )); if 
 INCAN_TEST_GENERATED_CARGO_TARGET_DIR ?= $(TARGET_DIR)/incan_generated_shared_target
 INCAN_TEST_SDK_PROVIDER_STORE ?= $(TARGET_DIR)/incan_test_sdk_provider_store
 INCAN_TEST_SDK_PROVIDER_PATH_FILE ?= $(TARGET_DIR)/incan_test_sdk_provider_path
+# Fresh target directories can import receipt-verified native outputs from neighboring test/lane stores. These are
+# caches, never resolution authority; the committed compiler graph below supplies the immutable index selection.
+INCAN_TEST_NATIVE_MIRRORS ?= $(shell for candidate in $(abspath $(dir $(TARGET_DIR)))/*/home/cache/providers/sdk-v2/.native/store $(abspath $(dir $(TARGET_DIR)))/*/incan_test_oven_home/cache/providers/sdk-v2/.native/store $(abspath $(dir $(TARGET_DIR)))/*/incan_test_sdk_provider_store/.native/store; do if [ -d "$$candidate/entries" ]; then printf '%s\n' "$$candidate"; fi; done | paste -sd : -)
+INCAN_OVEN_MIRRORS ?= $(INCAN_TEST_NATIVE_MIRRORS)
+# Make and CI source transport select the same explicit native platform graph before SDK identity or preparation.
+INCAN_TEST_NATIVE_COMPILER_GRAPH ?= $(or $(shell sh "$(CURDIR)/scripts/select_native_compiler_graph.sh" "$(CURDIR)"),$(error Native compiler graph selection failed; supply INCAN_TEST_NATIVE_COMPILER_GRAPH explicitly))
+# The registry readiness producer derives its graph from this original compiler authority.
+# Ordinary consumers keep the compiler graph and independently select their admitted native demands.
+INCAN_TEST_STANDARD_NATIVE_GRAPH ?= $(TARGET_DIR)/compiler-development/standard-packages-native.json
 INCAN_TEST_OVEN_HOME ?= $(TARGET_DIR)/incan_test_oven_home
+# Receipt-addressed fixture units survive compiler rebuilds and sibling workspace invocations.
+INCAN_TEST_OVEN_FIXTURE_HOME ?= $(abspath $(dir $(TARGET_DIR))/incan-oven-fixture-home)
 INCAN_TEST_OVEN_LOAF_ROOT ?= $(TARGET_DIR)/share/incan/oven/loafs
 INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT ?= $(TARGET_DIR)/oven-alpha-release-toolchain
 INCAN_TEST_OVEN_RELEASE_COMPILER_BIN ?= $(TARGET_DIR)/debug/incan
 INCAN_TEST_OVEN_RELEASE_POLICY_HOME ?= $(TARGET_DIR)/oven-alpha-release-policy-home
 INCAN_TEST_OVEN_RELEASE_POLICY_REPORT ?= $(TARGET_DIR)/oven-alpha-release-policy.json
-INCAN_TEST_OVEN_COMPILER_SUITE_STORE ?= $(TARGET_DIR)/oven-compiler-suite-store
+# Bootstrap engine preparation uses ordinary Oven commands under this home. Source-current output selection must
+# use that same shared store; a separate default would miss even an engine the preparation just reused.
+INCAN_TEST_OVEN_COMPILER_SUITE_STORE ?= $(INCAN_TEST_OVEN_HOME)/oven/store/v2
+# Kept across runs: explicit-bake roots (the native driver root bakes the whole compiler) reuse their fixture state.
+INCAN_TEST_OVEN_EXPLICIT_BAKE_WORKSPACE ?= $(TARGET_DIR)/oven-explicit-bake-workspace
 # Caller-owned compiler-suite outputs are one-use. `test-oven` creates a fresh directory below this root and removes
 # it after reporting its physical disk use, so repeated local runs cannot reuse a stale test binary or accumulate it.
 INCAN_TEST_OVEN_COMPILER_SUITE_OUTPUT_ROOT ?= $(TARGET_DIR)
@@ -38,8 +53,8 @@ INCAN_TEST_OVEN_BAKE_REPORT ?=
 # Optional caller-owned location for the compiler-suite JSON report. The default test target removes its one-use
 # caller output; setting this retains the report, transcript archive and outer wrapper timing record.
 INCAN_TEST_OVEN_COMPILER_SUITE_REPORT ?=
-# Optional caller-owned location for `test-one` evidence, using the same report/archive/timing retention as replay.
-# Successful focused commands reclaim disposable output; failures retain their available diagnostic evidence.
+# Optional caller-owned selected-root report and transcript archive. Invocation evidence and receipt-bound binaries
+# are retained separately; archive publication reclaims only its disposable evidence copy.
 INCAN_TEST_OVEN_TEST_ONE_REPORT ?=
 # The pinned publisher Cargo supplies the unstable unit graph and the package-qualified Rust-inspection tests that
 # exercise Cargo's nightly-only metadata flags. Loaf receipts and direct-rustc suite execution use the selected
@@ -66,17 +81,37 @@ INCAN_TEST_LOAF_REGISTRY_COMMIT ?=
 # Directory the release bake writes incan.pub harvest proposals into from its own runtime-foundation capture.
 INCAN_TEST_HARVEST_DIR ?=
 INCAN_TEST_SUITE_TOOLCHAIN ?= 1.98.0
+# Stage zero runs the Incan bootstrap; that program binds and builds the current source compiler before tests.
+INCAN_TEST_BOOTSTRAP_COMPILER ?= incan
+# Native compiler source publication recognizes this real checkout geometry, not arbitrary Cargo target roots.
+# Cargo caches may remain external; their debug/incan launcher resolves to this canonical compiler owner.
+# Use a real source checkout on the build volume when the genuine compiler output must also live there.
+INCAN_TEST_COLD_COMPILER_OUTPUT ?= $(CURDIR)/target/compiler-development/bin/incan
+INCAN_TEST_COLD_COMPILER_PREPARATION ?= $(TARGET_DIR)/compiler-development/cold-preparation
+INCAN_TEST_COLD_COMPILER_BOOTSTRAP ?= $(if $(filter 1,$(INCAN_TEST_COMPILER_ALREADY_BUILT)),0,1)
+INCAN_RELEASE_COMPILER_OUTPUT ?= $(CURDIR)/target/release/incan
+INCAN_RELEASE_COMPILER_PREPARATION ?= $(TARGET_DIR)/compiler-development/release-preparation
+# Directories whose executables own the C toolchain a recorded native-link fact names (the macOS Command Line Tools).
+INCAN_OVEN_LINK_OWNERS ?= $(if $(filter Darwin,$(shell uname -s)),/Library/Developer/CommandLineTools,)
 TEST_ENV = CARGO_BUILD_JOBS=$(INCAN_TEST_CARGO_BUILD_JOBS) \
+	INCAN_OVEN_MIRRORS="$(INCAN_OVEN_MIRRORS)" \
+	INCAN_SDK_NATIVE_COMPILER_GRAPH="$(INCAN_TEST_NATIVE_COMPILER_GRAPH)" \
 	INCAN_TEST_TMP_ROOT="$(abspath $(INCAN_TEST_TMP_ROOT))" \
 	INCAN_GENERATED_CARGO_TARGET_DIR="$(INCAN_TEST_GENERATED_CARGO_TARGET_DIR)" \
 	INCAN_INTERNAL_SDK_PROVIDER_STORE="$(INCAN_TEST_SDK_PROVIDER_STORE)" \
 	INCAN_HOME="$(INCAN_TEST_OVEN_HOME)" \
+	INCAN_TEST_OVEN_FIXTURE_HOME="$(INCAN_TEST_OVEN_FIXTURE_HOME)" \
 	INCAN_SOURCE_ROOT="$(CURDIR)" \
 	INCAN_STDLIB="$(CURDIR)/loaves/stdlib" \
-	INCAN_STDLIB_DIR="$(CURDIR)/loaves/stdlib"
+	INCAN_STDLIB_DIR="$(CURDIR)/loaves/stdlib" \
+	INCAN_OVEN_LINK_OWNERS="$(INCAN_OVEN_LINK_OWNERS)"
 TEST_RUNTIME_ENV = $(TEST_ENV) \
 	INCAN_INTERNAL_SDK_PROVIDER_PATH_FILE="$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)" \
 	INCAN_SDK_INVENTORY="$$(cat "$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)")/sdk-inventory.json"
+# Make owns only command transport; Incan selects and prepares the exact compiler inputs for builds and tests.
+COMPILER_DEVELOPMENT = $(TEST_ENV) sh "$(CURDIR)/scripts/compiler_development.sh" \
+	"$(CURDIR)" "$(TARGET_DIR)" "$(INCAN_TEST_BOOTSTRAP_COMPILER)" "$(INCAN_TEST_SUITE_TOOLCHAIN)" \
+	"$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)" "$(INCAN_TEST_OVEN_COMPILER_SUITE_STORE)"
 ifneq ($(strip $(INCAN_TEST_COMMAND_TIMINGS)),)
 TEST_RUNTIME_ENV += INCAN_TEST_COMMAND_TIMINGS="$(INCAN_TEST_COMMAND_TIMINGS)"
 endif
@@ -123,14 +158,17 @@ help: build-quiet  ## Display this help message
 
 .PHONY: _incan_link_debug_to_cargo_bin
 _incan_link_debug_to_cargo_bin:
-	@if [ "$(INCAN_LINK_CARGO_BIN)" != "1" ] || [ "$(INCAN_SKIP_CARGO_BIN_LINK)" = "1" ]; then exit 0; fi
-	@if [ ! -f "$(TARGET_DIR)/debug/incan" ]; then echo "incan: expected $(TARGET_DIR)/debug/incan after build"; exit 1; fi
-	@mkdir -p "$(HOME)/.cargo/bin"
-	@ln -sf "$(TARGET_DIR)/debug/incan" "$(HOME)/.cargo/bin/incan"
-	@echo "\033[32m✓ Linked ~/.cargo/bin/incan -> $(TARGET_DIR)/debug/incan\033[0m"
-	@if [ -f "$(TARGET_DIR)/debug/incan-lsp" ]; then \
-		ln -sf "$(TARGET_DIR)/debug/incan-lsp" "$(HOME)/.cargo/bin/incan-lsp"; \
-		echo "\033[32m✓ Linked ~/.cargo/bin/incan-lsp -> $(TARGET_DIR)/debug/incan-lsp\033[0m"; \
+	@set -e; \
+		if [ "$(INCAN_LINK_CARGO_BIN)" != "1" ] || [ "$(INCAN_SKIP_CARGO_BIN_LINK)" = "1" ]; then exit 0; fi; \
+		if [ ! -f "$(TARGET_DIR)/debug/incan" ]; then echo "incan: expected $(TARGET_DIR)/debug/incan after build"; exit 1; fi; \
+		output_root="$(TARGET_DIR)"; \
+		case "$$output_root" in /*) ;; *) output_root="$(CURDIR)/$$output_root" ;; esac; \
+		mkdir -p "$(HOME)/.cargo/bin"; \
+		ln -sf "$$output_root/debug/incan" "$(HOME)/.cargo/bin/incan"; \
+		echo "\033[32m✓ Linked ~/.cargo/bin/incan -> $$output_root/debug/incan\033[0m"; \
+		if [ -f "$(TARGET_DIR)/debug/incan-lsp" ]; then \
+			ln -sf "$$output_root/debug/incan-lsp" "$(HOME)/.cargo/bin/incan-lsp"; \
+			echo "\033[32m✓ Linked ~/.cargo/bin/incan-lsp -> $$output_root/debug/incan-lsp\033[0m"; \
 	fi
 
 .PHONY: build  ## build - Debug build (compiler, LSP, oven); links ~/.cargo/bin/incan + incan-lsp locally
@@ -142,17 +180,41 @@ build:
 .PHONY: build-fast  ## build - Debug build (compiler only); links ~/.cargo/bin/incan locally
 build-fast:
 	@echo "\033[1mBuilding compiler only (debug)...\033[0m"
-	@cargo build -p incan-cli
+	@$(COMPILER_DEVELOPMENT) build "$(TARGET_DIR)/debug/incan"
 	@$(MAKE) _incan_link_debug_to_cargo_bin
 
 .PHONY: build-quiet
 build-quiet:
-	@cargo build -p incan-cli --quiet 2>/dev/null || cargo build -p incan-cli --quiet
+	@$(COMPILER_DEVELOPMENT) quiet "$(TARGET_DIR)/debug/incan"
 
 .PHONY: release  ## build - Release build (optimized)
-release:
-	@echo "\033[1mBuilding (release)...\033[0m"
-	@cargo build --release -p incan-cli
+release: test-prewarm-sdk
+	@echo "\033[1mBuilding the receipt-bound release compiler...\033[0m"
+	@set -eu; \
+		mkdir -p "$(TARGET_DIR)/compiler-development" "$(TARGET_DIR)/release-cargo-guard"; \
+		cp "$(CURDIR)/scripts/cargo-guard/cargo" "$(TARGET_DIR)/release-cargo-guard/cargo"; \
+		: > "$(TARGET_DIR)/release-cargo-guard/invocations.log"; \
+		if PATH="$(TARGET_DIR)/release-cargo-guard:$$PATH" CARGO="$(TARGET_DIR)/release-cargo-guard/cargo" \
+		INCAN_OVEN_CARGO_GUARD_LOG="$(TARGET_DIR)/release-cargo-guard/invocations.log" \
+		$(TEST_RUNTIME_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_PREWARM_TOOLCHAIN)" CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 \
+			"$(TARGET_DIR)/debug/incan" oven bootstrap-compiler \
+				--compiler-root "$(CURDIR)" \
+				--preparation-output "$(INCAN_RELEASE_COMPILER_PREPARATION)" \
+				--output "$(INCAN_RELEASE_COMPILER_OUTPUT)" --profile release \
+				--rustc "$$(rustup which --toolchain "$(INCAN_TEST_PREWARM_TOOLCHAIN)" rustc)" \
+				--store "$(INCAN_TEST_OVEN_COMPILER_SUITE_STORE)" \
+				> "$(TARGET_DIR)/compiler-development/release-compiler-bootstrap.json"; then :; \
+		else \
+			bootstrap_status=$$?; \
+			cat "$(TARGET_DIR)/compiler-development/release-compiler-bootstrap.json" >&2 || :; \
+			exit "$$bootstrap_status"; \
+		fi; \
+		test ! -s "$(TARGET_DIR)/release-cargo-guard/invocations.log"; \
+		if [ "$$(cd "$(TARGET_DIR)" && pwd -P)" = "$(CURDIR)/target" ]; then \
+			sh "$(CURDIR)/scripts/stage_compiler_bundle.sh" "$(INCAN_RELEASE_COMPILER_OUTPUT)" "$(TARGET_DIR)/release/incan"; \
+		else \
+			sh "$(CURDIR)/scripts/stage_compiler_bundle.sh" --launcher "$(INCAN_RELEASE_COMPILER_OUTPUT)" "$(TARGET_DIR)/release/incan"; \
+		fi
 
 .PHONY: install  ## build - Install to ~/.cargo/bin
 install:
@@ -252,6 +314,12 @@ reference-contract-check:
 us-english-fix:
 	@python3 scripts/check_us_english.py --fix
 
+.PHONY: behavior-roots  ## quality - Regenerate the behavior roots (one libtest case per behavior fixture) from their areas
+behavior-roots:
+	@INCAN_WRITE_BEHAVIOR_ROOTS=1 INCAN_INTERNAL_TEST_SOURCE_ROOT="$(CURDIR)" $(MAKE) test-one \
+		TEST_ROOT=loaves/compiler/incan_test_support/src/lib.rs \
+		TEST_EXACT=behavior_roots::tests::behavior_roots_match_their_areas
+
 .PHONY: test-inventory  ## quality - Regenerate the test corpus inventory page from the tree and dispositions.json
 test-inventory:
 	@python3 scripts/test_inventory/render.py
@@ -266,10 +334,6 @@ test-inventory-check:
 version-gate:
 	@python3 scripts/check_release_version_consistency.py
 	@python3 scripts/check_ring_versions.py
-
-.PHONY: parity-corpus-owners  ## check - Verify every deferred parity row names an OPEN owning issue
-parity-corpus-owners:
-	@python3 scripts/check_parity_corpus_owners.py
 
 .PHONY: agents-doc-sync  ## quality - Check AGENTS.md's skill table matches .agents/skills/ (local only, not CI)
 agents-doc-sync:
@@ -391,7 +455,7 @@ pre-commit-full-gate:
 pre-commit:
 	@echo "\033[1mRunning pre-commit (full local gate)...\033[0m"
 	@$(MAKE) pre-commit-full-gate
-	@$(MAKE) smoke-test-fast
+	@$(MAKE) smoke-test-fast INCAN_TEST_COMPILER_ALREADY_BUILT=1 INCAN_TEST_COLD_COMPILER_BOOTSTRAP=0
 	@echo "\033[32m✓ Pre-commit passed\033[0m"
 
 .PHONY: ci-full  ## quality - Full CI check: fmt, lint, udeps, test, and release build
@@ -399,7 +463,7 @@ ci-full: fmt lint udeps
 	@echo "\033[1mRunning tests...\033[0m"
 	@$(MAKE) -s test-oven
 	@echo "\033[1mBuilding release...\033[0m"
-	@cargo build --release -p incan-cli --quiet
+	@$(MAKE) -s release INCAN_TEST_COMPILER_ALREADY_BUILT=1 INCAN_TEST_COLD_COMPILER_BOOTSTRAP=0
 	@echo "\033[32m✓ Full CI checks passed\033[0m"
 
 # =============================================================================
@@ -477,6 +541,7 @@ test-oven-replay:
 			INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT="$(TARGET_DIR)" \
 			"$(TARGET_DIR)/debug/incan" oven compiler-libtests \
 				--compiler-root "$(CURDIR)" --rustc "$$rustc_path" --fixture-cargo "$$fixture_cargo_path" \
+				--explicit-bake-workspace "$(INCAN_TEST_OVEN_EXPLICIT_BAKE_WORKSPACE)" \
 				--output "$$suite_output" \
 				--store "$(INCAN_TEST_OVEN_COMPILER_SUITE_STORE)" \
 				$(INCAN_TEST_OVEN_COMPILER_SUITE_PARTITION_ARGS) \
@@ -498,68 +563,114 @@ test-oven-case-timings:
 .PHONY: test  ## test - Run all compiler tests through bounded Oven direct-Rustc execution
 test: test-oven
 
-.PHONY: test-prewarm-sdk
-test-prewarm-sdk:
+.PHONY: test-prewarm-sdk-providers
+# Publish only the SDK with the selected compiler; CI also calls this after replacing stage zero.
+test-prewarm-sdk-providers:
 	@echo "\033[1mPrewarming compiled SDK providers...\033[0m"
-	@if [ "$(INCAN_TEST_COMPILER_ALREADY_BUILT)" = "1" ]; then \
+	@set -e; phase_started="$$(date +%s)"; \
+	if [ "$(INCAN_TEST_COMPILER_ALREADY_BUILT)" = "1" ]; then \
 		test -x "$(TARGET_DIR)/debug/incan"; \
 	else \
+		if [ -L "$(TARGET_DIR)/debug/incan" ]; then \
+			canonical_output="$$(cd "$$(dirname "$(INCAN_TEST_COLD_COMPILER_OUTPUT)")" && pwd -P)/$$(basename "$(INCAN_TEST_COLD_COMPILER_OUTPUT)")"; \
+			test "$$(readlink "$(TARGET_DIR)/debug/incan")" = "$$canonical_output" || { echo "Refusing to replace a foreign compiler launcher before Cargo preparation" >&2; exit 2; }; \
+			rm -- "$(TARGET_DIR)/debug/incan"; \
+		fi; \
 		$(TEST_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_PREWARM_TOOLCHAIN)" cargo build -p incan-cli -p incan-lsp; \
-	fi
-	@$(TEST_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_PREWARM_TOOLCHAIN)" CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 \
+	fi; \
+	echo "incan-test-setup-timing phase=compiler-bootstrap seconds=$$(( $$(date +%s) - phase_started ))"
+	@test -n "$(INCAN_SDK_NATIVE_BLOBS)" -a -n "$(INCAN_SDK_NATIVE_INDEX)" || { \
+		echo "SDK preparation needs INCAN_SDK_NATIVE_BLOBS (incan.pub source archives) and INCAN_SDK_NATIVE_INDEX (an incan.pub index checkout)" >&2; \
+		exit 2; }
+	@set -e; phase_started="$$(date +%s)"; \
+	rustc_path="$$(rustup which --toolchain "$(INCAN_TEST_PREWARM_TOOLCHAIN)" rustc)"; \
+	mkdir -p "$(TARGET_DIR)/sdk-cargo-guard"; \
+	cp "$(CURDIR)/scripts/cargo-guard/cargo" "$(TARGET_DIR)/sdk-cargo-guard/cargo"; \
+	: > "$(TARGET_DIR)/sdk-cargo-guard/invocations.log"; \
+	PATH="$(TARGET_DIR)/sdk-cargo-guard:$$PATH" \
+	INCAN_OVEN_CARGO_GUARD_LOG="$(TARGET_DIR)/sdk-cargo-guard/invocations.log" \
+	$(TEST_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_PREWARM_TOOLCHAIN)" CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 \
+		RUSTC="$$rustc_path" \
 		INCAN_STDLIB="$(CURDIR)/loaves/stdlib" \
 		INCAN_STDLIB_DIR="$(CURDIR)/loaves/stdlib" \
+		INCAN_SDK_NATIVE_BLOBS="$(INCAN_SDK_NATIVE_BLOBS)" \
+		INCAN_SDK_NATIVE_INDEX="$(INCAN_SDK_NATIVE_INDEX)" \
 		INCAN_INTERNAL_SDK_PROVIDER_PATH_FILE="$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)" \
-		"$(TARGET_DIR)/debug/incan" check loaves/compiler/incan_test_support/fixtures/test_assert_canary.incn
+		"$(TARGET_DIR)/debug/incan" prepare-sdk; \
+	test ! -s "$(TARGET_DIR)/sdk-cargo-guard/invocations.log"; \
+	echo "incan-test-setup-timing phase=native-sdk-and-stdlib-family seconds=$$(( $$(date +%s) - phase_started ))"
 	@test -s "$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)"
 	@test -f "$$(cat "$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)")/sdk-inventory.json"
-
-.PHONY: shadow-comparison-evidence  ## test - Stage Oven and prove the #1146 source-observable comparison actually ran
-# The bounded #1146 comparison's legacy route is Oven-owned, so it needs a published direct-rustc plan. Without
-# one the comparison is honestly unavailable and every corpus row stays non-green -- which a default test run
-# cannot distinguish from a comparison that was never implemented. This target stages the exact plans, then runs the
-# relevant suites with INCAN_SHADOW_REQUIRE_LEGACY_ROUTE=1 so an unstaged or failing comparison is a hard failure
-# rather than a reported skip. Each distinct source-session provider closure gets its own exact receipt; the
-# comparator selects from that ordered list rather than treating a broader or narrower closure as authority.
-shadow-comparison-evidence: test-prewarm-sdk
-	@echo "\033[1mStaging Oven and proving the #1146 source-observable comparison...\033[0m"
-	@set -e; \
-		if [ "$(INCAN_TEST_COMPILER_ALREADY_BUILT)" = "1" ]; then \
-			test -x "$(TARGET_DIR)/debug/incan"; \
+.PHONY: test-prewarm-sdk
+test-prewarm-sdk: test-prewarm-sdk-providers
+	@mkdir -p "$(TARGET_DIR)/compiler-development"
+	@set -eu; \
+	if [ "$(INCAN_TEST_COLD_COMPILER_BOOTSTRAP)" = "1" ]; then \
+		echo "Building the receipt-bound compiler from the prepared SDK..."; \
+		if PATH="$(TARGET_DIR)/sdk-cargo-guard:$$PATH" CARGO="$(TARGET_DIR)/sdk-cargo-guard/cargo" \
+		INCAN_OVEN_CARGO_GUARD_LOG="$(TARGET_DIR)/sdk-cargo-guard/invocations.log" \
+		$(TEST_RUNTIME_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_PREWARM_TOOLCHAIN)" CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 \
+			"$(TARGET_DIR)/debug/incan" oven bootstrap-compiler \
+				--compiler-root "$(CURDIR)" \
+				--preparation-output "$(INCAN_TEST_COLD_COMPILER_PREPARATION)" \
+				--output "$(INCAN_TEST_COLD_COMPILER_OUTPUT)" \
+				--rustc "$$(rustup which --toolchain "$(INCAN_TEST_PREWARM_TOOLCHAIN)" rustc)" \
+				--store "$(INCAN_TEST_OVEN_COMPILER_SUITE_STORE)" \
+				> "$(TARGET_DIR)/compiler-development/cold-compiler-bootstrap.json"; then :; \
 		else \
-			$(TEST_ENV) cargo build -p incan-cli --bin incan; \
+			bootstrap_status=$$?; \
+			cat "$(TARGET_DIR)/compiler-development/cold-compiler-bootstrap.json" >&2 || :; \
+			exit "$$bootstrap_status"; \
 		fi; \
-		stage="$(INCAN_SHADOW_STAGE_ROOT)"; \
-		rm -rf -- "$$stage"; \
-		mkdir -p "$$stage"; \
-		$(SHADOW_STAGE_ENV) "$(TARGET_DIR)/debug/incan" new shadow_probe --yes --dir "$$stage/shadow_probe" >/dev/null; \
-		$(SHADOW_STAGE_ENV) "$(TARGET_DIR)/debug/incan" new shadow_json_probe --yes --dir "$$stage/shadow_json_probe" >/dev/null; \
-		cp "$(CURDIR)/loaves/compiler/incan_driver/tests/fixtures/replacement/json_stringify_scalars.incn" "$$stage/shadow_json_probe/src/main.incn"; \
-		printf '\n\ndef main() -> None:\n    println(observe())\n' >> "$$stage/shadow_json_probe/src/main.incn"; \
-		$(SHADOW_STAGE_ENV) "$(TARGET_DIR)/debug/incan" oven bake --project "$$stage/shadow_probe" >/dev/null; \
-		$(SHADOW_STAGE_ENV) "$(TARGET_DIR)/debug/incan" oven bake --project "$$stage/shadow_json_probe" >/dev/null; \
-		core_receipt="$$stage/shadow_probe/.incan/oven/executable-debug-receipt.json"; \
-		json_receipt="$$stage/shadow_json_probe/.incan/oven/executable-debug-receipt.json"; \
-		for receipt in "$$core_receipt" "$$json_receipt"; do \
-			test -f "$$receipt" || { echo "Oven bake did not publish executable debug receipt $$receipt" >&2; exit 1; }; \
+		test ! -s "$(TARGET_DIR)/sdk-cargo-guard/invocations.log"; \
+		if [ "$$(cd "$(TARGET_DIR)" && pwd -P)" = "$(CURDIR)/target" ]; then \
+			sh "$(CURDIR)/scripts/stage_compiler_bundle.sh" "$(INCAN_TEST_COLD_COMPILER_OUTPUT)" "$(TARGET_DIR)/debug/incan"; \
+		else \
+			sh "$(CURDIR)/scripts/stage_compiler_bundle.sh" --launcher "$(INCAN_TEST_COLD_COMPILER_OUTPUT)" "$(TARGET_DIR)/debug/incan"; \
+		fi; \
+	elif [ "$(INCAN_TEST_COLD_COMPILER_BOOTSTRAP)" = "0" ]; then \
+		for member in incan incan.receipt.json incan.oven-output.json native-runtime-inputs oven-policy-engine; do \
+			test -s "$(TARGET_DIR)/debug/$$member" || { echo "Prepared compiler bundle is missing $$member; a bare Cargo compiler requires INCAN_TEST_COLD_COMPILER_BOOTSTRAP=1" >&2; exit 2; }; \
 		done; \
-		$(SHADOW_TEST_ENV) INCAN_SHADOW_OVEN_RECEIPT="$$core_receipt$(SHADOW_RECEIPT_PATH_SEPARATOR)$$json_receipt" \
-			cargo test -p incan_driver --test shadow_comparison_tests --test parity_corpus_tests \
-				--test replacement_enumerate_zip_shadow_tests --test replacement_enumerate_zip_parity_cases \
-				--test replacement_scalar_conversion_shadow_tests \
-				--test replacement_isinstance_shadow_tests
-	@echo "\033[32m✓ the #1146 comparison ran under Oven authority and its corpus row is green\033[0m"
+		test -x "$(TARGET_DIR)/debug/incan"; \
+		test -x "$(TARGET_DIR)/debug/native-runtime-inputs"; \
+		test -x "$(TARGET_DIR)/debug/oven-policy-engine"; \
+	else \
+		echo "INCAN_TEST_COLD_COMPILER_BOOTSTRAP must be 0 or 1" >&2; exit 2; \
+	fi
 
-# Oven home the staged comparison publishes its direct-rustc plan into, kept out of the developer's own store.
-INCAN_SHADOW_OVEN_HOME ?= $(TARGET_DIR)/incan_shadow_oven_home
-INCAN_SHADOW_STAGE_ROOT ?= $(TARGET_DIR)/incan_shadow_stage
-INCAN_SHADOW_RUSTC ?= $(shell rustup which rustc)
-SHADOW_RECEIPT_PATH_SEPARATOR ?= :
-SHADOW_STAGE_ENV = $(TEST_RUNTIME_ENV) INCAN_HOME="$(INCAN_SHADOW_OVEN_HOME)" CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1
-SHADOW_TEST_ENV = $(TEST_RUNTIME_ENV) CARGO_NET_OFFLINE=true \
-	INCAN_SHADOW_OVEN_HOME="$(INCAN_SHADOW_OVEN_HOME)" \
-	INCAN_SHADOW_RUSTC="$(INCAN_SHADOW_RUSTC)" \
-	INCAN_SHADOW_REQUIRE_LEGACY_ROUTE=1
+	@$(MAKE) -s test-prewarm-standard-packages
+
+# This target also serves fresh CI consumers after they authenticate the SDK handoff. It intentionally requires
+# the already prepared receipt-bound compiler; it does not bootstrap again or change the suite's graph authority.
+.PHONY: test-prewarm-standard-packages
+test-prewarm-standard-packages:
+	@echo "\033[1mPreparing ordinary standard-package publications...\033[0m"
+	@set -eu; \
+	for member in incan incan.receipt.json incan.oven-output.json native-runtime-inputs oven-policy-engine; do \
+		test -s "$(TARGET_DIR)/debug/$$member" || { echo "Prepared compiler bundle is missing $$member; run test-prewarm-sdk first" >&2; exit 2; }; \
+	done; \
+	for executable in incan native-runtime-inputs oven-policy-engine; do \
+		test -x "$(TARGET_DIR)/debug/$$executable" || { echo "Prepared compiler bundle member $$executable is not executable" >&2; exit 2; }; \
+	done
+	@test -s "$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)"
+	@set -eu; phase_started="$$(date +%s)"; \
+	rustc_path="$$(rustup which --toolchain "$(INCAN_TEST_PREWARM_TOOLCHAIN)" rustc)"; \
+	mkdir -p "$(TARGET_DIR)/standard-packages-cargo-guard" "$(dir $(INCAN_TEST_STANDARD_NATIVE_GRAPH))"; \
+	cp "$(CURDIR)/scripts/cargo-guard/cargo" "$(TARGET_DIR)/standard-packages-cargo-guard/cargo"; \
+	: > "$(TARGET_DIR)/standard-packages-cargo-guard/invocations.log"; \
+	PATH="$(TARGET_DIR)/standard-packages-cargo-guard:$$PATH" \
+	CARGO="$(TARGET_DIR)/standard-packages-cargo-guard/cargo" \
+	INCAN_OVEN_CARGO_GUARD_LOG="$(TARGET_DIR)/standard-packages-cargo-guard/invocations.log" \
+	$(TEST_RUNTIME_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_PREWARM_TOOLCHAIN)" CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 \
+		RUSTC="$$rustc_path" \
+		INCAN_SDK_NATIVE_BLOBS="$(INCAN_SDK_NATIVE_BLOBS)" \
+		INCAN_SDK_NATIVE_INDEX="$(INCAN_SDK_NATIVE_INDEX)" \
+		"$(TARGET_DIR)/debug/incan" oven prepare-standard-packages \
+			--native-graph-output "$(INCAN_TEST_STANDARD_NATIVE_GRAPH)" \
+			> "$(TARGET_DIR)/standard-packages-preparation.json"; \
+	test ! -s "$(TARGET_DIR)/standard-packages-cargo-guard/invocations.log"; \
+	echo "incan-test-setup-timing phase=ordinary-standard-packages seconds=$$(( $$(date +%s) - phase_started ))"
 
 .PHONY: test-prewarm-oven-loafs
 test-prewarm-oven-loafs: test-prewarm-sdk
@@ -567,6 +678,8 @@ test-prewarm-oven-loafs: test-prewarm-sdk
 	@$(TEST_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_LOAF_TOOLCHAIN)" CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 \
 		INCAN_STDLIB="$(CURDIR)/loaves/stdlib" \
 		INCAN_STDLIB_DIR="$(CURDIR)/loaves/stdlib" \
+		INCAN_SDK_NATIVE_BLOBS="$(INCAN_SDK_NATIVE_BLOBS)" \
+		INCAN_SDK_NATIVE_INDEX="$(INCAN_SDK_NATIVE_INDEX)" \
 		"$(TARGET_DIR)/debug/incan" oven legacy-cargo bake-loafs \
 			--compiler-root "$(CURDIR)" \
 			--output "$(INCAN_TEST_OVEN_LOAF_ROOT)" \
@@ -584,11 +697,7 @@ test-prewarm-oven-loafs: test-prewarm-sdk
 test-prewarm-oven-release-loafs: test-prewarm-sdk
 	@echo "\033[1mBaking or reusing the release standard-library Loaf family...\033[0m"
 	@test -x "$(INCAN_TEST_OVEN_RELEASE_COMPILER_BIN)"
-	@mkdir -p "$(INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT)/bin"
-	@cp "$(INCAN_TEST_OVEN_RELEASE_COMPILER_BIN)" "$(INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT)/bin/incan"
-	@if [ "$$(uname -s)" = "Darwin" ] && command -v codesign >/dev/null 2>&1; then \
-		codesign --force --sign - "$(INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT)/bin/incan"; \
-	fi
+	@sh "$(CURDIR)/scripts/stage_compiler_bundle.sh" "$(INCAN_TEST_OVEN_RELEASE_COMPILER_BIN)" "$(INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT)/bin/incan"
 	@set -eu; \
 		command -v jq >/dev/null 2>&1; \
 		cargo_bin="$$(rustup which --toolchain "$(INCAN_TEST_PUBLISHER_TOOLCHAIN)" cargo)"; \
@@ -606,7 +715,7 @@ test-prewarm-oven-release-loafs: test-prewarm-sdk
 		trap 'rm -rf "$$policy_home"' EXIT HUP INT TERM; \
 		policy_toolchain_root="$$policy_home/toolchain"; \
 		mkdir -p "$$policy_toolchain_root/bin"; \
-		cp "$(INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT)/bin/incan" "$$policy_toolchain_root/bin/incan"; \
+		sh "$(CURDIR)/scripts/stage_compiler_bundle.sh" "$(INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT)/bin/incan" "$$policy_toolchain_root/bin/incan"; \
 		test ! -e "$$policy_toolchain_root/share/incan/oven/loafs/envelope.json"; \
 		$(TEST_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_LOAF_TOOLCHAIN)" CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 \
 			INCAN_HOME="$$policy_home" \
@@ -831,11 +940,11 @@ smoke-test-benchmarks-incan:
 # producer bake fails with "no compatible release-cohort Loaf" before the consumer ever runs.
 .PHONY: smoke-test-core
 smoke-test-core: test-prewarm-oven-loafs test-prewarm-oven-release-loafs
-	@$(MAKE) smoke-test-release
+	@$(MAKE) smoke-test-release INCAN_TEST_COMPILER_ALREADY_BUILT=1 INCAN_TEST_COLD_COMPILER_BOOTSTRAP=0
 	@$(MAKE) smoke-test-canary
 	@$(MAKE) smoke-test-web-example
 	@$(MAKE) smoke-test-nested-project-example
-	@$(MAKE) smoke-test-rust-interop-examples
+	@$(MAKE) smoke-test-rust-interop-examples INCAN_TEST_COMPILER_ALREADY_BUILT=1 INCAN_TEST_COLD_COMPILER_BOOTSTRAP=0
 	@$(MAKE) smoke-test-examples
 	@$(MAKE) smoke-test-benchmarks-incan
 
@@ -843,7 +952,7 @@ smoke-test-core: test-prewarm-oven-loafs test-prewarm-oven-release-loafs
 smoke-test:
 	@echo "\033[1mRunning smoke-test...\033[0m"
 	@$(MAKE) test
-	@$(MAKE) smoke-test-core
+	@$(MAKE) smoke-test-core INCAN_TEST_COMPILER_ALREADY_BUILT=1 INCAN_TEST_COLD_COMPILER_BOOTSTRAP=0
 	@echo "\033[32m✓ Smoke-test passed\033[0m"
 
 .PHONY: smoke-test-fast  ## test - Fast smoke test for after pre-commit (skips duplicate unit test suite)
@@ -870,46 +979,12 @@ test-timings:
 	@cargo test --all --no-run --timings
 	@echo "\033[32m✓ Timing report generated in target/cargo-timings\033[0m"
 
-# Keep single-root diagnostics on the same short, invocation-owned scratch policy as full suite replay.
-.PHONY: test-one  ## test - Run one receipt-bound compiler-suite source root (optional TEST_EXACT=module::case)
-test-one: test-prewarm-oven-loafs
+# Incan owns selected-test preparation and retained binaries. Make supplies command inputs and the outer Cargo guard.
+.PHONY: test-one  ## test - Run one receipt-bound compiler-suite source root (optional space-separated TEST_EXACT names)
+test-one:
 	@test -n "$(TEST_ROOT)" || { echo "usage: make test-one TEST_ROOT=loaves/toolchain/incan-cli/tests/cli_provider_boundary_tests.rs" >&2; exit 2; }
 	@echo "\033[1mRunning $(TEST_ROOT)$(if $(TEST_EXACT), ($(TEST_EXACT)),) through Oven...\033[0m"
-	@set -e; \
-		root_started="$$($(TARGET_DIR)/debug/incan oven retain-suite-output --clock)"; \
-		command_started=0; \
-		mkdir -p "$(INCAN_TEST_OVEN_COMPILER_SUITE_OUTPUT_ROOT)" "$(INCAN_TEST_TMP_ROOT)"; \
-		root_output="$$(mktemp -d "$(INCAN_TEST_OVEN_COMPILER_SUITE_OUTPUT_ROOT)/oven-test-one.XXXXXX")"; \
-		root_tmp="$$(mktemp -d "$(INCAN_TEST_TMP_ROOT)/incan-oven-root.XXXXXX")"; \
-		root_succeeded=false; \
-		cleanup_root_output() { \
-			root_status=$$?; \
-			"$(TARGET_DIR)/debug/incan" oven retain-suite-output "$$root_output" "$$root_tmp" \
-				"$$root_succeeded" "$(abspath $(INCAN_TEST_OVEN_TEST_ONE_REPORT))" "$$root_status" \
-				"$$root_started" "$$command_started"; \
-			exit $$?; \
-		}; \
-		trap cleanup_root_output EXIT; \
-		rustc_path="$$(rustup which --toolchain "$(INCAN_TEST_SUITE_TOOLCHAIN)" rustc)"; \
-		fixture_cargo_path="$$(rustup which --toolchain "$(INCAN_TEST_FIXTURE_CARGO_TOOLCHAIN)" cargo)"; \
-		mkdir -p "$$root_output/cargo-guard"; \
-		cp "$(CURDIR)/scripts/cargo-guard/cargo" "$$root_output/cargo-guard/cargo"; \
-		: > "$$root_output/cargo-guard/invocations.log"; \
-		command_started="$$($(TARGET_DIR)/debug/incan oven retain-suite-output --clock)"; \
-		PATH="$$root_output/cargo-guard:$$PATH" INCAN_OVEN_CARGO_GUARD_LOG="$$root_output/cargo-guard/invocations.log" \
-			TMPDIR="$$root_tmp" $(TEST_RUNTIME_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_SUITE_TOOLCHAIN)" \
-			CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT="$(TARGET_DIR)" \
-			"$(TARGET_DIR)/debug/incan" oven compiler-libtests \
-				--compiler-root "$(CURDIR)" --rustc "$$rustc_path" --fixture-cargo "$$fixture_cargo_path" \
-				--target "$(TEST_ROOT)" $(if $(TEST_EXACT),--exact "$(TEST_EXACT)") \
-				--output "$$root_output" --store "$(INCAN_TEST_OVEN_COMPILER_SUITE_STORE)" \
-				--format text; \
-		if [ -s "$$root_output/cargo-guard/invocations.log" ]; then \
-			echo "\033[31mThe Oven suite must run without Cargo, and these invocations reached the guard:\033[0m" >&2; \
-			sed "s/^/  /" "$$root_output/cargo-guard/invocations.log" >&2; \
-			exit 1; \
-		fi; \
-		root_succeeded=true
+	@$(COMPILER_DEVELOPMENT) test "$(TEST_ROOT)" "$(TEST_EXACT)" "$(INCAN_TEST_OVEN_TEST_ONE_REPORT)"
 
 # =============================================================================
 # Tooling

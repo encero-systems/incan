@@ -1,0 +1,36 @@
+# behavior: a model pattern with field literals contains a match over an enum (parity corpus row replacement-body-v0-016)
+# expect-stdout:
+#   42
+
+"""A model pattern with field literals contains a match over an enum (parity corpus row replacement-body-v0-016)."""
+model Pair:
+    """Hold left and right used by this fixture."""
+    left: int
+    right: int
+
+enum Signal:
+    """Represent the Ready, Stop alternatives in this fixture."""
+    Ready
+    Stop
+
+def classify(pair: Pair, signal: Signal) -> int:
+    """Match the fixture alternatives and return the selected result."""
+    match pair:
+        case Pair(left=40, right=2):
+            match signal:
+                case Signal.Ready:
+                    return 42
+                case Signal.Stop:
+                    return 0
+        case _:
+            return 0
+    return 0
+
+def direct_patterns() -> int:
+    """Return the fixture expression `classify(Pair(left=40, right=2), Signal.Ready)`."""
+    return classify(Pair(left=40, right=2), Signal.Ready)
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(direct_patterns())

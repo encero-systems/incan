@@ -1,0 +1,17 @@
+# behavior: a NaN f64 passed through a function is still NaN
+# expect-stdout:
+#   nan
+
+"""A NaN f64 passed through a function is still NaN."""
+import std.math
+
+
+def identity_f64(value: f64) -> f64:
+    """Return `value` for this fixture."""
+    return value
+
+
+def main() -> None:
+    """Print `identity_f64(value)` after preparing the fixture inputs."""
+    value: f64 = math.NAN
+    println(identity_f64(value))

@@ -292,8 +292,10 @@ pub fn prove_release_runtime_closure_member(
         message,
     })?;
     let store_root = generation.join(&member.store_relative_path);
-    let mut selected = PublishedOvenStore::new(&store_root)
-        .select_payloads_matching_for_execution(|candidate| candidate.identity == member.artifact_identity)?;
+    let mut selected = PublishedOvenStore::new(&store_root).select_payloads_matching_for_execution(
+        |candidate| candidate.identity == member.artifact_identity,
+        |_, _| true,
+    )?;
     if selected.len() != 1 {
         return Err(OvenLoafError::InvalidLoaf {
             path: store_root,
@@ -2234,8 +2236,10 @@ pub(crate) fn prove_release_store_member_payload(
             message: "release store member resolves outside its held generation".to_string(),
         });
     }
-    let mut selected = PublishedOvenStore::new(&canonical_store_root)
-        .select_payloads_matching_for_execution(|candidate| candidate.identity == member.artifact_identity)?;
+    let mut selected = PublishedOvenStore::new(&canonical_store_root).select_payloads_matching_for_execution(
+        |candidate| candidate.identity == member.artifact_identity,
+        |_, _| true,
+    )?;
     if selected.len() != 1 {
         return Err(OvenLoafError::InvalidLoaf {
             path: canonical_store_root,
@@ -2246,7 +2250,7 @@ pub(crate) fn prove_release_store_member_payload(
         message: "release store selection became empty".to_string(),
     })?;
     payload.verify_materialized_files()?;
-    if payload.manifest.kind != OvenArtifactKind::ProjectOutput {
+    if payload.manifest().kind != OvenArtifactKind::ProjectOutput {
         return Err(OvenLoafError::InvalidLoaf {
             path: canonical_store_root,
             message: "release store member must retain a ProjectOutput artifact".to_string(),
@@ -2263,7 +2267,7 @@ pub(crate) fn prove_release_store_member_payload(
             message: "release store member must retain exactly one executable materialized file".to_string(),
         });
     }
-    let executable = payload.artifact_root.join(&executables[0].relative_path);
+    let executable = payload.artifact_root().join(&executables[0].relative_path);
     let canonical_executable = fs::canonicalize(&executable).map_err(|source| OvenLoafError::Io {
         path: executable,
         source,
@@ -2366,10 +2370,10 @@ pub fn acquire_committed_release_runtime_foundation(
         let store_root = loaf_root
             .join(generation_directory_path(&manifest.generation_identity))
             .join(&closure_member.store_relative_path);
-        let mut candidates =
-            PublishedOvenStore::new(&store_root).select_payloads_matching_for_execution(|candidate| {
-                candidate.identity == closure_member.artifact_identity
-            })?;
+        let mut candidates = PublishedOvenStore::new(&store_root).select_payloads_matching_for_execution(
+            |candidate| candidate.identity == closure_member.artifact_identity,
+            |_, _| true,
+        )?;
         if candidates.len() != 1 {
             return Err(OvenLoafError::InvalidLoaf {
                 path: store_root,
@@ -3491,7 +3495,7 @@ mod tests {
         assert!(executable.is_file());
         let lease = fs::File::open(
             payload
-                .artifact_root
+                .artifact_root()
                 .parent()
                 .ok_or("materialized root has no entry")?
                 .join(".active.lock"),
@@ -3772,7 +3776,7 @@ mod tests {
         )?;
         let held = acquire_committed_release_store_member(root.path(), "engine")?.ok_or("member not acquired")?;
         assert!(held.executable.is_file());
-        assert_eq!(held.payload.manifest.kind, OvenArtifactKind::ProjectOutput);
+        assert_eq!(held.payload.manifest().kind, OvenArtifactKind::ProjectOutput);
         let generation_lock = fs::File::open(root.path().join(OVEN_LOAF_ENVELOPE_LOCK_FILE))?;
         assert!(matches!(generation_lock.try_lock(), Err(fs::TryLockError::WouldBlock)));
         drop(held);
@@ -3805,8 +3809,11 @@ mod tests {
         fs::create_dir_all(&generation)?;
         let member = publish_release_store_fixture(&generation, OvenArtifactKind::ProjectOutput, 1)?;
         let selected = PublishedOvenStore::new(generation.join(&member.store_relative_path))
-            .select_payloads_matching_for_execution(|candidate| candidate.identity == member.artifact_identity)?;
-        let executable = selected[0].artifact_root.join("bin/engine-0");
+            .select_payloads_matching_for_execution(
+                |candidate| candidate.identity == member.artifact_identity,
+                |_, _| true,
+            )?;
+        let executable = selected[0].artifact_root().join("bin/engine-0");
         drop(selected);
         fs::remove_file(&executable)?;
         fs::write(&executable, b"tampered executable")?;

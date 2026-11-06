@@ -1,0 +1,21 @@
+# behavior: propagates async task failure at the child statement span, stopping the program
+# expect-stdout:
+# expect-exit: 101
+
+
+"""Propagates async task failure at the child statement span, stopping the program."""
+import std.async
+
+async def child() -> int:
+  """Fail the assertion when this callable is reached."""
+  assert false
+  return 7
+
+async def program_result() -> int:
+  """Return the fixture expression `await child()`."""
+  return await child()
+
+
+async def main() -> None:
+    """Await `program_result()` with the fixture inputs."""
+    await program_result()

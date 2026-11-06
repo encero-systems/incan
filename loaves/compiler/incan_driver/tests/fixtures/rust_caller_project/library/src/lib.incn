@@ -1,0 +1,13 @@
+pub enum Op:
+    Assign(int, int)
+    Return
+
+
+pub model Plan:
+    pub ops: list[Op]
+    pub label: str
+    pub version: int
+
+
+pub def make_plan() -> Plan:
+    return Plan(ops=[Op.Assign(7, 42), Op.Return], label="bootstrap", version=3)

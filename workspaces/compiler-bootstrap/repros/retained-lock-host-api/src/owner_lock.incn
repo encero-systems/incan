@@ -1,0 +1,48 @@
+"""Exercise the public lock operation twice through one original owner."""
+
+from rust::incan_driver::build::executable import ExecutableBuildOwner
+from rust::incan_driver::build::lock_preparation import LockPreparationRequest
+from rust::incan_provider import FeatureSelection
+from rust::oven_model::lock import CargoFeatureSelection
+from rust::std::path import PathBuf
+from rust::std::env import args
+from rust::std::fs import read_to_string
+from rust::std::process import exit
+
+
+pub def prepare_twice(directory: str) -> Result[None, str]:
+    """Preserve the original mutable owner and request on an unchanged repeat."""
+    root = PathBuf.from(directory)
+    request = LockPreparationRequest(
+        directory=root.clone(),
+        entry=None,
+        features=FeatureSelection.default(),
+        sdk_profile=None,
+        cargo_features=CargoFeatureSelection.default(),
+    )
+    mut owner = ExecutableBuildOwner.default()
+    owner.prepare_lock(request).map_err((error) => str(error))?
+    lock_name: str = "oven.lock"
+    lock_path = root.join(lock_name)
+    first = read_to_string(lock_path.as_path()).map_err((error) => str(error))?
+    owner.prepare_lock(request).map_err((error) => str(error))?
+    second = read_to_string(lock_path.as_path()).map_err((error) => str(error))?
+    if first != second:
+        return Err("unchanged owner request changed the lock")
+    println("public owner lock first and repeat passed")
+    return Ok(None)
+
+
+def main() -> None:
+    """Run the actual public operation on the explicitly selected fixture."""
+    mut arguments: list[str] = []
+    for argument in args():
+        arguments.append(argument)
+    if len(arguments) != 2:
+        println("usage: owner_lock PROJECT")
+        exit(2)
+    match prepare_twice(arguments[1]):
+        Err(error) =>
+            println(error)
+            exit(1)
+        Ok(_) => pass

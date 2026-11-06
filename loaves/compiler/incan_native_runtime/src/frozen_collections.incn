@@ -1,0 +1,146 @@
+"""Read-only observations and owned snapshots of the legacy static frozen carriers."""
+
+from rust::incan_std_core::frozen import (
+    FrozenList as RuntimeFrozenList,
+    FrozenSet as RuntimeFrozenSet,
+    FrozenDict as RuntimeFrozenDict,
+)
+from rust::std::clone import Clone as RuntimeClone
+from rust::std::fmt import Display
+from rust::std::cmp import PartialEq
+from rust::std::convert import Into as RustInto
+from rust::incan_std_core::errors import raise_key_error
+from std.rust import Static
+
+
+pub def frozen_list_length[T with Static](value: RuntimeFrozenList[T]) -> int:
+    """Measure immutable static storage without allocating an owned collection."""
+    return int(value.len())
+
+
+pub def frozen_list_length_ref[T with Static](value: &RuntimeFrozenList[T]) -> int:
+    """Measure borrowed baked list storage without requiring its elements to be Copy."""
+    return int(value.len())
+
+
+pub def frozen_set_length_ref[T with Static](value: &RuntimeFrozenSet[T]) -> int:
+    """Measure borrowed baked set storage without consuming its wrapper or elements."""
+    return int(value.len())
+
+
+pub def frozen_dict_length_ref[K with Static, V with Static](value: &RuntimeFrozenDict[K, V]) -> int:
+    """Measure borrowed baked dictionary storage without consuming either element carrier."""
+    return int(value.len())
+
+
+pub def frozen_list_items[T with (RuntimeClone, Static)](value: RuntimeFrozenList[T]) -> list[T]:
+    """Materialize ordered owned elements through their real Clone implementations, matching legacy iteration."""
+    return value.as_slice().to_vec()
+
+
+pub def frozen_list_text_items[T with (Display, Static)](value: RuntimeFrozenList[T]) -> list[str]:
+    """Materialize static string elements as owned strings without formatting the enclosing collection."""
+    mut result: list[str] = []
+    for item in value.iter():
+        result.append(str(item))
+    return result
+
+
+pub def frozen_list_byte_items[Source with (RuntimeClone, RustInto[bytes], Static)](
+    value: RuntimeFrozenList[Source],
+) -> list[bytes]:
+    """Copy static byte slices into owned byte buffers at the same read boundary as legacy iteration."""
+    mut result: list[bytes] = []
+    for item in value.iter():
+        result.append(RustInto.into(RuntimeClone.clone(item)))
+    return result
+
+
+pub def own_static_bytes[Source with RustInto[bytes]](value: Source) -> bytes:
+    """Copy a static byte slice into the owned byte buffer a frozen element read returns."""
+    return RustInto.into(value)
+
+
+pub def frozen_set_length[T with Static](value: RuntimeFrozenSet[T]) -> int:
+    """Measure the baked slice without replacing it with a hash collection."""
+    return int(value.len())
+
+
+pub def frozen_set_items[T with (RuntimeClone, Static)](value: RuntimeFrozenSet[T]) -> list[T]:
+    """Read frozen set elements in baked order, as legacy's iterator does."""
+    mut result: list[T] = []
+    for item in value.iter():
+        result.append(RuntimeClone.clone(item))
+    return result
+
+
+pub def frozen_set_text_items[T with (Display, Static)](value: RuntimeFrozenSet[T]) -> list[str]:
+    """Materialize static text set elements as owned strings in baked order."""
+    mut result: list[str] = []
+    for item in value.iter():
+        result.append(str(item))
+    return result
+
+
+pub def frozen_dict_length[K with Static, V with Static](value: RuntimeFrozenDict[K, V]) -> int:
+    """Measure baked entries, including the same duplicate-key storage legacy preserves."""
+    return int(value.len())
+
+
+pub def frozen_dict_keys[K with (RuntimeClone, Static), V with Static](value: RuntimeFrozenDict[K, V]) -> list[K]:
+    """Clone only scalar keys in baked iteration order; values remain unread."""
+    mut result: list[K] = []
+    for key, _item in value.iter():
+        result.append(RuntimeClone.clone(key))
+    return result
+
+
+pub def frozen_dict_text_keys[K with (Display, Static), V with Static](value: RuntimeFrozenDict[K, V]) -> list[str]:
+    """Read static text keys as owned strings, preserving baked order without cloning values."""
+    mut result: list[str] = []
+    for key, _item in value.iter():
+        result.append(str(key))
+    return result
+
+
+pub def frozen_dict_text_get[K with (Display, Static), V with (RuntimeClone, Static)](
+    value: RuntimeFrozenDict[K, V],
+    key: &str,
+) -> V:
+    """Read the first matching static text key, cloning only its value and preserving legacy's missing-key error."""
+    for stored, item in value.iter():
+        if str(stored) == str(key):
+            return RuntimeClone.clone(item)
+    return raise_key_error(f"'{key}' not found in dict")
+
+
+pub def frozen_dict_get[K with (PartialEq, Display, Static), V with (RuntimeClone, Static)](
+    value: RuntimeFrozenDict[K, V],
+    key: K,
+) -> V:
+    """Use exact scalar key equality and return the first matching value, without cloning unrelated entries."""
+    reference: &K = key
+    for stored, item in value.iter():
+        if PartialEq.eq(stored, reference):
+            return RuntimeClone.clone(item)
+    return raise_key_error(f"'{key}' not found in dict")
+
+
+pub def frozen_dict_text_contains[K with (Display, Static), V with Static](
+    value: RuntimeFrozenDict[K, V],
+    key: &str,
+) -> bool:
+    """Check static text keys without reading or cloning values."""
+    for stored, _item in value.iter():
+        if str(stored) == str(key):
+            return true
+    return false
+
+
+pub def frozen_dict_contains[K with (PartialEq, Static), V with Static](value: RuntimeFrozenDict[K, V], key: K) -> bool:
+    """Test scalar key equality in baked order without requiring a hash implementation."""
+    reference: &K = key
+    for stored, _item in value.iter():
+        if PartialEq.eq(stored, reference):
+            return true
+    return false

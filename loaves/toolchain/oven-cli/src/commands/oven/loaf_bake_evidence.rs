@@ -646,9 +646,12 @@ pub(crate) fn pin_loaf_fixture_rustc(command: &mut Command, rustc: &Path) {
 ///
 /// The probe exists only to derive a fresh receipt and generated project. Giving that maintainer-owned child an
 /// empty compiler-data layout makes the intended Oven miss deterministic while the previous committed generation
-/// remains intact until its atomic replacement is ready.
+/// remains intact until its atomic replacement is ready. This explicit compatibility probe must also remove the
+/// inherited ordinary graph selector: its empty layout intentionally has no ordinary core publication. The baker's
+/// selected SDK inventory and sealed inspection authority remain the child's only dependency authorities.
 pub(crate) fn isolate_loaf_fixture_toolchain_data(command: &mut Command, toolchain_data_root: &Path) {
     command
+        .env_remove("INCAN_SDK_NATIVE_COMPILER_GRAPH")
         .env("INCAN_INTERNAL_OVEN_LOAF_EXECUTION", "1")
         .env("INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT", toolchain_data_root);
 }

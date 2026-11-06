@@ -80,6 +80,36 @@ impl OvenProviderHooks for IncanProviderHooks {
             })
         })
     }
+
+    fn authored_native_source_digest(
+        &self,
+        dependency: &oven_model::manifest::DependencySpec,
+    ) -> Option<Result<String, oven_store::OvenError>> {
+        let oven_model::manifest::DependencySource::Path { path } = &dependency.source else {
+            return None;
+        };
+        match fs::symlink_metadata(path.join("loaf.toml")) {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+            Err(error) => {
+                return Some(Err(oven_store::OvenError::InvalidProjectSource {
+                    path: path.clone(),
+                    message: error.to_string(),
+                }));
+            }
+        }
+        Some({
+            oven_rustc::sdk_closure::local_native_dependency_source_digest(
+                path,
+                &dependency.features,
+                dependency.default_features,
+            )
+            .map_err(|error| oven_store::OvenError::InvalidProjectSource {
+                path: path.clone(),
+                message: error.to_string(),
+            })
+        })
+    }
 }
 
 /// Whether a path dependency root is a packaged Incan provider: a generated library crate carrying its `.incnlib`
@@ -365,7 +395,7 @@ mod tests {
             "the release and compiler-suite `stdlib` Loafs must declare one identical complete standard-library dependency surface"
         );
         let mut expected_packages = stdlib::extra_crate_deps()
-            .filter(|dependency| matches!(dependency.source, StdlibExtraCrateSource::Version(_)))
+            .filter(|dependency| matches!(dependency.source, StdlibExtraCrateSource::Declared))
             .map(|dependency| {
                 stdlib::extra_crate_package_alias(dependency.crate_name)
                     .unwrap_or(dependency.crate_name)
@@ -442,7 +472,7 @@ mod tests {
                         continue;
                     };
                     shared += 1;
-                    let registry = dependency_spec_from_stdlib_dep(registry);
+                    let registry = dependency_spec_from_stdlib_dep(registry)?;
                     let declared = declared.clone().normalized();
                     assert!(
                         dependency_specs_match(&declared, &registry),

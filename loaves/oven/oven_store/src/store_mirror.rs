@@ -83,17 +83,20 @@ where
         if !mirror.join("entries").is_dir() {
             continue;
         }
-        let mut candidates = PublishedOvenStore::new(mirror).select_payloads_matching_for_execution(&matches)?;
+        let mut candidates =
+            PublishedOvenStore::new(mirror).select_payloads_matching_for_execution(&matches, |_, _| true)?;
         if candidates.is_empty() {
             continue;
         }
-        candidates.sort_by_key(|candidate| family_import_rank(candidate.manifest.kind));
+        candidates.sort_by_key(|candidate| family_import_rank(candidate.manifest().kind));
         let mut imported = Vec::with_capacity(candidates.len());
         for candidate in candidates {
             candidate.verify_admitted_record()?;
-            let Some(receipt) =
-                import_receipt_for(&candidate.manifest, candidate.original_native_receipt(), caller_receipt)
-            else {
+            let Some(receipt) = import_receipt_for(
+                candidate.manifest(),
+                candidate.original_native_receipt(),
+                caller_receipt,
+            ) else {
                 // Nothing to publish this entry under: no witness, and no caller receipt it was published for. It is
                 // left to the local bake. Not an error: a mirror may hold such entries beside importable ones.
                 continue;
@@ -151,11 +154,12 @@ where
             continue;
         }
         let mut candidates = PublishedOvenStore::new(mirror)
-            .select_payloads_matching_for_execution(|manifest| {
-                manifest.kind == kind && manifest.intent == receipt.intent
-            })?
+            .select_payloads_matching_for_execution(
+                |manifest| manifest.kind == kind && manifest.intent == receipt.intent,
+                |_, _| true,
+            )?
             .into_iter()
-            .filter(|candidate| matches(&candidate.manifest, &candidate.payload))
+            .filter(|candidate| matches(candidate.manifest(), candidate.payload()))
             .collect::<Vec<_>>();
         if candidates.is_empty() {
             continue;
@@ -166,13 +170,13 @@ where
         // several identities. Each of them would be read and re-digested in full only to resolve to the local entry
         // the first one created, so the duplicates are dropped here, keeping the smallest identity for a stable
         // choice.
-        candidates.sort_by(|left, right| left.manifest.identity.cmp(&right.manifest.identity));
+        candidates.sort_by(|left, right| left.manifest().identity.cmp(&right.manifest().identity));
         let mut distinct = Vec::<OvenStoreExecutionPayload>::with_capacity(candidates.len());
         for candidate in candidates {
             let duplicate = distinct.iter().any(|kept| {
-                kept.manifest.payload == candidate.manifest.payload
-                    && kept.manifest.materialized_files == candidate.manifest.materialized_files
-                    && kept.manifest.materialized_directories == candidate.manifest.materialized_directories
+                kept.manifest().payload == candidate.manifest().payload
+                    && kept.manifest().materialized_files == candidate.manifest().materialized_files
+                    && kept.manifest().materialized_directories == candidate.manifest().materialized_directories
             });
             if !duplicate {
                 distinct.push(candidate);
@@ -321,13 +325,14 @@ mod tests {
         let published = publish_into_mirror(mirror_root.path(), project.path(), b"closure payload")?;
         let local = OvenStore::new(local_root.path(), limits());
 
-        let before = local.select_payloads_matching_for_execution(|m| m.identity == published.identity)?;
+        let before = local.select_payloads_matching_for_execution(|m| m.identity == published.identity, |_, _| true)?;
         assert!(before.is_empty(), "the local store starts empty");
 
         let imported = import_matching_from_mirrors(&local, &[mirror_root.path().to_path_buf()], None, |m| {
             m.identity == published.identity
         })?;
-        let selected = local.select_payloads_matching_for_execution(|m| m.identity == published.identity)?;
+        let selected =
+            local.select_payloads_matching_for_execution(|m| m.identity == published.identity, |_, _| true)?;
         assert_eq!(imported.len(), 1, "one entry was imported");
         assert_eq!(imported[0].mirror, mirror_root.path());
         assert_eq!(
@@ -335,7 +340,7 @@ mod tests {
             "content identity survives the copy"
         );
         assert_eq!(selected.len(), 1, "and it now selects locally");
-        assert_eq!(selected[0].payload, b"closure payload");
+        assert_eq!(selected[0].payload(), b"closure payload");
         assert!(
             local
                 .entry_root_for_tests(&published.identity)
@@ -350,7 +355,7 @@ mod tests {
         })?;
         assert_eq!(imported_again.len(), 1);
         assert_eq!(imported_again[0].manifest.identity, published.identity);
-        let again = local.select_payloads_matching_for_execution(|m| m.identity == published.identity)?;
+        let again = local.select_payloads_matching_for_execution(|m| m.identity == published.identity, |_, _| true)?;
         assert_eq!(again.len(), 1);
         Ok(())
     }
@@ -376,7 +381,7 @@ mod tests {
             matches!(result, Err(OvenStoreError::Integrity { .. })),
             "got {result:?}"
         );
-        let after = local.select_payloads_matching_for_execution(|m| m.identity == published.identity)?;
+        let after = local.select_payloads_matching_for_execution(|m| m.identity == published.identity, |_, _| true)?;
         assert!(after.is_empty(), "a refused import leaves no entry behind");
         Ok(())
     }
@@ -489,9 +494,10 @@ mod tests {
                 .is_file(),
             "the materialized closure was copied"
         );
-        let selected = local.select_payloads_matching_for_execution(|m| m.identity == admitted.identity)?;
+        let selected =
+            local.select_payloads_matching_for_execution(|m| m.identity == admitted.identity, |_, _| true)?;
         assert_eq!(selected.len(), 1);
-        assert_eq!(selected[0].payload, br#"{"key":"k1"}"#);
+        assert_eq!(selected[0].payload(), br#"{"key":"k1"}"#);
 
         // A mismatched intent is never a candidate, whatever the payload says.
         let mut other_intent = receipt.clone();
@@ -550,7 +556,7 @@ mod tests {
             "one content is imported once, whatever it was republished as"
         );
         assert_eq!(imported[0].manifest.receipt_identity, receipt.identity);
-        let held = local.select_payloads_matching_for_execution(|_| true)?;
+        let held = local.select_payloads_matching_for_execution(|_| true, |_, _| true)?;
         assert_eq!(held.len(), 1);
         Ok(())
     }
@@ -580,7 +586,7 @@ mod tests {
             matches!(result, Err(OvenStoreError::Integrity { .. })),
             "got {result:?}"
         );
-        let after = local.select_payloads_matching_for_execution(|_| true)?;
+        let after = local.select_payloads_matching_for_execution(|_| true, |_, _| true)?;
         assert!(after.is_empty(), "a refused import leaves no entry behind");
         Ok(())
     }

@@ -139,6 +139,7 @@ fn release_only_project_inspection_authority_binds_root_features_and_orders_cons
         default_features: false,
     };
     let mut payload = OvenProjectInspectionAuthorityPayload {
+        native_roots: None,
         schema_version: OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION,
         project_identity: "sha256:project".to_string(),
         source_authority_digest: "sha256:source".to_string(),
@@ -1196,5 +1197,162 @@ fn source_projection_allows_a_caller_registry_leaf_to_replace_a_private_compiler
             .dependency_search_paths
             .contains(&PathBuf::from("/immutable/compiler-private"))
     );
+    Ok(())
+}
+
+/// Native registry roots bind the original receipt and reject changed declarations or substituted constituents.
+#[test]
+fn ordinary_native_inspection_roots_preserve_receipt_and_declaration_authority()
+-> Result<(), Box<dyn std::error::Error>> {
+    let project = tempfile::tempdir()?;
+    write_project(project.path())?;
+    let source = project.path().join("fixture.rs");
+    fs::write(&source, "fn main() {}\n")?;
+    let roots = BTreeMap::from([
+        ("incan_std_core".to_string(), "sha256:core-record".to_string()),
+        ("json_api".to_string(), "sha256:json-record".to_string()),
+    ]);
+    let digest = crate::native_loaf::native_loaf_roots_digest(&roots)?;
+    assert_eq!(digest, digest_bytes(br#"[{"alias":"incan_std_core","record_identity":"sha256:core-record"},{"alias":"json_api","record_identity":"sha256:json-record"}]"#));
+    let receipt = receipt_generated_project(
+        &OvenGeneratedProjectRequest::new(
+            project.path(),
+            "native-inspection",
+            "1.0.0",
+            "aarch64-apple-darwin",
+            "test-toolchain",
+            "debug",
+            Vec::new(),
+        )
+        .with_generated_source("root", &source)
+        .with_build_unit_input("ordinary-native-roots", digest),
+    )?;
+    let dependency = DependencySpec {
+        crate_name: "json_api".to_string(),
+        package: Some("serde_json".to_string()),
+        version: Some("1".to_string()),
+        features: vec!["raw_value".to_string()],
+        default_features: false,
+        optional: false,
+        source: DependencySource::Registry,
+    };
+    let dependency_digest =
+        oven_store::digest_dependency_specs(std::slice::from_ref(&dependency), &oven_store::NoProviderHooks)?;
+    let payload = OvenProjectInspectionAuthorityPayload {
+        schema_version: OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION,
+        native_roots: Some(crate::rustc::OvenProjectInspectionNativeRoots {
+            constituent_index: 0,
+            roots,
+        }),
+        project_identity: "project".to_string(),
+        source_authority_digest: "source".to_string(),
+        compiler_version: "compiler".to_string(),
+        registry_lock_digest: digest_bytes(&[]),
+        registry_source_dependencies: Vec::new(),
+        dev_registry_source_dependencies: Vec::new(),
+        registry_sources: Vec::new(),
+        generated_out_dirs: Vec::new(),
+        constituents: vec![OvenProjectInspectionConstituent::Stored {
+            identity: "native-plan".to_string(),
+            artifact_kind: OvenArtifactKind::DirectRustcPlan,
+            receipt,
+            base_loaf_identity: None,
+        }],
+        test_dependency_envelope: Some(OvenProjectInspectionTestDependencyEnvelope {
+            constituent_index: 0,
+            provider_constituents: Vec::new(),
+            dependency_surface_digest: dependency_digest.clone(),
+            dependency_roots: BTreeMap::from([(
+                "json_api".to_string(),
+                OvenProjectInspectionTestDependencyRoot::NativeRegistry {
+                    dependency_digest,
+                    record_identity: "sha256:json-record".to_string(),
+                },
+            )]),
+        }),
+    };
+    validate_project_inspection_authority_payload(&payload)?;
+    assert!(project_inspection_test_dependency_envelope_supports_dependencies(
+        &payload,
+        std::slice::from_ref(&dependency),
+        &oven_store::NoProviderHooks
+    )?);
+    assert!(
+        !project_inspection_authority_supports_dependencies(&payload, std::slice::from_ref(&dependency)),
+        "native roots cannot impersonate legacy source catalogs"
+    );
+    for field in ["features", "defaults", "version", "package", "alias"] {
+        let mut changed = dependency.clone();
+        match field {
+            "features" => changed.features.clear(),
+            "defaults" => changed.default_features = true,
+            "version" => changed.version = Some("2".to_string()),
+            "package" => changed.package = Some("other".to_string()),
+            _ => changed.crate_name = "other".to_string(),
+        }
+        assert!(
+            !project_inspection_test_dependency_envelope_supports_dependencies(
+                &payload,
+                &[changed],
+                &oven_store::NoProviderHooks
+            )?,
+            "changed {field} was admitted"
+        );
+    }
+    for case in ["record", "support", "constituent", "missing", "schema", "lock"] {
+        let mut changed = payload.clone();
+        match case {
+            "record" => {
+                changed
+                    .native_roots
+                    .as_mut()
+                    .ok_or("native roots missing")?
+                    .roots
+                    .insert("json_api".to_string(), "other-record".to_string());
+            }
+            "support" => {
+                changed
+                    .native_roots
+                    .as_mut()
+                    .ok_or("native roots missing")?
+                    .roots
+                    .remove("incan_std_core");
+            }
+            "constituent" => {
+                changed
+                    .native_roots
+                    .as_mut()
+                    .ok_or("native roots missing")?
+                    .constituent_index = 1
+            }
+            "missing" => changed.native_roots = None,
+            "schema" => changed.schema_version = 2,
+            _ => changed.registry_lock_digest = digest_bytes(b"invented Cargo lock"),
+        }
+        assert!(
+            validate_project_inspection_authority_payload(&changed).is_err(),
+            "changed {case} was admitted"
+        );
+    }
+    let mut changed = payload.clone();
+    let Some(OvenProjectInspectionTestDependencyRoot::NativeRegistry { record_identity, .. }) = changed
+        .test_dependency_envelope
+        .as_mut()
+        .ok_or("envelope missing")?
+        .dependency_roots
+        .get_mut("json_api")
+    else {
+        return Err("native root missing".into());
+    };
+    *record_identity = "other-record".to_string();
+    assert!(validate_project_inspection_authority_payload(&changed).is_err());
+    let mut release = payload;
+    release.test_dependency_envelope = None;
+    validate_project_inspection_authority_payload(&release)?;
+    assert!(!project_inspection_test_dependency_envelope_supports_dependencies(
+        &release,
+        &[dependency],
+        &oven_store::NoProviderHooks
+    )?);
     Ok(())
 }

@@ -13,6 +13,12 @@ pub(super) struct AnchoredStandaloneBlock {
     pub indent: usize,
     pub lines: Vec<String>,
     pub blank_line_before: bool,
+    /// A root-level block following a suite retains its gaps and waits for the suite to end.
+    pub after_root_suite: bool,
+    /// Source gap before a root-level block, capped by the output buffer's two-line policy.
+    pub root_blank_lines_before: usize,
+    /// Source gap between a root-level leading block and its following declaration.
+    pub root_blank_lines_after: usize,
 }
 
 #[derive(Clone)]
@@ -35,6 +41,22 @@ struct PendingStandaloneBlock {
     lines: Vec<String>,
     saw_blank_after: bool,
     saw_blank_before: bool,
+    blank_lines_before: usize,
+    blank_lines_after: usize,
+}
+
+impl PendingStandaloneBlock {
+    /// Start a comment block with its source indentation and preceding readability gap.
+    fn new(line: &str, indent: usize, blank_lines_before: usize) -> Self {
+        Self {
+            indent,
+            lines: vec![line.trim_end().to_string()],
+            saw_blank_after: false,
+            saw_blank_before: blank_lines_before > 0,
+            blank_lines_before,
+            blank_lines_after: 0,
+        }
+    }
 }
 
 /// Normalize source text before matching comments back to code.
@@ -52,7 +74,7 @@ pub(super) fn extract_comments(source: &str) -> ExtractedComments {
     let mut inline_comments: Vec<InlineComment> = Vec::new();
     let mut source_anchor_occurrences: HashMap<String, usize> = HashMap::new();
     let mut last_code_at_indent: HashMap<usize, (String, usize)> = HashMap::new();
-    let mut last_source_line_was_blank = false;
+    let mut preceding_blank_lines = 0usize;
 
     for line in source.lines() {
         let comment_idx = comment_start_index(line, &mut state);
@@ -63,8 +85,9 @@ pub(super) fn extract_comments(source: &str) -> ExtractedComments {
             if trimmed.is_empty() {
                 if let Some(block) = &mut pending_standalone {
                     block.saw_blank_after = true;
+                    block.blank_lines_after += 1;
                 }
-                last_source_line_was_blank = true;
+                preceding_blank_lines += 1;
                 continue;
             }
 
@@ -83,7 +106,7 @@ pub(super) fn extract_comments(source: &str) -> ExtractedComments {
             }
             last_code_at_indent.insert(indent, (anchor.clone(), occurrence));
             source_anchor_occurrences.insert(anchor, occurrence);
-            last_source_line_was_blank = false;
+            preceding_blank_lines = 0;
             continue;
         };
 
@@ -95,15 +118,8 @@ pub(super) fn extract_comments(source: &str) -> ExtractedComments {
                 if !block.saw_blank_after && block.indent == indent {
                     block.lines.push(line.trim_end().to_string());
                 } else {
-                    let old_block = std::mem::replace(
-                        block,
-                        PendingStandaloneBlock {
-                            indent,
-                            lines: vec![line.trim_end().to_string()],
-                            saw_blank_after: false,
-                            saw_blank_before: last_source_line_was_blank,
-                        },
-                    );
+                    let old_block =
+                        std::mem::replace(block, PendingStandaloneBlock::new(line, indent, preceding_blank_lines));
                     finalize_pending_standalone_block(
                         old_block,
                         None,
@@ -114,14 +130,9 @@ pub(super) fn extract_comments(source: &str) -> ExtractedComments {
                     );
                 }
             } else {
-                pending_standalone = Some(PendingStandaloneBlock {
-                    indent,
-                    lines: vec![line.trim_end().to_string()],
-                    saw_blank_after: false,
-                    saw_blank_before: last_source_line_was_blank,
-                });
+                pending_standalone = Some(PendingStandaloneBlock::new(line, indent, preceding_blank_lines));
             }
-            last_source_line_was_blank = false;
+            preceding_blank_lines = 0;
             continue;
         }
 
@@ -146,7 +157,7 @@ pub(super) fn extract_comments(source: &str) -> ExtractedComments {
         });
         last_code_at_indent.insert(indent, (anchor.clone(), occurrence));
         source_anchor_occurrences.insert(anchor, occurrence);
-        last_source_line_was_blank = false;
+        preceding_blank_lines = 0;
     }
 
     if let Some(block) = pending_standalone.take() {
@@ -170,9 +181,10 @@ pub(super) fn extract_comments(source: &str) -> ExtractedComments {
 
 /// Attach a pending source comment block to its nearest stable formatted location.
 ///
-/// Blocks that are immediately followed by same-indent code become leading comments for that next code line. Blocks
-/// separated by a blank line, or followed by different indentation, attach to the previous code line at the same
-/// indentation. Blocks without a stable leading or trailing anchor use the EOF fallback path.
+/// Blocks immediately followed by same-indent code attach forward. Separated blocks attach to the previous same-indent
+/// code line, with EOF as the fallback when no stable anchor exists. A trailing root-level suite block retains both
+/// source gaps and must wait for the suite to end, rather than treating its internal blank lines as attachment
+/// boundaries.
 fn finalize_pending_standalone_block(
     block: PendingStandaloneBlock,
     next_anchor: Option<(String, usize, usize)>,
@@ -183,13 +195,19 @@ fn finalize_pending_standalone_block(
 ) {
     let lines = trim_trailing_blank_comment_lines(&block.lines);
     match next_anchor {
-        Some((anchor, occurrence, next_indent)) if !block.saw_blank_after && next_indent == block.indent => {
+        Some((anchor, occurrence, next_indent)) if next_indent == block.indent && !block.saw_blank_after => {
             leading_standalone.push(AnchoredStandaloneBlock {
                 anchor,
                 occurrence,
                 indent: block.indent,
                 lines,
                 blank_line_before: block.saw_blank_before,
+                after_root_suite: block.indent == 0
+                    && last_code_at_indent
+                        .get(&0)
+                        .is_some_and(|(anchor, _)| anchor.ends_with(':')),
+                root_blank_lines_before: if block.indent == 0 { block.blank_lines_before } else { 0 },
+                root_blank_lines_after: if block.indent == 0 { block.blank_lines_after } else { 0 },
             });
         }
         _ => {
@@ -200,6 +218,17 @@ fn finalize_pending_standalone_block(
                     indent: block.indent,
                     lines,
                     blank_line_before: block.saw_blank_before,
+                    after_root_suite: block.indent == 0 && prev_anchor.ends_with(':'),
+                    root_blank_lines_before: if block.indent == 0 && prev_anchor.ends_with(':') {
+                        block.blank_lines_before
+                    } else {
+                        0
+                    },
+                    root_blank_lines_after: if block.indent == 0 && prev_anchor.ends_with(':') {
+                        block.blank_lines_after
+                    } else {
+                        0
+                    },
                 });
             } else {
                 eof_standalone.extend(lines);

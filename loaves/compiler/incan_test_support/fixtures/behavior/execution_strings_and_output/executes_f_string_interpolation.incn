@@ -1,0 +1,17 @@
+# behavior: executes f string interpolation
+# expect-stdout:
+#   3 rows ok=true quoted="rows"
+
+
+"""Executes f string interpolation."""
+def program_result() -> str:
+  """Compute and return `f"{count} {name} ok={ok} quoted={name:?}"`."""
+  count = 3
+  name = "rows"
+  ok = true
+  return f"{count} {name} ok={ok} quoted={name:?}"
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

@@ -28,3 +28,4 @@ workspaces/docs-site/docs/contributing/how-to/authoring_vocab_crates.md	src/lib.
 # The source-build recipe pins the v0.5.0 tag and names that checkout's layout, not the current tree.
 workspaces/docs-site/docs/_snippets/learning/development_toolchain.md	crates/incan_stdlib/stdlib	The v0.5.0 checkout the recipe pins keeps the standard library there
 workspaces/docs-site/docs/_snippets/learning/development_toolchain.md	crates	The v0.5.0 checkout the recipe pins keeps the support crates there
+workspaces/docs-site/docs/contributing/reference/test_corpus_inventory.md	src/developer_workflow_acceptance.incn	Fixture pattern relative to the workspaces/oven root in the same inventory row; the inventory collector verifies that it selects the real file.

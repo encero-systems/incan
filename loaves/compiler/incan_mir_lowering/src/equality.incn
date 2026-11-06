@@ -1,0 +1,48 @@
+"""Borrowed collection equality uses the same PartialEq operations as legacy emission."""
+
+from pub::incan_mir_plan import Operand, PlanType, SourceSpan
+from frame import Builder, temporary, read_place
+from lists import list_shape, list_element
+from collections import collection_call, collection_reference, collection_owned, is_collection
+from builtins import list_call
+
+
+pub def equality_shape(ty: PlanType) -> Option[PlanType]:
+    """Normalize shared collection parameters to the same owned layout as literal operands."""
+    match list_shape(ty):
+        Some((leaf, depth)) => return Some(PlanType.List(leaf, depth))
+        None => pass
+    if is_collection(ty):
+        return Some(collection_owned(ty))
+    return None
+
+
+pub def emit_collection_equality(
+    mut builder: Builder,
+    ty: PlanType,
+    references: list[Operand],
+    unequal: bool,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Instantiate an exact checked collection shape without cloning either operand or its elements."""
+    output = temporary(builder, PlanType.Bool, span)
+    mut operation = "equal"
+    if unequal:
+        operation = "unequal"
+    match list_shape(ty):
+        Some((leaf, depth)) =>
+            reference = PlanType.ListRef(leaf, depth)
+            list_call(
+                builder,
+                f"{operation}_list",
+                list_element(leaf, depth),
+                [reference, reference],
+                PlanType.Bool,
+                references,
+                output,
+                span,
+            )
+        None =>
+            reference = collection_reference(ty, false)
+            collection_call(builder, ty, operation, [reference, reference], PlanType.Bool, references, output, span)?
+    return Ok(read_place(output, false, span))

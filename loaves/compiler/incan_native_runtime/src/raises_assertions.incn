@@ -1,0 +1,51 @@
+"""Inspect panic-hosted error categories inside a deferred function's unwind boundary."""
+
+from rust::std::panic import catch_unwind
+from rust::std::primitive import str as RustStr
+from rust::incan_std_core::strings import str_starts_with
+from rust::incan_std_testing import fail_t
+from rust::std::cmp import PartialEq
+
+
+pub def assert_equal[T with PartialEq](left: T, right: T, message: str) -> None:
+    """Preserve canonical assert_eq's AssertionError category, including an explicitly empty message."""
+    if left != right:
+        comparison_failure(message, "left != right")
+
+
+pub def assert_unequal[T with PartialEq](left: T, right: T, message: str) -> None:
+    """Preserve canonical assert_ne's AssertionError category without requiring Debug formatting."""
+    if left == right:
+        comparison_failure(message, "left == right")
+
+
+def comparison_failure(message: str, condition: str) -> None:
+    """Use the language helper's exact default/custom panic payload while keeping the frozen testing crate unchanged."""
+    if message == "":
+        return fail_t(f"AssertionError: {condition}")
+    return fail_t(f"AssertionError: {message}; {condition}")
+
+
+pub def assert_raises_deferred(block: () -> None, expected: str, message: str) -> None:
+    """Match legacy's String/static-str payload categories and exact default or custom assertion failures."""
+    match catch_unwind(block):
+        Ok(_) =>
+            if message != "":
+                return fail_t(f"AssertionError: {message}")
+            return fail_t(f"AssertionError: expected {expected} to be raised")
+        Err(payload) =>
+            mut actual = ""
+            match payload.downcast_ref[str]():
+                Some(value) =>
+                    actual = str(value)
+                None =>
+                    match payload.downcast_ref[&RustStr]():
+                        Some(value) =>
+                            actual = str(value)
+                        None => pass
+            prefix = f"{expected}:"
+            if actual == expected or str_starts_with(actual, prefix):
+                return
+            if message != "":
+                return fail_t(f"AssertionError: {message}")
+            return fail_t(f"AssertionError: expected {expected} to be raised, got {actual}")

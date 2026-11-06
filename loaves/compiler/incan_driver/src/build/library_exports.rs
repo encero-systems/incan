@@ -4,12 +4,12 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::env;
 use std::path::{Path, PathBuf};
+#[cfg(feature = "rust_inspect")]
+use std::time::Instant;
 
 use crate::build::rust_extern::RustExternDeclContext;
 use crate::error::{CliError, CliResult};
 use crate::project::resolve_project_root;
-#[cfg(feature = "rust_inspect")]
-use crate::rust_inspect_workspace::collect_rust_inspect_query_paths;
 #[cfg(feature = "rust_inspect")]
 use ::rust_inspect::Inspector;
 #[cfg(feature = "rust_inspect")]
@@ -30,11 +30,60 @@ pub fn collect_library_rust_abi_query_paths(
     modules: &[ParsedModule],
     rust_extern_contexts: &[RustExternDeclContext],
 ) -> Vec<String> {
-    let mut paths: BTreeSet<String> = collect_rust_inspect_query_paths(modules).into_iter().collect();
+    // Consumer prewarming can skip runtime facets. A durable publication must retain its own imported native ABI
+    // as well, regardless of that performance policy or the ambient prewarm environment.
+    let mut paths = BTreeSet::new();
+    for module in modules {
+        for declaration in &module.ast.declarations {
+            let Declaration::Import(import) = &declaration.node else {
+                continue;
+            };
+            let ImportKind::RustFrom {
+                crate_name,
+                path,
+                items,
+                ..
+            } = &import.kind
+            else {
+                continue;
+            };
+            let base = std::iter::once(crate_name.replace('-', "_"))
+                .chain(path.iter().cloned())
+                .collect::<Vec<_>>()
+                .join("::");
+            if matches!(base.as_str(), "std::primitive" | "core::primitive") {
+                continue;
+            }
+            for item in items {
+                paths.insert(format!("{base}::{}", item.name));
+            }
+        }
+    }
     for context in rust_extern_contexts {
         paths.insert(format!("{}::{}", context.rust_module_path, context.item_name));
     }
     paths.into_iter().collect()
+}
+
+/// Collect ordinary ABI coverage through original source ownership while retaining legacy extern report labels.
+///
+/// Backend-provided protocol methods require the actual native helper's complete ABI. This adapter changes only
+/// genuine ordinary source publication queries; an ordinary consumer or legacy collector cannot acquire it by name.
+#[cfg(feature = "rust_inspect")]
+pub(crate) fn collect_ordinary_library_rust_abi_query_paths(
+    modules: &[ParsedModule],
+    contexts: &[RustExternDeclContext],
+    plan: &incan_provider::ProviderPlan,
+) -> CliResult<Vec<String>> {
+    let mut paths = collect_library_rust_abi_query_paths(modules, &[])
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    for context in contexts {
+        paths.insert(crate::build::rust_extern::ordinary_rust_extern_abi_path(
+            context, modules, plan,
+        )?);
+    }
+    Ok(paths.into_iter().collect())
 }
 
 #[cfg(feature = "rust_inspect")]
@@ -51,15 +100,19 @@ pub fn collect_library_rust_abi(
     }
 
     let inspector = Inspector::new(InspectorConfig::new(rust_inspect_manifest_dir.to_path_buf()));
+    let extraction_start = Instant::now();
     let mut items = Vec::new();
+    let mut complete_requests = 0;
     for path in query_paths {
         let Some(lookup_path) = Inspector::normalize_lookup_path(path) else {
             continue;
         };
-        match inspector
-            .cache()
-            .get_or_extract_complete(rust_inspect_manifest_dir, lookup_path, &|_| ())
-        {
+        complete_requests += 1;
+        match inspector.cache().get_or_extract_complete_deferred_persist(
+            rust_inspect_manifest_dir,
+            lookup_path,
+            &|_| (),
+        ) {
             Ok(metadata) => items.push((*metadata).clone()),
             Err(
                 RustMetadataError::CrateNotFound(_)
@@ -73,6 +126,83 @@ pub fn collect_library_rust_abi(
                 )));
             }
         }
+    }
+    let complete_extraction_ms = extraction_start.elapsed().as_secs_f64() * 1000.0;
+    let persistence_start = Instant::now();
+    // Persisting metadata is an accelerator, not publication authority; retain the original best-effort behavior.
+    if complete_requests > 0
+        && let Err(error) = inspector.cache().persist_manifest_dir(rust_inspect_manifest_dir)
+    {
+        tracing::warn!(
+            root = %rust_inspect_manifest_dir.display(),
+            error = %error,
+            "failed to persist batched public Rust ABI metadata"
+        );
+    }
+    tracing::debug!(
+        complete_abi_requests = complete_requests,
+        complete_abi_items = items.len(),
+        persistence_attempts = usize::from(complete_requests > 0),
+        complete_extraction_ms,
+        persistence_ms = persistence_start.elapsed().as_secs_f64() * 1000.0,
+        root = %rust_inspect_manifest_dir.display(),
+        "public Rust ABI metadata batch completed"
+    );
+    Ok(LibraryRustAbi::from_items(items))
+}
+
+/// Select a shipped ABI record only when it can satisfy durable publication without source extraction.
+#[cfg(feature = "rust_inspect")]
+fn complete_shipped_rust_abi_item(
+    index: &incan_frontend::library_manifest_index::LibraryManifestIndex,
+    path: &str,
+) -> Option<incan_lang::interop::RustItemMetadata> {
+    index.rust_abi_item(path).filter(|metadata| match &metadata.kind {
+        incan_lang::interop::RustItemKind::Type(info) => {
+            info.metadata_completeness.has_methods() && info.metadata_completeness.has_trait_impls()
+        }
+        _ => true,
+    })
+}
+
+/// Prepare inspection only for queries not already answered by complete ABI in the checker's dependency index.
+#[cfg(feature = "rust_inspect")]
+pub(crate) fn library_rust_abi_source_queries(
+    query_paths: &[String],
+    index: &incan_frontend::library_manifest_index::LibraryManifestIndex,
+) -> Vec<String> {
+    query_paths
+        .iter()
+        .filter(|path| complete_shipped_rust_abi_item(index, path).is_none())
+        .cloned()
+        .collect()
+}
+
+/// Reuse the checker's complete shipped ABI records and inspect only demands not covered by that same index.
+///
+/// The caller retains the dependency owners behind the index throughout checking and publication. Copying their
+/// checked facts avoids reconstructing a dependency's inspection workspace. Partial type records still require
+/// complete extraction and cannot satisfy a durable ABI requirement by themselves.
+#[cfg(feature = "rust_inspect")]
+pub(crate) fn collect_library_rust_abi_with_shipped(
+    rust_inspect_manifest_dir: Option<&Path>,
+    query_paths: &[String],
+    index: &incan_frontend::library_manifest_index::LibraryManifestIndex,
+) -> CliResult<Option<LibraryRustAbi>> {
+    let mut items = Vec::new();
+    let mut source_queries = Vec::new();
+    for path in query_paths {
+        if let Some(metadata) = complete_shipped_rust_abi_item(index, path) {
+            items.push(metadata);
+        } else {
+            source_queries.push(path.clone());
+        }
+    }
+    if !source_queries.is_empty()
+        && let Some(directory) = rust_inspect_manifest_dir
+        && let Some(extracted) = collect_library_rust_abi(directory, &source_queries)?
+    {
+        items.extend(extracted.items);
     }
     Ok(LibraryRustAbi::from_items(items))
 }
@@ -371,6 +501,10 @@ impl<'a> LibraryReexportResolver<'a> {
     }
 }
 
+#[cfg(all(test, feature = "rust_inspect"))]
+#[path = "library_exports/native_abi_tests.rs"]
+mod native_abi_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -434,82 +568,132 @@ mod tests {
         Ok(())
     }
 
-    /// Proves complete published ABI extraction is independent of unrelated downstream impl crates in the graph.
+    /// Prepare the supported dependency-free Loaf inspection route with explicit sysroot-only source authority.
+    #[cfg(feature = "rust_inspect")]
+    fn dev7_mutable_demand_prepare_local_abi_workspace(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        crate::lock::registry_sources::acquire_explicit_project_inspection_sources(root, root, &[])?;
+        fs::write(root.join(rust_inspect::OVEN_DIRECT_INSPECTION_MARKER), "1\n")?;
+        fs::write(root.join(rust_inspect::OVEN_LOAF_ONLY_INSPECTION_MARKER), "1\n")?;
+        Ok(())
+    }
+
+    /// ABI publication promotes partial records, survives source restoration and refuses missing extraction authority.
     #[cfg(feature = "rust_inspect")]
     #[test]
-    fn library_rust_abi_ignores_loaded_downstream_trait_impls_issue924() -> Result<(), Box<dyn std::error::Error>> {
-        // ---- Fixture: clean and downstream-loaded views of one Rust surface ----
-        let workspace = tempfile::tempdir()?;
-        let trait_api = workspace.path().join("trait-api");
-        let surface_api = workspace.path().join("surface-api");
-        let downstream_api = workspace.path().join("downstream-api");
-        let clean_probe = workspace.path().join("clean-probe");
-        let polluted_probe = workspace.path().join("polluted-probe");
-        for root in [&trait_api, &surface_api, &downstream_api, &clean_probe, &polluted_probe] {
-            fs::create_dir_all(root.join("src"))?;
-        }
+    fn dev7_mutable_demand_public_abi_remains_complete_and_source_current() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        fs::create_dir(root.path().join("src"))?;
         fs::write(
-            trait_api.join("Cargo.toml"),
-            "[package]\nname = \"abi_trait_api\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            root.path().join("loaf.toml"),
+            "[project]\nname='abi_demand_probe'\nversion='1.0.0'\n[rust]\nname='abi_demand_probe'\ntype='lib'\nedition='2021'\n",
         )?;
-        fs::write(trait_api.join("src/lib.rs"), "pub trait Intrinsic {}\n")?;
-        fs::write(
-            surface_api.join("Cargo.toml"),
-            "[package]\nname = \"abi_surface_api\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nabi_trait_api = { path = \"../trait-api\" }\n",
+        let source = root.path().join("src/lib.rs");
+        let original = "pub trait Intrinsic {}\npub struct Thing;\nimpl Intrinsic for Thing {}\n";
+        fs::write(&source, original)?;
+        dev7_mutable_demand_prepare_local_abi_workspace(root.path())?;
+        let query = "abi_demand_probe::Thing";
+        let paths = vec![query.to_string()];
+        let cache = rust_inspect::RustMetadataCache::new();
+        cache.insert_test_item(
+            root.path(),
+            incan_lang::interop::RustItemMetadata {
+                canonical_path: query.to_string(),
+                definition_path: Some(query.to_string()),
+                visibility: incan_lang::interop::RustVisibility::Public,
+                kind: incan_lang::interop::RustItemKind::Type(incan_lang::interop::RustTypeInfo {
+                    type_params: Vec::new(),
+                    type_param_defaults: Vec::new(),
+                    mutable_reference_type_params: Vec::new(),
+                    expanded_derive_traits: Vec::new(),
+                    has_const_params: false,
+                    alias_target: None,
+                    metadata_completeness: incan_lang::interop::RustTypeMetadataCompleteness::FieldsAndVariantsOnly,
+                    methods: Vec::new(),
+                    implemented_traits: Vec::new(),
+                    fields: Vec::new(),
+                    variants: Vec::new(),
+                }),
+            },
         )?;
-        fs::write(
-            surface_api.join("src/lib.rs"),
-            "pub struct Thing;\n\nimpl abi_trait_api::Intrinsic for Thing {}\n",
-        )?;
-        fs::write(
-            downstream_api.join("Cargo.toml"),
-            "[package]\nname = \"abi_downstream_api\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nabi_surface_api = { path = \"../surface-api\" }\n",
-        )?;
-        fs::write(
-            downstream_api.join("src/lib.rs"),
-            "pub trait Ambient {}\n\nimpl Ambient for abi_surface_api::Thing {}\n",
-        )?;
-        fs::write(
-            clean_probe.join("Cargo.toml"),
-            "[package]\nname = \"abi_clean_probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nabi_surface_api = { path = \"../surface-api\" }\n",
-        )?;
-        fs::write(clean_probe.join("src/lib.rs"), "pub fn load_surface() {}\n")?;
-        fs::write(
-            polluted_probe.join("Cargo.toml"),
-            "[package]\nname = \"abi_polluted_probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nabi_surface_api = { path = \"../surface-api\" }\nabi_downstream_api = { path = \"../downstream-api\" }\n",
-        )?;
-        fs::write(polluted_probe.join("src/lib.rs"), "pub fn load_graph() {}\n")?;
-
-        // ---- Publication: complete ABI must converge across both loaded graphs ----
-        let query_paths = vec!["abi_surface_api::Thing".to_string()];
-        let clean = collect_library_rust_abi(&clean_probe, &query_paths)?.ok_or("expected clean library Rust ABI")?;
-        let polluted =
-            collect_library_rust_abi(&polluted_probe, &query_paths)?.ok_or("expected polluted library Rust ABI")?;
-
-        assert_eq!(
-            clean, polluted,
-            "published library ABI must not depend on unrelated downstream impl crates"
-        );
-
-        // ---- Contract: preserve intrinsic traits and exclude downstream-only traits ----
-        let thing = polluted
-            .get("abi_surface_api::Thing")
-            .ok_or("expected Thing ABI item")?;
-        let incan_lang::interop::RustItemKind::Type(thing_type) = &thing.kind else {
-            return Err("expected Thing ABI type metadata".into());
+        let first = collect_library_rust_abi(root.path(), &paths)?.ok_or("missing checked ABI")?;
+        let incan_lang::interop::RustItemKind::Type(first_type) = &first.get(query).ok_or("missing type ABI")?.kind
+        else {
+            return Err("expected type ABI".into());
         };
+        assert!(first_type.metadata_completeness.has_trait_impls());
         assert!(
-            thing_type
+            first_type
                 .implemented_traits
                 .iter()
-                .any(|implemented| implemented.path == "abi_trait_api::Intrinsic")
+                .any(|implementation| implementation.path.ends_with("::Intrinsic"))
         );
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.path().join(".incan_rust_inspect_cache.json"))?)?;
         assert!(
-            thing_type
-                .implemented_traits
+            persisted["complete_items"]
+                .as_array()
+                .ok_or("complete items missing")?
                 .iter()
-                .all(|implemented| implemented.path != "abi_downstream_api::Ambient")
+                .any(|item| item.as_str() == Some(query))
         );
+        assert_eq!(collect_library_rust_abi(root.path(), &paths)?, Some(first.clone()));
+
+        // Each source generation explicitly invalidates its editable inspection workspace before publication.
+        fs::write(&source, "pub trait Intrinsic {}\npub struct Thing;\n")?;
+        cache.invalidate_manifest_dir(root.path())?;
+        let changed = collect_library_rust_abi(root.path(), &paths)?.ok_or("changed ABI missing")?;
+        assert_ne!(
+            changed, first,
+            "changed trait facts must not borrow the previous complete record"
+        );
+        fs::write(&source, original)?;
+        cache.invalidate_manifest_dir(root.path())?;
+        assert_eq!(collect_library_rust_abi(root.path(), &paths)?, Some(first));
+        let unprepared = tempfile::tempdir()?;
+        fs::write(
+            unprepared.path().join(rust_inspect::OVEN_DIRECT_INSPECTION_MARKER),
+            "1\n",
+        )?;
+        fs::write(
+            unprepared.path().join(rust_inspect::OVEN_LOAF_ONLY_INSPECTION_MARKER),
+            "1\n",
+        )?;
+        let error = collect_library_rust_abi(unprepared.path(), &paths)
+            .err()
+            .ok_or("missing Loaf inspection preparation was accepted")?;
+        assert!(
+            error
+                .to_string()
+                .contains("Loaf-only inspection has no authored probe declaration"),
+            "missing preparation must refuse on the direct Loaf route: {error}"
+        );
+        Ok(())
+    }
+
+    /// A batched cache write remains best effort after the complete ABI has already been checked.
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn dev7_mutable_demand_abi_cache_write_failure_preserves_checked_result() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let root = tempfile::tempdir()?;
+        fs::create_dir(root.path().join("src"))?;
+        fs::write(
+            root.path().join("loaf.toml"),
+            "[project]\nname='abi_flush_probe'\nversion='1.0.0'\n[rust]\nname='abi_flush_probe'\ntype='lib'\nedition='2021'\n",
+        )?;
+        fs::write(root.path().join("src/lib.rs"), "pub struct Thing;\n")?;
+        dev7_mutable_demand_prepare_local_abi_workspace(root.path())?;
+        let paths = vec!["abi_flush_probe::Thing".to_string()];
+        let first = collect_library_rust_abi(root.path(), &paths)?.ok_or("missing checked ABI")?;
+        let temporary_cache = root.path().join(".incan_rust_inspect_cache.tmp");
+        fs::create_dir(&temporary_cache)?;
+        assert_eq!(
+            collect_library_rust_abi(root.path(), &paths)?,
+            Some(first.clone()),
+            "cache persistence failure must not erase checked semantic authority"
+        );
+        fs::remove_dir(temporary_cache)?;
+        assert_eq!(collect_library_rust_abi(root.path(), &paths)?, Some(first));
         Ok(())
     }
 
@@ -959,6 +1143,14 @@ mod tests {
         package: &str,
         sources: &[(&str, &str)],
     ) -> Result<LibraryManifest, Box<dyn std::error::Error>> {
+        Ok(published_library_manifest_and_exports(package, sources)?.0)
+    }
+
+    /// Retain both the finalized package authority and the exact checked shapes used by ordinary replay capture.
+    fn published_library_manifest_and_exports(
+        package: &str,
+        sources: &[(&str, &str)],
+    ) -> Result<(LibraryManifest, Vec<CheckedNamedExport>), Box<dyn std::error::Error>> {
         let mut modules = Vec::new();
         for (relative, source) in sources {
             let stem = relative
@@ -1029,7 +1221,117 @@ mod tests {
             &checked_exports_by_source_module,
         )?;
         manifest.contract_metadata.api = Some(api);
-        Ok(manifest)
+        Ok((manifest, selected))
+    }
+
+    /// Replay capture must preserve original multi-hop exports after the complete package manifest validates.
+    #[test]
+    fn original_multi_hop_exports_survive_checked_replay_capture() -> Result<(), Box<dyn std::error::Error>> {
+        let originals = incan_test_support::fixtures_dir().join("behavior");
+        for (relative, name, paths) in [
+            (
+                "cli_dependencies/dependency_submodule_reexports/deps/greetings/src",
+                "greetings",
+                &[
+                    "lib.incn",
+                    "inner.incn",
+                    "middle.incn",
+                    "outer.incn",
+                    "renamed.incn",
+                    "relabel.incn",
+                    "nested/relay.incn",
+                ][..],
+            ),
+            (
+                "cli_dependencies/dev7_dependency_enum_reexports/deps/messages/src",
+                "messages",
+                &["lib.incn", "inner.incn", "middle.incn"][..],
+            ),
+            (
+                "emit_dependency_unions_and_surfaces/dependency_unions_across_the_package_boundary/deps/querykit/src",
+                "querykit",
+                &["lib.incn", "exprs.incn"][..],
+            ),
+        ] {
+            let package = originals.join(relative);
+            let sources = paths
+                .iter()
+                .map(|path| std::fs::read_to_string(package.join(path)))
+                .collect::<Result<Vec<_>, _>>()?;
+            let sources = paths
+                .iter()
+                .zip(&sources)
+                .map(|(path, source)| (*path, source.as_str()))
+                .collect::<Vec<_>>();
+            let (manifest, exports) = published_library_manifest_and_exports(name, &sources)?;
+            manifest.to_json_string()?;
+            let root = tempfile::tempdir()?;
+            std::fs::write(
+                root.path().join("loaf.toml"),
+                format!("[project]\nname={name:?}\nversion='0.1.0'\n"),
+            )?;
+            let project = oven_model::manifest::ProjectManifest::load(&root.path().join("loaf.toml"))?;
+            let contract = crate::build::library_metadata::requirements::CheckedLibraryRequirements::capture(
+                crate::build::library_metadata::requirements::CheckedLibraryCapture {
+                    project: &project,
+                    index: &LibraryManifestIndex::default(),
+                    requirements: &incan_provider::requirements::ProjectRequirements::default(),
+                    imports: &[],
+                    exports: &exports,
+                    publication: Some(&manifest),
+                    version: "0.1.0",
+                    used_module_paths: Default::default(),
+                    source_modules: [("src/lib.incn".into(), vec!["main".into()])].into(),
+                    entry_module: vec!["main".into()],
+                    rust_abi_queries: Default::default(),
+                    rust_extern_paths: Vec::new(),
+                    backend: None,
+                    native_demands: Default::default(),
+                },
+            )?;
+            let decoded: crate::build::library_metadata::requirements::CheckedLibraryRequirements =
+                serde_json::from_slice(&serde_json::to_vec(&contract)?)?;
+            decoded.validate()?;
+            assert_eq!(decoded.caller_exports()?.len(), exports.len());
+            for export in exports {
+                let record =
+                    incan_frontend::library_manifest::CheckedExportReplay::from_checked_in_package(&manifest, &export)?;
+                let bytes = serde_json::to_vec(&record)?;
+                let restored: incan_frontend::library_manifest::CheckedExportReplay = serde_json::from_slice(&bytes)?;
+                assert_eq!(restored.to_checked()?.identity, export.identity);
+                if name == "greetings" && export.name == "wave" {
+                    let mut broken = serde_json::to_value(&record)?;
+                    let graph = broken["projection"]["contract_metadata"]["identity_graph"]["exports"]
+                        .as_array_mut()
+                        .ok_or("missing replay identity graph")?;
+                    let before = graph.len();
+                    graph.retain(|entry| entry["public_path"] != serde_json::json!(["greetings", "relabel", "wave"]));
+                    assert_eq!(graph.len() + 1, before);
+                    assert!(
+                        serde_json::from_value::<incan_frontend::library_manifest::CheckedExportReplay>(broken)
+                            .is_err()
+                    );
+                    let mut wrong_owner = export.clone();
+                    let identity = wrong_owner
+                        .identity
+                        .canonical
+                        .as_mut()
+                        .ok_or("missing checked export owner")?;
+                    identity.origin = incan_semantics_core::SymbolOrigin::Package {
+                        library: "foreign".into(),
+                        module_path: vec!["inner".into()],
+                    };
+                    assert!(
+                        incan_frontend::library_manifest::CheckedExportReplay::from_checked_in_package(
+                            &manifest,
+                            &wrong_owner
+                        )
+                        .is_err()
+                    );
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Encode `manifest` as a library build writes it, decode it again, and check `consumer` against the decoded
@@ -1207,6 +1509,141 @@ mod tests {
             Ok(())
         } else {
             Err(failures.join("\n").into())
+        }
+    }
+
+    /// The original multi-hop package publishes every namespace through the actual dependency-free source session.
+    #[test]
+    fn original_reexports_publish_through_source_session() -> Result<(), Box<dyn std::error::Error>> {
+        use std::sync::Arc;
+
+        use incan_provider::FeatureSelection;
+        use oven_store::store::OvenStoreLimits;
+
+        let original =
+            incan_test_support::fixtures_dir().join("behavior/cli_dependencies/dependency_submodule_reexports");
+        let package = original.join("deps/greetings");
+        let root = tempfile::tempdir()?;
+        std::fs::create_dir_all(root.path().join("src/nested"))?;
+        std::fs::copy(package.join("loaf.toml"), root.path().join("loaf.toml"))?;
+        for relative in [
+            "lib.incn",
+            "inner.incn",
+            "middle.incn",
+            "outer.incn",
+            "renamed.incn",
+            "relabel.incn",
+            "nested/relay.incn",
+        ] {
+            std::fs::copy(
+                package.join("src").join(relative),
+                root.path().join("src").join(relative),
+            )?;
+        }
+        let entry = root.path().join("src/lib.incn");
+        let dependencies = Arc::new(crate::build::library_dependencies::PreparedLibraryDependencies::admit(
+            &[],
+            "aarch64-apple-darwin",
+            "reexport-session-control",
+            OvenStoreLimits::new(16 << 20, 16 << 20, 16 << 20),
+        )?);
+        let session = crate::session::CompilationSession::discover_with_admitted_library_dependencies(
+            &entry,
+            &FeatureSelection::default(),
+            dependencies,
+        )?;
+        let (manifest, _) = crate::build::library_project::checked_source_library_manifest(&session, &entry)?;
+        manifest.to_json_string().map_err(|error| {
+            format!(
+                "{error}; actual source-session identity graph: {:#?}",
+                manifest.contract_metadata.identity_graph
+            )
+        })?;
+        encode_and_consume(
+            "greetings",
+            &manifest,
+            &std::fs::read_to_string(original.join("src/main.incn"))?,
+        )
+    }
+
+    /// Original facade return carriers survive the actual CLI session's checked imports and registry package context.
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn original_facade_carriers_survive_compilation_session() -> Result<(), Box<dyn std::error::Error>> {
+        let area = incan_test_support::fixtures_dir().join("behavior/cli_modules_and_declarations");
+        let fixture = incan_test_support::behavior_fixtures::discover(&area)?
+            .into_iter()
+            .find(|fixture| fixture.name == "facade_reexport_alias_target")
+            .ok_or("missing original facade fixture")?;
+        let root = tempfile::tempdir()?;
+        incan_test_support::behavior_fixtures::materialize(&fixture, root.path())?;
+        let entry = root.path().join("src/main.incn");
+        let session = crate::session::CompilationSession::discover_with_feature_selection(&entry, &Default::default())?;
+        let modules = crate::modules::collect_modules_detailed_with_session(entry, &session)
+            .map_err(|failure| failure.render_human())?;
+        let analysis = session
+            .analyze_modules(&modules, None)
+            .map_err(|failure| failure.render_human())?;
+        let mut context = Vec::new();
+        for source in &modules {
+            let facts = analysis
+                .type_info_for_path(&source.file_path)
+                .ok_or("missing original source facts")?;
+            let (module, _, _) = incan_frontend::body_ir::build_body_ir_module_v0_with_sdk_linkage_and_registry_package(
+                &source.ast,
+                &source.path_segments,
+                facts,
+                &context,
+                "facade_reexport_alias_target",
+            );
+            context.push(module);
+        }
+        for module in &context {
+            for body in &module.bodies {
+                let mut leaves = Vec::new();
+                collect_return_nominal_leaves(&body.return_type, &mut leaves);
+                for key in leaves {
+                    let owner = body.named_type_identities.get(key).ok_or_else(|| {
+                        let facts = modules
+                            .iter()
+                            .find(|source| source.path_segments.join("::") == module.module_id.path())
+                            .and_then(|source| analysis.type_info_for_path(&source.file_path));
+                        format!(
+                            "missing return owner {key}: {}\nframe identities={:?}\nnative checked identities={:?}",
+                            body.render_snapshot(),
+                            body.named_type_identities,
+                            facts.map(|facts| &facts.declarations.body_ir_native_type_identities)
+                        )
+                    })?;
+                    assert!(
+                        context
+                            .iter()
+                            .flat_map(|module| &module.nominal_declarations)
+                            .any(|declaration| &declaration.canonical == owner),
+                        "{}\nreturn owner={owner:?}\nlayouts={:?}",
+                        body.render_snapshot(),
+                        context
+                            .iter()
+                            .flat_map(|module| &module.nominal_declarations)
+                            .map(|declaration| (&declaration.name, &declaration.canonical))
+                            .collect::<Vec<_>>()
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Inventory every nominal return position, including union members not explicitly imported by the forwarder.
+    fn collect_return_nominal_leaves<'a>(ty: &'a incan_semantics_core::IncanType, out: &mut Vec<&'a String>) {
+        match ty {
+            incan_semantics_core::IncanType::Named(name) => out.push(name),
+            incan_semantics_core::IncanType::Generic { args, .. } | incan_semantics_core::IncanType::Tuple(args) => {
+                for argument in args {
+                    collect_return_nominal_leaves(argument, out);
+                }
+            }
+            _ => {}
         }
     }
 

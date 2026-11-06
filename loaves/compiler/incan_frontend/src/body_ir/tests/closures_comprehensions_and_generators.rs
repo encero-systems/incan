@@ -4,6 +4,350 @@
 
 use super::*;
 
+/// Generic value parameters retain captured callable storage without changing an explicit function-type contract.
+#[test]
+fn generic_callable_arguments_retain_owned_storage() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "from std.traits.callable import Callable1\n\ndef use[Callback with (Clone, Callable1[str, str])](callback: Callback, text: str) -> str:\n  alias = callback\n  return alias(text)\n\ndef plain(text: str) -> str:\n  return text\n\ndef main() -> None:\n  prefix = \"prefix-\"\n  callback: (str) -> str = (text) => f\"{prefix}{text}\"\n  println(use(callback, \"x\"))\n  println(use(plain, \"y\"))\n",
+        &["app", "generic_callable_storage"],
+    )?;
+    let body = body_named(&module, "main")?;
+    let targets = body
+        .block
+        .stmts
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+                ..
+            } if target
+                .canonical
+                .as_ref()
+                .is_some_and(|identity| identity.declaration_name == "use") =>
+            {
+                Some(target)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let [capturing, item] = targets.as_slice() else {
+        return Err("expected both checked generic call sites".into());
+    };
+    let generic = body_named(&module, "use")?;
+    assert_eq!(generic.params[0].ty, IncanType::TypeVar("Callback".to_owned()));
+    let generic_facts = generic
+        .callable_representation
+        .as_ref()
+        .ok_or("missing generic callable representations")?;
+    assert!(
+        generic_facts
+            .closure_holding_parameters
+            .contains(&generic.params[0].local)
+    );
+    assert!(!generic.params[0].mutable);
+    for target in [capturing, item] {
+        assert!(
+            matches!(target.type_args.as_slice(), [IncanType::Function { params, return_type }]
+            if params.len() == 1 && params[0].ty == IncanType::Primitive(IncanPrimitiveType::Str)
+                && **return_type == IncanType::Primitive(IncanPrimitiveType::Str))
+        );
+    }
+    let representations = body
+        .callable_representation
+        .as_ref()
+        .ok_or("missing callable representations")?;
+    let callback = body
+        .locals
+        .iter()
+        .find(|local| local.name.as_deref() == Some("callback"))
+        .ok_or("missing captured binding")?;
+    assert!(representations.closure_holding_locals.contains(&callback.id));
+    assert!(!representations.function_pointer_locals.contains(&callback.id));
+    Ok(())
+}
+/// An iterator returned by a source call does not gain canonical zip capture authority from its type spelling.
+#[test]
+fn indirect_iterator_capture_keeps_consumption_unproven() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def pairs() -> Iterator[(int, int)]:\n  return zip([4], [5])\n\ndef main() -> None:\n  values = pairs()\n  capture: () -> list[int] = () => (left + right for left, right in values).collect()\n  println(capture()[0])\n",
+        &["indirect_iterator_capture"],
+    )?;
+    let body = body_named(&module, "main")?;
+    let closure = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Closure { body, .. },
+                ..
+            } => Some(body),
+            _ => None,
+        })
+        .ok_or("indirect iterator closure missing")?;
+    let contract = serde_json::to_value(closure)?;
+    assert!(
+        !contract
+            .get("consumes_environment")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or_default()
+    );
+    Ok(())
+}
+
+/// Moving a captured zip into the deferred generator retains a consuming environment and a moved local invocation.
+#[test]
+fn captured_zip_closure_retains_consuming_invocation() -> Result<(), Box<dyn std::error::Error>> {
+    let source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/execution_collections/executes_a_closure_that_captures_canonical_zip.incn"
+    );
+    let module = build(source, &["consuming_zip"])?;
+    let body = body_named(&module, "captured_zip_closure")?;
+    let closure = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Closure { body, .. },
+                ..
+            } => Some(body),
+            _ => None,
+        })
+        .ok_or("captured closure missing")?;
+    let contract = serde_json::to_value(closure)?;
+    assert_eq!(
+        contract.get("consumes_environment"),
+        Some(&serde_json::Value::Bool(true)),
+        "{}",
+        body.render_snapshot()
+    );
+    let invocation = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Function(bir::CallableTarget::Local(target)),
+                ..
+            } => Some(target),
+            _ => None,
+        })
+        .ok_or("local invocation missing")?;
+    assert_eq!(invocation.operand.fact, bir::OwnershipFact::Move);
+    assert!(invocation.operand.last_use);
+    Ok(())
+}
+
+/// A captured scalar used repeatedly remains reusable; moving it into the environment does not imply FnOnce.
+#[test]
+fn scalar_capture_keeps_reusable_invocation_contract() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def main() -> None:\n  offset = 3\n  add: (int) -> int = (value) => value + offset\n  println(add(1))\n  println(add(2))\n",
+        &["reusable_scalar"],
+    )?;
+    let body = body_named(&module, "main")?;
+    let closure = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Closure { body, .. },
+                ..
+            } => Some(body),
+            _ => None,
+        })
+        .ok_or("scalar closure missing")?;
+    let contract = serde_json::to_value(closure)?;
+    assert!(
+        !contract
+            .get("consumes_environment")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or_default()
+    );
+    Ok(())
+}
+
+/// A deferred read of `self` belongs to an explicit captured local, never the enclosing receiver frame.
+#[test]
+fn closure_captures_the_receiver_in_its_own_local() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "class Greeter:\n  pub name: str\n  def describe(self) -> str:\n    render: () -> str = () => self.name\n    return render() + render() + self.name\n";
+    let module = build(source, &["m", "closure_receiver"])?;
+    let body = body_named(&module, "describe")?;
+    let (captures, closure) = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue:
+                    bir::Rvalue::Closure {
+                        captured_operands,
+                        body,
+                        ..
+                    },
+                ..
+            } => Some((captured_operands, body)),
+            _ => None,
+        })
+        .ok_or("missing receiver closure")?;
+    assert_eq!(captures.len(), 1, "{}", module.render_snapshot());
+    assert_eq!(closure.capture_locals.len(), 1);
+    let captured = closure.capture_locals[0];
+    assert_eq!(body.locals[captured.index()].origin, bir::LocalOrigin::Captured);
+    let bir::Operand::Place(read) = &closure.result else {
+        return Err("receiver field result must read a place".into());
+    };
+    assert_eq!(read.place.local_id(), Some(captured));
+    Ok(())
+}
+
+/// A generic parameter invoked through the checked callable trait retains its environment-capable representation.
+#[test]
+fn callable_bound_parameter_retains_closure_representation() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "from std.traits.callable import Callable1\n\ndef apply[Mapper with (Clone, Callable1[int, str])](mapper: Mapper, value: int) -> str:\n  return mapper(value)\n";
+    let module = build(source, &["m", "bound_callable_representation"])?;
+    let body = body_named(&module, "apply")?;
+    let facts = body
+        .callable_representation
+        .as_ref()
+        .ok_or("missing callable representation")?;
+    assert_eq!(
+        facts.closure_holding_parameters,
+        vec![bir::LocalId(0)],
+        "{}",
+        body.render_snapshot()
+    );
+    Ok(())
+}
+
+/// A same-spelled application callable hook does not grant the standard callable object's storage contract.
+#[test]
+fn application_callable_hook_keeps_nominal_representation() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "trait Invoker:\n  def __call__(self, value: int) -> str: ...\n\ndef apply[Mapper with Invoker](mapper: Mapper, value: int) -> str:\n  return mapper(value)\n";
+    let module = build(source, &["m", "application_callable"])?;
+    let body = body_named(&module, "apply")?;
+    let facts = body
+        .callable_representation
+        .as_ref()
+        .ok_or("missing callable representation")?;
+    assert!(
+        facts.closure_holding_parameters.is_empty(),
+        "{}",
+        body.render_snapshot()
+    );
+    Ok(())
+}
+/// Preserve the checker's `Fn` representation choices separately from the function-type call surface.
+#[test]
+fn callable_signatures_retain_closure_holding_parameters_and_returns() -> Result<(), Box<dyn std::error::Error>> {
+    let source = concat!(
+        "def apply(f: (int) -> int, x: int) -> int:\n  return f(x)\n",
+        "def make(offset: int) -> (int) -> int:\n  return (x) => x + offset\n",
+        "def plain(x: int) -> int:\n  return x\n",
+        "def bindings() -> int:\n  typed: (int) -> int = plain\n  inferred = plain\n  return typed(2) + inferred(3)\n",
+        "def captured(offset: int) -> int:\n  add: (int) -> int = (x) => x + offset\n  return add(1)\n",
+    );
+    let module = build(source, &["m", "callable_representations"])?;
+    let apply = body_named(&module, "apply")?;
+    let make = body_named(&module, "make")?;
+    let plain = body_named(&module, "plain")?;
+    let apply_facts = apply
+        .callable_representation
+        .as_ref()
+        .ok_or("missing apply representation")?;
+    let make_facts = make
+        .callable_representation
+        .as_ref()
+        .ok_or("missing make representation")?;
+    let plain_facts = plain
+        .callable_representation
+        .as_ref()
+        .ok_or("missing plain representation")?;
+    assert_eq!(apply_facts.closure_holding_parameters, vec![bir::LocalId(0)]);
+    assert!(!apply_facts.closure_holding_return);
+    assert!(make_facts.closure_holding_parameters.is_empty());
+    assert!(make_facts.closure_holding_return);
+    assert!(plain_facts.closure_holding_parameters.is_empty());
+    assert!(!plain_facts.closure_holding_return);
+    assert!(matches!(apply.params[0].ty, IncanType::Function { .. }));
+    assert!(matches!(make.return_type, IncanType::Function { .. }));
+    let bindings = body_named(&module, "bindings")?;
+    let binding_facts = bindings
+        .callable_representation
+        .as_ref()
+        .ok_or("missing binding representation")?;
+    let [typed] = binding_facts.function_pointer_locals.as_slice() else {
+        return Err("expected exactly one explicitly annotated function-pointer local".into());
+    };
+    assert_eq!(bindings.locals[typed.index()].name.as_deref(), Some("typed"));
+    let named_reads = bindings
+        .block
+        .stmts
+        .iter()
+        .filter(|statement| {
+            matches!(
+                &statement.kind,
+                bir::StatementKind::Assign { rvalue: bir::Rvalue::Closure { body, .. }, .. } if body.function_item
+            )
+        })
+        .count();
+    assert_eq!(named_reads, 2);
+    let captured = body_named(&module, "captured")?;
+    let facts = captured
+        .callable_representation
+        .as_ref()
+        .ok_or("missing captured binding representation")?;
+    assert!(facts.function_pointer_locals.is_empty());
+    let [local] = facts.closure_holding_locals.as_slice() else {
+        return Err("expected one closure-holding local".into());
+    };
+    assert_eq!(captured.locals[local.index()].name.as_deref(), Some("add"));
+    Ok(())
+}
+
+/// Generated collection mutations carry the same canonical identities as explicit builtin member calls.
+#[test]
+fn comprehension_writes_retain_builtin_member_identities() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def main() -> None:\n  xs = [1, 2]\n  ys = [x * 2 for x in xs if x > 0]\n  zs = {x: x * 2 for x in xs if x > 0}\n",
+        &["m", "comprehension_members"],
+    )?;
+    let mut targets = Vec::new();
+    collect_comprehension_writes(&body_named(&module, "main")?.block, &mut targets);
+    assert_eq!(targets.len(), 2);
+    for (target, owner, member) in [(&targets[0], "List", "append"), (&targets[1], "Dict", "insert")] {
+        assert_eq!(
+            target.canonical.as_ref(),
+            Some(&crate::symbols::canonical_builtin_member_identity(owner, member))
+        );
+    }
+    Ok(())
+}
+
+/// Collect the mutation targets through the loop and filter blocks produced by these comprehensions.
+fn collect_comprehension_writes<'a>(block: &'a bir::Block, targets: &mut Vec<&'a bir::MethodTarget>) {
+    for statement in &block.stmts {
+        match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Method(target),
+                ..
+            } if target.name == "push" || target.name == "insert" => targets.push(target),
+            bir::StatementKind::Loop { body } => collect_comprehension_writes(body, targets),
+            bir::StatementKind::If {
+                then_block, else_block, ..
+            } => {
+                collect_comprehension_writes(then_block, targets);
+                if let Some(block) = else_block {
+                    collect_comprehension_writes(block, targets);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 #[test]
 fn lowers_a_list_comprehension_into_a_push_loop() -> Result<(), Box<dyn std::error::Error>> {
     let source = "def doubled(items: list[int]) -> list[int]:\n  return [x * 2 for x in items]\n";
@@ -520,13 +864,19 @@ fn lowers_a_partial_callable_into_a_forwarding_closure() -> Result<(), Box<dyn s
         return Err("the partial preset must retain its capture local".into());
     };
     assert_eq!(closure_body.capture_locals, vec![*capture]);
-    assert!(matches!(
-        captured_operands.first(),
-        Some(bir::Operand::Place(bir::PlaceOperand {
-            fact: bir::OwnershipFact::Clone,
-            ..
-        }))
-    ));
+    let Some(bir::Operand::Place(captured)) = captured_operands.first() else {
+        return Err("partial preset snapshot missing".into());
+    };
+    assert_eq!(captured.fact, bir::OwnershipFact::Move);
+    let snapshot_local = captured.place.local_id().ok_or("preset snapshot local missing")?;
+    assert_eq!(make.locals[snapshot_local.index()].origin, bir::LocalOrigin::Temporary);
+    assert!(make.block.stmts.iter().any(|statement| matches!(
+        &statement.kind,
+        bir::StatementKind::Assign {
+            place,
+            rvalue: bir::Rvalue::Use(bir::Operand::Place(bir::PlaceOperand { fact: bir::OwnershipFact::Clone, .. })),
+        } if place.local_id() == Some(snapshot_local)
+    )), "the source preset must be cloned before its snapshot is moved into the closure: {snapshot}");
     let bir::CallableParamDefault::Source(content_type_default) = &content_type.default else {
         return Err("the unpresetted checked default must remain a deferred source computation".into());
     };
@@ -540,23 +890,24 @@ fn lowers_a_partial_callable_into_a_forwarding_closure() -> Result<(), Box<dyn s
         content_type_default.result,
         bir::Operand::Constant(bir::Constant::Str("text".to_string()))
     );
-    let supplied_slots: Vec<Vec<usize>> = make
-        .block
-        .stmts
-        .iter()
-        .filter_map(|statement| match &statement.kind {
-            bir::StatementKind::Call {
-                callee: bir::Callee::Function(bir::CallableTarget::Local(target)),
-                ..
-            } => match &target.binding {
-                bir::ArgumentBinding::Resolved { arguments, .. } => {
-                    Some(arguments.iter().map(|argument| argument.slot).collect())
-                }
-                bir::ArgumentBinding::UnresolvedPositional => None,
-            },
-            _ => None,
-        })
-        .collect();
+    let supplied_slots: Vec<Vec<usize>> =
+        make.block
+            .stmts
+            .iter()
+            .filter_map(|statement| match &statement.kind {
+                bir::StatementKind::Call {
+                    callee: bir::Callee::Function(bir::CallableTarget::Local(target)),
+                    ..
+                } => match &target.binding {
+                    bir::ArgumentBinding::Resolved { arguments, .. } => {
+                        Some(arguments.iter().map(|argument| argument.slot).collect())
+                    }
+                    bir::ArgumentBinding::UnresolvedPositional
+                    | bir::ArgumentBinding::ResolvedDeclarationOrder { .. } => None,
+                },
+                _ => None,
+            })
+            .collect();
     assert!(
         supplied_slots.iter().any(|slots| slots.as_slice() == [0, 1]),
         "a named argument must override the captured preset in its declaration slot: {make:?}"
@@ -792,5 +1143,186 @@ fn yielded_expression_participates_in_last_use_tracking() -> Result<(), Box<dyn 
         snapshot.contains("yield move(_0, last_use)"),
         "the yielded value should be a last-use move: {snapshot}"
     );
+    Ok(())
+}
+
+/// Named function reads retain their explicit origin and canonical forwarding target rather than closure syntax.
+#[test]
+fn a_function_named_as_a_value_is_a_forwarding_closure_to_it() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def square(x: int) -> int:\n  return x * x\n\ndef apply(f: Callable[int, int], v: int) -> int:\n  return f(v)\n\ndef main() -> int:\n  return apply(square, 7)\n";
+    let module = build(source, &["m", "function_values"])?;
+    let main = body_named(&module, "main")?;
+    let rendered = main.render_snapshot();
+    assert!(
+        !rendered.contains("unsupported("),
+        "a function named as a value must lower: {rendered}"
+    );
+    let square = body_named(&module, "square")?;
+    let forwards = main.block.stmts.iter().any(|stmt| match &stmt.kind {
+        bir::StatementKind::Assign {
+            rvalue:
+                bir::Rvalue::Closure {
+                    body,
+                    captured_operands,
+                    ..
+                },
+            ..
+        } => {
+            body.function_item
+                && captured_operands.is_empty()
+                && body.stmts.iter().any(|inner| {
+                    matches!(
+                        &inner.kind,
+                        bir::StatementKind::Call {
+                            callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+                            ..
+                        } if target.direct_call_id.as_ref() == Some(&square.direct_call_id)
+                            && target.canonical == square.canonical
+                    )
+                })
+        }
+        _ => false,
+    });
+    assert!(
+        forwards,
+        "`square` must become a capture-free closure calling `square`: {rendered}"
+    );
+    Ok(())
+}
+
+/// The forwarding closure a function value or partial lowers to in `body`: its parameters and its forwarding call's
+/// argument facts, in declaration order.
+fn forwarding_closure(body: &bir::Body) -> Option<(Vec<bool>, Vec<bir::OwnershipFact>)> {
+    body.block.stmts.iter().find_map(|stmt| match &stmt.kind {
+        bir::StatementKind::Assign {
+            rvalue: bir::Rvalue::Closure { params, body, .. },
+            ..
+        } => body.stmts.iter().find_map(|inner| match &inner.kind {
+            bir::StatementKind::Call { args, .. } => Some((
+                params.iter().map(|param| param.mutable).collect(),
+                args.iter()
+                    .filter_map(|arg| match arg {
+                        bir::ArgumentElement::One(bir::Operand::Place(place)) => Some(place.fact),
+                        _ => None,
+                    })
+                    .collect(),
+            )),
+            _ => None,
+        }),
+        _ => None,
+    })
+}
+
+/// The first-argument fact of the first call through a local callable value in `body`.
+fn local_call_first_argument_fact(body: &bir::Body) -> Option<bir::OwnershipFact> {
+    body.block.stmts.iter().find_map(|stmt| match &stmt.kind {
+        bir::StatementKind::Call {
+            callee: bir::Callee::Function(bir::CallableTarget::Local(_)),
+            args,
+            ..
+        } => match args.first() {
+            Some(bir::ArgumentElement::One(bir::Operand::Place(place))) => Some(place.fact),
+            _ => None,
+        },
+        _ => None,
+    })
+}
+
+#[test]
+fn a_function_value_keeps_its_mut_parameters_issue2022() -> Result<(), Box<dyn std::error::Error>> {
+    // `f = bump` is the same callable as `bump`: calling it lends the list, and the forwarding call lends it on, so
+    // `bump`'s write reaches the caller's list instead of a copy.
+    let source = "def bump(mut xs: List[int]) -> None:\n  xs[0] = 9\n\n\
+                  def alias() -> int:\n  mut xs = [1]\n  f = bump\n  f(xs)\n  return xs[0]\n";
+    let module = build(source, &["m", "mut_function_value"])?;
+    let alias = body_named(&module, "alias")?;
+    let rendered = alias.render_snapshot();
+    assert_eq!(
+        forwarding_closure(alias),
+        Some((vec![true], vec![bir::OwnershipFact::MutBorrow])),
+        "{rendered}"
+    );
+    assert_eq!(
+        local_call_first_argument_fact(alias),
+        Some(bir::OwnershipFact::MutBorrow),
+        "{rendered}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_partial_keeps_its_residual_mut_parameter_issue2022() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def put(mut xs: List[int], v: int) -> None:\n  xs[0] = v\n\n\
+                  def fill() -> int:\n  mut xs = [1]\n  set_five = partial put(v=5)\n  set_five(xs)\n  return xs[0]\n";
+    let module = build(source, &["m", "mut_partial_residual"])?;
+    let fill = body_named(&module, "fill")?;
+    let rendered = fill.render_snapshot();
+    let (mutable, facts) = forwarding_closure(fill).ok_or_else(|| format!("no forwarding closure: {rendered}"))?;
+    assert_eq!(mutable, vec![true, false], "{rendered}");
+    assert_eq!(facts.first(), Some(&bir::OwnershipFact::MutBorrow), "{rendered}");
+    assert_eq!(
+        local_call_first_argument_fact(fill),
+        Some(bir::OwnershipFact::MutBorrow),
+        "{rendered}"
+    );
+    Ok(())
+}
+
+/// An `Ok(...)` or `Err(...)` a closure returns or a list comprehension builds is built with the result type the
+/// checker settled for the closure or the comprehension's element: the enclosing function's `Result` side, or `None`
+/// outside one (#1561).
+#[test]
+fn result_constructors_take_their_closure_or_comprehension_settled_type() -> Result<(), Box<dyn std::error::Error>> {
+    let source = concat!(
+        "def run() -> Result[str, int]:\n  f = () => Ok(1)\n  println(f().unwrap_or(0))\n  return Ok(\"done\")\n\n",
+        "def main() -> None:\n  e = () => Err(\"no\")\n  match e():\n    Ok(_) => println(\"ok\")\n    Err(m) => println(m)\n",
+        "  ys = [Ok(x * 2) for x in [1, 2]]\n  println(len(ys))\n",
+    );
+    let module = build(source, &["m", "settled_closure_constructors"])?;
+    let run = body_named(&module, "run")?;
+    assert_eq!(
+        local_types_at(run, source, "Ok(1)"),
+        ["Result[int, int]"],
+        "{}",
+        run.render_snapshot()
+    );
+    let main = body_named(&module, "main")?;
+    let rendered = main.render_snapshot();
+    assert_eq!(
+        local_types_at(main, source, "Err(\"no\")"),
+        ["Result[Unit, str]"],
+        "{rendered}"
+    );
+    assert_eq!(
+        local_types_at(main, source, "Ok(x * 2)"),
+        ["Result[int, Unit]"],
+        "{rendered}"
+    );
+    Ok(())
+}
+
+/// A checked `list(source)` conversion collects each item a `for` loop over the source yields, and `dict(source)` of
+/// a dictionary is a dictionary literal holding one spread; neither stays a call to a function named `list` or `dict`.
+#[test]
+fn collection_constructors_from_a_source_lower_to_their_loop_and_spread() -> Result<(), Box<dyn std::error::Error>> {
+    let source = concat!(
+        "def copy_list(items: list[str]) -> list[str]:\n  return list(items)\n\n",
+        "def letters() -> list[str]:\n  return list(\"hey\")\n\n",
+        "def copy_dict(table: dict[str, int]) -> dict[str, int]:\n  return dict(table)\n",
+    );
+    let module = build(source, &["m", "collection_constructors"])?;
+    for name in ["copy_list", "letters", "copy_dict"] {
+        let rendered = body_named(&module, name)?.render_snapshot();
+        assert!(!rendered.contains("unsupported("), "{rendered}");
+        assert!(
+            !rendered.contains("fn:list") && !rendered.contains("fn:dict"),
+            "{rendered}"
+        );
+    }
+    let copy_list = body_named(&module, "copy_list")?.render_snapshot();
+    assert!(copy_list.contains("loop"), "{copy_list}");
+    assert!(copy_list.contains("push"), "{copy_list}");
+    let copy_dict = body_named(&module, "copy_dict")?.render_snapshot();
+    assert!(copy_dict.contains("**"), "{copy_dict}");
     Ok(())
 }

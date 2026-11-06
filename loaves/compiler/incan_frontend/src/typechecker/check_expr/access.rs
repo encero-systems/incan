@@ -46,7 +46,7 @@ use incan_lang::lang::types::numerics::{self as numerics, IntegerHelperFamily, I
 use incan_lang::lang::{conventions, stdlib};
 use incan_lang::lang::{enum_helpers, surface::option_methods};
 use incan_semantics_core::body_ir::HelperOp;
-use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
+use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace};
 use quote::ToTokens;
 use syn::{GenericArgument, PathArguments, ReturnType, Type as SynType, TypeParamBound};
 
@@ -740,14 +740,16 @@ impl TypeChecker {
     /// Record `settled`, the type a `match` or `loop:` value's open `Result` sides were settled to, as the type of the
     /// value and, with its open parts filled from it, of each of its arm and `break` values, at any depth (#1561).
     ///
+    /// Source collection and intrinsic constructor literals also retain their settled parts at descendant spans.
     /// Lowering spells each value's recorded type on the `Ok(...)` or `Err(...)` it builds, so the arms of `r = match
     /// c:` that all build `Ok(...)` build the same `Result[int, None]` the binding has. Any other value records
-    /// nothing.
+    /// nothing unless it is such a literal.
     pub(in crate::typechecker) fn record_settled_branch_values(
         &mut self,
         value: &Spanned<Expr>,
         settled: &ResolvedType,
     ) {
+        self.retain_literal_carrier_types(value, settled);
         match &value.node {
             Expr::Paren(inner) => self.record_settled_branch_values(inner, settled),
             Expr::Match(_, _) | Expr::Loop(_) => {
@@ -1637,6 +1639,40 @@ impl TypeChecker {
         ResolvedType::Unknown
     }
 
+    /// Preserve the legacy arity/type decisions, then snapshot only direct-profile selections for Body IR.
+    fn checked_iterator_sum_output_type(
+        &mut self,
+        method: &str,
+        args: &[CallArg],
+        elem: &ResolvedType,
+        span: Span,
+    ) -> ResolvedType {
+        let valid_arity = self.validate_iterator_method_arity(method, 0, args.len(), span);
+        let result = self.iterator_sum_output_type(elem, span);
+        if valid_arity && self.native_iterator_sum_item_profile(&result) && !matches!(result, ResolvedType::Unknown) {
+            self.type_info
+                .body_ir_iterator_sum_items
+                .insert((span.start, span.end), result.clone());
+        }
+        result
+    }
+
+    /// Keep source trait adoptions and `sum` members outside automatic reconstruction until their dispatch is retained.
+    fn native_iterator_sum_item_profile(&self, ty: &ResolvedType) -> bool {
+        match ty {
+            ResolvedType::Named(name) => match self.lookup_semantic_type_info(name) {
+                Some(TypeInfo::Newtype(info)) => {
+                    info.traits.is_empty()
+                        && !info.methods.contains_key("sum")
+                        && !info.method_aliases.contains_key("sum")
+                        && !info.method_rebindings.contains_key("sum")
+                }
+                _ => true,
+            },
+            _ => true,
+        }
+    }
+
     /// Track the narrow same-binding case after a terminal iterator method consumes a direct local binding.
     fn mark_direct_iterator_binding_consumed(&mut self, base: &Spanned<Expr>, method: &str, span: Span) {
         if !Self::is_iterator_terminal_method(method) {
@@ -1910,10 +1946,7 @@ impl TypeChecker {
                 }
                 Some(ResolvedType::Unit)
             }
-            M::Sum => {
-                self.validate_iterator_method_arity(method, 0, args.len(), span);
-                Some(self.iterator_sum_output_type(&iterator_elem, span))
-            }
+            M::Sum => Some(self.checked_iterator_sum_output_type(method, args, &iterator_elem, span)),
         }
     }
 
@@ -1954,14 +1987,30 @@ impl TypeChecker {
     /// and member are selected from typed compiler registries before this is called; source spelling alone is never
     /// treated as semantic evidence.
     fn compiler_builtin_member_identity(owner: &str, member: &str) -> CanonicalSymbolId {
-        CanonicalSymbolId {
-            namespace: SymbolNamespace::Member,
-            origin: SymbolOrigin::Builtin,
-            declaration_name: format!("{owner}.{member}"),
-            kind: SemanticSourceTargetKind::Method,
-            scope_discriminant: None,
-            declaration_span: HirSourceSpan::new(0, 0),
+        crate::symbols::canonical_builtin_member_identity(owner, member)
+    }
+
+    /// Retain the accepted inferred Clone requirement only for a rigid parameter's zero-argument fallback. Source
+    /// and explicit bound methods have already resolved before this boundary; no legacy fact is changed here.
+    fn record_body_ir_inferred_clone(
+        &mut self,
+        receiver: &ResolvedType,
+        method: &str,
+        type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        span: Span,
+    ) {
+        if method != trait_bounds::rust::CLONE_METHOD
+            || !type_args.is_empty()
+            || !args.is_empty()
+            || self.rigid_type_param_name(receiver).is_none()
+        {
+            return;
         }
+        self.type_info.traits.inferred_method_identities.insert(
+            (span.start, span.end),
+            Self::compiler_builtin_member_identity(core_traits::as_str(TraitId::Clone), method),
+        );
     }
 
     /// Build a compiler-synthesized member identity from the canonical identity of its owning declaration.
@@ -2063,10 +2112,18 @@ impl TypeChecker {
                 incan_lang::lang::types::collections::as_str(CollectionTypeId::FrozenDict),
                 frozen_dict_methods::from_str(method).map(frozen_dict_methods::as_str)?,
             ),
+            // An `Iterator[T]` value, such as an adapter's result or a list's `iter()`, has the RFC 088 surface as its
+            // own members, as a `Generator[T]` does.
+            ResolvedType::Generic(name, _) if Self::is_iterator_protocol_name(name) => (
+                Self::iterator_protocol_name(),
+                iterator_methods::from_str(method).map(iterator_methods::as_str)?,
+            ),
             ResolvedType::Generic(name, _) => match collection_type_id(name) {
                 Some(CollectionTypeId::List) => (
                     incan_lang::lang::types::collections::as_str(CollectionTypeId::List),
-                    list_methods::from_str(method).map(list_methods::as_str)?,
+                    list_methods::from_str(method)
+                        .map(list_methods::as_str)
+                        .or_else(|| Self::iterable_iter_member(method))?,
                 ),
                 Some(CollectionTypeId::Dict) => (
                     incan_lang::lang::types::collections::as_str(CollectionTypeId::Dict),
@@ -2097,7 +2154,14 @@ impl TypeChecker {
         Some(Self::compiler_builtin_member_identity(owner, member))
     }
 
-    /// Typecheck built-in numeric resize helpers using the expected result type as the target.
+    /// Name the RFC 088 `iter()` member that starts an iterator over a list; the list method registry does not list it,
+    /// because the iterator surface owns it.
+    fn iterable_iter_member(method: &str) -> Option<&'static str> {
+        let iter = iterator_methods::IteratorMethodId::Iter;
+        (iterator_methods::from_str(method) == Some(iter)).then(|| iterator_methods::as_str(iter))
+    }
+
+    /// Typecheck built-in numeric resize helpers and retain their concrete target for downstream call lowering.
     fn check_numeric_resize_method(
         &mut self,
         base_ty: &ResolvedType,
@@ -2206,7 +2270,8 @@ impl TypeChecker {
                 NumericFamily::SignedInteger | NumericFamily::UnsignedInteger
             )
         );
-        match policy {
+        let monomorph_target = target_ty.clone();
+        let result = match policy {
             NumericResizeMethodPolicy::Lossless => {
                 if !incan_lang::numeric_values::numeric_type_losslessly_widens_to(source, target) {
                     self.errors.push(
@@ -2235,7 +2300,12 @@ impl TypeChecker {
                     _ => Some(target_ty),
                 }
             }
-        }
+        };
+        self.type_info
+            .calls
+            .call_site_monomorph_type_args
+            .insert((span.start, span.end), vec![monomorph_target]);
+        result
     }
 
     /// Typecheck RFC 009 integer overflow helpers from the language-owned numeric registry.
@@ -4869,9 +4939,9 @@ impl TypeChecker {
     /// Return the constant a tuple index spells: an integer literal, a negated one, which counts from the end, or
     /// either in parentheses.
     ///
-    /// Lowering reads the same spellings when it turns the index into an element position, so every index accepted
-    /// here resolves to a position there.
-    fn constant_tuple_index(index: &Spanned<Expr>) -> Option<i64> {
+    /// Body IR shares this classification so checked negative and parenthesized tuple indices survive as constants,
+    /// without folding ordinary arithmetic or collection indices at the replacement boundary.
+    pub(crate) fn constant_tuple_index(index: &Spanned<Expr>) -> Option<i64> {
         match &index.node {
             Expr::Literal(Literal::Int(literal)) => Some(literal.value),
             Expr::Unary(UnaryOp::Neg, operand) => match &operand.node {
@@ -5228,13 +5298,54 @@ impl TypeChecker {
         }
         let base_ty = self.check_type_receiver_expr(base);
 
+        // Field lookup follows explicit references without changing the checked receiver's ownership facts.
+        let mut field_owner = &base_ty;
+        while let ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) = field_owner {
+            field_owner = inner;
+        }
+        let base_ty = field_owner;
+
+        if let Some(ty) = self.check_imported_module_field(base, field, span) {
+            return ty;
+        }
+        if matches!(base_ty, ResolvedType::Unknown) {
+            return ResolvedType::Unknown;
+        }
+        if let ResolvedType::RustPath(path) = base_ty {
+            return self.check_rust_path_field(path, field, span);
+        }
+
+        if let ResolvedType::Generic(name, args) = &base_ty
+            && surface_types::from_str(name.as_str()).is_some_and(surface_types::field_access_reads_wrapped_value)
+            && args.len() == 1
+        {
+            if field == "value" {
+                return args[0].clone();
+            }
+            return self.check_nominal_field(base, &args[0], field, span);
+        }
+
+        // In a declared type's own method, a `Self` value (`other: Self`) is that type, so its fields resolve as they
+        // do on `self`, as its methods already do (#1561); a trait default keeps `Self` open and reads fields through
+        // `@requires`.
+        if matches!(base_ty, ResolvedType::SelfType)
+            && let Some(owner_ty) = self.current_method_owner_type()
+        {
+            return self.check_nominal_field(base, &owner_ty, field, span);
+        }
+
+        self.check_nominal_field(base, base_ty, field, span)
+    }
+
+    /// Resolve imported module members from checked symbol metadata before treating a receiver as a value.
+    fn check_imported_module_field(&mut self, base: &Spanned<Expr>, field: &str, span: Span) -> Option<ResolvedType> {
         // Imported modules use symbol-driven metadata resolution.
         if let Some((module_name, module_path)) = self.imported_module_for_expr(base) {
             if let Some((info, identity)) = self.resolve_imported_module_constant_member(&module_path, field) {
                 if let Some(identity) = identity {
                     self.type_info.record_resolved_identity(span, identity);
                 }
-                return info.ty;
+                return Some(info.ty);
             }
             let is_public_library_module =
                 module_path.len() >= 2 && module_path.first().is_some_and(|segment| segment == "pub");
@@ -5257,7 +5368,7 @@ impl TypeChecker {
                             &source_modules,
                             span,
                         ));
-                        return ResolvedType::Unknown;
+                        return Some(ResolvedType::Unknown);
                     }
                 }
             } else {
@@ -5292,7 +5403,7 @@ impl TypeChecker {
                             .insert((span.start, span.end), IdentKind::TypeName);
                         let source_kind = Self::source_target_kind_for_type_info(&type_info).unwrap_or("type");
                         self.record_source_target(span, source_module_path, source_name, source_kind);
-                        return ResolvedType::Named(canonical_name);
+                        return Some(ResolvedType::Named(canonical_name));
                     }
                     (SymbolKind::Function(info), _) => {
                         self.record_source_target(span, source_module_path, source_name, "function");
@@ -5301,11 +5412,11 @@ impl TypeChecker {
                             if !self.is_generic_partial_target_span(span) {
                                 self.errors
                                     .push(errors::generic_function_reference(callable.as_str(), span));
-                                return ResolvedType::Unknown;
+                                return Some(ResolvedType::Unknown);
                             }
                             self.generic_partial_target = Some(GenericPartialTarget::of_function(&callable, &info));
                         }
-                        return Self::function_info_to_resolved_function_type(&info);
+                        return Some(Self::function_info_to_resolved_function_type(&info));
                     }
                     (SymbolKind::FunctionOverloads(_), _) => {
                         self.record_source_target(span, source_module_path, source_name, "function");
@@ -5315,183 +5426,200 @@ impl TypeChecker {
                             ),
                             span,
                         ));
-                        return ResolvedType::Unknown;
+                        return Some(ResolvedType::Unknown);
                     }
                     _ => {}
                 }
             }
         }
 
-        // Be permissive for unknown receivers: allow field access and continue typechecking.
-        if matches!(base_ty, ResolvedType::Unknown) {
-            return ResolvedType::Unknown;
-        }
+        None
+    }
 
-        if let ResolvedType::RustPath(path) = &base_ty {
-            let Some(meta) = self.rust_item_metadata_for_path(path) else {
-                if let Some(sig) = metadata_free_method_signature(path, field) {
+    /// Resolve a Rust field or associated item using the admitted metadata, retaining the no-metadata fallback.
+    fn check_rust_path_field(&mut self, path: &str, field: &str, span: Span) -> ResolvedType {
+        let Some(meta) = self.rust_item_metadata_for_path(path) else {
+            if let Some(sig) = metadata_free_method_signature(path, field) {
+                return self.resolved_function_type_from_rust_sig_for_path(&sig, false, path);
+            }
+            // Metadata backend disabled/unavailable: preserve permissive RFC 005 behavior.
+            return ResolvedType::Unknown;
+        };
+        match &meta.kind {
+            RustItemKind::Module(module) => {
+                if let Some(child) = module.children.iter().find(|c| c.name == field) {
+                    return match child.kind_hint {
+                        incan_lang::interop::RustModuleChildKind::Module
+                        | incan_lang::interop::RustModuleChildKind::Type
+                        | incan_lang::interop::RustModuleChildKind::Trait
+                        | incan_lang::interop::RustModuleChildKind::Other => {
+                            ResolvedType::RustPath(format!("{path}::{field}"))
+                        }
+                        incan_lang::interop::RustModuleChildKind::Function => {
+                            ResolvedType::Function(Vec::new(), Box::new(ResolvedType::Unknown))
+                        }
+                        incan_lang::interop::RustModuleChildKind::Constant => ResolvedType::Unknown,
+                    };
+                }
+                // Module membership from rust-analyzer is authoritative.
+                self.errors
+                    .push(errors::missing_field(rust_receiver_display(path).as_str(), field, span));
+                ResolvedType::Unknown
+            }
+            RustItemKind::Type(_) => {
+                if let Some(sig) = self.rust_associated_function_signature(path, field) {
                     return self.resolved_function_type_from_rust_sig_for_path(&sig, false, path);
                 }
-                // Metadata backend disabled/unavailable: preserve permissive RFC 005 behavior.
-                return ResolvedType::Unknown;
-            };
-            match &meta.kind {
-                RustItemKind::Module(module) => {
-                    if let Some(child) = module.children.iter().find(|c| c.name == field) {
-                        return match child.kind_hint {
-                            incan_lang::interop::RustModuleChildKind::Module
-                            | incan_lang::interop::RustModuleChildKind::Type
-                            | incan_lang::interop::RustModuleChildKind::Trait
-                            | incan_lang::interop::RustModuleChildKind::Other => {
-                                ResolvedType::RustPath(format!("{path}::{field}"))
-                            }
-                            incan_lang::interop::RustModuleChildKind::Function => {
-                                ResolvedType::Function(Vec::new(), Box::new(ResolvedType::Unknown))
-                            }
-                            incan_lang::interop::RustModuleChildKind::Constant => ResolvedType::Unknown,
-                        };
+                if let Some(params) = self.rust_variant_callable_params(path, field) {
+                    if params.is_empty() {
+                        return ResolvedType::RustPath(path.to_string());
                     }
-                    // Module membership from rust-analyzer is authoritative.
-                    self.errors
-                        .push(errors::missing_field(rust_receiver_display(path).as_str(), field, span));
-                    return ResolvedType::Unknown;
+                    return ResolvedType::Function(params, Box::new(ResolvedType::RustPath(path.to_string())));
                 }
-                RustItemKind::Type(_) => {
-                    if let Some(sig) = self.rust_associated_function_signature(path, field) {
-                        return self.resolved_function_type_from_rust_sig_for_path(&sig, false, path);
-                    }
-                    if let Some(params) = self.rust_variant_callable_params(path, field) {
-                        if params.is_empty() {
-                            return ResolvedType::RustPath(path.to_string());
-                        }
-                        return ResolvedType::Function(params, Box::new(ResolvedType::RustPath(path.to_string())));
-                    }
-                    if let RustItemKind::Type(info) = &meta.kind
-                        && let Some(rust_field) = Self::rust_field_for_source_name(&info.fields, field)
-                    {
-                        self.type_info
-                            .record_rust_field_access_name(span, rust_field.name.clone());
-                        return self.resolved_rust_field_type(path, rust_field);
-                    }
-                    // Metadata may still be missing constants, type aliases, trait-provided items, or private fields.
-                    // Stay permissive when no exact field surface is available.
-                    return ResolvedType::Unknown;
-                }
-                RustItemKind::Unsupported { description } => {
-                    self.errors
-                        .push(errors::rust_item_shape_not_supported(path, description.as_str(), span));
-                    return ResolvedType::Unknown;
-                }
-                // Function, Trait, Constant: metadata coverage is incomplete, stay permissive.
-                _ => return ResolvedType::Unknown,
-            };
-        }
-
-        let resolve_on = |checker: &mut Self, ty: &ResolvedType| -> ResolvedType {
-            if field == "__name__" && checker.is_generic_placeholder_type(ty) {
-                if let Some(owner_name) = checker.generic_placeholder_name(ty)
-                    && let Some(identity) = checker.synthetic_member_identity_for_named_owner(
-                        owner_name,
-                        field,
-                        SemanticSourceTargetKind::Field,
-                    )
+                if let RustItemKind::Type(info) = &meta.kind
+                    && let Some(rust_field) = Self::rust_field_for_source_name(&info.fields, field)
                 {
-                    checker.type_info.record_resolved_identity(span, identity);
+                    self.type_info
+                        .record_rust_field_access_name(span, rust_field.name.clone());
+                    return self.resolved_rust_field_type(path, rust_field);
                 }
-                return ResolvedType::Str;
+                // Metadata may still be missing constants, type aliases, trait-provided items, or private fields.
+                // Stay permissive when no exact field surface is available.
+                ResolvedType::Unknown
             }
-            match ty {
-                ResolvedType::Unknown => ResolvedType::Unknown,
-                // Trait default methods typecheck against `Self`, but field access must be declared via
-                // `@requires(...)` on the trait.
-                ResolvedType::SelfType => {
-                    if let Some(info) = checker
-                        .current_trait_properties
-                        .as_ref()
-                        .and_then(|properties| properties.get(field))
-                        .cloned()
-                    {
-                        if let Some(identity) = info.identity {
-                            checker.type_info.record_resolved_identity(span, identity);
-                        }
-                        checker.type_info.record_computed_property_access(span, "Self", field);
-                        info.return_type
-                    } else {
-                        checker
-                            .trait_required_field_type(field, span)
-                            .unwrap_or(ResolvedType::Unknown)
-                    }
-                }
-                ResolvedType::Tuple(elements) => {
-                    if let Ok(idx) = field.parse::<usize>()
-                        && idx < elements.len()
-                    {
-                        return elements[idx].clone();
-                    }
-                    checker.errors.push(errors::missing_field(&ty.to_string(), field, span));
-                    ResolvedType::Unknown
-                }
-                ResolvedType::Function(_, _) if field == "__name__" => {
-                    if let Some(owner) = checker.type_info.resolved_identity(base.span).cloned() {
-                        checker.type_info.record_resolved_identity(
-                            span,
-                            Self::synthetic_member_identity(&owner, field, SemanticSourceTargetKind::Field),
-                        );
-                    }
-                    ResolvedType::Str
-                }
-                ResolvedType::Named(type_name) => {
-                    if let Some(field_ty) = checker.resolve_nominal_field_type(type_name, None, field, span) {
-                        return field_ty;
-                    }
-                    if let Some(property_ty) = checker.resolve_nominal_property_type(type_name, None, field, span) {
-                        return property_ty;
-                    }
-                    checker.errors.push(errors::missing_field(type_name, field, span));
-                    ResolvedType::Unknown
-                }
-                ResolvedType::Generic(type_name, type_args) => {
-                    if let Some(field_ty) =
-                        checker.resolve_nominal_field_type(type_name, Some(type_args.as_slice()), field, span)
-                    {
-                        return field_ty;
-                    }
-                    if let Some(property_ty) =
-                        checker.resolve_nominal_property_type(type_name, Some(type_args.as_slice()), field, span)
-                    {
-                        return property_ty;
-                    }
-                    checker.errors.push(errors::missing_field(type_name, field, span));
-                    ResolvedType::Unknown
-                }
-                ResolvedType::TypeVar(name) => {
-                    if field == "__name__" {
-                        return ResolvedType::Str;
-                    }
-                    if let Some(property_ty) = checker.resolve_generic_placeholder_property(name, field, span) {
-                        return property_ty;
-                    }
-                    checker.errors.push(errors::missing_field(&ty.to_string(), field, span));
-                    ResolvedType::Unknown
-                }
-                _ => {
-                    checker.errors.push(errors::missing_field(&ty.to_string(), field, span));
-                    ResolvedType::Unknown
-                }
+            RustItemKind::Unsupported { description } => {
+                self.errors
+                    .push(errors::rust_item_shape_not_supported(path, description.as_str(), span));
+                ResolvedType::Unknown
             }
-        };
-
-        if let ResolvedType::Generic(name, args) = &base_ty
-            && surface_types::from_str(name.as_str()).is_some_and(surface_types::field_access_reads_wrapped_value)
-            && args.len() == 1
-        {
-            if field == "value" {
-                return args[0].clone();
-            }
-            return resolve_on(self, &args[0]);
+            // Function, Trait, Constant: metadata coverage is incomplete, stay permissive.
+            _ => ResolvedType::Unknown,
         }
+    }
 
-        resolve_on(self, &base_ty)
+    /// Retain callable-value metadata only for Body IR, excluding the checker's existing type and trait name roles.
+    /// Parentheses preserve the identifier's role; legacy resolution and return types remain unchanged.
+    fn retain_body_ir_callable_name_read(&mut self, base: &Spanned<Expr>, span: Span) {
+        let mut receiver = base;
+        while let Expr::Paren(inner) = &receiver.node {
+            receiver = inner;
+        }
+        if matches!(
+            self.type_info.ident_kind(receiver.span),
+            Some(IdentKind::TypeName | IdentKind::Trait)
+        ) {
+            return;
+        }
+        self.type_info
+            .expressions
+            .body_ir_callable_name_reads
+            .insert((span.start, span.end));
+    }
+
+    /// Resolve a nominal value's field without changing the receiver's ownership or reference facts.
+    fn check_nominal_field(
+        &mut self,
+        base: &Spanned<Expr>,
+        ty: &ResolvedType,
+        field: &str,
+        span: Span,
+    ) -> ResolvedType {
+        let checker = self;
+
+        if field == "__name__" && checker.is_generic_placeholder_type(ty) {
+            checker.retain_body_ir_callable_name_read(base, span);
+            if let Some(owner_name) = checker.generic_placeholder_name(ty)
+                && let Some(identity) = checker.synthetic_member_identity_for_named_owner(
+                    owner_name,
+                    field,
+                    SemanticSourceTargetKind::Field,
+                )
+            {
+                checker.type_info.record_resolved_identity(span, identity);
+            }
+            return ResolvedType::Str;
+        }
+        match ty {
+            ResolvedType::Unknown => ResolvedType::Unknown,
+            // Trait default methods typecheck against `Self`, but field access must be declared via
+            // `@requires(...)` on the trait.
+            ResolvedType::SelfType => {
+                if let Some(info) = checker
+                    .current_trait_properties
+                    .as_ref()
+                    .and_then(|properties| properties.get(field))
+                    .cloned()
+                {
+                    if let Some(identity) = info.identity {
+                        checker.type_info.record_resolved_identity(span, identity);
+                    }
+                    checker.type_info.record_computed_property_access(span, "Self", field);
+                    info.return_type
+                } else {
+                    checker
+                        .trait_required_field_type(field, span)
+                        .unwrap_or(ResolvedType::Unknown)
+                }
+            }
+            ResolvedType::Tuple(elements) => {
+                if let Ok(idx) = field.parse::<usize>()
+                    && idx < elements.len()
+                {
+                    return elements[idx].clone();
+                }
+                checker.errors.push(errors::missing_field(&ty.to_string(), field, span));
+                ResolvedType::Unknown
+            }
+            ResolvedType::Function(_, _) if field == "__name__" => {
+                checker.retain_body_ir_callable_name_read(base, span);
+                if let Some(owner) = checker.type_info.resolved_identity(base.span).cloned() {
+                    checker.type_info.record_resolved_identity(
+                        span,
+                        Self::synthetic_member_identity(&owner, field, SemanticSourceTargetKind::Field),
+                    );
+                }
+                ResolvedType::Str
+            }
+            ResolvedType::Named(type_name) => {
+                if let Some(field_ty) = checker.resolve_nominal_field_type(type_name, None, field, span) {
+                    return field_ty;
+                }
+                if let Some(property_ty) = checker.resolve_nominal_property_type(type_name, None, field, span) {
+                    return property_ty;
+                }
+                checker.errors.push(errors::missing_field(type_name, field, span));
+                ResolvedType::Unknown
+            }
+            ResolvedType::Generic(type_name, type_args) => {
+                if let Some(field_ty) =
+                    checker.resolve_nominal_field_type(type_name, Some(type_args.as_slice()), field, span)
+                {
+                    return field_ty;
+                }
+                if let Some(property_ty) =
+                    checker.resolve_nominal_property_type(type_name, Some(type_args.as_slice()), field, span)
+                {
+                    return property_ty;
+                }
+                checker.errors.push(errors::missing_field(type_name, field, span));
+                ResolvedType::Unknown
+            }
+            ResolvedType::TypeVar(name) => {
+                if field == "__name__" {
+                    checker.retain_body_ir_callable_name_read(base, span);
+                    return ResolvedType::Str;
+                }
+                if let Some(property_ty) = checker.resolve_generic_placeholder_property(name, field, span) {
+                    return property_ty;
+                }
+                checker.errors.push(errors::missing_field(&ty.to_string(), field, span));
+                ResolvedType::Unknown
+            }
+            _ => {
+                checker.errors.push(errors::missing_field(&ty.to_string(), field, span));
+                ResolvedType::Unknown
+            }
+        }
     }
 
     /// Validate the RFC 006 `Generator[T].map(fn)` helper and return the mapped element type.
@@ -5979,6 +6107,10 @@ impl TypeChecker {
         span: Span,
         expected_return_ty: Option<&ResolvedType>,
     ) -> ResolvedType {
+        self.type_info
+            .traits
+            .inferred_method_identities
+            .remove(&(span.start, span.end));
         if let Some(result) = self.check_c_abi_c_string_constructor(base, method, type_args, args, span) {
             return result;
         }
@@ -6210,8 +6342,7 @@ impl TypeChecker {
             } else {
                 self.resolve_imported_module_function_member_with_source(&module_path, method)
                     .map(|(kind, source_module_path)| {
-                        let canonical =
-                            self.dependency_member_identity(&ImportPath::simple(module_path.clone()), method);
+                        let canonical = self.imported_module_callable_identity(&module_path, method);
                         (kind, canonical, source_module_path, method.to_string(), None)
                     })
             };
@@ -6240,6 +6371,7 @@ impl TypeChecker {
                         // re-deriving a target from the qualifier and member spellings.
                         self.type_info
                             .record_call_site_callable_params_exact(span, &info.params);
+                        let errors_before_call = self.errors.len();
                         let result = self.validate_stdlib_module_function_call(
                             callable.as_str(),
                             &info,
@@ -6250,6 +6382,7 @@ impl TypeChecker {
                         );
                         let identity = self.type_info.resolved_identity(span).cloned();
                         self.check_capturing_call_arguments(identity.as_ref(), &callable, &info.params, args);
+                        self.retain_body_ir_async_call_target(&info, span, span, errors_before_call);
                         result
                     }
                     (SymbolKind::FunctionOverloads(overloads), _) => {
@@ -6486,13 +6619,32 @@ impl TypeChecker {
             return ret;
         }
         // In a trait's own method, a method that the trait or a supertrait of it declares, called on a `Self` value,
-        // has that declaration's signature (#1561). Any other method called on `Self` is left open, as is every one in
-        // the standard library's own source, whose trait defaults its own lowering rules expand.
+        // has that declaration's signature (#1561). Any other method called on `Self` is left open. In the standard
+        // library's own source the call's checked type stays open too, because legacy expands those trait defaults by
+        // its own rules; the slot and its declared result are retained for Body IR only.
         if matches!(base_ty, ResolvedType::SelfType) {
-            if !self.checks_standard_library_source()
-                && let Some(trait_name) = self.current_trait_name.clone()
+            if let Some(trait_name) = self.current_trait_name.clone()
                 && let Some(method_info) = self.trait_method_info_resolved(&trait_name, method, span)
             {
+                // A default's open receiver selects the trait slot, not a concrete implementation. Retain that
+                // checked declaration so downstream routes can dispatch after specializing the receiver.
+                if let Some(identity) = &method_info.identity {
+                    self.type_info
+                        .traits
+                        .self_method_identities
+                        .insert((span.start, span.end), identity.clone());
+                }
+                if self.checks_standard_library_source() {
+                    self.type_info
+                        .traits
+                        .self_method_result_types
+                        .insert((span.start, span.end), method_info.return_type.clone());
+                    self.type_info
+                        .traits
+                        .self_method_params
+                        .insert((span.start, span.end), method_info.params.clone());
+                    return ResolvedType::Unknown;
+                }
                 return self.check_generic_method_call(
                     method,
                     method_info,
@@ -6546,8 +6698,12 @@ impl TypeChecker {
             && (enum_info.variants.iter().any(|v| v == method) || enum_info.variant_aliases.contains_key(method))
         {
             let variant_identity = enum_info.variant_identities.get(method).cloned();
+            let variant_params = self.checked_enum_variant_parameters(enum_name, method);
             // Args were checked above; no strict arity enforcement here.
             let _ = &arg_types; // keep for potential future validation
+            if let Some(parameters) = variant_params {
+                self.type_info.record_call_site_callable_params_exact(span, &parameters);
+            }
             if let Some(identity) = variant_identity {
                 self.type_info.record_resolved_identity(span, identity);
             }
@@ -6642,6 +6798,18 @@ impl TypeChecker {
             && bytes_methods::from_str(method) == Some(bytes_methods::BytesMethodId::Decode)
         {
             self.validate_text_codec_call("bytes.decode", true, args, &arg_types, span);
+            if is_frozen_bytes(&base_ty) {
+                let owner = incan_lang::lang::types::stringlike::as_str(
+                    incan_lang::lang::types::stringlike::StringLikeId::FrozenBytes,
+                );
+                self.type_info.calls.body_ir_native_codec_members.insert(
+                    (span.start, span.end),
+                    Self::compiler_builtin_member_identity(
+                        owner,
+                        bytes_methods::as_str(bytes_methods::BytesMethodId::Decode),
+                    ),
+                );
+            }
             // Malformed input is a data failure the caller handles, so the result is a `Result` over the prelude
             // validation error (#1668); `str.encode` cannot fail on valid text and stays a plain `bytes`.
             return ResolvedType::Generic(
@@ -7315,6 +7483,7 @@ impl TypeChecker {
                 }
                 return ResolvedType::Unknown;
             }
+            self.record_body_ir_inferred_clone(&base_ty, method, type_args, args, span);
             return base_ty.clone();
         }
 

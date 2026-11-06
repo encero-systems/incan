@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::type_refs::type_ref_from_resolved;
 use super::validation::validate_raw_manifest;
-use super::wire::RawLibraryManifest;
+use super::wire::{RawLibraryManifest, RawVocabExports};
 use super::{
     COMPILED_PROVIDER_METADATA_SCHEMA_VERSION, DslSurface, LIBRARY_MANIFEST_FORMAT, RUST_ABI_SCHEMA_VERSION,
     VocabKeywordRegistration, VocabProviderManifest,
@@ -1165,11 +1165,10 @@ impl LibraryRustAbi {
         })
     }
 
-    /// Return metadata for one canonical Rust path.
+    /// Return metadata for the exact queried Rust surface. Definition identity does not transfer surface-specific trait
+    /// proofs.
     pub fn get(&self, canonical_path: &str) -> Option<&RustItemMetadata> {
-        self.items.iter().find(|item| {
-            item.canonical_path == canonical_path || item.definition_path.as_deref() == Some(canonical_path)
-        })
+        self.items.iter().find(|item| item.canonical_path == canonical_path)
     }
 }
 
@@ -1194,6 +1193,17 @@ pub struct VocabExports {
     pub provider_manifest: VocabProviderManifest,
     /// Optional packaged desugarer artifact used at compile time.
     pub desugarer_artifact: Option<VocabDesugarerArtifact>,
+}
+
+impl VocabExports {
+    /// Encode this vocabulary through the same wire conversion used by the complete library manifest.
+    ///
+    /// This encoding supports retained producer identities; it does not admit a library or validate helper bindings
+    /// against exports. Complete publication and consumer loading still validate the enclosing library manifest.
+    pub fn to_json_string(&self) -> Result<String, LibraryManifestError> {
+        serde_json::to_string(&RawVocabExports::from_semantic(self))
+            .map_err(|error| LibraryManifestError::Serialize(error.to_string()))
+    }
 }
 
 /// Packaged compile-time desugarer artifact metadata.

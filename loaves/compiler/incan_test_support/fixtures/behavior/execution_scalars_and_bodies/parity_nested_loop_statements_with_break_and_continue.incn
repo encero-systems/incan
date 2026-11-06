@@ -1,0 +1,27 @@
+# behavior: nested `loop:` statements leave through break and skip through continue (parity corpus case 18)
+# expect-stdout:
+#   6
+
+"""Nested `loop:` statements leave through break and skip through continue (parity corpus case 18)."""
+def grid(rows: int, cols: int) -> int:
+    """Count cells with nested loops and explicit control flow."""
+    mut cells = 0
+    mut r = 0
+    loop:
+        if r >= rows:
+            break
+        mut c = 0
+        loop:
+            if c >= cols:
+                break
+            c += 1
+            if c % 2 == 0:
+                continue
+            cells += 1
+        r += 1
+    return cells
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(grid(3, 4))

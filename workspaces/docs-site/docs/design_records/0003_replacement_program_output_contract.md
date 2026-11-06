@@ -1,7 +1,7 @@
 ---
 id: DD-0003
 title: Deliver replacement program output during execution and bind it into the receipt
-status: Draft
+status: Withdrawn
 type: design-decision
 date: 2026-09-07
 review_target: v0.6
@@ -11,6 +11,8 @@ sources:
 ---
 
 # DD-0003: Deliver replacement program output during execution and bind it into the receipt
+
+**Withdrawn.** The direct replacement backend this record governed was removed before the record was accepted (#1337): Incan has one execution route, and a program's output is whatever that route's produced process writes. The record is kept as provenance for the design it describes.
 
 ## Context
 

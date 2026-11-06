@@ -1,0 +1,95 @@
+"""Native lock transport uses explicit targets and retains existing domain and predicate policy."""
+
+from std.json import JsonValue
+from std.testing import fail, fail_t
+from loaf_closure_exchange import resolve_snapshot
+
+
+def checked[T](result: Result[T, str]) -> T:
+    """Keep snapshot decoding errors in the assertion channel."""
+    match result:
+        Ok(value) => return value
+        Err(reason) => return fail_t[T](reason)
+
+
+def field(document: JsonValue, name: str) -> JsonValue:
+    """Require the actual resolver's recorded fields instead of accepting absent evidence."""
+    match document.get(name):
+        Some(value) => return value
+        None => return fail_t[JsonValue](f"missing resolution field {name}")
+
+
+def snapshot(target: str, host: str, commit: str = "synthetic-native-transport-pin") -> Result[JsonValue, str]:
+    """Resolve a real tiny index with only the unix flag used by its synthetic predicates."""
+    roots = "[{\"name\":\"root\",\"loaf\":\"test/root\",\"req\":\"^1\",\"features\":[\"strong\"],\"default-features\":false,\"optional\":false}]"
+    return resolve_snapshot(
+        "tests/fixtures/loaf-index",
+        "tests/fixtures/loaf-index/native-names.txt",
+        "tests/fixtures/loaf-index/native-unix.cfg",
+        roots, commit, target, host,
+    )
+
+
+def require_native_selection(target: str, exact_darwin_matches: bool) -> None:
+    """Inspect actual selected records, including the separate proc-macro host closure."""
+    document = checked(snapshot(target, target))
+    units = checked(field(document, "units").expect_array().map_err((e) => e.message()))
+    assert len(units) == 4
+    mut root_seen = false
+    mut host_leaf_seen = false
+    mut target_leaf_seen = false
+    for unit in units:
+        loaf = checked(field(unit, "loaf").expect_str().map_err((e) => e.message()))
+        domain = checked(field(unit, "domain").expect_str().map_err((e) => e.message()))
+        if loaf == "test/root":
+            root_seen = true
+            assert domain == "target"
+            predicates = checked(field(unit, "target_predicates").expect_array().map_err((e) => e.message()))
+            assert len(predicates) == 2
+            assert checked(field(predicates[0], "target").expect_str().map_err((e) => e.message())) == "aarch64-apple-darwin"
+            assert checked(field(predicates[0], "matches").expect_bool().map_err((e) => e.message())) == exact_darwin_matches
+            assert checked(field(predicates[1], "target").expect_str().map_err((e) => e.message())) == "cfg(unix)"
+            assert checked(field(predicates[1], "matches").expect_bool().map_err((e) => e.message()))
+        elif loaf == "test/leaf":
+            features = checked(field(unit, "features").expect_array().map_err((e) => e.message()))
+            if domain == "host":
+                host_leaf_seen = true
+                assert len(features) == 0
+            else:
+                target_leaf_seen = true
+                assert domain == "target"
+                assert len(features) == 2
+                assert checked(features[0].expect_str().map_err((e) => e.message())) == "extra"
+                assert checked(features[1].expect_str().map_err((e) => e.message())) == "std"
+    assert root_seen and host_leaf_seen and target_leaf_seen
+
+
+pub def test_native_linux_snapshot_resolves_with_its_explicit_target() -> None:
+    """Linux must not inherit the Darwin-only edge while unix and host-domain selections remain active."""
+    require_native_selection("x86_64-unknown-linux-gnu", false)
+
+
+pub def test_native_darwin_snapshot_preserves_existing_resolution() -> None:
+    """The existing Darwin selection stays unchanged through the target-generic transport."""
+    require_native_selection("aarch64-apple-darwin", true)
+
+
+pub def test_native_snapshot_refuses_cross_target_cfg_reuse() -> None:
+    """One cfg file cannot stand in for distinct target and host configurations."""
+    match snapshot("x86_64-unknown-linux-gnu", "aarch64-apple-darwin"):
+        Ok(_) => fail("cross-target request accepted one cfg snapshot")
+        Err(reason) => assert reason == "closure resolution requires the same host and target for its single cfg snapshot"
+
+
+pub def test_native_snapshot_requires_an_explicit_target() -> None:
+    """An empty triple cannot make the same-host restriction vacuously true."""
+    match snapshot("", ""):
+        Ok(_) => fail("empty native target accepted")
+        Err(reason) => assert reason == "closure resolution requires an explicit target triple"
+
+
+pub def test_native_snapshot_preserves_index_revision_refusal() -> None:
+    """Platform support does not weaken the staged immutable index selection."""
+    match snapshot("x86_64-unknown-linux-gnu", "x86_64-unknown-linux-gnu", "different-pin"):
+        Ok(_) => fail("different staged revision accepted")
+        Err(reason) => assert reason == "staged index revision differs from the requested commit"

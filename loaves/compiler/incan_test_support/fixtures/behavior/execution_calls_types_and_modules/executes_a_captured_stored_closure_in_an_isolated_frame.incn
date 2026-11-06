@@ -1,0 +1,16 @@
+# behavior: executes a captured stored closure in an isolated frame
+# expect-stdout:
+#   42
+
+
+"""Executes a captured stored closure in an isolated frame."""
+def program_result() -> int:
+  """Compute and return `add(40)`."""
+  offset = 2
+  add: (int) -> int = (value) => value + offset
+  return add(40)
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

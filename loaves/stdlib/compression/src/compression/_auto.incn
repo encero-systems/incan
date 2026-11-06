@@ -203,7 +203,7 @@ def _decompress_gzip_stream(
         mut reader = GzDecoder.new(Cursor.new(prefix).chain(Read.by_ref(handle)))
         while true:
             mut chunk: bytes = b""
-            match reader.by_ref().take(chunk_size).read_to_end(chunk):
+            match reader.by_ref().take(chunk_size.saturating_resize[u64]()).read_to_end(chunk):
                 Ok(_) =>
                     if len(chunk) == 0:
                         return Ok(None)
@@ -214,7 +214,7 @@ def _decompress_gzip_stream(
         mut reader = GzDecoder.new(Cursor.new(prefix).chain(Read.by_ref(handle)))
         while true:
             mut chunk: bytes = b""
-            match reader.by_ref().take(chunk_size).read_to_end(chunk):
+            match reader.by_ref().take(chunk_size.saturating_resize[u64]()).read_to_end(chunk):
                 Ok(_) =>
                     if len(chunk) == 0:
                         return Ok(None)
@@ -236,7 +236,7 @@ def _decompress_zlib_stream(
         mut reader = ZlibDecoder.new(Cursor.new(prefix).chain(Read.by_ref(handle)))
         while true:
             mut chunk: bytes = b""
-            match reader.by_ref().take(chunk_size).read_to_end(chunk):
+            match reader.by_ref().take(chunk_size.saturating_resize[u64]()).read_to_end(chunk):
                 Ok(_) =>
                     if len(chunk) == 0:
                         return Ok(None)
@@ -247,7 +247,7 @@ def _decompress_zlib_stream(
         mut reader = ZlibDecoder.new(Cursor.new(prefix).chain(Read.by_ref(handle)))
         while true:
             mut chunk: bytes = b""
-            match reader.by_ref().take(chunk_size).read_to_end(chunk):
+            match reader.by_ref().take(chunk_size.saturating_resize[u64]()).read_to_end(chunk):
                 Ok(_) =>
                     if len(chunk) == 0:
                         return Ok(None)
@@ -271,7 +271,7 @@ def _decompress_zstd_stream(
                 mut adapter = reader
                 while true:
                     mut chunk: bytes = b""
-                    match adapter.by_ref().take(chunk_size).read_to_end(chunk):
+                    match adapter.by_ref().take(chunk_size.saturating_resize[u64]()).read_to_end(chunk):
                         Ok(_) =>
                             if len(chunk) == 0:
                                 return Ok(None)
@@ -285,7 +285,7 @@ def _decompress_zstd_stream(
                 mut adapter = reader
                 while true:
                     mut chunk: bytes = b""
-                    match adapter.by_ref().take(chunk_size).read_to_end(chunk):
+                    match adapter.by_ref().take(chunk_size.saturating_resize[u64]()).read_to_end(chunk):
                         Ok(_) =>
                             if len(chunk) == 0:
                                 return Ok(None)
@@ -308,7 +308,7 @@ def _decompress_bz2_stream(
         mut reader = BzDecoder.new(Cursor.new(prefix).chain(Read.by_ref(handle)))
         while true:
             mut chunk: bytes = b""
-            match reader.by_ref().take(chunk_size).read_to_end(chunk):
+            match reader.by_ref().take(chunk_size.saturating_resize[u64]()).read_to_end(chunk):
                 Ok(_) =>
                     if len(chunk) == 0:
                         return Ok(None)
@@ -319,7 +319,7 @@ def _decompress_bz2_stream(
         mut reader = BzDecoder.new(Cursor.new(prefix).chain(Read.by_ref(handle)))
         while true:
             mut chunk: bytes = b""
-            match reader.by_ref().take(chunk_size).read_to_end(chunk):
+            match reader.by_ref().take(chunk_size.saturating_resize[u64]()).read_to_end(chunk):
                 Ok(_) =>
                     if len(chunk) == 0:
                         return Ok(None)
@@ -341,7 +341,7 @@ def _decompress_lzma_stream(
         mut reader = XzDecoder.new(Cursor.new(prefix).chain(Read.by_ref(handle)))
         while true:
             mut chunk: bytes = b""
-            match reader.by_ref().take(chunk_size).read_to_end(chunk):
+            match reader.by_ref().take(chunk_size.saturating_resize[u64]()).read_to_end(chunk):
                 Ok(_) =>
                     if len(chunk) == 0:
                         return Ok(None)
@@ -352,7 +352,7 @@ def _decompress_lzma_stream(
         mut reader = XzDecoder.new(Cursor.new(prefix).chain(Read.by_ref(handle)))
         while true:
             mut chunk: bytes = b""
-            match reader.by_ref().take(chunk_size).read_to_end(chunk):
+            match reader.by_ref().take(chunk_size.saturating_resize[u64]()).read_to_end(chunk):
                 Ok(_) =>
                     if len(chunk) == 0:
                         return Ok(None)
@@ -374,7 +374,7 @@ def _decompress_snappy_stream(
         mut reader = FrameDecoder.new(Cursor.new(prefix).chain(Read.by_ref(handle)))
         while true:
             mut chunk: bytes = b""
-            match reader.by_ref().take(chunk_size).read_to_end(chunk):
+            match reader.by_ref().take(chunk_size.saturating_resize[u64]()).read_to_end(chunk):
                 Ok(_) =>
                     if len(chunk) == 0:
                         return Ok(None)
@@ -385,7 +385,7 @@ def _decompress_snappy_stream(
         mut reader = FrameDecoder.new(Cursor.new(prefix).chain(Read.by_ref(handle)))
         while true:
             mut chunk: bytes = b""
-            match reader.by_ref().take(chunk_size).read_to_end(chunk):
+            match reader.by_ref().take(chunk_size.saturating_resize[u64]()).read_to_end(chunk):
                 Ok(_) =>
                     if len(chunk) == 0:
                         return Ok(None)

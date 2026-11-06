@@ -1,8 +1,8 @@
 //! Building direct-rustc plans from caller-owned workspace libraries.
 
 use super::{
-    BTreeSet, OvenCallerOwnedRustcLibrary, OvenRustcArtifactPlan, OvenRustcError, validate_rust_identifier,
-    verified_regular_file,
+    BTreeSet, OvenCallerOwnedRustcLibrary, OvenRustcArtifactPlan, OvenRustcError, digest_regular_file,
+    validate_rust_identifier, verified_regular_file,
 };
 
 /// Normalize a declared package name to the direct-rustc crate identifier it exposes.
@@ -15,8 +15,9 @@ pub(super) fn direct_rustc_crate_name(name: &str) -> Result<String, OvenRustcErr
 /// Add direct-Rustc workspace-library outputs to a previously selected immutable artifact plan.
 ///
 /// The immutable plan continues to own third-party and native inputs. These libraries are the caller-owned bridge
-/// between topologically ordered workspace compilation steps, so their already-verified digests are incorporated
-/// into the consumer output's reuse identity instead of being mistaken for a Cargo target directory.
+/// between topologically ordered workspace compilation steps. Their retained digests are checked against current
+/// files before entering the consumer's reuse identity, using the existing metadata-sensitive Store observations.
+/// A changed output must be prepared again; it cannot inherit an earlier output's authority.
 pub fn attach_caller_owned_rustc_libraries(
     plan: &mut OvenRustcArtifactPlan,
     libraries: &[OvenCallerOwnedRustcLibrary],
@@ -29,6 +30,12 @@ pub fn attach_caller_owned_rustc_libraries(
     for library in libraries {
         validate_rust_identifier(&library.crate_name)?;
         let output = verified_regular_file(&library.output, "caller-owned library")?;
+        if digest_regular_file(&output, "caller-owned library")? != library.digest {
+            return Err(OvenRustcError::InvalidInput {
+                field: "caller-owned library",
+                message: format!("{} differs from its prepared digest", output.display()),
+            });
+        }
         if library.expose_extern && !crate_names.insert(library.crate_name.clone()) {
             // A package diamond reaches one provider under one alias from two sides (#1459): the consumer names it
             // directly and an intermediate provider names it too. The same sealed artifact arriving twice is not a

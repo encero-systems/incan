@@ -1,0 +1,21 @@
+"""Resolve a None argument for the existing optional borrowed-tuple parameter."""
+
+from rust::std::path import Path as RustPath
+from rust::oven_store::store import OvenStore, OvenStoreLimits
+from rust::incan_driver::build import OvenBakeProjectTarget
+from rust::incan_driver::build::output_selection import matching_baked_project_outputs_with_source_authority
+
+
+pub def main() -> None:
+    store = OvenStore.new("target/probe-store", OvenStoreLimits.new(1024, 1024, 1024))
+    project = RustPath.new(".")
+    candidates = matching_baked_project_outputs_with_source_authority(
+        store,
+        project,
+        project,
+        OvenBakeProjectTarget.Executable,
+        "debug",
+        "unused",
+        None,
+    )
+    println(candidates.is_ok())
