@@ -1,0 +1,44 @@
+# behavior: rusttypes adapt through declared receiver and associated edges, including a blanket Rust trait method whose implementation remains a rustc obligation
+# expect-stdout:
+#   ADA
+#   BOB
+#   true
+
+from rust::std::string import String as RustString, ToString
+from rust::std::net import Ipv4Addr
+
+
+type Name = rusttype RustString:
+    interop:
+        from str via Name.from
+        into str via Name.as_str
+
+    def from(raw: str) -> Name:
+        pass
+
+    def as_str(self) -> str:
+        pass
+
+
+type Address = rusttype Ipv4Addr:
+    interop:
+        into str via Address.to_string
+
+    def to_string(self) -> str:
+        pass
+
+
+def shout(text: str) -> str:
+    return text.upper()
+
+
+def label(name: Name) -> str:
+    return shout(name)
+
+
+def main() -> None:
+    name: Name = "ada"
+    println(shout(name))
+    println(label("bob"))
+    address: Address = Ipv4Addr.new(127u8, 0u8, 0u8, 1u8)
+    println(shout(address) == "127.0.0.1")

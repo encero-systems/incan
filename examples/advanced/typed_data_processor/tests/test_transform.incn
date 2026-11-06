@@ -12,12 +12,10 @@ def test_primitive_helpers() -> None:
 
 def test_build_report_keeps_valid_orders() -> None:
     batch = OrderBatch(
-        orders=[Order(id="A-1", product="keyboard", quantity=2, unit_price=50.0), Order(
-            id="A-2",
-            product="invalid",
-            quantity=0,
-            unit_price=12.0,
-        )],
+        orders=[
+            Order(id="A-1", product="keyboard", quantity=2, unit_price=50.0),
+            Order(id="A-2", product="invalid", quantity=0, unit_price=12.0),
+        ],
     )
 
     report = build_report(batch)

@@ -1,0 +1,63 @@
+# behavior: native associated and instance calls retain their declared results, including extension trait associated calls with contextual integer literals (#2256); a body-less rusttype that forwards Clone and Display to its backing Rust type stays a transparent alias and retains Clone's native receiver (#2443, rust-22h)
+# expect-stdout:
+#   5
+#   8
+#   true
+#   42
+#   7
+#   493
+#   420
+#   ada
+#   ada
+
+from rust::std::clone import Clone as NativeClone
+from rust::std::fmt import Display
+from rust::std::fs import Permissions
+from rust::std::os::unix::fs import PermissionsExt
+from rust::std::num import ParseIntError
+from rust::std::string import String as RustString
+
+
+type Name = rusttype RustString
+
+
+type Label = rusttype RustString with NativeClone, Display
+
+
+model Buffer:
+    raw: Name
+
+    def append(mut self, text: str) -> None:
+        self.raw.push_str(text)
+
+    def size(self) -> int:
+        return self.raw.len()
+
+    def starts_with_text(self, text: str) -> bool:
+        return self.raw.starts_with(text)
+
+
+def main() -> None:
+    mut buffer = Buffer(raw=Name.from("alice"))
+    println(buffer.size())
+    buffer.append("@ex")
+    println(buffer.size())
+    println(buffer.starts_with_text("ali"))
+    digits = Name.from("42")
+    match digits.parse[i64]():
+        Ok(number) => println(number)
+        Err(_) => println("not a number")
+    inferred: Result[i64, ParseIntError] = Name.from("7").parse()
+    match inferred:
+        Ok(number) => println(number)
+        Err(_) => println("not a number")
+    permissions = Permissions.from_mode(493)
+    println(permissions.mode())
+    mode: u32 = 420
+    typed = Permissions.from_mode(mode)
+    println(typed.mode())
+    label = Label.from("ada")
+    assert label.len() == 3
+    println(label)
+    copied = label.clone()
+    println(copied)

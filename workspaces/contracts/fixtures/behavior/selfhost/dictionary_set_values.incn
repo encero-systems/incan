@@ -1,0 +1,29 @@
+# behavior: dictionaries own independent set values through insertion, default lookup and persistent replacement
+# expect-stdout:
+#   true
+#   false
+#   true
+#   true
+#   false
+#   true
+
+static groups: dict[int, set[int]] = {}
+
+
+def replace() -> None:
+    """Replace one stored set while another value retains its own snapshot."""
+    groups[1] = {4, 5}
+
+
+def main() -> None:
+    """Read set-valued dictionary entries before and after persistent writes."""
+    groups[1] = {2, 3}
+    saved = groups.get(1, {9})
+    println(2 in saved)
+    println(9 in saved)
+    replace()
+    current = groups.get(1, {9})
+    println(4 in current)
+    println(2 in saved)
+    println(2 in current)
+    println(9 in groups.get(8, {9}))

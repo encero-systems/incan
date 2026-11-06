@@ -6,8 +6,8 @@
 use crate::ast::{self, Declaration};
 use crate::typechecker::TypeCheckInfo;
 use incan_semantics_core::{
-    CompilerNodeId, DeclarationVisibility, HirDeclaration, HirDeclarationKind, HirModule, HirSourceSpan,
-    SemanticFactStore, SemanticModuleSnapshot,
+    CompilerNodeId, DeclarationVisibility, HirDeclaration, HirDeclarationKind, HirModule, SemanticFactStore,
+    SemanticModuleSnapshot,
 };
 
 /// Build declaration-level HIR v0 for a typechecked module.
@@ -60,8 +60,8 @@ fn hir_declarations_for(
     type_info: &TypeCheckInfo,
     facts: &SemanticFactStore,
 ) -> Vec<HirDeclaration> {
-    let key = (decl.span.start, decl.span.end);
-    let span = HirSourceSpan::new(decl.span.start, decl.span.end);
+    let key = decl.span;
+    let span = decl.span;
     let bindings = type_info
         .declarations
         .hir_bindings_by_span
@@ -74,7 +74,7 @@ fn hir_declarations_for(
             .iter()
             .enumerate()
             .map(|(ordinal, binding)| HirDeclaration {
-                id: CompilerNodeId::declaration_binding_span(module_identity, decl.span.start, decl.span.end, ordinal),
+                id: CompilerNodeId::declaration_binding_at(module_identity, decl.span, ordinal),
                 kind: HirDeclarationKind::Import,
                 name: Some(binding.local_name.clone()),
                 span,
@@ -206,7 +206,7 @@ fn hir_module_identity(module_path: &[String]) -> String {
 
 /// Build the HIR node identity for a source declaration.
 fn hir_span_decl_id(module_identity: &str, span: ast::Span) -> CompilerNodeId {
-    CompilerNodeId::declaration_span(module_identity, span.start, span.end)
+    CompilerNodeId::declaration_at(module_identity, span)
 }
 
 #[cfg(test)]

@@ -1,0 +1,422 @@
+"""Exercise the installed driver's compiler-identity boundary without modifying the supplied toolchain."""
+
+from rust::std::env::consts import OS
+from rust::std::fs import File
+from rust::std::process import Child, Command, Stdio, exit
+from rust::std::string import String as RustString
+from std.encoding.hex import unhexlify
+from std.environ import args
+from std.fs import Path
+from std.json import JsonValue
+
+
+pub model Settings:
+    """Supplied driver, sysroot, independently described unit, and new evidence directory."""
+
+    pub driver: Path
+    pub sysroot: Path
+    pub unit: Path
+    pub scratch: Path
+
+
+pub model Context:
+    """Private installed-driver copy and paths retained throughout one identity verification."""
+
+    pub driver: Path
+    pub sysroot: Path
+    pub unit: Path
+    pub scratch: Path
+    pub home: Path
+    pub proof: Path
+
+
+pub model Outcome:
+    """One direct driver invocation's status and decoded streams."""
+
+    pub code: int
+    pub stdout: str
+    pub stderr: str
+
+
+def main() -> None:
+    """Parse the historical four operands, run the identity contract, and retain every trace and refusal."""
+    arguments = args().unwrap_or([])
+    match parse(arguments[1:]):
+        Ok(settings) =>
+            match verify(settings):
+                Ok(_) => exit(0)
+                Err(message) =>
+                    println(f"driver identity: {message}")
+                    exit(1)
+        Err(message) =>
+            println(f"driver identity: {message}")
+            exit(2)
+
+
+pub def parse(arguments: list[str]) -> Result[Settings, str]:
+    """Parse `DRIVER SYSROOT UNIT NEW_SCRATCH_DIRECTORY`."""
+    if len(arguments) != 4:
+        return Err("expected DRIVER SYSROOT UNIT NEW_SCRATCH_DIRECTORY")
+    return Ok(
+        Settings(
+            driver=Path(arguments[0]),
+            sysroot=Path(arguments[1]),
+            unit=Path(arguments[2]),
+            scratch=Path(arguments[3]),
+        ),
+    )
+
+
+pub def verify(settings: Settings) -> Result[None, str]:
+    """
+    Prove the driver's installed compiler identity boundary.
+
+    1. Establish cold and warm proof decisions and invalidate every stored proof field.
+    2. Exercise malformed, unreadable, symlinked, unwritable, and concurrent proof storage.
+    3. Require bootstrap, mismatched sysroot, and loaded-library refusals before publication.
+    4. Prove an otherwise valid driver also works without its installation manifest.
+    """
+    context = prepare(settings)?
+
+    # 1. Cold proof writes every identity field; the unchanged repeat reuses it byte for byte.
+    compile(context, "cold")?
+    require_cached(context, "cold", false)?
+    expected = context.scratch.joinpath("expected.proof")
+    _ = context.proof.copy(expected, true, true).map_err((error) => error.message())?
+    compile(context, "warm")?
+    require_cached(context, "warm", true)?
+    require_same(context.proof, expected)?
+    for key in [
+        "path",
+        "device",
+        "inode",
+        "size",
+        "mtime",
+        "mtime_ns",
+        "ctime",
+        "ctime_ns",
+        "expected",
+        "kind",
+        "schema",
+    ]:
+        write_invalid_proof(expected, context.proof, key)?
+        name = f"invalid_{key}"
+        compile(context, name)?
+        require_cached(context, name, false)?
+        require_same(context.proof, expected)?
+
+    # 2. Invalid storage never becomes authority, and simultaneous misses converge on one complete proof.
+    context.proof.write_text("incomplete", "utf-8", "strict", None).map_err((error) => error.message())?
+    compile(context, "malformed")?
+    require_cached(context, "malformed", false)?
+    require_same(context.proof, expected)?
+    saved = context.scratch.joinpath("saved.proof")
+    _ = context.proof.move(saved).map_err((error) => error.message())?
+    context.proof.mkdir(false, false).map_err((error) => error.message())?
+    compile(context, "unreadable")?
+    require_cached(context, "unreadable", false)?
+    if not context.proof.is_dir():
+        return Err("an unreadable proof directory was replaced")
+    context.proof.remove_tree().map_err((error) => error.message())?
+    context.proof.symlink_to(saved).map_err((error) => error.message())?
+    compile(context, "symlink")?
+    require_cached(context, "symlink", false)?
+    if context.proof.is_symlink():
+        return Err("the proof remained a symlink")
+    require_same(context.proof, expected)?
+    before_unwritable = context.scratch.joinpath("before_unwritable.proof")
+    _ = context.proof.move(before_unwritable).map_err((error) => error.message())?
+    context.home.chmod(true).map_err((error) => error.message())?
+    compile(context, "unwritable")?
+    require_cached(context, "unwritable", false)?
+    if context.proof.exists():
+        return Err("an unwritable home unexpectedly stored its proof")
+    context.home.chmod(false).map_err((error) => error.message())?
+    concurrent(context)?
+    require_same(context.proof, expected)?
+    compile(context, "after_concurrent")?
+    require_cached(context, "after_concurrent", true)?
+
+    # 3. Environment and compiler identity mismatches refuse before publishing a native artifact.
+    refused(
+        context,
+        "bootstrap",
+        "RUSTC_BOOTSTRAP is forbidden",
+        context.driver,
+        ["--unit", context.unit.0, "identity_probe", context.scratch.joinpath("bootstrap").0, context.sysroot.0],
+        {"RUSTC_BOOTSTRAP": ""},
+    )?
+    identity = run(context.driver, ["--identity", context.home.joinpath("sysroot").0], context.scratch, "identity", {})?
+    if identity.code != 0:
+        return Err(f"installed sysroot identity failed: {identity.stderr.strip()}")
+    verify_other_sysroot(context)?
+    verify_loaded_library(context, expected)?
+
+    # 4. A copied driver remains usable when the installation manifest is absent, without reusing its proof.
+    _ = context.home
+        .joinpath("toolchain.json")
+        .move(context.home.joinpath("toolchain.json.saved"))
+        .map_err((error) => error.message())?
+    compile(context, "uninstalled")?
+    require_cached(context, "uninstalled", false)?
+    println(
+        "PASS identity: cold/warm, all proof keys, malformed/unreadable/unwritable store, concurrency, bootstrap, sysroot, loaded library, uninstalled driver",
+    )
+    return Ok(None)
+
+
+def prepare(settings: Settings) -> Result[Context, str]:
+    """Create a private installed-driver shape while leaving the supplied driver and sysroot unchanged."""
+    if settings.scratch.exists():
+        return Err(f"scratch directory already exists: {settings.scratch.0}")
+    home = settings.scratch.joinpath("toolchain")
+    home.joinpath("bin").mkdir(true, true).map_err((error) => error.message())?
+    settings.scratch.joinpath("logs").mkdir(true, true).map_err((error) => error.message())?
+    driver = home.joinpath("bin/incan-rustc-driver")
+    _ = settings.driver.copy(driver, true, true).map_err((error) => error.message())?
+    home.joinpath("sysroot").symlink_to(settings.sysroot).map_err((error) => error.message())?
+    home.joinpath("toolchain.json").write_text("{}\n", "utf-8", "strict", None).map_err((error) => error.message())?
+    return Ok(
+        Context(
+            driver=driver,
+            sysroot=settings.sysroot,
+            unit=settings.unit,
+            scratch=settings.scratch,
+            home=home,
+            proof=home.joinpath("driver-library.proof"),
+        ),
+    )
+
+
+def compile(context: Context, name: str) -> Result[None, str]:
+    """Compile one probe and require exactly one identity decision in its trace."""
+    output = context.scratch.joinpath(name)
+    trace = context.scratch.joinpath(f"logs/{name}")
+    trace.mkdir(true, true).map_err((error) => error.message())?
+    result = run(
+        context.driver,
+        ["--unit", context.unit.0, "identity_probe", output.0, context.sysroot.0],
+        context.scratch,
+        name,
+        {"INCAN_TRACE_DIR": trace.0},
+    )?
+    if result.code != 0:
+        return Err(f"{name} failed with status {result.code}: {result.stderr.strip()}")
+    if begin_count(trace)? != 1:
+        return Err(f"{name} did not trace exactly one verify_identity span")
+    return Ok(None)
+
+
+def require_cached(context: Context, name: str, expected: bool) -> Result[None, str]:
+    """Require one loaded-library proof decision with the selected cache value."""
+    observed = cached_values(context.scratch.joinpath(f"logs/{name}"))?
+    if observed != [expected]:
+        return Err(f"{name} cached decisions were {observed}, expected {[expected]}")
+    return Ok(None)
+
+
+def concurrent(context: Context) -> Result[None, str]:
+    """Start two simultaneous cold misses and require both compilations plus a complete shared proof."""
+    first = start_compile(context, "concurrent_a")?
+    second = start_compile(context, "concurrent_b")?
+    require_child(first, "concurrent_a")?
+    require_child(second, "concurrent_b")?
+    for name in ["concurrent_a", "concurrent_b"]:
+        trace = context.scratch.joinpath(f"logs/{name}")
+        if begin_count(trace)? != 1:
+            return Err(f"{name} did not trace exactly one verify_identity span")
+    return Ok(None)
+
+
+def start_compile(context: Context, name: str) -> Result[Child, str]:
+    """Start one direct compile with file-backed streams so simultaneous misses cannot interleave evidence."""
+    trace = context.scratch.joinpath(f"logs/{name}")
+    trace.mkdir(true, true).map_err((error) => error.message())?
+    stdout = File.create(context.scratch.joinpath(f"{name}.stdout").0).map_err((error) => str(error))?
+    stderr = File.create(context.scratch.joinpath(f"{name}.stderr").0).map_err((error) => str(error))?
+    mut command = Command.new(context.driver.0)
+    command
+        .current_dir(context.scratch.0)
+        .env_remove("RUSTC_BOOTSTRAP")
+        .env("INCAN_TRACE_DIR", trace.0)
+        .arg("--unit")
+        .arg(context.unit.0)
+        .arg("identity_probe")
+        .arg(context.scratch.joinpath(name).0)
+        .arg(context.sysroot.0)
+        .stdin(Stdio.null())
+        .stdout(stdout)
+        .stderr(stderr)
+    return command.spawn().map_err((error) => f"cannot start {name}: {error}")
+
+
+def require_child(mut child: Child, name: str) -> Result[None, str]:
+    """Wait for one concurrent compile and require successful termination."""
+    status = child.wait().map_err((error) => f"cannot wait for {name}: {error}")?
+    if not status.success():
+        return Err(f"{name} failed with status {status}")
+    return Ok(None)
+
+
+def refused(
+    context: Context,
+    name: str,
+    message: str,
+    command: Path,
+    arguments: list[str],
+    environment: Dict[str, str],
+) -> Result[None, str]:
+    """Require a direct invocation to refuse with selected text before publishing its named output."""
+    result = run(command, arguments, context.scratch, name, environment)?
+    if result.code == 0:
+        return Err(f"unexpected acceptance: {name}")
+    if message not in result.stderr:
+        return Err(f"{name} did not report `{message}`: {result.stderr.strip()}")
+    if context.scratch.joinpath(name).exists():
+        return Err(f"{name} published output before refusing")
+    return Ok(None)
+
+
+def verify_other_sysroot(context: Context) -> Result[None, str]:
+    """Require a compiler unlike the pinned sysroot compiler to refuse before output publication."""
+    directory = context.scratch.joinpath("other-compiler/bin")
+    directory.mkdir(true, true).map_err((error) => error.message())?
+    directory.joinpath("rustc").symlink_to(Path("/usr/bin/clang")).map_err((error) => error.message())?
+    return refused(
+        context,
+        "other_sysroot",
+        "driver identity",
+        context.driver,
+        [
+            "--unit",
+            context.unit.0,
+            "identity_probe",
+            context.scratch.joinpath("other_sysroot").0,
+            context.scratch.joinpath("other-compiler").0,
+        ],
+        {},
+    )
+
+
+def verify_loaded_library(context: Context, expected: Path) -> Result[None, str]:
+    """Require identical compiler-library bytes loaded from a different path to refuse."""
+    proof = read_json(expected)?
+    encoded = proof.require("path").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+    decoded = unhexlify(encoded).map_err((error) => error.message())?
+    library_text = RustString.from_utf8(decoded).map_err((error) => error.to_string())?
+    library = Path(library_text)
+    other = context.scratch.joinpath("other-library")
+    other.mkdir(true, true).map_err((error) => error.message())?
+    _ = library.copy(other.joinpath(library.name()), true, true).map_err((error) => error.message())?
+    mut loader = ""
+    if OS == "macos":
+        loader = "DYLD_LIBRARY_PATH"
+    elif OS == "linux":
+        loader = "LD_LIBRARY_PATH"
+    else:
+        return Err("loaded-library test supports macOS and Linux")
+    return refused(
+        context,
+        "other_library",
+        "loaded a different rustc_driver shared library",
+        context.driver,
+        ["--unit", context.unit.0, "identity_probe", context.scratch.joinpath("other_library").0, context.sysroot.0],
+        {loader: other.0},
+    )
+
+
+def write_invalid_proof(expected: Path, proof: Path, key: str) -> Result[None, str]:
+    """Write one otherwise valid proof with the selected required field replaced."""
+    mut value = read_json(expected)?
+    if value.get(key) is None:
+        return Err(f"identity proof has no `{key}` field")
+    value.set(key, JsonValue.string("invalid")).map_err((error) => error.message())?
+    return proof
+        .write_text(value.to_json().map_err((error) => error.message())?, "utf-8", "strict", None)
+        .map_err((error) => error.message())
+
+
+def begin_count(trace: Path) -> Result[int, str]:
+    """Count trace begins for the driver's verify_identity function."""
+    mut count = 0
+    for record in trace_records(trace)?:
+        if (
+            json_text(record, "kind")? == "begin"
+            and json_text(record, "function")? == "incan_rustc_driver::verify_identity"
+        ):
+            count += 1
+    return Ok(count)
+
+
+def cached_values(trace: Path) -> Result[list[bool], str]:
+    """Return loaded-library proof cache decisions from one trace directory."""
+    mut values: list[bool] = []
+    for record in trace_records(trace)?:
+        if json_text(record, "kind")? != "event":
+            continue
+        fields = record.require("fields").map_err((error) => error.message())?
+        if json_text(fields, "message")? == "loaded compiler library proof":
+            values.append(
+                fields.require("cached").and_then((value) => value.expect_bool()).map_err((error) => error.message())?,
+            )
+    return Ok(values)
+
+
+def trace_records(directory: Path) -> Result[list[JsonValue], str]:
+    """Decode every non-empty JSONL trace record in deterministic file order."""
+    mut records: list[JsonValue] = []
+    paths = sorted([path.0 for path in directory.rglob("*.jsonl").map_err((error) => error.message())?])
+    for path_text in paths:
+        source = Path(path_text).read_text("utf-8", "strict").map_err((error) => error.message())?
+        for line in source.split("\n"):
+            if line != "":
+                records.append(JsonValue.parse(line).map_err((error) => error.message())?)
+    return Ok(records)
+
+
+def run(
+    command: Path,
+    arguments: list[str],
+    directory: Path,
+    name: str,
+    environment: Dict[str, str],
+) -> Result[Outcome, str]:
+    """Run one direct-driver command with bootstrap removed unless explicitly supplied, retaining both streams."""
+    mut process = Command.new(command.0)
+    process.current_dir(directory.0)
+    if "RUSTC_BOOTSTRAP" not in environment:
+        process.env_remove("RUSTC_BOOTSTRAP")
+    for argument in arguments:
+        process.arg(argument)
+    for key in environment.keys():
+        process.env(key, environment[key])
+    output = process.output().map_err((error) => f"cannot run {command.0}: {error}")?
+    stdout = RustString.from_utf8_lossy(output.stdout).into_owned()
+    stderr = RustString.from_utf8_lossy(output.stderr).into_owned()
+    directory.joinpath(f"{name}.stdout").write_text(stdout, "utf-8", "strict", None).map_err((error) => error.message())?
+    directory.joinpath(f"{name}.stderr").write_text(stderr, "utf-8", "strict", None).map_err((error) => error.message())?
+    code = match output.status.code():
+        Some(value) => int(value)
+        None => 128
+
+    return Ok(Outcome(code=code, stdout=stdout, stderr=stderr))
+
+
+def require_same(left: Path, right: Path) -> Result[None, str]:
+    """Require byte-identical proof files."""
+    left_bytes = left.read_bytes().map_err((error) => error.message())?
+    right_bytes = right.read_bytes().map_err((error) => error.message())?
+    if left_bytes != right_bytes:
+        return Err(f"proof files differ: {left.0}, {right.0}")
+    return Ok(None)
+
+
+def read_json(path: Path) -> Result[JsonValue, str]:
+    """Read one strict UTF-8 JSON document."""
+    source = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+    return JsonValue.parse(source).map_err((error) => error.message())
+
+
+def json_text(value: JsonValue, key: str) -> Result[str, str]:
+    """Return one required JSON string field."""
+    return value.require(key).and_then((entry) => entry.expect_str()).map_err((error) => error.message())

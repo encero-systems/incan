@@ -1,0 +1,106 @@
+"""
+Oven's home and the artifact layout: where every Loaf's artifacts live for a profile, and where the toolchain's
+standard packages come from.
+
+- The home is `INCAN_HOME`, else `.incan` under `HOME` (`USERPROFILE` on Windows).
+- A standard package's artifacts live in the home, under the toolchain that built them:
+  `<home>/toolchains/<toolchain>/loaves/<package>/<profile>`.
+- A path dependency's artifacts live in the target directory of the root project that reaches it, so one graph's
+  unified features build it once: `<root>/target/incan/loaves/<package>/<profile>`.
+- The standard packages are the packages of the toolchain's standard-library directory, `INCAN_STDLIB` when set,
+  else the installed toolchain's `stdlib`: each of its immediate subdirectories that holds a `loaf.toml`.
+"""
+
+from std.environ import get_or
+from std.fs import Path
+from intake import load_project, ManifestReader
+from manifest_intent import ProjectIntent
+from toolchain import installation
+# The toolchain this Oven belongs to; it names the home's toolchain directory.
+pub from home_paths import TOOLCHAIN, home
+
+
+pub model StandardPackage:
+    """One standard package of the toolchain."""
+
+    pub name: str
+    # The package's source directory.
+    pub root: str
+
+
+pub def standard_artifact_dir(package: str, profile: str) -> Result[Path, str]:
+    """The artifact directory of the standard package `package` for `profile`."""
+    return Ok(home()?.joinpath("toolchains").joinpath(TOOLCHAIN).joinpath("loaves").joinpath(package).joinpath(profile))
+
+
+pub def dependency_artifact_dir(root_project: str, package: str, profile: str) -> Path:
+    """The artifact directory of a path dependency `package`, reached from the project at `root_project`."""
+    return Path(root_project)
+        .joinpath("target")
+        .joinpath("incan")
+        .joinpath("loaves")
+        .joinpath(package)
+        .joinpath(profile)
+
+
+pub def unit_ledger(project_root: str, name: str) -> Path:
+    """The ledger of one unit's inputs, in the target directory of the project that builds it."""
+    return Path(project_root).joinpath("target").joinpath("incan").joinpath("observations").joinpath(f"{name}.json")
+
+
+pub def standard_library_dir() -> Result[Path, str]:
+    """
+    The toolchain's standard-library directory: `INCAN_STDLIB` when set, else the standard sources the installed
+    toolchain ships in its `stdlib` directory.
+    """
+    configured = get_or("INCAN_STDLIB", "")
+    if configured != "":
+        return Ok(Path(configured))
+    shipped = home()?.joinpath("toolchains").joinpath(TOOLCHAIN).joinpath("stdlib")
+    if shipped.is_dir():
+        return Ok(shipped)
+    return Err(f"no standard library: {shipped.0} does not exist; set INCAN_STDLIB")
+
+
+pub def standard_packages(reader: ManifestReader = ManifestReader()) -> Result[list[StandardPackage], str]:
+    """Read installed package intent from the admitted page; explicit editable source overrides retain live intake."""
+    if get_or("INCAN_STDLIB", "") == "":
+        _ = standard_library_dir()?
+        mut directory = home()?.joinpath("toolchains").joinpath(TOOLCHAIN)
+        directory = directory.resolve().map_err((error) => error.message())?
+        page = installation(directory)?
+        return Ok([StandardPackage(name=manifest.intent.name, root=manifest.root) for manifest in page.manifests])
+    directory = standard_library_dir()?
+    root = directory.0
+    mut packages: list[StandardPackage] = []
+    match directory.iterdir():
+        Err(error) => return Err(f"cannot read the standard library at {root}: {error.message()}")
+        Ok(entries) =>
+            for entry in entries:
+                if entry.joinpath("loaf.toml").is_file():
+                    match load_project(entry, reader):
+                        Err(error) => return Err(error.message())
+                        Ok(project) => packages.append(StandardPackage(name=project.intent.name, root=project.root))
+    mut by_name: Dict[str, StandardPackage] = {}
+    for package in packages:
+        by_name[package.name] = package
+    return Ok([by_name[name] for name in sorted([name for name in by_name.keys()])])
+
+
+pub def owners_dir() -> Result[Path, str]:
+    """Where the resident owners of this home keep their sockets, locks and mailboxes: private to the user."""
+    return Ok(home()?.joinpath("owners"))
+
+
+pub def standard_intents() -> Result[list[ProjectIntent], str]:
+    """The complete admitted standard declarations; source overrides use the same live intake as other projects."""
+    if get_or("INCAN_STDLIB", "") == "":
+        _ = standard_library_dir()?
+        mut directory = home()?.joinpath("toolchains").joinpath(TOOLCHAIN)
+        directory = directory.resolve().map_err((error) => error.message())?
+        return Ok([manifest.intent for manifest in installation(directory)?.manifests])
+    reader = ManifestReader()
+    mut intents: list[ProjectIntent] = []
+    for package in standard_packages(reader)?:
+        intents.append(load_project(Path(package.root), reader).map_err((error) => error.message())?.intent)
+    return Ok(intents)

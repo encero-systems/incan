@@ -1,11 +1,9 @@
-//! The mandatory Incan standard library runtime: the Rust facet of the `core` component.
+//! Transitional Rust support retained by the `core` standard-library component.
 //!
-//! Every generated Incan program links this crate. It holds what compiler-generated Rust calls for language features
-//! rather than for any one `std.*` namespace: reflection traits and their field records, the frozen constant types,
-//! Python-shaped numeric and string operations, collection helpers that raise canonical errors instead of Rust's
-//! indexing panics, static storage, validation, and the stdlib version check every generated crate carries. The
-//! optional runtime surfaces live in the facets of the components that own their namespaces — `incan_std_data`,
-//! `incan_std_async`, `incan_std_web`, `incan_std_testing` — and depend on this crate; nothing here reaches into them.
+//! Reflection, static storage, validation, conversions and the standard-library version check remain here until the
+//! final core fold. Foundational errors, strings, numerics, collections, iterators and frozen carriers live in
+//! `incan_std_primitives`; their re-exports below preserve bootstrap and higher-facet paths without creating a second
+//! compiler identity.
 //!
 //! The stable boundary for Incan users is the `std.*` API declared by the component sources beside this crate. Rust
 //! modules here are runtime support for compiler-generated Rust and may contain transitional host implementations
@@ -13,18 +11,15 @@
 
 #![deny(clippy::unwrap_used)]
 
-pub mod collections;
 pub mod conversions;
-pub mod errors;
-pub mod frozen;
-pub mod iter;
-pub mod num;
 pub mod prelude;
 pub mod reflection;
 pub mod storage;
-pub mod strings;
 pub mod validation;
 pub mod version;
+
+/// Preserve the previous core-facet module paths while installed compilers bootstrap the primitive identities.
+pub use incan_std_primitives::{collections, errors, frozen, iter, num, strings};
 
 // Re-export commonly used items
 pub use reflection::{

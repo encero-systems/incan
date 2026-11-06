@@ -1,0 +1,3 @@
+pub def helper() -> int:
+    """A provider reached through a resolved import."""
+    return 7

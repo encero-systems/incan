@@ -1,0 +1,16 @@
+"""
+The OS-facing primitives below `std`, one module per facility.
+
+Consumers import a facility through its module, for example `from pub::incan_platform.ipc import dial`.
+"""
+
+import store
+import store.bytes
+import store.codec
+import store.collection
+import store.files
+import store.hash
+import store.index
+import store.path
+import store.payloads
+import store.repair

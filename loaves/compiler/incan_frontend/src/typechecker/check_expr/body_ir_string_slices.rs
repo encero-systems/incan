@@ -34,7 +34,7 @@ impl TypeChecker {
         {
             return;
         }
-        let key = (expression.span.start, expression.span.end);
+        let key = expression.span;
         let canonical = canonical_builtin_member_identity("str", magic_methods::as_str(MagicMethodId::Slice));
         self.type_info.calls.body_ir_string_slice_members.insert(key, canonical);
         self.type_info

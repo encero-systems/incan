@@ -1,0 +1,344 @@
+"""
+The toolchain Oven runs: its compiler, and the native closure every compiled unit links (DD-0008).
+
+Its description is `<home>/toolchains/<toolchain>/toolchain.json` (`incan.toolchain/1`):
+
+- `driver`: the compiler, `incan-rustc-driver`.
+- `sysroot`: the pinned Rust toolchain the compiler was built against. The compiler verifies the match by content
+  (its `rustc -vV` output and `rustc_driver` library bytes), so any location of the same compiler is accepted. An
+  installed toolchain names its `sysroot` link, which points at the machine's Rust installation.
+- `rust_abi`: the ABI caches of the toolchain's Rust crates (`std`, `core`, `alloc`): the Rust facts checking reads.
+- `externs`: the crates every unit may name, each `{"name", "path"}`: the runtime and its support crates. An explicit
+  manifest dependency takes precedence over a support crate's ambient alias. Packed references also carry
+  `unit_identity` and `payload_digest` for admission without deriving a producer identity from its bytes.
+- `search`: the directories the dependencies of those crates live in.
+- `registry_units`: the prepared registry closure (`incan.oven.closure/1`) available to this toolchain.
+- `registry_lock`: an optional producer closure whose exact entries decide registry root selection.
+- `c_compiler`: the optional Clang that C ABI checks use; a Linux toolchain carries it. The checks read the machine's
+  own headers, those of the system libraries a binding links. Without it the driver uses the machine's Clang (Xcode's
+  on macOS).
+
+Every path is relative to the toolchain directory, which is what makes a toolchain relocatable; an absolute path is
+used as written (a bootstrap home that has not been packed).
+"""
+
+from pub::incan_platform.trace import Operation
+from std.fs import Path
+from std.encoding.hex import hexlify
+from std.hash import sha256
+from std.json import JsonValue
+from files import read_json
+from home_paths import TOOLCHAIN, home
+from observation import observe
+from json_fields import array, field, strings, text_field, required_items, required_text
+from native_closure_input import NativeClosureInput
+pub from toolchain_types import NativeCrate, Toolchain
+from unit_publication import (
+    PayloadAdmission,
+    import_payload,
+    import_publication,
+    record_path,
+    verified_payload,
+    relocate_payload,
+)
+from compiler_facts import FactAdmission, admit_fact, verified_fact, relocate_fact
+from apple_sdk import selected_sdk
+from std.environ import get_or
+from jec import begin, record
+from installation_codec import Installation
+from installation_page import recall as recall_installation, retain as retain_installation
+
+pub const TOOLCHAIN_SCHEMA: str = "incan.toolchain/1"
+
+
+pub model InstallationAdmission:
+    """Verified staged generations to bind after atomic publication; paths are relative to the installation."""
+
+    pub payloads: list[Tuple[str, PayloadAdmission]]
+    pub facts: list[Tuple[str, FactAdmission]]
+
+
+pub def prepare_installation(directory: Path) -> Result[tuple[Toolchain, InstallationAdmission], str]:
+    """Verify staged payloads once and capture their generations before the installation is renamed."""
+    toolchain, document = parsed_toolchain(directory)?
+    paths = admit_toolchain(document, directory)?
+    admit_compiler_facts(toolchain)?
+    payloads = [(path.0[len(directory.0) + 1:], verified_payload(path)?) for path in paths]
+    facts = [(path[len(directory.0) + 1:], verified_fact(Path(path))?) for path in [toolchain.driver] + toolchain.rust_abi]
+    return Ok((toolchain, InstallationAdmission(payloads=payloads, facts=facts)))
+
+
+pub def finish_installation(directory: Path, admission: InstallationAdmission) -> Result[None, str]:
+    """Bind the same verified generations at their final location and record completed installation admission."""
+    for relative, payload in admission.payloads:
+        relocate_payload(directory.joinpath(relative), payload)?
+    for relative, fact in admission.facts:
+        relocate_fact(directory.joinpath(relative), fact)?
+    generation = observe(directory.joinpath("toolchain.json"))?.stamp
+    toolchain, _ = parsed_toolchain(directory)?
+    # The machine-local sysroot exists only after installation has selected and bound it.
+    admit_compiler_facts(toolchain)?
+    retain_installation(directory, read_toolchain, Some((toolchain, generation)))?
+    retire_legacy_admission(directory)?
+    return Ok(None)
+
+
+pub def rust_compiler(toolchain: Toolchain) -> str:
+    """Select the installed toolchain's Rust compiler for every Rust facet operation."""
+    return Path(toolchain.sysroot).joinpath("bin").joinpath("rustc").0
+
+
+pub def toolchain_directory() -> Result[Path, str]:
+    """The directory this Oven's toolchain is installed in: `<home>/toolchains/<toolchain>`."""
+    return Ok(home()?.joinpath("toolchains").joinpath(TOOLCHAIN))
+
+
+pub def load_toolchain() -> Result[Toolchain, str]:
+    """
+    Read the installed toolchain through its physical directory so aliases share native preparation and exports.
+
+    Its payloads are frozen: they are admitted once per installed generation at its location, not on every command.
+    """
+    mut directory = toolchain_directory()?
+    if directory.is_dir():
+        directory = directory.resolve().map_err((error) => error.message())?
+    return load_toolchain_at(directory)
+
+
+pub def load_toolchain_at(directory: Path) -> Result[Toolchain, str]:
+    """Select the compiler from the same admitted installation page every ordinary command reads."""
+    return Ok(installation(directory)?.toolchain.select())
+
+
+pub def installation(directory: Path) -> Result[Installation, str]:
+    """Read the admitted typed page, or verify and admit a changed installation before selecting any facts."""
+    if let Some(page) = recall_installation(directory)?:
+        return Ok(page)
+    clock = begin()
+    page = retain_installation(directory, unprepared_toolchain)?
+    retire_legacy_admission(directory)?
+    record(Operation.ToolchainAdmission, directory.0, clock)
+    return Ok(page)
+
+
+def parsed_without_admission(directory: Path) -> Result[Toolchain, str]:
+    """Import only the description of a generation whose payload admission is already complete."""
+    toolchain, _document = parsed_toolchain(directory)?
+    return Ok(toolchain)
+
+
+def unprepared_toolchain(directory: Path) -> Result[Toolchain, str]:
+    """Produce a description under the page claim, preserving already verified legacy payload admission."""
+    if legacy_admitted(directory)?:
+        return parsed_without_admission(directory)
+    return read_toolchain(directory)
+
+
+pub def read_toolchain(directory: Path) -> Result[Toolchain, str]:
+    """Read the same toolchain contract for installed use or staged installation verification, admitting its payloads."""
+    toolchain, document = parsed_toolchain(directory)?
+    admit_toolchain(document, directory)?
+    admit_compiler_facts(toolchain)?
+    return Ok(toolchain)
+
+
+def parsed_toolchain(directory: Path) -> Result[tuple[Toolchain, JsonValue], str]:
+    """The toolchain contract and its description document, without admitting anything it names."""
+    path = directory.joinpath("toolchain.json")
+    if not path.is_file():
+        return Err(f"no toolchain {TOOLCHAIN} is installed: {path.0} does not exist")
+    document = read_json(path)?
+    toolchain = described_toolchain(document, directory).map_err((failed) => f"{path.0}: {failed}")?
+    return Ok((toolchain, document))
+
+
+pub def described_toolchain(document: JsonValue, directory: Path) -> Result[Toolchain, str]:
+    """The toolchain a description names, located in `directory`, without admitting anything it names."""
+    return toolchain_of(document, directory).map_err((failed) => f"`{".".join(failed)}` is missing or malformed")
+
+
+def admission_marker(directory: Path) -> Result[Path, str]:
+    """Where this home records that the toolchain installed at `directory` had its payloads admitted."""
+    located = hexlify(sha256.digest(directory.0.encode("utf-8")))
+    return Ok(home()?.joinpath("cache/toolchain-admissions").joinpath(f"{located}.stamp"))
+
+
+def legacy_admitted(directory: Path) -> Result[bool, str]:
+    """Import a preceding installation's payload admission once, before the typed page is first selected."""
+    marker = admission_marker(directory)?
+    match marker.read_text("utf-8", "strict"):
+        Ok(saved) => return Ok(saved == observe(directory.joinpath("toolchain.json"))?.stamp)
+        Err(error) =>
+            if error.kind == "not_found":
+                return Ok(false)
+            return Err(error.message())
+
+
+def retire_legacy_admission(directory: Path) -> Result[None, str]:
+    """Remove the preceding marker after conversion; the selected typed revision becomes the sole admission reading."""
+    marker = admission_marker(directory)?
+    match marker.unlink():
+        Ok(_) => pass
+        Err(error) =>
+            if error.kind != "not_found":
+                return Err(error.message())
+    return Ok(None)
+
+
+pub def admit_compiler_facts(toolchain: Toolchain) -> Result[None, str]:
+    """Admit compiler, Rust fact caches and SDK settings before any unit asks for their content identities."""
+    clock = begin()
+    for path in [toolchain.driver] + toolchain.rust_abi:
+        admit_fact(Path(path))?
+    compiler = Path(toolchain.sysroot).joinpath("bin/rustc")
+    if compiler.is_file():
+        admit_fact(compiler)?
+    mut sdk = selected_sdk(toolchain.sysroot)?
+    if sdk == "":
+        sdk = get_or("SDKROOT", "")
+    if sdk != "":
+        admit_fact(Path(sdk).joinpath("SDKSettings.json"))?
+    record(Operation.CompilerFacts, toolchain.driver, clock)
+    return Ok(None)
+
+
+def admit_toolchain(document: JsonValue, directory: Path) -> Result[list[Path], str]:
+    """
+    Admit transported payloads at installation selection, before unit identification reads only producer identities.
+
+    1. Verify native artifacts and their checked interfaces against transported publication records.
+    2. Admit the registry producers that ambient standard closures may name without a Rust facet.
+    3. Verify each standard provider's published artifact set after an installation moves.
+    """
+    mut paths: Dict[str, Path] = {}
+    # 1. Packed native references carry both identities even when their registry store is read-only.
+    for native in required_items(document, "externs")?:
+        path = Path(located(directory, required_text(native, "path")?))
+        if native.get("unit_identity") != None:
+            import_payload(path, required_text(native, "unit_identity")?, required_text(native, "payload_digest")?)?
+        elif record_path(path).is_file():
+            import_publication(path)?
+        if native.get("unit_identity") != None or record_path(path).is_file():
+            paths[path.0] = path
+        for artifact in admit_provider(path.parent())?:
+            paths[artifact.0] = artifact
+    # 2. A fresh home cannot rely on a preceding Rust facet to admit ambient registry dependencies.
+    for artifact in admit_registry(document, directory)?:
+        paths[artifact.0] = artifact
+    # 3. Standard native libraries and checked interfaces both retain their producers after transport.
+    loaves = directory.joinpath("loaves")
+    if not loaves.is_dir():
+        return Ok([paths[name] for name in sorted([name for name in paths.keys()])])
+    for package in loaves.iterdir().map_err((error) => error.message())?:
+        if not package.is_dir():
+            continue
+        for profile in package.iterdir().map_err((error) => error.message())?:
+            if profile.is_dir():
+                for artifact in admit_provider(profile)?:
+                    paths[artifact.0] = artifact
+    return Ok([paths[name] for name in sorted([name for name in paths.keys()])])
+
+
+def admit_provider(directory: Path) -> Result[list[Path], str]:
+    """Admit every transported payload with a producer record before a consumer names its identity."""
+    mut paths: list[Path] = []
+    for record in directory.iterdir().map_err((error) => error.message())?:
+        if record.is_file() and record.name().endswith(".oven-unit"):
+            path = Path(record.0[:-10])
+            import_publication(path)?
+            paths.append(path)
+    return Ok(paths)
+
+
+def admit_registry(document: JsonValue, directory: Path) -> Result[list[Path], str]:
+    """Admit payloads under the producer identities recorded in the selected toolchain's registry closure."""
+    source = Path(located(directory, required_text(document, "registry_units")?))
+    if not source.is_file():
+        return Ok([])
+    mut paths: list[Path] = []
+    externs = read_json(source)?.require("externs").map_err((error) => error.message())?
+    for identity in externs.keys():
+        native = externs.require(identity).map_err((error) => error.message())?
+        artifact = Path(located(source.parent(), required_text(native, "path")?))
+        mut expected = ""
+        if native.get("payload_digest") != None:
+            expected = required_text(native, "payload_digest")?
+        import_payload(artifact, identity, expected)?
+        paths.append(artifact)
+    return Ok(paths)
+
+
+pub def located(directory: Path, path: str) -> str:
+    """
+    A manifest path as a usable one: relative to the toolchain `directory`, or as written when absolute.
+
+    A relative path is joined lexically with `.` and `..` collapsed, so one artifact named from different documents has
+    one spelling and equal artifacts compare equal.
+    """
+    if path.startswith("/"):
+        return path
+    mut parts = directory.0.split("/")
+    for part in path.split("/"):
+        if part == "..":
+            if len(parts) > 1:
+                parts = parts[:len(parts) - 1]
+        elif part != "." and part != "":
+            parts.append(part)
+    return "/".join(parts)
+
+
+def toolchain_of(document: JsonValue, directory: Path) -> Result[Toolchain, list[str]]:
+    """
+    A toolchain description's fields, located in `directory`; a refusal is the field path that failed.
+
+    1. The description is of this schema.
+    2. Each native crate names itself and its library.
+    3. The ABI caches and search directories are lists of paths.
+    4. Every path is located relative to the toolchain directory.
+    """
+    # 1. A description of another schema is refused by name before any other field is read.
+    schema = text_field(document, "schema", [])?
+    if schema != TOOLCHAIN_SCHEMA:
+        return Err(["schema"])
+    # 2. Every crate a unit may name has a crate name and a library, and the first that lacks either is the refusal.
+    mut externs: list[NativeCrate] = []
+    entries = array(field(document, "externs", [])?, ["externs"])?
+    for index in range(len(entries)):
+        place = ["externs", str(index)]
+        name = text_field(entries[index], "name", place)?
+        path = text_field(entries[index], "path", place)?
+        externs.append(NativeCrate(name=name, path=located(directory, path)))
+    # 3. The Rust fact caches and the search directories are lists of paths, nothing else.
+    abi = strings(field(document, "rust_abi", [])?, ["rust_abi"])?
+    search = strings(field(document, "search", [])?, ["search"])?
+    # 4. A path is relative to the toolchain directory, which is what makes a toolchain relocatable.
+    return Ok(
+        Toolchain(
+            driver=located(directory, text_field(document, "driver", [])?),
+            sysroot=located(directory, text_field(document, "sysroot", [])?),
+            rust_abi=[located(directory, item) for item in abi],
+            externs=externs,
+            search=[located(directory, item) for item in search],
+            registry_units=located(directory, text_field(document, "registry_units", [])?),
+            console="",
+            worker_generation="",
+            native_closures=NativeClosureInput(),
+            registry_lock=optional_path(document, "registry_lock", directory)?,
+            c_compiler=optional_path(document, "c_compiler", directory)?,
+        ),
+    )
+
+
+def optional_path(document: JsonValue, key: str, directory: Path) -> Result[str, list[str]]:
+    """Locate an optional recorded input without treating an empty path as the toolchain directory."""
+    if document.get(key) == None:
+        return Ok("")
+    value = text_field(document, key, [])?
+    if value == "":
+        return Ok("")
+    return Ok(located(directory, value))
+
+
+pub def toolchain_file() -> Result[Path, str]:
+    """Where this Oven's toolchain description lives in its home."""
+    return Ok(toolchain_directory()?.joinpath("toolchain.json"))

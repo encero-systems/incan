@@ -10,10 +10,10 @@ If you’re deciding between `model` and `class`, start with the [Models & class
 class Counter:
     value: int  # (1)
 
-    def get(self) -> int:  # (2)
+    pub def get(self) -> int:  # (2)
         return self.value
 
-    def increment(mut self) -> None:  # (3)
+    pub def increment(mut self) -> None:  # (3)
         self.value += 1
 
 def main() -> None:
@@ -146,12 +146,31 @@ Use `self` for read-only methods and `mut self` for methods that modify the obje
 class Counter:
     value: int
 
-    def get(self) -> int:
+    pub def get(self) -> int:
         return self.value
 
-    def increment(mut self) -> None:
+    pub def increment(mut self) -> None:
         self.value += 1
 ```
+
+## Method visibility
+
+Methods follow the same rule as fields: a method is private to its class unless it is marked `pub`, whether or not the class itself is `pub`. `pub def` makes a method part of the class's surface, callable from functions, other types, other modules and consumers of a compiled library. An unmarked method is a helper that only the class's own methods may call; a child class's methods may not call the unmarked methods it inherits.
+
+```incan
+pub class Ledger:
+    pub total: int
+
+    pub def report(self) -> str:
+        return f"checksum {self.checksum()}"
+
+    def checksum(self) -> int:
+        return self.total * 31
+```
+
+`Ledger(total=4).report()` works anywhere; `Ledger(total=4).checksum()` outside `Ledger`'s methods is refused with "Method 'checksum' on 'Ledger' is private".
+
+A method that implements a trait's method takes the trait's visibility instead, so it carries no `pub` of its own; neither does a language hook such as `__eq__` or `__str__`, which the language calls by name. See [Method visibility (Reference)](../../reference/functions.md#method-visibility).
 
 ## Static methods (`@staticmethod`)
 
@@ -164,7 +183,7 @@ class MathUtils:
     precision: int = 2
 
     @staticmethod
-    def clamp(value: int, low: int, high: int) -> int:
+    pub def clamp(value: int, low: int, high: int) -> int:
         if value < low:
             return low
         if value > high:
@@ -205,13 +224,13 @@ Classes support single inheritance:
 class Animal:
     name: str
 
-    def speak(self) -> str:
+    pub def speak(self) -> str:
         return "..."
 
 class Dog extends Animal:
     breed: str
 
-    def speak(self) -> str:
+    pub def speak(self) -> str:
         return "Woof!"
 ```
 
@@ -284,7 +303,7 @@ model User:
 class UserService:
     users: list[User]
 
-    def get_emails(self) -> list[str]:
+    pub def get_emails(self) -> list[str]:
         return [u.email for u in self.users]
 
 def main() -> None:

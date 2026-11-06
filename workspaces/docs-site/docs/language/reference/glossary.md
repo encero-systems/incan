@@ -43,7 +43,7 @@ An identifier is a name that is not a keyword. Any identifier can name a model o
 
 A soft keyword is a keyword only after a particular import; before it, the word is an identifier.
 
-`async` and `await` are soft keywords: they are keywords after an import whose path begins with `std.async`.
+`async` and `await` are reserved words, not soft keywords. A library may still provide its own import-activated vocabulary.
 
 See: [Imports and modules (reference)](imports_and_modules.md#soft-keywords).
 
@@ -63,7 +63,7 @@ See: [Error Handling](../explanation/error_handling.md).
 
 Async code lets a program do other work while waiting on I/O (network, disk, timers).
 
-`async def` and `await` require an import whose path begins with `std.async` (see [Soft keyword](#soft-keyword)).
+`async def` and `await` are language syntax and need no import. Import `std.async` for its task, timer, race, channel, and synchronization APIs.
 
 See:
 

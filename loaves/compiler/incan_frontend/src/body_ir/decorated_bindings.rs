@@ -1,5 +1,4 @@
-//! RFC 036 originals with checked module, per-instantiation and per-invocation replacement frames, used exclusively by
-//! Body IR.
+//! RFC 036 originals with checked module and per-instantiation replacement frames, used exclusively by Body IR.
 
 use super::args::fixed_elements;
 use super::*;
@@ -28,13 +27,10 @@ pub(super) fn supports_method(method: &ast::MethodDecl, owner: &str, type_info: 
             .iter()
             .zip(replacement)
             .all(|(left, right)| left.ty == right.ty && left.is_mut == right.is_mut && left.kind == right.kind)
-        && method.decorators.iter().all(
-            |decorator| match decorators::from_segments(&decorator.node.path.segments) {
-                Some(decorators::DecoratorId::RustExtern) => false,
-                Some(_) => true,
-                None => decorator.node.path.segments.len() == 1,
-            },
-        )
+        && method.decorators.iter().all(|decorator| {
+            decorators::from_segments(&decorator.node.path.segments).is_some()
+                || decorator.node.path.segments.len() == 1
+        })
 }
 
 /// Rewrite only shared receiver positions that the existing checker planned for a complete method chain.
@@ -99,10 +95,11 @@ fn shared_callable_receiver(mut shape: IncanType) -> IncanType {
     shape
 }
 
-/// Admit checked source callables without conflating closed cached originals with signatures using declaration binders.
-/// Open signatures preserve their return type and use the invocation wrapper. The measured closed generic profile
-/// remains a synchronous zero-argument string callable with its own initializer template. Factories retain their
-/// validated closed applications; extern delegations cannot bypass the visible replacement.
+/// Admit checked source callables with an initializer template per generic instantiation, including signatures using
+/// declaration binders and overloads keyed on a type bound (`cast[T with Int](expr: Col)`, #1033). Factories retain
+/// their validated closed applications; extern delegations cannot bypass the visible replacement.
+/// A nongeneric replacement may change required ordinary input types and passing modes; the wrapper retains the
+/// original as a separate callable and receives the replacement's checked signature.
 pub(super) fn supports_function(
     function: &ast::FunctionDecl,
     span: ast::Span,
@@ -112,7 +109,7 @@ pub(super) fn supports_function(
         .type_info
         .declarations
         .decorated_function_bindings_by_span
-        .get(&(span.start, span.end))
+        .get(&span)
     else {
         return false;
     };
@@ -126,39 +123,51 @@ pub(super) fn supports_function(
         .iter()
         .map(|parameter| parameter.name.clone())
         .collect::<Vec<_>>();
-    let signature = parameter_types::checked_parameter_type(&binding.ty, facts.type_info, &type_parameters);
-    let profile = type_parameters.is_empty()
-        || (original_return == replacement_return
-            && (bir::decorated_signature_uses_parameters(&signature, &type_parameters)
-                || matches!(&signature, IncanType::Function { params, return_type }
-                    if params.is_empty()
-                        && **return_type == IncanType::Primitive(IncanPrimitiveType::Str))));
-    profile
-        && original.len() == replacement.len()
+    // Open and closed generic signatures alike must keep the original return type.
+    let profile = type_parameters.is_empty() || original_return == replacement_return;
+    let preserves_inputs = original
+        .iter()
+        .zip(replacement)
+        .all(|(left, right)| left.ty == right.ty && left.is_mut == right.is_mut && left.kind == right.kind);
+    let changes_closed_inputs = type_parameters.is_empty()
+        && function.params.iter().all(|parameter| parameter.node.default.is_none())
         && original
             .iter()
             .zip(replacement)
-            .all(|(left, right)| left.ty == right.ty && left.is_mut == right.is_mut && left.kind == right.kind)
-        && !function.is_async()
-        && function.decorators.iter().all(
-            |decorator| match decorators::from_segments(&decorator.node.path.segments) {
-                Some(decorators::DecoratorId::RustExtern) => false,
-                Some(_) => true,
-                None => {
-                    decorator.node.path.segments.len() == 1
-                        || facts
-                            .type_info
-                            .declarations
-                            .body_ir_decorator_static_receivers
-                            .contains_key(&(decorator.span.start, decorator.span.end))
-                }
-            },
-        )
+            .all(|(left, right)| left.kind == ast::ParamKind::Normal && right.kind == ast::ParamKind::Normal);
+    profile
+        && original.len() == replacement.len()
+        && (preserves_inputs || changes_closed_inputs)
+        && function.decorators.iter().all(|decorator| {
+            decorators::from_segments(&decorator.node.path.segments).is_some()
+                || facts
+                    .type_info
+                    .declarations
+                    .body_ir_decorator_applications
+                    .contains_key(&decorator.span)
+        })
+}
+
+/// Convert an async declaration's logical callable type to the runtime constructor type decorators receive.
+///
+/// Source checking keeps `async def f() -> T` as a logical `() -> T` plus its async declaration fact. Decorator
+/// initialization executes against the actual callable value, whose synchronous invocation constructs
+/// `Awaitable[T]`; only this Body IR boundary exposes that carrier.
+fn runtime_decorator_callable_type(ty: &ResolvedType, is_async: bool) -> ResolvedType {
+    if !is_async {
+        return ty.clone();
+    }
+    let ResolvedType::Function(params, result) = ty else {
+        return ty.clone();
+    };
+    ResolvedType::Function(
+        params.clone(),
+        Box::new(ResolvedType::Generic("Awaitable".to_string(), vec![(**result).clone()])),
+    )
 }
 
 /// Retain originals and replacement initializers in source order, replacing their visible bodies with wrappers.
-/// Closed generic signatures retain initializer templates outside module statics; checked open signatures use
-/// invocation frames instead.
+/// Generic signatures retain initializer templates outside module statics, closed together with each callable instance.
 pub(super) fn collect(
     program: &ast::Program,
     facts: &BodyIrLoweringFacts<'_, '_>,
@@ -207,7 +216,7 @@ pub(super) fn collect(
             .type_info
             .declarations
             .decorated_function_bindings_by_span
-            .get(&(declaration.span.start, declaration.span.end))
+            .get(&declaration.span)
         else {
             continue;
         };
@@ -217,9 +226,11 @@ pub(super) fn collect(
         let Some(body) = bodies.iter_mut().find(|body| body.span == hir_span(declaration.span)) else {
             continue;
         };
-        let ty = parameter_types::checked_parameter_type(&binding.ty, facts.type_info, &body.type_parameters);
+        let runtime_ty = runtime_decorator_callable_type(&binding.ty, binding.is_async);
+        let runtime_original_ty = runtime_decorator_callable_type(&binding.original_ty, binding.is_async);
+        let ty = parameter_types::checked_parameter_type(&runtime_ty, facts.type_info, &body.type_parameters);
         let original_ty =
-            parameter_types::checked_parameter_type(&binding.original_ty, facts.type_info, &body.type_parameters);
+            parameter_types::checked_parameter_type(&runtime_original_ty, facts.type_info, &body.type_parameters);
         retain_binding(
             &function.decorators,
             declaration.span,
@@ -235,8 +246,7 @@ pub(super) fn collect(
 }
 
 /// Attach a replacement to the original declaration's canonical identity with its checked initialization scope.
-/// Closed generic originals retain the exact initializer template; open signatures use the checked invocation wrapper,
-/// and only nongeneric replacements become module statics.
+/// Generic originals retain the exact initializer template, and only nongeneric replacements become module statics.
 #[expect(
     clippy::too_many_arguments,
     reason = "Keep original and replacement signatures and their distinct binding and static outputs explicit at this boundary."
@@ -254,18 +264,7 @@ fn retain_binding(
     let Some(canonical) = body.canonical.clone() else {
         return;
     };
-    if !body.type_parameters.is_empty() && bir::decorated_signature_uses_parameters(&ty, &body.type_parameters) {
-        if let Some(wrapper) = invocation_wrapper(decorators, span, facts, body, &original_ty, &ty) {
-            let original_body = std::mem::replace(body, wrapper);
-            retained.push(bir::DecoratedBinding {
-                original_body,
-                initializer: None,
-                initialization: bir::DecoratedInitialization::PerInvocation,
-            });
-        }
-        return;
-    }
-    let initializer = initializer(decorators, span, facts, body, &original_ty, &ty, false);
+    let initializer = initializer(decorators, span, facts, body, &original_ty, &ty);
     let replacement = bir::StaticDeclaration {
         canonical,
         ty,
@@ -305,7 +304,6 @@ fn initializer(
     original: &bir::Body,
     original_ty: &IncanType,
     replacement_ty: &IncanType,
-    invocation: bool,
 ) -> bir::Body {
     let mut builder = BodyBuilder::new(facts, replacement_ty.clone());
     builder.type_parameters = original.type_parameters.clone();
@@ -314,13 +312,6 @@ fn initializer(
         .first()
         .is_some_and(|local| matches!(local.origin, bir::LocalOrigin::Receiver { mutable: false }));
     let scope = builder.new_scope(None, hir_span(span));
-    if invocation {
-        // Seed storage through the allocator without binding input names into the decorator's module scope.
-        for local in original.locals.iter().take(original.params.len()) {
-            let id = builder.new_temp(local.ty.clone(), scope, local.span);
-            builder.locals[id.index()] = local.clone();
-        }
-    }
     let mut statements = Vec::new();
 
     // ---- Context: the original callable with its checked passing parameters ----
@@ -338,6 +329,7 @@ fn initializer(
         }
         parameter.kind = ty.kind;
         parameter.mutable = ty.is_mut;
+        parameter.native_owned = ty.native_owned;
         parameter.local = builder.new_temp(parameter.ty.clone(), scope, hir_span(span));
     }
     let mut value = builder.push_assign_temp(
@@ -345,6 +337,7 @@ fn initializer(
             params: parameters,
             captured_operands: Vec::new(),
             body: Box::new(bir::ClosureBody {
+                native_storage: None,
                 original_callable: original.canonical.clone(),
                 function_item: true,
                 consumes_environment: false,
@@ -378,11 +371,12 @@ fn initializer(
     });
     let mut body = original.clone();
     body.return_type = replacement_ty.clone();
+    // Applying decorators initializes a callable value synchronously even when the original callable constructs a
+    // future. Async-ness belongs only to the separately retained original body.
+    body.is_async = false;
     body.locals = builder.locals;
-    if !invocation {
-        body.params.clear();
-        body.param_locals.clear();
-    }
+    body.params.clear();
+    body.param_locals.clear();
     body.scopes = builder.scopes;
     body.block = bir::Block {
         scope,
@@ -419,15 +413,13 @@ fn lower_application(
         .type_info
         .declarations
         .body_ir_decorator_applications
-        .get(&(decorator.span.start, decorator.span.end))
+        .get(&decorator.span)
     {
         let ty = crate::resolved_type_subst::substitute_resolved_type(
             &application.callable_type,
             &application.type_bindings,
         );
-        builder
-            .type_overrides
-            .insert((decorator.span.start, decorator.span.end), builder.checked_type(&ty));
+        builder.type_overrides.insert(decorator.span, builder.checked_type(&ty));
     }
     let callable = builder.lower_expr_to_operand(&path, scope, statements);
     let IncanType::Function { return_type, .. } = builder.resolve_ty(decorator.span) else {
@@ -466,13 +458,7 @@ fn lower_application(
 /// Recreate only the expression the checker already evaluated at this decorator's own span. Its recorded identities,
 /// argument bindings and result type remain authoritative; this helper does not resolve or recheck a factory.
 fn decorator_expression(decorator: &ast::Spanned<ast::Decorator>) -> Option<ast::Spanned<ast::Expr>> {
-    if decorator.node.path.segments.len() > 2 {
-        return None;
-    }
-    let path = ast::Spanned::new(
-        ast::Expr::Ident(decorator.node.path.segments.first()?.clone()),
-        decorator.span,
-    );
+    let path = decorator_path_expression(&decorator.node.path.segments, decorator.span)?;
     if !decorator.node.is_call {
         return Some(path);
     }
@@ -487,75 +473,31 @@ fn decorator_expression(decorator: &ast::Spanned<ast::Decorator>) -> Option<ast:
             ast::DecoratorArg::Named(_, ast::DecoratorArgValue::Type(_)) => return None,
         }
     }
-    let expression = match decorator.node.path.segments.as_slice() {
-        [_, method] => ast::Expr::MethodCall(
-            Box::new(path),
-            method.clone(),
+    let expression = if decorator.node.path.segments.len() > 1 {
+        let receiver = decorator_path_expression(
+            &decorator.node.path.segments[..decorator.node.path.segments.len() - 1],
+            decorator.span,
+        )?;
+        ast::Expr::MethodCall(
+            Box::new(receiver),
+            decorator.node.path.segments.last()?.clone(),
             decorator.node.type_args.clone(),
             arguments,
-        ),
-        [_] => ast::Expr::Call(Box::new(path), decorator.node.type_args.clone(), arguments),
-        _ => return None,
+        )
+    } else {
+        ast::Expr::Call(Box::new(path), decorator.node.type_args.clone(), arguments)
     };
     Some(ast::Spanned::new(expression, decorator.span))
 }
 
-/// Apply the checked decorator chain in the wrapper's own invocation frame, then forward its original arguments.
-/// Open signatures use this frame; closed generic signatures keep their distinct per-instantiation initializer cache.
-fn invocation_wrapper(
-    decorators: &[ast::Spanned<ast::Decorator>],
-    span: ast::Span,
-    facts: &BodyIrLoweringFacts<'_, '_>,
-    original: &bir::Body,
-    original_ty: &IncanType,
-    replacement_ty: &IncanType,
-) -> Option<bir::Body> {
-    let IncanType::Function { return_type, .. } = replacement_ty else {
-        return None;
-    };
-    let mut body = initializer(decorators, span, facts, original, original_ty, replacement_ty, true);
-    let returned = body.block.stmts.pop()?;
-    let bir::StatementKind::Return {
-        value: Some(bir::Operand::Place(callable)),
-    } = returned.kind
-    else {
-        return None;
-    };
-    body.return_type = *return_type.clone();
-    let result = bir::LocalId(body.locals.len().try_into().ok()?);
-    body.locals.push(bir::LocalDecl {
-        id: result,
-        name: None,
-        identity: None,
-        ty: body.return_type.clone(),
-        origin: bir::LocalOrigin::Temporary,
-        scope: body.block.scope,
-        span: body.span,
-    });
-    let arguments = forwarded_arguments(&body);
-    body.block.stmts.push(bir::Statement {
-        kind: bir::StatementKind::Call {
-            destination: Some(bir::Place::from_local(result)),
-            callee: bir::Callee::Function(bir::CallableTarget::Local(bir::LocalCallableTarget {
-                operand: callable,
-                binding: bir::ArgumentBinding::resolved_positional(body.params.len()),
-            })),
-            args: fixed_elements(arguments),
-            may_panic: false,
-        },
-        span: body.span,
-    });
-    body.block.stmts.push(bir::Statement {
-        kind: bir::StatementKind::Return {
-            value: Some(bir::Operand::place(
-                bir::Place::from_local(result),
-                bir::OwnershipFact::Move,
-                true,
-            )),
-        },
-        span: body.span,
-    });
-    Some(body)
+/// Rebuild the exact checked identifier/field path of a decorator without resolving any segment from its spelling.
+fn decorator_path_expression(segments: &[String], span: ast::Span) -> Option<ast::Spanned<ast::Expr>> {
+    let mut segments = segments.iter();
+    let mut expression = ast::Spanned::new(ast::Expr::Ident(segments.next()?.clone()), span);
+    for segment in segments {
+        expression = ast::Spanned::new(ast::Expr::Field(Box::new(expression), segment.clone()), span);
+    }
+    Some(expression)
 }
 
 /// Forward each wrapper input once under its existing checked receiver and ownership contract.
@@ -585,6 +527,9 @@ fn wrapper(original: &bir::Body, replacement: &bir::StaticDeclaration) -> Option
     }
     let mut body = original.clone();
     body.return_type = *return_type.clone();
+    // The source binding remains async to the checker, but its replacement wrapper is the synchronous future
+    // constructor returned by decoration. The separately retained original remains the coroutine producer.
+    body.is_async = false;
     body.locals.truncate(body.params.len());
     for (parameter, ty) in body.params.iter_mut().zip(params) {
         if matches!(
@@ -598,6 +543,7 @@ fn wrapper(original: &bir::Body, replacement: &bir::StaticDeclaration) -> Option
         }
         parameter.kind = ty.kind;
         parameter.mutable = ty.is_mut;
+        parameter.native_owned = ty.native_owned;
         body.locals[parameter.local.index()].ty = parameter.ty.clone();
     }
     let scope = body.block.scope;

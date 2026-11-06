@@ -1,0 +1,11 @@
+from rust::serde_json import to_string
+
+
+def answer() -> int:
+    """Compute the library's default independently of its native serialization call."""
+    return 40 + 2
+
+
+pub def encoded(value: int = answer()) -> str:
+    """Serialize the selected value while keeping native temporaries private to the compiled item."""
+    return to_string(value).unwrap_or("serialization failed")

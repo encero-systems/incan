@@ -1,0 +1,11 @@
+# behavior: Rust generic inference refuses conflicting argument and result constraints
+# expect-diagnostic: INCAN-T0001
+
+"""An expected result cannot change a Rust function's input type."""
+
+from rust::std::convert import identity
+
+
+def main() -> None:
+    """Refuse conflicting constraints on the same Rust parameter."""
+    value: str = identity(7)

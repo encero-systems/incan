@@ -1,0 +1,59 @@
+# behavior: a guarded native callback is copied across owner destruction while a checked static method preserves mutation
+# expect-stdout:
+#   1
+#   word
+#   2
+#   word
+
+from rust::std::sync import Mutex
+from rust::std::collections import HashMap
+from rust::std::string import String as RustString
+
+type Callback = () -> str
+
+
+model Counter:
+    """Record each source lookup through one checked mutating static receiver."""
+    count: int
+
+    def advance(mut self) -> int:
+        """Change the stored count in place and return the new value."""
+        self.count += 1
+        return self.count
+
+
+static LOOKUPS: Counter = Counter(count=0)
+
+
+def word() -> str:
+    """Return the stored pointer's observable result."""
+    return "word"
+
+
+def borrowed_key(value: &RustString) -> &RustString:
+    """Preserve the native key's borrowed carrier."""
+    return value
+
+
+def lookup() -> Callback:
+    """Look up the exact pointer behind the metadata-selected Deref target."""
+    mut entries: HashMap[RustString, () -> str] = HashMap.new()
+    _ = entries.insert(RustString.from("key"), word)
+    cell = Mutex.new(entries)
+    mut guard = match cell.lock():
+        Ok(value) => value
+        Err(error) => error.into_inner()
+    key: RustString = RustString.from("key")
+    match guard.get(borrowed_key(key)):
+        Some(value) =>
+            println(LOOKUPS.advance())
+            return value.clone()
+        None => return word
+
+
+def main() -> None:
+    """Invoke each copied pointer after its map, guard and mutex have been dropped."""
+    first = lookup()
+    println(first())
+    second = lookup()
+    println(second())

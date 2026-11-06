@@ -1,0 +1,7 @@
+# behavior: the std.async module used without its import is refused even though async syntax is ambient
+# expect-diagnostic: INCAN-T0001
+
+"""Invalid fixture: std.async module import missing."""
+
+async def work() -> None:
+    await async.sleep(0.1)

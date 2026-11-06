@@ -1,0 +1,876 @@
+"""Lift closure expressions and generator expressions into planned functions with their captured environments."""
+
+from pub::incan_mir_plan import (
+    Callee,
+    CalleeKind,
+    Function,
+    Local,
+    Operand,
+    OperandKind,
+    Parameter,
+    Place,
+    PlanType,
+    Projection,
+    RvalueKind,
+    SourceSpan,
+    assign as plan_assign,
+    place as plan_place,
+)
+from explicit_arguments import explicit_place_argument
+from rust::incan_semantics_core::body_ir import (
+    NativeClosureStorage,
+    Block as RustBlock,
+    CallableParamDefault,
+    GeneratorBody as RustGeneratorBody,
+    CallableParam as RustCallableParam,
+    LocalId as RustLocalId,
+    Operand as RustOperand,
+    OwnershipFact,
+    Statement as RustStatement,
+    StatementKind as RustStatementKind,
+)
+from layout_types import shared_receiver_type
+from rust::incan_semantics_core import IncanInputAccess
+from tuple_iterators import clone_zip
+from generators import generator_shape, generator_element
+from generator_expressions import (
+    first_clause_item,
+    source_generator,
+    source_item,
+    construct_chain,
+    step_result,
+    step_capture_type,
+    step_pointer,
+)
+from generator_clauses import later_clauses, clause_item
+from table_views import borrowed_at
+from element_places import is_element_place
+from tuples import tuple_has_owners
+from text_plan import clone_text
+from builtins import list_call
+from frame import place_type, Builder, temporary, drop_owned, track_rvalue_moves, terminate_call, read_place
+from collections import is_owned_collection
+from lists import list_shape, list_element, is_owned_list, parameter_storage_type, is_exclusive_borrow
+from type_parameters import merge_instance_requests
+from shared_callables import record_scalar_closure, scalar_capture
+from closures import (
+    packed_input,
+    function_assignment,
+    callable_signature,
+    closure_arguments,
+    closure_capture_type,
+    closure_constructor,
+    reference_capture,
+)
+from partial_callables import (
+    default_flags,
+    with_supplied_flags,
+    partial_flags,
+    record_partial,
+    bind_defaulted_parameter,
+)
+from lowering import BodyIrModule
+from checked_values import scalar_place, target_read
+from operators import operand_type
+from statements import finish_return, is_nominal_type, is_owned_callable, lower_statement, return_operand
+from callable_calls import owned_callable_value
+from list_values import list_borrow, value_operand
+from list_methods import borrowed_list_generator_call
+from list_iteration import frozen_list_snapshot
+from hashed_collections import cloned_collection
+
+
+pub def assign_callable(
+    mut builder: Builder,
+    target: Place,
+    value: Operand,
+    pointer_storage: bool,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Store a Copy callable with its retained item type or the source-required function-pointer coercion."""
+    if target.projection != Projection.Whole:
+        return Err("unsupported Body IR projected callable assignment")
+    source = operand_type(builder, value)?
+    match place_type(builder.locals, target):
+        PlanType.Closure(signature) =>
+            # A closure holding borrowed captures keeps its borrowing object in the binding.
+            if source == PlanType.BorrowingClosure(signature):
+                return move_closure(builder, target, value, signature, false, span, true)
+            owned = owned_callable_value(builder, value, signature, span)?
+            return move_closure(builder, target, owned, signature, false, span)
+        _ => pass
+    ty, operation = function_assignment(
+        place_type(builder.locals, target),
+        source,
+        value,
+        pointer_storage,
+        f"binding in {builder.name}",
+    )?
+    builder.locals[target.local].ty = ty
+    record_partial(builder, target.local, [])
+    builder.emit(plan_assign(target, operation, span))
+    return Ok(None)
+
+
+pub def move_closure(
+    mut builder: Builder,
+    target: Place,
+    value: Operand,
+    signature: list[PlanType],
+    consumes_environment: bool,
+    span: SourceSpan,
+    borrowing: bool = false,
+) -> Result[None, str]:
+    """Transfer an owned closure into a callable binding, which takes the closure's own boxed type."""
+    if target.projection != Projection.Whole:
+        return Err("unsupported Body IR projected closure assignment")
+    if target.local in builder.function_pointer_locals:
+        return Err("unsupported Body IR capturing closure stored as a function pointer")
+    mut declared = callable_signature(place_type(builder.locals, target))?
+    # A closure whose parameters carry defaults keeps its supplied flags in whichever binding holds it.
+    mut flags: list[bool] = []
+    match value.kind:
+        OperandKind.Move(source) =>
+            match partial_flags(builder, source.local):
+                Some(held) =>
+                    declared = with_supplied_flags(declared, held.clone())?
+                    flags = held
+                None => pass
+        _ => pass
+    if declared != signature:
+        return Err("invalid Body IR closure assignment signature")
+    if consumes_environment:
+        match value.kind:
+            OperandKind.Move(_source) => pass
+            _ => return Err("unsupported Body IR consuming closure assignment without a move")
+    mut scalar_environment = false
+    match value.kind:
+        OperandKind.Move(source) =>
+            scalar_environment = source.projection == Projection.Whole and source.local in builder.scalar_closures and source.local not in builder.unproven_closures
+        _ => pass
+    record_scalar_closure(builder, target.local, scalar_environment)
+    track_rvalue_moves(builder, RvalueKind.Use(value))
+    drop_owned(builder, target.local, span)
+    hold_closure(builder, target.local, signature, flags, consumes_environment, borrowing)?
+    builder.emit(plan_assign(target, RvalueKind.Use(value), span))
+    builder.owned.append(target.local)
+    return Ok(None)
+
+
+pub def stored_callable(mut builder: Builder, operand: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
+    """Read the callable an assignment stores; a partial moves out whole, because its binding carries its flags."""
+    match operand:
+        RustOperand.Place(read) =>
+            match read.place.global():
+                Some(_global) => return value_operand(builder, operand, span)
+                None => pass
+            if is_element_place(builder, read.place)?:
+                return value_operand(builder, operand, span)
+            source = scalar_place(builder, read.place, span)?
+            match partial_flags(builder, source.local):
+                Some(_flags) =>
+                    if read.fact != OwnershipFact.Move or source.projection != Projection.Whole:
+                        return Err("unsupported Body IR partial shared between bindings")
+                    return Ok(read_place(source, true, span))
+                None => pass
+        _ => pass
+    return value_operand(builder, operand, span)
+
+
+def hold_closure(
+    mut builder: Builder,
+    local: int,
+    signature: list[PlanType],
+    flags: list[bool],
+    consumes_environment: bool,
+    borrowing: bool = false,
+) -> Result[None, str]:
+    """
+    Type a binding as the owned closure it now holds and record the closure's supplied flags, if it has any.
+
+    A checked local starts with a provisional source signature; its first value fixes the supplied-flag and Fn/FnOnce ABI. Parameters, return storage and already materialized locals keep their existing ABI across later moves and drops.
+    """
+    if local <= builder.parameter_count or local in builder.materialized_closures:
+        match borrowed_at(builder.locals, local).ty:
+            PlanType.Closure(held) =>
+                if consumes_environment:
+                    return Err("unsupported Body IR binding changing callable consumption")
+                if held != signature:
+                    return Err("unsupported Body IR binding holding closures with different default parameters")
+            PlanType.ClosureOnce(held) =>
+                if not consumes_environment or held != signature:
+                    return Err("unsupported Body IR binding changing callable consumption or signature")
+            _ => pass
+    mut object_type = PlanType.Closure(signature)
+    if consumes_environment:
+        object_type = PlanType.ClosureOnce(signature)
+    if borrowing:
+        object_type = PlanType.BorrowingClosure(signature)
+    builder.locals[local].ty = object_type
+    if local not in builder.materialized_closures:
+        builder.materialized_closures.append(local)
+    record_partial(builder, local, flags)
+    return Ok(None)
+
+
+pub def synthesize(mut builder: Builder, function: Function) -> None:
+    """Retain one synthesized function per name; a forwarding environment for one item is shared."""
+    for retained in builder.synthesized:
+        if retained.name == function.name:
+            return
+    builder.synthesized.append(function)
+
+
+pub def lower_closure(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: Place,
+    parameters: &list[RustCallableParam],
+    captures: &list[RustOperand],
+    capture_locals: &list[RustLocalId],
+    statements: &list[RustStatement],
+    result: &RustOperand,
+    consumes_environment: bool,
+    native_storage: &Option[NativeClosureStorage],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Lift a closure expression's body into a planned function, then bind the value the source requires.
+
+    A closure without captures is that function's item, so it reuses item storage, pointer reification, and calls. A
+    capturing closure boxes one environment holding its captures by value, which is the checker's snapshot contract.
+    """
+    if target.projection != Projection.Whole:
+        return Err("unsupported Body IR projected closure construction")
+    if builder.local_offset != 0:
+        return Err("unsupported Body IR closure inside a deferred default")
+    if len(captures) != len(capture_locals):
+        return Err("invalid Body IR closure capture layout")
+    flags = default_flags(parameters)
+    mut signature = callable_signature(place_type(builder.locals, target))?
+    if true in flags:
+        if len(captures) == 0:
+            return Err("unsupported Body IR partial without presets")
+        signature = with_supplied_flags(signature, flags.clone())?
+    mut operands: list[Operand] = []
+    mut capture_types: list[PlanType] = []
+    for capture in captures:
+        operand = capture_operand(builder, capture, span)?
+        ty = operand_type(builder, operand)?
+        match ty:
+            PlanType.ZipIterator(_left, _right) =>
+                if not consumes_environment:
+                    return Err("unsupported Body IR iterator closure capture without FnOnce contract")
+            _ => pass
+        if not closure_capture_type(ty, consumes_environment):
+            return Err(f"unsupported Body IR closure capture {ty:?}")
+        operands.append(operand)
+        capture_types.append(ty)
+    name = f"__incan_closure_{builder.name}_{len(builder.synthesized)}"
+    lifted = lift_closure(
+        module,
+        builder,
+        name,
+        capture_types,
+        parameters,
+        capture_locals,
+        statements,
+        result,
+        signature,
+        consumes_environment,
+        span,
+    )?
+    synthesize(builder, lifted)
+    item = RvalueKind.FunctionItem(Callee(kind=CalleeKind.Planned(name), span=span))
+    if len(capture_types) == 0 and not is_owned_callable(place_type(builder.locals, target)):
+        if target.local in builder.function_pointer_locals:
+            held = temporary(builder, PlanType.FunctionItem(name, signature), span)
+            builder.emit(plan_assign(held, item, span))
+            return assign_callable(builder, target, read_place(held, false, span), true, span)
+        builder.locals[target.local].ty = PlanType.FunctionItem(name, signature)
+        record_partial(builder, target.local, [])
+        builder.emit(plan_assign(target, item, span))
+        return Ok(None)
+    if target.local in builder.function_pointer_locals:
+        return Err("unsupported Body IR capturing closure stored as a function pointer")
+    _ = closure_arguments(signature)?
+    # An environment holding shared references lives no longer than their shortest borrow, which checking keeps alive.
+    # Its object takes that common bound while each capture retains its independent source lifetime.
+    mut references = 0
+    for capture in capture_types:
+        if reference_capture(capture):
+            references += 1
+    borrowing = references != 0
+    if borrowing and true in flags:
+        return Err("unsupported Body IR closure holding borrowed captures with default parameters")
+    mut native_send = false
+    mut native_sync = false
+    match native_storage:
+        Some(storage) =>
+            if borrowing:
+                return Err("unsupported Body IR native callback holding borrowed captures")
+            if not storage.move_capture:
+                return Err("invalid Body IR native callback without owned capture storage")
+            native_send = storage.send
+            native_sync = storage.sync
+        None => pass
+    constructor = closure_constructor(
+        f"{name}_new",
+        name,
+        capture_types,
+        signature,
+        consumes_environment,
+        span,
+        native_send,
+        native_sync,
+        borrowing,
+    )
+    synthesize(builder, constructor)
+    drop_owned(builder, target.local, span)
+    hold_closure(builder, target.local, signature, flags, consumes_environment, borrowing)?
+    if native_send or native_sync:
+        builder.locals[target.local].ty = PlanType.NativeClosure(signature, native_send, native_sync)
+    terminate_call(builder, CalleeKind.Planned(f"{name}_new"), operands, target, span)
+    mut scalar_environment = true
+    for capture in capture_types:
+        if not scalar_capture(capture):
+            scalar_environment = false
+    record_scalar_closure(builder, target.local, scalar_environment)
+    builder.owned.append(target.local)
+    return Ok(None)
+
+
+def capture_operand(mut builder: Builder, capture: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
+    """
+    A capture the closure borrows is a fresh shared loan of its exact place, unless that place already holds a shared
+    reference, which is copied; any other capture is read as a value.
+    """
+    match capture:
+        RustOperand.Place(read) =>
+            if read.fact == OwnershipFact.Borrow:
+                source = scalar_place(builder, read.place, span)?
+                referent = place_type(builder.locals, source)
+                if not reference_capture(referent):
+                    expected = shared_receiver_type(referent)?
+                    return explicit_place_argument(builder, source, read.fact, expected, IncanInputAccess.Shared, span)
+        _ => pass
+    return value_operand(builder, capture, span)
+
+
+def lift_closure(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    name: str,
+    captures: list[PlanType],
+    parameters: &list[RustCallableParam],
+    capture_locals: &list[RustLocalId],
+    statements: &list[RustStatement],
+    result: &RustOperand,
+    signature: list[PlanType],
+    consumes_environment: bool,
+    span: SourceSpan,
+) -> Result[Function, str]:
+    """
+    Build a closure body as a planned function taking its captures, then its inputs, by value.
+
+    The enclosing frame's locals keep their Body IR slots after those arguments, so the closure's statements lower with
+    the ordinary local offset; a prologue moves each argument into the capture or parameter local the body reads. A
+    parameter that carries a default takes a supplied flag before its value (see `partial_callables`).
+    """
+    mut supplied_flags = 0
+    for flag in default_flags(parameters):
+        if flag:
+            supplied_flags += 1
+    if len(parameters) + supplied_flags + 1 != len(signature):
+        return Err("invalid Body IR closure parameter count")
+    mut arguments: list[PlanType] = []
+    for ty in captures:
+        arguments.append(ty)
+    for index in range(len(signature) - 1):
+        arguments.append(signature[index])
+    count = len(arguments)
+    mut lifted_parameters: list[Parameter] = []
+    for index in range(count):
+        lifted_parameters.append(Parameter(name=f"__incan_argument_{index}", ty=arguments[index], span=span))
+    mut lifted = lifted_frame(builder, name, arguments, signature[-1], span)
+    lifted.consuming_closure_frame = consumes_environment
+    for index in range(len(captures)):
+        captured_local = capture_locals[index]
+        destination = int(captured_local.index()) + 1 + count
+        mut captured = lifted.locals[destination].ty
+        # A shared reference capture is stored as that reference; the body reads its borrowed value through it.
+        if reference_capture(arguments[index]):
+            captured = arguments[index]
+        bind_closure_input(lifted, destination, index + 1, arguments[index], captured, span)?
+    mut position = len(captures)
+    for parameter in parameters:
+        destination = int(parameter.local.index()) + 1 + count
+        match parameter.default:
+            CallableParamDefault.Required =>
+                declared = lifted.locals[destination].ty
+                # A closure checked against a callable type whose input is `mut` takes that input as the borrow too.
+                mutable = parameter.mutable or parameter_storage_type(declared, true) == arguments[position]
+                mut storage = parameter_storage_type(declared, mutable)
+                if parameter.native_owned or parameter.input_access != IncanInputAccess.Inferred:
+                    storage = packed_input(
+                        declared,
+                        parameter.kind,
+                        parameter.mutable,
+                        parameter.native_owned,
+                        parameter.input_access,
+                    )?
+                bind_closure_input(lifted, destination, position + 1, arguments[position], storage, span)?
+                position += 1
+            _ =>
+                # The supplied flag comes first, then the value it describes.
+                value_type = arguments[position + 1]
+                bind_defaulted_parameter(module, lifted, parameter, destination, position + 1, value_type, span)?
+                position += 2
+    for statement in statements:
+        lower_statement(module, lifted, statement)?
+    if not lifted.closed[lifted.current]:
+        value = return_operand(lifted, result, span)?
+        finish_return(lifted, value, span)?
+    # A generator expression's step lifted inside the closure, with its environment constructor, belongs to the
+    # enclosing plan too; any other function synthesized there keeps the nested-closure refusal.
+    for function in lifted.synthesized:
+        if not function.name.startswith("__incan_generator_step_"):
+            return Err("unsupported Body IR closure nested in a closure")
+        synthesize(builder, function)
+    adopt_lifted(builder, lifted)
+    return Ok(
+        Function(
+            name=name,
+            parameters=lifted_parameters,
+            return_type=signature[-1],
+            locals=lifted.locals,
+            blocks=lifted.blocks,
+            span=span,
+        ),
+    )
+
+
+pub def lifted_frame(
+    mut builder: Builder,
+    name: str,
+    arguments: list[PlanType],
+    result: PlanType,
+    span: SourceSpan,
+) -> Builder:
+    """
+    Start a lifted function's frame: its result slot, its arguments, then the enclosing frame's locals.
+
+    The enclosing locals keep their Body IR slots behind the arguments, so the lifted statements lower with the ordinary
+    local offset. An enclosing frame that is itself lifted, such as a generator-expression step whose later clause lifts
+    another, contributes its Body IR slots without its own arguments.
+    """
+    count = len(arguments)
+    mut locals = [Local(ty=result, span=span)]
+    for argument in arguments:
+        locals.append(Local(ty=argument, span=span))
+    for index in range(1 + builder.local_offset, len(builder.locals)):
+        locals.append(builder.locals[index])
+    # Only the enclosing frame's own Body IR slots move into the lifted frame; a deferred default's caller locals sit
+    # below its offset and stay behind.
+    mut pointer_locals: list[int] = []
+    for local in builder.function_pointer_locals:
+        if local > builder.local_offset:
+            pointer_locals.append(local - builder.local_offset + count)
+    mut scoped_locals: list[tuple[int, int]] = []
+    for slot in range(len(builder.scoped_locals)):
+        local = builder.scoped_locals[slot][0]
+        scope = builder.scoped_locals[slot][1]
+        if local > builder.local_offset:
+            scoped_locals.append((local - builder.local_offset + count, scope))
+    mut lifted = Builder(
+        program=builder.program,
+        locals=locals,
+        parameter_count=count,
+        blocks=[],
+        current=0,
+        source=builder.source,
+        file=builder.file,
+        line_starts=builder.line_starts,
+        module_identity=builder.module_identity,
+        callable_identity=None,
+        loops=[],
+        loop_owners=[],
+        externals=[],
+        owned=[],
+        closed=[],
+        iterators=[],
+        borrowed_items=[],
+        in_place_items=[],
+        partial_callables=[],
+        scalar_closures=[],
+        unproven_closures=[],
+        intrinsics=builder.intrinsics,
+        local_offset=count,
+        consuming_closure_frame=false,
+        generator_handle=-1,
+        unions=builder.unions,
+        type_parameters=builder.type_parameters,
+        type_arguments=builder.type_arguments,
+        trait_environment=builder.trait_environment.clone(),
+        instances=[],
+        function_pointer_locals=pointer_locals,
+        name=name,
+        synthesized=[],
+        scoped_locals=scoped_locals,
+        scope_parents=builder.scope_parents,
+        moved_tuple_fields=[],
+        body_identity=builder.body_identity,
+        initializing_decorator=builder.initializing_decorator,
+        cached_decorator=builder.cached_decorator,
+        callable_name_dynamic_profile=builder.callable_name_dynamic_profile,
+    )
+    _ = lifted.new_block(span)
+    return lifted
+
+
+pub def adopt_lifted(mut builder: Builder, mut lifted: Builder) -> None:
+    """Borrow a lifted frame while carrying only its runtime signatures and checked instantiations into the enclosing plan."""
+    for external in lifted.externals:
+        builder.externals.append(external)
+    merge_instance_requests(builder.instances, lifted.instances)
+
+
+pub def lower_generator_expression(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: Place,
+    source: &RustOperand,
+    captures: &list[RustOperand],
+    body: &RustGeneratorBody,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Build a generator expression as legacy's lazy adapter chain over its eagerly evaluated first source.
+
+    The first source becomes an owned generator now. Frozen collections first yield their ordered owned snapshot,
+    as legacy's eager first-source evaluation does. A lifted step receives each item only when a consumer polls and
+    returns that item's accepted element, or nothing, so no clause, filter or element runs before it is drawn.
+    A consuming closure admits only a canonical zip source and no separate step captures; reusable closures and deferred
+    defaults retain their ordinary source and capture rules.
+    """
+    if target.projection != Projection.Whole:
+        return Err("unsupported Body IR projected generator expression")
+    if builder.consuming_closure_frame and len(captures) != 0:
+        return Err("unsupported Body IR consuming closure generator expression captures")
+    if len(captures) != len(body.capture_locals):
+        return Err("invalid Body IR generator expression capture layout")
+    item_local = first_clause_item(body)?
+    mut evaluated = generator_source_value(builder, source, span)?
+    if builder.consuming_closure_frame:
+        match operand_type(builder, evaluated)?:
+            PlanType.ZipIterator(_left, _right) => pass
+            _ => return Err("unsupported Body IR consuming closure generator source outside canonical zip")
+    match operand_type(builder, evaluated)?:
+        PlanType.FrozenCollection(_name, _elements) =>
+            snapshot = frozen_list_snapshot(builder, evaluated, span)?
+            evaluated = read_place(snapshot, true, span)
+        _ => pass
+    first = source_generator(builder, evaluated, span)?
+    # The step's environment holds each capture by value, read once now, as legacy's `move` closure takes it.
+    mut operands: list[Operand] = []
+    mut capture_types: list[PlanType] = []
+    for capture in captures:
+        operand = value_operand(builder, capture, span)?
+        ty = operand_type(builder, operand)?
+        if not step_capture_type(ty):
+            reason = f"unsupported Body IR generator expression capture {ty:?} in {builder.name}"
+            return Err(f"{reason} at {span.line}:{span.column}")
+        operands.append(operand)
+        capture_types.append(ty)
+    mut bindings: list[int] = []
+    for local in body.capture_locals:
+        bindings.append(int(local.index()))
+    item = source_item(builder, first)?
+    name = f"__incan_generator_step_{builder.name}_{len(builder.synthesized)}"
+    match body.stmts[1].kind:
+        RustStatementKind.Loop(body=block) =>
+            step = lift_generator_step(
+                module,
+                builder,
+                name,
+                item,
+                capture_types,
+                bindings,
+                place_type(builder.locals, target),
+                item_local,
+                block,
+                span,
+            )?
+            synthesize(builder, step)
+        _ => return Err("unsupported Body IR generator expression body shape")
+    drop_owned(builder, target.local, span)
+    callable = step_callable(builder, name, item, place_type(builder.locals, target), capture_types, operands, span)
+    construct_chain(builder, first, callable, target, span)?
+    builder.owned.append(target.local)
+    return Ok(None)
+
+
+def generator_source_value(mut builder: Builder, source: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
+    """Borrow a stored list source for a lazy expression, while moving independently owned sources as before."""
+    match source:
+        RustOperand.Place(read) =>
+            root = scalar_place(builder, read.place, span)?
+            match list_shape(place_type(builder.locals, root)):
+                Some((leaf, depth)) =>
+                    if read.fact == OwnershipFact.Move and place_type(builder.locals, root) == PlanType.List(leaf, depth):
+                        return Ok(read_place(root, true, span))
+                    reference = list_borrow(builder, root, false, span)?
+                    result = PlanType.Generator(leaf, depth - 1)
+                    output = temporary(builder, result, span)
+                    borrowed_list_generator_call(builder, reference, leaf, depth, output, span)?
+                    builder.owned.append(output.local)
+                    return Ok(read_place(output, true, span))
+                None => pass
+        _ => pass
+    return value_operand(builder, source, span)
+
+
+pub def step_callable(
+    mut builder: Builder,
+    name: str,
+    item: PlanType,
+    result: PlanType,
+    captures: list[PlanType],
+    operands: list[Operand],
+    span: SourceSpan,
+) -> Operand:
+    """Pass a capture-free step as its function pointer, and a capturing one as a boxed environment over its captures."""
+    signature = [item, result]
+    if len(captures) == 0:
+        return step_pointer(builder, name, signature, span)
+    synthesize(builder, closure_constructor(f"{name}_new", name, captures, signature, false, span))
+    environment = temporary(builder, PlanType.Closure(signature), span)
+    terminate_call(builder, CalleeKind.Planned(f"{name}_new"), operands, environment, span)
+    builder.owned.append(environment.local)
+    return read_place(environment, true, span)
+
+
+def lift_generator_step(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    name: str,
+    item: PlanType,
+    captures: list[PlanType],
+    capture_locals: list[int],
+    result: PlanType,
+    item_local: int,
+    block: &RustBlock,
+    span: SourceSpan,
+) -> Result[Function, str]:
+    """
+    Build one generator-expression step: from a first-source item to the generator of that item's accepted elements.
+
+    The step takes the expression's captures, then the item, as a capturing closure's lifted function does. It binds
+    each to the local the deferred body reads, then lowers every statement after the item's poll; a yield returns its
+    element, a later `for` clause returns the nested chain it builds, and falling through returns an empty generator.
+    """
+    match generator_shape(result):
+        Some((leaf, depth)) =>
+            mut arguments: list[PlanType] = []
+            mut bindings: list[int] = []
+            for index in range(len(captures)):
+                arguments.append(captures[index])
+                bindings.append(capture_locals[index])
+            arguments.append(item)
+            bindings.append(item_local)
+            mut lifted = lifted_frame(builder, name, arguments, result, span)
+            lifted.step_element = Some(generator_element(leaf, depth))
+            lifted.step_bindings = bindings
+            lifted.step_clauses = later_clauses(block)
+            bind_step_arguments(lifted, arguments, bindings, span)?
+            mut parameters: list[Parameter] = []
+            for index in range(len(arguments)):
+                parameters.append(Parameter(name=f"__incan_argument_{index}", ty=arguments[index], span=span))
+            for index in range(1, len(block.stmts)):
+                lower_statement(module, lifted, block.stmts[index])?
+                if lifted.closed[lifted.current]:
+                    break
+            if not lifted.closed[lifted.current]:
+                filtered = step_result(lifted, None, span)?
+                finish_return(lifted, filtered, span)?
+            # A later clause's step and environment constructor belong to the enclosing plan too.
+            for function in lifted.synthesized:
+                synthesize(builder, function)
+            adopt_lifted(builder, lifted)
+            return Ok(
+                Function(
+                    name=name,
+                    parameters=parameters,
+                    return_type=result,
+                    locals=lifted.locals,
+                    blocks=lifted.blocks,
+                    span=span,
+                ),
+            )
+        None => return Err("unsupported Body IR generator expression type")
+
+
+pub def later_clause_index(mut builder: Builder, iterator: int) -> int:
+    """Find the step's later clause that polls this iterator local, or -1 outside a step or for any other local."""
+    if iterator < 0:
+        return -1
+    for index in range(len(builder.step_clauses)):
+        if builder.step_clauses[index][0] == iterator:
+            return index
+    return -1
+
+
+pub def lower_later_clause(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    clause: int,
+    body: &RustBlock,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Return a later `for` clause's own chain as the step's result, as legacy's nested `flat_map` does.
+
+    The clause's source is drawn lazily from a snapshot of a list, or from a generator the step built. Its step is
+    lifted like the first one; its environment holds the outer step's bound locals, cloned for each item it expands.
+    """
+    iterator, source, assigned = builder.step_clauses[clause]
+    item_local = clause_item(body)
+    if item_local < 0:
+        return Err("unsupported Body IR generator expression later for clause poll")
+    first = clause_source(builder, source + 1 + builder.local_offset, span)?
+    item = source_item(builder, first)?
+    mut environment: list[int] = []
+    mut types: list[PlanType] = []
+    mut operands: list[Operand] = []
+    for local in builder.step_bindings + assigned:
+        if local != iterator and local != source and local not in environment:
+            operand = environment_operand(builder, local + 1 + builder.local_offset, span)?
+            environment.append(local)
+            types.append(operand_type(builder, operand)?)
+            operands.append(operand)
+    result = borrowed_at(builder.locals, 0).ty
+    name = f"__incan_generator_step_{builder.name}_{len(builder.synthesized)}"
+    step = lift_generator_step(module, builder, name, item, types, environment, result, item_local, body, span)?
+    synthesize(builder, step)
+    callable = step_callable(builder, name, item, result, types, operands, span)
+    # The chain moves straight into the return slot, so it never joins the step's owners.
+    output = temporary(builder, result, span)
+    construct_chain(builder, first, callable, output, span)?
+    return finish_return(builder, read_place(output, true, span), span)
+
+
+def clause_source(mut builder: Builder, slot: int, span: SourceSpan) -> Result[Operand, str]:
+    """Snapshot a list, set or zip source per item, or move a generator the step built."""
+    place = plan_place(slot, span)
+    ty = borrowed_at(builder.locals, slot).ty
+    match ty:
+        PlanType.Set(_leaf) =>
+            snapshot = cloned_collection(builder, place, span)?
+            return source_generator(builder, snapshot, span)
+        PlanType.ZipIterator(_left, _right) =>
+            snapshot = clone_zip(builder, place, span)?
+            return source_generator(builder, snapshot, span)
+        _ => pass
+    match generator_shape(ty):
+        Some((leaf, depth)) =>
+            if ty != PlanType.Generator(leaf, depth):
+                return Err("unsupported Body IR generator expression later for clause over a borrowed generator")
+            return Ok(read_place(place, true, span))
+        None => pass
+    if not is_owned_list(ty):
+        return Err("unsupported Body IR generator expression later for clause source outside lists and generators")
+    snapshot = environment_operand(builder, slot, span)?
+    return source_generator(builder, snapshot, span)
+
+
+def environment_operand(mut builder: Builder, slot: int, span: SourceSpan) -> Result[Operand, str]:
+    """Copy a scalar or clone an owned snapshot or callable so the outer step retains its reusable environment."""
+    place = plan_place(slot, span)
+    ty = borrowed_at(builder.locals, slot).ty
+    if not step_capture_type(ty):
+        return Err("unsupported Body IR generator expression clause environment outside scalars, owned text and lists")
+    match ty:
+        PlanType.ZipIterator(_left, _right) => return clone_zip(builder, place, span)
+        PlanType.Closure(_signature) => return target_read(builder, place, OwnershipFact.Clone, span)
+        _ => pass
+    if ty == PlanType.String:
+        text = clone_text(builder, place, span)?
+        builder.owned.append(text.local)
+        return Ok(read_place(text, true, span))
+    match list_shape(ty):
+        Some((leaf, depth)) =>
+            reference = list_borrow(builder, place, false, span)?
+            copy = temporary(builder, ty, span)
+            list_call(
+                builder,
+                "clone_list",
+                list_element(leaf, depth),
+                [PlanType.ListRef(leaf, depth)],
+                ty,
+                [reference],
+                copy,
+                span,
+            )
+            builder.owned.append(copy.local)
+            return Ok(read_place(copy, true, span))
+        None => return Ok(read_place(place, false, span))
+
+
+def bind_step_arguments(
+    mut lifted: Builder,
+    arguments: list[PlanType],
+    bindings: list[int],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Move each step argument into the Body IR local the deferred body reads; an owned one is the step's to drop."""
+    count = len(arguments)
+    for index in range(count):
+        destination = bindings[index] + 1 + count
+        if lifted.locals[destination].ty != arguments[index]:
+            return Err("unsupported Body IR generator expression item binding")
+        # A tuple item holding text, such as an `enumerate` pair over strings, is owned like text.
+        mut owned = arguments[index] == PlanType.String or is_owned_list(arguments[index]) or tuple_has_owners(
+            arguments[index],
+        )
+        match arguments[index]:
+            PlanType.ZipIterator(_left, _right) => owned = true
+            PlanType.Closure(_signature) => owned = true
+            _ => pass
+        lifted.emit(
+            plan_assign(
+                plan_place(destination, span),
+                RvalueKind.Use(read_place(plan_place(index + 1, span), owned, span)),
+                span,
+            ),
+        )
+        if owned:
+            lifted.owned.append(destination)
+    return Ok(None)
+
+
+pub def bind_closure_input(
+    mut lifted: Builder,
+    destination: int,
+    argument: int,
+    ty: PlanType,
+    storage: PlanType,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Move one closure argument into the capture or parameter local the body reads, which stores it as `storage`: a
+    capture by value, a parameter as a function frame stores it (a list as a view, a `mut` value as its borrow).
+    """
+    if storage != ty:
+        return Err("invalid Body IR closure argument type")
+    lifted.locals[destination].ty = storage
+    # Text and an owned collection, model, enum or carrier input move into the local the body reads, which then owns
+    # them; an exclusive borrow moves in too, and every other input is a copy or a shared view.
+    mut owned = ty == PlanType.String or is_nominal_type(ty) or is_owned_collection(ty)
+    match ty:
+        PlanType.ZipIterator(_left, _right) => owned = true
+        _ => pass
+    value = read_place(plan_place(argument, span), owned or is_exclusive_borrow(ty), span)
+    lifted.emit(plan_assign(plan_place(destination, span), RvalueKind.Use(value), span))
+    if owned:
+        lifted.owned.append(destination)
+    return Ok(None)

@@ -1,0 +1,28 @@
+# behavior: run and build print source refusals exactly as check does, as rendered diagnostics rather than quoted and escaped debug strings; a transparent alias remains the displayed parameter spelling for ordinary and type-token mismatches while compatibility uses its normalized target (#1033)
+# cli-commands:
+#   check src/main.incn
+#   run src/main.incn
+#   build src/main.incn
+# expect-stdout:
+# expect-stderr-contains:
+#   has type mismatch: expected 'Int', found 'Str'
+#   Argument 'value' of 'accept_count' has type mismatch: expected 'Count', found 'Str'
+#   Argument 'target' of 'accept_count_token' has type mismatch: expected 'Type[Count]', found 'Type[Str]'
+#   count: int = "seven"
+# expect-exit: 1
+
+type Count = int
+
+
+def accept_count(value: Count) -> None:
+    pass
+
+
+def accept_count_token(target: Type[Count]) -> None:
+    pass
+
+def main() -> None:
+    count: int = "seven"
+    accept_count("seven")
+    accept_count_token(str)
+    println(count)

@@ -596,7 +596,28 @@ fn collect_rs_files(root: &Path) -> Vec<PathBuf> {
     files
 }
 
+/// Recognize a single physical Rust symbol bound to a named owner, never an inline vocabulary decision.
+///
+/// These constants belong beside Rust path/protocol construction. The declaration must have one literal value and
+/// an explicit RUST_<OWNER>_SYMBOL name; ordinary constants, expressions and matches retain strict enforcement.
+fn is_owned_rust_symbol(line: &str, literal: &str) -> bool {
+    let declaration = line.trim().strip_prefix("pub(crate) ").unwrap_or(line.trim());
+    let Some(declaration) = declaration.strip_prefix("const RUST_") else {
+        return false;
+    };
+    let Some((owner, value)) = declaration.split_once("_SYMBOL: &str = ") else {
+        return false;
+    };
+    !owner.is_empty()
+        && owner
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+        && value == format!("\"{literal}\";")
+}
+
+/// Find unowned Incan vocabulary literals; physical Rust symbols must name their owner at a constant declaration.
 fn find_string_literals(paths: &[PathBuf], literals: &[&str]) -> Vec<String> {
+    /// Whole-line comments describe spellings without supplying compiler decisions.
     fn is_comment_line(line: &str) -> bool {
         let trimmed = line.trim_start();
         trimmed.starts_with("//") || trimmed.starts_with("///") || trimmed.starts_with("//!")
@@ -613,7 +634,7 @@ fn find_string_literals(paths: &[PathBuf], literals: &[&str]) -> Vec<String> {
             }
             for &literal in literals {
                 let needle = format!("\"{literal}\"");
-                if line.contains(&needle) {
+                if line.contains(&needle) && !is_owned_rust_symbol(line, literal) {
                     hits.push(format!("{}:{}: {}", path.display(), idx + 1, line.trim()));
                 }
             }
@@ -622,15 +643,14 @@ fn find_string_literals(paths: &[PathBuf], literals: &[&str]) -> Vec<String> {
     hits
 }
 
-/// The compiler layers the guard covers: the typechecker, lowering and emission rings, the driver's transitional
-/// backend, and the language server — what `src/frontend`, `src/backend` and `src/lsp` were before the rings.
+/// The active Rust compiler layers: checking, native planning, session orchestration, MIR adaptation and the LSP.
 fn compiler_layer_rs_files() -> Vec<PathBuf> {
     let root = repo_root();
     let targets = [
         root.join("loaves/compiler/incan_frontend/src"),
-        root.join("loaves/compiler/incan_ir/src"),
-        root.join("loaves/compiler/incan_emit/src"),
-        root.join("loaves/compiler/incan_driver/src/backend"),
+        root.join("loaves/compiler/incan_mir_plan/src"),
+        root.join("loaves/compiler/incan_driver/src"),
+        root.join("loaves/toolchain/incan-rustc-driver/src"),
         root.join("loaves/toolchain/incan-lsp/src"),
     ];
     let mut files = Vec::new();
@@ -640,8 +660,15 @@ fn compiler_layer_rs_files() -> Vec<PathBuf> {
     files
 }
 
+/// Incan trait/derive decisions use registry identities; physical Rust traits name their ABI owner explicitly.
 #[test]
 fn no_builtin_trait_string_literals_in_compiler_layers() {
+    assert!(is_owned_rust_symbol(
+        "const RUST_CLONE_SYMBOL: &str = \"Clone\";",
+        "Clone"
+    ));
+    assert!(!is_owned_rust_symbol("const CLONE_SYMBOL: &str = \"Clone\";", "Clone"));
+    assert!(!is_owned_rust_symbol("derive == \"Clone\"", "Clone"));
     let files = compiler_layer_rs_files();
 
     let trait_literals = [
@@ -668,13 +695,25 @@ fn no_builtin_trait_string_literals_in_compiler_layers() {
     let hits = find_string_literals(&files, &trait_literals);
     assert!(
         hits.is_empty(),
-        "builtin trait spellings must come from incan_lang::lang::traits; found:\n{}",
+        "Incan trait/derive choices must come from incan_lang registries; physical Rust symbols must name their owners; found:\n{}",
         hits.join("\n")
     );
 }
 
+/// Constructors come from Incan's registry, while named physical Rust symbols retain their distinct owners.
 #[test]
 fn no_constructor_string_literals_in_compiler_layers() {
+    assert!(is_owned_rust_symbol(
+        "const RUST_RESULT_OK_SYMBOL: &str = \"Ok\";",
+        "Ok"
+    ));
+    assert!(!is_owned_rust_symbol("const RESULT_OK_SYMBOL: &str = \"Ok\";", "Ok"));
+    assert!(!is_owned_rust_symbol(
+        "const RUST_RESULT_OK_SYMBOL: &str = \"Some\";",
+        "Ok"
+    ));
+    assert!(!is_owned_rust_symbol("let name = \"Ok\";", "Ok"));
+    assert!(!is_owned_rust_symbol("\"Ok\" => true,", "Ok"));
     let files = compiler_layer_rs_files();
 
     let constructor_literals = ["Ok", "Err", "Some", "None"];

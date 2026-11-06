@@ -10,33 +10,42 @@ from rust::incan_semantics_core import (
 )
 from rust::incan_semantics_core::body_ir import BodyIrModule, Body
 from pub::incan_mir_plan import IteratorMethods, EnumDeclaration, PlanType
-from classes import frame_type, function_name
-from unions import native_source_type, collect_unions
+from classes import frame_type, function_name, parameter_local_index
+from layout_types import native_source_type
+from native_type_identity import ConstructorIndex
+from unions import collect_unions
 from trait_links import contains
-from native_arguments import uses_native_argument
 from decls import library_item
+from table_views import borrowed_at, borrowed_table
 
 
 pub def iterator_methods(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     owner: int,
-    intrinsics: list[EnumDeclaration],
+    native_names: list[str],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[Option[IteratorMethods], str]:
     """Authorize only a concrete source adopter actually retained as an SDK storage argument; native bounds remain checked."""
-    declaration = module.nominal_declarations[owner]
-    if library_item(declaration) != "" or not uses_native_argument(module, str(declaration.name))?:
+    if str(borrowed_at(module.nominal_declarations, owner).name) not in native_names:
+        return Ok(None)
+    declaration = borrowed_at(module.nominal_declarations, owner)
+    if library_item(declaration) != "":
         return Ok(None)
     mut selected: Option[IteratorMethods] = None
-    for protocol in module.trait_declarations:
+    for protocol_position in range(len(module.trait_declarations)):
+        protocol = borrowed_at(module.trait_declarations, protocol_position)
         if not standard_protocol(protocol):
             continue
         mut arguments: list[RustType] = []
         mut next: Option[CanonicalSymbolId] = None
         mut slots: list[str] = []
-        for implementation in module.trait_implementations:
-            if implementation.owner != declaration.canonical or implementation.method.origin != protocol.origin or not contains(
-                protocol,
-                implementation.method,
+        for implementation_position in range(len(module.trait_implementations)):
+            implementation = borrowed_at(module.trait_implementations, implementation_position)
+            if (
+                implementation.owner != declaration.canonical
+                or implementation.method.origin != protocol.origin
+                or not contains(protocol, implementation.method)
             ):
                 continue
             name = str(implementation.method.declaration_name)
@@ -45,9 +54,10 @@ pub def iterator_methods(
             slots.append(name)
             if name == "__next__":
                 identity = implementation.implementation
-                if identity == implementation.method or identity.origin != declaration.canonical.origin or not contains(
-                    declaration.canonical,
-                    identity,
+                if (
+                    identity == implementation.method
+                    or identity.origin != declaration.canonical.origin
+                    or not contains(declaration.canonical, identity)
                 ):
                     return Err("unsupported Body IR native iterator without source poll")
                 next = Some(identity.clone())
@@ -72,18 +82,20 @@ pub def iterator_methods(
             None => return Err("unsupported Body IR native iterator without checked poll")
             Some(identity) =>
                 mut bodies: list[Body] = []
-                for body in module.bodies:
+                for body_position in range(len(module.bodies)):
+                    body = borrowed_at(module.bodies, body_position)
                     if body.canonical == Some(identity.clone()):
                         bodies.append(body.clone())
-                if len(bodies) != 1 or not poll_abi(module, bodies[0], owner, arguments[0], intrinsics)?:
+                if len(bodies) != 1 or not poll_abi(constructors, module, bodies[0], owner, arguments[0], intrinsics)?:
                     return Err("unsupported Body IR unavailable or invalid native iterator poll body")
                 if selected != None:
                     return Err("unsupported Body IR ambiguous native iterator declaration")
                 selected = Some(
                     IteratorMethods(
                         item=native_source_type(
-                            module.nominal_declarations,
-                            module.enum_declarations,
+                            constructors,
+                            borrowed_table(module.nominal_declarations),
+                            borrowed_table(module.enum_declarations),
                             collect_unions(module),
                             arguments[0],
                             intrinsics,
@@ -94,9 +106,13 @@ pub def iterator_methods(
     return Ok(selected)
 
 
-pub def standard_protocol(identity: &CanonicalSymbolId) -> bool:
+pub def standard_protocol(identity: CanonicalSymbolId) -> bool:
     """Authenticate the standard declaring trait rather than a source trait with the same spelling."""
-    if identity.kind != SemanticSourceTargetKind.Trait or identity.namespace != SymbolNamespace.OrdinaryLexical or identity.declaration_name != "Iterator":
+    if (
+        identity.kind != SemanticSourceTargetKind.Trait
+        or identity.namespace != SymbolNamespace.OrdinaryLexical
+        or identity.declaration_name != "Iterator"
+    ):
         return false
     match identity.origin:
         SymbolOrigin.Package(library=library, module_path=path) =>
@@ -106,11 +122,12 @@ pub def standard_protocol(identity: &CanonicalSymbolId) -> bool:
 
 
 def poll_abi(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     body: &Body,
     owner: int,
     item: &RustType,
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[bool, str]:
     """Require the unique concrete mutable receiver, exact Option[item] result, and a fully retained poll body."""
     if len(body.type_parameters) != 0 or len(body.params) != 1:
@@ -118,7 +135,8 @@ def poll_abi(
     match body.first_representation_gap():
         Some(_gap) => return Ok(false)
         None => pass
-    reference = PlanType.ModelMutRef(owner, str(module.nominal_declarations[owner].name))
-    if frame_type(module, body.locals[int(body.params[0].local.index())], intrinsics)? != reference:
+    reference = PlanType.ModelMutRef(owner, str(borrowed_at(module.nominal_declarations, owner).name))
+    local = body.locals[parameter_local_index(body, 0)]
+    if frame_type(constructors, module.nominal_declarations, module.enum_declarations, local, intrinsics)? != reference:
         return Ok(false)
     return Ok(body.return_type == generic("Option", [item.clone()]))

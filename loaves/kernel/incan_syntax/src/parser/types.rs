@@ -192,66 +192,7 @@ impl<'a> Parser<'a> {
 
         // Unit type
         if self.match_token(&TokenKind::Punctuation(PunctuationId::LParen)) {
-            if self.match_token(&TokenKind::Punctuation(PunctuationId::RParen)) {
-                // Could be unit type () or zero-arg function type () -> T
-                if self.match_token(&TokenKind::Punctuation(PunctuationId::Arrow)) {
-                    let ret = self.type_expr()?;
-                    let end = ret.span.end;
-                    return Ok(Spanned::new(
-                        Type::Function(vec![], Box::new(ret)),
-                        Span::new(start, end),
-                    ));
-                }
-                let end = self.tokens[self.pos - 1].span.end;
-                return Ok(Spanned::new(Type::Unit, Span::new(start, end)));
-            }
-            // Could be tuple type or function type
-            let first = self.parenthesized_type_entry()?;
-            if self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
-                // Tuple type
-                let mut types = vec![first];
-                if !self.check(&TokenKind::Punctuation(PunctuationId::RParen)) {
-                    loop {
-                        types.push(self.parenthesized_type_entry()?);
-                        if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
-                            break;
-                        }
-                    }
-                }
-                self.expect(
-                    &TokenKind::Punctuation(PunctuationId::RParen),
-                    "Expected ')' after tuple type",
-                )?;
-
-                // Check for function type
-                if self.match_token(&TokenKind::Punctuation(PunctuationId::Arrow)) {
-                    let ret = self.type_expr()?;
-                    let end = ret.span.end;
-                    return Ok(Spanned::new(
-                        Type::Function(types, Box::new(ret)),
-                        Span::new(start, end),
-                    ));
-                }
-
-                Self::refuse_mut_marker_outside_callable_params(&types)?;
-                let end = self.tokens[self.pos - 1].span.end;
-                return Ok(Spanned::new(Type::Tuple(types), Span::new(start, end)));
-            }
-            self.expect(&TokenKind::Punctuation(PunctuationId::RParen), "Expected ')'")?;
-
-            // Check for function type
-            if self.match_token(&TokenKind::Punctuation(PunctuationId::Arrow)) {
-                let ret = self.type_expr()?;
-                let end = ret.span.end;
-                return Ok(Spanned::new(
-                    Type::Function(vec![first], Box::new(ret)),
-                    Span::new(start, end),
-                ));
-            }
-
-            // Just a parenthesized type
-            Self::refuse_mut_marker_outside_callable_params(std::slice::from_ref(&first))?;
-            return Ok(first);
+            return self.parenthesized_type(start);
         }
 
         // Handle None as a type (alias for unit/void)
@@ -350,6 +291,64 @@ impl<'a> Parser<'a> {
             let end = self.tokens[self.pos - 1].span.end;
             Ok(Spanned::new(Type::Qualified(path), Span::new(start, end)))
         }
+    }
+
+    /// Parse a unit, grouped, tuple or function type after its opening parenthesis was consumed.
+    ///
+    /// Parameter mutability is retained until an arrow selects a function type; grouped and tuple types refuse it.
+    fn parenthesized_type(&mut self, start: usize) -> Result<Spanned<Type>, CompileError> {
+        if self.match_token(&TokenKind::Punctuation(PunctuationId::RParen)) {
+            if self.match_token(&TokenKind::Punctuation(PunctuationId::Arrow)) {
+                let ret = self.type_expr()?;
+                let end = ret.span.end;
+                return Ok(Spanned::new(
+                    Type::Function(vec![], Box::new(ret)),
+                    Span::new(start, end),
+                ));
+            }
+            let end = self.tokens[self.pos - 1].span.end;
+            return Ok(Spanned::new(Type::Unit, Span::new(start, end)));
+        }
+
+        let first = self.parenthesized_type_entry()?;
+        if self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
+            let mut types = vec![first];
+            if !self.check(&TokenKind::Punctuation(PunctuationId::RParen)) {
+                loop {
+                    types.push(self.parenthesized_type_entry()?);
+                    if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
+                        break;
+                    }
+                }
+            }
+            self.expect(
+                &TokenKind::Punctuation(PunctuationId::RParen),
+                "Expected ')' after tuple type",
+            )?;
+            if self.match_token(&TokenKind::Punctuation(PunctuationId::Arrow)) {
+                let ret = self.type_expr()?;
+                let end = ret.span.end;
+                return Ok(Spanned::new(
+                    Type::Function(types, Box::new(ret)),
+                    Span::new(start, end),
+                ));
+            }
+            Self::refuse_mut_marker_outside_callable_params(&types)?;
+            let end = self.tokens[self.pos - 1].span.end;
+            return Ok(Spanned::new(Type::Tuple(types), Span::new(start, end)));
+        }
+
+        self.expect(&TokenKind::Punctuation(PunctuationId::RParen), "Expected ')'")?;
+        if self.match_token(&TokenKind::Punctuation(PunctuationId::Arrow)) {
+            let ret = self.type_expr()?;
+            let end = ret.span.end;
+            return Ok(Spanned::new(
+                Type::Function(vec![first], Box::new(ret)),
+                Span::new(start, end),
+            ));
+        }
+        Self::refuse_mut_marker_outside_callable_params(std::slice::from_ref(&first))?;
+        Ok(first)
     }
 
     /// Parse one entry of a parenthesized type list, admitting the `mut` marker a callable type's parameter may carry.

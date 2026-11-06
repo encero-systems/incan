@@ -1,0 +1,54 @@
+# behavior: a class holding its own type through Option, and two classes holding each other through Option, build, read, rebind and clone their links (#2475)
+# expect-stdout:
+#   1
+#   2
+#   end
+#   3
+#   2
+#   b sees a
+#   1
+
+@derive(Clone)
+class Node:
+    pub value: int
+    pub next: Option[Node]
+
+
+class A:
+    pub id: int
+    pub b: Option[B]
+
+
+class B:
+    pub a: Option[A]
+
+
+def describe(node: Node) -> str:
+    match node.next:
+        Some(_n) => return "more"
+        None => return "end"
+
+
+def main() -> None:
+    tail = Node(value=2, next=None)
+    mut head = Node(value=1, next=Some(tail))
+    println(head.value)
+    match head.next:
+        Some(n) =>
+            println(n.value)
+            println(describe(n))
+        None => println("none")
+    head.next = Some(Node(value=3, next=None))
+    copy = head.clone()
+    match copy.next:
+        Some(n) => println(n.value)
+        None => println("none")
+    println(len([head.value, 1]))
+    pair = A(id=1, b=Some(B(a=None)))
+    match pair.b:
+        Some(b) =>
+            match b.a:
+                Some(_a) => println("b has a")
+                None => println("b sees a")
+        None => println("no b")
+    println(pair.id)

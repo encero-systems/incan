@@ -1,0 +1,10 @@
+# behavior: rust.allow is refused because native compilation has no generated Rust lint surface (RFC 171)
+# expect-diagnostic: INCAN-T0001
+
+"""The retired no-op lint decorator cannot claim to suppress a Rust lint."""
+
+
+@rust.allow("dead_code")
+def MixedName(a: int, b: int, c: int) -> int:
+    """Retain the decorated declaration solely to prove its refusal."""
+    return a + b + c

@@ -119,7 +119,7 @@ def main():
     n = 500_000
     advance(bodies, 0.01, n)
 
-    print(f"Final energy: {energy(bodies):.9f}")
+    print(f"Final energy: {energy(bodies)}")
 
 if __name__ == "__main__":
     main()

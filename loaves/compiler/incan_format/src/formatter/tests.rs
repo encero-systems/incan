@@ -124,13 +124,22 @@ fn structural_fragment_formatting_is_idempotent() -> Result<(), String> {
     Ok(())
 }
 
+/// Preserve holes and custom-property references while rendering style declarations to a parseable fixed point.
 #[test]
 fn a_structural_style_fragment_renders_rules_and_declarations() -> Result<(), String> {
     // The style submode nests declarations under a rule rather than children under an element, so it exercises a
     // different branch of the structural renderer than markup does.
     let (keyword_map, surface_map) =
         fixture_maps("css", "styleforge", incan_vocab::EmbeddedFragmentSubmode::Style, false);
-    let source = "import pub::styleforge\n\ndef theme(accent: str) -> None:\n    css:\n        .card {\n            color: {accent};\n        }\n";
+    let source = r"import pub::styleforge
+
+def theme(accent: str) -> None:
+    css:
+        .card {
+            color: {accent};
+            background: var(--accent-color);
+        }
+";
 
     let once = format_fixture(source, &keyword_map, &surface_map)?;
     assert!(
@@ -140,6 +149,10 @@ fn a_structural_style_fragment_renders_rules_and_declarations() -> Result<(), St
     assert!(
         once.contains("color: {accent};"),
         "a declaration with a hole value should render with its semicolon:\n{once}"
+    );
+    assert!(
+        once.contains("background: var(--accent-color);"),
+        "a custom-property reference must retain its expression delimiters:\n{once}"
     );
 
     let twice = format_fixture(&once, &keyword_map, &surface_map)?;

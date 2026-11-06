@@ -611,7 +611,7 @@ Rejected. Dogfooding is valuable, but forcing compiler CLI migration into this R
 
 ## Layers affected
 
-- **Stdlib / runtime (`incan_stdlib`)**: new `std.cli` module, parser entry points, error types, help rendering, shell completion rendering for bash/zsh/fish/PowerShell, and exit-code helpers.
+- **Stdlib / runtime (`loaves/stdlib/`)**: new `std.cli` module, parser entry points, error types, help rendering, shell completion rendering for bash/zsh/fish/PowerShell, and exit-code helpers.
 - **Typechecker / symbol resolution**: CLI spec derivation must validate supported command enum and model shapes, metadata keys, option spelling collisions, and parse paths; must reject `parse[T]`/`spec_for[T]` calls where `T` has derived neither `CliArgs` nor `CliCommand` (ordinary RFC 025 multi-instantiation bound checking, no CLI-specific typechecker logic required beyond that); must diagnose CLI-specific metadata keys (`option`, `short`, `positional`, `value_name`) used on a field of a type that has derived neither trait. `@derive(CliArgs)`/`@derive(CliCommand)` themselves are RFC 024 `__derives__` modules with Incan-authored bodies, not new typechecker-level derive-generation code.
 - **Metadata / descriptors**: RFC 021's `FieldInfo.extra: dict[str, str]` reserved slot must actually be populated with a field's bracket-metadata keys during reflection, so `std.cli`'s Incan-authored derive body can read `option`/`short`/`positional`/`value_name`/`env`/`secret` back out through `__fields__()`. This is the first real consumer of that reserved slot, not a new descriptor mechanism.
 - **Emission / runtime handoff**: generated programs need a stable way to pass the current argument vector into Incan `main` or equivalent CLI entry points.

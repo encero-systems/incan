@@ -425,7 +425,7 @@ Existing RFC 027 metadata and desugarer artifacts can remain valid. `pub vocab` 
 - **Typechecker / Symbol resolution**: bind `self` to the declared receiver type inside extension-property bodies, check result types, derive extension-property facts, activate imported vocabularies, and resolve property reads through owned members before active extension facts.
 - **IR Lowering**: lower selected extension-property reads to checked property bodies, generated helpers, or equivalent static calls while preserving vocabulary provenance and evaluation order.
 - **Emission**: emit static code for extension-property bodies without runtime member lookup, string dispatch, or monkey patching.
-- **Stdlib / Runtime (`incan_stdlib`)**: standard vocabularies may provide value types, helper functions, explicit dynamic alternatives, and runtime-anchor APIs used by extension properties.
+- **Stdlib / Runtime (`loaves/stdlib/`)**: standard vocabularies may provide value types, helper functions, explicit dynamic alternatives, and runtime-anchor APIs used by extension properties.
 - **Library packaging**: package artifacts must carry vocabulary metadata and extension-property facts so consumers can resolve imports without source-layout assumptions.
 - **Formatter**: format `vocab` blocks and extension-property declarations consistently with existing declaration and property formatting.
 - **LSP / Tooling**: completion, hover, go-to-definition, generated docs, and diagnostics must show active vocabularies, extension-property receiver types, result types, provenance, missing imports, and runtime-anchor status.

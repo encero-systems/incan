@@ -281,7 +281,7 @@ Storage-backed constrained newtypes should expose their storage carrier through 
 - **Typechecker / Symbol resolution**: concrete type metadata must record generic trait-targeted adoption families, trait metadata must record trait-owned capability families, method signatures must be checked against targeted trait methods, `where` constraints must be evaluated, and overlapping families must be rejected.
 - **IR Lowering**: lowered method metadata must preserve the targeted trait instantiation and generic constraints so backend dispatch remains checked.
 - **Emission**: Rust emission should lower eligible generic trait-targeted methods to valid Rust trait implementations or equivalent generated code while respecting coherence.
-- **Stdlib / Runtime (`incan_stdlib`)**: numeric family traits and storage-backed integer traits should be exposed where `std.io`, codecs, serializers, and related APIs need them.
+- **Stdlib / Runtime (`loaves/stdlib/`)**: numeric family traits and storage-backed integer traits should be exposed where `std.io`, codecs, serializers, and related APIs need them.
 - **Formatter**: multiline generic method headers with `for` and repeated `where` clauses must format stably.
 - **Library manifests / checked API metadata**: public adoption-family metadata must preserve trait targets, constraints, capability-family predicates, substitutions, overlap diagnostics, and provenance.
 - **LSP / Tooling**: hover, completion, go-to-definition, diagnostics, semantic inspection, and explanation commands should surface the trait target, adoption family constraints, concrete substitutions, and reasons a substitution was accepted or rejected.

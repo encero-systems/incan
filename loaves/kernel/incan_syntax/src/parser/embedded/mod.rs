@@ -136,10 +136,7 @@ impl<'a> Parser<'a> {
             layout_sensitive,
         };
         let embedded_expr = Spanned::new(Expr::Embedded(Box::new(fragment)), fragment_span);
-        Ok(Some(vec![Spanned::new(
-            Statement::Expr(embedded_expr),
-            fragment_span,
-        )]))
+        Ok(Some(vec![Spanned::new(Statement::Expr(embedded_expr), fragment_span)]))
     }
 
     /// Return the token index of the `Dedent` that closes the suite starting at the current parser position.

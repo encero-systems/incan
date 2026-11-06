@@ -1,7 +1,6 @@
 //! Retain checked method descriptions in the initialization of a sole source-local registry static.
 
 use super::*;
-use crate::symbols::TypeInfo;
 use crate::typechecker::RegistryDescriptionRegistry;
 use incan_semantics_core::SemanticRegistrySubjectKind;
 
@@ -33,11 +32,7 @@ pub(super) fn helper_identity(info: &TypeCheckInfo) -> Option<CanonicalSymbolId>
     if !supported_profile(info) {
         return None;
     }
-    let mut cache = info.body_ir_stdlib_cache();
-    let path = vec!["std".to_owned(), "registry".to_owned()];
-    let TypeInfo::Class(owner) = cache.lookup_type(&path, "Registry")? else {
-        return None;
-    };
+    let owner = &info.registry.standard.as_ref()?.registry_class;
     let method = owner.methods.get("_describe_method")?;
     if method.receiver != Some(ast::Receiver::Mutable)
         || method.params.len() != 3
@@ -59,19 +54,13 @@ pub(super) fn initialization_type(storage: &ast::StaticDecl, info: &TypeCheckInf
     };
     let selected = info.resolved_identity(storage.value.span)?;
     let receiver_identity = info.resolved_identity(receiver.span)?;
-    let mut cache = info.body_ir_stdlib_cache();
-    let path = vec!["std".to_owned(), "registry".to_owned()];
-    let owner_identity = cache.lookup_identity(&path, "Registry")?;
-    let TypeInfo::Class(owner) = cache.lookup_type(&path, "Registry")? else {
-        return None;
-    };
-    let factory = owner.methods.get("define")?;
+    let standard = info.registry.standard.as_ref()?;
+    let owner_identity = standard.registry.clone();
+    let factory = standard.registry_class.methods.get("define")?;
     if factory.receiver.is_some()
         || factory.return_type != ResolvedType::SelfType
-        || super::library_nominals::sdk_identity(selected)?
-            != super::library_nominals::sdk_identity(factory.identity.as_ref()?)?
-        || super::library_nominals::sdk_identity(receiver_identity)?
-            != super::library_nominals::sdk_identity(&owner_identity)?
+        || Some(selected) != factory.identity.as_ref()
+        || receiver_identity != &owner_identity
     {
         return None;
     }
@@ -104,9 +93,9 @@ fn attachment<'a>(
         .iter()
         .find(|entry| {
             entry.declaration_name == format!("{owner}.{}", method.name)
-                && entry.decorator_span == (decorator.span.start, decorator.span.end)
-                && entry.key_span == (key.span.start, key.span.end)
-                && entry.descriptor_span == (descriptor.span.start, descriptor.span.end)
+                && entry.decorator_span == decorator.span
+                && entry.key_span == key.span
+                && entry.descriptor_span == descriptor.span
                 && literal_materialization(key, info)
                 && literal_materialization(descriptor, info)
         })
@@ -227,8 +216,9 @@ pub(super) fn append_registrations(
                     name: identity.declaration_name.clone(),
                     canonical: Some(identity.clone()),
                     intrinsic_carrier: None,
-                    reflection: None,
-                    sdk_trait: None,
+                    operation: None,
+                    loaf_trait: None,
+                    trait_arguments: None,
                     native_trait_delegation: None,
                     type_args: Vec::new(),
                     binding: bir::ArgumentBinding::Resolved {

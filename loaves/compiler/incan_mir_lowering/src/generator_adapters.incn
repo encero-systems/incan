@@ -1,20 +1,29 @@
 """Lazy iterator adapters chained onto an owned generator through the runtime's own Incan iterator surface."""
 
 from pub::incan_mir_plan import (
+    Callee,
     CalleeKind,
     ExternalFunction,
+    Function,
     ListLeaf,
+    Local,
     Operand,
     OperandKind,
+    Parameter,
     Place,
     PlanType,
     RvalueKind,
     SourceSpan,
+    TerminatorKind,
     TupleElement,
+    Unwind,
 )
-from pub::incan_mir_plan import assign as plan_assign
+from pub::incan_mir_plan import assign as plan_assign, block as plan_block, place as plan_place
 from frame import Builder, temporary, read_place, value_type, external_call, terminate_call
 from generators import generator_shape, generator_element, generator_runtime_call
+from generator_expressions import construct_chain
+from closure_lifting import step_callable, synthesize
+from table_views import borrowed_at
 
 
 pub def iterator_method(member: str) -> str:
@@ -84,7 +93,7 @@ def count_adapter(
     if method == "batch":
         leaf, depth = require_generator(source_type)?
         result = PlanType.Generator(leaf, depth + 1)
-    if builder.locals[output.local].ty != result:
+    if borrowed_at(builder.locals, output.local).ty != result:
         return Err(f"unsupported Body IR generator {method} types")
     name = f"{method}_generator"
     generator_runtime_call(builder, name, element, [source_type, PlanType.Int], result, [source, count], output, span)
@@ -100,7 +109,7 @@ def chain_adapter(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Draw the second owned generator's items after the first is exhausted."""
-    if owned_generator(builder, second)? != source_type or builder.locals[output.local].ty != source_type:
+    if owned_generator(builder, second)? != source_type or borrowed_at(builder.locals, output.local).ty != source_type:
         return Err("unsupported Body IR generator chain types")
     element = source_element(source_type)?
     generator_runtime_call(
@@ -126,7 +135,7 @@ def predicate_adapter(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Keep the items a function value accepts, or the prefix it accepts, or what follows that prefix."""
-    if builder.locals[output.local].ty != source_type:
+    if borrowed_at(builder.locals, output.local).ty != source_type:
         return Err(f"unsupported Body IR generator {method} types")
     element = source_element(source_type)?
     family = element_family(element)?
@@ -155,11 +164,15 @@ def map_adapter(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Transform each item with a function value when it is polled."""
-    result = builder.locals[output.local].ty
+    result = borrowed_at(builder.locals, output.local).ty
     mapped = source_element(result)?
     element = source_element(source_type)?
     signature = [element, mapped]
     pointer = adapter_callable(builder, transform, signature, span)?
+    match element:
+        PlanType.Model(_owner, _name) =>
+            return map_model_adapter(builder, source, pointer, element, mapped, result, output, span)
+        _ => pass
     if element == PlanType.String:
         return text_callable_adapter(
             builder,
@@ -186,6 +199,65 @@ def map_adapter(
     return Ok(None)
 
 
+def map_model_adapter(
+    mut builder: Builder,
+    source: Operand,
+    transform: Operand,
+    element: PlanType,
+    mapped: PlanType,
+    result: PlanType,
+    output: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Keep a model mapper lazy by forwarding each polled owned element through the existing generic step chain."""
+    name = f"__incan_map_step_{builder.name}_{len(builder.synthesized)}"
+    pointer = PlanType.FunctionPointer([element, mapped])
+    synthesize(builder, mapping_step(name, element, mapped, result, span))
+    builder.externals.append(
+        ExternalFunction(
+            path="incan_native_runtime::once_generator",
+            type_arguments=[mapped],
+            parameters=[mapped],
+            return_type=result,
+            span=span,
+        ),
+    )
+    step = step_callable(builder, name, element, result, [pointer], [transform], span)
+    return construct_chain(builder, source, step, output, span)
+
+
+def mapping_step(name: str, element: PlanType, mapped: PlanType, result: PlanType, span: SourceSpan) -> Function:
+    """Call the retained mapper once for an owned item, then yield its owned result through a single-item generator."""
+    pointer = PlanType.FunctionPointer([element, mapped])
+    parameters = [Parameter(name="transform", ty=pointer, span=span), Parameter(name="item", ty=element, span=span)]
+    locals = [Local(ty=result, span=span), Local(ty=pointer, span=span), Local(ty=element, span=span), Local(
+        ty=mapped,
+        span=span,
+    )]
+    call = TerminatorKind.Call(
+        Callee(kind=CalleeKind.Value(read_place(plan_place(1, span), false, span)), span=span),
+        [read_place(plan_place(2, span), true, span)],
+        plan_place(3, span),
+        1,
+        Unwind.Continue,
+    )
+    yield_item = TerminatorKind.Call(
+        Callee(kind=CalleeKind.Instantiated("incan_native_runtime::once_generator", [mapped]), span=span),
+        [read_place(plan_place(3, span), true, span)],
+        plan_place(0, span),
+        2,
+        Unwind.Continue,
+    )
+    return Function(
+        name=name,
+        parameters=parameters,
+        return_type=result,
+        locals=locals,
+        blocks=[plan_block([], call, span), plan_block([], yield_item, span), plan_block([], TerminatorKind.Return, span)],
+        span=span,
+    )
+
+
 def flat_map_adapter(
     mut builder: Builder,
     source: Operand,
@@ -199,7 +271,7 @@ def flat_map_adapter(
 
     An expansion is a list, or a generator whose own items are drawn only as the result is polled.
     """
-    result = builder.locals[output.local].ty
+    result = borrowed_at(builder.locals, output.local).ty
     leaf, depth = require_generator(result)?
     mapped = generator_element(leaf, depth)
     if source_type == PlanType.Generator(ListLeaf.Str, 0):
@@ -252,7 +324,7 @@ def flat_map_adapter(
     return Ok(None)
 
 
-def expansion_result(builder: Builder, expand: Operand) -> Result[PlanType, str]:
+def expansion_result(mut builder: Builder, expand: Operand) -> Result[PlanType, str]:
     """Read the retained callback result without assuming every flat_map expansion is a list."""
     match value_type(builder, expand)?:
         PlanType.FunctionPointer(signature) =>
@@ -292,7 +364,7 @@ def text_callable_adapter(
     return Ok(None)
 
 
-def expands_to_generators(builder: Builder, expand: Operand, result: PlanType) -> Result[bool, str]:
+def expands_to_generators(mut builder: Builder, expand: Operand, result: PlanType) -> Result[bool, str]:
     """Report whether a `flat_map` function value returns the result's own generator type rather than a list."""
     match value_type(builder, expand)?:
         PlanType.FunctionPointer(signature) => return Ok(len(signature) == 2 and signature[1] == result)
@@ -341,10 +413,10 @@ pub def zip_generators(
     return Ok(None)
 
 
-def pair_output(builder: Builder, output: Place, left: TupleElement, right: TupleElement) -> Result[PlanType, str]:
+def pair_output(mut builder: Builder, output: Place, left: TupleElement, right: TupleElement) -> Result[PlanType, str]:
     """Require the generator of pairs the frame laid out for a pair adapter's checked destination."""
     result = PlanType.Generator(ListLeaf.Tuple([left, right]), 0)
-    if builder.locals[output.local].ty != result:
+    if borrowed_at(builder.locals, output.local).ty != result:
         return Err("unsupported Body IR generator pair destination")
     return Ok(result)
 
@@ -359,7 +431,7 @@ def pair_component(element: PlanType) -> Result[TupleElement, str]:
         _ => return Err("unsupported Body IR generator pair component outside scalars and text")
 
 
-def owned_generator(builder: Builder, value: Operand) -> Result[PlanType, str]:
+def owned_generator(mut builder: Builder, value: Operand) -> Result[PlanType, str]:
     """Require a moved, owned generator argument; a borrowed one would be read twice."""
     ty = value_type(builder, value)?
     match value.kind:

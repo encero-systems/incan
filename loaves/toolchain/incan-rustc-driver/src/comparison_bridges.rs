@@ -1,8 +1,12 @@
 //! Native trait ABI forwarding for comparison bodies selected and validated by Incan lowering.
 
-use crate::ast_build::{expression, global_path, ident, inherited, local, path_ty, self_value};
+use crate::ast_build::{
+    RUST_CMP_EQ_SYMBOL, RUST_CMP_ORD_SYMBOL, RUST_CMP_PARTIAL_EQ_SYMBOL, RUST_CMP_PARTIAL_ORD_SYMBOL, expression,
+    global_path, ident, inherited, local, path_ty, self_value,
+};
 use crate::error::PlanError;
 use crate::plan::{EnumDeclaration, ModelDeclaration, Plan, PlanType};
+use incan_lang::lang::derives::{self, DeriveId};
 use rustc_ast as ast;
 use rustc_span::Span;
 use thin_vec::{ThinVec, thin_vec};
@@ -23,14 +27,20 @@ fn validate(plan: &Plan, owner: usize, model: &ModelDeclaration) -> Result<i64, 
     if !matches!(model.comparison_methods.len(), 1 | 5) || !model.library_item.is_empty() {
         return Err(refused("source comparison layout or slot count"));
     }
-    if model
-        .derives
-        .iter()
-        .any(|derive| matches!(derive.as_str(), "PartialEq" | "Eq" | "PartialOrd" | "Ord"))
-    {
+    if model.derives.iter().any(|derive| {
+        matches!(
+            derives::from_str(derive),
+            Some(DeriveId::PartialEq | DeriveId::Eq | DeriveId::PartialOrd | DeriveId::Ord)
+        )
+    }) {
         return Err(refused("conflicting native comparison derive"));
     }
-    if model.comparison_methods.len() == 5 && !model.derives.iter().any(|derive| derive == "Clone") {
+    if model.comparison_methods.len() == 5
+        && !model
+            .derives
+            .iter()
+            .any(|derive| derives::from_str(derive) == Some(DeriveId::Clone))
+    {
         return Err(refused("ordering requires the retained native Clone"));
     }
     let reference = PlanType::ModelRef(owner, model.name.clone());
@@ -107,14 +117,21 @@ fn validate_enum(plan: &Plan, owner: usize, declaration: &EnumDeclaration) -> Re
     let owner = i64::try_from(owner).map_err(|_| refused("owner index is out of range"))?;
     if !matches!(declaration.comparison_methods.len(), 1 | 5)
         || !declaration.library_item.is_empty()
-        || declaration
-            .derives
-            .iter()
-            .any(|name| matches!(name.as_str(), "PartialEq" | "Eq" | "PartialOrd" | "Ord"))
+        || declaration.derives.iter().any(|name| {
+            matches!(
+                derives::from_str(name),
+                Some(DeriveId::PartialEq | DeriveId::Eq | DeriveId::PartialOrd | DeriveId::Ord)
+            )
+        })
     {
         return Err(refused("source layout or conflicting native derive"));
     }
-    if declaration.comparison_methods.len() == 5 && !declaration.derives.iter().any(|name| name == "Clone") {
+    if declaration.comparison_methods.len() == 5
+        && !declaration
+            .derives
+            .iter()
+            .any(|name| derives::from_str(name) == Some(DeriveId::Clone))
+    {
         return Err(refused("ordering requires retained Clone"));
     }
     let reference = PlanType::EnumRef(owner, declaration.name.clone());
@@ -146,7 +163,7 @@ fn bridge_items(model: &ComparisonMethods<'_>, reference: Box<ast::Ty>, span: Sp
     let mut result = vec![
         implementation(
             model,
-            "PartialEq",
+            RUST_CMP_PARTIAL_EQ_SYMBOL,
             thin_vec![crate::shared_callables::method(
                 "eq",
                 Some(reference.clone()),
@@ -156,7 +173,7 @@ fn bridge_items(model: &ComparisonMethods<'_>, reference: Box<ast::Ty>, span: Sp
             )],
             span,
         ),
-        implementation(model, "Eq", ThinVec::new(), span),
+        implementation(model, RUST_CMP_EQ_SYMBOL, ThinVec::new(), span),
     ];
     if model.comparison_methods.len() == 5 {
         result.push(partial_order(model, reference.clone(), span));
@@ -234,7 +251,7 @@ fn partial_order(model: &ComparisonMethods<'_>, reference: Box<ast::Ty>, span: S
     let comparison = expression(
         ast::ExprKind::Call(
             expression(
-                ast::ExprKind::Path(None, global_path(&["std", "cmp", "Ord", "cmp"], span)),
+                ast::ExprKind::Path(None, global_path(&["std", "cmp", RUST_CMP_ORD_SYMBOL, "cmp"], span)),
                 span,
             ),
             thin_vec![self_value(span), local("argument", span)],
@@ -244,7 +261,13 @@ fn partial_order(model: &ComparisonMethods<'_>, reference: Box<ast::Ty>, span: S
     let some = expression(
         ast::ExprKind::Call(
             expression(
-                ast::ExprKind::Path(None, global_path(&["std", "option", "Option", "Some"], span)),
+                ast::ExprKind::Path(
+                    None,
+                    global_path(
+                        &["std", "option", "Option", crate::ast_build::RUST_OPTION_SOME_SYMBOL],
+                        span,
+                    ),
+                ),
                 span,
             ),
             thin_vec![comparison],
@@ -276,7 +299,7 @@ fn partial_order(model: &ComparisonMethods<'_>, reference: Box<ast::Ty>, span: S
             span,
         ));
     }
-    implementation(model, "PartialOrd", methods, span)
+    implementation(model, RUST_CMP_PARTIAL_ORD_SYMBOL, methods, span)
 }
 
 /// Preserve legacy's total-order bridge: evaluate reverse less-than first, forward less-than second, then compare those
@@ -287,7 +310,7 @@ fn total_order(model: &ComparisonMethods<'_>, reference: Box<ast::Ty>, span: Spa
     let body = expression(
         ast::ExprKind::Call(
             expression(
-                ast::ExprKind::Path(None, global_path(&["std", "cmp", "Ord", "cmp"], span)),
+                ast::ExprKind::Path(None, global_path(&["std", "cmp", RUST_CMP_ORD_SYMBOL, "cmp"], span)),
                 span,
             ),
             thin_vec![borrowed(reverse, span), borrowed(forward, span)],
@@ -296,7 +319,7 @@ fn total_order(model: &ComparisonMethods<'_>, reference: Box<ast::Ty>, span: Spa
     );
     implementation(
         model,
-        "Ord",
+        RUST_CMP_ORD_SYMBOL,
         thin_vec![crate::shared_callables::method(
             "cmp",
             Some(reference),

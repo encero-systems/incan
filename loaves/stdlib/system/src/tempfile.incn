@@ -54,7 +54,7 @@ pub class NamedTemporaryFile:
     persisted_path: Rc[RefCell[Option[Path]]]
 
     @staticmethod
-    def try_new() -> Result[NamedTemporaryFile, IoError]:
+    pub def try_new() -> Result[NamedTemporaryFile, IoError]:
         """
         Create a named temporary file with host defaults.
 
@@ -68,7 +68,7 @@ pub class NamedTemporaryFile:
         return NamedTemporaryFile.try_new_with("", "", None)
 
     @staticmethod
-    def try_new_with(prefix: str, suffix: str, dir: Option[Path]) -> Result[NamedTemporaryFile, IoError]:
+    pub def try_new_with(prefix: str, suffix: str, dir: Option[Path]) -> Result[NamedTemporaryFile, IoError]:
         """
         Create a named temporary file with configured naming.
 
@@ -99,7 +99,7 @@ pub class NamedTemporaryFile:
             Some(parent) => return _named_temporary_file_from_result(error_path, builder.tempfile_in(parent))
             None => return _named_temporary_file_from_result(error_path, builder.tempfile())
 
-    def path(self) -> Path:
+    pub def path(self) -> Path:
         """
         Return the current filesystem path.
 
@@ -117,7 +117,7 @@ pub class NamedTemporaryFile:
                     Some(path) => return path.clone()
                     None => return Path("")
 
-    def persist(self) -> Result[Path, IoError]:
+    pub def persist(self) -> Result[Path, IoError]:
         """
         Keep the file at its current path and disable automatic deletion.
 
@@ -172,7 +172,7 @@ pub class TemporaryDirectory:
     persisted_path: Rc[RefCell[Option[Path]]]
 
     @staticmethod
-    def try_new() -> Result[TemporaryDirectory, IoError]:
+    pub def try_new() -> Result[TemporaryDirectory, IoError]:
         """
         Create a temporary directory with host defaults.
 
@@ -186,7 +186,7 @@ pub class TemporaryDirectory:
         return TemporaryDirectory.try_new_with("", "", None)
 
     @staticmethod
-    def try_new_with(prefix: str, suffix: str, dir: Option[Path]) -> Result[TemporaryDirectory, IoError]:
+    pub def try_new_with(prefix: str, suffix: str, dir: Option[Path]) -> Result[TemporaryDirectory, IoError]:
         """
         Create a temporary directory with configured naming.
 
@@ -217,7 +217,7 @@ pub class TemporaryDirectory:
             Some(parent) => return _temporary_directory_from_result(error_path, builder.tempdir_in(parent))
             None => return _temporary_directory_from_result(error_path, builder.tempdir())
 
-    def path(self) -> Path:
+    pub def path(self) -> Path:
         """
         Return the current filesystem path.
 
@@ -235,7 +235,7 @@ pub class TemporaryDirectory:
                     Some(path) => return path.clone()
                     None => return Path("")
 
-    def persist(self) -> Result[Path, IoError]:
+    pub def persist(self) -> Result[Path, IoError]:
         """
         Keep the directory tree at its current path and disable automatic deletion.
 
@@ -285,7 +285,7 @@ pub class _SpooledTemporaryFile:
     temp_file: Option[NamedTemporaryFile]
     disk_file: Option[File]
 
-    def rolled_to_disk(self) -> bool:
+    pub def rolled_to_disk(self) -> bool:
         """
         Return whether the stream has rolled over to a real temporary file.
 
@@ -299,7 +299,7 @@ pub class _SpooledTemporaryFile:
             Some(_) => return true
             None => return false
 
-    def path(self) -> Result[Path, IoError]:
+    pub def path(self) -> Result[Path, IoError]:
         """
         Return the rolled temporary file path.
 
@@ -313,7 +313,7 @@ pub class _SpooledTemporaryFile:
             Some(temp) => return Ok(temp.path())
             None => return Err(_io_error(Path("."), "spooled temporary file has not rolled to disk"))
 
-    def rollover(mut self) -> Result[Path, IoError]:
+    pub def rollover(mut self) -> Result[Path, IoError]:
         """
         Force rollover to a named temporary file.
 
@@ -344,7 +344,7 @@ pub class _SpooledTemporaryFile:
         self.disk_file = Some(file)
         return self.path()
 
-    def read(self, size: int = -1) -> Result[bytes, IoError]:
+    pub def read(self, size: int = -1) -> Result[bytes, IoError]:
         """
         Read bytes from the current cursor.
 
@@ -364,7 +364,7 @@ pub class _SpooledTemporaryFile:
                     Ok(data) => return Ok(data)
                     Err(err) => return Err(_io_error(Path("."), err.detail))
 
-    def read_bytes(self, size: int = -1) -> Result[bytes, IoError]:
+    pub def read_bytes(self, size: int = -1) -> Result[bytes, IoError]:
         """
         Read bytes from the current cursor.
 
@@ -379,7 +379,7 @@ pub class _SpooledTemporaryFile:
         """
         return self.read(size)
 
-    def write(mut self, data: bytes) -> Result[int, IoError]:
+    pub def write(mut self, data: bytes) -> Result[int, IoError]:
         """
         Write bytes at the current cursor and roll over when the buffer exceeds `max_size`.
 
@@ -394,7 +394,7 @@ pub class _SpooledTemporaryFile:
         """
         return self.write_bytes(data)
 
-    def write_bytes(mut self, data: bytes) -> Result[int, IoError]:
+    pub def write_bytes(mut self, data: bytes) -> Result[int, IoError]:
         """
         Write bytes at the current cursor and roll over when the buffer exceeds `max_size`.
 
@@ -417,7 +417,7 @@ pub class _SpooledTemporaryFile:
                         return Ok(written)
                     Err(err) => return Err(_io_error(Path("."), err.detail))
 
-    def seek(self, offset: int, whence: int = 0) -> Result[int, IoError]:
+    pub def seek(self, offset: int, whence: int = 0) -> Result[int, IoError]:
         """
         Move the stream cursor.
 
@@ -438,7 +438,7 @@ pub class _SpooledTemporaryFile:
                     Ok(position) => return Ok(position)
                     Err(err) => return Err(_io_error(Path("."), err.detail))
 
-    def tell(self) -> Result[int, IoError]:
+    pub def tell(self) -> Result[int, IoError]:
         """
         Return the current byte cursor position.
 
@@ -452,7 +452,7 @@ pub class _SpooledTemporaryFile:
             Some(file) => return file.tell()
             None => return Ok(self.memory.tell())
 
-    def flush(self) -> Result[None, IoError]:
+    pub def flush(self) -> Result[None, IoError]:
         """
         Flush the disk-backed file if rollover has happened.
 
@@ -466,7 +466,7 @@ pub class _SpooledTemporaryFile:
             Some(file) => return file.flush()
             None => return Ok(None)
 
-    def getvalue(self) -> Result[bytes, IoError]:
+    pub def getvalue(self) -> Result[bytes, IoError]:
         """
         Return all stream bytes without changing the current cursor.
 
@@ -485,7 +485,7 @@ pub class _SpooledTemporaryFile:
                 return Ok(data)
             None => return Ok(self.memory.getvalue())
 
-    def persist(mut self) -> Result[Path, IoError]:
+    pub def persist(mut self) -> Result[Path, IoError]:
         """
         Keep the rolled file on disk and disable automatic deletion.
 
@@ -509,7 +509,6 @@ pub class _SpooledTemporaryFile:
             None => return Err(_io_error(Path("."), "spooled temporary file is no longer live"))
 
 
-@rust.allow("non_snake_case")
 pub def SpooledTemporaryFile(max_size: int = 0) -> _SpooledTemporaryFile:
     """
     Construct an infallible spooled temporary binary stream.

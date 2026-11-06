@@ -1,0 +1,15 @@
+# behavior: a boxed native argument cannot borrow a different target type
+# expect-diagnostic: INCAN-T0001
+
+from rust::std::boxed import Box
+
+
+def read(value: &str) -> int:
+    """Require borrowed text rather than a borrowed integer."""
+    return len(value)
+
+
+def main() -> None:
+    """Refuse a dereference whose metadata-selected target differs from the parameter."""
+    value: Box[int] = Box.new(41)
+    println(read(value))

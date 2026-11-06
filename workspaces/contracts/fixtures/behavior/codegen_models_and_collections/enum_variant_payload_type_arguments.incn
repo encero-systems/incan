@@ -1,0 +1,80 @@
+# behavior: empty enum payload lists take declared concrete or supplied generic element types, including constructors nested in Result and differently typed locals (#1516, #2256)
+# expect-stdout:
+#   0
+#   0
+#   0
+#   aside:0
+#   empty
+
+@derive(Clone)
+enum Holder[Elem with Clone]:
+    Names(list[str])
+    Items(list[Elem])
+    Empty
+
+
+enum Concrete:
+    """Keep a declared text payload independent of an enclosing result constructor."""
+
+    Names(list[str])
+
+
+def build_concrete() -> Result[Concrete, str]:
+    """Contextually type an empty payload before wrapping the concrete enum in a result."""
+    return Ok(Concrete.Names([]))
+
+
+@derive(Clone)
+model Maker[T with Clone]:
+    seed: T
+
+    def build[Picked with Clone](self) -> Holder[Picked]:
+        return Holder.Items([])
+
+
+def build[U with Clone]() -> Holder[U]:
+    return Holder.Items([])
+
+
+def build_names[Picked with Clone]() -> Holder[Picked]:
+    return Holder.Names([])
+
+
+def build_aside[Picked with Clone]() -> Holder[Picked]:
+    aside: Holder[str] = Holder.Items([])
+    match aside:
+        case Holder.Items(values):
+            println(f"aside:{len(values)}")
+        case _:
+            println("aside:other")
+    return Holder.Empty
+
+
+def show[E with Clone](holder: Holder[E]) -> str:
+    match holder:
+        case Holder.Items(values):
+            return f"{len(values)}"
+        case Holder.Names(names):
+            return f"{len(names)}"
+        case Holder.Empty:
+            return "empty"
+
+
+def main() -> None:
+    """Observe generic destinations and a concrete payload nested inside a result."""
+    match build_concrete():
+        case Ok(value):
+            match value:
+                case Concrete.Names(names):
+                    assert len(names) == 0
+        case Err(_error):
+            assert false
+    m = Maker[int](seed=1)
+    h: Holder[str] = m.build[str]()
+    println(show(h))
+    g: Holder[str] = build[str]()
+    println(show(g))
+    n: Holder[int] = build_names[int]()
+    println(show(n))
+    a: Holder[int] = build_aside[int]()
+    println(show(a))

@@ -1,0 +1,18 @@
+# behavior: a for loop that awaits each task handle of a list takes the handles out of the list and prints each task's result
+# expect-stdout:
+#   1
+#   1
+
+from std.async import spawn
+
+
+async def work() -> int:
+    return 1
+
+
+async def main() -> None:
+    handles = [spawn(work()), spawn(work())]
+    for handle in handles:
+        match await handle:
+            Ok(value) => println(value)
+            Err(_) => println("join failed")

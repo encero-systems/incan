@@ -190,6 +190,10 @@ impl<'a> Lexer<'a> {
             return;
         };
 
+        if self.scan_operator(c, start) {
+            return;
+        }
+
         match c {
             // Comments
             '#' => {
@@ -219,7 +223,40 @@ impl<'a> Lexer<'a> {
             // Skip carriage return
             '\r' => {}
 
-            // Operators and punctuation
+            // Strings
+            '"' => self.scan_string(start, '"'),
+            '\'' => self.scan_string(start, '\''),
+
+            // f-strings
+            'f' if self.peek() == Some('"') || self.peek() == Some('\'') => {
+                if let Some(quote) = self.advance() {
+                    self.scan_fstring(start, quote);
+                }
+            }
+
+            // b-strings (byte strings)
+            'b' if self.peek() == Some('"') || self.peek() == Some('\'') => {
+                if let Some(quote) = self.advance() {
+                    self.scan_byte_string(start, quote);
+                }
+            }
+
+            // Numbers
+            '0'..='9' => self.scan_number(start),
+
+            // Identifiers and keywords
+            _ if is_ident_start(c) => self.scan_identifier(start, c),
+
+            _ => {
+                self.errors
+                    .push(errors::unexpected_character(c, Span::new(start, self.current_pos)));
+            }
+        }
+    }
+
+    /// Scan an operator or punctuation after its first character was consumed; leave other characters untouched.
+    fn scan_operator(&mut self, character: char, start: usize) -> bool {
+        match character {
             '+' => self.operator(start, OperatorId::Plus, &[('=', OperatorId::PlusEq)]),
             '-' => {
                 if self.match_char('>') {
@@ -296,35 +333,9 @@ impl<'a> Lexer<'a> {
                 }
             }
 
-            // Strings
-            '"' => self.scan_string(start, '"'),
-            '\'' => self.scan_string(start, '\''),
-
-            // f-strings
-            'f' if self.peek() == Some('"') || self.peek() == Some('\'') => {
-                if let Some(quote) = self.advance() {
-                    self.scan_fstring(start, quote);
-                }
-            }
-
-            // b-strings (byte strings)
-            'b' if self.peek() == Some('"') || self.peek() == Some('\'') => {
-                if let Some(quote) = self.advance() {
-                    self.scan_byte_string(start, quote);
-                }
-            }
-
-            // Numbers
-            '0'..='9' => self.scan_number(start),
-
-            // Identifiers and keywords
-            _ if is_ident_start(c) => self.scan_identifier(start, c),
-
-            _ => {
-                self.errors
-                    .push(errors::unexpected_character(c, Span::new(start, self.current_pos)));
-            }
+            _ => return false,
         }
+        true
     }
 
     // ========================================================================
@@ -672,8 +683,8 @@ mod tests {
     fn test_keywords() {
         let tokens = lex_ok("def async await class model trait");
         assert!(matches!(tokens[0].kind, TokenKind::Keyword(KeywordId::Def)));
-        assert!(matches!(&tokens[1].kind, TokenKind::Ident(name) if name == "async"));
-        assert!(matches!(&tokens[2].kind, TokenKind::Ident(name) if name == "await"));
+        assert!(matches!(tokens[1].kind, TokenKind::Keyword(KeywordId::Async)));
+        assert!(matches!(tokens[2].kind, TokenKind::Keyword(KeywordId::Await)));
         assert!(matches!(tokens[3].kind, TokenKind::Keyword(KeywordId::Class)));
         assert!(matches!(tokens[4].kind, TokenKind::Keyword(KeywordId::Model)));
         assert!(matches!(tokens[5].kind, TokenKind::Keyword(KeywordId::Trait)));

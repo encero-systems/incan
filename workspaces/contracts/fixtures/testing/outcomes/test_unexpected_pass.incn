@@ -1,0 +1,14 @@
+# behavior: an expected failure that passes reports XPASS and fails the command
+# expect-stdout-contains:
+#   test_unexpected_pass.incn::test_fixed XPASS (tracked bug)
+# expect-exit: 1
+
+"""Expected-failure markers cannot silently hide a fixed test."""
+
+from std.testing import xfail
+
+
+@xfail("tracked bug")
+def test_fixed() -> None:
+    """An unexpectedly passing test requires attention."""
+    assert true

@@ -1,0 +1,25 @@
+[project]
+name = "incan_stdlib_primitives"
+version = "0.5.0"
+license = "Apache-2.0"
+private = true
+
+[rust]
+name = "incan_std_primitives"
+type = "lib"
+edition = "2024"
+
+[rust.source]
+root = "rust"
+
+[dependencies]
+crc32fast = { loaf = "crates-io/crc32fast", version = "1", features = [], default-features = true }
+hmac = { loaf = "crates-io/hmac", version = "0.12", features = ["reset"], default-features = true }
+incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
+memmap2 = { loaf = "crates-io/memmap2", version = "=0.9.11", features = [], default-features = true }
+rustix = { loaf = "crates-io/rustix", version = "1.1", features = ["fs"], default-features = true }
+serde = { loaf = "crates-io/serde", version = "1.0", features = ["derive"], default-features = true }
+serde_json = { loaf = "crates-io/serde_json", version = "1.0", features = [], default-features = true }
+sha2 = { loaf = "crates-io/sha2", version = "0.10", features = [], default-features = true }
+tempfile = { loaf = "crates-io/tempfile", version = "3", features = [], default-features = true }
+tokio = { loaf = "crates-io/tokio", version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"], default-features = true }

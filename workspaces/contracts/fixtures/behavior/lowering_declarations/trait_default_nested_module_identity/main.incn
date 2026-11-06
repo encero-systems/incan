@@ -1,0 +1,28 @@
+# behavior: defaults of a trait from a nested module construct that module's model, class, enum and newtype, read that model's field and the module's private const, while the adopter's module declares and uses a same-named model of its own
+# expect-stdout:
+#   local
+#   2
+#   3
+#   true
+#   4
+#   7
+
+from geometry.shapes import Corner, Measured
+
+
+model Extent:
+    label: str
+
+
+model Card with Measured:
+    size: int
+
+
+def main() -> None:
+    card = Card(size=1)
+    println(Extent(label="local").label)
+    println(card.extent_size())
+    println(card.frame().n)
+    println(card.corner() == Corner.Top)
+    println(card.distance().0)
+    println(card.limit())

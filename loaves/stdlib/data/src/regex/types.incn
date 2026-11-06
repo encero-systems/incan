@@ -7,7 +7,7 @@ Incan callers: matches, capture sets, and iterators over collected results.
 
 from std.derives.collection import Iterator
 from std.derives.copying import Clone
-from rust::incan_std_core::strings import str_slice_byte_range, str_slice_from_byte_offset
+from rust::incan_std_primitives::strings import str_slice_byte_range, str_slice_from_byte_offset
 
 
 @derive(Clone)
@@ -23,7 +23,7 @@ pub model Match:
     pub start_offset: int
     pub end_offset: int
 
-    def as_str(self) -> str:
+    pub def as_str(self) -> str:
         """
         Return the matched substring.
 
@@ -32,7 +32,7 @@ pub model Match:
         """
         return self.text
 
-    def start(self) -> int:
+    pub def start(self) -> int:
         """
         Return the start byte offset.
 
@@ -41,7 +41,7 @@ pub model Match:
         """
         return self.start_offset
 
-    def end(self) -> int:
+    pub def end(self) -> int:
         """
         Return the exclusive end byte offset.
 
@@ -50,7 +50,7 @@ pub model Match:
         """
         return self.end_offset
 
-    def span(self) -> Tuple[int, int]:
+    pub def span(self) -> Tuple[int, int]:
         """
         Return the byte span.
 
@@ -72,7 +72,7 @@ pub model Captures:
     pub indexed: list[Option[Match]]
     pub named: Dict[str, Option[Match]]
 
-    def full_match(self) -> Option[Match]:
+    pub def full_match(self) -> Option[Match]:
         """
         Return capture group `0`.
 
@@ -81,7 +81,7 @@ pub model Captures:
         """
         return self.match_index(0)
 
-    def group(self, key: int | str) -> Option[str]:
+    pub def group(self, key: int | str) -> Option[str]:
         """
         Return captured text by numeric index or name.
 
@@ -97,7 +97,7 @@ pub model Captures:
             return _match_text(self.match_name(key))
         return None
 
-    def span(self, key: int | str) -> Option[Tuple[int, int]]:
+    pub def span(self, key: int | str) -> Option[Tuple[int, int]]:
         """
         Return a captured byte span by numeric index or name.
 
@@ -113,7 +113,7 @@ pub model Captures:
             return _match_span(self.match_name(key))
         return None
 
-    def groups(self) -> list[Option[str]]:
+    pub def groups(self) -> list[Option[str]]:
         """
         Return indexed capture text, excluding the full match.
 
@@ -125,7 +125,7 @@ pub model Captures:
             out.append(_match_text(self.indexed[index]))
         return out
 
-    def groupdict(self) -> Dict[str, Option[str]]:
+    pub def groupdict(self) -> Dict[str, Option[str]]:
         """
         Return named capture text.
 
@@ -134,10 +134,11 @@ pub model Captures:
         """
         mut out: Dict[str, Option[str]] = {}
         for name in self.named.keys():
-            out[name] = _match_text(self.named[name])
+            value = _match_text(self.named[name])
+            out[name] = value
         return out
 
-    def match_index(self, index: int) -> Option[Match]:
+    pub def match_index(self, index: int) -> Option[Match]:
         """
         Return a captured match by numeric index.
 
@@ -151,7 +152,7 @@ pub model Captures:
             return None
         return self.indexed[index]
 
-    def match_name(self, name: str) -> Option[Match]:
+    pub def match_name(self, name: str) -> Option[Match]:
         """
         Return a captured match by name.
 

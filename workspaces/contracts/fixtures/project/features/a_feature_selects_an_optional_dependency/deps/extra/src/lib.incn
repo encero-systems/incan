@@ -1,0 +1,2 @@
+pub def extra_value() -> int:
+    return 1

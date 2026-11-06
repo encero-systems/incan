@@ -5,10 +5,10 @@ This page specifies `Debug` and `Display`. The derive catalog and the automatic 
 ## Debug
 
 - **Provides**: `{value:?}` formatting.
-- **Provided by**: every `model`, `class` and `enum`; a `newtype` whose underlying type implements `Debug`.
+- **Provided by**: every `model`, `class` and `enum`, except that a class whose name starts with `_` and whose fields contain a directly imported Rust type needs an explicit or implied `Debug` derive; a `newtype` whose underlying type implements `Debug`.
 - **Behavior**: a model or class formats as its type name followed by its fields in declaration order, each as `name: value`, in braces. An enum value formats as its variant name, followed by its payloads in parentheses when it has any: `Red`, `Leaf(1)`, `Error(404, "missing")`. A newtype formats as its type name followed by its underlying value in parentheses: `UserId(42)`. A `str` value is quoted.
 - **Dunder**: none.
-- **Requires**: every field type implements `Debug` (see [Automatic derives](../derives_and_traits.md#automatic-derives), `INCAN-T0113`).
+- **Requires**: every field type implements `Debug` (see [Automatic derives](../derives_and_traits.md#automatic-derives), `INCAN-T0113` or a Rust trait-bound diagnostic for a directly imported Rust field type).
 
 ## Display
 

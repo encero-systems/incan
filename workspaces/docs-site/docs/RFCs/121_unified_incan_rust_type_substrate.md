@@ -135,7 +135,7 @@ Closing any gap between Incan's current internal type representations and this R
 
 - **Typechecker / language type system**: primitive and stdlib type definitions must commit to Rust-representation identity at the type-system level, not only at emission time.
 - **IR Lowering / Emission**: no conversion/adapter emission for representation-identical types; lowering passes a real value through rather than constructing a projected copy.
-- **Stdlib (`incan_stdlib`)**: owns the canonical shared definitions for stdlib/compound types.
+- **Stdlib (`loaves/stdlib/`)**: owns the canonical shared definitions for stdlib/compound types.
 - **RFC 097's caller boundary**: "Type projection" section requires a follow-up revision from conversion framing to identity framing.
 - **RFC 005 / RFC 041 / RFC 043's Rust-interop boundary**: require an equivalent follow-up revision for the reverse direction.
 
@@ -150,7 +150,7 @@ Closing any gap between Incan's current internal type representations and this R
 ## Unresolved questions
 
 - Are there any Incan type-system semantics that cannot be made representation-identical to a natural Rust type — different overflow/panic semantics, different string-encoding guarantees, or similar — and if so, how should those exceptions be named and diagnosed?
-- What is the actual canonical location for the shared stdlib-type module — part of `incan_stdlib`, a new dedicated crate, or something else?
+- What is the actual canonical location for the shared stdlib-type module — part of `loaves/stdlib/`, a new dedicated crate, or something else?
 - Does `str`'s owned-versus-borrowed (`String` vs `&str`) choice remain a genuine per-call-site policy decision under this model, or does it need its own resolution to fit cleanly under "representation identity"?
 - What is the actual sequencing for revisiting RFC 005/041/043 and RFC 097's "Type projection" section once this RFC is accepted — one combined follow-up, or a separate pass per RFC?
 - Does this RFC's principle extend to Incan's trait/dispatch system (RFC 025's multi-instantiation dispatch, RFC 043's Rust trait implementation), or is it scoped to data/type-shape identity only?

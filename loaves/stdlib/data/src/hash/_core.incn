@@ -5,7 +5,7 @@ This module owns the algorithm wrappers and value hashing paths. File and reader
 `std.hash._streaming` so the public prelude stays small and the hot dispatch paths are easier to audit.
 """
 
-from rust::incan_std_core::errors import raise_value_error
+from rust::incan_std_primitives::errors import raise_value_error
 from rust::blake2 import Blake2b512, Blake2s256
 from rust::blake3 import Hasher as Blake3Hasher, hash as blake3_hash
 from rust::md5 import Md5
@@ -16,6 +16,7 @@ from rust::sha3::digest import ExtendableOutputReset, Update, XofReader
 from rust::xxhash_rust::xxh3 import Xxh3Default, xxh3_64 as rust_xxh3_64, xxh3_128 as rust_xxh3_128
 from rust::xxhash_rust::xxh32 import Xxh32
 from rust::xxhash_rust::xxh64 import Xxh64
+from std.fs.mapping import MappedView
 from std.traits.error import Error
 
 
@@ -132,7 +133,7 @@ pub enum _Algorithm(str):
     Xxh3_64 = "xxh3_64"
     Xxh3_128 = "xxh3_128"
 
-    def from_str(name: str) -> Result[Self, HashError]:
+    pub def from_str(name: str) -> Result[Self, HashError]:
         """
         Parse a public algorithm name into the internal selector.
 
@@ -146,7 +147,7 @@ pub enum _Algorithm(str):
             return Ok(parsed)
         return Err(_invalid_error(name, "unknown_algorithm", f"unknown hash algorithm: {name}"))
 
-    def is_known(name: str) -> bool:
+    pub def is_known(name: str) -> bool:
         """
         Return whether `name` is a known hash algorithm.
         """
@@ -155,13 +156,13 @@ pub enum _Algorithm(str):
             Ok(value) => return value
             Err(value) => return value
 
-    def name(self) -> str:
+    pub def name(self) -> str:
         """
         Return the canonical public algorithm name.
         """
         return self.value()
 
-    def is_shake(self) -> bool:
+    pub def is_shake(self) -> bool:
         """
         Return whether this algorithm has caller-selected SHAKE output length.
         """
@@ -192,12 +193,17 @@ pub class Sha256Hasher with ByteDigestHasher:
     Create a handle with `sha256.new()`, retain it in a model or class field, then call `update` from each method that
     contributes canonical bytes. `finalize_bytes()` returns the digest for bytes already supplied and resets the handle
     for a subsequent byte stream; this type does not define which bytes are canonical for an application identity.
+    `update_view` hashes a mapped view where it lies, so verifying mapped content copies none of it.
     """
 
     handle: Sha256
 
     def update(mut self, chunk: bytes) -> None:
         Digest.update(self.handle, chunk.as_slice())
+
+    pub def update_view(mut self, view: MappedView) -> None:
+        """Add the bytes of `view` without copying them out of the mapping."""
+        Digest.update(self.handle, view.0)
 
     def finalize_bytes(mut self) -> bytes:
         return self.handle.finalize_reset().to_vec()
@@ -463,304 +469,285 @@ pub class _Xxh3_128Hasher with Hash128DigestHasher:
         return self.handle.digest128()
 
 
-@rust.allow("non_camel_case_types")
 pub class sha224:
     """
     SHA-224 namespace with one-shot and incremental hashing.
     """
 
     @staticmethod
-    def digest(data: bytes) -> bytes:
+    pub def digest(data: bytes) -> bytes:
         return _must_digest_bytes(data, "sha224", 0)
 
     @staticmethod
-    def new() -> _Sha224Hasher:
+    pub def new() -> _Sha224Hasher:
         return _Sha224Hasher(handle=Sha224.default())
 
 
-@rust.allow("non_camel_case_types")
 pub class sha256:
     """
     SHA-256 namespace with one-shot and incremental hashing.
     """
 
     @staticmethod
-    def digest(data: bytes) -> bytes:
+    pub def digest(data: bytes) -> bytes:
         return _must_digest_bytes(data, "sha256", 0)
 
     @staticmethod
-    def new() -> Sha256Hasher:
+    pub def new() -> Sha256Hasher:
         return Sha256Hasher(handle=Sha256.default())
 
 
-@rust.allow("non_camel_case_types")
 pub class sha384:
     """
     SHA-384 namespace with one-shot and incremental hashing.
     """
 
     @staticmethod
-    def digest(data: bytes) -> bytes:
+    pub def digest(data: bytes) -> bytes:
         return _must_digest_bytes(data, "sha384", 0)
 
     @staticmethod
-    def new() -> _Sha384Hasher:
+    pub def new() -> _Sha384Hasher:
         return _Sha384Hasher(handle=Sha384.default())
 
 
-@rust.allow("non_camel_case_types")
 pub class sha512:
     """
     SHA-512 namespace with one-shot and incremental hashing.
     """
 
     @staticmethod
-    def digest(data: bytes) -> bytes:
+    pub def digest(data: bytes) -> bytes:
         return _must_digest_bytes(data, "sha512", 0)
 
     @staticmethod
-    def new() -> _Sha512Hasher:
+    pub def new() -> _Sha512Hasher:
         return _Sha512Hasher(handle=Sha512.default())
 
 
-@rust.allow("non_camel_case_types")
 pub class sha3_224:
     """
     SHA3-224 namespace with one-shot and incremental hashing.
     """
 
     @staticmethod
-    def digest(data: bytes) -> bytes:
+    pub def digest(data: bytes) -> bytes:
         return _must_digest_bytes(data, "sha3_224", 0)
 
     @staticmethod
-    def new() -> _Sha3_224Hasher:
+    pub def new() -> _Sha3_224Hasher:
         return _Sha3_224Hasher(handle=Sha3_224.default())
 
 
-@rust.allow("non_camel_case_types")
 pub class sha3_256:
     """
     SHA3-256 namespace with one-shot and incremental hashing.
     """
 
     @staticmethod
-    def digest(data: bytes) -> bytes:
+    pub def digest(data: bytes) -> bytes:
         return _must_digest_bytes(data, "sha3_256", 0)
 
     @staticmethod
-    def new() -> _Sha3_256Hasher:
+    pub def new() -> _Sha3_256Hasher:
         return _Sha3_256Hasher(handle=Sha3_256.default())
 
 
-@rust.allow("non_camel_case_types")
 pub class sha3_384:
     """
     SHA3-384 namespace with one-shot and incremental hashing.
     """
 
     @staticmethod
-    def digest(data: bytes) -> bytes:
+    pub def digest(data: bytes) -> bytes:
         return _must_digest_bytes(data, "sha3_384", 0)
 
     @staticmethod
-    def new() -> _Sha3_384Hasher:
+    pub def new() -> _Sha3_384Hasher:
         return _Sha3_384Hasher(handle=Sha3_384.default())
 
 
-@rust.allow("non_camel_case_types")
 pub class sha3_512:
     """
     SHA3-512 namespace with one-shot and incremental hashing.
     """
 
     @staticmethod
-    def digest(data: bytes) -> bytes:
+    pub def digest(data: bytes) -> bytes:
         return _must_digest_bytes(data, "sha3_512", 0)
 
     @staticmethod
-    def new() -> _Sha3_512Hasher:
+    pub def new() -> _Sha3_512Hasher:
         return _Sha3_512Hasher(handle=Sha3_512.default())
 
 
-@rust.allow("non_camel_case_types")
 pub class shake128:
     """
     SHAKE128 namespace requiring explicit output lengths.
     """
 
     @staticmethod
-    def digest(data: bytes, length: int) -> Result[bytes, HashError]:
+    pub def digest(data: bytes, length: int) -> Result[bytes, HashError]:
         return _digest_bytes(data, "shake128", length)
 
     @staticmethod
-    def new() -> _Shake128Hasher:
+    pub def new() -> _Shake128Hasher:
         return _Shake128Hasher(handle=Shake128.default())
 
 
-@rust.allow("non_camel_case_types")
 pub class shake256:
     """
     SHAKE256 namespace requiring explicit output lengths.
     """
 
     @staticmethod
-    def digest(data: bytes, length: int) -> Result[bytes, HashError]:
+    pub def digest(data: bytes, length: int) -> Result[bytes, HashError]:
         return _digest_bytes(data, "shake256", length)
 
     @staticmethod
-    def new() -> _Shake256Hasher:
+    pub def new() -> _Shake256Hasher:
         return _Shake256Hasher(handle=Shake256.default())
 
 
-@rust.allow("non_camel_case_types")
 pub class blake2b:
     """
     BLAKE2b namespace with the standard 64-byte output.
     """
 
     @staticmethod
-    def digest(data: bytes) -> bytes:
+    pub def digest(data: bytes) -> bytes:
         return _must_digest_bytes(data, "blake2b", 64)
 
     @staticmethod
-    def new() -> _Blake2bHasher:
+    pub def new() -> _Blake2bHasher:
         return _Blake2bHasher(handle=Blake2b512.default())
 
 
-@rust.allow("non_camel_case_types")
 pub class blake2s:
     """
     BLAKE2s namespace with the standard 32-byte output.
     """
 
     @staticmethod
-    def digest(data: bytes) -> bytes:
+    pub def digest(data: bytes) -> bytes:
         return _must_digest_bytes(data, "blake2s", 32)
 
     @staticmethod
-    def new() -> _Blake2sHasher:
+    pub def new() -> _Blake2sHasher:
         return _Blake2sHasher(handle=Blake2s256.default())
 
 
-@rust.allow("non_camel_case_types")
 pub class blake3:
     """
     BLAKE3 namespace with one-shot and incremental hashing.
     """
 
     @staticmethod
-    def digest(data: bytes) -> bytes:
+    pub def digest(data: bytes) -> bytes:
         return _must_digest_bytes(data, "blake3", 0)
 
     @staticmethod
-    def new() -> _Blake3Hasher:
+    pub def new() -> _Blake3Hasher:
         return _Blake3Hasher(handle=Blake3Hasher.new())
 
 
-@rust.allow("non_camel_case_types")
 pub class md5:
     """
     MD5 namespace for interoperability and checksum workflows.
     """
 
     @staticmethod
-    def digest(data: bytes) -> bytes:
+    pub def digest(data: bytes) -> bytes:
         return _must_digest_bytes(data, "md5", 0)
 
     @staticmethod
-    def new() -> _Md5Hasher:
+    pub def new() -> _Md5Hasher:
         return _Md5Hasher(handle=Md5.default())
 
 
-@rust.allow("non_camel_case_types")
 pub class sha1:
     """
     SHA-1 namespace for interoperability and checksum workflows.
     """
 
     @staticmethod
-    def digest(data: bytes) -> bytes:
+    pub def digest(data: bytes) -> bytes:
         return _must_digest_bytes(data, "sha1", 0)
 
     @staticmethod
-    def new() -> _Sha1Hasher:
+    pub def new() -> _Sha1Hasher:
         return _Sha1Hasher(handle=Sha1.default())
 
 
-@rust.allow("non_camel_case_types")
 pub class xxh3_64:
     """
     XXH3 64-bit namespace with byte and integer outputs.
     """
 
     @staticmethod
-    def digest(data: bytes) -> bytes:
+    pub def digest(data: bytes) -> bytes:
         return _must_digest_bytes(data, "xxh3_64", 0)
 
     @staticmethod
-    def hash_u64(data: bytes) -> u64:
+    pub def hash_u64(data: bytes) -> u64:
         return _must_hash_u64(data, "xxh3_64")
 
     @staticmethod
-    def new() -> _Xxh3_64Hasher:
+    pub def new() -> _Xxh3_64Hasher:
         return _Xxh3_64Hasher(handle=Xxh3Default.new())
 
 
-@rust.allow("non_camel_case_types")
 pub class xxh3_128:
     """
     XXH3 128-bit namespace with byte and integer outputs.
     """
 
     @staticmethod
-    def digest(data: bytes) -> bytes:
+    pub def digest(data: bytes) -> bytes:
         return _must_digest_bytes(data, "xxh3_128", 0)
 
     @staticmethod
-    def hash_u128(data: bytes) -> u128:
+    pub def hash_u128(data: bytes) -> u128:
         return _must_hash_u128(data, "xxh3_128")
 
     @staticmethod
-    def new() -> _Xxh3_128Hasher:
+    pub def new() -> _Xxh3_128Hasher:
         return _Xxh3_128Hasher(handle=Xxh3Default.new())
 
 
-@rust.allow("non_camel_case_types")
 pub class xxh64:
     """
     xxHash64 namespace with byte and 64-bit integer outputs.
     """
 
     @staticmethod
-    def digest(data: bytes) -> bytes:
+    pub def digest(data: bytes) -> bytes:
         return _must_digest_bytes(data, "xxh64", 0)
 
     @staticmethod
-    def hash_u64(data: bytes) -> u64:
+    pub def hash_u64(data: bytes) -> u64:
         return _must_hash_u64(data, "xxh64")
 
     @staticmethod
-    def new() -> _Xxh64Hasher:
+    pub def new() -> _Xxh64Hasher:
         return _Xxh64Hasher(handle=Xxh64.default())
 
 
-@rust.allow("non_camel_case_types")
 pub class xxh32:
     """
     xxHash32 namespace with byte and 32-bit integer outputs.
     """
 
     @staticmethod
-    def digest(data: bytes) -> bytes:
+    pub def digest(data: bytes) -> bytes:
         return _must_digest_bytes(data, "xxh32", 0)
 
     @staticmethod
-    def hash_u32(data: bytes) -> u32:
+    pub def hash_u32(data: bytes) -> u32:
         return _must_hash_u32(data, "xxh32")
 
     @staticmethod
-    def new() -> _Xxh32Hasher:
+    pub def new() -> _Xxh32Hasher:
         return _Xxh32Hasher(handle=Xxh32.default())
 
 

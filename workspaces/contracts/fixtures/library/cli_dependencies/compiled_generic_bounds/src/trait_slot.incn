@@ -1,0 +1,21 @@
+"""A consumer that bounds its own generic functions by a dependency's trait."""
+
+from pub::bounds import Item, Labeled
+
+
+def display[T with Labeled](value: T) -> str:
+    """Select the library's default through its checked trait bound."""
+    return value.decorated()
+
+
+def replace[T with Labeled](mut value: T) -> str:
+    """Keep the exclusive receiver through the library's inherited default."""
+    return value.replace("first", "second")
+
+
+pub def run_trait_slot() -> None:
+    """Execute the default with a receiver implemented in the library."""
+    mut item = Item(value="linked")
+    println(display(item))
+    println(replace(item))
+    println(item.value)

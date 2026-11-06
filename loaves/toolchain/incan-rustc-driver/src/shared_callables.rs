@@ -1,7 +1,8 @@
 //! Native ABI bridges for SDK callbacks whose immutable primitive captures have been proved by Incan lowering.
 
 use crate::ast_build::{
-    binding, block, expression, expression_statement, global_path, ident, inherited, local, path_ty, self_value,
+    RUST_CLONE_SYMBOL, binding, block, expression, expression_statement, global_path, ident, inherited, local, path_ty,
+    self_value,
 };
 use crate::error::PlanError;
 use crate::plan::{CalleeKind, Function, OperandKind, Plan, PlanType, Projection, TerminatorKind};
@@ -150,7 +151,7 @@ fn clone_impl(signature: &[PlanType], span: Span) -> Box<ast::Item> {
     let body = expression(ast::ExprKind::Call(local("Self", span), thin_vec![clone]), span);
     implementation(
         signature,
-        global_path(&["std", "clone", "Clone"], span),
+        global_path(&["std", "clone", RUST_CLONE_SYMBOL], span),
         method(
             "clone",
             None,

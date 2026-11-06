@@ -236,7 +236,7 @@ This RFC is additive. Existing `Eq` and `Ord` code keeps working. Documentation 
 - **Typechecker / Symbol resolution:** trait adoption, derive conflicts, field comparability, and operator compatibility must be checked consistently.
 - **IR Lowering:** derived and default comparison behavior must lower through the canonical comparison contract without duplicating unrelated operator paths.
 - **Emission:** generated comparison code must preserve field order, `Ordering` results, and operator behavior.
-- **Stdlib / Runtime (`incan_stdlib`):** the standard library must expose `Ordering`, `Comparable`, default helper methods, and any comparison-bound error types.
+- **Stdlib / Runtime (`loaves/stdlib/`):** the standard library must expose `Ordering`, `Comparable`, default helper methods, and any comparison-bound error types.
 - **Formatter:** formatter behavior is unchanged except for ordinary derive and trait formatting.
 - **LSP / Tooling:** completion, hover, derived-member inspection, and diagnostics should show the generated comparison surface and conflicts with `Eq` or `Ord`.
 

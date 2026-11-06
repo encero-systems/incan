@@ -1,0 +1,3 @@
+pub def greeting(name: str) -> str:
+    """Build a greeting for the caller."""
+    return f"hello {name}"

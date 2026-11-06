@@ -1,21 +1,24 @@
 [project]
 name = "incan-rustc-driver"
-version = "0.6.0-dev.7"
+version = "0.6.0-dev.8"
 private = true
 
 [dependencies]
-oven_rustc = { loaf = "oven_rustc", path = "../../oven/oven_rustc" }
-oven-cli = { loaf = "oven_cli", path = "../oven-cli", default-features = false, features = ["rust_inspect", "std_async", "std_decorators", "std_testing"] }
+libc = { loaf = "crates-io/libc", version = "0.2" }
+incan_codegraph = { loaf = "incan_codegraph", path = "../../kernel/incan_codegraph" }
 tracing = { loaf = "crates-io/tracing", version = "0.1" }
-incan_mir_plan = { loaf = "incan_mir_plan", path = "../../compiler/incan_mir_plan" }
 incan_mir_lowering = { loaf = "incan_mir_lowering", path = "../../compiler/incan_mir_lowering" }
+incan_worker_host = { loaf = "incan_worker_host", path = "../../compiler/incan_worker_host" }
+incan_format = { loaf = "incan_format", path = "../../compiler/incan_format" }
 
-incan_driver = { loaf = "incan_driver", path = "../../compiler/incan_driver", default-features = false, features = ["cli", "rust_inspect", "std_async", "std_testing", "std_decorators"] }
+incan_driver = { loaf = "incan_driver", path = "../../compiler/incan_driver" }
 thiserror = { loaf = "crates-io/thiserror", version = "2" }
 serde_json = { loaf = "crates-io/serde_json", version = "1" }
-oven_model = { loaf = "oven_model", path = "../../oven/oven_model" }
+hex = { loaf = "crates-io/hex", version = "0.4.3" }
+sha2 = { loaf = "crates-io/sha2", version = "0.10.9" }
 incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
-incan_frontend = { loaf = "incan_frontend", path = "../../compiler/incan_frontend", default-features = false }
+incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
+incan_frontend = { loaf = "incan_frontend", path = "../../compiler/incan_frontend" }
 
 [[rust.bin]]
 name = "incan-rustc-driver"
@@ -23,3 +26,7 @@ path = "src/main.rs"
 unstable_features = ["rustc_private"]
 toolchain_components = ["rustc-dev"]
 sysroot_dependencies = ["rustc_driver"]
+
+# Native runtime code is linked by compiled programs rather than by the compiler binary.
+[tool.incan.codegraph]
+sources = ["../../compiler/incan_native_runtime"]

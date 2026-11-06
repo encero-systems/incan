@@ -1,16 +1,16 @@
 # Guided project: carry one workflow through the fundamentals
 
-The Incan Book teaches language concepts in small programs. This guided spine gives those concepts one cumulative destination: the release-envelope executable [pipeline mini-project](../../tooling/tutorials/pipeline_mini_project.md).
+The Incan Book teaches language concepts in small programs. This guided spine gives those concepts one cumulative destination: the [pipeline mini-project](../../tooling/tutorials/pipeline_mini_project.md).
 
 <aside class="inc-tutorial-meta" aria-label="Tutorial details">
   <dl>
     <div><dt>Reader</dt><dd>Learner who wants continuity between Book chapters</dd></div>
     <div><dt>Prerequisites</dt><dd>Getting Started completed</dd></div>
     <div><dt>Time</dt><dd>1–2 focused sessions</dd></div>
-    <div><dt>Verified</dt><dd>Incan <code>&gt;=0.5.0-0,&lt;0.6.0</code>; run and tests exercised with the 0.5 release envelope</dd></div>
-    <div><dt>Status</dt><dd>Release-envelope executable</dd></div>
+    <div><dt>Verified</dt><dd>Incan <code>0.6.0-dev.8</code></dd></div>
+    <div><dt>Status</dt><dd>Development-toolchain executable</dd></div>
     <div><dt>Outcome</dt><dd>A deterministic typed workflow step</dd></div>
-    <div><dt>Artifacts</dt><dd>Manifest, public step module, tests, lockfile, and native binary</dd></div>
+    <div><dt>Artifacts</dt><dd>Manifest, public step module, tests and native binary</dd></div>
   </dl>
 </aside>
 
@@ -19,7 +19,7 @@ The Incan Book teaches language concepts in small programs. This guided spine gi
   <li><strong>Fail</strong>Explicit Result</li>
   <li><strong>Organize</strong>Project boundary</li>
   <li><strong>Test</strong>Both outcomes</li>
-  <li><strong>Deliver</strong>Lock and build</li>
+  <li><strong>Deliver</strong>Run and build</li>
 </ol>
 
 ## Stage 1: shape one transformation
@@ -62,7 +62,7 @@ def main() -> None:
 
 Read [modules and imports](book/05_modules_and_imports.md), then follow the mini-project's [manifest-backed layout](../../tooling/tutorials/pipeline_mini_project.md#step-1-create-a-file). Keep the public step and terminal `main` in `src/pipeline_step.incn`; point `[project.scripts] main` at that file.
 
-The manifest owns the entry point. Tests import the public function as `from pipeline_step import normalize_name`; they do not climb directories or duplicate the function.
+The source path selects the entry point. Tests import the public function as `from pipeline_step import normalize_name`; they do not climb directories or duplicate the function.
 
 ## Stage 4: test both contracts
 
@@ -71,27 +71,26 @@ Read [unit tests](book/13_unit_tests.md), then add the mini-project's [success a
 Run the complete test gate:
 
 ```bash
-incan test
+incan test tests/test_pipeline_step.incn
 ```
 
 A useful workflow test proves both the ordinary value and the rejected input. It does not merely assert that the program starts.
 
 ## Stage 5: deliver the program
 
-Lock, run, and release-build the completed project:
+Run and build the completed project:
 
 ```bash
-incan lock
-incan run --locked
-incan test --locked
-incan build --locked
+incan run src/pipeline_step.incn
+incan test tests/test_pipeline_step.incn
+incan build src/pipeline_step.incn
 ```
 
-The same source, manifest, and lock authority now drive local execution, tests, and the native artifact.
+The same source and manifest drive local execution, tests and the native artifact.
 
 <section class="inc-learning-panel inc-learning-panel--complete inc-incus-slot" data-label="Complete" data-incus-category="success" markdown="1">
 
-You carried one workflow from a small typed function through explicit fallibility, a public module boundary, focused tests, a canonical lock, and a native build—all inside the 0.5 release envelope.
+You carried one workflow from a small typed function through explicit fallibility, a public module boundary, focused tests and a native build.
 
 </section>
 

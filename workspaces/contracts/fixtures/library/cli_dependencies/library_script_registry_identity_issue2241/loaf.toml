@@ -1,0 +1,9 @@
+[project]
+name = "library_script_registry_identity_issue2241"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+numbers = { path = "deps/numbers" }

@@ -2,9 +2,7 @@
 
 Conformance example for script/type-shaped descriptor-gated embedded fragments (RFC 081, `#1023`).
 
-This example is meant to be read from the Incan consumer surface first. The Rust companion crate exists to
-describe the accepted `RegexTemplate`, `TypePosition`, and `RawText` submode grammars to the compiler; it does not claim
-JavaScript, TypeScript, or any other script-language compatibility.
+Read the Incan consumer first. Its Incan vocabulary entry registers the `RegexTemplate`, `TypePosition` and `RawText` submodes; it does not claim JavaScript, TypeScript or other script-language compatibility.
 
 The consumer writes:
 
@@ -46,16 +44,10 @@ The important parts are:
 This example proves the parser-to-typechecker-to-lowering contract: each fragment parses through its own dedicated
 submode grammar, the template string's expression hole typechecks as a real Incan expression, and the resulting
 typed `EmbeddedFragmentExpr` artifacts reach Body IR successfully. It does **not** register a desugarer or
-lowering hook, so it has no runtime meaning yet -- RFC 081 explicitly assigns that responsibility to the owning
-DSL's own desugarer or lowering hook (`#1023`'s scope is the mechanism, not a concrete script runtime). Building
-this consumer with `incan build` will therefore stop at Rust emission with a clear, explicit refusal (`cannot emit
-Rust code for a descriptor-gated embedded fragment: no owning DSL lowering hook is registered for it yet`) rather
-than silently emitting nothing or guessing at semantics. `incan check` against the consumer proves the
-parser/typechecker contract without needing a lowering hook.
+lowering hook. `incan check` proves its parser/typechecker contract. Running or building the consumer is refused with `unsupported source construct: embedded DSL fragment expression`. The consumer is listed in `examples/check-only.txt`; the examples runner checks it.
 
 Files worth reading in order:
 
 - `consumer/src/main.incn` - the user-facing DSL surface.
-- `producer/loaf.toml` - points the producer library at its vocab companion crate.
-- `producer/vocab_companion/src/lib.rs` - registers the `pattern:`/`shape:` blocks and their embedded-fragment
-  descriptors.
+- `producer/loaf.toml` - declares `[vocab] entry`.
+- `producer/src/vocab.incn` - registers the `pattern:`, `shape:` and `note:` fragment descriptors through `std.vocab`.

@@ -5,6 +5,7 @@ A payload that is itself a union is tested by its member tag after the Option's 
 union payload is never inspected through an absent Option.
 """
 
+from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import (
     BinaryOp,
     Constant,
@@ -20,10 +21,10 @@ from frame import Builder, temporary, read_place, literal, appended_field
 from unions import union_test_slots, test_union_tag
 
 
-pub def is_option_carrier(builder: Builder, owner: int) -> bool:
+pub def is_option_carrier(mut builder: Builder, owner: int) -> bool:
     """Whether a retained enum owner is the intrinsic Option carrier rather than a source enum or a union."""
     index = owner - len(builder.enums)
-    return index >= 0 and index < len(builder.intrinsics) and builder.intrinsics[index].carrier == "Option"
+    return index >= 0 and index < len(builder.intrinsics) and builder.intrinsics[index].carrier == Carrier.Option
 
 
 pub def option_isinstance(
@@ -45,22 +46,6 @@ pub def option_isinstance(
     tag = enum_tag(builder, source, span)
     # Option's Some is variant 1, so a present payload of the target type is exactly tag 1.
     return Ok(test_union_tag(builder, tag, [1], span))
-
-
-pub def option_union_payload(builder: Builder, target: PlanType) -> Option[PlanType]:
-    """The union an Option carrier holds, when `target` is such an Option; `None` for any other type."""
-    match target:
-        PlanType.Enum(owner, _name) =>
-            if not is_option_carrier(builder, owner):
-                return None
-            payload = builder.intrinsics[owner - len(builder.enums)].variants[1].fields[0]
-            match payload:
-                PlanType.Enum(inner, _inner_name) =>
-                    if is_union_carrier(builder, inner):
-                        return Some(payload)
-                _ => pass
-        _ => pass
-    return None
 
 
 pub def enum_tag(mut builder: Builder, source: Place, span: SourceSpan) -> Place:
@@ -108,10 +93,10 @@ def union_payload_test(
     return Ok(RvalueKind.Use(read_place(output, false, span)))
 
 
-pub def is_union_carrier(builder: Builder, owner: int) -> bool:
+pub def is_union_carrier(mut builder: Builder, owner: int) -> bool:
     """Whether a retained enum owner is an anonymous union, the intrinsic carrier without a standard name."""
     index = owner - len(builder.enums)
-    return index >= 0 and index < len(builder.intrinsics) and builder.intrinsics[index].carrier == ""
+    return index >= 0 and index < len(builder.intrinsics) and builder.intrinsics[index].carrier == Carrier.Declared
 
 
 def same_isinstance_type(payload: PlanType, member: PlanType) -> bool:

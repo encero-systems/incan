@@ -1,0 +1,385 @@
+"""Lower static methods, including SDK static methods and their receivers and forwarders."""
+
+from pub::incan_mir_plan import (
+    Callee,
+    CalleeKind,
+    ExternalFunction,
+    Function,
+    Local,
+    Operand,
+    Parameter,
+    Place,
+    PlanType,
+    Projection,
+    FieldProjection,
+    RvalueKind,
+    SourceSpan,
+    TerminatorKind,
+    Unwind,
+    assign as plan_assign,
+    place as plan_place,
+    block as plan_block,
+)
+from types import static_method_result_type
+from layout_types import shared_receiver_type, native_source_type
+from rust::incan_semantics_core import IncanInputAccess, IncanType as RustType
+from rust::incan_semantics_core::body_ir import (
+    GlobalPlace as RustGlobalPlace,
+    ArgumentBinding as RustArgumentBinding,
+    ArgumentElement as RustArgumentElement,
+    OwnershipFact,
+    Place as RustPlace,
+    LoafCallable as RustLoafCallable,
+    MethodTarget,
+    PlaceOperand as RustPlaceOperand,
+)
+from classes import frame_type
+from nominal_instances import instance_arguments
+from traits import owner_method_index
+from decls import static_slot
+from models import field_path
+from frame import Builder, read_place
+from type_parameters import substitute
+from computed_statics import initialize_module_statics, is_computed_static, static_owner
+from closures import return_representation
+from lowering import BodyIrModule
+from operators import operand_type
+from closure_lifting import synthesize
+from method_calls import instantiated_method_body, method_ordinary_operands, source_method_symbol
+from callable_calls import emit_selected_body_call, lower_callable_result
+from call_arguments import call_parameter_type, has_defaulted_slots, ordered_slot_operands
+from defaults import library_default_arguments
+from static_storage import computed_static_type
+from list_methods import call_destination
+
+
+pub def lower_static_sdk_method(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    delegation: &RustLoafCallable,
+    target: &MethodTarget,
+    read: &RustPlaceOperand,
+    global: &RustGlobalPlace,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Call a checked SDK method under the actual static guard after evaluating its bound ordinary arguments."""
+    match delegation.declaration_frame():
+        Some(frame) =>
+            for parameter in frame.params:
+                if parameter.input_access != IncanInputAccess.Inferred:
+                    return Err("unsupported Body IR explicit input through a computed static SDK method")
+        None => pass
+
+    if len(read.place.projection) != 0 or len(arguments) == 0:
+        return Err("standard library static method argument count or projected receiver is unsupported")
+    if target.loaf_trait != None or len(target.type_args) != 0 or len(delegation.native_type_arguments) != 0:
+        return Err("standard library static methods cannot supply explicit trait or method type parameters")
+    match target.binding:
+        RustArgumentBinding.Resolved(arguments=bound, defaulted_slots=defaults) =>
+            if (
+                len(bound) + 1 != len(arguments)
+                or len(bound) + len(defaults) + 1 != len(delegation.parameters)
+            ):
+                return Err("standard library static method argument binding is unsupported")
+        _ => return Err("standard library static method arguments have no checked binding")
+    slot = static_slot(builder.program.statics.as_ref(), global)?
+    if not is_computed_static(builder.program.statics.as_ref()[slot]):
+        return Err("this standard library static method requires a computed static receiver")
+    owner = native_source_type(
+        builder.constructors,
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        global.ty,
+        builder.intrinsics,
+    )?
+    mut index = -1
+    match owner:
+        PlanType.Model(owner_index, _name) => index = owner_index
+        _ => return Err("this standard library static method requires a model receiver")
+    mut names: list[str] = []
+    for name in delegation.type_parameters:
+        names.append(str(name))
+    closed = instance_arguments(builder.nominals[index])?
+    if len(closed) != len(names):
+        return Err(
+            f"standard library static method owner type parameters differ for {delegation.canonical.declaration_name} on {builder.nominals[index].name}: declared={names}, retained={closed:?}",
+        )
+    receiver = static_sdk_receiver(builder, delegation.parameters[0], names, closed, owner)?
+    match receiver:
+        PlanType.ModelRef(receiver_index, _name) =>
+            if receiver_index != index or read.fact != OwnershipFact.Borrow:
+                return Err("the standard library static method requires a shared receiver")
+        PlanType.ModelMutRef(receiver_index, _name) =>
+            if receiver_index != index or read.fact != OwnershipFact.MutBorrow:
+                return Err("the standard library static method requires a mutable receiver")
+        _ => return Err("the standard library static method receiver signature is unsupported")
+    returned: RustType = substitute(delegation.return_type, names, closed)?
+    result = native_source_type(
+        builder.constructors,
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        returned,
+        builder.intrinsics,
+    )?
+    if not static_method_result_type(result):
+        return Err("the standard library static method result is borrowed or has no proven type")
+    mut path = ""
+    match delegation.rust_path():
+        Some(native_path) => path = str(native_path)
+        None => return Err("the standard library static method has no checked native identity")
+    mut type_arguments: list[PlanType] = []
+    for argument in closed:
+        type_arguments.append(
+            native_source_type(
+                builder.constructors,
+                builder.nominals,
+                builder.enums,
+                builder.unions,
+                argument,
+                builder.intrinsics,
+            )?,
+        )
+    parameters, ordinary_types = static_sdk_parameter_types(builder, delegation, receiver, names, closed)?
+    mut operands: list[Operand] = []
+    if has_defaulted_slots(target.binding):
+        operands = library_default_arguments(
+            module,
+            builder,
+            delegation,
+            target.binding,
+            arguments[1:],
+            ordinary_types,
+            span,
+            1,
+        )?
+    else:
+        operands = ordered_slot_operands(builder, target.binding, arguments, ordinary_types, span, 1)?
+    name = f"{builder.name}__incan_static_sdk_{slot}_{len(builder.synthesized)}"
+    builder.synthesized.append(static_sdk_forwarder(name, path, type_arguments, parameters, result, span))
+    builder.externals.append(
+        ExternalFunction(path=path, type_arguments=type_arguments, parameters=parameters, return_type=result, span=span),
+    )
+    initialize_module_statics(builder, static_owner(builder.program.statics.as_ref()[slot]), span)
+    output = call_destination(builder, destination, result, span)?
+    return lower_callable_result(builder, CalleeKind.StaticMethod(slot, name), operands, output, result, span)
+
+
+def static_sdk_parameter_types(
+    mut builder: Builder,
+    delegation: &RustLoafCallable,
+    receiver: PlanType,
+    names: list[str],
+    closed: list[RustType],
+) -> Result[tuple[list[PlanType], list[PlanType]], str]:
+    """Close ordinary static-method parameters and retain the declaration frame's passing representation."""
+    mut parameters = [receiver]
+    mut ordinary_types: list[PlanType] = []
+    for position in range(1, len(delegation.parameters)):
+        declared = substitute(delegation.parameters[position], names, closed)?
+        mut parameter = native_source_type(
+            builder.constructors,
+            builder.nominals,
+            builder.enums,
+            builder.unions,
+            declared,
+            builder.intrinsics,
+        )?
+        match delegation.declaration_frame():
+            Some(frame) => parameter = call_parameter_type(builder, frame, frame.params[position])?
+            None => pass
+        parameters.append(parameter)
+        ordinary_types.append(parameter)
+    return Ok((parameters, ordinary_types))
+
+
+def static_sdk_receiver(
+    mut builder: Builder,
+    declared: &RustType,
+    names: list[str],
+    arguments: list[RustType],
+    owner: PlanType,
+) -> Result[PlanType, str]:
+    """Close an SDK receiver's referent explicitly and require the exact static carrier before preserving its borrow mode."""
+    mut mutable = false
+    mut referent = RustType.Unknown
+    match declared:
+        RustType.Ref(inner) => referent = substitute(inner, names, arguments)?
+        RustType.RefMut(inner) =>
+            mutable = true
+            referent = substitute(inner, names, arguments)?
+        _ => return Err("a standard library static method cannot consume its receiver")
+    concrete = native_source_type(
+        builder.constructors,
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        referent,
+        builder.intrinsics,
+    )?
+    if concrete != owner:
+        return Err("the standard library static method receiver storage differs from its checked type")
+    match concrete:
+        PlanType.Model(index, name) =>
+            if mutable:
+                return Ok(PlanType.ModelMutRef(index, name))
+            return Ok(PlanType.ModelRef(index, name))
+        _ => return Err("the standard library static method receiver requires a nominal type")
+
+
+def static_sdk_forwarder(
+    name: str,
+    path: str,
+    type_arguments: list[PlanType],
+    inputs: list[PlanType],
+    result: PlanType,
+    span: SourceSpan,
+) -> Function:
+    """Forward the checked receiver and ordinary values while the enclosing static accessor owns the guard."""
+    mut callee = CalleeKind.External(path)
+    if len(type_arguments) != 0:
+        callee = CalleeKind.Instantiated(path, type_arguments)
+    mut parameters: list[Parameter] = []
+    mut locals = [Local(ty=result, span=span)]
+    mut arguments: list[Operand] = []
+    for index in range(len(inputs)):
+        parameters.append(Parameter(name=f"__incan_argument_{index}", ty=inputs[index], span=span))
+        locals.append(Local(ty=inputs[index], span=span))
+        mut moved = index != 0
+        match inputs[index]:
+            PlanType.ModelMutRef(_owner, _name) => moved = true
+            _ => pass
+        arguments.append(read_place(plan_place(index + 1, span), moved, span))
+    invocation = TerminatorKind.Call(Callee(kind=callee, span=span), arguments, plan_place(0, span), 1, Unwind.Continue)
+    return Function(
+        name=name,
+        parameters=parameters,
+        return_type=result,
+        locals=locals,
+        blocks=[plan_block([], invocation, span), plan_block([], TerminatorKind.Return, span)],
+        span=span,
+    )
+
+
+pub def lower_static_method_body(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &MethodTarget,
+    read: &RustPlaceOperand,
+    global: &RustGlobalPlace,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Validate canonical storage, selected receiver passing and a nonescaping result before calling under its guard."""
+    slot = static_slot(builder.program.statics.as_ref(), global)?
+    if not is_computed_static(builder.program.statics.as_ref()[slot]):
+        return Err("unsupported Body IR noncomputed global method receiver")
+    owner = native_source_type(
+        builder.constructors,
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        global.ty,
+        builder.intrinsics,
+    )?
+    match owner:
+        PlanType.Model(_owner, _name) => pass
+        _ => return Err("unsupported Body IR nonmodel global method receiver")
+    selected = computed_static_type(builder, read.place, global)?
+    index = owner_method_index(module, target, selected, builder)?
+    body = instantiated_method_body(module, builder, target, index, arguments, span)?
+    receiver = frame_type(builder.constructors, builder.nominals, builder.enums, body.locals[0], builder.intrinsics)?
+    match receiver:
+        PlanType.ModelMutRef(_owner, _name) =>
+            if read.fact != OwnershipFact.MutBorrow:
+                return Err("unsupported Body IR global method without checked mutable receiver")
+        (PlanType.ModelRef(_owner, _name) | PlanType.EnumRef(_owner, _name)) =>
+            if read.fact != OwnershipFact.Borrow:
+                return Err("unsupported Body IR global method without checked shared receiver")
+        _ => return Err("unsupported Body IR global method receiver frame")
+    declared_result = native_source_type(
+        builder.constructors,
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        body.return_type,
+        builder.intrinsics,
+    )?
+    result = return_representation(body, declared_result)?
+    if not static_method_result_type(result):
+        return Err("unsupported Body IR global method borrowed or unproven result")
+    operands = method_ordinary_operands(module, builder, target, arguments, body, span)?
+    initialize_module_statics(builder, static_owner(builder.program.statics.as_ref()[slot]), span)
+    mut symbol = source_method_symbol(module, builder, target, body, span)
+    if len(read.place.projection) != 0:
+        fields = field_path(
+            builder.constructors,
+            builder.nominals,
+            owner,
+            read.place.projection,
+            len(read.place.projection),
+            builder.enums,
+            builder.unions,
+            builder.intrinsics,
+        )?
+        mut inputs = [receiver]
+        for operand in operands:
+            inputs.append(operand_type(builder, operand)?)
+        mut root_reference = shared_receiver_type(owner)?
+        if read.fact == OwnershipFact.MutBorrow:
+            match owner:
+                PlanType.Model(index, name) => root_reference = PlanType.ModelMutRef(index, name)
+                _ => return Err("unsupported Body IR static projection mutable root")
+        wrapper = f"{builder.name}__incan_static_projection_{slot}_{len(builder.synthesized)}"
+        synthesize(builder, static_projection_forwarder(wrapper, symbol, root_reference, fields, inputs, result, span))
+        symbol = wrapper
+    callee = CalleeKind.StaticMethod(slot, symbol)
+    return emit_selected_body_call(builder, body, callee, operands, destination, span)
+
+
+def static_projection_forwarder(
+    name: str,
+    method: str,
+    root_reference: PlanType,
+    fields: list[FieldProjection],
+    inputs: list[PlanType],
+    result: PlanType,
+    span: SourceSpan,
+) -> Function:
+    """Borrow the retained field path under the root's guard and call its selected method without a snapshot."""
+    mut parameters = [Parameter(name="__incan_root", ty=root_reference, span=span)]
+    mut locals = [Local(ty=result, span=span), Local(ty=root_reference, span=span)]
+    mut arguments: list[Operand] = []
+    for index in range(1, len(inputs)):
+        parameters.append(Parameter(name=f"__incan_argument_{index}", ty=inputs[index], span=span))
+        locals.append(Local(ty=inputs[index], span=span))
+        arguments.append(read_place(plan_place(index + 1, span), true, span))
+    receiver = plan_place(len(locals), span)
+    locals.append(Local(ty=inputs[0], span=span))
+    field = Place(local=1, projection=Projection.DerefFields(fields), span=span)
+    mut borrow = RvalueKind.Borrow(field)
+    match root_reference:
+        PlanType.ModelMutRef(_owner, _name) => borrow = RvalueKind.MutBorrow(field)
+        _ => pass
+    invocation = TerminatorKind.Call(
+        Callee(kind=CalleeKind.Planned(method), span=span),
+        [read_place(receiver, true, span)] + arguments,
+        plan_place(0, span),
+        1,
+        Unwind.Continue,
+    )
+    return Function(
+        name=name,
+        parameters=parameters,
+        return_type=result,
+        locals=locals,
+        blocks=[
+            plan_block([plan_assign(receiver, borrow, span)], invocation, span),
+            plan_block([], TerminatorKind.Return, span),
+        ],
+        span=span,
+    )

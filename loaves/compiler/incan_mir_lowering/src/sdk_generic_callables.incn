@@ -5,17 +5,18 @@ from rust::incan_semantics_core::body_ir import (
     ArgumentBinding as RustBinding,
     ArgumentElement as RustArgument,
     Operand as RustOperand,
-    StdlibDelegation,
+    LoafCallable,
 )
 from frame import Builder
 from pub::incan_mir_plan import PlanType
 from layout_types import native_source_type
 from type_parameters import substitute
+from table_views import borrowed_at
 
 
 pub def sdk_owned_callable_bindings(
-    builder: Builder,
-    delegation: &StdlibDelegation,
+    mut builder: Builder,
+    delegation: &LoafCallable,
     binding: &RustBinding,
     arguments: &list[RustArgument],
     types: list[PlanType],
@@ -26,53 +27,61 @@ pub def sdk_owned_callable_bindings(
             if len(defaults) != 0:
                 return Ok([])
             if len(bindings) != len(types) or len(arguments) != len(types) + 1:
-                return Err("unsupported Body IR SDK generic callable slot binding")
+                return Err("standard library generic callable parameter binding is unsupported")
             mut owned: list[tuple[str, PlanType]] = []
             mut slots: list[int] = []
             for index in range(len(bindings)):
                 slot = int(bindings[index].slot)
                 if slot < 0 or slot >= len(types):
-                    return Err("invalid Body IR SDK generic callable slot")
+                    return Err("the standard library generic callable parameter is invalid")
                 match delegation.parameters[slot + 1]:
                     RustType.TypeVar(name) =>
                         match argument_storage(builder, arguments[index + 1])?:
                             Some(PlanType.Closure(signature)) =>
                                 if types[slot] != PlanType.FunctionPointer(signature):
-                                    return Err("unsupported Body IR SDK generic callable signature mismatch")
+                                    return Err("the standard library generic callable signatures differ")
                                 _ = require_plain_sdk_callable(builder, arguments[index + 1])?
                                 mut storage = PlanType.Closure(signature)
                                 if delegation.rust_path() == Some(
                                     "incan_stdlib_core::derives::collection::FallibleIterator::map_err",
                                 ):
                                     if len(signature) != 2:
-                                        return Err("unsupported Body IR SDK cloneable callable arity")
+                                        return Err(
+                                            "the standard library cloneable callable argument count is unsupported",
+                                        )
                                     match arguments[index + 1].as_one():
                                         Some(RustOperand.Place(read)) =>
                                             match read.place.local_id():
                                                 Some(local) =>
                                                     held = int(local.index()) + builder.local_offset + 1
-                                                    if held not in builder.scalar_closures or held in builder.unproven_closures:
+                                                    if (
+                                                        held not in builder.scalar_closures
+                                                        or held in builder.unproven_closures
+                                                    ):
                                                         return Err(
-                                                            "unsupported Body IR SDK cloneable callable capture profile",
+                                                            "the standard library cloneable callable capture shape is unsupported",
                                                         )
                                                     storage = PlanType.SharedCallable(signature)
-                                                None => return Err("unsupported Body IR SDK cloneable callable origin")
-                                        _ => return Err("unsupported Body IR SDK cloneable callable origin")
+                                                None =>
+                                                    return Err(
+                                                        "the standard library cloneable callable origin is unsupported",
+                                                    )
+                                        _ => return Err("the standard library cloneable callable origin is unsupported")
                                 owned.append((str(name), storage))
                                 slots.append(slot)
                             Some(PlanType.ClosureRef(_signature)) =>
-                                return Err("unsupported Body IR SDK borrowed generic callable storage")
+                                return Err("borrowed standard library generic callable storage is unsupported")
                             _ => pass
                     _ => pass
             for slot in slots:
                 for other in range(len(types)):
                     if delegation.parameters[other + 1] == delegation.parameters[slot + 1] and other not in slots:
-                        return Err("unsupported Body IR SDK mixed generic callable storage")
+                        return Err("mixed standard library generic callable storage is unsupported")
             return Ok(owned)
         _ => return Ok([])
 
 
-def require_plain_sdk_callable(builder: Builder, argument: &RustArgument) -> Result[None, str]:
+def require_plain_sdk_callable(mut builder: Builder, argument: RustArgument) -> Result[None, str]:
     """Refuse a partial callable whose extra supplied flags are absent from the SDK's checked input signature."""
     match argument.as_one():
         Some(RustOperand.Place(read)) =>
@@ -81,14 +90,14 @@ def require_plain_sdk_callable(builder: Builder, argument: &RustArgument) -> Res
                     index = int(local.index()) + builder.local_offset + 1
                     for entry in builder.partial_callables:
                         if entry[0] == index and true in entry[1]:
-                            return Err("unsupported Body IR SDK generic callable with default parameters")
+                            return Err("standard library generic callables with default parameters are unsupported")
                 None => pass
         _ => pass
     return Ok(None)
 
 
 pub def sdk_callable_type(
-    builder: Builder,
+    mut builder: Builder,
     original: &RustType,
     names: list[str],
     closed: list[RustType],
@@ -102,12 +111,19 @@ pub def sdk_callable_type(
                     return Ok(storage)
         _ => pass
     concrete: RustType = substitute(original, names, closed)?
-    return native_source_type(builder.nominals, builder.enums, builder.unions, concrete, builder.intrinsics)
+    return native_source_type(
+        builder.constructors,
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        concrete,
+        builder.intrinsics,
+    )
 
 
 pub def sdk_callable_type_arguments(
-    builder: Builder,
-    delegation: &StdlibDelegation,
+    mut builder: Builder,
+    delegation: LoafCallable,
     names: list[str],
     closed: list[RustType],
     owned: list[tuple[str, PlanType]],
@@ -119,7 +135,14 @@ pub def sdk_callable_type_arguments(
             result.append(sdk_callable_type(builder, argument, names, closed, owned)?)
         return Ok(result)
     for index in range(len(closed)):
-        mut ty = native_source_type(builder.nominals, builder.enums, builder.unions, closed[index], builder.intrinsics)?
+        mut ty = native_source_type(
+            builder.constructors,
+            builder.nominals,
+            builder.enums,
+            builder.unions,
+            closed[index],
+            builder.intrinsics,
+        )?
         for binder, storage in owned:
             if binder == names[index]:
                 ty = storage
@@ -127,7 +150,7 @@ pub def sdk_callable_type_arguments(
     return Ok(result)
 
 
-def argument_storage(builder: Builder, argument: &RustArgument) -> Result[Option[PlanType], str]:
+def argument_storage(mut builder: Builder, argument: RustArgument) -> Result[Option[PlanType], str]:
     """Inspect a proven frame local without reading it, executing an index, or manufacturing a projected field ABI."""
     match argument.as_one():
         Some(RustOperand.Place(read)) =>
@@ -139,7 +162,7 @@ def argument_storage(builder: Builder, argument: &RustArgument) -> Result[Option
             match read.place.local_id():
                 Some(local) =>
                     index = int(local.index()) + builder.local_offset + 1
-                    return Ok(Some(builder.locals[index].ty))
+                    return Ok(Some(borrowed_at(builder.locals, index).ty))
                 None => pass
         _ => pass
     return Ok(None)

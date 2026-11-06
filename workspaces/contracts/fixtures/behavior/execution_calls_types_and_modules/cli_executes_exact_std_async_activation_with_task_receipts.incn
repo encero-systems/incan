@@ -1,0 +1,18 @@
+# behavior: checked async syntax selects the runtime without a standard-library import, and awaited task receipts reach the caller
+# expect-stdout:
+#   7
+
+"""Execute async syntax and task receipts without an activation import."""
+
+async def child() -> int:
+  """Return `7` for this fixture."""
+  return 7
+
+async def program_result() -> int:
+  """Return the fixture expression `await child()`."""
+  return await child()
+
+
+async def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(await program_result())

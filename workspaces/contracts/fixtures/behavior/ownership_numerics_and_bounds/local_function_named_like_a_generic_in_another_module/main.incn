@@ -1,0 +1,15 @@
+# behavior: a module's own non-generic function keeps its plain signature while another module of the program declares a generic function of the same name
+# expect-stdout:
+#   local timeout
+#   helper 5
+
+from helper import describe
+
+
+def timeout() -> str:
+    return "local timeout"
+
+
+def main() -> None:
+    println(timeout())
+    println(describe(5))

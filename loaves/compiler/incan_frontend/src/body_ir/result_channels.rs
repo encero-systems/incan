@@ -41,7 +41,7 @@ impl BodyBuilder<'_, '_> {
         };
         if let IncanType::Function { return_type, .. } = &mut ty {
             **return_type = self.refine_result_channels(return_type, &actual);
-            self.type_overrides.insert((span.start, span.end), ty.clone());
+            self.type_overrides.insert(span, ty.clone());
         }
         ty
     }
@@ -96,7 +96,7 @@ impl BodyBuilder<'_, '_> {
     }
 
     /// Select only a registry-owned builtin Result member, excluding same-spelled source methods.
-    fn checked_result_method(&self, span: ast::Span) -> Option<ResultMethodId> {
+    pub(super) fn checked_result_method(&self, span: ast::Span) -> Option<ResultMethodId> {
         let identity = self.type_info.resolved_identity(span)?;
         if identity.origin != SymbolOrigin::Builtin
             || identity.namespace != SymbolNamespace::Member
@@ -158,14 +158,14 @@ impl BodyBuilder<'_, '_> {
         let recorded = self.resolve_ty(span);
         let refined = self.refine_result_channels(&recorded, &actual);
         if refined != recorded {
-            self.type_overrides.insert((span.start, span.end), refined);
+            self.type_overrides.insert(span, refined);
         }
     }
 
     /// Fill a missing selected payload type from its checked Result member, preserving every fixed type.
     fn retain_scalar_result(&mut self, span: ast::Span, actual: IncanType) -> bool {
         if matches!(self.resolve_ty(span), IncanType::Unknown | IncanType::Infer) && !self.leaves_type_open(&actual) {
-            self.type_overrides.insert((span.start, span.end), actual);
+            self.type_overrides.insert(span, actual);
             return true;
         }
         false

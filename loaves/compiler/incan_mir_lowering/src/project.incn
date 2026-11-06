@@ -1,8 +1,8 @@
 """Shared declaration context for a project whose individual owning modules have been validated."""
 
-from rust::incan_semantics_core::body_ir import BodyIrModule, NominalDeclaration
+from rust::incan_semantics_core::body_ir import BodyIrModule, EnumDeclaration, NominalDeclaration, LoafCallable
 from traits import specialize_project_traits
-from canonical_nominals import qualify_nominal_modules
+from table_views import borrowed_at
 
 
 pub def project_context(
@@ -10,8 +10,7 @@ pub def project_context(
     entry: int,
 ) -> Result[tuple[BodyIrModule, list[BodyIrModule]], str]:
     """Retain original canonical identities while joining layouts and specialized bodies for native planning."""
-    qualified = qualify_nominal_modules(modules)?
-    mut context = qualified[entry].clone()
+    mut context = modules[entry].clone()
     context.bodies.clear()
     context.nominal_declarations.clear()
     context.enum_declarations.clear()
@@ -21,29 +20,33 @@ pub def project_context(
     context.trait_implementations.clear()
     context.static_declarations.clear()
     context.decorated_bindings.clear()
-    context.stdlib_delegations.clear()
+    context.loaf_callables.clear()
     context.native_union_declarations.clear()
     mut checked: list[BodyIrModule] = []
-    for module in qualified:
-        specialized = specialize_project_traits(module, qualified)?
+    for module_position in range(len(modules)):
+        module = borrowed_at(modules, module_position)
+        specialized = specialize_project_traits(module, modules)?
         # The imported Rust type has Clone, but List.append cannot prove that trait for a named opaque value.
         # An explicit interop clone is an owned call result and retains the module for both planning views.
         checked.append(specialized.clone())
-        for body in specialized.bodies:
+        for body_position in range(len(specialized.bodies)):
+            body = borrowed_at(specialized.bodies, body_position)
             context.bodies.push(body.clone())
         # Indexed interop reads avoid legacy emission moving a vector field from a borrowed loop element.
         for index in range(len(module.nominal_declarations)):
-            mut declaration = module.nominal_declarations[index].clone()
+            mut declaration = borrowed_at(module.nominal_declarations, index).clone()
             # A producer-retained carrier key names the exact canonical owner; older unqualified layouts stay refused.
-            declaration.name = declaration.carrier_name()
+            if len(declaration.type_parameters) == 0:
+                declaration.name = declaration.carrier_name()
+            else:
+                declaration.name = declaration.template_carrier_name()
             if not retains_nominal(context, declaration)?:
                 context.nominal_declarations.push(declaration.clone())
         for index in range(len(module.enum_declarations)):
-            declaration = module.enum_declarations[index].clone()
-            for retained in range(len(context.enum_declarations)):
-                if context.enum_declarations[retained].name == declaration.name:
-                    return Err(f"unsupported Body IR ambiguous project enum carrier {declaration.name}")
-            context.enum_declarations.push(declaration.clone())
+            mut declaration = borrowed_at(module.enum_declarations, index).clone()
+            declaration.name = declaration.carrier_name()
+            if not retains_enum(context, declaration)?:
+                context.enum_declarations.push(declaration.clone())
         for index in range(len(module.fieldless_enum_declarations)):
             declaration = module.fieldless_enum_declarations[index].clone()
             context.fieldless_enum_declarations.push(declaration.clone())
@@ -61,22 +64,48 @@ pub def project_context(
             context.static_declarations.push(declaration.clone())
         for index in range(len(module.decorated_bindings)):
             context.decorated_bindings.push(module.decorated_bindings[index].clone())
-        for index in range(len(module.stdlib_delegations)):
-            declaration = module.stdlib_delegations[index].clone()
-            context.stdlib_delegations.push(declaration.clone())
+        for index in range(len(module.loaf_callables)):
+            declaration = module.loaf_callables[index].clone()
+            if not retains_callable(context, declaration):
+                context.loaf_callables.push(declaration.clone())
         for index in range(len(module.native_union_declarations)):
             declaration = module.native_union_declarations[index].clone()
             context.native_union_declarations.push(declaration.clone())
     return Ok((context, checked))
 
 
+def retains_callable(context: &BodyIrModule, candidate: &LoafCallable) -> bool:
+    """Reuse an exact authenticated callable record, including its native arguments, signature and declaration frame."""
+    # Borrow by position: iterating the borrowed list would clone every callable, body included, per candidate.
+    for position in range(len(context.loaf_callables)):
+        if borrowed_at(context.loaf_callables, position) == candidate:
+            return true
+    return false
+
+
 def retains_nominal(context: &BodyIrModule, candidate: &NominalDeclaration) -> Result[bool, str]:
     """Reuse one exact published record; canonical duplicates with differing layout or execution facts remain refused."""
-    for declaration in context.nominal_declarations:
+    # Borrow by position: iterating the borrowed list would clone every record per candidate.
+    for position in range(len(context.nominal_declarations)):
+        declaration = borrowed_at(context.nominal_declarations, position)
         if declaration.canonical == candidate.canonical:
             if declaration != candidate:
                 return Err(f"unsupported Body IR conflicting project nominal records {candidate.name}")
             return Ok(true)
         if declaration.name == candidate.name:
             return Err(f"unsupported Body IR ambiguous project nominal carrier {candidate.name}")
+    return Ok(false)
+
+
+def retains_enum(context: &BodyIrModule, candidate: &EnumDeclaration) -> Result[bool, str]:
+    """Keep distinct checked enum owners while refusing conflicting records or unqualified carrier collisions."""
+    # Borrow by position: iterating the borrowed list would clone every record per candidate.
+    for position in range(len(context.enum_declarations)):
+        declaration = borrowed_at(context.enum_declarations, position)
+        if declaration.canonical == candidate.canonical:
+            if declaration != candidate:
+                return Err(f"unsupported Body IR conflicting project enum records {candidate.name}")
+            return Ok(true)
+        if declaration.carrier_name() == candidate.carrier_name():
+            return Err(f"unsupported Body IR ambiguous project enum carrier {candidate.name}")
     return Ok(false)

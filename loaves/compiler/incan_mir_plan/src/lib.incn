@@ -6,545 +6,86 @@ order. Blocks are indexed from zero. Every source-bearing node keeps its Incan
 location, including operands and places, so native diagnostics retain provenance.
 """
 
-
-@derive(Clone, PartialEq)
-pub enum TupleElement:
-    """
-    One tuple element's layout: a scalar, owned or frozen text, an owned list, a model or enum carrier, a Copy function pointer, or a nested tuple.
-
-    A list keeps its leaf and depth, an enum carrier (an `Option`, a `Result` or a source enum) keeps its retained
-    declaration index and name, and a nested tuple keeps its own element layout, exactly as the matching `PlanType`
-    does. A model retains its declaration identity, and a function pointer retains its exact signature.
-    """
-
-    Int
-    Float
-    Bool
-    Unit
-    String
-    List(ListLeaf, int)
-    Model(int, str)
-    Enum(int, str)
-    Tuple(list[TupleElement])
-    FunctionPointer(list[PlanType])
-    FrozenStr
-
-
-@derive(Clone, PartialEq)
-pub model SourceSpan:
-    """One-based line and column in an Incan source file."""
-
-    pub file: str
-    pub line: int
-    pub column: int
-
-
-@derive(Clone, PartialEq)
-pub enum ListLeaf:
-    """
-    Scalar, flat tuple, Copy function pointer, and exact retained nominal/carrier leaves; hash keys still require admitted Eq and Hash authority.
-
-    `List` and `Dict` are owned collection values held by another collection, such as a dictionary's list values or a
-    list's dictionaries. A list of lists keeps one leaf with a greater depth, so `List` never leads a `PlanType.List`.
-    `FrozenStr` and `FrozenBytes` keep dependency-owned Copy wrappers; ordinary strings and bytes own their read data.
-    A variant cannot hold its own type directly, so `List` holds its element leaf as the only item of a list, and
-    `Dict` holds its key and value leaves, in that order, as the two items of one.
-    """
-
-    Int
-    Float
-    Bool
-    Str
-    Tuple(list[TupleElement])
-    Model(int, str)
-    Enum(int, str)
-    U8
-    Unit
-    Decimal
-    FrozenStr
-    FrozenBytes
-    FunctionPointer(list[PlanType])
-    List(list[ListLeaf], int)
-    Dict(list[ListLeaf])
+from rust::incan_semantics_core import IncanType as SemanticType
+pub from _types import (
+    TupleElement,
+    SourceSpan,
+    ListLeaf,
+    SizedNumeric,
+    PlanType,
+    list_leaf_type,
+    sized_plan_type,
+    range_field_types,
+    tuple_element_type,
+    source_span,
+)
+pub from _body import (
+    Parameter,
+    Local,
+    FieldProjection,
+    Projection,
+    Place,
+    Constant,
+    OperandKind,
+    Operand,
+    BinaryOp,
+    UnaryOp,
+    RvalueKind,
+    FrozenValue,
+    Rvalue,
+    StatementKind,
+    Statement,
+    CalleeKind,
+    ForeignFunction,
+    Callee,
+    Unwind,
+    TerminatorKind,
+    Terminator,
+    BasicBlock,
+    FieldMetadata,
+    place,
+    integer,
+    copy,
+    assign,
+    block,
+)
 
 
 @derive(Clone, PartialEq)
-pub enum SizedNumeric:
-    """Exact sized carrier retained by an overflow pair."""
+pub enum AttributeValue:
+    """A literal an attribute macro receives as a Rust literal; a list keeps its elements in written order."""
 
-    I8
-    I16
-    I32
-    I128
-    U8
-    U16
-    U32
-    U64
-    U128
-    F32
-    F64
-    ISize
-    USize
-
-
-@derive(Clone, PartialEq)
-pub enum PlanType:
-    """
-    Scalar and source nominal types plus the owned text, fixed arrays, and shared slices used by formatting.
-
-    EnumTag is rustc's native discriminant type and stays body-internal; TagToInt explicitly converts it to source int.
-
-    Sized numeric variants preserve their exact Rust carriers. CheckedNumeric stores its named sized carrier; its value projection retains the carrier type. Tuple elements retain their ordered types and own any string elements. Array lengths are exact nonnegative counts. CheckedInt and arrays are body temporaries; shared slice variants already include their reference.
-    StringRef borrows an owned String, StringMutRef is the exclusive borrow a `mut str` parameter receives, and StrRef is a string literal's shared str view.
-    ScalarRef borrows exactly one numeric, Boolean, Decimal or frozen scalar carrier; nested references and non-scalar referents are refused before native MIR construction.
-    List stores its scalar or flat tuple leaf element and a positive nesting depth; ListRef and ListMutRef borrow that same Vec representation.
-    ModelRef and ModelMutRef retain shared and mutable nominal receiver references; ModelMutRef, EnumMutRef and TupleMutRef are also the exclusive borrow a `mut` parameter or an in-place loop item holds. TupleMutRef retains its referent's complete tuple layout.
-    Decimal retains the legacy Decimal128 carrier; precision is checked upstream and the value keeps its written scale.
-    FrozenStr retains the copyable frozen wrapper over static text; it owns no allocation and is distinct from String.
-    FrozenBytes retains the copyable wrapper over a static byte slice, distinct from an owned byte list.
-    Set and Dict retain the legacy HashSet and HashMap leaf arguments; their reference variants preserve caller-owned storage. Float and model keys are refused; flat tuple keys exclude floating-point fields.
-    Generator retains the legacy lazy runtime wrapper, with depth zero for an immediate scalar or retained nominal leaf.
-    GeneratorMutRef advances caller-owned state. GeneratorYield and GeneratorYieldRef are producer-only runtime
-    handles; they never represent source values or eagerly collected elements.
-    ZipIterator retains two independent owned list snapshots; its reference variants retain shared read or exclusive poll authority.
-    RangeValue retains a source range value's start, end, step, and inclusivity scalar fields in Body IR's declared range field order; its field projections use that order.
-    FunctionPointer retains its inputs followed by exactly one return entry; the vector is never empty, including for a zero-argument function. FunctionItem keeps that same signature and the proven source declaration's name; it remains distinct from a pointer until an explicit reification.
-    Closure owns a boxed callable object with that signature layout, holding its captures by value; ClosureRef is the shared view a closure-holding parameter receives. CallableArguments is the body-internal argument tuple; it preserves each input's exact type, including caller-owned collection references, independently of source tuple layouts.
-    """
-
-    Int
-    Float
-    I8
-    I16
-    I32
-    I128
-    ISize
-    USize
-    U8
-    U16
-    U32
-    U64
-    U128
-    F32
-    F64
-    Bool
-    Unit
-    CheckedNumeric(SizedNumeric)
-    # A source-free executor callback; ordinary source callable values stay outside this carrier.
-    UnitFunction
-    EnumTag
-    CheckedInt
-    Tuple(list[TupleElement])
-    String
-    TupleMutRef(list[TupleElement])
-    StringRef
-    # Exactly one numeric, Bool, Decimal or frozen scalar referent; the shared borrow owns no storage.
-    ScalarRef(list[PlanType])
-    StringMutRef
-    Decimal
-    FrozenStr
-    FrozenBytes
-    # Dependency-owned frozen collection and its exact static element types; dictionaries carry key then value.
-    FrozenCollection(str, list[PlanType])
-    # A shared view of the same baked storage; comparisons never consume or clone its elements.
-    FrozenCollectionRef(str, list[PlanType])
-    # The existing SDK's zero-sized marker with exactly one checked represented primitive type.
-    TypeToken(list[PlanType])
-    # Exact static string storage, including generic arguments; StrRef remains a body-local formatting view.
-    StaticText
-    StaticBytes
-    # Dependency-owned builtin validation storage; the reference borrows its message and optional code.
-    ValidationError
-    ValidationErrorRef
-    StrRef
-    StringArray(int)
-    StrArray(int)
-    StringArrayRef(int)
-    StrArrayRef(int)
-    Enum(int, str)
-    EnumRef(int, str)
-    EnumMutRef(int, str)
-    Model(int, str)
-    ModelRef(int, str)
-    ModelMutRef(int, str)
-    StringSlice
-    StrSlice
-    # A homogeneous list: its admitted leaf element and nesting depth.
-    List(ListLeaf, int)
-    ListRef(ListLeaf, int)
-    ListMutRef(ListLeaf, int)
-    # Concrete Vec::IntoIter owns the checked list's items; its mutable view polls without Clone.
-    ListIntoIter(ListLeaf, int)
-    ListIntoIterMutRef(ListLeaf, int)
-    Set(ListLeaf)
-    SetRef(ListLeaf)
-    SetMutRef(ListLeaf)
-    Dict(ListLeaf, ListLeaf)
-    DictRef(ListLeaf, ListLeaf)
-    DictMutRef(ListLeaf, ListLeaf)
-    # A source range value: four Copy scalar fields in declared range field order.
-    RangeValue
-    # Lazy zip over independent owned list snapshots; references retain poll authority.
-    ZipIterator(TupleElement, TupleElement)
-    ZipIteratorRef(TupleElement, TupleElement)
-    ZipIteratorMutRef(TupleElement, TupleElement)
-    # Lazy runtime generators retain the admitted immediate element representation.
-    Generator(ListLeaf, int)
-    GeneratorMutRef(ListLeaf, int)
-    GeneratorYield(ListLeaf, int)
-    GeneratorYieldRef(ListLeaf, int)
-    FunctionPointer(list[PlanType])
-    FunctionItem(str, list[PlanType])
-    Closure(list[PlanType])
-    # A one-argument SDK callable shares an immutable primitive-capture environment and implements its published Clone and Callable1 bounds.
-    SharedCallable(list[PlanType])
-    # An owned FnOnce object whose invocation transfers its environment instead of borrowing it.
-    ClosureOnce(list[PlanType])
-    ClosureRef(list[PlanType])
-    CallableArguments(list[PlanType])
-    # Exactly one output carrier; the owned pinned future executes only when polled.
-    Future(list[PlanType])
-
-
-pub def list_leaf_type(leaf: ListLeaf) -> PlanType:
-    """Recover one admitted leaf's exact representation for lowering and adapter consumers."""
-    match leaf:
-        ListLeaf.Int => return PlanType.Int
-        ListLeaf.Float => return PlanType.Float
-        ListLeaf.Bool => return PlanType.Bool
-        ListLeaf.Str => return PlanType.String
-        ListLeaf.Tuple(elements) => return PlanType.Tuple(elements)
-        ListLeaf.Model(index, name) => return PlanType.Model(index, name)
-        ListLeaf.Enum(index, name) => return PlanType.Enum(index, name)
-        ListLeaf.U8 => return PlanType.U8
-        ListLeaf.Unit => return PlanType.Unit
-        ListLeaf.Decimal => return PlanType.Decimal
-        ListLeaf.FrozenStr => return PlanType.FrozenStr
-        ListLeaf.FrozenBytes => return PlanType.FrozenBytes
-        ListLeaf.FunctionPointer(signature) => return PlanType.FunctionPointer(signature)
-        ListLeaf.List(element, depth) => return PlanType.List(element[0], depth)
-        ListLeaf.Dict(entry) => return PlanType.Dict(entry[0], entry[1])
-
-
-pub def range_field_types() -> list[PlanType]:
-    """Return RangeValue's native field carriers in declared range field order: start, end, step, then inclusivity."""
-    return [PlanType.Int, PlanType.Int, PlanType.Int, PlanType.Bool]
-
-
-pub def tuple_element_type(element: TupleElement) -> PlanType:
-    """Recover a tuple field's exact local type from the admitted layout."""
-    match element:
-        TupleElement.Int => return PlanType.Int
-        TupleElement.Float => return PlanType.Float
-        TupleElement.Bool => return PlanType.Bool
-        TupleElement.Unit => return PlanType.Unit
-        TupleElement.String => return PlanType.String
-        TupleElement.List(leaf, depth) => return PlanType.List(leaf, depth)
-        TupleElement.Model(owner, name) => return PlanType.Model(owner, name)
-        TupleElement.Enum(owner, name) => return PlanType.Enum(owner, name)
-        TupleElement.Tuple(elements) => return PlanType.Tuple(elements)
-        TupleElement.FunctionPointer(signature) => return PlanType.FunctionPointer(signature)
-        TupleElement.FrozenStr => return PlanType.FrozenStr
-
-
-@derive(Clone, PartialEq)
-pub model Parameter:
-    """A named function parameter; its local index follows declaration order."""
-
-    pub name: str
-    pub ty: PlanType
-    pub span: SourceSpan
-
-
-@derive(Clone, PartialEq)
-pub model Local:
-    """A typed body local; parameters and the return place are included."""
-
-    pub ty: PlanType
-    pub span: SourceSpan
-
-
-@derive(Clone, PartialEq)
-pub model FieldProjection:
-    """One canonical field slot and its exact retained native type."""
-
-    pub slot: int
-    pub ty: PlanType
-    # A nonnegative variant selects the checked enum payload before this field; -1 keeps an ordinary field.
-    pub variant: int = -1
-
-
-@derive(Clone, PartialEq)
-pub enum Projection:
-    """Whole local, checked component, typed reference dereference, canonical field path, or downcast enum payload."""
-
-    Whole
-    NumericValue(PlanType)
-    Value
-    Overflow
-    VariantField(int, int, PlanType)
-    Field(int, PlanType)
-    Deref(PlanType)
-    DerefField(int, PlanType)
-    Fields(list[FieldProjection])
-    DerefFields(list[FieldProjection])
-
-
-@derive(Clone, PartialEq)
-pub model Place:
-    """An indexed local with a checked arithmetic, nominal field, or typed reference projection."""
-
-    pub local: int
-    pub projection: Projection
-    pub span: SourceSpan
-
-
-@derive(Clone, PartialEq)
-pub enum Constant:
-    """A scalar literal or borrowed static text. Numeric retains exact integer digits or IEEE bit digits with its carrier, never a host-width approximation."""
-
-    Numeric(str, PlanType)
+    Text(str)
     Int(int)
     Float(float)
     Bool(bool)
-    Unit
-    Text(str)
+    List(list[AttributeValue])
 
 
 @derive(Clone, PartialEq)
-pub enum OperandKind:
-    """Explicit copy, move, or constant; ownership intent is never inferred."""
+pub model AttributeArgument:
+    """One attribute argument; an empty name marks a positional one."""
 
-    Copy(Place)
-    Move(Place)
-    Literal(Constant)
-
-
-@derive(Clone, PartialEq)
-pub model Operand:
-    """A source-located value read by a statement or terminator."""
-
-    pub kind: OperandKind
-    pub span: SourceSpan
+    pub name: str
+    pub value: AttributeValue
 
 
 @derive(Clone, PartialEq)
-pub enum BinaryOp:
-    """
-    Checked integer arithmetic, scalar comparisons, floating arithmetic, and integer bit operations.
+pub model NativeAttribute:
+    """One exported attribute macro applied to a declaration: its canonical Rust path and written arguments."""
 
-    Add, Subtract, and Multiply on int produce CheckedInt. Comparisons produce
-    Bool. The other arithmetic operations require float operands.
-    BitAnd, BitOr, and BitXor take two operands of one integer type and keep it. A shift keeps its left operand's
-    integer type, counts with any integer type, and masks the count to that width as Rust's unchecked release shift does.
-    """
-
-    Add
-    Subtract
-    Multiply
-    Divide
-    Equal
-    NotEqual
-    Less
-    LessEqual
-    Greater
-    GreaterEqual
-    BitAnd
-    BitOr
-    BitXor
-    ShiftLeft
-    ShiftRight
+    pub path: str
+    pub arguments: list[AttributeArgument]
 
 
 @derive(Clone, PartialEq)
-pub enum UnaryOp:
-    """Boolean inversion, numeric negation, or the bitwise complement of an integer that keeps its type."""
+pub model GenericLoan:
+    """One source type parameter's occurrence in a concrete signature, preserving its nested native loans."""
 
-    Not
-    Negate
-    Invert
-
-
-@derive(Clone, PartialEq)
-pub enum RvalueKind:
-    """
-    An explicit native expression assigned to a checked place.
-
-    Enum construction names the owner and variant indices. Discriminant reads without moving the enum; VariantField
-    projections are valid only on the selected variant branch.
-
-    NumericCast retains both checked source and destination carriers. FloatToInt preserves Rust truncation and saturation; BoolToInt produces zero or one.
-
-    Tuple preserves the ordered operand layout of its destination type.
-    Range preserves the four scalar operands in Body IR's declared range field order and requires a RangeValue destination.
-    FrozenText wraps a static Text literal in the dependency-owned FrozenStr carrier; a dynamic text operand is refused.
-    FrozenBytes wraps exact unsigned literal bytes in the dependency-owned static byte carrier.
-    Array moves or copies its listed operands into a fixed array. Borrow creates
-    a shared reference to a checked place; MutBorrow creates a mutable list or nominal receiver reference. UnsizeSlice converts an array reference
-    to the corresponding shared slice without changing ownership of its owner.
-    """
-
-    Use(Operand)
-    # Reify a validated zero-argument unit function for the canonical async entry bridge.
-    UnitFunction(str)
-    FrozenText(Operand)
-    FrozenBytes(list[int])
-    FrozenCollection(PlanType, list[FrozenValue])
-    Binary(BinaryOp, Operand, Operand)
-    Unary(UnaryOp, Operand)
-    NumericCast(Operand, PlanType, PlanType)
-    IntToFloat(Operand)
-    FloatToInt(Operand)
-    BoolToInt(Operand)
-    Array(list[Operand])
-    Enum(int, int, list[Operand])
-    Discriminant(Place)
-    TagToInt(Operand)
-    Model(int, list[Operand])
-    Tuple(list[Operand])
-    Range(list[Operand])
-    Borrow(Place)
-    MutBorrow(Place)
-    UnsizeSlice(Operand)
-    FunctionItem(Callee)
-    ReifyFunction(Operand)
-    # Borrow an owned closure's callable object as the shared view a call or closure-holding parameter takes.
-    ClosureObject(Place)
-
-
-@derive(Clone, PartialEq)
-pub enum FrozenValue:
-    """Effect-free static data: scalars, raw bytes, and nested frozen collections in source order."""
-
-    Scalar(Constant)
-    Bytes(list[int])
-    Collection(PlanType, list[FrozenValue])
-
-
-@derive(Clone, PartialEq)
-pub model Rvalue:
-    """A source-located scalar expression."""
-
-    pub kind: RvalueKind
-    pub span: SourceSpan
-
-
-@derive(Clone, PartialEq)
-pub enum StatementKind:
-    """Assignment and explicit local storage lifetime boundaries."""
-
-    Assign(Place, Rvalue)
-    StorageLive(int)
-    StorageDead(int)
-
-
-@derive(Clone, PartialEq)
-pub model Statement:
-    """One source-located operation before a block's terminator."""
-
-    pub kind: StatementKind
-    pub span: SourceSpan
-
-
-@derive(Clone, PartialEq)
-pub enum CalleeKind:
-    """A planned function, canonical external path, checked model clone, explicit generic instantiation, exact legacy generator runtime operation, or a local item/pointer operand with its retained type."""
-
-    Planned(str)
-    External(str)
-    CloneEnum(int, str)
-    CloneModel(int, str)
-    # Every type argument in the external's checked parameter order, including callable arguments.
-    Instantiated(str, list[PlanType])
-    # A checked inherent SDK method future keeps owner arguments on its type path, not on its method segment.
-    FutureMethod(str, list[PlanType])
-    # The explicit producer takes its yield handle before the source-ordered owned captures. A zero-capture spawn
-    # uses a function item; a captured spawn is a constructor whose call arguments initialize one native FnOnce environment.
-    SpawnGenerator(str, ListLeaf, int)
-    YieldGenerator(ListLeaf, int)
-    CollectGenerator(ListLeaf, int)
-    Value(Operand)
-    # A synthesized constructor's boxed environment. Its closure forwards the leading captured parameters, then its own
-    # inputs, to the named lifted function; the count says how many of that function's parameters are captures.
-    ClosureBody(str, int)
-    # A validated bridge transfers a boxed callable into the SDK's cloneable immutable environment carrier.
-    SharedCallableBody(list[PlanType])
-    # The exact declaration owner and native FieldInfo carrier of a checked generated metadata hook.
-    FieldMetadata(int, int)
-    # A constructor and lifted body for a consuming environment, forwarded by value exactly once.
-    ClosureBodyOnce(str, int)
-    # Invoke a borrowed callable object of this signature with one packed argument tuple.
-    CallClosure(list[PlanType])
-    # Invoke the owned callable object by moving it with one packed argument tuple.
-    CallClosureOnce(list[PlanType])
-    # Read a clone of computed static storage slot `n`, running its initializer first if nothing has yet.
-    StaticLoad(int)
-    # Replace the value of computed static storage slot `n`.
-    StaticStore(int)
-    # Run computed static slot `n`'s initializer unless it has already run, keeping the value in its storage.
-    StaticForce(int)
-    # Call the selected planned method while holding computed slot n's actual shared or exclusive storage guard.
-    StaticMethod(int, str)
-    # Clone the captured concrete environment behind an authenticated shared callable object.
-    CloneClosure(list[PlanType])
-
-
-@derive(Clone, PartialEq)
-pub model Callee:
-    """A function reference, resolved by source name or canonical module path."""
-
-    pub kind: CalleeKind
-    pub span: SourceSpan
-
-
-@derive(Clone, PartialEq)
-pub enum Unwind:
-    """Propagate unwinding, enter cleanup, or abort a second panic during cleanup."""
-
-    Continue
-    Cleanup(int)
-    Terminate
-
-
-@derive(Clone, PartialEq)
-pub enum TerminatorKind:
-    """
-    Control flow, calls, drops, overflow checks, and unwinding exits.
-
-    SwitchBool records the false and true targets explicitly. AssertOverflow
-    checks a checked arithmetic overflow flag against false and retains both
-    inputs for the native panic message. Call and Drop carry explicit unwinding.
-    """
-
-    Goto(int)
-    SwitchBool(Operand, int, int)
-    Call(Callee, list[Operand], Place, int, Unwind)
-    Drop(Place, int, Unwind)
-    AssertOverflow(Operand, BinaryOp, Operand, Operand, int, Unwind)
-    # Polling and completed-future destruction have distinct owner cleanup states; cancellation drops suspended owners.
-    Await(Place, Place, int, int, Unwind, Unwind)
-    CoroutineDrop
-    Return
-    Unreachable
-    UnwindResume
-
-
-@derive(Clone, PartialEq)
-pub model Terminator:
-    """The source-located exit of a basic block."""
-
-    pub kind: TerminatorKind
-    pub span: SourceSpan
-
-
-@derive(Clone, PartialEq)
-pub model BasicBlock:
-    """An indexed block; cleanup blocks may only run on the unwind path."""
-
-    pub statements: list[Statement]
-    pub terminator: Terminator
-    pub cleanup: bool
-    pub span: SourceSpan
+    pub slot: int
+    pub path: list[int]
+    pub parameter: int
+    pub ty: PlanType
 
 
 @derive(Clone, PartialEq)
@@ -561,6 +102,15 @@ pub model Function:
     pub is_async: bool = false
     # Only the explicit boxing constructor retains native MIR for this callee.
     pub future_callee: Option[Callee] = None
+    # Attribute macros rustc expands on the declaration; the macro's output replaces it.
+    pub attributes: list[NativeAttribute] = []
+    # Reference preorder for each parameter and the result; equal nonempty names retain one source generic loan.
+    # Empty names keep ordinary elision, including the independent outer borrow of a mutable collection.
+    pub signature_lifetimes: list[list[str]] = []
+    # Type-parameter provenance retains hidden native lifetime arguments independently of explicit references.
+    pub generic_loans: list[GenericLoan] = []
+    # Parameter slot whose loan is retained inside an owned native result; -1 means no retained result source.
+    pub retained_result_source: int = -1
 
 
 @derive(Clone, PartialEq)
@@ -579,6 +129,90 @@ pub model Plan:
     pub span: SourceSpan
     # Computed static storage the adapter declares, each initialized by its planned initializer function.
     pub statics: list[StaticCell] = []
+    # A library plan's public names, each re-exported at the crate root; an executable plan has none.
+    pub exports: list[PlanExport] = []
+    # Collected test entry functions; the adapter registers these with rustc's native test harness.
+    pub tests: list[str] = []
+    # A governed runtime's checked zip result owns each consumer-local carrier; absent entries use the linked ABI.
+    pub zip_carriers: list[ZipCarrier] = []
+    # Canonically lowered program entries; rustc applies Termination to the one selected for this process.
+    pub programs: list[str] = []
+    # A library publishes each generic ADT once; concrete layouts alias its instantiations.
+    pub generic_models: list[GenericModelDeclaration] = []
+    pub generic_enums: list[GenericEnumDeclaration] = []
+
+
+@derive(Clone, PartialEq)
+pub enum GenericLayoutType:
+    """A generic ADT field's checked type; function-pointer signatures retain inputs followed by one result entry."""
+
+    Parameter(str)
+    Concrete(PlanType)
+    Applied(str, list[GenericLayoutType])
+    Tuple(list[GenericLayoutType])
+    # Declaration-order native inputs followed by the result; never an empty signature.
+    FunctionPointer(list[GenericLayoutType])
+
+
+@derive(Clone, PartialEq)
+pub model GenericLayoutField:
+    """One source field in a generic ADT, in declaration order and with its checked visibility."""
+
+    pub name: str
+    pub ty: GenericLayoutType
+    pub public: bool
+
+
+@derive(Clone, PartialEq)
+pub model GenericModelDeclaration:
+    """A provider-owned generic ADT whose parameters, fields, and derive authority come from its checked declaration."""
+
+    pub name: str
+    pub source_name: str
+    pub parameters: list[str]
+    pub fields: list[GenericLayoutField]
+    pub derives: list[str]
+    pub span: SourceSpan
+
+
+@derive(Clone, PartialEq)
+pub model GenericEnumVariant:
+    """One authored variant with generic payload types in declaration order."""
+
+    pub name: str
+    pub fields: list[GenericLayoutType]
+
+
+@derive(Clone, PartialEq)
+pub model GenericEnumDeclaration:
+    """One provider-owned generic enum template; closed plans alias it with exact type arguments."""
+
+    pub name: str
+    pub parameters: list[str]
+    pub variants: list[GenericEnumVariant]
+    pub derives: list[str]
+    pub span: SourceSpan
+
+
+@derive(Clone, PartialEq)
+pub model ZipCarrier:
+    """Associate a builtin zip's checked element layouts with the published runtime result's closed source carrier."""
+
+    pub left: TupleElement
+    pub right: TupleElement
+    pub target: PlanType
+
+
+@derive(Clone, PartialEq)
+pub model PlanExport:
+    """
+    One public name a library plan publishes, emitted as `pub use <path> as <name>;` at the crate root.
+
+    `path` is either a planned item of this crate (`crate::<item>`) or a Rust item the library re-exports (`::<path>`).
+    """
+
+    pub name: str
+    pub path: str
 
 
 @derive(Clone, PartialEq)
@@ -594,17 +228,8 @@ pub model StaticCell:
     pub ty: PlanType
     pub initializer: str
     pub span: SourceSpan
-
-
-@derive(Clone, PartialEq)
-pub model FieldMetadata:
-    """Immutable source field presentation values selected by the checked reflection visibility policy."""
-
-    pub name: str
-    pub alias: Option[str]
-    pub description: Option[str]
-    pub type_name: str
-    pub has_default: bool
+    # Only the first computed cell of a module owns its initialization completion flag.
+    pub module_completion: bool = false
 
 
 @derive(Clone, PartialEq)
@@ -625,11 +250,19 @@ pub model FallibleIteratorMethods:
 
 
 @derive(Clone, PartialEq)
-pub enum MarkerTrait:
-    """An empty standard trait authorized by its checked adoption and existing serde derive."""
+pub model NativeTraitMethod:
+    """A Rust trait method filled by a planned source method; rustc checks the implementation's signature."""
 
-    TomlSerialize
-    TomlDeserialize
+    pub name: str
+    pub function: str
+
+
+@derive(Clone, PartialEq)
+pub model NativeTraitAdoption:
+    """A class's request to implement a concrete Rust trait; rustc proves the implementation, not this record."""
+
+    pub path: str
+    pub methods: list[NativeTraitMethod]
 
 
 @derive(Clone, PartialEq)
@@ -670,12 +303,15 @@ pub model ModelDeclaration:
     # A checked standard Callable1 member and its ordered owned input/output carriers; empty grants no bridge.
     pub callable_method: str = ""
     pub callable_signature: list[PlanType] = []
-    # Only a checked canonical standard adoption with its required serde derive authorizes an empty native impl.
-    pub marker_traits: list[MarkerTrait] = []
-    # A source SDK TryFrom[str] implementation forwards to the exact validated Incan conversion root.
-    # Empty paired fields grant no implementation, independently of serde's Rust TryFrom contract.
+    # The selected source SDK TryFrom[str] identity authenticates this planned Incan conversion root.
+    # Empty paired fields grant no conversion, independently of serde's native Rust TryFrom contract.
     pub string_conversion_root: str = ""
     pub string_conversion_trait: str = ""
+    # Rust traits a source class implements with its own methods; empty implements none.
+    pub native_trait_adoptions: list[NativeTraitAdoption] = []
+    # Native field slots the plan cannot carry. Each keeps a unit placeholder type that never authorizes a read, a
+    # write or a construction of the layout.
+    pub unavailable_native_fields: list[int] = []
 
 
 @derive(Clone, PartialEq)
@@ -689,248 +325,23 @@ pub model ExternalFunction:
     pub span: SourceSpan
 
 
-pub def place(local: int, span: SourceSpan) -> Place:
-    """Name a whole local without exposing projection bookkeeping to builders."""
-    return Place(local=local, projection=Projection.Whole, span=span)
+pub def semantic_type_matches(declaration: &EnumDeclaration, ty: &SemanticType) -> bool:
+    """Compare a retained carrier's exact checked type without reconstructing identity from diagnostic text."""
+    match declaration.semantic_key:
+        Some(retained) => return retained == ty
+        None => return false
 
 
-pub def integer(value: int, span: SourceSpan) -> Operand:
-    """Build an int literal, represented natively as a signed 64-bit constant."""
-    return Operand(kind=OperandKind.Literal(Constant.Int(value)), span=span)
-
-
-pub def copy(local: int, span: SourceSpan) -> Operand:
-    """Read a scalar local while leaving it available to later operations."""
-    return Operand(kind=OperandKind.Copy(place(local, span)), span=span)
-
-
-pub def assign(destination: Place, value: RvalueKind, span: SourceSpan) -> Statement:
-    """Assign one scalar expression and retain the statement's source location."""
-    return Statement(kind=StatementKind.Assign(destination, Rvalue(kind=value, span=span)), span=span)
-
-
-pub def block(statements: list[Statement], exit: TerminatorKind, span: SourceSpan) -> BasicBlock:
-    """Build a normal block; cleanup blocks are constructed explicitly."""
-    return BasicBlock(statements=statements, terminator=Terminator(kind=exit, span=span), cleanup=false, span=span)
-
-
-pub def scalar_example(file: str, output_function: str, overflow: bool, dangling: bool) -> Plan:
+@derive(Clone, PartialEq)
+pub enum Carrier:
     """
-    Fill a scalar plan by hand for a native driver conformance fixture.
-
-    The output function is a canonical dependency path taking one int and
-    returning unit. Its implementation belongs to the fixture's runtime Loaf.
-    An overflow fixture changes the first input; a refusal fixture changes the
-    first edge. The source fixture's addition is at line 3, column 12.
+    Which standard enum a retained layout instantiates. `Option` lays out `None` then `Some`, and `Result` lays out `Ok`
+    then `Err`; any other enum is `Declared`, with its variants in source declaration order.
     """
-    location = SourceSpan(file=file, line=3, column=12)
-    pair = Place(local=3, projection=Projection.Overflow, span=location)
-    result = Place(local=3, projection=Projection.Value, span=location)
-    addition = Function(
-        name="add_scores",
-        parameters=[Parameter(name="a", ty=PlanType.Int, span=location), Parameter(
-            name="b",
-            ty=PlanType.Int,
-            span=location,
-        )],
-        return_type=PlanType.Int,
-        locals=[Local(ty=PlanType.Int, span=location), Local(ty=PlanType.Int, span=location), Local(
-            ty=PlanType.Int,
-            span=location,
-        ), Local(ty=PlanType.CheckedInt, span=location)],
-        blocks=[block(
-            [assign(place(3, location), RvalueKind.Binary(BinaryOp.Add, copy(1, location), copy(2, location)), location)],
-            TerminatorKind.AssertOverflow(
-                Operand(kind=OperandKind.Copy(pair), span=location),
-                BinaryOp.Add,
-                copy(1, location),
-                copy(2, location),
-                1,
-                Unwind.Continue,
-            ),
-            location,
-        ), block(
-            [assign(place(0, location), RvalueKind.Use(Operand(kind=OperandKind.Copy(result), span=location)), location)],
-            TerminatorKind.Return,
-            location,
-        )],
-        span=location,
-    )
-    mut first = 20
-    if overflow:
-        first = 9223372036854775807
-    mut target = 1
-    if dangling:
-        target = 99
-    entry = Function(
-        name="main",
-        parameters=[],
-        return_type=PlanType.Unit,
-        locals=[Local(ty=PlanType.Unit, span=location), Local(ty=PlanType.Int, span=location), Local(
-            ty=PlanType.Bool,
-            span=location,
-        )],
-        blocks=[block(
-            [],
-            TerminatorKind.Call(
-                Callee(kind=CalleeKind.Planned("add_scores"), span=location),
-                [integer(first, location), integer(22, location)],
-                place(1, location),
-                target,
-                Unwind.Continue,
-            ),
-            location,
-        ), block(
-            [assign(
-                place(2, location),
-                RvalueKind.Binary(BinaryOp.Greater, copy(1, location), integer(0, location)),
-                location,
-            )],
-            TerminatorKind.SwitchBool(copy(2, location), 3, 2),
-            location,
-        ), block(
-            [],
-            TerminatorKind.Call(
-                Callee(kind=CalleeKind.External(output_function), span=location),
-                [copy(1, location)],
-                place(0, location),
-                3,
-                Unwind.Continue,
-            ),
-            location,
-        ), block(
-            [assign(
-                place(0, location),
-                RvalueKind.Use(Operand(kind=OperandKind.Literal(Constant.Unit), span=location)),
-                location,
-            )],
-            TerminatorKind.Return,
-            location,
-        )],
-        span=location,
-    )
-    output = ExternalFunction(path=output_function, parameters=[PlanType.Int], return_type=PlanType.Unit, span=location)
-    return Plan(enums=[], models=[], functions=[addition, entry], externals=[output], span=location)
 
-
-pub def consuming_closure_example(file: str, output_function: str) -> Plan:
-    """Exercise the native consuming environment boundary independently of source generator admission."""
-    location = SourceSpan(file=file, line=3, column=12)
-    capture = PlanType.Model(0, "OwnedCapture")
-    closure = PlanType.ClosureOnce([PlanType.Int])
-    field = Place(local=1, projection=Projection.Field(0, PlanType.Int), span=location)
-    lifted = Function(
-        name="consume_capture",
-        parameters=[Parameter(name="capture", ty=capture, span=location)],
-        return_type=PlanType.Int,
-        locals=[Local(ty=PlanType.Int, span=location), Local(ty=capture, span=location)],
-        blocks=[block(
-            [assign(place(0, location), RvalueKind.Use(Operand(kind=OperandKind.Copy(field), span=location)), location)],
-            TerminatorKind.Drop(place(1, location), 1, Unwind.Continue),
-            location,
-        ), block([], TerminatorKind.Return, location)],
-        span=location,
-    )
-    capture_declaration = ModelDeclaration(
-        name="OwnedCapture",
-        public=false,
-        fields=[Parameter(name="0", ty=PlanType.Int, span=location)],
-        field_public=[false],
-        derives=["Debug", "Clone"],
-        span=location,
-        marker_traits=[],
-    )
-    output = ExternalFunction(path=output_function, parameters=[PlanType.Int], return_type=PlanType.Unit, span=location)
-    return Plan(
-        enums=[],
-        models=[capture_declaration],
-        functions=[lifted, consuming_fixture_constructor(location, capture, closure), consuming_fixture_entry(
-            location,
-            capture,
-            closure,
-            output_function,
-        )],
-        externals=[output],
-        span=location,
-    )
-
-
-def consuming_fixture_constructor(location: SourceSpan, capture: PlanType, closure: PlanType) -> Function:
-    """Box one non-Copy capture with the consuming constructor contract the adapter validates."""
-    return Function(
-        name="capture_new",
-        parameters=[Parameter(name="capture", ty=capture, span=location)],
-        return_type=closure,
-        locals=[Local(ty=closure, span=location), Local(ty=capture, span=location)],
-        blocks=[block(
-            [],
-            TerminatorKind.Call(
-                Callee(kind=CalleeKind.ClosureBodyOnce("consume_capture", 1), span=location),
-                [Operand(kind=OperandKind.Move(place(1, location)), span=location)],
-                place(0, location),
-                1,
-                Unwind.Continue,
-            ),
-            location,
-        ), block([], TerminatorKind.Return, location)],
-        span=location,
-    )
-
-
-def consuming_fixture_entry(location: SourceSpan, capture: PlanType, closure: PlanType, output: str) -> Function:
-    """Move a boxed environment into one packed invocation, then print the field its lifted body returned."""
-    return Function(
-        name="main",
-        parameters=[],
-        return_type=PlanType.Unit,
-        locals=[Local(ty=PlanType.Unit, span=location), Local(ty=capture, span=location), Local(
-            ty=closure,
-            span=location,
-        ), Local(ty=PlanType.CallableArguments([]), span=location), Local(ty=PlanType.Int, span=location)],
-        blocks=[block(
-            [assign(place(1, location), RvalueKind.Model(0, [integer(42, location)]), location)],
-            TerminatorKind.Call(
-                Callee(kind=CalleeKind.Planned("capture_new"), span=location),
-                [Operand(kind=OperandKind.Move(place(1, location)), span=location)],
-                place(2, location),
-                1,
-                Unwind.Continue,
-            ),
-            location,
-        ), block(
-            [assign(place(3, location), RvalueKind.Tuple([]), location)],
-            TerminatorKind.Call(
-                Callee(kind=CalleeKind.CallClosureOnce([PlanType.Int]), span=location),
-                [Operand(kind=OperandKind.Move(place(2, location)), span=location), Operand(
-                    kind=OperandKind.Move(place(3, location)),
-                    span=location,
-                )],
-                place(4, location),
-                2,
-                Unwind.Continue,
-            ),
-            location,
-        ), block(
-            [],
-            TerminatorKind.Call(
-                Callee(kind=CalleeKind.External(output), span=location),
-                [copy(4, location)],
-                place(0, location),
-                3,
-                Unwind.Continue,
-            ),
-            location,
-        ), block(
-            [assign(
-                place(0, location),
-                RvalueKind.Use(Operand(kind=OperandKind.Literal(Constant.Unit), span=location)),
-                location,
-            )],
-            TerminatorKind.Return,
-            location,
-        )],
-        span=location,
-    )
+    Declared
+    Option
+    Result
 
 
 @derive(Clone, PartialEq)
@@ -943,7 +354,9 @@ pub model EnumDeclaration:
     pub derives: list[str]
     pub span: SourceSpan
     # Standard carriers use their concrete type arguments from the variant fields.
-    pub carrier: str = ""
+    pub carrier: Carrier = Carrier.Declared
+    # The exact checked carrier witness is used for identity; source_type remains diagnostic presentation only.
+    pub semantic_key: Option[SemanticType] = None
     pub source_type: str = ""
     # A union's Debug prints the member it holds, as legacy's hand-written impl does; it is never derived.
     pub member_debug: bool = false
@@ -957,6 +370,8 @@ pub model EnumDeclaration:
     pub raw_values: list[str] = []
     # Checked source equality and ordering bodies; the adapter validates their exact enum input ABI before bridging.
     pub comparison_methods: list[str] = []
+    # Exact callable object aliases for environment-holding union variants, in their physical order.
+    pub closure_items: list[str] = []
 
 
 @derive(Clone, PartialEq)

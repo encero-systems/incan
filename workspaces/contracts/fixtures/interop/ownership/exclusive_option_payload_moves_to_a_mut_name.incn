@@ -1,0 +1,31 @@
+# behavior: the exclusive payload that Option.as_mut() binds moves to a `mut` name, which writes through it; an exclusive reference is neither copied nor cloned (#2481)
+# expect-stdout:
+#   written
+#   true
+
+"""Hand the exclusive socket reference a guarded Option lends to a `mut` name and write through that name."""
+
+from rust::std::cell import RefCell
+from rust::std::io import Read, Write
+from rust::std::os::unix::net import UnixStream
+from rust::std::rc import Rc
+
+
+def main() -> None:
+    match UnixStream.pair():
+        Ok(pair) =>
+            left, right = pair
+            cell = Rc.new(RefCell.new(Some(left)))
+            match cell.borrow_mut().as_mut():
+                Some(open) =>
+                    mut writing = open
+                    match writing.write_all(b"hi"):
+                        Ok(_) => println("written")
+                        Err(error) => println(f"{error}")
+                None => println("closed")
+            mut reader = right
+            mut got = b"xx"
+            match reader.read_exact(got):
+                Ok(_) => println(got == b"hi")
+                Err(error) => println(f"{error}")
+        Err(error) => println(f"{error}")

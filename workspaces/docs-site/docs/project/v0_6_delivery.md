@@ -10,7 +10,7 @@ tags:
 
 # Incan 0.6 roadmap
 
-0.6 is the architectural cutover that makes compiler-owned facts and the Oven project model the normal authority for compilation, packages, build artifacts, and inspection. Generated Rust remains available for inspection and debugging; it is no longer the semantic handoff the release is working toward.
+0.6 makes compiler-owned facts and Oven's project model the authority for compilation, packages, artifacts and inspection. Dev.8 compiles checked Body IR directly through the pinned Rust compiler; source diagnostics and codegraph records provide inspection.
 
 This page is the public delivery map for that work. It complements the [development release note](../release_notes/0_6.md): the release note explains the contract, while this page shows how the work is organized and what each slice must prove.
 
@@ -28,4 +28,4 @@ The rendered map is a checked-in GitHub snapshot, not a browser-side query. That
 make -C workspaces/docs-site docs-refresh
 ```
 
-The umbrella command currently delegates to the v0.6 roadmap refresh and is the stable entry point for future checked-in documentation snapshots. It uses the public GitHub REST API: no `gh` session or browser-side request is involved. A small POSIX tool using `curl` and `jq` validates the response, reconstructs GitHub’s native hierarchy, counts issue state, and renders the Markdown/Mermaid snapshot. It works anonymously for occasional refreshes; set `GITHUB_TOKEN` with read access for routine use, avoiding GitHub's small anonymous request budget. Review and commit the resulting snapshot with any corresponding change to the release note or [main roadmap](../roadmap.md).
+The umbrella command currently delegates to the v0.6 roadmap refresh and is the stable entry point for future checked-in documentation snapshots. The Incan refresh program uses `gh api` to fetch the public GitHub REST records, validates every response, reconstructs GitHub’s native hierarchy, counts issue state, and renders the Markdown/Mermaid snapshot. Authenticate `gh` with read access before refreshing; `GH_TOKEN` or `GITHUB_TOKEN` may select a non-interactive credential. Review and commit the resulting snapshot with any corresponding change to the release note or [main roadmap](../roadmap.md).

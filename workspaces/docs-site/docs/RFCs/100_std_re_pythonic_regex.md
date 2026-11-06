@@ -353,7 +353,7 @@ The engine family must expose enough metadata for `std.regex` to reject backtrac
 - **Typechecker / Symbol resolution**: stdlib module loading must expose the `std.re` module, its aliases, constants, functions, `Pattern`, `Match`, and error types with precise `Result` and `Option` types.
 - **IR Lowering**: calls into `std.re` must lower like ordinary stdlib calls and must preserve callable replacement functions without treating them as string templates.
 - **Emission**: generated Rust must link the selected engine-family runtime and must keep `std.regex` and `std.re` public types distinct.
-- **Stdlib / Runtime (`incan_stdlib`)**: the runtime must provide the Pythonic engine backend, owned pattern and match values, replacement-template expansion, split/substitution helpers, and diagnostics.
+- **Stdlib / Runtime (`loaves/stdlib/`)**: the runtime must provide the Pythonic engine backend, owned pattern and match values, replacement-template expansion, split/substitution helpers, and diagnostics.
 - **LSP / Tooling**: completion and hover should distinguish `std.regex` from `std.re`, show pattern/error types, and surface docs that explain safe versus Pythonic matching.
 - **Documentation**: stdlib reference docs must explain when to choose `std.regex` and when to choose `std.re`, including the backtracking risk and portability motivation.
 

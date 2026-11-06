@@ -1,0 +1,40 @@
+# behavior: a static method returns an independent opaque native owner before later static access and native mutation
+# expect-stdout:
+#   1
+#   2
+
+from rust::std::sync import Arc, Mutex
+from rust::std::collections import HashMap
+from rust::std::string import String as RustString
+
+type Cell = Arc[Mutex[HashMap[RustString, int]]]
+
+
+model Registry:
+    """Select independently owned cells while holding only the registry's static guard."""
+    count: int
+
+    def select(mut self) -> Cell:
+        """Allocate an owned native result and preserve the registry's mutation."""
+        self.count += 1
+        cell: Cell = Arc.new(Mutex.new(HashMap.new()))
+        return cell
+
+    def visits(self) -> int:
+        """Observe the registry after the owner has escaped the earlier guard."""
+        return self.count
+
+
+static CELLS: Registry = Registry(count=0)
+
+
+def main() -> None:
+    """Use both returned cells after reacquiring the static lock, which must already be released."""
+    first = CELLS.select()
+    second = CELLS.select()
+    mut guard = match first.lock():
+        Ok(value) => value
+        Err(error) => error.into_inner()
+    _ = guard.insert(RustString.from("first"), 1)
+    println(guard.len())
+    println(CELLS.visits())

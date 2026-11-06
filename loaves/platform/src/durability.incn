@@ -1,0 +1,18 @@
+"""Thin filesystem synchronization for ordering staged writes before a batched durable publication."""
+
+from rust::std::fs import File
+from rust::std::os::fd import AsFd
+from rust::rustix::fs import fsync
+
+
+pub def sync_ordered(path: str) -> Result[None, str]:
+    """
+    Submit a file's data or a directory's entries with ordinary filesystem synchronization.
+
+    This establishes filesystem ordering without requesting an Apple drive-cache flush for every object. A durable
+    publisher must still flush the completed dependency graph before selecting it, and the selection before replying.
+    Errors preserve the path and OS error; this operation never substitutes success for an unsupported filesystem.
+    """
+    file = File.open(path).map_err((error) => f"{path}: {error}")?
+    fsync(file.as_fd()).map_err((error) => f"{path}: {error}")?
+    return Ok(None)

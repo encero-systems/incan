@@ -31,7 +31,7 @@ Read the "does not accept" column as final for that submode, not as a roadmap. N
 
 That boundary is deliberate rather than unfinished. Accepting a real external grammar would mean tracking a specification the compiler does not own, across versions it cannot pin, and would turn every gap into a compatibility bug. A fixed small grammar can be specified exactly and can say no clearly.
 
-**A library that describes its blocks as "HTML support" or "CSS support" is overclaiming.** What it has is a submode, and the accepted constructs are listed in the [vocab authoring guide](../../contributing/how-to/authoring_vocab_crates.md#the-submode-catalog).
+**A library that describes its blocks as "HTML support" or "CSS support" is overclaiming.** What it has is a submode, and the accepted constructs are listed in the [submode catalog above](#it-is-not-the-language-it-resembles).
 
 ## Unrecognized syntax is an error, never a reinterpretation
 
@@ -86,5 +86,5 @@ Diagnostics follow the same split. A construct the submode rejects is reported w
 
 ## See also
 
-- [Authoring vocab crates](../../contributing/how-to/authoring_vocab_crates.md) — the library-author side, including the full submode catalog
+- [Author a vocabulary in Incan](../../contributing/how-to/authoring_vocabularies.md) — register fragments and implement their native hooks
 - [RFC 081](../../RFCs/closed/implemented/081_language_shaped_dsl_embeddings.md) — the specification

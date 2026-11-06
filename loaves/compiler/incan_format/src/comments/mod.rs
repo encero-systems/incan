@@ -4,6 +4,7 @@ pub(super) mod buffer;
 mod model;
 mod reattach;
 mod scanner;
+mod stream;
 
 /// Reattach scanned comments to the formatted syntax tree.
 pub(super) fn reattach_comments(source: &str, formatted: &str) -> String {

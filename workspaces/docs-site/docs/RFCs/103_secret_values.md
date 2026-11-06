@@ -422,7 +422,7 @@ Migration helpers may wrap existing `str` or `bytes` values explicitly. Such hel
 
 ## Layers affected
 
-- **Stdlib / Runtime (`incan_stdlib`)**: must provide `std.secrets`, `SecretStr`, `SecretBytes`, redaction behavior, construction helpers, scoped reveal operations, protected-storage behavior where supported, and integration hooks for stdlib consumers.
+- **Stdlib / Runtime (`loaves/stdlib/`)**: must provide `std.secrets`, `SecretStr`, `SecretBytes`, redaction behavior, construction helpers, scoped reveal operations, protected-storage behavior where supported, and integration hooks for stdlib consumers.
 - **Typechecker / Symbol resolution / checked metadata**: must preserve the distinct types, reject implicit conversion from secret wrappers to plain `str` or `bytes`, enforce non-escape of the implicitly borrowed callback view, and derive the sensitivity and secret-type facts without runtime payload inspection.
 - **Emission**: generated Rust must preserve redacting display/debug behavior, scoped cleanup, and non-elidable zeroization attempts for every wrapper-owned or reveal-scratch allocation.
 - **Formatter**: no syntax changes are required, but examples and generated code should preserve readable secret-type annotations.

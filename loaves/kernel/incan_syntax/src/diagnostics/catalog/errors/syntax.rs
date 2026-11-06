@@ -25,6 +25,15 @@ pub fn expected_identifier(found: &str, span: Span) -> CompileError {
     CompileError::syntax(format!("Expected identifier, found {found}"), span)
 }
 
+/// Report an always-reserved keyword where source would otherwise declare or bind a name.
+pub fn reserved_keyword_name(keyword: &str, span: Span) -> CompileError {
+    CompileError::syntax(
+        format!("`{keyword}` is a reserved word and cannot be declared as a name"),
+        span,
+    )
+    .with_hint("Choose a different name")
+}
+
 pub fn expected_string_literal(found: &str, span: Span) -> CompileError {
     CompileError::syntax(format!("Expected string literal, found {found}"), span)
 }
@@ -246,6 +255,15 @@ pub fn method_trait_target_after_return_type(span: Span) -> CompileError {
         span,
     )
     .with_hint("Write `def name(self) for Trait -> ReturnType:`")
+}
+
+/// Report `pub` on a method declared in a trait, which takes the trait's visibility (#2570).
+pub fn pub_modifier_not_allowed_on_trait_method(span: Span) -> CompileError {
+    CompileError::syntax(
+        "A method declared in a trait takes the trait's visibility and cannot be marked `pub`".to_string(),
+        span,
+    )
+    .with_hint("Remove `pub`; mark the trait `pub` to make its methods public")
 }
 
 pub fn static_only_allowed_at_module_scope(span: Span) -> CompileError {

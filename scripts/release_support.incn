@@ -1,0 +1,415 @@
+"""Shared release and installed-verification contracts, evidence models, and process execution."""
+
+from rust::std::fs import File
+from rust::std::process import Command, ExitStatus, Stdio
+from rust::std::thread import sleep
+from rust::std::time import Duration, Instant
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.hash import file_digest
+from std.json import JsonValue
+from std.regex import Regex
+
+pub const TOOLCHAIN_VERSION: str = "0.6.0-dev.8"
+pub const TOOLCHAIN_DIRECTORY: str = "toolchains/0.6.0-dev.8"
+pub const FAMILIES: FrozenList[str] = [
+    "behavior",
+    "check",
+    "library",
+    "interop",
+    "testing",
+    "project",
+    "format",
+    "graph",
+]
+pub const STANDARD_PACKAGES: FrozenList[str] = [
+    "primitives",
+    "core",
+    "testing",
+    "async",
+    "system",
+    "codecs",
+    "compression",
+    "web",
+    "data",
+    "observability",
+    "vocab",
+    "interop",
+]
+
+
+pub model ReleaseOptions:
+    """Caller-selected release source, output, fixed-point proof, worker count, and per-command timeout."""
+
+    pub source_sha: str
+    pub output: Path
+    pub prove_fixed_point: bool
+    pub jobs: int
+    pub timeout_seconds: int
+
+
+pub model VerificationOptions:
+    """Installed-verification evidence directory, worker count, and per-command timeout."""
+
+    pub output: Path
+    pub jobs: int
+    pub timeout_seconds: int
+
+
+@derive(Clone, Eq)
+pub model Counts:
+    """Contract outcomes parsed from one complete eight-family runner log."""
+
+    pub passed: int
+    pub failed: int
+    pub pending: int
+
+
+pub model BaselineReport:
+    """A complete census and the committed baseline keys it preserves."""
+
+    pub counts: Counts
+    pub baseline_keys: int
+    pub lost_passes: list[str]
+    pub result_keys: list[str]
+    pub result_statuses: Dict[str, str]
+
+
+pub model Step:
+    """One timed child process with isolated environment changes and durable output."""
+
+    pub name: str
+    pub executable: str
+    pub arguments: list[str]
+    pub environment: Dict[str, str]
+    pub remove_environment: list[str]
+    pub directory: Option[Path]
+    pub log: Path
+    pub timeout_seconds: int
+
+
+pub def parse_release_options(arguments: list[str]) -> Result[ReleaseOptions, str]:
+    """Parse `SHA OUT [--prove-fixed-point] [--jobs N] [--timeout SECONDS]` without reading process state."""
+    mut positional: list[str] = []
+    mut prove = false
+    mut jobs = 4
+    mut timeout = 600
+    mut index = 0
+    while index < len(arguments):
+        argument = str(arguments[index])
+        if argument == "--prove-fixed-point":
+            prove = true
+            index += 1
+        elif argument == "--jobs" or argument == "--timeout":
+            if index + 1 >= len(arguments):
+                return Err(f"{argument} needs a positive integer")
+            value = positive(arguments[index + 1], argument)?
+            if argument == "--jobs":
+                jobs = value
+            else:
+                timeout = value
+            index += 2
+        elif argument.startswith("-"):
+            return Err(f"unknown option `{argument}`")
+        else:
+            positional.append(argument)
+            index += 1
+    if len(positional) != 2:
+        return Err("usage: release.incn SHA OUT [--prove-fixed-point] [--jobs N] [--timeout SECONDS]")
+    if not full_sha(positional[0]):
+        return Err("SHA must be a full lowercase source commit")
+    return Ok(
+        ReleaseOptions(
+            source_sha=positional[0],
+            output=Path(positional[1]),
+            prove_fixed_point=prove,
+            jobs=jobs,
+            timeout_seconds=timeout,
+        ),
+    )
+
+
+pub def parse_verification_options(arguments: list[str]) -> Result[VerificationOptions, str]:
+    """Parse `OUT [--jobs N] [--timeout SECONDS]` for an already installed toolchain."""
+    mut positional: list[str] = []
+    mut jobs = 2
+    mut timeout = 120
+    mut index = 0
+    while index < len(arguments):
+        argument = str(arguments[index])
+        if argument == "--jobs" or argument == "--timeout":
+            if index + 1 >= len(arguments):
+                return Err(f"{argument} needs a positive integer")
+            value = positive(arguments[index + 1], argument)?
+            if argument == "--jobs":
+                jobs = value
+            else:
+                timeout = value
+            index += 2
+        elif argument.startswith("-"):
+            return Err(f"unknown option `{argument}`")
+        else:
+            positional.append(argument)
+            index += 1
+    if len(positional) != 1:
+        return Err("usage: verify_installation.incn OUT [--jobs N] [--timeout SECONDS]")
+    return Ok(VerificationOptions(output=Path(positional[0]), jobs=jobs, timeout_seconds=timeout))
+
+
+pub def check_baseline(baseline: str, log: str) -> Result[BaselineReport, str]:
+    """Require a complete eight-family census and every committed baseline key to remain `PASS`."""
+    valid = Regex("^(behavior|check|library|interop|testing|project|format|graph)/[a-z_][a-z0-9_]*/[a-z_][a-z0-9_]*$").map_err(
+        (error) => error.message(),
+    )?
+    baseline_keys = parse_baseline_keys(baseline, valid)?
+    results, families, counts, totals = parse_results(log, valid)?
+    if totals is None:
+        return Err("expected one final total; runner log is incomplete")
+    expected = totals.unwrap_or(Counts(passed=-1, failed=-1, pending=-1))
+    if expected != counts:
+        return Err("final total disagrees with case results")
+    for family in FAMILIES:
+        if family not in families:
+            return Err(f"family absent: {family}")
+    mut lost: list[str] = []
+    for key in baseline_keys:
+        if key not in results or results[key] != "PASS":
+            mut status = "MISSING"
+            if key in results:
+                status = results[key]
+            lost.append(f"{key} -> {status}")
+    if len(lost) > 0:
+        return Err("lost PASS " + "; lost PASS ".join(lost))
+    return Ok(
+        BaselineReport(
+            counts=counts,
+            baseline_keys=len(baseline_keys),
+            lost_passes=lost,
+            result_keys=sorted([key for key in results.keys()]),
+            result_statuses=results,
+        ),
+    )
+
+
+pub def baseline_summary(report: BaselineReport) -> str:
+    """Render the stable one-line installed-verification baseline summary."""
+    return (
+        f"release: {report.counts.passed} PASS, {report.counts.failed} FAIL, {report.counts.pending} PEND; " + f"{report.baseline_keys} baseline keys, {len(
+            report.lost_passes,
+        )} lost PASS"
+    )
+
+
+pub def counts_json(counts: Counts) -> JsonValue:
+    """Encode contract counts for release and verification receipts."""
+    return JsonValue.object(
+        {"pass": JsonValue.int(counts.passed), "fail": JsonValue.int(counts.failed), "pending": JsonValue.int(
+            counts.pending,
+        )},
+    )
+
+
+pub def release_receipt(
+    source_sha: str,
+    host: str,
+    outcome: str,
+    phase: str,
+    exit_code: int,
+    elapsed_seconds: int,
+    artifacts: Dict[str, JsonValue],
+    compiler_build: str,
+    contracts: JsonValue,
+    oven_tests: JsonValue,
+    baseline_parity: JsonValue,
+) -> JsonValue:
+    """Build the stable `incan.release-rehearsal/1` receipt without reading process or filesystem state."""
+    return JsonValue.object(
+        {"schema": JsonValue.string("incan.release-rehearsal/1"), "source_sha": JsonValue.string(source_sha), "host": JsonValue.string(
+            host,
+        ), "outcome": JsonValue.string(outcome), "phase": JsonValue.string(phase), "exit_code": JsonValue.int(exit_code), "elapsed_seconds": JsonValue.int(
+            elapsed_seconds,
+        ), "sha256": JsonValue.object(artifacts), "compiler_build": JsonValue.string(compiler_build), "contracts": contracts, "oven_tests": oven_tests, "baseline_parity": baseline_parity},
+    )
+
+
+pub def digest(path: Path) -> Result[str, str]:
+    """Return a file's lowercase SHA-256 digest."""
+    return Ok(hexlify(file_digest(path, "sha256").map_err((error) => error.message())?))
+
+
+pub def same_bytes(left: Path, right: Path) -> Result[bool, str]:
+    """Compare complete file bytes without delegating to an external command."""
+    if not left.is_file() or not right.is_file():
+        return Err(f"cannot compare missing files: {left.0}, {right.0}")
+    return Ok(digest(left)? == digest(right)?)
+
+
+pub def log_tail(path: Path, limit: int = 30) -> str:
+    """Return the final lines of one UTF-8 phase log, or a diagnostic when the log cannot be read."""
+    match path.read_text("utf-8", "replace"):
+        Ok(text) =>
+            lines = text.split("\n")
+            mut start = 0
+            if len(lines) > limit:
+                start = len(lines) - limit
+            return "\n".join(lines[start:])
+        Err(error) => return f"cannot read failing log {path.0}: {error.message()}"
+
+
+pub def run_step(step: Step) -> Result[int, str]:
+    """Run one child with file-backed streams, kill it at its deadline, and return its exact status code."""
+    step.log.parent().mkdir(true, true).map_err((error) => error.message())?
+    log = File.create(step.log.0).map_err((error) => f"{step.log.0}: {error}")?
+    errors = log.try_clone().map_err((error) => str(error))?
+    mut command = Command.new(step.executable)
+    for argument in step.arguments:
+        command.arg(argument)
+    for key in sorted([key for key in step.environment.keys()]):
+        command.env(key, step.environment[key])
+    for key in step.remove_environment:
+        command.env_remove(key)
+    if let Some(directory) = step.directory:
+        command.current_dir(directory.0)
+    command.stdin(Stdio.null()).stdout(log).stderr(errors)
+    mut child = command.spawn().map_err((error) => f"cannot start {step.name}: {error}")?
+    started = Instant.now()
+    loop:
+        match child.try_wait().map_err((error) => f"cannot wait for {step.name}: {error}")?:
+            Some(status) => return Ok(status_code(status))
+            None =>
+                if started.elapsed().as_secs() >= step.timeout_seconds:
+                    _ = child.kill()
+                    _ = child.wait()
+                    return Err(f"{step.name} timed out after {step.timeout_seconds}s; log: {step.log.0}")
+                sleep(Duration.from_millis(20))
+
+
+pub def require_step(step: Step) -> Result[None, str]:
+    """Require one timed child to exit successfully while preserving its complete log."""
+    code = run_step(step)?
+    if code != 0:
+        return Err(f"{step.name} failed with status {code}; log: {step.log.0}")
+    return Ok(None)
+
+
+pub def append_timing(path: Path, phase: str, elapsed_seconds: float) -> Result[None, str]:
+    """Append one phase duration to the release's stable TSV evidence."""
+    mut text = ""
+    if path.is_file():
+        text = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+    text += f"{phase}\t{elapsed_seconds}\n"
+    return path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+pub def write_json(path: Path, value: JsonValue) -> Result[None, str]:
+    """Write pretty JSON with one trailing newline."""
+    text = value.to_pretty_json().map_err((error) => error.message())? + "\n"
+    return path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+pub def full_sha(value: str) -> bool:
+    """Return whether `value` is one full lowercase hexadecimal Git object id."""
+    if len(value) != 40:
+        return false
+    for character in value:
+        if character not in "0123456789abcdef":
+            return false
+    return true
+
+
+def positive(value: str, option: str) -> Result[int, str]:
+    """Parse one positive decimal option value."""
+    if value == "":
+        return Err(f"{option} needs a positive integer")
+    for character in value:
+        if character not in "0123456789":
+            return Err(f"{option} needs a positive integer")
+    parsed = int(value)
+    if parsed <= 0:
+        return Err(f"{option} needs a positive integer")
+    return Ok(parsed)
+
+
+def parse_baseline_keys(text: str, valid: Regex) -> Result[list[str], str]:
+    """Parse unique non-comment baseline keys and reject an empty baseline."""
+    mut keys: list[str] = []
+    for raw in text.split("\n"):
+        line = raw.strip()
+        if line == "" or line.startswith("#"):
+            continue
+        if not valid.is_match(line):
+            return Err(f"invalid baseline key: {line}")
+        if line in keys:
+            return Err(f"duplicate baseline key: {line}")
+        keys.append(line)
+    if len(keys) == 0:
+        return Err("baseline is empty")
+    return Ok(keys)
+
+
+def parse_results(text: str, valid: Regex) -> Result[tuple[Dict[str, str], set[str], Counts, Option[Counts]], str]:
+    """Parse unique case verdicts, represented families, counted verdicts, and the single final total."""
+    mut results: Dict[str, str] = {}
+    mut families: set[str] = set()
+    mut passed = 0
+    mut failed = 0
+    mut pending = 0
+    mut total: Option[Counts] = None
+    for raw in text.split("\n"):
+        fields = raw.split(" ")
+        if len(fields) >= 2 and fields[0] in ["PASS", "FAIL", "PEND"]:
+            status, key = fields[0], fields[1]
+            if not valid.is_match(key):
+                return Err(f"invalid result key: {key}")
+            if key in results:
+                return Err(f"duplicate result key: {key}")
+            results[key] = status
+            families.add(key.split("/")[0])
+            if status == "PASS":
+                passed += 1
+            elif status == "FAIL":
+                failed += 1
+            else:
+                pending += 1
+        elif raw.startswith("total: "):
+            if total is not None:
+                return Err("expected one final total; runner log has several")
+            total = parse_total(raw)?
+    return Ok((results, families, Counts(passed=passed, failed=failed, pending=pending), total))
+
+
+def parse_total(line: str) -> Result[Counts, str]:
+    """Parse the runner's exact `total: N passed, N failed, N pending` spelling."""
+    fields = line.replace(",", "").split(" ")
+    if (
+        len(fields) != 7
+        or fields[0] != "total:"
+        or fields[2] != "passed"
+        or fields[4] != "failed"
+        or fields[6] != "pending"
+    ):
+        return Err(f"invalid final total: {line}")
+    return Ok(
+        Counts(
+            passed=positive_or_zero(fields[1])?,
+            failed=positive_or_zero(fields[3])?,
+            pending=positive_or_zero(fields[5])?,
+        ),
+    )
+
+
+def positive_or_zero(value: str) -> Result[int, str]:
+    """Parse one nonnegative decimal count."""
+    if value == "":
+        return Err("count is empty")
+    for character in value:
+        if character not in "0123456789":
+            return Err(f"invalid count: {value}")
+    return Ok(int(value))
+
+
+def status_code(status: ExitStatus) -> int:
+    """Return a process status code, using 128 when the host reports only signal termination."""
+    match status.code():
+        Some(code) => return int(code)
+        None => return 128

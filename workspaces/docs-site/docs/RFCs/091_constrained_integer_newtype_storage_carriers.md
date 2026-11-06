@@ -176,7 +176,7 @@ This section is non-normative. The recommended shape is to keep the constrained 
 - **Typechecker / Symbol resolution**: constrained integer newtypes must validate carrier names, duplicate storage attributes, constraint consistency, representability, and RFC 017 coercion behavior.
 - **IR Lowering**: storage-backed newtypes must carry the logical domain and the chosen backing carrier into lowered form.
 - **Emission**: generated Rust output must store the newtype using the selected exact-width carrier while preserving checked construction semantics.
-- **Stdlib / Runtime (`incan_stdlib`)**: validation error rendering and numeric conversion helpers may need to support storage-backed construction paths.
+- **Stdlib / Runtime (`loaves/stdlib/`)**: validation error rendering and numeric conversion helpers may need to support storage-backed construction paths.
 - **Formatter**: constrained primitive formatting must preserve the storage attribute in a stable order.
 - **LSP / Tooling**: hover, completion, diagnostics, and metadata extraction should surface the logical constrained type and the storage carrier distinctly.
 

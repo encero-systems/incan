@@ -1,0 +1,483 @@
+"""
+Run installed CI's Oven test step through an installed Oven, several test invocations at once.
+
+Run `incan run scripts/oven_tests.incn -- OVEN EVIDENCE [--jobs N] [--memory GIB]` from a checkout. OVEN is the
+installed command; EVIDENCE is the run's evidence directory. The step runs, one source per invocation so a source can
+be excluded on its own:
+
+1. `OVEN test` for every `workspaces/oven/src/test_*.incn`, from `workspaces/oven`.
+2. `OVEN test --profile release` for every `loaves/*/*/tests/test_*.incn`, from its Loaf.
+3. The record-scope contract, in an isolated project under `EVIDENCE/checker-records`.
+
+Each invocation writes its own log under `EVIDENCE/oven-tests/`. `oven-tests.log` joins them in the order above, so
+it does not depend on scheduling. The passing ids must equal `workspaces/contracts/oven-tests.txt`.
+
+At most N invocations run at once: `--jobs N`, else the core count. Each invocation also
+reserves memory, and one starts only while the reservations fit the memory they share: `--memory GIB`, else physical
+memory less a headroom. OVEN must store each test source's executable apart, so invocations in one project never
+replace each other's.
+"""
+
+from rust::std::cell import RefCell
+from rust::std::env import args
+from rust::std::fs import File
+from rust::std::io import copy as copy_stream
+from rust::std::process import Child, Command, Stdio, exit
+from rust::std::rc import Rc
+from rust::std::string import String as RustString
+from rust::std::thread import available_parallelism, sleep
+from rust::std::time import Duration
+from std.fs import Path
+from std.regex import Regex
+from check_support import read, repository_root, write_stderr
+
+const GIB: int = 1073741824
+# What one invocation reserves. Peaks measured one invocation at a time, as the summed RSS of its processes and the
+# resident owner: Oven units 3.0 to 3.8 GiB, compiler Loaf tests up to 4.2 GiB, and the record-scope project 5.7 GiB,
+# in which the frontend's native-facts driver alone took 5.5 to 6.2 GiB. Compiler-Loaf work reserves lowering scale.
+pub const PROJECT_RESERVATION_BYTES: int = 4 * GIB
+pub const LOWERING_RESERVATION_BYTES: int = 6 * GIB
+# Physical memory no reservation takes: the operating system's share and this program's own.
+pub const HEADROOM_BYTES: int = GIB
+const PASSED: str = "^test_[A-Za-z0-9_]+[.]incn::test_[A-Za-z0-9_]+ PASSED$"
+const FAILED: str = "^test_[A-Za-z0-9_]+[.]incn::test_[A-Za-z0-9_]+ (FAILED|XPASS)( |$)"
+# These read the installed toolchain and require it unchanged, which another invocation's first use of a native crate can
+# break, so they run after the others have finished.
+const NEEDS_SETTLED_INSTALLATION: FrozenList[str] = ["test_engine_protocol.incn"]
+const RECORD_SOURCES: FrozenList[str] = ["checker_records", "record_scope", "records", "record_service"]
+const RECORD_TESTS: FrozenList[str] = ["canonical_record_controls", "test_record_scope"]
+const USAGE: str = "usage: oven_tests.incn OVEN EVIDENCE [--jobs N] [--memory GIB]"
+# The step reports failures under the installed-verification program's name.
+const REPORTER: str = "verify-installation"
+
+
+pub model Options:
+    """The installed command, the evidence directory, how many invocations run at once and the memory they share."""
+
+    pub oven: str
+    pub evidence: Path
+    pub jobs: int
+    # Bytes the reservations may take together; zero when physical memory is unknown, which bounds nothing.
+    pub memory: int
+
+
+pub model Invocation:
+    """
+    One test command: its arguments, its working directory (empty inherits this one), the memory its compile
+    reserves, and its own log.
+    """
+
+    pub arguments: list[str]
+    pub directory: str
+    pub reservation: int
+    pub log: Path
+    # Runs by itself after the others, because it requires an installation that has stopped changing.
+    pub alone: bool = false
+
+
+pub model Summary:
+    """The step's counts and ids, as the log and the expected list state them."""
+
+    pub passed: int
+    pub failed: int
+    pub passed_ids: list[str]
+    pub expected_ids: list[str]
+
+
+model Running:
+    """One started invocation and the memory it reserved."""
+
+    reservation: int
+    child: Rc[RefCell[Child]]
+
+
+def main() -> None:
+    """Run the step: status 2 for refused arguments, 1 for a failed step and 0 when every expected test passed."""
+    arguments = [str(argument) for argument in args()][1:]
+    match parse_options(arguments, "", host_cores(), host_memory()):
+        Ok(options) =>
+            match run(options):
+                Ok(outcome) =>
+                    println(outcome)
+                    exit(0)
+                Err(message) =>
+                    write_stderr(f"{REPORTER}: {message}\n")
+                    exit(1)
+        Err(message) =>
+            write_stderr(f"{REPORTER}: {message}\n{USAGE}\n")
+            exit(2)
+
+
+pub def parse_options(arguments: list[str], configured: str, cores: int, physical: int) -> Result[Options, str]:
+    """
+    OVEN and EVIDENCE, then optional `--jobs N` and `--memory GIB`. Without them `configured` or `cores` selects the
+    count, and `physical` bytes less the headroom the shared memory.
+    """
+    mut operands: list[str] = []
+    mut jobs = default_jobs(configured, cores)
+    mut memory = shared_memory(physical)
+    mut pending = ""
+    for argument in arguments:
+        if pending != "":
+            if not positive(argument):
+                return Err(f"`{pending}` needs a positive number")
+            if pending == "--jobs":
+                jobs = int(argument)
+            else:
+                memory = int(argument) * GIB
+            pending = ""
+        elif argument == "--jobs" or argument == "--memory":
+            pending = argument
+        elif argument.startswith("-"):
+            return Err(f"unknown option `{argument}`")
+        else:
+            operands.append(argument)
+    if pending != "":
+        return Err(f"`{pending}` needs a positive number")
+    if len(operands) != 2:
+        return Err("OVEN and EVIDENCE are required")
+    evidence = Path(operands[1]).absolute().map_err((error) => error.message())?
+    return Ok(Options(oven=operands[0], evidence=evidence, jobs=jobs, memory=memory))
+
+
+pub def default_jobs(configured: str, cores: int) -> int:
+    """`configured` when it is a positive number, else `cores`, and at least one."""
+    if positive(configured):
+        return int(configured)
+    if cores > 1:
+        return cores
+    return 1
+
+
+pub def shared_memory(physical: int) -> int:
+    """What the reservations may take of `physical` bytes: all but the headroom, or zero when it is unknown."""
+    if physical <= HEADROOM_BYTES:
+        return 0
+    return physical - HEADROOM_BYTES
+
+
+def positive(text: str) -> bool:
+    """Whether `text` is a decimal number above zero."""
+    if text == "" or len(text) > 6:
+        return false
+    for character in text:
+        if character not in "0123456789":
+            return false
+    return int(text) > 0
+
+
+def run(options: Options) -> Result[str, str]:
+    """Plan the invocations, run them, join their logs and return the outcome when every expected test passed."""
+    root = repository_root()?
+    logs = options.evidence.joinpath("oven-tests")
+    logs.mkdir(true, true).map_err((error) => error.message())?
+    planned = invocations(root, options.evidence, logs)?
+    ran = run_all(options.oven, [item for item in planned if not item.alone], options.jobs, options.memory)?
+    ran_alone = run_all(options.oven, [item for item in planned if item.alone], 1, options.memory)?
+    succeeded = ran and ran_alone
+    log = options.evidence.joinpath("oven-tests.log")
+    joined = join_logs(planned, log)?
+    expected = read(root.joinpath("workspaces/contracts/oven-tests.txt"))?
+    summary = summarize(joined, expected)?
+    return report(options.evidence, summary, succeeded)
+
+
+pub def invocations(root: Path, evidence: Path, logs: Path) -> Result[list[Invocation], str]:
+    """The step's invocations in their fixed order, each with its memory reservation and its own numbered log."""
+    mut planned: list[Invocation] = []
+    oven = root.joinpath("workspaces/oven")
+    sources = listed_tests(oven.joinpath("src"))?
+    if len(sources) == 0:
+        return Err("Oven test sources are absent")
+    for source in sources:
+        if not source.is_file():
+            return Err("Oven test sources are absent")
+        unit = ["test", source.0]
+        alone = source.name() in NEEDS_SETTLED_INSTALLATION
+        planned.append(invocation(unit, oven.0, PROJECT_RESERVATION_BYTES, logs, len(planned), source, alone))
+    compiler = root.joinpath("loaves/compiler").0 + "/"
+    excluded = root.joinpath("loaves/compiler/internal_models/tests").0 + "/"
+    for source in loaf_tests(root.joinpath("loaves"))?:
+        # The record contracts' canonical controls need the frontend's native adapter, which their manifest omits.
+        if source.0.startswith(excluded):
+            continue
+        # Compiler Loaves link native support, which an installed bundle ships for the release profile only.
+        loaf = source.parent().parent()
+        arguments = ["test", source.0, "--profile", "release"]
+        planned.append(invocation(arguments, loaf.0, reservation_of(source, compiler), logs, len(planned), source))
+    contract = checker_records(root, evidence.joinpath("checker-records"))?
+    contract_test = ["test", contract.0, "--profile", "release"]
+    planned.append(invocation(contract_test, "", LOWERING_RESERVATION_BYTES, logs, len(planned), contract))
+    return Ok(planned)
+
+
+def invocation(
+    arguments: list[str],
+    directory: str,
+    reservation: int,
+    logs: Path,
+    position: int,
+    source: Path,
+    alone: bool = false,
+) -> Invocation:
+    """One invocation whose log name orders it by its position."""
+    log = logs.joinpath(log_name(position, source))
+    return Invocation(arguments=arguments, directory=directory, reservation=reservation, log=log, alone=alone)
+
+
+def reservation_of(source: Path, compiler: str) -> int:
+    """A compiler Loaf's tests reserve lowering scale; any other Loaf's tests reserve project scale."""
+    if source.0.startswith(compiler):
+        return LOWERING_RESERVATION_BYTES
+    return PROJECT_RESERVATION_BYTES
+
+
+pub def log_name(position: int, source: Path) -> str:
+    """A log name that sorts in invocation order and names the test source."""
+    mut number = str(position)
+    while len(number) < 3:
+        number = "0" + number
+    return f"{number}-{source.stem()}.log"
+
+
+def listed_tests(directory: Path) -> Result[list[Path], str]:
+    """The `test_*.incn` entries of `directory` in byte order, as a shell glob lists them."""
+    if not directory.is_dir():
+        return Ok([])
+    mut found: list[Path] = []
+    for entry in directory.iterdir().map_err((error) => error.message())?:
+        name = entry.name()
+        if name.startswith("test_") and name.endswith(".incn"):
+            found.append(entry)
+    return Ok(sorted_paths(found))
+
+
+def loaf_tests(loaves: Path) -> Result[list[Path], str]:
+    """Every `*/*/tests/test_*.incn` file under `loaves`, in byte order of the whole path."""
+    mut found: list[Path] = []
+    for group in visible_directories(loaves)?:
+        for loaf in visible_directories(group)?:
+            for source in listed_tests(loaf.joinpath("tests"))?:
+                if source.is_file():
+                    found.append(source)
+    return Ok(sorted_paths(found))
+
+
+def visible_directories(directory: Path) -> Result[list[Path], str]:
+    """The directories a shell `*` selects in `directory`: hidden names are skipped."""
+    mut found: list[Path] = []
+    for entry in directory.iterdir().map_err((error) => error.message())?:
+        if entry.is_dir() and not entry.name().startswith("."):
+            found.append(entry)
+    return Ok(found)
+
+
+def sorted_paths(paths: list[Path]) -> list[Path]:
+    """Paths in byte order of their spelling."""
+    return [Path(spelling) for spelling in sorted([path.0 for path in paths])]
+
+
+def checker_records(root: Path, evidence: Path) -> Result[Path, str]:
+    """
+    Prepare the record-scope contract with the canonical codec and its test-only native adapter dependency, and return
+    its test source. The project must be new, so a reused evidence directory never mixes two runs.
+    """
+    evidence.mkdir(true, true).map_err((error) => error.message())?
+    project = evidence.joinpath("project")
+    project.mkdir(false, false).map_err((error) => f"{project.0}: {error.message()}")?
+    source = project.joinpath("src")
+    source.mkdir(false, false).map_err((error) => error.message())?
+    # These are generated build inputs copied from their sole authored home, not a second contract implementation.
+    models = root.joinpath("loaves/compiler/internal_models")
+    for name in RECORD_SOURCES:
+        copy(models.joinpath(f"src/{name}.incn"), source.joinpath(f"{name}.incn"))?
+    for name in RECORD_TESTS:
+        copy(models.joinpath(f"tests/{name}.incn"), source.joinpath(f"{name}.incn"))?
+    frontend = root.joinpath("loaves/compiler/incan_frontend").0
+    mut manifest = "[project]\nname = \"checker_record_contract_test\"\nversion = \"0.1.0\"\nprivate = true\n"
+    manifest += "[project.scripts]\ncontract = \"src/test_record_scope.incn\"\n"
+    manifest += f"[dependencies]\nincan_frontend = {{ loaf = \"incan_frontend\", path = \"{frontend}\" }}\n"
+    project.joinpath("loaf.toml").write_text(manifest, "utf-8", "strict", None).map_err((error) => error.message())?
+    # File-based Incan tests currently omit envs.test; this isolated manifest keeps the native adapter out of
+    # production.
+    return Ok(source.joinpath("test_record_scope.incn"))
+
+
+def copy(source: Path, destination: Path) -> Result[None, str]:
+    """Copy one authored source without its metadata."""
+    _ = source.copy(destination, true, false).map_err((error) => f"{source.0}: {error.message()}")?
+    return Ok(None)
+
+
+pub def run_all(oven: str, planned: list[Invocation], jobs: int, memory: int) -> Result[bool, str]:
+    """Run every invocation, at most `jobs` at once within `memory`, and report whether all of them succeeded."""
+    reservations = [item.reservation for item in planned]
+    mut waiting = [index for index in range(len(planned))]
+    mut active: list[Running] = []
+    mut succeeded = true
+    while len(waiting) > 0 or len(active) > 0:
+        chosen = admitted(reservations, waiting, [item.reservation for item in active], jobs, memory)
+        for index in chosen:
+            child = start(oven, planned[index])?
+            active.append(Running(reservation=reservations[index], child=Rc.new(RefCell.new(child))))
+        waiting = [index for index in waiting if index not in chosen]
+        mut running: list[Running] = []
+        for item in active:
+            match item.child.borrow_mut().try_wait().map_err((error) => str(error))?:
+                Some(status) =>
+                    if not status.success():
+                        succeeded = false
+                None => running.append(item)
+        if len(running) == len(active):
+            sleep(Duration.from_millis(20))
+        active = running
+    return Ok(succeeded)
+
+
+pub def admitted(reservations: list[int], waiting: list[int], held: list[int], jobs: int, memory: int) -> list[int]:
+    """
+    The waiting invocations to start now, in order: each whose reservation fits in `memory` beside those `held`,
+    while fewer than `jobs` run. One that fits only alone waits for the others; with nothing running it always starts.
+    A `memory` of zero bounds nothing.
+    """
+    mut count = len(held)
+    mut reserved = 0
+    for reservation in held:
+        reserved += reservation
+    mut chosen: list[int] = []
+    for index in waiting:
+        if count >= jobs:
+            break
+        if count == 0 or memory == 0 or reserved + reservations[index] <= memory:
+            chosen.append(index)
+            count += 1
+            reserved += reservations[index]
+    return chosen
+
+
+def start(oven: str, planned: Invocation) -> Result[Child, str]:
+    """Start one invocation with stdout and stderr in its own log, in the order it writes them."""
+    log = File.create(planned.log.0).map_err((error) => f"{planned.log.0}: {error}")?
+    errors = log.try_clone().map_err((error) => str(error))?
+    mut command = Command.new(oven)
+    for argument in planned.arguments:
+        command.arg(argument)
+    if planned.directory != "":
+        command.current_dir(planned.directory)
+    command.stdin(Stdio.null())
+    command.stdout(log)
+    command.stderr(errors)
+    return command.spawn().map_err((error) => f"cannot start `{oven}`: {error}")
+
+
+pub def join_logs(planned: list[Invocation], log: Path) -> Result[str, str]:
+    """Copy the invocation logs byte for byte to `log` in invocation order, and return the joined text."""
+    mut joined = File.create(log.0).map_err((error) => f"{log.0}: {error}")?
+    for item in planned:
+        mut part = File.open(item.log.0).map_err((error) => f"{item.log.0}: {error}")?
+        _ = copy_stream(part, joined).map_err((error) => f"{log.0}: {error}")?
+    data = log.read_bytes().map_err((error) => error.message())?
+    return Ok(str(RustString.from_utf8_lossy(data)))
+
+
+pub def summarize(log: str, expected: str) -> Result[Summary, str]:
+    """Count passing and failing test lines, and sort the passing ids and the expected list in byte order."""
+    passing = Regex(PASSED).map_err((error) => error.message())?
+    failing = Regex(FAILED).map_err((error) => error.message())?
+    mut passed_ids: list[str] = []
+    mut failed = 0
+    for line in log.split("\n"):
+        if passing.is_match(line):
+            passed_ids.append(line.split(" ")[0])
+        if failing.is_match(line):
+            failed += 1
+    ordered = sorted(passed_ids)
+    expected_ids = sorted(file_lines(expected))
+    return Ok(Summary(passed=len(ordered), failed=failed, passed_ids=ordered, expected_ids=expected_ids))
+
+
+pub def file_lines(text: str) -> list[str]:
+    """The lines of a text file, as `sort` and `wc -l` count them: a final newline ends a line, not starts one."""
+    mut lines = text.split("\n")
+    if len(lines) > 0 and lines[len(lines) - 1] == "":
+        _ = lines.pop()
+    return lines
+
+
+def report(evidence: Path, summary: Summary, succeeded: bool) -> Result[str, str]:
+    """Write the id lists, counts and their difference, then state the step's outcome."""
+    passed = evidence.joinpath("oven-passed-ids.txt")
+    expected = evidence.joinpath("oven-expected-ids.txt")
+    write_lines(passed, summary.passed_ids)?
+    write_lines(expected, summary.expected_ids)?
+    counts = evidence.joinpath("oven-tests.json")
+    counts.write_text(summary_document(summary), "utf-8", "strict", None).map_err((error) => error.message())?
+    identical = unified_diff(expected, passed, evidence.joinpath("oven-test-diff.txt"))?
+    outcome = f"Oven tests: {summary.passed} PASS, {summary.failed} FAIL"
+    if not succeeded or not identical or summary.failed != 0:
+        return Err(f"{outcome}; test ids differ or an invocation failed")
+    return Ok(outcome)
+
+
+pub def summary_document(summary: Summary) -> str:
+    """The counts document, spelled as `jq` prints it."""
+    expected = len(summary.expected_ids)
+    return f"{{\n  \"passed\": {summary.passed},\n  \"failed\": {summary.failed},\n  \"expected\": {expected}\n}}\n"
+
+
+def write_lines(path: Path, lines: list[str]) -> Result[None, str]:
+    """Write one line per entry, each ending in a newline."""
+    mut text = ""
+    for line in lines:
+        text += f"{line}\n"
+    return path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+def unified_diff(expected: Path, passed: Path, output: Path) -> Result[bool, str]:
+    """Write `diff -u` of the two lists to `output`, and report whether they are identical."""
+    written = File.create(output.0).map_err((error) => f"{output.0}: {error}")?
+    status = Command
+        .new("diff")
+        .arg("-u")
+        .arg(expected.0)
+        .arg(passed.0)
+        .stdout(written)
+        .status()
+        .map_err((error) => f"cannot run diff: {error}")?
+    return Ok(status.success())
+
+
+def host_cores() -> int:
+    """The processors this process may use, or one when unknown."""
+    match available_parallelism():
+        Ok(count) => return int(count.get())
+        Err(_) => return 1
+
+
+def host_memory() -> int:
+    """Physical memory in bytes from `sysctl` or `/proc/meminfo`; zero when neither says."""
+    match Command.new("/usr/sbin/sysctl").arg("-n").arg("hw.memsize").stderr(Stdio.null()).output():
+        Ok(found) =>
+            if found.status.success():
+                text = str(RustString.from_utf8(found.stdout).unwrap_or(RustString.new())).strip()
+                if positive_bytes(text):
+                    return int(text)
+        Err(_) => pass
+    meminfo = Path("/proc/meminfo")
+    if not meminfo.is_file():
+        return 0
+    for line in read(meminfo).unwrap_or("").split("\n"):
+        fields = [field for field in line.split(" ") if field != ""]
+        if len(fields) == 3 and fields[0] == "MemTotal:" and fields[2] == "kB" and positive_bytes(fields[1]):
+            return int(fields[1]) * 1024
+    return 0
+
+
+def positive_bytes(text: str) -> bool:
+    """Whether `text` is a decimal byte count."""
+    if text == "" or len(text) > 18:
+        return false
+    for character in text:
+        if character not in "0123456789":
+            return false
+    return true

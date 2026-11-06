@@ -14,9 +14,11 @@ pub use crate::reflection::{
     HasTypeFieldMetadata,
 };
 // frozen runtime types for consts (RFC 008)
-pub use crate::frozen::{FrozenBytes, FrozenDict, FrozenList, FrozenSet, FrozenStr};
+pub use incan_std_primitives::frozen::{FrozenBytes, FrozenDict, FrozenList, FrozenSet, FrozenStr};
 // Python-like numeric operations (generic entrypoints + compatibility helpers)
-pub use crate::num::{py_div, py_floor_div, py_floor_div_f64, py_floor_div_i64, py_mod, py_mod_f64, py_mod_i64};
+pub use incan_std_primitives::num::{
+    py_div, py_floor_div, py_floor_div_f64, py_floor_div_i64, py_mod, py_mod_f64, py_mod_i64,
+};
 
 // Re-export derive macros from incan_derive
 // Note: These are proc macros and must be re-exported with `pub use`

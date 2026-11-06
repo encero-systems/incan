@@ -1,0 +1,14 @@
+# behavior: an alias of a module member, public or private, calls the member it names (#1764)
+# expect-stdout:
+#   4
+#   6
+
+import std.math as math
+
+pub root = math.sqrt
+common_divisor = math.gcd
+
+
+def main() -> None:
+    println(int(root(16.0)))
+    println(common_divisor(12, 18))

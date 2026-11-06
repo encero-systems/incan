@@ -17,6 +17,7 @@ Own:
 - hardcoded behavior that should extend canonical registries
 - compiler/runtime semantic drift
 - split-brain decision surfaces where local/imported/reexported/package/test/vocab/generated-Rust paths can make different decisions for the same semantic concept
+- design records that log mechanisms instead of decisions: a record changes only when a decision changes, in a sentence or two, and keeps decisions, boundaries, consequences, and non-goals under about 1,000 words; mechanisms belong in commit messages and rustdoc, never a paragraph per commit
 
 Do not own:
 
@@ -86,8 +87,8 @@ Snapshot content is evidence, not a fix log. Preserve the original finding block
   - ...
 
 ## Findings
-- [ ] warning | design-tension | wrong layer | loaves/toolchain/incan-cli/src/commands/lifecycle.rs:210
-  Resolution policy duplicates env semantics that should stay in `loaves/oven/oven_model/src/project_lifecycle/**`.
+- [ ] warning | design-tension | wrong layer | workspaces/oven/src/main.incn:210
+  Resolution policy duplicates dependency semantics that should stay in `workspaces/oven/src/loaf_resolve.incn`.
 
 ## Reviewed Clean Surfaces
 - <optional, only for risky or disputed clean calls>
@@ -111,8 +112,8 @@ Only write this file when findings are present.
   - ...
 
 ## Findings
-- [ ] warning | design-tension | wrong layer | loaves/toolchain/incan-cli/src/commands/lifecycle.rs:210
-  Resolution policy duplicates env semantics that should stay in `loaves/oven/oven_model/src/project_lifecycle/**`.
+- [ ] warning | design-tension | wrong layer | workspaces/oven/src/main.incn:210
+  Resolution policy duplicates dependency semantics that should stay in `workspaces/oven/src/loaf_resolve.incn`.
 
 ## Resolution
 - <optional, only if this snapshot is written after a fix loop>

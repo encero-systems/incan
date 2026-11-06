@@ -7,8 +7,15 @@ Rust `flate2` reader adapters as the codec boundary.
 
 from rust::std::io import Cursor, Read
 from rust::flate2 import Compression as FlateCompression
-from rust::flate2::read import GzDecoder, GzEncoder
-from std.compression._core import Codec, CompressionError, _codec_error, _level_or_default, _validate_chunk_size, _write_sink_bytes
+from rust::flate2::read import GzEncoder, MultiGzDecoder
+from std.compression._core import (
+    Codec,
+    CompressionError,
+    _codec_error,
+    _level_or_default,
+    _validate_chunk_size,
+    _write_sink_bytes,
+)
 from std.fs import File
 from std.io import _BytesIO
 
@@ -41,7 +48,7 @@ pub def decompress(data: bytes) -> Result[bytes, CompressionError]:
     Returns:
         `Ok(bytes)` with the decompressed payload, or `Err(CompressionError)` for invalid or truncated data.
     """
-    mut reader = GzDecoder.new(Cursor.new(data))
+    mut reader = MultiGzDecoder.new(Cursor.new(data))
     mut out: bytes = b""
     match reader.read_to_end(out):
         Ok(_) => return Ok(out)
@@ -98,9 +105,7 @@ pub def decompress_stream(
 
 
 def _flate_level(level: Option[int]) -> Result[FlateCompression, CompressionError]:
-    """
-    Convert a portable gzip level into the `flate2` compression type.
-    """
+    """Convert a portable gzip level into the `flate2` compression type."""
     selected = _level_or_default(Codec.Gzip, level, 6, 0, 9)?
     maybe: Option[u32] = selected.try_resize()
     match maybe:
@@ -114,9 +119,7 @@ def _compress_bytesio_stream(
     compression: FlateCompression,
     chunk_size: int,
 ) -> Result[None, CompressionError]:
-    """
-    Compress bytes from an in-memory stream into a binary sink.
-    """
+    """Compress bytes from an in-memory stream into a binary sink."""
     mut handle = source.handle.borrow_mut()
     mut reader = GzEncoder.new(Read.by_ref(handle), compression)
     while true:
@@ -135,10 +138,8 @@ def _compress_file_stream(
     compression: FlateCompression,
     chunk_size: int,
 ) -> Result[None, CompressionError]:
-    """
-    Compress bytes from a file stream into a binary sink.
-    """
-    mut handle = source.handle.borrow_mut()
+    """Compress bytes from a file stream into a binary sink."""
+    mut handle = source.handle.handle.borrow_mut()
     mut reader = GzEncoder.new(Read.by_ref(handle), compression)
     while true:
         mut chunk: bytes = b""
@@ -155,11 +156,9 @@ def _decompress_bytesio_stream(
     target: Union[_BytesIO, File],
     chunk_size: int,
 ) -> Result[None, CompressionError]:
-    """
-    Decompress gzip bytes from an in-memory stream into a binary sink.
-    """
+    """Decompress gzip bytes from an in-memory stream into a binary sink."""
     mut handle = source.handle.borrow_mut()
-    mut reader = GzDecoder.new(Read.by_ref(handle))
+    mut reader = MultiGzDecoder.new(Read.by_ref(handle))
     while true:
         mut chunk: bytes = b""
         match reader.by_ref().take(chunk_size.saturating_resize[u64]()).read_to_end(chunk):
@@ -175,11 +174,9 @@ def _decompress_file_stream(
     target: Union[_BytesIO, File],
     chunk_size: int,
 ) -> Result[None, CompressionError]:
-    """
-    Decompress gzip bytes from a file stream into a binary sink.
-    """
-    mut handle = source.handle.borrow_mut()
-    mut reader = GzDecoder.new(Read.by_ref(handle))
+    """Decompress gzip bytes from a file stream into a binary sink."""
+    mut handle = source.handle.handle.borrow_mut()
+    mut reader = MultiGzDecoder.new(Read.by_ref(handle))
     while true:
         mut chunk: bytes = b""
         match reader.by_ref().take(chunk_size.saturating_resize[u64]()).read_to_end(chunk):

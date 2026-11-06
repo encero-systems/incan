@@ -1,0 +1,12 @@
+# behavior: a testing helper accepts a bare None whose Option payload type is inferred
+# expect-stdout-contains:
+#   test_none_argument.incn::test_absent PASSED
+
+"""A constant None argument still requires a concrete Option carrier at its call boundary."""
+
+from std.testing import assert_is_none
+
+
+def test_absent() -> None:
+    """Infer and retain the helper's Option payload type."""
+    assert_is_none(None)

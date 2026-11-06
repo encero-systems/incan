@@ -1,0 +1,687 @@
+"""Lower checked operators: arithmetic and bit operations, and equality and ordering comparisons."""
+
+from pub::incan_mir_plan import (
+    Carrier,
+    BinaryOp,
+    CalleeKind,
+    ExternalFunction,
+    Constant,
+    ListLeaf,
+    Operand,
+    OperandKind,
+    Place,
+    PlanType,
+    TupleElement,
+    RvalueKind,
+    SourceSpan,
+    UnaryOp,
+    assign as plan_assign,
+    place as plan_place,
+)
+from bytes_plan import bytes_literal
+from text_ownership import drop_borrowed_text_temporaries
+from decimal_plan import decimal_comparison
+from rust::incan_semantics_core::body_ir import (
+    BinOp,
+    Constant as RustConstant,
+    Operand as RustOperand,
+    OwnershipFact,
+    Rvalue as RustRvalue,
+    UnOp,
+)
+from rust::incan_semantics_core import SemanticSourceTargetKind
+from frozen_equality import compare_frozen
+from decls import library_enum_item
+from element_places import is_element_place
+from enums import unit_variant, validate_unit_comparison, validate_unit_ordering
+from enum_display import native_enum_owner
+from value_enums import value_variant
+from options import carrier_layout
+from numbers import float_operand
+from numerics import integer_carrier
+from strings import emit_text_helper
+from equality import emit_collection_equality, equality_shape
+from frame import place_type, Builder, temporary, terminate_call, read_place, value_type, literal
+from collections import is_collection
+from lists import is_list
+from lowering import BodyIrModule
+from checked_values import scalar_place
+from statements import is_text_or_nominal
+from calls import instantiated_external_call
+from call_arguments import shared_nominal_argument
+from model_construction import checked_aggregate
+from operand_borrows import borrow_text_operand
+from list_values import list_borrow, value_operand
+from list_methods import materialized_receiver
+from matches import enum_operand
+from carrier_operands import lower_union_isinstance
+from sequence_builtins import source_operand_type
+from result_carriers import retained_reference_value
+
+
+pub def operand_type(mut builder: Builder, operand: Operand) -> Result[PlanType, str]:
+    """The plan type an operand carries: its local's declared type, or its literal's type."""
+    return value_type(builder, operand)
+
+
+pub def binary_operator(operator: BinOp) -> Result[BinaryOp, str]:
+    """Translate only native scalar operations; operators with runtime semantics are separate calls."""
+    match operator:
+        BinOp.Add => return Ok(BinaryOp.Add)
+        BinOp.Sub => return Ok(BinaryOp.Subtract)
+        BinOp.Mul => return Ok(BinaryOp.Multiply)
+        BinOp.Div => return Ok(BinaryOp.Divide)
+        BinOp.Eq => return Ok(BinaryOp.Equal)
+        BinOp.Ne => return Ok(BinaryOp.NotEqual)
+        BinOp.Lt => return Ok(BinaryOp.Less)
+        BinOp.Le => return Ok(BinaryOp.LessEqual)
+        BinOp.Gt => return Ok(BinaryOp.Greater)
+        BinOp.Ge => return Ok(BinaryOp.GreaterEqual)
+        BinOp.FloorDiv => return Err("Body IR FloorDiv requires its runtime helper")
+        BinOp.Mod => return Err("Body IR Mod requires its runtime helper")
+        BinOp.Pow => return Err("unsupported Body IR Pow")
+        BinOp.BitAnd => return Ok(BinaryOp.BitAnd)
+        BinOp.BitOr => return Ok(BinaryOp.BitOr)
+        BinOp.BitXor => return Ok(BinaryOp.BitXor)
+        BinOp.Shl => return Ok(BinaryOp.ShiftLeft)
+        BinOp.Shr => return Ok(BinaryOp.ShiftRight)
+        BinOp.Is => return Err("unsupported Body IR Is")
+        BinOp.IsNot => return Err("unsupported Body IR IsNot")
+        BinOp.And => return Err("unsupported Body IR And")
+        BinOp.Or => return Err("unsupported Body IR Or")
+
+
+def is_bit_operator(operator: BinOp) -> bool:
+    """Select the integer bit operations legacy emits as Rust infix operators."""
+    match operator:
+        BinOp.BitAnd => return true
+        BinOp.BitOr => return true
+        BinOp.BitXor => return true
+        BinOp.Shl => return true
+        BinOp.Shr => return true
+        _ => return false
+
+
+def is_ordering(operator: BinOp) -> bool:
+    """Select the four ordering comparisons."""
+    match operator:
+        BinOp.Lt => return true
+        BinOp.Le => return true
+        BinOp.Gt => return true
+        BinOp.Ge => return true
+        _ => return false
+
+
+def bit_operation(
+    operator: BinOp,
+    left: Operand,
+    left_type: PlanType,
+    right: Operand,
+    right_type: PlanType,
+) -> Result[RvalueKind, str]:
+    """Admit integer bit operations over one integer type; a shift keeps its left type and counts with any integer."""
+    if not integer_carrier(left_type) or not integer_carrier(right_type):
+        return Err("unsupported Body IR non-integer bit operands")
+    shift = operator == BinOp.Shl or operator == BinOp.Shr
+    if not shift and left_type != right_type:
+        return Err("unsupported Body IR mixed integer bit operands")
+    return Ok(RvalueKind.Binary(binary_operator(operator)?, left, right))
+
+
+pub def scalar_operator_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
+    """Materialize indexed scalar operands and refuse collection operators before native validation."""
+    operand = value_operand(builder, value, span)?
+    if is_list(operand_type(builder, operand)?) or is_collection(operand_type(builder, operand)?):
+        return Err("unsupported Body IR list scalar operator")
+    return Ok(operand)
+
+
+def external_enum_equality_kind(mut builder: Builder, owner: int) -> Result[Option[bool], str]:
+    """Select external equality for exact Option/Result carriers or published enums; true preserves Rust's own ne."""
+    if owner < 0:
+        return Err("invalid Body IR enum comparison owner")
+    if owner >= len(builder.enums):
+        index = owner - len(builder.enums)
+        if index >= len(builder.intrinsics):
+            return Err("invalid Body IR intrinsic enum comparison owner")
+        carrier = builder.intrinsics[index].carrier
+        if carrier != Carrier.Declared:
+            return Ok(Some(true))
+        return Ok(None)
+    declaration = builder.enums[owner]
+    if library_enum_item(declaration) == "":
+        return Ok(None)
+    native = native_enum_owner(builder, owner)
+    if native:
+        return Ok(Some(true))
+    if "PartialEq" not in declaration.derives:
+        return Err("standard library enum comparison requires a checked PartialEq implementation")
+    for variant in declaration.variants:
+        if len(variant.fields) != 0:
+            return Ok(Some(false))
+    return Ok(None)
+
+
+def native_enum_equality(
+    mut builder: Builder,
+    operator: &BinOp,
+    left: Place,
+    right: Place,
+    span: SourceSpan,
+) -> Result[Option[Operand], str]:
+    """Borrow native enums and Option/Result for their Rust equality implementation; published source enums retain their checked derives."""
+    if operator != BinOp.Eq and operator != BinOp.Ne:
+        return Ok(None)
+    ty = place_type(builder.locals, left)
+    if ty != place_type(builder.locals, right):
+        return Err("unsupported Body IR mixed enum comparison")
+    mut owner = -1
+    mut reference = PlanType.Unit
+    match ty:
+        PlanType.Enum(index, name) =>
+            owner = index
+            reference = PlanType.EnumRef(index, name)
+        _ => return Ok(None)
+    mut native = false
+    match external_enum_equality_kind(builder, owner)?:
+        Some(preserve_ne) => native = preserve_ne
+        None => return Ok(None)
+    mut operands: list[Operand] = []
+    for source in [left, right]:
+        borrowed = temporary(builder, reference, span)
+        builder.emit(plan_assign(borrowed, RvalueKind.Borrow(source), span))
+        operands.append(read_place(borrowed, false, span))
+    mut path = "core::cmp::PartialEq::eq"
+    if native and operator == BinOp.Ne:
+        path = "core::cmp::PartialEq::ne"
+    builder.externals.append(
+        ExternalFunction(
+            path=path,
+            type_arguments=[ty, ty],
+            parameters=[reference, reference],
+            return_type=PlanType.Bool,
+            span=span,
+        ),
+    )
+    output = temporary(builder, PlanType.Bool, span)
+    terminate_call(builder, CalleeKind.Instantiated(path, [ty, ty]), operands, output, span)
+    if operator == BinOp.Ne and not native:
+        negated = temporary(builder, PlanType.Bool, span)
+        builder.emit(plan_assign(negated, RvalueKind.Unary(UnaryOp.Not, read_place(output, false, span)), span))
+        return Ok(Some(read_place(negated, false, span)))
+    return Ok(Some(read_place(output, false, span)))
+
+
+def unit_enum_comparison(
+    mut builder: Builder,
+    operator: &BinOp,
+    left: &RustOperand,
+    right: &RustOperand,
+    span: SourceSpan,
+) -> Result[RvalueKind, str]:
+    """
+    Compare native payload carriers through PartialEq, or checked fieldless source tags without consuming either receiver.
+
+    Ordering compares the tags too, which is the derived order: native discriminants are the source variant indices.
+    """
+    if operator != BinOp.Eq and operator != BinOp.Ne and not is_ordering(operator):
+        return Err("unsupported Body IR enum BinaryOp")
+    left_place = enum_comparison_place(builder, left, span)?
+    right_place = enum_comparison_place(builder, right, span)?
+    match native_enum_equality(builder, operator, left_place, right_place, span)?:
+        Some(result) => return Ok(RvalueKind.Use(result))
+        None => pass
+    validate_unit_comparison(
+        builder.enums,
+        place_type(builder.locals, left_place),
+        place_type(builder.locals, right_place),
+    )?
+    if is_ordering(operator):
+        validate_unit_ordering(builder.enums, place_type(builder.locals, left_place))?
+    left_tag = enum_comparison_tag(builder, left_place, span)
+    right_tag = enum_comparison_tag(builder, right_place, span)
+    return Ok(
+        RvalueKind.Binary(
+            binary_operator(operator)?,
+            read_place(left_tag, false, span),
+            read_place(right_tag, false, span),
+        ),
+    )
+
+
+def optional_none_comparison(
+    mut builder: Builder,
+    operator: &BinOp,
+    left: &RustOperand,
+    right: &RustOperand,
+    span: SourceSpan,
+) -> Result[Option[RvalueKind], str]:
+    """Compare a checked Option against None by its tag without copying or equating its payload."""
+    if operator != BinOp.Eq and operator != BinOp.Ne and operator != BinOp.Is and operator != BinOp.IsNot:
+        return Ok(None)
+    mut other = left
+    if none_constant(right):
+        other = left
+    elif none_constant(left):
+        other = right
+    else:
+        return Ok(None)
+    if none_constant(other):
+        return Ok(Some(RvalueKind.Use(literal(Constant.Bool(operator == BinOp.Eq or operator == BinOp.Is), span))))
+    source = enum_comparison_place(builder, other, span)?
+    if place_type(builder.locals, source) == PlanType.Unit:
+        return Ok(Some(RvalueKind.Use(literal(Constant.Bool(operator == BinOp.Eq or operator == BinOp.Is), span))))
+    _owner, declaration = carrier_layout(builder, place_type(builder.locals, source))?
+    if declaration.carrier != Carrier.Option:
+        return Err("invalid Body IR None comparison carrier")
+    tag = enum_comparison_tag(builder, source, span)
+    mut comparison = BinaryOp.Equal
+    if operator == BinOp.Ne or operator == BinOp.IsNot:
+        comparison = BinaryOp.NotEqual
+    return Ok(Some(RvalueKind.Binary(comparison, read_place(tag, false, span), literal(Constant.Int(0), span))))
+
+
+def none_constant(value: &RustOperand) -> bool:
+    """Recognize only the retained None constant; ordinary unit values cannot authorize an Option tag comparison."""
+    match value:
+        RustOperand.Constant(RustConstant.None) => return true
+        _ => return false
+
+
+def enum_comparison_place(mut builder: Builder, operand: &RustOperand, span: SourceSpan) -> Result[Place, str]:
+    """Materialize an indexed checked value once before borrowing its discriminant; structural values keep their place."""
+    match operand:
+        RustOperand.Place(read) =>
+            if is_element_place(builder, read.place)?:
+                return materialized_receiver(builder, read.place, span)
+            return scalar_place(builder, read.place, span)
+        _ => return Err("unsupported Body IR nonplace enum comparison")
+
+
+def enum_comparison_tag(mut builder: Builder, source: Place, span: SourceSpan) -> Place:
+    """Materialize one native discriminant as the integer tag type used by checked match dispatch."""
+    raw = temporary(builder, PlanType.EnumTag, span)
+    tag = temporary(builder, PlanType.Int, span)
+    builder.emit(plan_assign(raw, RvalueKind.Discriminant(source), span))
+    builder.emit(plan_assign(tag, RvalueKind.TagToInt(read_place(raw, false, span)), span))
+    return tag
+
+
+def owner_borrow(
+    mut builder: Builder,
+    operand: &RustOperand,
+    expected: PlanType,
+    span: SourceSpan,
+) -> Result[Option[Operand], str]:
+    """Borrow an owner's place for a destination declared as a reference to it, rather than reading a copy."""
+    match operand:
+        RustOperand.Place(read) =>
+            match read.place.global():
+                Some(_global) => return Ok(None)
+                None => pass
+            if is_element_place(builder, read.place)?:
+                return Ok(None)
+            place = scalar_place(builder, read.place, span)?
+            owner = place_type(builder.locals, place)
+            match (expected, owner):
+                (PlanType.ModelRef(index, _name), PlanType.Model(owner_index, _owner_name)) =>
+                    if index != owner_index:
+                        return Ok(None)
+                (PlanType.EnumRef(index, _name), PlanType.Enum(owner_index, _owner_name)) =>
+                    if index != owner_index:
+                        return Ok(None)
+                _ => return Ok(None)
+            reference = temporary(builder, expected, span)
+            builder.emit(plan_assign(reference, RvalueKind.Borrow(place), span))
+            return Ok(Some(read_place(reference, false, span)))
+        _ => return Ok(None)
+
+
+pub def scalar_rvalue(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    value: &RustRvalue,
+    expected: PlanType,
+    span: SourceSpan,
+) -> Result[RvalueKind, str]:
+    """Read the checked expression; the retained destination carrier selects a proven constructor's closed layout."""
+    match value:
+        RustRvalue.Use(operand) =>
+            match retained_reference_value(builder, operand, expected, span)?:
+                Some(reference) => return Ok(RvalueKind.Use(reference))
+                None => pass
+            match owner_borrow(builder, operand, expected, span)?:
+                Some(reference) => return Ok(RvalueKind.Use(reference))
+                None => return Ok(RvalueKind.Use(value_operand(builder, operand, span)?))
+        RustRvalue.UnaryOp(operator, operand) =>
+            match operator:
+                UnOp.Not => return Ok(RvalueKind.Unary(UnaryOp.Not, scalar_operator_operand(builder, operand, span)?))
+                UnOp.Neg =>
+                    return Ok(RvalueKind.Unary(UnaryOp.Negate, scalar_operator_operand(builder, operand, span)?))
+                UnOp.Invert =>
+                    inverted = scalar_operator_operand(builder, operand, span)?
+                    if not integer_carrier(operand_type(builder, inverted)?):
+                        return Err("unsupported Body IR non-integer unary operator Invert")
+                    return Ok(RvalueKind.Unary(UnaryOp.Invert, inverted))
+        RustRvalue.BinaryOp(operator, left, right) =>
+            match optional_none_comparison(builder, operator, left, right, span)?:
+                Some(result) => return Ok(result)
+                None => pass
+            if enum_operand(builder, left, span)? or enum_operand(builder, right, span)?:
+                return unit_enum_comparison(builder, operator, left, right, span)
+            if operator == BinOp.Eq or operator == BinOp.Ne:
+                match compare_frozen(builder, operator, left, right, span)?:
+                    Some(result) => return Ok(RvalueKind.Use(result))
+                    None => pass
+                match collection_equality(builder, operator, left, right, span)?:
+                    Some(result) => return Ok(RvalueKind.Use(result))
+                    None => pass
+                match tuple_equality(builder, operator, left, right, span)?:
+                    Some(result) => return Ok(RvalueKind.Use(result))
+                    None => pass
+                match newtype_equality(builder, operator, left, right, span)?:
+                    Some(result) => return Ok(RvalueKind.Use(result))
+                    None => pass
+            match text_comparison(builder, operator, left, right, span)?:
+                Some(result) => return Ok(RvalueKind.Use(result))
+                None => pass
+            if operator == BinOp.Div:
+                mut frame_locals = builder.locals[builder.local_offset:]
+                if (
+                    not float_operand(
+                        builder.constructors,
+                        builder.nominals,
+                        frame_locals,
+                        left,
+                        span,
+                        builder.enums,
+                        builder.unions,
+                        builder.intrinsics,
+                    )?
+                    or not float_operand(
+                        builder.constructors,
+                        builder.nominals,
+                        frame_locals,
+                        right,
+                        span,
+                        builder.enums,
+                        builder.unions,
+                        builder.intrinsics,
+                    )?
+                ):
+                    return Err("unsupported Body IR non-float true division operands")
+            left_operand = scalar_operator_operand(builder, left, span)?
+            right_operand = scalar_operator_operand(builder, right, span)?
+            left_type = operand_type(builder, left_operand)?
+            right_type = operand_type(builder, right_operand)?
+            match left_type:
+                PlanType.FrozenCollection(_name, _elements) =>
+                    return Err("unsupported Body IR frozen collection comparison")
+                _ => pass
+            if is_bit_operator(operator):
+                return bit_operation(operator, left_operand, left_type, right_operand, right_type)
+            if left_type != right_type:
+                return Err("unsupported Body IR mixed numeric arithmetic without retained coercion")
+            if operator == BinOp.Is or operator == BinOp.IsNot:
+                if left_type != PlanType.Bool:
+                    return Err("unsupported Body IR scalar identity outside booleans")
+                mut comparison = BinaryOp.Equal
+                if operator == BinOp.IsNot:
+                    comparison = BinaryOp.NotEqual
+                return Ok(RvalueKind.Binary(comparison, left_operand, right_operand))
+            if left_type == PlanType.Decimal:
+                return Ok(RvalueKind.Use(decimal_comparison(builder, operator, left_operand, right_operand, span)?))
+            # A closed type-parameter instance can reach here with text or a nominal where the checker chose a plain
+            # operator for the open parameter; those need a runtime operation the checker never selected.
+            if is_text_or_nominal(left_type):
+                return Err(
+                    f"unsupported Body IR binary operator {operator:?} on text or nominal operands {left_type:?} at {span:?}",
+                )
+            return Ok(RvalueKind.Binary(binary_operator(operator)?, left_operand, right_operand))
+        RustRvalue.IsInstance(value=value, value_ty=ty, target=target) =>
+            return lower_union_isinstance(builder, value, ty, target.ty, span)
+        RustRvalue.Aggregate(kind, elements) =>
+            return checked_aggregate(module, builder, kind, elements, expected, span)
+        RustRvalue.Dict(_entries) => return Err("unsupported Body IR Dict")
+        RustRvalue.ValueEnumVariant(target) =>
+            owner, variant = value_variant(builder.enums, builder.value_enums, target)?
+            return Ok(RvalueKind.Enum(owner, variant, []))
+        RustRvalue.FieldlessEnumVariant(target) =>
+            owner, variant = unit_variant(builder.enums, target)?
+            return Ok(RvalueKind.Enum(owner, variant, []))
+        RustRvalue.ResultVariant(_value) => return Err("unsupported Body IR ResultVariant")
+        RustRvalue.Format(_parts) => return Err("unsupported Body IR Format")
+        RustRvalue.Closure(params=_params, captured_operands=_captures, body=_body) =>
+            return Err("unsupported Body IR Closure")
+        RustRvalue.Generator(source=_source, captured_operands=_captures, body=_body) =>
+            return Err("unsupported Body IR Generator")
+        RustRvalue.Match(scrutinee=_value, arms=_arms) => return Err("unsupported Body IR Match")
+
+
+def comparison_collection_place(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
+    """
+    Borrow checked collection storage, materializing a byte literal or an indexed or sliced operand once before its
+    shared read. Callers classify both operands first, so only owners, projections and byte literals arrive here.
+    """
+    match value:
+        RustOperand.Constant(constant) => return bytes_literal(builder, constant, span)
+        RustOperand.Place(read) =>
+            if read.fact != OwnershipFact.Borrow:
+                return Err("unsupported Body IR collection equality without retained shared read")
+            if is_element_place(builder, read.place)?:
+                return materialized_receiver(builder, read.place, span)
+            place = scalar_place(builder, read.place, span)?
+            ty = place_type(builder.locals, place)
+            if len(read.place.projection) != 0 and equality_shape(ty) != Some(ty):
+                return Err("unsupported Body IR projected collection reference equality")
+            return Ok(place)
+        _ => return Err("invalid Body IR collection comparison operand")
+
+
+def comparison_operand_type(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[PlanType, str]:
+    """Read a comparison operand's carrier without evaluating it; a byte literal is an owned unsigned byte list."""
+    match value:
+        RustOperand.Constant(_constant) => return Ok(PlanType.List(ListLeaf.U8, 1))
+        _ => return source_operand_type(builder, value, span)
+
+
+def collection_equality(
+    mut builder: Builder,
+    operator: &BinOp,
+    left: &RustOperand,
+    right: &RustOperand,
+    span: SourceSpan,
+) -> Result[Option[Operand], str]:
+    """Classify both checked layouts before evaluating either operand, then compare their shared collection views."""
+    if not local_comparison_operand(left) or not local_comparison_operand(right):
+        return Ok(None)
+    left_shape = equality_shape(comparison_operand_type(builder, left, span)?)
+    right_shape = equality_shape(comparison_operand_type(builder, right, span)?)
+    if left_shape == None or right_shape == None:
+        return Ok(None)
+    if left_shape != right_shape:
+        return Err("unsupported Body IR collection equality across different layouts")
+    places = [comparison_collection_place(builder, left, span)?, comparison_collection_place(builder, right, span)?]
+    match left_shape:
+        Some(ty) =>
+            references = [list_borrow(builder, places[0], false, span)?, list_borrow(builder, places[1], false, span)?]
+            return Ok(Some(emit_collection_equality(builder, ty, references, operator == BinOp.Ne, span)?))
+        None => return Ok(None)
+
+
+def tuple_equality(
+    mut builder: Builder,
+    operator: &BinOp,
+    left: &RustOperand,
+    right: &RustOperand,
+    span: SourceSpan,
+) -> Result[Option[Operand], str]:
+    """
+    Compare matching structural tuples through their native PartialEq implementation without consuming fields.
+
+    1. Require the same checked tuple layout on both sides.
+    2. Borrow each operand once, retaining model-field and parameter storage.
+    3. Call native equality and negate its result for inequality.
+    """
+    # 1. Scalars and other aggregate kinds keep their own comparison paths.
+    if not local_comparison_operand(left) or not local_comparison_operand(right):
+        return Ok(None)
+    mut owned = PlanType.Unit
+    mut reference = PlanType.Unit
+    match tuple_comparison_layout(source_operand_type(builder, left, span)?):
+        Some((layout, borrowed)) =>
+            owned = layout
+            reference = borrowed
+        None => return Ok(None)
+    if tuple_comparison_layout(source_operand_type(builder, right, span)?) != Some((owned, reference)):
+        return Err("unsupported Body IR tuple equality across different layouts")
+    # 2. The shared argument boundary preserves existing references and borrows owned tuple fields.
+    operands = [
+        shared_nominal_argument(builder, left, reference, span)?,
+        shared_nominal_argument(builder, right, reference, span)?,
+    ]
+    # 3. Aggregate equality is a trait call, never a primitive MIR binary operation.
+    output = temporary(builder, PlanType.Bool, span)
+    instantiated_external_call(
+        builder,
+        "core::cmp::PartialEq::eq",
+        [owned, owned],
+        [reference, reference],
+        PlanType.Bool,
+        operands,
+        output,
+        span,
+    )?
+    if operator == BinOp.Ne:
+        negated = temporary(builder, PlanType.Bool, span)
+        builder.emit(plan_assign(negated, RvalueKind.Unary(UnaryOp.Not, read_place(output, false, span)), span))
+        return Ok(Some(read_place(negated, false, span)))
+    return Ok(Some(read_place(output, false, span)))
+
+
+def tuple_comparison_layout(ty: PlanType) -> Option[tuple[PlanType, PlanType]]:
+    """Normalize tuple storage and its shared view while preserving every structural field carrier."""
+    mut fields: list[TupleElement] = []
+    match ty:
+        PlanType.Tuple(elements) => fields = elements
+        PlanType.TupleRef(elements) => fields = elements
+        PlanType.TupleMutRef(elements) => fields = elements
+        _ => return None
+    return Some((PlanType.Tuple(fields), PlanType.TupleRef(fields)))
+
+
+def local_comparison_operand(value: &RustOperand) -> bool:
+    """Recognize checked local and byte-literal comparison operands without collecting borrowed values into owned storage."""
+    match value:
+        RustOperand.Place(read) => return read.place.local_id() != None
+        RustOperand.Constant(RustConstant.Bytes(_bytes)) => return true
+        _ => return false
+
+
+def newtype_equality(
+    mut builder: Builder,
+    operator: &BinOp,
+    left: &RustOperand,
+    right: &RustOperand,
+    span: SourceSpan,
+) -> Result[Option[Operand], str]:
+    """Compare a source or linked newtype through its retained PartialEq selection, which native metadata verifies."""
+    match left:
+        RustOperand.Place(_read) => pass
+        RustOperand.Constant(RustConstant.NumericNewtype(_value)) => pass
+        _ => return Ok(None)
+    match right:
+        RustOperand.Place(_read) => pass
+        RustOperand.Constant(RustConstant.NumericNewtype(_value)) => pass
+        _ => return Ok(None)
+    ty = source_operand_type(builder, left, span)?
+    mut owner = -1
+    mut reference = PlanType.Unit
+    match ty:
+        PlanType.Model(index, name) =>
+            owner = index
+            reference = PlanType.ModelRef(index, name)
+        _ => return Ok(None)
+    if owner < 0 or owner >= len(builder.nominals):
+        return Err("unsupported Body IR equality without retained nominal declaration")
+    declaration = builder.nominals[owner]
+    if declaration.canonical.kind != SemanticSourceTargetKind.Newtype:
+        return Ok(None)
+    if "PartialEq" not in declaration.derives:
+        return Err("unsupported Body IR newtype equality without retained PartialEq")
+    if source_operand_type(builder, right, span)? != ty:
+        return Err("unsupported Body IR equality between different newtypes")
+    operands = [
+        newtype_comparison_operand(builder, left, ty, reference, span)?,
+        newtype_comparison_operand(builder, right, ty, reference, span)?,
+    ]
+    path = "core::cmp::PartialEq::eq"
+    builder.externals.append(
+        ExternalFunction(
+            path=path,
+            type_arguments=[ty, ty],
+            parameters=[reference, reference],
+            return_type=PlanType.Bool,
+            span=span,
+        ),
+    )
+    output = temporary(builder, PlanType.Bool, span)
+    terminate_call(builder, CalleeKind.Instantiated(path, [ty, ty]), operands, output, span)
+    if operator == BinOp.Ne:
+        negated = temporary(builder, PlanType.Bool, span)
+        builder.emit(plan_assign(negated, RvalueKind.Unary(UnaryOp.Not, read_place(output, false, span)), span))
+        return Ok(Some(read_place(negated, false, span)))
+    return Ok(Some(read_place(output, false, span)))
+
+
+def newtype_comparison_operand(
+    mut builder: Builder,
+    value: &RustOperand,
+    ty: PlanType,
+    reference: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Materialize one checked newtype operand and borrow its retained carrier for equality."""
+    selected = value_operand(builder, value, span)?
+    mut source = plan_place(0, span)
+    match selected.kind:
+        OperandKind.Move(place) => source = place
+        OperandKind.Copy(place) => source = place
+        _ => return Err("unsupported Body IR newtype equality without an owned place")
+    if place_type(builder.locals, source) != ty:
+        return Err("unsupported Body IR newtype equality carrier mismatch")
+    borrowed = temporary(builder, reference, span)
+    builder.emit(plan_assign(borrowed, RvalueKind.Borrow(source), span))
+    return Ok(read_place(borrowed, false, span))
+
+
+def text_comparison_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[bool, str]:
+    """Classify text from retained storage, including indexed elements, before materializing either comparison value."""
+    ty = source_operand_type(builder, value, span)?
+    return Ok(ty in [PlanType.String, PlanType.StringRef, PlanType.StrRef, PlanType.FrozenStr])
+
+
+def text_comparison(
+    mut builder: Builder,
+    operator: &BinOp,
+    left: &RustOperand,
+    right: &RustOperand,
+    span: SourceSpan,
+) -> Result[Option[Operand], str]:
+    """Bind a checked comparison in a closed text instance to the same borrowed runtime operation as concrete text."""
+    mut name = ""
+    match operator:
+        BinOp.Eq => name = "equal_text"
+        BinOp.Ne => name = "unequal_text"
+        BinOp.Lt => name = "less_text"
+        BinOp.Le => name = "less_equal_text"
+        BinOp.Gt => name = "greater_text"
+        BinOp.Ge => name = "greater_equal_text"
+        _ => return Ok(None)
+    if not text_comparison_operand(builder, left, span)? or not text_comparison_operand(builder, right, span)?:
+        return Ok(None)
+    incoming = builder.owned
+    operands = [borrow_text_operand(builder, left, span)?, borrow_text_operand(builder, right, span)?]
+    output = emit_text_helper(builder, name, PlanType.Bool, [PlanType.StringRef, PlanType.StringRef], operands, span)
+    drop_borrowed_text_temporaries(builder, incoming, output.local, span)
+    return Ok(Some(read_place(output, false, span)))

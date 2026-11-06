@@ -1,0 +1,22 @@
+# behavior: a native diverging call preserves preceding output and never resumes its caller
+# expect-stdout:
+#   before
+# expect-stderr-contains:
+#   constraint positive failed
+# expect-exit: 101
+
+from rust::incan_std_core::validation import raise_constraint_error
+
+
+def validate(valid: bool) -> None:
+    """Keep the native never-returning result inside a conditional source function."""
+    if not valid:
+        raise_constraint_error("Number", "positive")
+
+
+def main() -> None:
+    """Prove normal continuation first, then observe the failing native call."""
+    validate(true)
+    println("before")
+    validate(false)
+    println("after")

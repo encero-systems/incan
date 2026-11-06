@@ -1,0 +1,55 @@
+"""Lock exact vocabulary provider units and apply the build's explicit native-provider admission policy."""
+
+from std.environ import get_or
+from std.fs import Path
+from std.json import JsonValue
+from files import json_text
+from graph_queries import nested, text
+from manifest_vocabulary import manifest_vocabulary
+from publication import publish
+from unit import UnitDescription
+
+
+pub def admit_vocabulary(unit: UnitDescription) -> Result[UnitDescription, str]:
+    """
+    Admit exact native providers reached through this build's resolved dependency graph.
+
+    1. Freeze provider and manifest identities into the build's provider lock.
+    2. Apply the host policy to those locked identities.
+    3. Carry only admitted identities into the compiler's unit description.
+    """
+    mut ready = unit
+    ready.vocab_admissions = []
+    ready.vocab_policy = get_or("INCAN_VOCAB_POLICY", "locked-dependencies")
+    mut providers: list[JsonValue] = []
+    # 1. The dependency graph has been built; its checked manifests select the executable units.
+    for loaf in ready.loaves:
+        manifest = Path(loaf.dir).joinpath(f"{loaf.name}.incnlib")
+        if not manifest.is_file():
+            continue
+        declared = manifest_vocabulary(manifest)?
+        artifact = declared.desugarer
+        if text(artifact, "artifact_kind") != "NativeWorker":
+            continue
+        identity = text(artifact, "unit_identity")
+        providers.append(
+            JsonValue.object(
+                {"dependency": JsonValue.string(loaf.key), "loaf": JsonValue.string(loaf.name), "unit_identity": JsonValue.string(
+                    identity,
+                ), "manifest_sha256": JsonValue.string(declared.digest), "worker_sha256": nested(artifact, "sha256")},
+            ),
+        )
+        # 2. A host may deny all providers even when they are locked dependencies.
+        if ready.vocab_policy == "locked-dependencies":
+            ready.vocab_admissions.append(identity)
+    # 3. The lock is evidence of the resolved artifacts; the compiler separately checks admission and artifact bytes.
+    if len(providers) > 0:
+        directory = Path(ready.project_root).joinpath("target").joinpath("incan").joinpath("vocabulary")
+        directory.mkdir(true, true).map_err((error) => error.message())?
+        locked = JsonValue.object(
+            {"schema": JsonValue.string("incan.vocab.providers/1"), "providers": JsonValue.array(providers), "policy": JsonValue.string(
+                ready.vocab_policy,
+            )},
+        )
+        publish(directory.joinpath("providers.lock.json"), json_text(locked)?)?
+    return Ok(ready)

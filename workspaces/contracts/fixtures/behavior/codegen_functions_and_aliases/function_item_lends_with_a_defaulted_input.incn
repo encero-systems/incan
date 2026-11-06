@@ -1,0 +1,15 @@
+# behavior: a function with a defaulted input lends its read-only inputs when passed as a callable
+# expect-stdout:
+#   a 7
+#   b 0
+
+def record(target: str, bytes: int = 0) -> str:
+    """Read the target without keeping it."""
+    return f"{target} {bytes}"
+
+
+def main() -> None:
+    """Call the same function through a callable value and directly."""
+    callback: (str, int) -> str = record
+    println(callback("a", 7))
+    println(record("b"))

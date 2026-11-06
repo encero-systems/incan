@@ -2,12 +2,14 @@
 
 The Incan standard library as SDK components, one directory per component, each a Loaf holding its Incan source and its Rust runtime bridge side by side.
 
-**Versioning:** release-train cadence per component set; every facet and both derive crates carry the ring's version line, checked by `scripts/check_ring_versions.py`. `sdk-components.toml` keeps `compiler-requirement` as a range, and `incan_std_core::__incan_stdlib_version_check!` accepts any stdlib the compiler's line is compatible with under the semver rule (a prerelease demands equality). A check against the stable `incan-v1` symbol ABI is the destination.
+**Versioning:** each standard package declares its version and dependencies in its `loaf.toml`. Oven selects compiled packages for the installed toolchain and requested profile. The former ring-version Python gate was removed.
 
 | Component | Namespace roots | Rust facet | Runtime crates |
 | --- | --- | --- | --- |
-| `core/` | `std.features`, `std.prelude`, `std.registry`, `std.result`, `std.reflection`, `std.this`, `std.derives`, `std.traits`, `std.runtime` | `incan_std_core` (mandatory: reflection, frozen constants, numerics, strings, collections, storage, validation, the version check) | — |
+| `core/` | `std.features`, `std.prelude`, `std.registry`, `std.result`, `std.reflection`, `std.this`, `std.derives`, `std.traits`, `std.runtime` | `incan_std_core` (reflection, storage, validation and the version check) | — |
+| `vocab/` | `std.vocab` | — | — |
 | `interop/` | `std.interop` | — | — |
+| `primitives/` | `std.primitives` | `incan_std_primitives` (foundational errors, text, numerics, collections, iterators, frozen values, async and file mechanisms) | crc32fast, hmac, memmap2, rustix, serde, serde_json, sha2, tempfile, tokio |
 | `system/` | `std.environ`, `std.io`, `std.tempfile`, `std.fs` | — | byteorder, encoding_rs, rustix, tempfile |
 | `codecs/` | `std.checksum`, `std.encoding` | — | crc32fast |
 | `compression/` | `std.compression` | — | flate2, zstd, bzip2, xz2, snap |
@@ -18,7 +20,7 @@ The Incan standard library as SDK components, one directory per component, each 
 | `testing/` | `std.testing` | `incan_std_testing` (marker and assertion host functions) | — |
 | `derive/` | — | host proc-macro crates `incan_derive` and `incan_web_macros` | — |
 
-Each component directory holds its Incan sources under `src/` — the `.incn` modules for the namespace roots `sdk-components.toml` assigns it, resolved by the compiler through that catalog — and, where the component has one, its Rust facet under `rust/`: a crate named `incan_std_<component>` that the `.incn` sources reach with `from rust::incan_std_<component>::…` and that generated code links by path. A `loaf.toml` declares the facet with `[rust.source] root = "rust"`, as RFC 119 spells a mixed root. The facet sits next to the source it serves, so runtime-dependency attribution follows the component instead of the whole `std.<module>`: a program that never imports `std.collections` links no hasher.
+Each component directory holds its Incan sources under `src/` — the `.incn` modules for the namespace roots the compiler's `STDLIB_NAMESPACES` catalog assigns it — and, where the component has one, its Rust facet under `rust/`: a crate named `incan_std_<component>` that the `.incn` sources reach with `from rust::incan_std_<component>::…` and that generated code links by path. A `loaf.toml` declares the facet with `[rust.source] root = "rust"`, as RFC 119 spells a mixed root. The facet sits next to the source it serves, so runtime-dependency attribution follows the component instead of the whole `std.<module>`: a program that never imports `std.collections` links no hasher.
 
 ## Why the derive macros are separate crates
 

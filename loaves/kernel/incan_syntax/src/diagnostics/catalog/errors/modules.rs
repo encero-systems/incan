@@ -6,6 +6,7 @@ use crate::ast::Span;
 
 use crate::diagnostics::CompileError;
 use incan_lang::lang::stdlib;
+use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
 
 /// Circular import detected.
 pub fn circular_import(path: &std::path::Path, span: Span) -> CompileError {
@@ -100,6 +101,64 @@ pub fn std_root_member_not_exported(name: &str, declaring_module: Option<&str>, 
     }
 }
 
+/// A resolved namespace exposes no visible declaration under the requested member name.
+pub fn namespace_member_not_found(namespace: &str, member: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("`{namespace}` has no member `{member}`",), span)
+        .with_hint("Check the member spelling and the namespace's public declarations")
+}
+
+/// A qualified path continues through a binding that does not expose a namespace.
+pub fn qualified_name_head_not_namespace(head: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("`{head}` does not expose a namespace"), span)
+        .with_hint("Qualify a module, type, or value whose members are visible here")
+}
+
+/// Following imported-name links returned to the first link without reaching a declaration.
+pub fn import_link_loop(links: &[(String, SymbolOrigin, Span)], span: Span) -> CompileError {
+    let mut names = links
+        .iter()
+        .map(|(spelling, _, _)| spelling.clone())
+        .collect::<Vec<_>>();
+    if let Some(first) = names.first().cloned() {
+        names.push(first);
+    }
+    let mut error = CompileError::type_error(
+        format!("`{}` is imported in a loop: {}", link_name(links), names.join(" -> ")),
+        span,
+    )
+    .with_stable_code("INCAN-I0104")
+    .with_primary_label("used here");
+    for (index, (spelling, origin, declaration_span)) in links.iter().enumerate() {
+        let target = &links[(index + 1) % links.len()].0;
+        let suffix = if index + 1 == links.len() {
+            ", which closes the loop"
+        } else {
+            ""
+        };
+        let identity = CanonicalSymbolId {
+            namespace: SymbolNamespace::OrdinaryLexical,
+            origin: origin.clone(),
+            declaration_name: spelling.rsplit('.').next().unwrap_or(spelling).to_string(),
+            kind: SemanticSourceTargetKind::Other("import".to_string()),
+            scope_discriminant: None,
+            declaration_span: *declaration_span,
+        };
+        error = error.with_related_declaration(identity, format!("`{spelling}` is `{target}`{suffix}"));
+    }
+    error.with_hint(format!(
+        "one of these must declare `{}` instead of re-exporting it",
+        link_name(links)
+    ))
+}
+
+/// Return the repeated local name of a link loop, or a neutral fallback for an internally empty path.
+fn link_name(links: &[(String, SymbolOrigin, Span)]) -> &str {
+    links
+        .first()
+        .and_then(|(spelling, _, _)| spelling.rsplit('.').next())
+        .unwrap_or("this name")
+}
+
 /// A module-qualified type annotation (`mod.Type`) named a member the module does not declare as a type.
 ///
 /// The root resolved to a module binding, so the spelling was a real module walk; it is the tail that fails. Naming
@@ -169,7 +228,22 @@ pub fn rust_item_not_public(local_name: &str, canonical_path: &str, span: Span) 
         span,
     )
     .with_hint("Import a public item or expose it from the Rust crate with `pub`")
-    .with_note("RFC 041 requires visibility-aware rust-inspect metadata for `rust::` imports")
+    .with_note("RFC 041 requires visibility-aware Rust metadata for `rust::` imports")
+}
+
+/// A `rust::` import names no item of its crate: rustc read the crate version, target and features the project
+/// selects, and its public API has nothing at the path. `canonical_path` starts with `crate_name`.
+pub fn rust_item_not_in_crate(crate_name: &str, canonical_path: &str, span: Span) -> CompileError {
+    let item = canonical_path
+        .strip_prefix(crate_name)
+        .and_then(|rest| rest.strip_prefix("::"))
+        .unwrap_or(canonical_path);
+    CompileError::new(format!("Rust crate `{crate_name}` has no public item `{item}`"), span)
+        .with_note(format!(
+            "`rust::{canonical_path}` names nothing in the public API of the `{crate_name}` version, target and \
+             features this project selects"
+        ))
+        .with_hint("Check the item's spelling, or select a crate version or feature that declares it")
 }
 
 /// Rust `core`/`alloc` imports are reserved for future no_std/target work.
@@ -180,6 +254,18 @@ pub fn unsupported_rust_core_alloc(crate_name: &str, span: Span) -> CompileError
     )
     .with_hint("Use `rust::std::...` for standard-library interop in this release")
     .with_note("Support for `rust::core` / `rust::alloc` will be introduced in a future RFC")
+}
+
+/// A `rust::` import names a crate outside the dependency origins admitted by the project.
+pub fn rust_crate_not_declared(crate_name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Rust crate `{crate_name}` is not declared by this project"),
+        span,
+    )
+    .with_hint(format!(
+        "Declare `{crate_name}` under `[rust-dependencies]` or add the Loaf that supplies its Rust facet"
+    ))
+    .with_note("Cached Rust metadata does not grant a project dependency authority")
 }
 
 /// Soft keyword usage requires importing its stdlib namespace.
@@ -193,10 +279,10 @@ pub fn soft_keyword_requires_import(keyword: &str, namespace: &str, span: Span) 
     ))
 }
 
-/// Failed to load `std.testing` marker metadata from `stdlib/testing.incn`.
+/// Failed to load marker metadata from the `std.testing` provider.
 pub fn invalid_std_testing_marker_metadata(details: &str, span: Span) -> CompileError {
     CompileError::new(
-        "Failed to load std.testing marker metadata from `stdlib/testing.incn`".to_string(),
+        "Failed to load marker metadata from the std.testing provider".to_string(),
         span,
     )
     .with_hint(format!("Details: {details}"))

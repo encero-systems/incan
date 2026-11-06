@@ -25,4 +25,4 @@ For named function callbacks, the compiler may lower method calls such as `resul
 
 That split is an implementation detail, not a semantic distinction users should depend on. The reference contract is that method syntax and the corresponding helper function have the same branch behavior, return type shape, and observer-preservation behavior.
 
-For workflow-oriented examples, see [Fallible and infallible paths](../../tutorials/fallible_and_infallible_paths.md). For the compiler-side ownership policy behind observer borrowing, see [Duckborrowing](../../../contributing/explanation/duckborrowing.md).
+For workflow-oriented examples, see [Fallible and infallible paths](../../tutorials/fallible_and_infallible_paths.md).

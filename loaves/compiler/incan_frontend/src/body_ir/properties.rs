@@ -17,13 +17,15 @@ pub(super) fn lower_getter_body(
     facts: &BodyIrLoweringFacts<'_, '_>,
 ) -> Option<bir::Body> {
     let source = property.node.body.as_ref()?;
+    let checked_receiver = facts.type_info.qualify_semantic_type(receiver_ty.clone());
+    let receiver_ty = &checked_receiver;
 
     // ---- Checked getter frame ----
     let binding = facts
         .type_info
         .declarations
         .body_ir_property_bindings
-        .get(&(property.span.start, property.span.end));
+        .get(&property.span);
     let parameters = binding
         .map(|binding| binding.owner_parameters.as_slice())
         .unwrap_or(&[]);
@@ -61,13 +63,18 @@ pub(super) fn lower_getter_body(
     let named_type_identities =
         builder.finish_type_identities(facts.type_info.declarations.named_type_identities.clone());
     Some(bir::Body {
+        trait_default_instantiation: None,
+        nominal_instantiation: Vec::new(),
         decl_id: CompilerNodeId::declaration(facts.module_identity, &format!("{owner}::{}", property.node.name)),
-        direct_call_id: CompilerNodeId::declaration_span(facts.module_identity, property.span.start, property.span.end),
+        direct_call_id: CompilerNodeId::declaration_at(facts.module_identity, property.span),
         canonical: binding.and_then(|binding| binding.callable.identity.clone()),
         name: property.node.name.clone(),
         span,
         type_parameters: Vec::new(),
         return_type: returned,
+        checked_input_profile: None,
+        explicit_input_bindings: Vec::new(),
+        returned_view: None,
         callable_representation: Some(bir::CallableRepresentation {
             function_pointer_locals: builder.function_pointer_locals,
             closure_holding_locals: builder.closure_holding_locals,
@@ -76,7 +83,7 @@ pub(super) fn lower_getter_body(
                 .type_info
                 .is_closure_returning_type(property.node.return_type.span),
         }),
-        named_type_identities,
+        named_type_identities: std::sync::Arc::new(named_type_identities),
         params: vec![bir::CallableParam {
             local: receiver,
             kind: IncanCallableParamKind::Normal,
@@ -85,6 +92,8 @@ pub(super) fn lower_getter_body(
             span,
             default: bir::CallableParamDefault::Required,
             mutable: false,
+            input_access: incan_semantics_core::IncanInputAccess::Inferred,
+            native_owned: false,
         }],
         param_locals: vec![receiver],
         locals: builder.locals,
@@ -93,7 +102,8 @@ pub(super) fn lower_getter_body(
         runtime_requirements: builder.runtime_requirements,
         panic_facts: builder.panic_facts,
         is_async: false,
-        extern_delegation: None,
+        retired_rust_facade_wire: None,
+        native_attributes: Vec::new(),
     })
 }
 
@@ -139,7 +149,7 @@ impl BodyBuilder<'_, '_> {
             Ok(returned) => returned,
             Err(description) => return Some(self.unsupported_operand(description, scope, source_span, out)),
         };
-        self.settled_types.insert((span.start, span.end), returned.clone());
+        self.settled_types.insert(span, returned.clone());
         let receiver = self.lower_expr_to_place(base, scope, out);
 
         // ---- Getter call ----
@@ -149,8 +159,9 @@ impl BodyBuilder<'_, '_> {
                 name,
                 canonical: Some(canonical),
                 intrinsic_carrier: None,
-                reflection: None,
-                sdk_trait: None,
+                operation: None,
+                loaf_trait: None,
+                trait_arguments: None,
                 type_args: Vec::new(),
                 binding: bir::ArgumentBinding::resolved_positional(0),
             }),

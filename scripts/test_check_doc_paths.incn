@@ -1,0 +1,154 @@
+"""Verify contributor path discovery, scoped exceptions, glob expansion and failure propagation."""
+
+from rust::std::env import var
+from rust::std::process import Command
+from rust::std::string import String as RustString
+from std.fs import Path
+from std.tempfile import TemporaryDirectory
+from check_test_support import run_check, write
+from check_support import read, repository_root
+
+
+def test_missing_file_and_directory_report_document_and_line() -> Result[None, str]:
+    """A missing file and directory each retain their document and line number."""
+    temporary = fixture()?
+    root = temporary.path()
+    write(root, "AGENTS.md", "`src/missing.rs`\n`loaves/missing/`\n")?
+    result = run_check("check_doc_paths", root)?
+    assert result.code == 1
+    assert "AGENTS.md:1: src/missing.rs" in result.stdout
+    assert "AGENTS.md:2: loaves/missing/" in result.stdout
+    return Ok(None)
+
+
+def test_discovers_ring_readmes_and_agent_docs_but_not_runtime_state() -> Result[None, str]:
+    """Loaf READMEs and agent docs are checked while runtime state stays private."""
+    temporary = fixture()?
+    root = temporary.path()
+    write(root, "loaves/kernel/example/README.md", "`src/absent.rs`")?
+    write(root, ".agents/test-suite.md", "`tests/absent.rs`")?
+    write(root, ".agents/state/private.md", "`src/private.rs`")?
+    result = run_check("check_doc_paths", root)?
+    assert result.code == 1
+    assert "loaves/kernel/example/README.md" in result.stdout
+    assert ".agents/test-suite.md" in result.stdout
+    assert "private.rs" not in result.stdout
+    return Ok(None)
+
+
+def test_shell_commands_and_diagrams_both_check_concrete_paths() -> Result[None, str]:
+    """Fenced commands and diagrams remain in the path audit's input."""
+    temporary = fixture()?
+    root = temporary.path()
+    write(root, "AGENTS.md", "```text\nsrc/diagram.rs\n```\n```sh\ncat src/missing.rs\n```\n")?
+    result = run_check("check_doc_paths", root)?
+    assert result.code == 1
+    assert "AGENTS.md:5: src/missing.rs" in result.stdout
+    assert "AGENTS.md:2: src/diagram.rs" in result.stdout
+    return Ok(None)
+
+
+def test_nested_fences_do_not_hide_concrete_paths() -> Result[None, str]:
+    """Nested and tilde fences cannot hide concrete repository mentions."""
+    temporary = fixture()?
+    root = temporary.path()
+    write(root, "AGENTS.md", "````text\n```\nsrc/diagram.rs\n````\n~~~sh\ncat src/missing.rs\n~~~\n")?
+    result = run_check("check_doc_paths", root)?
+    assert result.code == 1
+    assert "src/diagram.rs" in result.stdout
+    assert "src/missing.rs" in result.stdout
+    return Ok(None)
+
+
+def test_scoped_exception_does_not_hide_same_path_in_other_documents() -> Result[None, str]:
+    """An exception applies to its declared document only."""
+    temporary = fixture()?
+    root = temporary.path()
+    write(root, "AGENTS.md", "`src/example.rs`")?
+    write(root, "CONTRIBUTING.md", "`src/example.rs`")?
+    write(root, "scripts/check_doc_paths.allow", "AGENTS.md\tsrc/example.rs\tIllustrative name\n")?
+    result = run_check("check_doc_paths", root)?
+    assert result.code == 1
+    assert "AGENTS.md:1:" not in result.stdout
+    assert "CONTRIBUTING.md:1:" in result.stdout
+    return Ok(None)
+
+
+def test_runtime_prefix_exception_does_not_hide_other_agent_paths() -> Result[None, str]:
+    """A subtree exception respects its slash boundary."""
+    temporary = fixture()?
+    root = temporary.path()
+    write(root, "AGENTS.md", "`.agents/state/report.md` `.agents/missing.md`")?
+    write(root, "scripts/check_doc_paths.allow", "*\t.agents/state/**\tRuntime state\n")?
+    result = run_check("check_doc_paths", root)?
+    assert result.code == 1
+    assert "AGENTS.md:1: .agents/state/report.md" not in result.stdout
+    assert "AGENTS.md:1: .agents/missing.md" in result.stdout
+    return Ok(None)
+
+
+def test_missing_or_malformed_allowlist_fails_closed() -> Result[None, str]:
+    """Missing and malformed exception files both use configuration status 2."""
+    temporary = fixture()?
+    root = temporary.path()
+    result = run_check("check_doc_paths", root, ["--allow", root.joinpath("absent.allow").0])?
+    assert result.code == 2
+    write(root, "scripts/check_doc_paths.allow", "src/missing.rs\n")?
+    assert run_check("check_doc_paths", root)?.code == 2
+    return Ok(None)
+
+
+def test_brace_alternatives_and_globs_require_matching_paths() -> Result[None, str]:
+    """Every brace alternative must resolve and a filename glob needs a real match."""
+    temporary = fixture()?
+    root = temporary.path()
+    write(root, "AGENTS.md", "`src/{one,two}.rs` `tests/*.rs`\n")?
+    write(root, "src/one.rs", "")?
+    write(root, "tests/works.rs", "")?
+    result = run_check("check_doc_paths", root)?
+    assert result.code == 1
+    assert "src/two.rs" in result.stdout
+    write(root, "src/two.rs", "")?
+    assert run_check("check_doc_paths", root)?.code == 0
+    return Ok(None)
+
+
+def test_links_and_line_suffixes_resolve_without_external_url_fragments() -> Result[None, str]:
+    """Anchors and line suffixes do not change source paths, and URL path fragments are excluded."""
+    temporary = fixture()?
+    root = temporary.path()
+    write(root, "AGENTS.md", "[file](src/one.rs#anchor) `src/one.rs:42`. https://example.test/src/missing.rs\n")?
+    write(root, "src/one.rs", "")?
+    result = run_check("check_doc_paths", root, ["--list"])?
+    assert result.code == 0
+    assert "src/one.rs" in result.stdout
+    assert "missing.rs" not in result.stdout
+    return Ok(None)
+
+
+def test_doc_path_gate_stops_before_following_work() -> Result[None, str]:
+    """A failed doc-paths prerequisite prevents its dependent Make target from starting."""
+    temporary = fixture()?
+    root = temporary.path()
+    repository = repository_root()?
+    write(root, "AGENTS.md", "`src/missing.rs`")?
+    for source in ["check_doc_paths.incn", "check_support.incn"]:
+        write(root, f"scripts/{source}", read(repository.joinpath(f"scripts/{source}"))?)?
+    write(root, "Makefile", read(repository.joinpath("Makefile"))?
+        + "\naudit: doc-paths\n\t@touch checks-started\n")?
+    executable: str = var("INCAN").unwrap_or("incan")
+    mut command = Command.new("make")
+    command.current_dir(root.0).arg("-s").arg("audit").arg(f"INCAN={executable}")
+    result = command.output().map_err((error) => error.to_string())?
+    output: str = RustString.from_utf8(result.stdout).map_err((error) => error.to_string())?
+    assert not result.status.success()
+    assert "AGENTS.md:1: src/missing.rs" in output
+    assert not root.joinpath("checks-started").exists()
+    return Ok(None)
+
+
+def fixture() -> Result[TemporaryDirectory, str]:
+    """Create an isolated tree with its mandatory empty exception file."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    write(temporary.path(), "scripts/check_doc_paths.allow", "")?
+    return Ok(temporary)

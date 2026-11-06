@@ -11,7 +11,7 @@ use super::{Expr, Ident, ImportPath, IntLiteral, PartialArg, Span, Spanned, Stat
 // ============================================================================
 
 /// A model declaration: a named data container with optional fields, methods, and trait adoption.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct ModelDecl {
     pub visibility: Visibility,
     pub decorators: Vec<Spanned<Decorator>>,
@@ -29,14 +29,14 @@ pub struct ModelDecl {
 }
 
 /// Optional metadata on a model/class field (alias, description).
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize)]
 pub struct FieldMetadata {
     pub alias: Option<String>,
     pub description: Option<String>,
 }
 
 /// A field declaration within a model or class.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct FieldDecl {
     pub visibility: Visibility,
     pub name: Ident,
@@ -54,7 +54,7 @@ pub struct FieldDecl {
 /// A grant may constrain zero or more of a capability's declared dimensions. A grant naming a dimension the
 /// capability did not declare is a checked error rather than a silently ignored key, which is why the declared set
 /// is retained here rather than inferred at grant time.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct CapabilityScopeDim {
     pub name: Ident,
     pub ty: Spanned<Type>,
@@ -68,7 +68,7 @@ pub struct CapabilityScopeDim {
 /// The declaration site is what gives the capability its identity: RFC 104 requires a capability identity to be a
 /// checked symbol whose fully-qualified path derives from where it is declared, exactly as any other Incan
 /// declaration's does, never a string an author types out.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct CapabilityDecl {
     pub visibility: Visibility,
     pub decorators: Vec<Spanned<Decorator>>,
@@ -90,7 +90,7 @@ pub struct CapabilityDecl {
 // ============================================================================
 
 /// A class declaration: a named type with optional inheritance, trait adoption, fields, and methods.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct ClassDecl {
     pub visibility: Visibility,
     pub decorators: Vec<Spanned<Decorator>>,
@@ -110,6 +110,7 @@ pub struct ClassDecl {
     /// Ordinary classes leave this empty. A vocabulary desugarer may attach its own declarative members to the
     /// ordinary class it emits, allowing the decorator contract to validate them without a language-specific AST
     /// variant.
+    #[serde(serialize_with = "super::serialize_debug")]
     pub declarative_members: Vec<incan_vocab::VocabDeclaration>,
 }
 
@@ -118,7 +119,7 @@ pub struct ClassDecl {
 // ============================================================================
 
 /// A trait declaration: a behavior-only interface with abstract and default methods.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct TraitDecl {
     pub visibility: Visibility,
     pub decorators: Vec<Spanned<Decorator>>,
@@ -139,7 +140,7 @@ pub struct TraitDecl {
 // ============================================================================
 
 /// A module-level symbol alias declaration: `mean = avg` or `pub average = alias avg`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct AliasDecl {
     pub visibility: Visibility,
     pub name: Ident,
@@ -148,7 +149,7 @@ pub struct AliasDecl {
 }
 
 /// A module-level partial callable preset declaration: `pub BronzeReader = partial TableReader(layer="bronze")`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct PartialDecl {
     pub visibility: Visibility,
     pub name: Ident,
@@ -157,7 +158,7 @@ pub struct PartialDecl {
 }
 
 /// A same-type method alias declaration inside a method-bearing type body.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct MethodAliasDecl {
     pub name: Ident,
     pub target: Ident,
@@ -165,7 +166,7 @@ pub struct MethodAliasDecl {
 }
 
 /// A same-type method partial declaration inside a method-bearing type body.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct MethodPartialDecl {
     pub name: Ident,
     pub target: Ident,
@@ -180,7 +181,7 @@ pub struct MethodPartialDecl {
 ///
 /// Compiles to a Rust `type` alias — no extra struct, no extra wrapping layer. Useful for re-exporting external types
 /// under an Incan name while retaining full docstrings and IDE support.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct TypeAliasDecl {
     pub visibility: Visibility,
     pub name: Ident,
@@ -193,7 +194,7 @@ pub struct TypeAliasDecl {
 // ============================================================================
 
 /// Reserved inline test-only scope introduced by `module tests:`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct TestModuleDecl {
     /// The reserved module name. RFC 018 only permits `tests`.
     pub name: Ident,
@@ -206,7 +207,7 @@ pub struct TestModuleDecl {
 // ============================================================================
 
 /// A newtype declaration: a zero-cost wrapper with optional methods and invariants.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct NewtypeDecl {
     pub visibility: Visibility,
     pub decorators: Vec<Spanned<Decorator>>,
@@ -230,7 +231,7 @@ pub struct NewtypeDecl {
 }
 
 /// A source-level associated type declaration in a type/rusttype body.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct AssociatedTypeDecl {
     pub name: Ident,
     pub trait_target: Spanned<TraitBound>,
@@ -238,28 +239,28 @@ pub struct AssociatedTypeDecl {
 }
 
 /// A short or qualified member rebinding declaration in a newtype/rusttype body.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct RebindingDecl {
     pub name: Ident,
     pub target: Spanned<Expr>,
 }
 
 /// Direction of a `interop:` edge declaration (RFC 041).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum InteropDirection {
     From,
     Into,
 }
 
 /// Adapter mode for an interop edge.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum InteropAdapterKind {
     Via,
     Try,
 }
 
 /// A single line in a `interop:` block.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct InteropEdgeDecl {
     pub direction: InteropDirection,
     pub ty: Spanned<Type>,
@@ -272,7 +273,7 @@ pub struct InteropEdgeDecl {
 // ============================================================================
 
 /// An enum declaration: an algebraic data type with variants, optional methods, and trait adoption.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct EnumDecl {
     pub visibility: Visibility,
     pub decorators: Vec<Spanned<Decorator>>,
@@ -293,21 +294,21 @@ pub struct EnumDecl {
 }
 
 /// The allowed backing literal types for a value enum.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum ValueEnumType {
     Str,
     Int,
 }
 
 /// A literal assigned to a value enum variant.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum ValueEnumLiteral {
     Str(String),
     Int(IntLiteral),
 }
 
 /// A single variant of an enum declaration, with optional tuple fields.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct VariantDecl {
     pub name: Ident,
     pub fields: Vec<Spanned<Type>>,
@@ -315,7 +316,7 @@ pub struct VariantDecl {
 }
 
 /// A same-enum variant alias declaration: `WARNING = alias WARN`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct EnumVariantAliasDecl {
     pub name: Ident,
     pub target: Ident,
@@ -325,8 +326,21 @@ pub struct EnumVariantAliasDecl {
 // Functions and Methods
 // ============================================================================
 
+/// A written borrowed-result source: one parameter or receiver and static field projections.
+///
+/// Syntax retains source tokens; the checker resolves the binding and fields. This is not an expression and cannot
+/// evaluate a call, index or arbitrary lookup when a result is returned.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct ResultSource {
+    /// Parameter or receiver token at the root of the declared place.
+    pub binding: Spanned<Ident>,
+    /// Ordered field projections after the root, each retaining its own diagnostic span.
+    pub fields: Vec<Spanned<Ident>>,
+}
+
 /// A top-level function declaration (`def`).
-#[derive(Debug, Clone, PartialEq)]
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct FunctionDecl {
     pub visibility: Visibility,
     pub decorators: Vec<Spanned<Decorator>>,
@@ -335,6 +349,8 @@ pub struct FunctionDecl {
     pub type_params: Vec<TypeParam>,
     pub params: Vec<Spanned<Param>>,
     pub return_type: Spanned<Type>,
+    /// Optional explicit source relationship for a borrowed result.
+    pub result_source: Option<Spanned<ResultSource>>,
     pub body: Vec<Spanned<Statement>>,
 }
 
@@ -344,15 +360,17 @@ impl FunctionDecl {
         self.surface_modifiers.iter().any(|m| m.key == *key)
     }
 
-    /// Returns `true` if this function was declared with the `async` soft keyword.
+    /// Returns `true` if this function was declared with the `async` modifier.
     pub fn is_async(&self) -> bool {
         self.has_surface_modifier(&SurfaceFeatureKey::SoftKeyword(KeywordId::Async))
     }
 }
 
 /// A method declaration within a model, class, or trait.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct MethodDecl {
+    /// Written visibility: `pub def` is public, and an unmarked method is private to its type (#2570).
+    pub visibility: Visibility,
     pub decorators: Vec<Spanned<Decorator>>,
     pub surface_modifiers: Vec<SurfaceModifier>,
     pub name: Ident,
@@ -365,6 +383,8 @@ pub struct MethodDecl {
     /// Optional trait implementation target, written before the return arrow: `for Display`.
     pub trait_target: Option<Spanned<TraitBound>>,
     pub return_type: Spanned<Type>,
+    /// Optional explicit source relationship, including on abstract methods.
+    pub result_source: Option<Spanned<ResultSource>>,
     pub body: Option<Vec<Spanned<Statement>>>, // None for abstract methods (...)
 }
 
@@ -374,7 +394,7 @@ impl MethodDecl {
         self.surface_modifiers.iter().any(|m| m.key == *key)
     }
 
-    /// Returns `true` if this method was declared with the `async` soft keyword.
+    /// Returns `true` if this method was declared with the `async` modifier.
     pub fn is_async(&self) -> bool {
         self.has_surface_modifier(&SurfaceFeatureKey::SoftKeyword(KeywordId::Async))
     }
@@ -384,7 +404,7 @@ impl MethodDecl {
 ///
 /// Properties expose field-like member access while carrying a typed body-bearing declaration for later semantic
 /// stages. `body: None` is reserved for abstract trait property requirements, mirroring abstract methods.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct PropertyDecl {
     pub visibility: Visibility,
     pub name: Ident,
@@ -392,7 +412,7 @@ pub struct PropertyDecl {
     pub body: Option<Vec<Spanned<Statement>>>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum Receiver {
     /// `self` - immutable receiver
     Immutable,
@@ -401,13 +421,14 @@ pub enum Receiver {
 }
 
 /// Generic declaration-level surface modifier (e.g., soft keyword prefix before `def`).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct SurfaceModifier {
+    #[serde(serialize_with = "super::serialize_debug")]
     pub key: SurfaceFeatureKey,
 }
 
 /// A function or method parameter.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct Param {
     pub is_mut: bool,
     pub kind: ParamKind,
@@ -420,7 +441,7 @@ pub struct Param {
 ///
 /// Rest parameters use the annotated element/value type at the source level, but downstream semantic layers bind the
 /// local variable as the explicit container type described by RFC 038.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
 pub enum ParamKind {
     /// Ordinary fixed-arity parameter: `name: T`.
     Normal,
@@ -435,7 +456,7 @@ pub enum ParamKind {
 // ============================================================================
 
 /// A decorator annotation (`@name(args)`).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct Decorator {
     pub path: ImportPath,
     pub name: Ident,
@@ -447,7 +468,7 @@ pub struct Decorator {
 }
 
 /// A single argument to a decorator.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum DecoratorArg {
     /// Positional argument
     Positional(Spanned<Expr>),
@@ -456,7 +477,7 @@ pub enum DecoratorArg {
 }
 
 /// The value part of a named decorator argument (either a type or an expression).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum DecoratorArgValue {
     Type(Spanned<Type>),
     Expr(Spanned<Expr>),
@@ -474,7 +495,7 @@ pub enum DecoratorArgValue {
 /// - `T` — bare type parameter (no bounds)
 /// - `T with Clone` — single bound
 /// - `T with (Eq, Debug)` — multiple bounds
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct TypeParam {
     pub name: Ident,
     pub bounds: Vec<TraitBound>,
@@ -500,7 +521,7 @@ impl TypeParam {
 /// ## Examples
 /// - `Eq` — simple bound
 /// - `From[U]` — bound with type arguments
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct TraitBound {
     pub name: Ident,
     pub type_args: Vec<Spanned<Type>>,

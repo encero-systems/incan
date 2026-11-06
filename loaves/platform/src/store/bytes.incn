@@ -1,0 +1,27 @@
+"""Canonical little-endian byte construction shared by store pages and segments."""
+
+
+pub def append_bytes(mut output: list[u8], data: bytes) -> None:
+    """Append `data` to an owned byte buffer."""
+    for value in data:
+        byte: u8 = value.wrapping_resize()
+        output.append(byte)
+
+
+pub def append_u64(mut output: list[u8], value: int, object: str) -> Result[None, str]:
+    """Append one nonnegative integer as a little-endian `u64`, naming an overflow's object."""
+    maybe: Option[u64] = value.try_resize()
+    match maybe:
+        None => return Err(f"{value} does not fit a {object} counter")
+        Some(encoded) =>
+            number = int(encoded)
+            byte0: u8 = (number % 256).wrapping_resize()
+            byte1: u8 = ((number // 256) % 256).wrapping_resize()
+            byte2: u8 = ((number // 65536) % 256).wrapping_resize()
+            byte3: u8 = ((number // 16777216) % 256).wrapping_resize()
+            byte4: u8 = ((number // 4294967296) % 256).wrapping_resize()
+            byte5: u8 = ((number // 1099511627776) % 256).wrapping_resize()
+            byte6: u8 = ((number // 281474976710656) % 256).wrapping_resize()
+            byte7: u8 = ((number // 72057594037927936) % 256).wrapping_resize()
+            output.extend([byte0, byte1, byte2, byte3, byte4, byte5, byte6, byte7])
+            return Ok(None)

@@ -11,7 +11,10 @@ from rust::incan_semantics_core::body_ir import (
 from pub::incan_mir_plan import PlanType, Place, Operand, OperandKind, RvalueKind, SourceSpan
 from pub::incan_mir_plan import assign as plan_assign
 from frame import Builder, temporary, place_type, read_place
-from lowering import scalar_place, value_operand, instantiated_external_call, computed_static_root
+from checked_values import scalar_place
+from list_values import value_operand
+from calls import instantiated_external_call
+from static_storage import computed_static_root
 
 
 pub def frozen_place(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Option[Place], str]:
@@ -38,7 +41,7 @@ pub def frozen_place(mut builder: Builder, value: &RustOperand, span: SourceSpan
 
 def frozen_storage_place(
     mut builder: Builder,
-    value: &RustPlace,
+    value: RustPlace,
     span: SourceSpan,
 ) -> Result[Place, str]:
     """Read a computed static's exact field through its snapshot; ordinary local places retain their checked projection."""
@@ -56,7 +59,7 @@ pub def frozen_reference_type(ty: PlanType) -> Result[PlanType, str]:
 
 pub def borrow_frozen_argument(
     mut builder: Builder,
-    argument: &RustArgumentElement,
+    argument: RustArgumentElement,
     span: SourceSpan,
 ) -> Result[Operand, str]:
     """Borrow one checked frozen argument without inventing a value for a spread or missing carrier."""

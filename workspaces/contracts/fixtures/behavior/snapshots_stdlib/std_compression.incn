@@ -1,0 +1,412 @@
+# behavior: every std.compression codec round-trips bytes, decompress_auto detects the codec, streams round-trip through files, and raw snappy round-trips
+# expect-stdout:
+#   gzip round trip ok
+#   zlib round trip ok
+#   deflate round trip ok
+#   zstd round trip ok
+#   bz2 round trip ok
+#   lzma round trip ok
+#   snappy round trip ok
+#   raw snappy round trip ok
+#   file stream round trip ok
+#   gzip member rules ok
+#   zstd frame rules ok
+#   bzip2 stream rules ok
+#   xz stream rules ok
+#   snappy frame rules ok
+#   zlib stream boundary rules ok
+#   deflate stream boundary rules ok
+
+from std.compression import (
+    Codec,
+    CompressionError,
+    bz2,
+    deflate,
+    decompress_auto,
+    decompress_auto_stream,
+    gzip,
+    lzma,
+    snappy,
+    zlib,
+    zstd,
+)
+from std.compression.snappy.raw import compress as raw_snappy_compress, decompress as raw_snappy_decompress
+from std.fs import Path
+from std.io import BytesIO, IoError
+from std.tempfile import TemporaryDirectory
+
+
+def assert_round_trip(name: str, plain: bytes, decoded: bytes) -> None:
+    assert decoded == plain
+    println(f"{name} round trip ok")
+
+
+def assert_auto(compressed: bytes, expected: Codec, plain: bytes) -> Result[None, CompressionError]:
+    codec, decoded = decompress_auto(compressed, [expected])?
+    assert codec == expected
+    assert decoded == plain
+
+    target = BytesIO()
+    stream_codec = decompress_auto_stream(BytesIO(compressed), target, [expected], 2)?
+    assert stream_codec == expected
+    assert target.getvalue() == plain
+    return Ok(None)
+
+
+def joined(first: bytes, second: bytes) -> bytes:
+    out = BytesIO()
+    match out.write_bytes(first):
+        Ok(_) => pass
+        Err(_) =>
+            assert false
+    match out.write_bytes(second):
+        Ok(_) => pass
+        Err(_) =>
+            assert false
+    return out.getvalue()
+
+
+def assert_decoded(result: Result[bytes, CompressionError], expected: bytes) -> None:
+    match result:
+        Ok(decoded) =>
+            assert decoded == expected
+        Err(_) =>
+            assert false
+
+
+def assert_error_kind(result: Result[bytes, CompressionError], expected: str) -> None:
+    match result:
+        Ok(_) =>
+            assert false
+        Err(error) =>
+            assert error.kind == expected
+
+
+def assert_four_decoded(
+    direct: Result[bytes, CompressionError],
+    stream: Result[bytes, CompressionError],
+    automatic: Result[bytes, CompressionError],
+    automatic_stream: Result[bytes, CompressionError],
+    expected: bytes,
+) -> None:
+    assert_decoded(direct, expected)
+    assert_decoded(stream, expected)
+    assert_decoded(automatic, expected)
+    assert_decoded(automatic_stream, expected)
+
+
+def assert_four_errors(
+    direct: Result[bytes, CompressionError],
+    stream: Result[bytes, CompressionError],
+    automatic: Result[bytes, CompressionError],
+    automatic_stream: Result[bytes, CompressionError],
+    expected: str,
+) -> None:
+    assert_error_kind(direct, expected)
+    assert_error_kind(stream, expected)
+    assert_error_kind(automatic, expected)
+    assert_error_kind(automatic_stream, expected)
+
+
+def auto_bytes(data: bytes, expected: Codec) -> Result[bytes, CompressionError]:
+    codec, decoded = decompress_auto(data)?
+    assert codec == expected
+    return Ok(decoded)
+
+
+def auto_stream_bytes(data: bytes, expected: Codec) -> Result[bytes, CompressionError]:
+    target = BytesIO()
+    codec = decompress_auto_stream(BytesIO(data), target)?
+    assert codec == expected
+    return Ok(target.getvalue())
+
+
+def gzip_stream(data: bytes) -> Result[bytes, CompressionError]:
+    target = BytesIO()
+    gzip.decompress_stream(BytesIO(data), target, 2)?
+    return Ok(target.getvalue())
+
+
+def zlib_stream(data: bytes) -> Result[bytes, CompressionError]:
+    target = BytesIO()
+    zlib.decompress_stream(BytesIO(data), target, 2)?
+    return Ok(target.getvalue())
+
+
+def deflate_stream(data: bytes) -> Result[bytes, CompressionError]:
+    target = BytesIO()
+    deflate.decompress_stream(BytesIO(data), target, 2)?
+    return Ok(target.getvalue())
+
+
+def zstd_stream(data: bytes) -> Result[bytes, CompressionError]:
+    target = BytesIO()
+    zstd.decompress_stream(BytesIO(data), target, 2)?
+    return Ok(target.getvalue())
+
+
+def bz2_stream(data: bytes) -> Result[bytes, CompressionError]:
+    target = BytesIO()
+    bz2.decompress_stream(BytesIO(data), target, 2)?
+    return Ok(target.getvalue())
+
+
+def lzma_stream(data: bytes) -> Result[bytes, CompressionError]:
+    target = BytesIO()
+    lzma.decompress_stream(BytesIO(data), target, 2)?
+    return Ok(target.getvalue())
+
+
+def snappy_stream(data: bytes) -> Result[bytes, CompressionError]:
+    target = BytesIO()
+    snappy.decompress_stream(BytesIO(data), target, 2)?
+    return Ok(target.getvalue())
+
+
+def with_empty(first: bytes, empty: bytes, second: bytes) -> bytes:
+    return joined(joined(first, empty), second)
+
+
+def without_last(data: bytes) -> bytes:
+    return data[:len(data) - 1]
+
+
+def exercise_gzip_members(first: bytes, second: bytes) -> Result[None, CompressionError]:
+    first_member = gzip.compress(first)?
+    second_member = gzip.compress(second)?
+    members = with_empty(first_member, gzip.compress(b"")?, second_member)
+    expected = joined(first, second)
+    assert_four_decoded(
+        gzip.decompress(members),
+        gzip_stream(members),
+        auto_bytes(members, Codec.Gzip),
+        auto_stream_bytes(members, Codec.Gzip),
+        expected,
+    )
+
+    truncated = joined(first_member, without_last(second_member))
+    assert_four_errors(
+        gzip.decompress(truncated),
+        gzip_stream(truncated),
+        auto_bytes(truncated, Codec.Gzip),
+        auto_stream_bytes(truncated, Codec.Gzip),
+        "truncated_input",
+    )
+    return Ok(None)
+
+
+def exercise_zstd_frames(first: bytes, second: bytes) -> Result[None, CompressionError]:
+    first_frame = zstd.compress(first)?
+    second_frame = zstd.compress(second)?
+    frames = with_empty(first_frame, zstd.compress(b"")?, second_frame)
+    expected = joined(first, second)
+    assert_four_decoded(
+        zstd.decompress(frames),
+        zstd_stream(frames),
+        auto_bytes(frames, Codec.Zstd),
+        auto_stream_bytes(frames, Codec.Zstd),
+        expected,
+    )
+
+    truncated = joined(first_frame, without_last(second_frame))
+    assert_four_errors(
+        zstd.decompress(truncated),
+        zstd_stream(truncated),
+        auto_bytes(truncated, Codec.Zstd),
+        auto_stream_bytes(truncated, Codec.Zstd),
+        "truncated_input",
+    )
+    return Ok(None)
+
+
+def exercise_bz2_streams(first: bytes, second: bytes) -> Result[None, CompressionError]:
+    first_stream = bz2.compress(first)?
+    second_stream = bz2.compress(second)?
+    streams = with_empty(first_stream, bz2.compress(b"")?, second_stream)
+    expected = joined(first, second)
+    assert_four_decoded(
+        bz2.decompress(streams),
+        bz2_stream(streams),
+        auto_bytes(streams, Codec.Bz2),
+        auto_stream_bytes(streams, Codec.Bz2),
+        expected,
+    )
+
+    truncated = joined(first_stream, without_last(second_stream))
+    assert_four_errors(
+        bz2.decompress(truncated),
+        bz2_stream(truncated),
+        auto_bytes(truncated, Codec.Bz2),
+        auto_stream_bytes(truncated, Codec.Bz2),
+        "truncated_input",
+    )
+    return Ok(None)
+
+
+def exercise_lzma_streams(first: bytes, second: bytes) -> Result[None, CompressionError]:
+    first_stream = lzma.compress(first)?
+    second_stream = lzma.compress(second)?
+    streams = with_empty(first_stream, lzma.compress(b"")?, second_stream)
+    expected = joined(first, second)
+    assert_four_decoded(
+        lzma.decompress(streams),
+        lzma_stream(streams),
+        auto_bytes(streams, Codec.Lzma),
+        auto_stream_bytes(streams, Codec.Lzma),
+        expected,
+    )
+
+    truncated = joined(first_stream, without_last(second_stream))
+    assert_four_errors(
+        lzma.decompress(truncated),
+        lzma_stream(truncated),
+        auto_bytes(truncated, Codec.Lzma),
+        auto_stream_bytes(truncated, Codec.Lzma),
+        "truncated_input",
+    )
+    return Ok(None)
+
+
+def exercise_snappy_frames(first: bytes, second: bytes) -> Result[None, CompressionError]:
+    first_frame = snappy.compress(first)?
+    second_frame = snappy.compress(second)?
+    frames = with_empty(first_frame, snappy.compress(b"")?, second_frame)
+    expected = joined(first, second)
+    assert_four_decoded(
+        snappy.decompress(frames),
+        snappy_stream(frames),
+        auto_bytes(frames, Codec.Snappy),
+        auto_stream_bytes(frames, Codec.Snappy),
+        expected,
+    )
+
+    truncated = joined(first_frame, without_last(second_frame))
+    assert_four_errors(
+        snappy.decompress(truncated),
+        snappy_stream(truncated),
+        auto_bytes(truncated, Codec.Snappy),
+        auto_stream_bytes(truncated, Codec.Snappy),
+        "truncated_input",
+    )
+    return Ok(None)
+
+
+def exercise_zlib_trailing_bytes(first: bytes, second: bytes) -> Result[None, CompressionError]:
+    first_stream = zlib.compress(first)?
+    second_stream = zlib.compress(second)?
+    streams = joined(first_stream, second_stream)
+    assert_four_errors(
+        zlib.decompress(streams),
+        zlib_stream(streams),
+        auto_bytes(streams, Codec.Zlib),
+        auto_stream_bytes(streams, Codec.Zlib),
+        "invalid_data",
+    )
+
+    truncated = without_last(first_stream)
+    assert_four_errors(
+        zlib.decompress(truncated),
+        zlib_stream(truncated),
+        auto_bytes(truncated, Codec.Zlib),
+        auto_stream_bytes(truncated, Codec.Zlib),
+        "truncated_input",
+    )
+    return Ok(None)
+
+
+def exercise_deflate_trailing_bytes(first: bytes, second: bytes) -> Result[None, CompressionError]:
+    first_stream = deflate.compress(first)?
+    second_stream = deflate.compress(second)?
+    streams = joined(first_stream, second_stream)
+    assert_error_kind(deflate.decompress(streams), "invalid_data")
+    assert_error_kind(deflate_stream(streams), "invalid_data")
+
+    truncated = without_last(first_stream)
+    assert_error_kind(deflate.decompress(truncated), "truncated_input")
+    assert_error_kind(deflate_stream(truncated), "truncated_input")
+    return Ok(None)
+
+
+def exercise_concatenated_input() -> Result[None, CompressionError]:
+    first = b"first "
+    second = b"second-payload"
+    exercise_gzip_members(first, second)?
+    println("gzip member rules ok")
+    exercise_zstd_frames(first, second)?
+    println("zstd frame rules ok")
+    exercise_bz2_streams(first, second)?
+    println("bzip2 stream rules ok")
+    exercise_lzma_streams(first, second)?
+    println("xz stream rules ok")
+    exercise_snappy_frames(first, second)?
+    println("snappy frame rules ok")
+    exercise_zlib_trailing_bytes(first, second)?
+    println("zlib stream boundary rules ok")
+    exercise_deflate_trailing_bytes(first, second)?
+    println("deflate stream boundary rules ok")
+    return Ok(None)
+
+
+def must_compression_none(result: Result[None, CompressionError]) -> None:
+    match result:
+        Ok(_) => return
+        Err(_) =>
+            assert false
+
+
+def exercise_file_stream(data: bytes) -> Result[None, IoError]:
+    scratch = TemporaryDirectory.try_new()?
+    root: Path = scratch.path()
+    source_path = root.joinpath("plain.bin")
+    compressed_path = root.joinpath("plain.bin.gz")
+    output_path = root.joinpath("plain.out")
+
+    source_path.write_bytes(data)?
+    source = source_path.open("rb")?
+    compressed = compressed_path.open("wb")?
+    must_compression_none(gzip.compress_stream(source, compressed, None, 4))
+    compressed.flush()?
+
+    compressed_source = compressed_path.open("rb")?
+    output = output_path.open("wb")?
+    must_compression_none(gzip.decompress_stream(compressed_source, output, 3))
+    output.flush()?
+
+    assert output_path.read_bytes()? == data
+    println("file stream round trip ok")
+    return Ok(None)
+
+
+def exercise_compression() -> Result[None, CompressionError]:
+    data = b"Incan compression dogfood"
+
+    gzip_data = gzip.compress(data, None)?
+    assert_round_trip("gzip", data, gzip.decompress(gzip_data)?)
+    assert_auto(gzip_data, Codec.Gzip, data)?
+
+    zlib_data = zlib.compress(data, None)?
+    zstd_data = zstd.compress(data, None)?
+    bz2_data = bz2.compress(data, None)?
+    lzma_data = lzma.compress(data, None)?
+    snappy_data = snappy.compress(data, None)?
+
+    assert_round_trip("zlib", data, zlib.decompress(zlib_data)?)
+    assert_round_trip("deflate", data, deflate.decompress(deflate.compress(data, None)?)?)
+    assert_round_trip("zstd", data, zstd.decompress(zstd_data)?)
+    assert_round_trip("bz2", data, bz2.decompress(bz2_data)?)
+    assert_round_trip("lzma", data, lzma.decompress(lzma_data)?)
+    assert_round_trip("snappy", data, snappy.decompress(snappy_data)?)
+    assert_round_trip("raw snappy", data, raw_snappy_decompress(raw_snappy_compress(data)?)?)
+    return Ok(None)
+
+
+def main() -> None:
+    match exercise_compression():
+        Ok(_) => pass
+        Err(error) => println(f"compression failed: {error.message()}")
+    match exercise_file_stream(b"Incan compression dogfood"):
+        Ok(_) => pass
+        Err(error) => println(f"io failed: {error.message()}")
+    match exercise_concatenated_input():
+        Ok(_) => pass
+        Err(error) => println(f"concatenated compression failed: {error.kind}: {error.message()}")

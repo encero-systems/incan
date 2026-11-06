@@ -1,0 +1,13 @@
+"""Declare custom expansion without providing the required function."""
+
+from std.vocab import DesugarError, DesugarRequest, DesugarResponse, VocabRegistration
+
+
+pub def library_vocab() -> VocabRegistration:
+    """Require an absent typed desugar export."""
+    return VocabRegistration.new().with_desugarer()
+
+
+def desugar(request: DesugarRequest) -> Result[DesugarResponse, DesugarError]:
+    """A private implementation does not supply the required public export."""
+    return Err(DesugarError.at(request.node.span(), "private provider"))

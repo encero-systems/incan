@@ -1,0 +1,19 @@
+# behavior: a reused native owner without Clone is refused before execution
+# expect-exit: 1
+# expect-stderr-contains:
+#   unsupported native instantiation of `std::clone::Clone::clone`
+#   std::fs::File
+"""An owned Rust argument cannot be copied to preserve its later reuse."""
+
+from rust::std::convert import identity
+from rust::std::fs import File
+
+
+def main() -> None:
+    """Require an invalid clone by passing a file by value before reading it again."""
+    match File.open("loaf.toml"):
+        Ok(file) =>
+            owned = identity(file)
+            println(file.metadata())
+            println(owned.metadata())
+        Err(error) => println(f"{error}")

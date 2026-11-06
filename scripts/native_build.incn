@@ -1,0 +1,707 @@
+"""Native release build steps over the existing Oven-owned unit-description authority."""
+
+from rust::std::process import Command
+from rust::std::string import String as RustString
+from rust::std::time import Instant
+from std.fs import Path
+from std.json import JsonValue
+from std.tempfile import TemporaryDirectory
+from release_support import (
+    STANDARD_PACKAGES,
+    TOOLCHAIN_DIRECTORY,
+    Step,
+    append_timing,
+    digest,
+    log_tail,
+    run_step,
+    same_bytes,
+)
+
+const SUPPORT_PROGRAM: str = "workspaces/oven/src/toolchain_native.incn"
+const RUNTIME_NAME: str = "incan_native_runtime"
+const RUNTIME_PROJECT: str = "loaves/compiler/incan_native_runtime"
+
+
+pub model NativeContext:
+    """Repository, release home, selected Oven, evidence root, and process budget for native production."""
+
+    pub repo: Path
+    pub lane: Path
+    pub home: Path
+    pub builder: str
+    pub stdlib: str
+    pub evidence: Path
+    pub timings: Path
+    pub timeout_seconds: int
+
+
+pub def build_support_tool(context: NativeContext, builder_home: Path) -> Result[Path, str]:
+    """Build and install the Incan native-description helper before any source runtime provider exists."""
+    output = context.repo.joinpath("workspaces/oven/target/incan/release/bin/oven")
+    log = context.evidence.joinpath("support-tool-build.log")
+    mut environment = common_environment(context)
+    environment["INCAN_HOME"] = builder_home.0
+    require_native_step(
+        context,
+        step(
+            context,
+            "support-tool-build",
+            context.builder,
+            ["build", context.repo.joinpath(SUPPORT_PROGRAM).0, "--profile", "release"],
+            environment,
+            context.repo,
+            log,
+        ),
+    )?
+    if not output.is_file():
+        return Err(f"support tool build produced no executable: {output.0}")
+    destination = context.lane.joinpath("out/native-builds/toolchain-native")
+    destination.parent().mkdir(true, true).map_err((error) => error.message())?
+    replace_copy(output, destination)?
+    return Ok(destination)
+
+
+pub def publish_support(context: NativeContext, helper: Path) -> Result[None, str]:
+    """Publish the source-selected Rust support closure into the fresh candidate home."""
+    return require_native_step(
+        context,
+        step(
+            context,
+            "support-build",
+            helper.0,
+            [context.repo.0],
+            common_environment(context),
+            context.repo,
+            context.evidence.joinpath("support-build.log"),
+        ),
+    )
+
+
+pub def build_source_interfaces(context: NativeContext, helper: Path, phase_prefix: str = "") -> Result[Path, str]:
+    """Check and publish the three source interfaces through the selected compiler generation."""
+    toolchain = context.home.joinpath(TOOLCHAIN_DIRECTORY)
+    manifest = read_json(toolchain.joinpath("toolchain.json"))?
+    driver = absolute(manifest_text(manifest, "driver")?, toolchain)
+    sysroot = absolute(manifest_text(manifest, "sysroot")?, toolchain)
+    interfaces = context.home.joinpath("source-interfaces")
+    interfaces.mkdir(true, true).map_err((error) => error.message())?
+    inventory = interfaces.joinpath("loaves.json")
+    write_json(inventory, JsonValue.array([]))?
+    for package in ["primitives", "core", "async"]:
+        build_source_interface(context, helper, package, driver, sysroot, inventory, interfaces, phase_prefix)?
+    return Ok(inventory)
+
+
+pub def build_runtime(
+    context: NativeContext,
+    helper: Path,
+    source_interfaces: Option[Path],
+    install: bool,
+    phase_prefix: str = "",
+) -> Result[Path, str]:
+    """Compile checked runtime source without an earlier runtime or compiled standard provider in its closure."""
+    toolchain = context.home.joinpath(TOOLCHAIN_DIRECTORY)
+    manifest = read_json(toolchain.joinpath("toolchain.json"))?
+    driver = absolute(manifest_text(manifest, "driver")?, toolchain)
+    sysroot = absolute(manifest_text(manifest, "sysroot")?, toolchain)
+    output = context.repo.joinpath(f"{RUNTIME_PROJECT}/target/incan/native/release")
+    output.mkdir(true, true).map_err((error) => error.message())?
+    unit = output.joinpath(f"{RUNTIME_NAME}.unit.json")
+    prepared = helper_json(
+        context,
+        helper,
+        [context.repo.0, "runtime", "release"],
+        {},
+        f"{phase_prefix}runtime-describe",
+    )?
+    write_json(unit, runtime_unit(prepared, source_interfaces)?)?
+    identify(context, helper, unit, false, f"{phase_prefix}runtime-identify")?
+    compile_library(context, driver, sysroot, unit, RUNTIME_NAME, output, f"{phase_prefix}runtime-build")?
+    publish(context, helper, unit, output, false, f"{phase_prefix}runtime-publish")?
+    if not install:
+        return Ok(output.joinpath(f"lib{RUNTIME_NAME}.rlib"))
+    return install_runtime(context, helper, unit, output)
+
+
+pub def build_standard_packages(context: NativeContext, helper: Path, phase_prefix: str) -> Result[None, str]:
+    """Compile each standard package in dependency order for release and debug from one candidate generation."""
+    standards = context.evidence.joinpath(f"{phase_prefix}standards")
+    standards.mkdir(true, true).map_err((error) => error.message())?
+    for profile in ["release", "debug"]:
+        admitted = standards.joinpath(f"{profile}-admitted.txt")
+        admitted.write_text("", "utf-8", "strict", None).map_err((error) => error.message())?
+        for package in STANDARD_PACKAGES:
+            build_standard_package(context, helper, package, profile, admitted, phase_prefix)?
+    return Ok(None)
+
+
+pub def build_tool(context: NativeContext, name: str, rebuild: bool, phase: str) -> Result[Path, str]:
+    """Build and atomically install Oven, the contract runner, or the language server."""
+    project, output, destination = tool_paths(context, name)?
+    if rebuild:
+        stamp = Path(f"{output.0}.oven-inputs")
+        if stamp.is_file():
+            stamp.unlink().map_err((error) => error.message())?
+    mut environment = common_environment(context)
+    environment["OVEN_TRACE"] = "-"
+    require_native_step(
+        context,
+        step(
+            context,
+            phase,
+            context.builder,
+            ["build", project.0, "--profile", "release"],
+            environment,
+            context.repo,
+            context.evidence.joinpath(f"{phase}.log"),
+        ),
+    )?
+    if not output.is_file():
+        return Err(f"native build did not publish {output.0}")
+    destination.parent().mkdir(true, true).map_err((error) => error.message())?
+    replace_copy(output, destination)?
+    if name == "lsp":
+        adjacent = destination.parent().joinpath("incan")
+        replace_symlink(Path("../oven-bin/incan"), adjacent)?
+    return Ok(destination)
+
+
+pub def require_unique_runtime_root(context: NativeContext) -> Result[None, str]:
+    """Require every direct native root name in the candidate manifest to occur exactly once."""
+    manifest = read_json(context.home.joinpath(f"{TOOLCHAIN_DIRECTORY}/toolchain.json"))?
+    mut seen: set[str] = set()
+    for entry in entries(manifest, "externs")?:
+        name = manifest_text(entry, "name")?
+        if name in seen:
+            return Err(f"native runtime closure has conflicting direct root: {name}")
+        seen.add(name)
+    return Ok(None)
+
+
+def build_source_interface(
+    context: NativeContext,
+    helper: Path,
+    package: str,
+    driver: Path,
+    sysroot: Path,
+    inventory: Path,
+    interfaces: Path,
+    phase_prefix: str,
+) -> Result[None, str]:
+    """Describe, check, and admit one checking-only source interface without compiled standard providers."""
+    project = context.repo.joinpath(f"loaves/stdlib/{package}")
+    name = project_name(project.joinpath("loaf.toml"))?
+    temporary = TemporaryDirectory.try_new_with(f"{package}.", "", Some(interfaces)).map_err((error) => error.message())?
+    directory = temporary.persist().map_err((error) => error.message())?
+    unit = directory.joinpath("unit.json")
+    prepared = helper_json(
+        context,
+        helper,
+        [context.repo.0, package, "release"],
+        {"SELFBUILD_LIBRARY_OUTPUT": ""},
+        f"{phase_prefix}source-interface-{package}-describe",
+    )?
+    interfaces_value = read_json(inventory)?.expect_array().map_err((error) => error.message())?
+    write_json(unit, source_interface_unit(prepared, interfaces_value)?)?
+    identify(context, helper, unit, true, f"{phase_prefix}source-interface-{package}-identify")?
+    require_native_step(
+        context,
+        step(
+            context,
+            f"{phase_prefix}source-interface-{package}",
+            driver.0,
+            ["--source-interface", unit.0, sysroot.0, directory.0],
+            common_environment(context),
+            context.repo,
+            context.evidence.joinpath(f"{phase_prefix}source-interface-{package}.log"),
+        ),
+    )?
+    publish(context, helper, unit, directory, true, f"{phase_prefix}source-interface-{package}-publish")?
+    append_interface(inventory, name, directory)?
+    return Ok(None)
+
+
+def source_interface_unit(prepared: JsonValue, interfaces: list[JsonValue]) -> Result[JsonValue, str]:
+    """Replace compiled standard providers with prior interfaces in one metadata-only standard unit."""
+    mut fields = prepared.expect_object().map_err((error) => error.message())?
+    fields["kind"] = JsonValue.string("library")
+    mut loaves = nonstandard(entries(JsonValue.object(fields), "loaves")?)?
+    loaves += interfaces
+    fields["loaves"] = JsonValue.array(loaves)
+    return Ok(JsonValue.object(fields))
+
+
+def runtime_unit(prepared: JsonValue, source_interfaces: Option[Path]) -> Result[JsonValue, str]:
+    """Remove earlier runtime providers and substitute explicit checked source interfaces when supplied."""
+    mut fields = prepared.expect_object().map_err((error) => error.message())?
+    fields["kind"] = JsonValue.string("library")
+    mut externs: list[JsonValue] = []
+    for entry in entries(JsonValue.object(fields), "externs")?:
+        name = manifest_text(entry, "name")?
+        if name != RUNTIME_NAME and not name.startswith("incan_stdlib_"):
+            externs.append(entry)
+    mut loaves: list[JsonValue] = []
+    for entry in entries(JsonValue.object(fields), "loaves")?:
+        if manifest_text(entry, "name")? != RUNTIME_NAME:
+            loaves.append(entry)
+    fields["externs"] = JsonValue.array(externs)
+    fields["loaves"] = JsonValue.array(loaves)
+    if let Some(inventory) = source_interfaces:
+        fields["loaves"] = JsonValue.array(nonstandard(loaves)? + entries(read_json(inventory)?, "")?)
+        fields["search"] = JsonValue.array(unique_paths(externs)?)
+    return Ok(JsonValue.object(fields))
+
+
+def nonstandard(loaves: list[JsonValue]) -> Result[list[JsonValue], str]:
+    """Keep only nonstandard Loaf bindings before checked source interfaces are injected."""
+    mut selected: list[JsonValue] = []
+    for entry in loaves:
+        standard = entry
+            .require("standard")
+            .and_then((value) => value.expect_bool())
+            .map_err((error) => error.message())?
+        if not standard:
+            selected.append(entry)
+    return Ok(selected)
+
+
+def unique_paths(externs: list[JsonValue]) -> Result[list[JsonValue], str]:
+    """Return sorted unique directories that contain the selected native externs."""
+    mut paths: set[str] = set()
+    for entry in externs:
+        paths.add(Path(manifest_text(entry, "path")?).parent().0)
+    return Ok([JsonValue.string(path) for path in sorted([path for path in paths])])
+
+
+def install_runtime(context: NativeContext, helper: Path, unit: Path, output: Path) -> Result[Path, str]:
+    """Stage the complete runtime generation, bind it by content, and update the candidate manifest."""
+    toolchain = context.home.joinpath(TOOLCHAIN_DIRECTORY)
+    runtime_root = toolchain.joinpath("runtime")
+    runtime_root.mkdir(true, true).map_err((error) => error.message())?
+    temporary = TemporaryDirectory.try_new_with(".staged.", "", Some(runtime_root)).map_err((error) => error.message())?
+    staged = temporary.path()
+    artifacts = runtime_artifacts()
+    for artifact in artifacts:
+        _ = output.joinpath(artifact).copy(staged.joinpath(artifact), true, true).map_err((error) => error.message())?
+    rewrite_native_paths(staged.joinpath(f"{RUNTIME_NAME}.native.json"), output)?
+    publish(context, helper, unit, staged, false, "runtime-install-publish")?
+    write_artifact_digests(staged, artifacts)?
+    generation = digest(staged.joinpath("artifacts.sha256"))?
+    installed = runtime_root.joinpath(generation)
+    if installed.exists():
+        require_same_generation(staged, installed, artifacts + ["artifacts.sha256"])?
+        publish(context, helper, unit, installed, false, "runtime-existing-publish")?
+    else:
+        persisted = temporary.persist().map_err((error) => error.message())?
+        _ = persisted.move(installed).map_err((error) => error.message())?
+    update_runtime_manifest(toolchain, installed)?
+    return Ok(installed.joinpath(f"lib{RUNTIME_NAME}.rlib"))
+
+
+def rewrite_native_paths(document: Path, directory: Path) -> Result[None, str]:
+    """Make runtime sidecar extern, macro, and search paths absolute against their producer directory."""
+    mut fields = read_json(document)?.expect_object().map_err((error) => error.message())?
+    for key in ["externs", "macro_externs"]:
+        mut rewritten: list[JsonValue] = []
+        for entry in entries(JsonValue.object(fields), key)?:
+            mut pair = entry.expect_array().map_err((error) => error.message())?
+            pair[1] = JsonValue.string(absolute(pair[1].expect_str().map_err((error) => error.message())?, directory).0)
+            rewritten.append(JsonValue.array(pair))
+        fields[key] = JsonValue.array(rewritten)
+    mut search: list[JsonValue] = []
+    for path in entries(JsonValue.object(fields), "search")?:
+        search.append(JsonValue.string(absolute(path.expect_str().map_err((error) => error.message())?, directory).0))
+    fields["search"] = JsonValue.array(search)
+    return write_json(document, JsonValue.object(fields))
+
+
+def update_runtime_manifest(toolchain: Path, installed: Path) -> Result[None, str]:
+    """Replace the direct runtime binding and its search directory in `toolchain.json`."""
+    path = toolchain.joinpath("toolchain.json")
+    mut fields = read_json(path)?.expect_object().map_err((error) => error.message())?
+    mut externs: list[JsonValue] = []
+    mut previous: list[str] = []
+    for entry in entries(JsonValue.object(fields), "externs")?:
+        if manifest_text(entry, "name")? == RUNTIME_NAME:
+            previous.append(Path(manifest_text(entry, "path")?).parent().0)
+        else:
+            externs.append(entry)
+    externs.append(
+        JsonValue.object(
+            {"name": JsonValue.string(RUNTIME_NAME), "path": JsonValue.string(
+                installed.joinpath(f"lib{RUNTIME_NAME}.rlib").0,
+            )},
+        ),
+    )
+    mut search: set[str] = set()
+    for entry in entries(JsonValue.object(fields), "search")?:
+        value = entry.expect_str().map_err((error) => error.message())?
+        if value not in previous:
+            search.add(value)
+    search.add(installed.0)
+    fields["externs"] = JsonValue.array(externs)
+    fields["search"] = JsonValue.array([JsonValue.string(value) for value in sorted([value for value in search])])
+    return replace_json(path, JsonValue.object(fields))
+
+
+def build_standard_package(
+    context: NativeContext,
+    helper: Path,
+    package: str,
+    profile: str,
+    admitted: Path,
+    phase_prefix: str,
+) -> Result[None, str]:
+    """Describe, compile, publish, and atomically select one standard package profile."""
+    project = context.repo.joinpath(f"loaves/stdlib/{package}")
+    if not project.joinpath("loaf.toml").is_file():
+        return Err(f"unknown standard package: {package}")
+    name = project_name(project.joinpath("loaf.toml"))?
+    toolchain = context.home.joinpath(TOOLCHAIN_DIRECTORY)
+    manifest = read_json(toolchain.joinpath("toolchain.json"))?
+    driver = absolute(manifest_text(manifest, "driver")?, toolchain)
+    sysroot = absolute(manifest_text(manifest, "sysroot")?, toolchain)
+    parent = toolchain.joinpath(f"loaves/{name}")
+    parent.mkdir(true, true).map_err((error) => error.message())?
+    temporary = TemporaryDirectory.try_new_with(f".{profile}.", "", Some(parent)).map_err((error) => error.message())?
+    staged = temporary.path()
+    unit = staged.joinpath(f"{name}.unit.json")
+    environment = {"SELFBUILD_LIBRARY_OUTPUT": staged.0, "SELFBUILD_ADMITTED_STDLIB": admitted.0}
+    prepared = helper_json(
+        context,
+        helper,
+        [context.repo.0, package, profile],
+        environment,
+        f"std-{package}-{profile}-describe",
+    )?
+    write_json(unit, prepared)?
+    identify(context, helper, unit, false, f"std-{package}-{profile}-identify")?
+    compile_library(context, driver, sysroot, unit, name, staged, f"{phase_prefix}std-{package}-{profile}")?
+    publish(context, helper, unit, staged, false, f"std-{package}-{profile}-publish")?
+    output = parent.joinpath(profile)
+    replace_directory(temporary, output)?
+    if profile == "release":
+        replace_symlink(Path("release"), parent.joinpath("debug"))?
+    append_line(admitted, name)?
+    return Ok(None)
+
+
+def compile_library(
+    context: NativeContext,
+    driver: Path,
+    sysroot: Path,
+    unit: Path,
+    name: str,
+    output: Path,
+    phase: str,
+) -> Result[None, str]:
+    """Compile one prepared unit through the candidate driver with its exact emitted native arguments."""
+    arguments_file = Path(f"{unit.0}.arguments")
+    flags = lines(arguments_file.read_text("utf-8", "strict").map_err((error) => error.message())?)
+    arguments = ["--unit", unit.0, name, output.joinpath(f"lib{name}.rlib").0, sysroot.0, "--library"] + flags
+    return require_native_step(
+        context,
+        Step(
+            name=phase,
+            executable=driver.0,
+            arguments=arguments,
+            environment=common_environment(context),
+            remove_environment=["RUSTC_BOOTSTRAP"],
+            directory=Some(context.repo),
+            log=context.evidence.joinpath(f"{phase}.log"),
+            timeout_seconds=context.timeout_seconds,
+        ),
+    )
+
+
+def identify(context: NativeContext, helper: Path, unit: Path, metadata_only: bool, phase: str) -> Result[None, str]:
+    """Retain one prepared unit identity and its native compiler arguments before compilation."""
+    mut environment = common_environment(context)
+    if metadata_only:
+        environment["SELFBUILD_METADATA_ONLY"] = "1"
+    return require_native_step(
+        context,
+        step(
+            context,
+            phase,
+            helper.0,
+            [context.repo.0, "identify", unit.0],
+            environment,
+            context.repo,
+            context.evidence.joinpath(f"{phase}.log"),
+        ),
+    )
+
+
+def publish(
+    context: NativeContext,
+    helper: Path,
+    unit: Path,
+    directory: Path,
+    metadata_only: bool,
+    phase: str,
+) -> Result[None, str]:
+    """Publish one completed unit under the identity retained before compilation."""
+    mut environment = common_environment(context)
+    if metadata_only:
+        environment["SELFBUILD_METADATA_ONLY"] = "1"
+    return require_native_step(
+        context,
+        step(
+            context,
+            phase,
+            helper.0,
+            [context.repo.0, "publish", unit.0, directory.0],
+            environment,
+            context.repo,
+            context.evidence.joinpath(f"{phase}.log"),
+        ),
+    )
+
+
+def helper_json(
+    context: NativeContext,
+    helper: Path,
+    arguments: list[str],
+    environment: Dict[str, str],
+    phase: str,
+) -> Result[JsonValue, str]:
+    """Run the native-description helper and parse its sole JSON document."""
+    started = Instant.now()
+    mut command = Command.new(helper.0)
+    command.current_dir(context.repo.0)
+    for argument in arguments:
+        command.arg(argument)
+    mut merged = common_environment(context)
+    for key in environment.keys():
+        merged[key] = environment[key]
+    for key in merged.keys():
+        command.env(key, merged[key])
+    output = command.output().map_err((error) => f"cannot run {phase}: {error}")?
+    stdout = RustString.from_utf8_lossy(output.stdout).into_owned()
+    stderr = RustString.from_utf8_lossy(output.stderr).into_owned()
+    context.evidence
+        .joinpath(f"{phase}.log")
+        .write_text(stdout + stderr, "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    append_timing(context.timings, phase, started.elapsed().as_secs_f64())?
+    if not output.status.success():
+        log = context.evidence.joinpath(f"{phase}.log")
+        return Err(f"{phase} failed; log: {log.0}\n{log_tail(log)}")
+    return JsonValue.parse(stdout).map_err((error) => f"{phase}: {error.message()}")
+
+
+def require_native_step(context: NativeContext, child: Step) -> Result[None, str]:
+    """Run one native phase, append its wall duration, and preserve the failing phase's exact log."""
+    name = str(child.name)
+    log = child.log.clone()
+    started = Instant.now()
+    outcome = run_step(child)
+    append_timing(context.timings, name, started.elapsed().as_secs_f64())?
+    code = match outcome:
+        Ok(observed) => observed
+        Err(message) => return Err(f"{message}\n{log_tail(log)}")
+
+    if code != 0:
+        return Err(f"{name} failed with status {code}; log: {log.0}\n{log_tail(log)}")
+    return Ok(None)
+
+
+def common_environment(context: NativeContext) -> Dict[str, str]:
+    """Return the explicit candidate build environment shared by native release producers."""
+    return {"INCAN_HOME": context.home.0, "INCAN_STDLIB": context.stdlib, "INCAN_NO_BANNER": "1", "OVEN_OWNER": "off", "RUSTUP_TOOLCHAIN": "1.98.0", "INCAN_RUST_INCREMENTAL": "0", "DEV8_LANE": context.lane.0, "SELFBUILD_HOME": context.home.0, "SELFBUILD_OVEN": context.builder, "SELFBUILD_STDLIB": context.stdlib}
+
+
+def step(
+    context: NativeContext,
+    name: str,
+    executable: str,
+    arguments: list[str],
+    environment: Dict[str, str],
+    directory: Path,
+    log: Path,
+) -> Step:
+    """Create one native build child specification under the release timeout."""
+    return Step(
+        name=name,
+        executable=executable,
+        arguments=arguments,
+        environment=environment,
+        remove_environment=[],
+        directory=Some(directory),
+        log=log,
+        timeout_seconds=context.timeout_seconds,
+    )
+
+
+def tool_paths(context: NativeContext, name: str) -> Result[tuple[Path, Path, Path], str]:
+    """Resolve source output and stable lane destination for one shipped or qualification tool."""
+    if name == "oven" or name == "contracts":
+        project = context.repo.joinpath(f"workspaces/{name}")
+        output = project.joinpath(f"target/incan/release/bin/{name}")
+        mut destination = context.lane.joinpath("oven-bin/incan")
+        if name == "contracts":
+            destination = context.lane.joinpath("contracts-bin/contracts")
+        return Ok((project, output, destination))
+    if name == "lsp":
+        project = context.repo.joinpath("loaves/toolchain/incan-lsp")
+        output = project.joinpath("target/incan/rust/release/bin/incan-lsp")
+        return Ok((project, output, context.lane.joinpath("lsp-bin/incan-lsp")))
+    return Err(f"unknown native tool: {name}")
+
+
+def project_name(manifest: Path) -> Result[str, str]:
+    """Read the first project `name` declaration from a Loaf manifest."""
+    text = manifest.read_text("utf-8", "strict").map_err((error) => error.message())?
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("name = \"") and stripped.endswith("\""):
+            return Ok(stripped[8:-1])
+    return Err(f"manifest has no project name: {manifest.0}")
+
+
+def append_interface(inventory: Path, name: str, directory: Path) -> Result[None, str]:
+    """Append one source interface to the checking-only inventory."""
+    mut values = read_json(inventory)?.expect_array().map_err((error) => error.message())?
+    values.append(
+        JsonValue.object(
+            {"key": JsonValue.string(name), "name": JsonValue.string(name), "dir": JsonValue.string(directory.0), "standard": JsonValue.bool(
+                true,
+            )},
+        ),
+    )
+    return replace_json(inventory, JsonValue.array(values))
+
+
+def runtime_artifacts() -> list[str]:
+    """Return every byte-bearing runtime generation artifact in stable order."""
+    return [
+        f"lib{RUNTIME_NAME}.rlib",
+        f"{RUNTIME_NAME}.incnlib",
+        f"{RUNTIME_NAME}.incnbody",
+        f"{RUNTIME_NAME}.native.json",
+        f"{RUNTIME_NAME}.rustabi",
+        f"{RUNTIME_NAME}.incngraph",
+    ]
+
+
+def write_artifact_digests(directory: Path, artifacts: list[str]) -> Result[None, str]:
+    """Write names and content digests so both contribute to the runtime generation identity."""
+    mut rows: list[str] = []
+    for artifact in artifacts:
+        rows.append(f"{digest(directory.joinpath(artifact))?}  {artifact}")
+    return directory
+        .joinpath("artifacts.sha256")
+        .write_text("\n".join(rows) + "\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())
+
+
+def require_same_generation(staged: Path, installed: Path, artifacts: list[str]) -> Result[None, str]:
+    """Refuse a content-named runtime directory whose retained bytes disagree with the staged generation."""
+    for artifact in artifacts:
+        if not same_bytes(staged.joinpath(artifact), installed.joinpath(artifact))?:
+            return Err(f"runtime generation has conflicting {artifact} bytes: {installed.0}")
+    return Ok(None)
+
+
+def replace_directory(temporary: TemporaryDirectory, output: Path) -> Result[None, str]:
+    """Replace one profile only after its complete staged directory exists."""
+    previous = Path(f"{output.0}.previous")
+    if previous.exists():
+        previous.remove_tree().map_err((error) => error.message())?
+    if output.exists() or output.is_symlink():
+        _ = output.move(previous).map_err((error) => error.message())?
+    persisted = temporary.persist().map_err((error) => error.message())?
+    _ = persisted.move(output).map_err((error) => error.message())?
+    if previous.exists() or previous.is_symlink():
+        if previous.is_dir() and not previous.is_symlink():
+            previous.remove_tree().map_err((error) => error.message())?
+        else:
+            previous.unlink().map_err((error) => error.message())?
+    return Ok(None)
+
+
+def replace_copy(source: Path, destination: Path) -> Result[None, str]:
+    """Copy a complete executable beside its destination, then replace the directory entry."""
+    staged = Path(f"{destination.0}.next")
+    if staged.exists() or staged.is_symlink():
+        staged.unlink().map_err((error) => error.message())?
+    _ = source.copy(staged, true, true).map_err((error) => error.message())?
+    if destination.exists() or destination.is_symlink():
+        destination.unlink().map_err((error) => error.message())?
+    _ = staged.move(destination).map_err((error) => error.message())?
+    return Ok(None)
+
+
+def replace_symlink(source: Path, destination: Path) -> Result[None, str]:
+    """Replace a symlink without exposing a partial file."""
+    staged = Path(f"{destination.0}.next")
+    if staged.exists() or staged.is_symlink():
+        if staged.is_dir() and not staged.is_symlink():
+            staged.remove_tree().map_err((error) => error.message())?
+        else:
+            staged.unlink().map_err((error) => error.message())?
+    staged.symlink_to(source).map_err((error) => error.message())?
+    if destination.exists() or destination.is_symlink():
+        if destination.is_dir() and not destination.is_symlink():
+            destination.remove_tree().map_err((error) => error.message())?
+        else:
+            destination.unlink().map_err((error) => error.message())?
+    _ = staged.move(destination).map_err((error) => error.message())?
+    return Ok(None)
+
+
+def append_line(path: Path, line: str) -> Result[None, str]:
+    """Append one newline-terminated item to a small release inventory."""
+    mut text = ""
+    if path.is_file():
+        text = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+    return path.write_text(text + line + "\n", "utf-8", "strict", None).map_err((error) => error.message())
+
+
+def lines(text: str) -> list[str]:
+    """Return nonempty file lines while ignoring one final newline."""
+    return [line for line in text.split("\n") if line != ""]
+
+
+def read_json(path: Path) -> Result[JsonValue, str]:
+    """Read one UTF-8 JSON document."""
+    text = path.read_text("utf-8", "strict").map_err((error) => f"{path.0}: {error.message()}")?
+    return JsonValue.parse(text).map_err((error) => f"{path.0}: {error.message()}")
+
+
+def write_json(path: Path, value: JsonValue) -> Result[None, str]:
+    """Write one pretty JSON document with a trailing newline."""
+    text = value.to_pretty_json().map_err((error) => error.message())? + "\n"
+    return path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+def replace_json(path: Path, value: JsonValue) -> Result[None, str]:
+    """Publish one JSON document through a same-directory staged file."""
+    staged = Path(f"{path.0}.next")
+    write_json(staged, value)?
+    if path.exists() or path.is_symlink():
+        path.unlink().map_err((error) => error.message())?
+    _ = staged.move(path).map_err((error) => error.message())?
+    return Ok(None)
+
+
+def entries(value: JsonValue, key: str) -> Result[list[JsonValue], str]:
+    """Read an array field, or a root array when `key` is empty."""
+    if key == "":
+        return value.expect_array().map_err((error) => error.message())
+    match value.get(key):
+        Some(found) => return found.expect_array().map_err((error) => error.message())
+        None => return Ok([])
+
+
+def manifest_text(value: JsonValue, key: str) -> Result[str, str]:
+    """Read one required string field from a JSON object."""
+    return value.require(key).and_then((found) => found.expect_str()).map_err((error) => f"{key}: {error.message()}")
+
+
+def absolute(value: str, base: Path) -> Path:
+    """Resolve a manifest path against the directory that owns the document."""
+    if value.startswith("/"):
+        return Path(value)
+    return base.joinpath(value)

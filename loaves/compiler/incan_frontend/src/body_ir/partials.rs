@@ -4,7 +4,7 @@ use super::args::fixed_elements;
 use super::{
     AbiV0RuntimeRequirement, BodyBuilder, BodyIrLoweringFacts, CanonicalSymbolId, CompilerNodeId,
     FunctionDefaultSource, HirSourceSpan, IncanType, SemanticSourceTargetKind, TypeCheckInfo, ast, bir, hir_span,
-    semantic_type_from_resolved,
+    parameter_types, semantic_type_from_resolved,
 };
 use crate::typechecker::PartialProjectionTargetKind;
 
@@ -139,7 +139,7 @@ fn function_target(
         .type_info
         .declarations
         .function_bindings_by_span
-        .get(&(span.start, span.end))
+        .get(&span)
         .and_then(|binding| binding.identity.as_ref())
         == Some(canonical);
     if !physically_owned {
@@ -153,7 +153,7 @@ fn function_target(
     Ok(PartialFunctionTarget {
         name: name.clone(),
         canonical: canonical.clone(),
-        direct_call_id: CompilerNodeId::declaration_span(facts.module_identity, span.start, span.end),
+        direct_call_id: CompilerNodeId::declaration_at(facts.module_identity, *span),
         defaults: defaults.clone(),
     })
 }
@@ -176,13 +176,20 @@ fn partial_parameters(
                 .name
                 .clone()
                 .unwrap_or_else(|| format!("__partial_arg_{index}"));
-            let ty = semantic_type_from_resolved(&parameter.ty);
+            let owner = match target {
+                Some(PartialTarget::Function(target)) => Some(&target.canonical),
+                _ => None,
+            };
+            let ty = super::input_access::value_type(builder, owner, index, &parameter.ty);
+            let native_owned = parameter_types::native_collection_parameter(&parameter.ty, builder.type_info);
             let local = builder.declare_new_local_with_reads(name.clone(), ty.clone(), scope, span, 1);
             builder.locals[local.index()].origin = bir::LocalOrigin::Parameter;
-            if parameter.is_mut {
+            if native_owned {
+                builder.owned_parameters.insert(local);
+            } else if parameter.is_mut {
                 builder.borrowed_parameters.insert(local);
             }
-            bir::CallableParam {
+            let mut projected = bir::CallableParam {
                 local,
                 kind: incan_semantics_core::IncanCallableParamKind::Normal,
                 name,
@@ -190,7 +197,11 @@ fn partial_parameters(
                 span,
                 default: bir::CallableParamDefault::Required,
                 mutable: parameter.is_mut,
-            }
+                input_access: incan_semantics_core::IncanInputAccess::Inferred,
+                native_owned,
+            };
+            super::input_access::apply(&mut projected, builder.type_info, owner, index);
+            projected
         })
         .collect::<Vec<_>>();
     // Deferred defaults may introduce temporaries; every parameter must already occupy its declaration slot.
@@ -324,11 +335,7 @@ pub(super) fn lower_source_partial(
     facts: &BodyIrLoweringFacts<'_, '_>,
 ) -> bir::Body {
     let span = hir_span(decl_span);
-    let binding = facts
-        .type_info
-        .declarations
-        .function_bindings_by_span
-        .get(&(decl_span.start, decl_span.end));
+    let binding = facts.type_info.declarations.function_bindings_by_span.get(&decl_span);
     let return_type = binding
         .map(|binding| semantic_type_from_resolved(&binding.return_type))
         .unwrap_or(IncanType::Unknown);
@@ -364,10 +371,12 @@ pub(super) fn lower_source_partial(
     {
         builder.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
     }
-    let direct_call_id = CompilerNodeId::declaration_span(facts.module_identity, decl_span.start, decl_span.end);
+    let direct_call_id = CompilerNodeId::declaration_at(facts.module_identity, decl_span);
     let named_type_identities =
         builder.finish_type_identities(facts.type_info.declarations.named_type_identities.clone());
     bir::Body {
+        trait_default_instantiation: None,
+        nominal_instantiation: Vec::new(),
         decl_id: direct_call_id.clone(),
         direct_call_id,
         canonical: binding.and_then(|binding| binding.identity.clone()),
@@ -375,7 +384,7 @@ pub(super) fn lower_source_partial(
         type_parameters: Vec::new(),
         span,
         return_type,
-        named_type_identities,
+        named_type_identities: std::sync::Arc::new(named_type_identities),
         param_locals: params.iter().map(|parameter| parameter.local).collect(),
         params,
         locals: builder.locals,
@@ -384,8 +393,12 @@ pub(super) fn lower_source_partial(
         runtime_requirements: builder.runtime_requirements,
         panic_facts: builder.panic_facts,
         is_async: false,
-        extern_delegation: None,
+        retired_rust_facade_wire: None,
+        native_attributes: Vec::new(),
         // No checked callable facts are recorded for a synthesized partial; callable signatures refuse by name.
+        checked_input_profile: None,
+        explicit_input_bindings: Vec::new(),
+        returned_view: None,
         callable_representation: None,
     }
 }

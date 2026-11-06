@@ -8,9 +8,9 @@
 //!
 //! The approach here is the one RFC 106 cites as prior art: normalize the structured value, then serialize.
 //! [`DigestSerializer`] walks a value through `serde` and feeds a hasher, dropping fields whose names are
-//! positional. Because it works field-by-field over the real value, a field added to Body IR later is included
-//! automatically — the drift that a hand-written visitor suffers, where a new field is silently omitted and the
-//! digest quietly under-invalidates, cannot happen here.
+//! positional, retaining expansion context from spans. Because it works field-by-field over the real value, a field
+//! added to Body IR later is included automatically — the drift that a hand-written visitor suffers, where a new field
+//! is silently omitted and the digest quietly under-invalidates, cannot happen here.
 //!
 //! Excluding a field is the *over*-invalidating direction when done wrong: a positional field left in makes an
 //! unrelated edit look like a change, which costs time. Omitting a meaningful field is the dangerous direction, and
@@ -19,8 +19,14 @@
 use serde::{Serialize, ser};
 use sha2::{Digest, Sha256};
 
-use crate::closure_digest::update_delimited;
+use crate::stable_identity::source_signature::SourceSignatureContext;
 use std::fmt::Display;
+
+/// Length-delimit a semantic value so adjoining values cannot forge the same hash input by shifting a boundary.
+fn update_delimited(hasher: &mut Sha256, value: &[u8]) {
+    hasher.update((value.len() as u64).to_le_bytes());
+    hasher.update(value);
+}
 
 /// Node-identifier fields excluded from every semantic digest.
 ///
@@ -36,21 +42,19 @@ const POSITIONAL_ID_FIELDS: &[&str] = &["decl_id", "direct_call_id", "id", "modu
 
 /// Whether a struct field is positional and must not reach the digest.
 ///
-/// The span rule is written structurally — `span` or any `*_span` — rather than as a list of known names. A list
-/// was the first attempt and it missed `CanonicalSymbolId::declaration_span`, which sits several levels down inside
-/// `Body::canonical`: every declaration in a module appeared to change when a comment was added anywhere in it.
-/// Matching the shape means a span field added later is excluded without anyone remembering to add it.
+/// Span fields are handled separately: their coordinates are positional, but their expansion identity is meaningful.
 ///
 /// The failure directions are asymmetric. A positional field wrongly left in makes an unrelated edit look like a
 /// change, costing a rebuild. A meaningful field wrongly excluded makes a real change invisible, producing a wrong
-/// build. This rule can only ever over-match on names ending in `_span`, so it errs the safe way.
+/// build. This rule matches only the exact names in [`POSITIONAL_ID_FIELDS`], so it errs the safe way.
 fn is_positional_field(name: &str) -> bool {
-    name == "span" || name.ends_with("_span") || POSITIONAL_ID_FIELDS.contains(&name)
+    POSITIONAL_ID_FIELDS.contains(&name)
 }
 
 /// The error type for digest serialization.
 ///
-/// Serializing into a hasher cannot fail on I/O, so the only error is one `serde` itself raises.
+/// Serialization cannot fail on I/O. A checked-body projection also refuses a nominal binding whose checked
+/// identity cannot produce the shared stable declaration identity.
 #[derive(Debug)]
 pub struct DigestError(String);
 
@@ -78,7 +82,11 @@ impl ser::Error for DigestError {
 /// Returns [`DigestError`] only if the value's own `Serialize` implementation fails.
 pub fn semantic_digest<T: Serialize>(value: &T) -> Result<String, DigestError> {
     let mut hasher = Sha256::new();
-    value.serialize(DigestSerializer { hasher: &mut hasher })?;
+    value.serialize(DigestSerializer {
+        hasher: &mut hasher,
+        mode: DigestMode::Meaning,
+        body: None,
+    })?;
     Ok(format!("sha256:{}", hex::encode(hasher.finalize())))
 }
 
@@ -87,19 +95,35 @@ pub fn semantic_digest<T: Serialize>(value: &T) -> Result<String, DigestError> {
 /// Every value is written with a type tag and, for anything variable-length, an explicit length. Both matter: a tag
 /// stops two differently-typed values with the same bytes from colliding, and a length stops adjacent values from
 /// running together — without one, the single identifier `aIb` and the pair `a` `b` hash identically.
-pub struct DigestSerializer<'hasher> {
+pub struct DigestSerializer<'hasher, 'body> {
     hasher: &'hasher mut Sha256,
+    mode: DigestMode,
+    body: Option<&'body SourceSignatureContext<'body>>,
 }
 
-impl DigestSerializer<'_> {
+/// A span contributes expansion identity but never its diagnostic byte coordinates.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DigestMode {
+    Meaning,
+    Span(&'static str),
+    Expansion(&'static str),
+    /// A checked IncanType nominal leaf or generic head, never an arbitrary string.
+    Nominal,
+}
+
+impl DigestSerializer<'_, '_> {
     /// Write a type tag, so values of different shapes cannot collide on identical payload bytes.
     fn tag(&mut self, tag: u8) {
-        self.hasher.update([tag]);
+        if self.mode == DigestMode::Meaning {
+            self.hasher.update([tag]);
+        }
     }
 
     /// Write a length-delimited byte run, so adjacent values cannot run together.
     fn bytes(&mut self, value: &[u8]) {
-        update_delimited(self.hasher, value);
+        if self.mode == DigestMode::Meaning {
+            update_delimited(self.hasher, value);
+        }
     }
 }
 
@@ -112,13 +136,15 @@ macro_rules! digest_primitive {
     ($method:ident, $ty:ty, $tag:expr) => {
         fn $method(mut self, value: $ty) -> Result<(), DigestError> {
             self.tag($tag);
-            self.hasher.update(value.to_le_bytes());
+            if self.mode == DigestMode::Meaning {
+                self.hasher.update(value.to_le_bytes());
+            }
             Ok(())
         }
     };
 }
 
-impl<'hasher> ser::Serializer for DigestSerializer<'hasher> {
+impl<'hasher, 'body> ser::Serializer for DigestSerializer<'hasher, 'body> {
     type Ok = ();
     type Error = DigestError;
     type SerializeSeq = Self;
@@ -126,13 +152,15 @@ impl<'hasher> ser::Serializer for DigestSerializer<'hasher> {
     type SerializeTupleStruct = Self;
     type SerializeTupleVariant = Self;
     type SerializeMap = Self;
-    type SerializeStruct = StructDigest<'hasher>;
-    type SerializeStructVariant = StructDigest<'hasher>;
+    type SerializeStruct = StructDigest<'hasher, 'body>;
+    type SerializeStructVariant = StructDigest<'hasher, 'body>;
 
     /// Tag a boolean and write its single byte.
     fn serialize_bool(mut self, value: bool) -> Result<(), DigestError> {
         self.tag(0x01);
-        self.hasher.update([u8::from(value)]);
+        if self.mode == DigestMode::Meaning {
+            self.hasher.update([u8::from(value)]);
+        }
         Ok(())
     }
 
@@ -161,6 +189,19 @@ impl<'hasher> ser::Serializer for DigestSerializer<'hasher> {
 
     /// Tag a string and write its bytes, length-delimited so adjacent values cannot run together.
     fn serialize_str(mut self, value: &str) -> Result<(), DigestError> {
+        if self.mode == DigestMode::Nominal {
+            if let Some(context) = self.body.filter(|context| context.nominals.contains_key(value)) {
+                let identity = context
+                    .nominal_identity(value)
+                    .ok_or_else(|| DigestError("checked nominal has no stable declaration identity".into()))?;
+                return (identity, context.nominals[value].declaration_span.expansion).serialize(DigestSerializer {
+                    hasher: self.hasher,
+                    mode: DigestMode::Meaning,
+                    body: None,
+                });
+            }
+            self.mode = DigestMode::Meaning;
+        }
         self.tag(0x0d);
         self.bytes(value.as_bytes());
         Ok(())
@@ -181,8 +222,17 @@ impl<'hasher> ser::Serializer for DigestSerializer<'hasher> {
 
     /// Tag a present optional, then hash the value it wraps.
     fn serialize_some<T: ?Sized + Serialize>(mut self, value: &T) -> Result<(), DigestError> {
+        if let DigestMode::Expansion(field) = self.mode {
+            self.mode = DigestMode::Meaning;
+            self.bytes(b"span.expansion");
+            self.bytes(field.as_bytes());
+        }
         self.tag(0x10);
-        value.serialize(DigestSerializer { hasher: self.hasher })
+        value.serialize(DigestSerializer {
+            hasher: self.hasher,
+            mode: self.mode,
+            body: self.body,
+        })
     }
 
     /// Tag the unit value.
@@ -220,20 +270,30 @@ impl<'hasher> ser::Serializer for DigestSerializer<'hasher> {
     /// Tag a newtype variant by name, then hash the value it wraps.
     fn serialize_newtype_variant<T: ?Sized + Serialize>(
         mut self,
-        _name: &'static str,
+        name: &'static str,
         _index: u32,
         variant: &'static str,
         value: &T,
     ) -> Result<(), DigestError> {
         self.tag(0x13);
         self.bytes(variant.as_bytes());
-        value.serialize(DigestSerializer { hasher: self.hasher })
+        value.serialize(DigestSerializer {
+            hasher: self.hasher,
+            mode: if name == "IncanType" && variant == "Named" && self.body.is_some() {
+                DigestMode::Nominal
+            } else {
+                self.mode
+            },
+            body: self.body,
+        })
     }
 
     /// Tag a sequence and write its length, so two sequences cannot concatenate into one.
     fn serialize_seq(mut self, length: Option<usize>) -> Result<Self, DigestError> {
         self.tag(0x14);
-        self.hasher.update((length.unwrap_or_default() as u64).to_le_bytes());
+        if self.mode == DigestMode::Meaning {
+            self.hasher.update((length.unwrap_or_default() as u64).to_le_bytes());
+        }
         Ok(self)
     }
 
@@ -257,45 +317,69 @@ impl<'hasher> ser::Serializer for DigestSerializer<'hasher> {
     ) -> Result<Self, DigestError> {
         self.tag(0x15);
         self.bytes(variant.as_bytes());
-        self.hasher.update((length as u64).to_le_bytes());
+        if self.mode == DigestMode::Meaning {
+            self.hasher.update((length as u64).to_le_bytes());
+        }
         Ok(self)
     }
 
     /// Tag a map and write its length, then hash each key and value in turn.
     fn serialize_map(mut self, length: Option<usize>) -> Result<Self, DigestError> {
         self.tag(0x16);
-        self.hasher.update((length.unwrap_or_default() as u64).to_le_bytes());
+        if self.mode == DigestMode::Meaning {
+            self.hasher.update((length.unwrap_or_default() as u64).to_le_bytes());
+        }
         Ok(self)
     }
 
     /// Tag a struct; its fields are hashed by [`StructDigest`], which drops the positional ones.
-    fn serialize_struct(mut self, _name: &'static str, _length: usize) -> Result<StructDigest<'hasher>, DigestError> {
+    fn serialize_struct(
+        mut self,
+        name: &'static str,
+        _length: usize,
+    ) -> Result<StructDigest<'hasher, 'body>, DigestError> {
         self.tag(0x17);
-        Ok(StructDigest { hasher: self.hasher })
+        Ok(StructDigest {
+            hasher: self.hasher,
+            mode: self.mode,
+            body: self.body,
+            generic_type: false,
+            body_type: name == "Body",
+        })
     }
 
     /// Tag a struct variant by name; its fields are hashed by [`StructDigest`].
     fn serialize_struct_variant(
         mut self,
-        _name: &'static str,
+        name: &'static str,
         _index: u32,
         variant: &'static str,
         _length: usize,
-    ) -> Result<StructDigest<'hasher>, DigestError> {
+    ) -> Result<StructDigest<'hasher, 'body>, DigestError> {
         self.tag(0x18);
         self.bytes(variant.as_bytes());
-        Ok(StructDigest { hasher: self.hasher })
+        Ok(StructDigest {
+            hasher: self.hasher,
+            mode: self.mode,
+            body: self.body,
+            generic_type: name == "IncanType" && variant == "Generic",
+            body_type: false,
+        })
     }
 }
 
 macro_rules! digest_sequence {
     ($trait_name:ident, $method:ident) => {
-        impl ser::$trait_name for DigestSerializer<'_> {
+        impl ser::$trait_name for DigestSerializer<'_, '_> {
             type Ok = ();
             type Error = DigestError;
 
             fn $method<T: ?Sized + Serialize>(&mut self, value: &T) -> Result<(), DigestError> {
-                value.serialize(DigestSerializer { hasher: self.hasher })
+                value.serialize(DigestSerializer {
+                    hasher: self.hasher,
+                    mode: self.mode,
+                    body: self.body,
+                })
             }
 
             fn end(self) -> Result<(), DigestError> {
@@ -310,16 +394,24 @@ digest_sequence!(SerializeTuple, serialize_element);
 digest_sequence!(SerializeTupleStruct, serialize_field);
 digest_sequence!(SerializeTupleVariant, serialize_field);
 
-impl ser::SerializeMap for DigestSerializer<'_> {
+impl ser::SerializeMap for DigestSerializer<'_, '_> {
     type Ok = ();
     type Error = DigestError;
 
     fn serialize_key<T: ?Sized + Serialize>(&mut self, key: &T) -> Result<(), DigestError> {
-        key.serialize(DigestSerializer { hasher: self.hasher })
+        key.serialize(DigestSerializer {
+            hasher: self.hasher,
+            mode: self.mode,
+            body: self.body,
+        })
     }
 
     fn serialize_value<T: ?Sized + Serialize>(&mut self, value: &T) -> Result<(), DigestError> {
-        value.serialize(DigestSerializer { hasher: self.hasher })
+        value.serialize(DigestSerializer {
+            hasher: self.hasher,
+            mode: self.mode,
+            body: self.body,
+        })
     }
 
     fn end(self) -> Result<(), DigestError> {
@@ -331,20 +423,69 @@ impl ser::SerializeMap for DigestSerializer<'_> {
 ///
 /// The field *name* is hashed alongside its value, so moving a value between two same-typed fields is a change
 /// rather than a coincidence.
-pub struct StructDigest<'hasher> {
+pub struct StructDigest<'hasher, 'body> {
     hasher: &'hasher mut Sha256,
+    mode: DigestMode,
+    body: Option<&'body SourceSignatureContext<'body>>,
+    generic_type: bool,
+    body_type: bool,
 }
 
-impl ser::SerializeStruct for StructDigest<'_> {
+impl ser::SerializeStruct for StructDigest<'_, '_> {
     type Ok = ();
     type Error = DigestError;
 
     fn serialize_field<T: ?Sized + Serialize>(&mut self, key: &'static str, value: &T) -> Result<(), DigestError> {
+        if let DigestMode::Span(field) = self.mode {
+            return if key == "expansion" {
+                value.serialize(DigestSerializer {
+                    hasher: self.hasher,
+                    mode: DigestMode::Expansion(field),
+                    body: self.body,
+                })
+            } else {
+                Ok(())
+            };
+        }
+        if key == "span" || key.ends_with("_span") {
+            return value.serialize(DigestSerializer {
+                hasher: self.hasher,
+                mode: DigestMode::Span(key),
+                body: self.body,
+            });
+        }
         if is_positional_field(key) {
             return Ok(());
         }
         update_delimited(self.hasher, key.as_bytes());
-        value.serialize(DigestSerializer { hasher: self.hasher })
+        if self.body_type && key == "named_type_identities" {
+            if let Some(context) = self.body {
+                let identities = context
+                    .nominals
+                    .iter()
+                    .map(|(name, canonical)| {
+                        context
+                            .nominal_identity(name)
+                            .map(|identity| (identity, canonical.declaration_span.expansion))
+                            .ok_or_else(|| DigestError("checked nominal has no stable declaration identity".into()))
+                    })
+                    .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
+                return identities.serialize(DigestSerializer {
+                    hasher: self.hasher,
+                    mode: DigestMode::Meaning,
+                    body: None,
+                });
+            }
+        }
+        value.serialize(DigestSerializer {
+            hasher: self.hasher,
+            mode: if self.generic_type && key == "base" && self.body.is_some() {
+                DigestMode::Nominal
+            } else {
+                self.mode
+            },
+            body: self.body,
+        })
     }
 
     fn end(self) -> Result<(), DigestError> {
@@ -352,7 +493,7 @@ impl ser::SerializeStruct for StructDigest<'_> {
     }
 }
 
-impl ser::SerializeStructVariant for StructDigest<'_> {
+impl ser::SerializeStructVariant for StructDigest<'_, '_> {
     type Ok = ();
     type Error = DigestError;
 
@@ -365,44 +506,52 @@ impl ser::SerializeStructVariant for StructDigest<'_> {
     }
 }
 
-/// Return a body with its docstring removed, ready to digest.
+/// Digest checked body meaning without cloning its locals, statements or identity tables.
 ///
-/// An Incan docstring is a bare string expression at the head of a body, exactly as in Python, and it survives
-/// lowering as a leading `StatementKind::Expr` whose operand is a string constant. It reaches generated Rust as a
-/// `///` line, which cannot change a compiled artifact, so it must not change the semantic digest.
+/// An Incan docstring is a bare string expression at the head of a body and survives lowering as a leading
+/// `StatementKind::Expr` whose operand is a string constant. Documentation does not change executable meaning and must
+/// not enter the semantic digest.
 ///
-/// Documentation is still *output* — for published reference docs and for a manifest surface it is the product —
-/// which is why RFC 106 gives it a separate `doc_digest` rather than discarding it. This function only decides
-/// what the *semantic* digest covers.
+/// Documentation remains output for published reference docs and manifest surfaces, so RFC 106 gives it a separate
+/// `doc_digest`. This function detaches a leading docstring during serialization and restores it before returning,
+/// including on a serialization error; every other field remains borrowed in place.
 ///
-/// The rule is deliberately narrow: only a leading bare string expression, only at the head of the body. A string
-/// expression anywhere else is a real statement, and dropping it would hide a change.
-pub fn body_without_docstring(body: &crate::body_ir::Body) -> crate::body_ir::Body {
-    use crate::body_ir::{Constant, Operand, StatementKind};
-
-    let mut projected = body.clone();
-    let is_docstring = projected
-        .block
-        .stmts
-        .first()
-        .map(|statement| {
-            matches!(
-                &statement.kind,
-                StatementKind::Expr {
-                    value: Operand::Constant(Constant::Str(_))
-                }
-            )
-        })
-        .unwrap_or(false);
-    if is_docstring {
-        projected.block.stmts.remove(0);
+/// Only a leading bare string expression is documentation. A string expression anywhere else remains a real statement.
+///
+/// # Errors
+///
+/// Returns a serialization error after restoring the complete input body.
+pub fn body_semantic_digest(body: &mut crate::body_ir::Body) -> Result<String, DigestError> {
+    if body_docstring(body).is_none() {
+        return projected_body_digest(body);
     }
-    projected
+    let docstring = body.block.stmts.remove(0);
+    let digest = projected_body_digest(body);
+    body.block.stmts.insert(0, docstring);
+    digest
+}
+
+/// Hash every retained body field through typed nominal leaves and a stable binding inventory. Serde's IncanType
+/// enum boundaries select nominal references, including nested generic heads, while ordinary strings remain exact.
+/// Executable carriers and the input body are never rewritten. The profile separates earlier positional digests.
+fn projected_body_digest(body: &crate::body_ir::Body) -> Result<String, DigestError> {
+    let context = SourceSignatureContext {
+        nominals: &body.named_type_identities,
+        binders: &body.type_parameters,
+    };
+    let mut hasher = Sha256::new();
+    update_delimited(&mut hasher, b"incan.checked-body/2");
+    body.serialize(DigestSerializer {
+        hasher: &mut hasher,
+        mode: DigestMode::Meaning,
+        body: Some(&context),
+    })?;
+    Ok(format!("sha256:{}", hex::encode(hasher.finalize())))
 }
 
 /// Extract a body's docstring, if it has one.
 ///
-/// The counterpart to [`body_without_docstring`]: what that removes, this returns, so a caller can compute RFC
+/// The counterpart to [`body_semantic_digest`]: what that excludes, this returns, so a caller can compute RFC
 /// 106's separate `doc_digest` over the same definition of what documentation is.
 pub fn body_docstring(body: &crate::body_ir::Body) -> Option<&str> {
     use crate::body_ir::{Constant, Operand, StatementKind};
@@ -477,6 +626,25 @@ mod tests {
         assert_ne!(semantic_digest(&Some("x"))?, semantic_digest(&"x")?);
         assert_ne!(semantic_digest(&1u32)?, semantic_digest(&1i32)?);
         assert_ne!(semantic_digest(&vec!["x"])?, semantic_digest(&"x")?);
+        #[derive(Serialize)]
+        struct Located {
+            span: crate::HirSourceSpan,
+        }
+        let authored = Located {
+            span: crate::HirSourceSpan::new(1, 2),
+        };
+        let moved = Located {
+            span: crate::HirSourceSpan::new(10, 20),
+        };
+        let generated = Located {
+            span: authored.span.with_expansion(Some([1; 32])),
+        };
+        let other = Located {
+            span: authored.span.with_expansion(Some([2; 32])),
+        };
+        assert_eq!(semantic_digest(&authored)?, semantic_digest(&moved)?);
+        assert_ne!(semantic_digest(&authored)?, semantic_digest(&generated)?);
+        assert_ne!(semantic_digest(&generated)?, semantic_digest(&other)?);
         Ok(())
     }
 

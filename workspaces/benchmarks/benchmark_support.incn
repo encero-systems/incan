@@ -1,0 +1,141 @@
+"""Share installed-toolchain discovery, process capture, and report identities across benchmark programs."""
+
+from rust::std::env import current_exe
+from rust::std::env::consts import ARCH, OS
+from rust::std::process import Command, ExitStatus
+from rust::std::string import String as RustString
+from rust::std::time import Instant
+from std.datetime.civil import DateTime
+from std.encoding.hex import hexlify
+from std.environ import get_or
+from std.fs import Path
+from std.hash import file_digest
+from std.json import JsonValue
+
+pub const TOOLCHAIN_NAME: str = "0.6.0-dev.8"
+
+
+pub model BenchmarkToolchain:
+    """Installed Incan, driver, and pinned Rust commands selected by one toolchain manifest."""
+
+    pub incan: str
+    pub home: Path
+    pub driver: Path
+    pub rustc: Path
+
+
+pub model Captured:
+    """One completed child process with decoded streams, status, and elapsed milliseconds."""
+
+    pub code: int
+    pub stdout: str
+    pub stderr: str
+    pub milliseconds: int
+
+
+pub def select_toolchain() -> Result[BenchmarkToolchain, str]:
+    """Resolve the selected installed CLI and its manifest-owned driver and pinned Rust compiler."""
+    home = Path(get_or("INCAN_HOME", get_or("HOME", "") + "/.incan"))
+    # An unset INCAN means the entry point of the same home that owns the driver, never whichever CLI PATH finds first.
+    incan = get_or("INCAN", home.joinpath("bin/incan").0)
+    root = home.joinpath(f"toolchains/{TOOLCHAIN_NAME}")
+    manifest_path = root.joinpath("toolchain.json")
+    if not manifest_path.is_file():
+        return Err(f"missing installed toolchain manifest: {manifest_path.0}")
+    manifest = JsonValue.parse(read(manifest_path)?).map_err((error) => error.message())?
+    driver = located(root, required_text(manifest, "driver")?)
+    sysroot = located(root, required_text(manifest, "sysroot")?)
+    rustc = sysroot.joinpath("bin/rustc")
+    if not driver.is_file() or not rustc.is_file():
+        return Err("installed toolchain is incomplete")
+    return Ok(BenchmarkToolchain(incan=incan, home=home, driver=driver, rustc=rustc))
+
+
+pub def capture(
+    command: str,
+    arguments: list[str],
+    directory: Path,
+    environment: Dict[str, str] = {},
+) -> Result[Captured, str]:
+    """Run one external benchmark command and return both streams, status, and elapsed milliseconds."""
+    mut process = Command.new(command)
+    process.current_dir(directory.0)
+    for argument in arguments:
+        process.arg(argument)
+    for key in sorted([key for key in environment.keys()]):
+        process.env(key, environment[key])
+    started = Instant.now()
+    output = process.output().map_err((error) => f"cannot run {command}: {error}")?
+    return Ok(
+        Captured(
+            code=status_code(output.status),
+            stdout=RustString.from_utf8_lossy(output.stdout).into_owned(),
+            stderr=RustString.from_utf8_lossy(output.stderr).into_owned(),
+            milliseconds=int(started.elapsed().as_millis()),
+        ),
+    )
+
+
+pub def require(
+    command: str,
+    arguments: list[str],
+    directory: Path,
+    environment: Dict[str, str] = {},
+) -> Result[Captured, str]:
+    """Run one external command and return its capture only when it exits successfully."""
+    result = capture(command, arguments, directory, environment)?
+    if result.code != 0:
+        invocation = " ".join(arguments)
+        return Err(f"{command} {invocation} failed with status {result.code}: {result.stderr.strip()}")
+    return Ok(result)
+
+
+pub def identity(root: Path, toolchain: BenchmarkToolchain, evidence: Path) -> Result[str, str]:
+    """Return the stable Markdown identity shared by benchmark result files."""
+    commit = require("git", ["rev-parse", "HEAD"], root)?.stdout.strip()
+    rust_version = require(toolchain.rustc.0, ["--version"], root)?.stdout.strip()
+    python_version = require("python3", ["--version"], root)?.stdout.strip()
+    digest = hexlify(file_digest(toolchain.driver, "sha256").map_err((error) => error.message())?)
+    mut text = f"Measured: {DateTime.utc_now().isoformat()}Z\n\nCommit: `{commit}`\n\n"
+    text += f"Toolchain: `{TOOLCHAIN_NAME}`; driver SHA-256: `{digest}`.\n\n"
+    text += f"Rust: `{rust_version}`; Python: `{python_version}`; host: `{OS} {ARCH}`.\n\n"
+    text += f"Raw evidence directory: `{evidence.name()}` under `BENCH_SCRATCH` (default `workspaces/benchmarks/target`).\n\n"
+    return Ok(text)
+
+
+pub def repository_root() -> Result[Path, str]:
+    """Find the repository above the current benchmark executable."""
+    binary = current_exe().map_err((error) => error.to_string())?
+    mut directory = Path(binary.to_string_lossy().into_owned()).parent()
+    while true:
+        if directory.joinpath("AGENTS.md").is_file() and directory.joinpath("workspaces/benchmarks").is_dir():
+            return Ok(directory)
+        parent = directory.parent()
+        if parent.0 in [directory.0, "", "."]:
+            return Err("cannot find the repository above the benchmark program")
+        directory = parent
+
+
+pub def read(path: Path) -> Result[str, str]:
+    """Read one strict UTF-8 benchmark input."""
+    return path.read_text("utf-8", "strict").map_err((error) => f"{path.0}: {error.message()}")
+
+
+pub def status_code(status: ExitStatus) -> int:
+    """Return a process status code, using 128 for signal-only termination."""
+    match status.code():
+        Some(code) => return int(code)
+        None => return 128
+
+
+def located(root: Path, value: str) -> Path:
+    """Resolve a manifest path against its toolchain root only when it is relative."""
+    path = Path(value)
+    if value.startswith("/"):
+        return path
+    return root.joinpath(value)
+
+
+def required_text(value: JsonValue, key: str) -> Result[str, str]:
+    """Read one required manifest string field."""
+    return value.require(key).and_then((entry) => entry.expect_str()).map_err((error) => f"{key}: {error.message()}")

@@ -1,0 +1,673 @@
+"""Lower method calls on compiled, retained, and selected library bodies."""
+
+from pub::incan_mir_plan import (
+    CalleeKind,
+    Function,
+    Operand,
+    Parameter,
+    Place,
+    PlanType,
+    Projection,
+    RvalueKind,
+    SourceSpan,
+    TerminatorKind,
+    assign as plan_assign,
+    place as plan_place,
+)
+from explicit_arguments import parameter_accesses
+from layout_types import native_source_type
+from result_combinators import result_combinator, lower_result_combinator
+from rust::incan_semantics_core import IncanType as RustType, SymbolOrigin, SymbolNamespace, SemanticSourceTargetKind
+from rust::incan_semantics_core::body_ir import (
+    ArgumentBinding as RustArgumentBinding,
+    ArgumentElement as RustArgumentElement,
+    Body as RustBody,
+    Operand as RustOperand,
+    Place as RustPlace,
+    MethodTarget,
+)
+from classes import function_name, method_receiver
+from program_context import body_at
+from table_views import borrowed_at, borrowed_table
+from comparison_methods import source_equality_value
+from traits import (
+    is_lazy_method_body,
+    method_index,
+    owner_method_index,
+    receiver_method_target,
+    implementation_target,
+    receiver_fills_source_slot,
+    receiver_fills_retained_slot,
+)
+from decls import library_item
+from iterator_methods import standard_protocol as standard_iterator_protocol
+from element_borrows import element_method_owner, element_method_receiver
+from reflection import lower_reflection
+from value_enums import value_method_owner, enum_message_layout
+from frame import place_type, Builder, temporary, drop_all_owned, terminate_call, read_place
+from async_ import construct_future
+from defaults import method_default_arguments
+from type_parameters import instantiate, request_instance
+from generic_callables import owned_callable_slots
+from lowering import BodyIrModule
+from checked_values import scalar_place
+from closure_lifting import lifted_frame, synthesize
+from value_enum_methods import lower_enum_message, lower_value_enum_method
+from static_methods import lower_static_method_body, lower_static_sdk_method
+from library_methods import lower_library_method, lower_standard_slot
+from callable_calls import checked_type_arguments, emit_selected_body_call
+from call_arguments import call_parameter_type, ordered_slot_operands
+from builtin_methods import lower_builtin_method
+from sequence_builtins import argument_type
+from result_carriers import lower_carrier_method
+
+
+pub def lower_method_call(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &MethodTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Close retained source trait arguments in the caller's checked frame before choosing an implementation."""
+    mut selected = target.clone()
+    match selected.trait_arguments.clone():
+        Some(trait_arguments) =>
+            retained: list[RustType] = trait_arguments
+            closed: list[RustType] = checked_type_arguments(builder, retained)?
+            selected.trait_arguments = Some(closed)
+        None => pass
+    return lower_checked_method_call(module, builder, selected, arguments, destination, span)
+
+
+def lower_checked_method_call(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &MethodTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Borrow the proven receiver and call its canonical method body with bound ordinary arguments."""
+    match target.intrinsic_carrier:
+        Some(_carrier) => return lower_carrier_method(builder, target, arguments, destination, span)
+        None => pass
+    # Builtin registry members and source methods both retain identities; their origin selects the admission path.
+    match target.canonical:
+        Some(identity) =>
+            if identity.origin == SymbolOrigin.Builtin:
+                if identity.declaration_name == "Iterator.collect":
+                    match argument_type(builder, arguments, 0, span)?:
+                        PlanType.Model(_owner, _name) =>
+                            selected = concrete_iterator_collect(module, builder, target, arguments, span)?
+                            return lower_retained_method_call(module, builder, selected, arguments, destination, span)
+                        _ => pass
+                match result_combinator(str(identity.declaration_name)):
+                    Some(combinator) =>
+                        return lower_result_combinator(module, builder, combinator, arguments, destination, span)
+                    None => pass
+                return lower_builtin_method(builder, target, arguments, destination, span)
+        None =>
+            return Err(
+                f"unsupported Body IR Method without canonical identity for {target.name} at {builder.file}:{span.line}:{span.column} in {builder.name}",
+            )
+    if len(arguments) == 0:
+        return Err("invalid Body IR Method missing receiver")
+    if lower_global_method(module, builder, target, arguments, destination, span)?:
+        return Ok(None)
+    if lower_reflection(builder, target, arguments, destination, span)?:
+        return Ok(None)
+    if lower_standard_slot(module, builder, target, arguments, destination, span)?:
+        return Ok(None)
+    if lower_compiled_method(module, builder, target, arguments, destination, span, true)?:
+        return Ok(None)
+    if retained_iterator_default(module, builder, target, arguments, span)?:
+        return lower_retained_method_call(module, builder, target, arguments, destination, span)
+    if lower_selected_library_method(module, builder, target, arguments, destination, span)?:
+        return Ok(None)
+    if lower_sdk_element_method(module, builder, target, arguments, destination, span)?:
+        return Ok(None)
+    # A list or dictionary element receiver is reborrowed in its container; no native place names it.
+    match element_method_owner(builder, arguments[0])?:
+        Some(owner) =>
+            index = owner_method_index(module, target, owner, builder)?
+            reference = element_method_receiver(module, builder, index, arguments[0], span)?
+            return call_method_body(module, builder, target, index, reference, arguments, destination, span)
+        None => pass
+    match enum_message_layout(
+        builder.constructors,
+        module,
+        target,
+        borrowed_table(builder.locals),
+        builder.local_offset,
+        arguments[0],
+        span,
+        builder.unions,
+        builder.intrinsics,
+    )?:
+        Some(index) => return lower_enum_message(builder, index, arguments, destination, span)
+        None => pass
+    match value_method_owner(
+        builder.constructors,
+        module,
+        target,
+        borrowed_table(builder.locals),
+        builder.local_offset,
+        arguments[0],
+        span,
+        builder.unions,
+        builder.intrinsics,
+    )?:
+        Some(owner) => return lower_value_enum_method(builder, owner, arguments, destination, span)
+        None => pass
+    if lower_compiled_method(module, builder, target, arguments, destination, span, false)?:
+        return Ok(None)
+    return lower_retained_method_call(module, builder, target, arguments, destination, span)
+
+
+def lower_compiled_method(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &MethodTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+    implementation_only: bool,
+) -> Result[bool, str]:
+    """Call one checked compiled target. Selected overrides precede SDK dispatch; ordinary calls preserve source slots."""
+    selected = receiver_method_target(module, target, builder, arguments[0], span)?
+    if implementation_only:
+        if selected.canonical == target.canonical:
+            return Ok(false)
+    else:
+        if receiver_fills_source_slot(module, target, builder, arguments[0], span)?:
+            return Ok(false)
+    for callable_position in range(len(module.loaf_callables)):
+        callable = borrowed_at(module.loaf_callables, callable_position)
+        match selected.canonical:
+            Some(identity) =>
+                if identity == callable.canonical:
+                    lower_library_method(module, builder, callable, selected, arguments, destination, span)?
+                    return Ok(true)
+            None => pass
+    return Ok(false)
+
+
+def concrete_iterator_collect(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &MethodTarget,
+    arguments: &list[RustArgumentElement],
+    span: SourceSpan,
+) -> Result[MethodTarget, str]:
+    """Resolve a builtin opaque-Iterator terminal only through its concrete SDK owner's unique retained default (#1698)."""
+    if (
+        len(arguments) != 1
+        or len(target.type_args) != 0
+        or target.loaf_trait != None
+        or target.native_trait_delegation != None
+    ):
+        return Err("unsupported Body IR opaque Iterator.collect call contract")
+    mut owner = -1
+    match argument_type(builder, arguments, 0, span)?:
+        PlanType.Model(index, _name) => owner = index
+        _ => return Err("unsupported Body IR opaque Iterator.collect without concrete receiver")
+    declaration = borrowed_at(module.nominal_declarations, owner)
+    if library_item(declaration) == "":
+        return Err("opaque Iterator.collect requires a standard library owner")
+    mut selected = target.clone()
+    mut matches = 0
+    for protocol_position in range(len(module.trait_declarations)):
+        protocol = borrowed_at(module.trait_declarations, protocol_position)
+        if not standard_iterator_protocol(protocol):
+            continue
+        for implementation_position in range(len(module.trait_implementations)):
+            implementation = borrowed_at(module.trait_implementations, implementation_position)
+            method = implementation.method
+            if (
+                implementation.owner != declaration.canonical
+                or method.origin != protocol.origin
+                or method.namespace != SymbolNamespace.Member
+                or method.kind != SemanticSourceTargetKind.Method
+                or method.declaration_name != "collect"
+            ):
+                continue
+            if not (
+                protocol.declaration_span.start <= method.declaration_span.start
+                and method.declaration_span.end <= protocol.declaration_span.end
+            ):
+                continue
+            if implementation.implementation != method:
+                return Err("unsupported Body IR opaque Iterator.collect with a nondefault implementation")
+            matches += 1
+            selected.canonical = Some(method.clone())
+    if matches != 1 or not receiver_fills_retained_slot(module, selected, builder, arguments[0], span)?:
+        return Err("unsupported Body IR opaque Iterator.collect without one retained standard default")
+    index = method_index(module, selected, builder, arguments[0], span)?
+    if len(module.bodies[index].params) != 1:
+        return Err("unsupported Body IR opaque Iterator.collect with ordinary parameters")
+    return Ok(selected)
+
+
+def retained_iterator_default(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &MethodTarget,
+    arguments: &list[RustArgumentElement],
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """Prefer retained Incan Iterator identity/collection defaults absent from the native SDK trait."""
+    match target.canonical:
+        None => return Ok(false)
+        Some(identity) =>
+            if (
+                identity.kind != SemanticSourceTargetKind.Method
+                or identity.namespace != SymbolNamespace.Member
+                or identity.declaration_name not in ["iter", "collect"]
+            ):
+                return Ok(false)
+            mut standard = false
+            for protocol_position in range(len(module.trait_declarations)):
+                protocol = borrowed_at(module.trait_declarations, protocol_position)
+                if (
+                    standard_iterator_protocol(protocol)
+                    and protocol.origin == identity.origin
+                    and protocol.declaration_span.start <= identity.declaration_span.start
+                    and identity.declaration_span.end <= protocol.declaration_span.end
+                ):
+                    standard = true
+            if not standard:
+                return Ok(false)
+    if not target.has_valid_native_trait_selection():
+        return Ok(false)
+    return receiver_fills_retained_slot(module, target, builder, arguments[0], span)
+
+
+def lower_retained_method_call(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &MethodTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Borrow the concrete receiver and execute its selected body, naming the frame when its receiver is refused."""
+    mut index = -1
+    match method_index(module, target, builder, arguments[0], span):
+        Ok(selected) => index = selected
+        Err(error) => return Err(f"{error} for {target.name} in {builder.name}")
+    constructors = builder.program.constructors.as_ref()
+    receiver_type, borrow = method_receiver(
+        constructors,
+        module,
+        borrowed_table(builder.locals),
+        builder.local_offset,
+        index,
+        arguments[0],
+        span,
+        builder.unions,
+        builder.intrinsics,
+    )?
+    reference = temporary(builder, receiver_type, span)
+    builder.emit(plan_assign(reference, borrow, span))
+    return call_method_body(module, builder, target, index, reference, arguments, destination, span)
+
+
+def lower_selected_library_method(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &MethodTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """Use a checked SDK instantiation while preserving source implementation priority, including collection elements."""
+    if not target.has_valid_native_trait_selection():
+        return Err("the selected standard library trait signature is invalid")
+    match target.native_trait_delegation:
+        None => return Ok(false)
+        Some(selection) =>
+            if receiver_fills_source_slot(module, target, builder, arguments[0], span)?:
+                return Ok(false)
+            match element_method_owner(builder, arguments[0])?:
+                Some(PlanType.Model(owner, _name)) =>
+                    if library_item(borrowed_at(module.nominal_declarations, owner)) == "":
+                        return Ok(false)
+                _ => pass
+            lower_library_method(module, builder, selection, target, arguments, destination, span)?
+            return Ok(true)
+
+
+def lower_sdk_element_method(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &MethodTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """Borrow a retained SDK collection element for its authenticated ordinary SDK method, preserving source dispatch."""
+    match element_method_owner(builder, arguments[0])?:
+        Some(PlanType.Model(owner, name)) =>
+            if library_item(borrowed_at(module.nominal_declarations, owner)) == "":
+                return Ok(false)
+            selected = implementation_target(module, target, PlanType.Model(owner, name))?
+            for callable_position in range(len(module.loaf_callables)):
+                callable = borrowed_at(module.loaf_callables, callable_position)
+                if selected.canonical == Some(callable.canonical):
+                    lower_library_method(module, builder, callable, selected, arguments, destination, span)?
+                    return Ok(true)
+            return Ok(false)
+        _ => return Ok(false)
+
+
+def call_method_body(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &MethodTarget,
+    index: int,
+    reference: Place,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Invoke the selected method with its checked receiver and arguments, retaining async captures in a future."""
+    body = instantiated_method_body(module, builder, target, index, arguments, span)?
+    retain_sdk_factory_result(module, builder, target, body, destination, span)?
+    ordinary = method_ordinary_operands(module, builder, target, arguments, body, span)?
+    mut operands = [read_place(reference, true, span)]
+    operands.extend(ordinary)
+    if body.is_async:
+        match destination:
+            Some(place) =>
+                output = scalar_place(builder, place, span)?
+                return construct_future(module, builder, body, operands, output, span)
+            None => return Err("unsupported Body IR async method call without carrier")
+    callee = CalleeKind.Planned(source_method_symbol(module, builder, target, body, span))
+    return emit_selected_body_call(builder, body, callee, operands, destination, span)
+
+
+def retain_sdk_factory_result(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &MethodTarget,
+    body: &RustBody,
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Keep a selected SDK default's concrete result where its checked interface still uses a tuple iterator frame."""
+    if target.loaf_trait == None or body.canonical != target.canonical or not target.has_valid_native_trait_selection():
+        return Ok(None)
+    match target.native_trait_delegation:
+        None => return Ok(None)
+        Some(delegation) =>
+            if Some(delegation.canonical.clone()) != target.canonical:
+                return Ok(None)
+            match destination:
+                None => return Ok(None)
+                Some(place) =>
+                    output = scalar_place(builder, place, span)?
+                    if output.projection != Projection.Whole:
+                        return Ok(None)
+                    match place_type(builder.locals, output):
+                        PlanType.ZipIterator(_left, _right) => pass
+                        _ => return Ok(None)
+                    result = native_source_type(
+                        builder.constructors,
+                        builder.nominals,
+                        builder.enums,
+                        builder.unions,
+                        body.return_type,
+                        builder.intrinsics,
+                    )?
+                    match result:
+                        PlanType.Model(owner, _name) =>
+                            if library_item(borrowed_at(module.nominal_declarations, owner)) == "":
+                                return Ok(None)
+                        _ => return Ok(None)
+                    declared = checked_type_arguments(builder, [delegation.return_type.clone()])?
+                    expected = native_source_type(
+                        builder.constructors,
+                        builder.nominals,
+                        builder.enums,
+                        builder.unions,
+                        declared[0],
+                        builder.intrinsics,
+                    )?
+                    if expected != place_type(builder.locals, output):
+                        return Err("the standard library factory result differs from its destination type")
+                    builder.locals[output.local].ty = result
+                    return Ok(None)
+
+
+pub def source_method_symbol(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &MethodTarget,
+    body: &RustBody,
+    span: SourceSpan,
+) -> str:
+    """Preserve an explicit equality source member's owned input and drop timing while its native trait slot borrows."""
+    symbol = function_name(module, body)
+    match source_equality_value(module, target, body):
+        None => return symbol
+        Some(value) =>
+            mut reference = PlanType.Unit
+            match value:
+                PlanType.Model(owner, name) => reference = PlanType.ModelRef(owner, name)
+                PlanType.Enum(owner, name) => reference = PlanType.EnumRef(owner, name)
+                _ => return symbol
+            wrapper_name = f"{builder.name}__owned_equality_{symbol}"
+            mut wrapper = lifted_frame(builder, wrapper_name, [reference, value], PlanType.Bool, span)
+            wrapper.locals = wrapper.locals[:3]
+            wrapper.local_offset = 0
+            wrapper.scoped_locals = []
+            wrapper.scope_parents = []
+            wrapper.owned = [2]
+            other = temporary(wrapper, reference, span)
+            wrapper.emit(plan_assign(other, RvalueKind.Borrow(plan_place(2, span)), span))
+            terminate_call(
+                wrapper,
+                CalleeKind.Planned(symbol),
+                [read_place(plan_place(1, span), false, span), read_place(other, false, span)],
+                plan_place(0, span),
+                span,
+            )
+            drop_all_owned(wrapper, span)
+            wrapper.finish(TerminatorKind.Return, span)
+            synthesize(
+                builder,
+                Function(
+                    name=wrapper_name,
+                    parameters=[
+                        Parameter(name="__incan_self", ty=reference, span=span),
+                        Parameter(name="other", ty=value, span=span),
+                    ],
+                    return_type=PlanType.Bool,
+                    locals=wrapper.locals,
+                    blocks=wrapper.blocks,
+                    span=span,
+                ),
+            )
+            return wrapper_name
+
+
+pub def instantiated_method_body(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &MethodTarget,
+    index: int,
+    arguments: &list[RustArgumentElement],
+    span: SourceSpan,
+) -> Result[RustBody, str]:
+    """Close only the selected method's retained parameters and queue its exact executable instance."""
+    body = body_at(module.bodies, index)
+    if len(body.type_parameters) != 0:
+        closed = sdk_forwarded_type_arguments(module, builder, target, body, arguments, span)?
+        mut typed = instantiate(body, closed, [])?
+        owned = owned_callable_slots(builder, body, typed, arguments, target.binding, 1)?
+        request_instance(builder.instances, body, closed, owned, false)
+        if len(owned) != 0:
+            typed = instantiate(body, closed, owned)?
+        return Ok(typed)
+    else:
+        if len(target.type_args) != 0:
+            return Err("unsupported Body IR type arguments on a method without type parameters")
+        if is_lazy_method_body(module, body):
+            empty_arguments: list[RustType] = []
+            request_instance(builder.instances, body, empty_arguments, [], false)
+    return Ok(body.clone())
+
+
+def sdk_forwarded_type_arguments(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &MethodTarget,
+    body: &RustBody,
+    arguments: &list[RustArgumentElement],
+    span: SourceSpan,
+) -> Result[list[RustType], str]:
+    """
+    Recover a scalar generic forwarding argument omitted by frozen SDK Self-call facts (#1698).
+
+    Both caller and callee must be authenticated defaults of the standard Iterator protocol. The callee's first
+    ordinary parameter and result name its sole binder. Its actual bound argument must have exactly the primitive
+    carrier of the caller's one already checked generic argument. Binder spellings from the two declarations are
+    never compared, and every remaining argument still passes normal instantiated signature validation.
+    """
+    closed = checked_type_arguments(builder, target.type_args)?
+    if len(closed) != 0 or len(body.type_parameters) != 1 or len(builder.callable_type_arguments) != 1:
+        return Ok(closed)
+    if len(body.params) < 2 or len(arguments) != len(body.params):
+        return Ok(closed)
+    if body.canonical != target.canonical:
+        return Ok(closed)
+    mut authenticated = false
+    match target.canonical:
+        None => return Ok(closed)
+        Some(selected) =>
+            match builder.callable_identity:
+                None => return Ok(closed)
+                Some(caller) =>
+                    if (
+                        selected.kind != SemanticSourceTargetKind.Method
+                        or caller.kind != SemanticSourceTargetKind.Method
+                        or selected.namespace != SymbolNamespace.Member
+                        or caller.namespace != SymbolNamespace.Member
+                    ):
+                        return Ok(closed)
+                    for protocol_position in range(len(module.trait_declarations)):
+                        protocol = borrowed_at(module.trait_declarations, protocol_position)
+                        if (
+                            standard_iterator_protocol(protocol)
+                            and selected.origin == protocol.origin
+                            and caller.origin == protocol.origin
+                            and protocol.declaration_span.start <= selected.declaration_span.start
+                            and selected.declaration_span.end <= protocol.declaration_span.end
+                            and protocol.declaration_span.start <= caller.declaration_span.start
+                            and caller.declaration_span.end <= protocol.declaration_span.end
+                        ):
+                            authenticated = true
+    if not authenticated:
+        return Ok(closed)
+    match body.params[1].ty:
+        RustType.TypeVar(name) =>
+            if str(name) != str(body.type_parameters[0]) or body.return_type != body.params[1].ty:
+                return Ok(closed)
+        _ => return Ok(closed)
+    candidate: RustType = builder.callable_type_arguments[0].clone()
+    match candidate:
+        RustType.Primitive(_primitive) => pass
+        _ => return Ok(closed)
+    mut position = -1
+    match target.binding:
+        RustArgumentBinding.Resolved(arguments=bindings, defaulted_slots=defaults) =>
+            if len(defaults) != 0 or len(bindings) + 1 != len(arguments):
+                return Ok(closed)
+            for index in range(len(bindings)):
+                if int(bindings[index].slot) == 0:
+                    if position != -1:
+                        return Ok(closed)
+                    position = index + 1
+        _ => return Ok(closed)
+    if position < 1:
+        return Ok(closed)
+    actual = argument_type(builder, arguments, position, span)?
+    expected = native_source_type(
+        builder.constructors,
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        candidate,
+        builder.intrinsics,
+    )?
+    if actual != expected:
+        return Ok(closed)
+    return Ok([candidate.clone()])
+
+
+pub def method_ordinary_operands(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &MethodTarget,
+    arguments: &list[RustArgumentElement],
+    body: &RustBody,
+    span: SourceSpan,
+) -> Result[list[Operand], str]:
+    """Bind the ordinary slots once, excluding the method's separately prepared receiver."""
+    # A selected body with only its receiver proves there are no ordinary slots to bind. Keep every resolved
+    # binding on the normal validation path, so malformed slot/default records still refuse.
+    if len(body.params) == 1 and len(arguments) == 1:
+        match target.binding:
+            RustArgumentBinding.UnresolvedPositional => return Ok([])
+            _ => pass
+    mut types: list[PlanType] = []
+    for position in range(1, len(body.params)):
+        mut ty = call_parameter_type(builder, body, body.params[position])?
+        match source_equality_value(module, target, body):
+            Some(value) => ty = value
+            None => pass
+        types.append(ty)
+    mut ordinary: list[Operand] = []
+    match method_default_arguments(module, builder, target, arguments, body, types, span)?:
+        Some(values) => ordinary = values
+        None =>
+            accesses = parameter_accesses(body.params, 1)?
+            ordinary = ordered_slot_operands(builder, target.binding, arguments, types, span, 1, accesses=accesses)?
+    return Ok(ordinary)
+
+
+def lower_global_method(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &MethodTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """Call a computed model static's selected method under its actual storage lock, preserving mutation and unwinding rather than copying a receiver out of storage."""
+    match arguments[0].as_one():
+        Some(RustOperand.Place(read)) =>
+            match read.place.global():
+                Some(global) =>
+                    if not receiver_fills_retained_slot(module, target, builder, arguments[0], span)?:
+                        for callable_position in range(len(module.loaf_callables)):
+                            callable = borrowed_at(module.loaf_callables, callable_position)
+                            if Some(callable.canonical) == target.canonical:
+                                lower_static_sdk_method(
+                                    module,
+                                    builder,
+                                    callable,
+                                    target,
+                                    read,
+                                    global,
+                                    arguments,
+                                    destination,
+                                    span,
+                                )?
+                                return Ok(true)
+                    _ = lower_static_method_body(module, builder, target, read, global, arguments, destination, span)?
+                    return Ok(true)
+                None => return Ok(false)
+        _ => return Ok(false)

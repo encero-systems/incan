@@ -8,6 +8,7 @@ from rust::incan_semantics_core::body_ir import (
     ArgumentElement,
     Place as RustPlace,
 )
+from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import (
     PlanType,
     Place,
@@ -40,7 +41,10 @@ from tuples import tuple_aggregate
 from lists import list_shape, list_element
 from builtins import list_call
 from text_plan import owned_literal
-from lowering import scalar_place, text_argument, display_plan_value, append_list_value
+from checked_values import scalar_place
+from sequence_builtins import text_argument
+from formatting import display_plan_value
+from list_values import append_list_value
 
 
 pub def lower_reflection(
@@ -55,20 +59,21 @@ pub def lower_reflection(
         return Ok(true)
     mut string = false
     mut items = false
-    match target.reflection:
+    match target.operation:
         None => return Ok(false)
         Some(operation) =>
             match operation:
                 ReflectionOperation.Metadata =>
                     return Err("unsupported Body IR field metadata without a retained declaration")
+                ReflectionOperation.GenericMetadata(_owner) =>
+                    return Err("unsupported Body IR generic field metadata without a retained declaration")
                 ReflectionOperation.TypedValue => pass
-                ReflectionOperation.TypedItems =>
-                    items = true
-                ReflectionOperation.StringValue =>
-                    string = true
+                ReflectionOperation.TypedItems => items = true
+                ReflectionOperation.StringValue => string = true
                 ReflectionOperation.StringItems =>
                     string = true
                     items = true
+                ReflectionOperation.Builtin(_operation) => return Ok(false)
     if len(arguments) != 1 + int(not items) or len(target.type_args) != 0:
         return Err("unsupported Body IR reflection argument contract")
     match target.canonical:
@@ -120,9 +125,15 @@ pub def lower_field_metadata(
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[bool, str]:
-    """Return immutable declaration metadata only for the checker-selected generated hook and exact native FieldInfo layout."""
-    if target.reflection != Some(ReflectionOperation.Metadata):
-        return Ok(false)
+    """Use checked generated ownership before substitution and the concrete declaration's retained public metadata."""
+    mut generic = false
+    match target.operation:
+        Some(ReflectionOperation.Metadata) => pass
+        Some(ReflectionOperation.GenericMetadata(_owner)) =>
+            if not target.has_valid_generic_metadata():
+                return Err("unsupported Body IR generic field metadata identity")
+            generic = true
+        _ => return Ok(false)
     if len(arguments) != 1 or len(target.type_args) != 0:
         return Err("unsupported Body IR field metadata arguments")
     match arguments[0].as_one():
@@ -137,7 +148,17 @@ pub def lower_field_metadata(
                                 None => return Err("unsupported Body IR field metadata identity")
                                 Some(identity) =>
                                     declaration = builder.nominals[owner].canonical
-                                    if identity.origin != declaration.origin or identity.declaration_span != declaration.declaration_span or identity.scope_discriminant != declaration.scope_discriminant or identity.declaration_name != "__fields__":
+                                    if generic:
+                                        # The generated-operation fact carries the checked binder authority; the
+                                        # substituted receiver must retain its own reflection capability and metadata.
+                                        if "FieldInfo" not in builder.nominals[owner].derives:
+                                            return Err("unsupported Body IR generic field metadata capability")
+                                    elif (
+                                        identity.origin != declaration.origin
+                                        or identity.declaration_span != declaration.declaration_span
+                                        or identity.scope_discriminant != declaration.scope_discriminant
+                                        or identity.declaration_name != "__fields__"
+                                    ):
                                         return Err("unsupported Body IR field metadata owner mismatch")
                             return emit_field_metadata(builder, owner, destination, span)
                         _ => return Err("unsupported Body IR field metadata receiver carrier")
@@ -160,6 +181,7 @@ pub def lower_static_field_metadata(
                 None => return Ok(false)
                 Some(receiver) =>
                     match native_source_type(
+                        builder.constructors,
                         builder.nominals,
                         builder.enums,
                         builder.unions,
@@ -168,7 +190,11 @@ pub def lower_static_field_metadata(
                     )?:
                         PlanType.Model(owner, _name) =>
                             declaration = builder.nominals[owner].canonical
-                            if identity.origin != declaration.origin or identity.declaration_span != declaration.declaration_span or identity.scope_discriminant != declaration.scope_discriminant:
+                            if (
+                                identity.origin != declaration.origin
+                                or identity.declaration_span != declaration.declaration_span
+                                or identity.scope_discriminant != declaration.scope_discriminant
+                            ):
                                 return Ok(false)
                             if len(arguments) != 0 or len(target.type_args) != 0:
                                 return Err("unsupported Body IR static field metadata arguments")
@@ -176,10 +202,10 @@ pub def lower_static_field_metadata(
                         _ => return Err("unsupported Body IR static field metadata owner")
 
 
-def emit_field_metadata(
+pub def emit_field_metadata(
     mut builder: Builder,
     owner: int,
-    destination: &Option[RustPlace],
+    destination: Option[RustPlace],
     span: SourceSpan,
 ) -> Result[bool, str]:
     """Share the value/type hook's immutable declaration records and exact SDK result carrier."""
@@ -199,18 +225,20 @@ def emit_field_metadata(
             None => pass
         terminate_call(builder, CalleeKind.FieldMetadata(owner, info), [], output, span)
         return Ok(true)
-    return Err("unsupported Body IR field metadata SDK layout")
+    return Err("the standard library field metadata layout is unsupported")
 
 
-def reflected_field(builder: Builder, owner: int, source: Place, slot: int, span: SourceSpan) -> Result[Place, str]:
+def reflected_field(mut builder: Builder, owner: int, source: Place, slot: int, span: SourceSpan) -> Result[Place, str]:
     """Project only an in-range retained source field using its canonical declared type."""
     if slot < 0 or slot >= len(builder.nominals[owner].fields):
         return Err("unsupported Body IR reflection field slot")
+    field_type = builder.nominals[owner].field_types[slot]
     ty = native_source_type(
+        builder.constructors,
         builder.nominals,
         builder.enums,
         builder.unions,
-        builder.nominals[owner].field_types[slot],
+        field_type,
         builder.intrinsics,
     )?
     return appended_field(source, FieldProjection(slot=slot, ty=ty), span)
@@ -222,12 +250,12 @@ def scalar_reflection_type(ty: PlanType) -> bool:
 
 
 def validate_reflection_fields(
-    builder: Builder,
+    mut builder: Builder,
     owner: int,
     receiver: Place,
     fields: list[int],
     string: bool,
-    target: &MethodTarget,
+    target: MethodTarget,
     span: SourceSpan,
 ) -> Result[None, str]:
     """Prove generated ownership and the whole generic capability before lowering a single lookup."""
@@ -235,7 +263,11 @@ def validate_reflection_fields(
         match target.canonical:
             Some(identity) =>
                 declaration = builder.nominals[owner].canonical
-                if identity.origin != declaration.origin or identity.declaration_span != declaration.declaration_span or identity.scope_discriminant != declaration.scope_discriminant:
+                if (
+                    identity.origin != declaration.origin
+                    or identity.declaration_span != declaration.declaration_span
+                    or identity.scope_discriminant != declaration.scope_discriminant
+                ):
                     return Err("unsupported Body IR reflection generated owner mismatch")
             None => return Err("unsupported Body IR reflection generated owner")
         return Ok(None)
@@ -247,8 +279,10 @@ def validate_reflection_fields(
         if scalar_reflection_type(ty):
             continue
         _index, layout = carrier_layout(builder, ty)?
-        if layout.carrier != "Option" or len(layout.variants[1].fields) != 1 or not scalar_reflection_type(
-            layout.variants[1].fields[0],
+        if (
+            layout.carrier != Carrier.Option
+            or len(layout.variants[1].fields) != 1
+            or not scalar_reflection_type(layout.variants[1].fields[0])
         ):
             return Err("unsupported Body IR generic reflection field capability")
     return Ok(None)
@@ -270,7 +304,7 @@ def string_field(mut builder: Builder, field: Place, span: SourceSpan) -> Result
     match ty:
         PlanType.Enum(_owner, _name) =>
             _index, layout = carrier_layout(builder, ty)?
-            if layout.carrier != "Option" or len(layout.variants[1].fields) != 1:
+            if layout.carrier != Carrier.Option or len(layout.variants[1].fields) != 1:
                 return Err("unsupported Body IR generic field reflection optional carrier")
             output = temporary(builder, PlanType.String, span)
             selected = builder.new_block(span)
@@ -315,14 +349,8 @@ def field_value(
         PlanType.Enum(owner, _name) =>
             if not is_union_carrier(builder, owner):
                 return Err("unsupported Body IR reflection typed overlay")
-            slot = union_slot(
-                builder.nominals,
-                builder.enums,
-                builder.unions,
-                owner,
-                value_type(builder, value)?,
-                builder.intrinsics,
-            )?
+            member = value_type(builder, value)?
+            slot = union_slot(builder.nominals, builder.enums, builder.unions, owner, member, builder.intrinsics)?
             output = temporary(builder, expected, span)
             replace_owned_destination(builder, output, RvalueKind.Enum(owner, slot, [value]), span)
             return Ok(read_place(output, true, span))
@@ -376,7 +404,7 @@ def reflect_value(
 ) -> Result[None, str]:
     """Compare names and aliases once, clone only a matched field, and construct checked Some or None results."""
     index, layout = carrier_layout(builder, place_type(builder.locals, output))?
-    if layout.carrier != "Option" or len(layout.variants[1].fields) != 1:
+    if layout.carrier != Carrier.Option or len(layout.variants[1].fields) != 1:
         return Err("unsupported Body IR reflection lookup result")
     key = text_argument(builder, arguments, 1, span)?
     join = builder.new_block(span)

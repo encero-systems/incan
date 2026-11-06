@@ -1,0 +1,81 @@
+# behavior: published declaration kinds remain usable; inferred and explicit generic calls decorate once per instance
+# expect-stdout:
+#   3
+#   8
+#   fast
+#   slow
+#   9
+#   badge gold
+#   int 4
+#   str four
+#   0
+#   10
+#   5
+#   1
+#   6
+#   1
+#   decorating generic
+#   7
+#   8
+#   decorating generic
+#   x
+#   y
+#   3
+#   two!
+
+from pub::kinds import (
+    Record,
+    Container,
+    Mode,
+    Token,
+    Named,
+    Badge,
+    ZERO,
+    current_count,
+    first,
+    fixed,
+    second,
+    decorated,
+    generic,
+    convert,
+    show_mode,
+    show_answer,
+)
+
+
+def describe[N with Named](named: N) -> str:
+    return named.label()
+
+
+def main() -> None:
+    """
+    Use the published declaration surface without changing its behavior at the package boundary.
+
+    1. Use nominal, trait and union declarations.
+    2. Read published values and call bound replacements.
+    3. Share generic decoration across inferred and explicit calls, then select overloads.
+    """
+    # 1. Nominal declarations retain their fields, methods and selected variants.
+    println(Record(value=3).value)
+    println(Container(value=4).doubled())
+    println(show_mode(Mode.Fast))
+    println(show_mode(Mode.Slow))
+    token = Token(9)
+    println(token.0)
+    println(describe(Badge(text="gold")))
+    println(show_answer(4))
+    println(show_answer("four"))
+    # 2. Values and nongeneric replacements retain their declaring module's behavior.
+    println(ZERO)
+    println(current_count())
+    println(first(5))
+    println(fixed())
+    println(second(6))
+    println(decorated())
+    # 3. A published initializer runs once for each closed type, with either call spelling.
+    println(generic(7))
+    println(generic[int](8))
+    println(generic("x"))
+    println(generic[str]("y"))
+    println(convert(2))
+    println(convert("two"))

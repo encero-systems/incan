@@ -1,0 +1,10 @@
+"""A second module, whose query node is a separate request to the same provider."""
+
+from pub::words import marker
+
+
+pub def other_query() -> None:
+    """Hold a query node in a second module."""
+    value = query:
+        FROM 2
+    println(marker())

@@ -2,6 +2,64 @@
 
 use super::*;
 
+/// Prove that a declaration-owned default constructs only fresh literal data, including checked enum variants.
+/// Publication preserves this proof without source syntax; calls, parameter reads and writes to existing storage
+/// cannot cross a supplied argument's observable evaluation.
+pub(super) fn is_literal_default(default: &bir::CallableParamDefault) -> bool {
+    let bir::CallableParamDefault::Source(computation) = default else {
+        return false;
+    };
+    let mut initialized = HashSet::new();
+    for statement in &computation.stmts {
+        let bir::StatementKind::Assign { place, rvalue } = &statement.kind else {
+            return false;
+        };
+        let bir::PlaceRoot::Local(local) = place.root else {
+            return false;
+        };
+        if !place.projection.is_empty() || initialized.contains(&local) || !literal_default_rvalue(rvalue, &initialized)
+        {
+            return false;
+        }
+        initialized.insert(local);
+    }
+    literal_default_operand(&computation.result, &initialized)
+}
+
+/// Admit literal containers and checked enum variants whose payloads refer only to constants or fresh temporaries.
+/// Variant construction has no user callable; retained enum targets supply its declaration-owned layout.
+fn literal_default_rvalue(value: &bir::Rvalue, initialized: &HashSet<bir::LocalId>) -> bool {
+    match value {
+        bir::Rvalue::Use(operand) => literal_default_operand(operand, initialized),
+        bir::Rvalue::FieldlessEnumVariant(_) | bir::Rvalue::ValueEnumVariant(_) => true,
+        bir::Rvalue::Aggregate(
+            bir::AggregateKind::List
+            | bir::AggregateKind::Set
+            | bir::AggregateKind::Tuple
+            | bir::AggregateKind::EnumVariant(_),
+            elements,
+        ) => elements.iter().all(|element| {
+            matches!(element, bir::ArgumentElement::One(operand) if literal_default_operand(operand, initialized))
+        }),
+        bir::Rvalue::Dict(entries) => entries.iter().all(|entry| {
+            matches!(entry, bir::DictEntry::Pair(key, value)
+                if literal_default_operand(key, initialized) && literal_default_operand(value, initialized))
+        }),
+        _ => false,
+    }
+}
+
+/// Accept immutable constant data and fresh whole temporaries, excluding parameter reads and projections.
+fn literal_default_operand(value: &bir::Operand, initialized: &HashSet<bir::LocalId>) -> bool {
+    match value {
+        bir::Operand::Constant(_) => true,
+        bir::Operand::Place(value) => {
+            value.place.projection.is_empty()
+                && matches!(value.place.root, bir::PlaceRoot::Local(local) if initialized.contains(&local))
+        }
+    }
+}
+
 /// Retain each admitted model or class's field defaults in a declaration-owned frame, evaluated only for omitted slots.
 pub(super) fn attach_nominal_field_defaults(
     program: &ast::Program,
@@ -44,6 +102,8 @@ pub(super) fn attach_nominal_field_defaults(
                 span: hir_span(field.span),
                 default: builder.lower_callable_default(field.node.default.as_ref(), scope),
                 mutable: false,
+                input_access: incan_semantics_core::IncanInputAccess::Inferred,
+                native_owned: false,
             });
         }
 
@@ -58,6 +118,8 @@ pub(super) fn attach_nominal_field_defaults(
         let named_type_identities =
             builder.finish_type_identities(facts.type_info.declarations.named_type_identities.clone());
         declaration.field_default_body = Some(Box::new(bir::Body {
+            trait_default_instantiation: None,
+            nominal_instantiation: Vec::new(),
             type_parameters: Vec::new(),
             decl_id: declaration.direct_declaration_id.clone(),
             direct_call_id: declaration.direct_declaration_id.clone(),
@@ -66,8 +128,11 @@ pub(super) fn attach_nominal_field_defaults(
             span,
             return_type: IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Unit),
             // Field slots carry no checker callable-representation proof, so consumers refuse function-typed fields.
+            checked_input_profile: None,
+            explicit_input_bindings: Vec::new(),
+            returned_view: None,
             callable_representation: None,
-            named_type_identities,
+            named_type_identities: std::sync::Arc::new(named_type_identities),
             param_locals: params.iter().map(|param| param.local).collect(),
             params,
             locals: builder.locals,
@@ -79,7 +144,8 @@ pub(super) fn attach_nominal_field_defaults(
             runtime_requirements: builder.runtime_requirements,
             panic_facts: builder.panic_facts,
             is_async: false,
-            extern_delegation: None,
+            retired_rust_facade_wire: None,
+            native_attributes: Vec::new(),
         }));
     }
 }
@@ -138,7 +204,7 @@ fn method_partial_frame(
         .type_info
         .declarations
         .method_bindings_by_span
-        .get(&(method.span.start, method.span.end))?
+        .get(&method.span)?
         .identity
         .clone()?;
     if target.kind != SemanticSourceTargetKind::Method
@@ -207,8 +273,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let saved_bindings = std::mem::take(&mut self.bindings);
         let saved_identity_bindings = std::mem::take(&mut self.identity_bindings);
         let saved_external_locals = std::mem::take(&mut self.external_locals);
+        // Defaults run in their own evaluation frame and cannot inherit the callee body's source ownership proof.
+        let saved_input_body = std::mem::replace(&mut self.input_body, Ok(None));
         let mut stmts = Vec::new();
         let result = self.lower_expr_to_operand(default_expr, scope, &mut stmts);
+        self.input_body = saved_input_body;
         let mut unresolved_names: Vec<String> = self.external_locals.keys().cloned().collect();
         unresolved_names.sort();
         self.bindings = saved_bindings;

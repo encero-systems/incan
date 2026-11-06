@@ -1,0 +1,376 @@
+"""
+`oven bakery status`: where the bakery's bytes are and why they remain (RFC 145).
+
+The report names the bakery's location and what selected it, the effective storage policy, the free space admission
+observes and the reservations of live operations. It attributes unit payloads to the project registrations that
+retain them, and states what explicit collection would reclaim and what staging holds. Reading it changes nothing: no
+registration, record, reservation or staging directory is written, and no use is refreshed.
+
+Byte counts are logical file lengths. A payload several projects reach counts once in the live total and once in
+each project's own total. Filesystem allocation and copy-on-write sharing are not measured.
+"""
+
+from std.fs import Path
+from std.json import JsonValue
+from home_paths import BakeryLocation, bakery_location, storage_policy
+from bakery_records import Fact, staging_root
+from bakery_roots import ProjectRoots, expiring_records, preview_collection, project_roots, reached_from, unit_facts
+from files import json_text
+from observation import now_seconds
+from storage_admission import (
+    Collectable,
+    Reservation,
+    available_space,
+    byte_text,
+    collectable_document,
+    policy_document,
+    read_reservations,
+    reservation_document,
+    tree_bytes,
+)
+from storage_policy import StoragePolicy
+
+pub const STATUS_SCHEMA: str = "incan.oven.store-status/1"
+pub const STATUS_USAGE: str = "oven bakery status [--format text|json]"
+const ACCOUNTING: str = "logical bytes; a payload counts once per total that reaches it; filesystem allocation and copy-on-write sharing are not measured"
+
+
+pub model Root:
+    """One project's retention: its directory, whether that is gone, its registrations and what they reach."""
+
+    pub project: str
+    pub orphaned: bool
+    pub registrations: int
+    pub units: int
+    pub payload_bytes: int
+
+
+pub model Retained:
+    """A set of unit records and the unique logical bytes of the payloads they name."""
+
+    pub units: int = 0
+    pub payload_bytes: int = 0
+
+
+pub model StoreStatus:
+    """The facts `oven bakery status` reports, observed at one time."""
+
+    pub store: Path
+    # What selected the store: `INCAN_BAKERY`, the configuration file, or `default`.
+    pub source: str
+    pub observed: int
+    pub policy: StoragePolicy
+    pub available: int
+    pub reservations: list[Reservation]
+    pub total_bytes: int
+    pub units: Retained
+    pub live: Retained
+    pub live_projects: int
+    pub roots: list[Root]
+    pub unregistered: Retained
+    pub collectable: Collectable
+    pub active: list[Reservation]
+    pub ended: list[Reservation]
+    pub unrecorded: int
+    pub unrecorded_bytes: int
+
+    pub def reserved(self) -> int:
+        """The bytes live reservations hold back from admission."""
+        mut total = 0
+        for reservation in self.reservations:
+            total += reservation.outstanding()
+        return total
+
+    pub def admissible(self) -> int:
+        """The bytes a new write could be admitted for now."""
+        return self.available - self.reserved() - self.policy.min_free_bytes
+
+
+pub def store_status(location: BakeryLocation) -> Result[StoreStatus, str]:
+    """
+    Observe the status of the store at `location` without changing it.
+
+    1. Read the policy, the free space and the reservations.
+    2. Attribute each record's payloads to the registrations that reach it: every project's own total, the unique
+       live total, and the records no registration reaches that collection keeps.
+    3. Read what collection would reclaim, and split staging into active, ended and unrecorded attempts.
+    """
+    # 1. The same observations admission makes.
+    policy = storage_policy()?
+    reservations = read_reservations(location.path)?
+    # 2. Reachability follows the records' own `reaches`, as collection does.
+    facts = unit_facts(location.path)?
+    mut reaches: dict[str, list[str]] = {}
+    for identity in facts.keys():
+        reaches[identity] = facts[identity].reaches
+    mut roots: list[Root] = []
+    mut live: dict[str, bool] = {}
+    mut live_projects = 0
+    for project in project_roots(location.path)?:
+        closure = reached_from(registered_identities(project), reaches)
+        retained = retained_by(closure, facts)
+        roots.append(
+            Root(
+                project=project.project,
+                orphaned=project.orphaned,
+                registrations=len(project.registrations),
+                units=retained.units,
+                payload_bytes=retained.payload_bytes,
+            ),
+        )
+        if not project.orphaned:
+            live_projects += 1
+            for identity in closure.keys():
+                live[identity] = true
+    expiring = expiring_records(location.path)?
+    mut unregistered: dict[str, bool] = {}
+    for identity in facts.keys():
+        if identity not in live and identity not in expiring:
+            unregistered[identity] = true
+    mut every: dict[str, bool] = {}
+    for identity in facts.keys():
+        every[identity] = true
+    # 3. Staging that has a reservation reports its phase; other staging is counted apart.
+    mut recorded: dict[str, bool] = {}
+    for reservation in reservations:
+        recorded[reservation.name] = true
+    mut unrecorded = 0
+    mut unrecorded_bytes = 0
+    directory = staging_root(location.path)
+    if directory.is_dir():
+        for entry in directory.iterdir().map_err((error) => error.message())?:
+            if entry.is_dir() and not entry.is_symlink() and entry.name() not in recorded:
+                unrecorded += 1
+                unrecorded_bytes += tree_bytes(entry)
+    return Ok(
+        StoreStatus(
+            store=location.path,
+            source=location.source,
+            observed=now_seconds(),
+            policy=policy,
+            available=available_space(location.path)?,
+            reservations=reservations,
+            total_bytes=tree_bytes(location.path),
+            units=retained_by(every, facts),
+            live=retained_by(live, facts),
+            live_projects=live_projects,
+            roots=by_size(roots),
+            unregistered=retained_by(unregistered, facts),
+            collectable=preview_collection(location.path)?,
+            active=[reservation for reservation in reservations if reservation.live],
+            ended=[reservation for reservation in reservations if not reservation.live],
+            unrecorded=unrecorded,
+            unrecorded_bytes=unrecorded_bytes,
+        ),
+    )
+
+
+def registered_identities(project: ProjectRoots) -> list[str]:
+    """Every identity any registration of `project` uses."""
+    mut identities: list[str] = []
+    for name in project.registrations.keys():
+        identities = identities + project.registrations[name]
+    return identities
+
+
+def retained_by(identities: dict[str, bool], facts: dict[str, Fact]) -> Retained:
+    """The records `identities` names and the unique logical bytes of their payloads."""
+    mut sizes: dict[str, int] = {}
+    mut units = 0
+    for identity in identities.keys():
+        if identity not in facts:
+            continue
+        units += 1
+        for file in facts[identity].files:
+            sizes[file.digest] = file.size
+    mut bytes = 0
+    for digest in sizes.keys():
+        bytes += sizes[digest]
+    return Retained(units=units, payload_bytes=bytes)
+
+
+def by_size(roots: list[Root]) -> list[Root]:
+    """Roots from the largest retained payload total down, then by project path."""
+    mut ordered: list[Root] = []
+    mut remaining = roots
+    while len(remaining) > 0:
+        mut chosen = 0
+        for index in range(len(remaining)):
+            candidate = remaining[index]
+            best = remaining[chosen]
+            if (
+                candidate.payload_bytes > best.payload_bytes
+                or (candidate.payload_bytes == best.payload_bytes and candidate.project < best.project)
+            ):
+                chosen = index
+        ordered.append(remaining[chosen])
+        remaining = remaining[:chosen] + remaining[chosen + 1:]
+    return ordered
+
+
+# ---- Reports ----
+
+
+pub def status_document(status: StoreStatus) -> JsonValue:
+    """The versioned machine-readable status."""
+    mut admission: dict[str, JsonValue] = {}
+    admission["available_bytes"] = JsonValue.int(status.available)
+    admission["reserve_bytes"] = JsonValue.int(status.policy.min_free_bytes)
+    admission["reserved_bytes"] = JsonValue.int(status.reserved())
+    admission["admissible_bytes"] = JsonValue.int(status.admissible())
+    mut live = retained_fields(status.live)
+    live["projects"] = JsonValue.int(status.live_projects)
+    mut unrecorded: dict[str, JsonValue] = {}
+    unrecorded["directories"] = JsonValue.int(status.unrecorded)
+    unrecorded["bytes"] = JsonValue.int(status.unrecorded_bytes)
+    mut staging: dict[str, JsonValue] = {}
+    staging["active"] = JsonValue.array([reservation_document(item) for item in status.active])
+    staging["ended"] = JsonValue.array([ended_document(item, status.policy) for item in status.ended])
+    staging["unrecorded"] = JsonValue.object(unrecorded)
+    mut fields: dict[str, JsonValue] = {}
+    fields["schema"] = JsonValue.string(STATUS_SCHEMA)
+    fields["store"] = JsonValue.string(status.store.0)
+    fields["store_source"] = JsonValue.string(status.source)
+    fields["observed_at"] = JsonValue.int(status.observed)
+    fields["accounting"] = JsonValue.string(ACCOUNTING)
+    fields["policy"] = policy_document(status.policy)
+    fields["admission"] = JsonValue.object(admission)
+    fields["total_bytes"] = JsonValue.int(status.total_bytes)
+    fields["units"] = JsonValue.object(retained_fields(status.units))
+    fields["live"] = JsonValue.object(live)
+    fields["roots"] = JsonValue.array([root_document(root) for root in status.roots])
+    fields["unregistered"] = JsonValue.object(retained_fields(status.unregistered))
+    fields["collectable"] = collectable_document(status.collectable)
+    fields["staging"] = JsonValue.object(staging)
+    return JsonValue.object(fields)
+
+
+def retained_fields(retained: Retained) -> dict[str, JsonValue]:
+    """A set of records and their unique payload bytes."""
+    mut fields: dict[str, JsonValue] = {}
+    fields["units"] = JsonValue.int(retained.units)
+    fields["payload_bytes"] = JsonValue.int(retained.payload_bytes)
+    return fields
+
+
+def root_document(root: Root) -> JsonValue:
+    """One project's retention."""
+    mut fields: dict[str, JsonValue] = {}
+    fields["project"] = JsonValue.string(root.project)
+    fields["orphaned"] = JsonValue.bool(root.orphaned)
+    fields["registrations"] = JsonValue.int(root.registrations)
+    fields["units"] = JsonValue.int(root.units)
+    fields["payload_bytes"] = JsonValue.int(root.payload_bytes)
+    return JsonValue.object(fields)
+
+
+def ended_document(reservation: Reservation, policy: StoragePolicy) -> JsonValue:
+    """
+    An ended attempt's staging: when its end was first observed and when it becomes reclaimable, or null for both
+    until the next admission observes the end.
+    """
+    mut fields: dict[str, JsonValue] = {}
+    fields["staging"] = JsonValue.string(reservation.name)
+    fields["work"] = JsonValue.string(reservation.work)
+    fields["bytes"] = JsonValue.int(reservation.allocated)
+    fields["end_observed_at"] = JsonValue.null()
+    fields["reclaimable_at"] = JsonValue.null()
+    if reservation.phase == "ended":
+        fields["end_observed_at"] = JsonValue.int(reservation.ended)
+        fields["reclaimable_at"] = JsonValue.int(reservation.ended + policy.failed_attempt_ttl)
+    return JsonValue.object(fields)
+
+
+pub def status_text(status: StoreStatus) -> str:
+    """The readable status, stating the same facts as the document."""
+    policy = status.policy
+    reserve = byte_text(policy.min_free_bytes)
+    reserved = byte_text(status.reserved())
+    admissible = byte_text(positive(status.admissible()))
+    live = byte_text(status.live.payload_bytes)
+    mut lines = [
+        f"bakery {status.store.0}: {byte_text(status.total_bytes)}",
+        f"  location: {status.source}",
+        f"  policy: root {policy.root} ({policy.root_source})",
+        f"          min-free-bytes {policy.min_free_bytes} ({policy.min_free_source})",
+        f"          failed-attempt-ttl {policy.failed_attempt_ttl}s ({policy.attempt_source})",
+        f"          history-ttl {policy.history_ttl}s ({policy.history_source})",
+        f"  admission: {byte_text(status.available)} available, {reserve} reserve",
+        f"             {reserved} reserved by {len(status.active)} operations, {admissible} admissible",
+        f"  units: {status.units.units} records, {byte_text(status.units.payload_bytes)} of payloads",
+        f"  live: {status.live_projects} projects reach {status.live.units} units, {live}",
+    ]
+    for root in status.roots:
+        lines.append(root_line(root))
+    unregistered = byte_text(status.unregistered.payload_bytes)
+    lines.append(f"  unregistered: {status.unregistered.units} units, {unregistered}; no registration reaches them")
+    collectable = status.collectable
+    payloads = byte_text(collectable.payload_bytes)
+    lines.append(f"  collectable by `oven bakery gc`: {collectable.units} units, {payloads} of payloads")
+    lines.append(f"    {collectable.projects} orphaned projects, {collectable.staging} ended staging directories")
+    unrecorded = byte_text(status.unrecorded_bytes)
+    lines.append(f"  staging: {len(status.active)} active, {len(status.ended)} ended")
+    lines.append(f"    {status.unrecorded} without a reservation, {unrecorded}")
+    for reservation in status.ended:
+        lines.append(ended_line(reservation, status))
+    return "\n".join(lines)
+
+
+def root_line(root: Root) -> str:
+    """One project's line of the readable status."""
+    mut state = ""
+    if root.orphaned:
+        state = " (orphaned: its directory is gone)"
+    bytes = byte_text(root.payload_bytes)
+    return f"    {root.project}{state}: {root.registrations} registrations, {root.units} units, {bytes}"
+
+
+def ended_line(reservation: Reservation, status: StoreStatus) -> str:
+    """One ended attempt's line of the readable status."""
+    mut when = "reclaimable once an admission observes its end"
+    if reservation.phase == "ended":
+        remaining = reservation.ended + status.policy.failed_attempt_ttl - status.observed
+        when = f"reclaimable {relative(remaining)}"
+    return f"    {reservation.name}: {byte_text(reservation.allocated)}, {when}"
+
+
+def positive(bytes: int) -> int:
+    """A byte count that is never below zero."""
+    if bytes < 0:
+        return 0
+    return bytes
+
+
+def relative(seconds: int) -> str:
+    """A delay in whole hours or minutes from now; a passed time reads as now."""
+    if seconds <= 0:
+        return "now"
+    if seconds >= 3600:
+        return f"in {seconds // 3600} h"
+    return f"in {seconds // 60 + 1} min"
+
+
+# ---- Command line ----
+
+
+pub def parse_status(arguments: list[str]) -> Result[str, str]:
+    """The report format `oven bakery status [--format text|json]` selects; text by default."""
+    if len(arguments) == 0:
+        return Ok("text")
+    if arguments[0] != "--format":
+        if arguments[0].startswith("-"):
+            return Err(f"unknown option `{arguments[0]}`")
+        return Err(f"unexpected argument `{arguments[0]}`")
+    if len(arguments) != 2 or arguments[1] not in ["text", "json"]:
+        return Err("`--format` is text or json")
+    return Ok(arguments[1])
+
+
+pub def status_command(format: str) -> Result[i32, str]:
+    """Print the selected bakery's status as text or as one JSON document."""
+    status = store_status(bakery_location()?)?
+    if format == "json":
+        println(json_text(status_document(status))?)
+    else:
+        println(status_text(status))
+    return Ok(0)

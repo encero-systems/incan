@@ -72,7 +72,7 @@ class Animal with Describable:
     def describe(self) -> str:
         return f"{self.name} is {self.age} years old"
 
-    def have_birthday(mut self) -> None:
+    pub def have_birthday(mut self) -> None:
         self.age = self.age + 1
 
 
@@ -85,7 +85,7 @@ class Pet extends Animal:
     def describe(self) -> str:
         return f"{self.name} the {self.species}, owned by {self.owner}"
 
-    def rename(mut self, new_name: str) -> None:
+    pub def rename(mut self, new_name: str) -> None:
         self.name = new_name
 
 

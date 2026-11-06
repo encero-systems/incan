@@ -1,6 +1,6 @@
 # Imports and modules (reference)
 
-This page specifies import forms, module paths and files, what an import binds, the reserved name prefix, exports and re-exports, package namespaces, the `std` root, soft keywords, Rust crate imports, `import python`, and `import this`. Refusals of an import are reported with `INCAN-I0001`, syntax errors with `INCAN-P0001`, and refusals made when a project builds or locks with `INCAN-C0001`, unless a rule below names another code.
+This page specifies import forms, module paths and files, what an import binds, the reserved name prefix, exports and re-exports, package namespaces, the `std` root, soft keywords, Rust crate imports, `import python`, and `import this`. Refusals of an import are reported with `INCAN-I0001`, syntax errors with `INCAN-P0001`, and refusals made when a project builds with `INCAN-C0001`, unless a rule below names another code.
 
 ## Import forms
 
@@ -59,9 +59,13 @@ from ...db.schema import Database         # accepted
 
 ### Module bindings
 
-`import models` binds the module. Its public functions are called through the binding, `models.parse(path)`, and its public types and traits are named through it in any annotation: `models.Config` is the declaration `from models import Config` binds.
+An import binds a link to the declaration or module it names; an alias or re-export binds another link, not a declaration with contents of its own. Name lookup resolves the head in the current scope, follows links to their declared node, and then resolves each following segment in that node's namespace. A module namespace contains its visible functions, types, traits, constants, submodules and reexports. A type namespace contains its associated members, including static methods and enum variants; a value namespace contains its fields and methods. A package namespace exposing a child module's names follows the same link rule.
 
-Refused (`INCAN-T0001`): a qualified annotation whose root is not a module binding, or whose member is not a type or trait the module declares. The name `c` bound by `from std.interop import c` is not a module binding; its members, such as `c.i32`, are specified in [`std.interop`](stdlib/interop.md).
+The source position applies its operation after resolution. A call calls a function, constructs a type or invokes another callable member; an annotation uses a type or trait; a value reference reads the selected declaration; and a decorator applies the selected callable. `models.parse(path)` therefore calls the same declaration as `from models import parse`, and `models.Config` names the same declaration as `from models import Config` in annotations and constructor calls.
+
+Refused (`INCAN-T0001`): a namespace does not expose the requested member, including when that member is private, or the head does not provide a namespace for the remaining path. The diagnostic names the namespace and member once. The name `c` bound by `from std.interop import c` is not a module binding; its members, such as `c.i32`, are specified in [`std.interop`](stdlib/interop.md).
+
+Refused (`INCAN-T0001`): following name links returns to a link already on the active lookup walk. The diagnostic lists the loop in order and identifies where each link is written. A cycle between modules remains accepted when resolving the requested name does not repeat a name link.
 
 ```incan
 import models
@@ -75,6 +79,7 @@ def load(path: str) -> models.Config:     # accepted
 - An import binds its local name in the module scope, beside the module's declarations.
 - A second binding of a name in the same scope is refused: a repeated import of the same declaration as a duplicate, and an import of a different declaration as ambiguous.
 - `std` and `rust` cannot be bound as local names, by a declaration or an import (`INCAN-T0001` on a declaration). The exception is an import that binds the root of its own path, such as `import std.web as std`. `import rust::std` without `as` binds `std` and is refused.
+- A bare enum variant name binds beside the module's declarations without displacing one. A module that declares `model FieldMetadata` and an enum variant `FieldMetadata` binds and exports the model under that name; the variant stays reachable through its enum, as `CalleeKind.FieldMetadata`.
 
 ```incan
 import codecs.prelude as codecs_prelude
@@ -95,6 +100,23 @@ model Response:
     @staticmethod
     def make(body: str) -> Response:          # accepted
         return Response(body=body)
+```
+
+### Names in annotations
+
+- A name in an annotation names a type: a builtin type, or a model, class, enum, newtype, trait, type alias or type parameter, declared or imported.
+- Refused (`INCAN-T0001`): an annotation name bound to anything else, such as an enum variant, a function, a constant, a local or a module.
+
+```incan
+enum Shape:
+    Circle(float)
+    Square(float)
+
+def area(shape: Shape) -> float:          # accepted
+    return 0.0
+
+def radius(shape: Circle) -> float:       # refused: Circle is a variant of Shape
+    return 0.0
 ```
 
 ### Builtin functions
@@ -178,6 +200,7 @@ import a::hidden         # refused: hidden is not pub (INCAN-I0001)
 
 - Accepted in a source file under a directory named `src`, for any module-level declaration kind: functions, models, classes, traits, enums, newtypes, type aliases, consts, statics, aliases and partial presets.
 - A re-export of an alias, or of a dependency's re-export, publishes the declaration it names: a call through each re-exported name calls that declaration.
+- Standard-library declarations can be re-exported with `pub from std.M import X [as Y]`. A published alias retains the standard declaration's callable or nominal identity; it does not create a replacement type or grant ownership of a standard namespace.
 
 Refused (`INCAN-P0001`): `pub from` in a file outside a `src` directory, and `pub import`.
 
@@ -201,16 +224,17 @@ def main() -> None:
     println(b_calculate(41))    # accepted
 ```
 
-`incan build --lib` refuses (`INCAN-C0001`) a library entrypoint that re-exports from an unknown module, re-exports a name its module does not export, or exports one name twice.
+`incan build src/lib.incn` refuses (`INCAN-C0001`) a library entrypoint that re-exports from an unknown module, re-exports a name its module does not export, or exports one name twice.
 
 ## Package namespaces
 
-`incan build --lib` publishes the library's modules under `pub::package`, following its source files below the source root.
+`incan build src/lib.incn` publishes the library's modules under `pub::package`, following its source files below the source root.
 
 - Each source module path, and each directory prefix of one, is a namespace: `src/hyperquant/index.incn` gives `pub::pkg.hyperquant` and `pub::pkg.hyperquant.index`.
 - A namespace exposes the `pub` declarations of its own module and of its immediate child modules. Deeper modules stay in their own namespaces.
 - Only `pub` declarations are exposed. Private declarations and imports are not.
-- A name that two modules of one namespace declare is ambiguous there, and importing or accessing it through that namespace is refused; the exact module path selects one.
+- A name that two child modules of one namespace declare is ambiguous there, and importing or accessing it through that namespace is refused; the exact module path selects one.
+- A name that the namespace's own module declares takes precedence over the same name in a child module: `std.compression.snappy.compress` is the framed codec although `std.compression.snappy.raw` declares `compress` too.
 - A declared member takes precedence over a child namespace with the same name.
 - At the package root, a re-export in `src/lib.incn` and a child namespace with the same name are ambiguous; the exact path selects one.
 
@@ -243,10 +267,10 @@ The standard-library modules are listed in the [language reference](language.md#
 
 ## Soft keywords
 
-- `async` and `await` are keywords only after an import whose path begins with `std.async`, such as `import std.async` or `from std.async.time import sleep`, from the next declaration on. `from std import async` does not activate them. `race for` requires the same import.
+- `async` and `await` are reserved words in every module. `async def`, `await`, and `race for <name>:` need no import.
+- Refused (`INCAN-P0001`): a variable, parameter, field, function, or other declaration named `async` or `await`.
+- A reserved word may occur in a module path. `import std.async` and `from std import async` bind the module, and `async.sleep(0.1)` resolves through that binding. An explicit alias named `async` or `await` is refused (`INCAN-P0001`).
 - A library's vocabulary keywords are keywords after an import of its provider namespace.
-
-Refused (`INCAN-P0001`): `async` or `await` as a keyword before the import.
 
 ## Rust crate imports
 
@@ -260,11 +284,10 @@ from rust::CRATE [@ "VERSION"] [with ["FEATURE", ...]] import ITEMS
 - Annotations are refused on a crate that `loaf.toml` configures.
 - Across files, one crate's versions match, and its features are unioned.
 - Annotations apply to `rust::` imports only.
-- A crate that `loaf.toml` declares under `[dependencies]`, the table of Incan library dependencies, and under neither `[rust-dependencies]` nor `[rust-dev-dependencies]`, is refused.
-- A crate that `loaf.toml` declares only under `[rust-dev-dependencies]` is refused outside a test file (see [`[rust-dev-dependencies]`](../../tooling/reference/project_configuration.md#rust-dev-dependencies)).
+- In a project, a `rust::` import may name `std`, a Rust dependency declared under `[rust-dependencies]`, a registry Loaf declared under `[dependencies]` with a `crates-io/<package>` identity, or a sibling path dependency whose Rust facet the package links. Dependency aliases replace `-` with `_` in the crate name. Using an item from any other crate is refused (`INCAN-T0001`).
 - An empty `@ ""` version requirement, and one that is not a Cargo SemVer requirement, are refused.
 
-These refusals are reported when the project builds or locks (`INCAN-C0001`). `rust::core` and `rust::alloc` are refused (`INCAN-I0001`).
+These refusals are reported when the project builds (`INCAN-C0001`). `rust::core` and `rust::alloc` are refused (`INCAN-I0001`).
 
 ```incan
 import rust::my_crate @ "1.0"

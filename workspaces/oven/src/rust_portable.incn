@@ -1,0 +1,87 @@
+"""Prove unchanged native producer bytes after a toolchain's artifact stores move."""
+
+from std.fs import Path
+from files import read
+from observation import SETTLE_SECONDS, Ledger, load_ledger, observe
+from publication import publish
+from unit_freshness import Key
+from unit_publication import record_verified_payload
+
+
+pub def portable_reusable(directory: Path, key: Key, outputs: list[Path]) -> Result[bool, str]:
+    """
+    Accept a relocated producer only when its complete input proof and every completed output still match.
+
+    1. Require the producer's existing content proof and matching native input key.
+    2. Compare all output names and exact bytes, excluding concurrent replacements.
+    """
+    # 1. Neither a missing proof nor another native producer may authorize relocation.
+    if key.refusal != "":
+        return Ok(false)
+    stamp = directory.joinpath("library.portable-inputs")
+    if not stamp.is_file():
+        return Ok(false)
+    recorded = read(stamp)?.split("\n")
+    first = 1 + len(key.parts)
+    if len(recorded) != first + len(outputs) or recorded[0] != key.digest:
+        return Ok(false)
+    for output in outputs:
+        if not output.is_file():
+            return Ok(false)
+    # 2. A copied file is valid only when its bytes are exactly those the original producer completed.
+    before = output_observations(outputs)?
+    mut ledger = portable_ledger(directory)
+    current = output_contents(outputs, ledger)?
+    ledger.save()?
+    if recorded[first:] != current or output_observations(outputs)? != before:
+        return Ok(false)
+    for index in range(len(outputs)):
+        output = outputs[index]
+        digest = current[index][len(output.name()) + 1:]
+        record_verified_payload(output, key.digest, digest, before[index], key.provenance)?
+    return Ok(true)
+
+
+pub def record_portable(directory: Path, key: Key, outputs: list[Path]) -> Result[None, str]:
+    """
+    Retain a content proof only after the caller has proved a completed native producer.
+
+    1. Read every completed output's exact bytes without allowing concurrent replacement.
+    2. Publish the complete native input key and output content identities together.
+    """
+    # 1. Callers retain their producer lock and validate source/native inputs before publishing this proof.
+    if key.refusal != "":
+        return Ok(None)
+    before = output_observations(outputs)?
+    mut ledger = portable_ledger(directory)
+    contents = output_contents(outputs, ledger)?
+    ledger.save()?
+    if output_observations(outputs)? != before:
+        return Err("Rust producer outputs changed while recording relocation proof")
+    # 2. A partial proof never replaces the previous completed publication.
+    stamp = directory.joinpath("library.portable-inputs")
+    text = "\n".join([key.digest] + key.parts + contents)
+    if stamp.is_file() and read(stamp)? == text:
+        return Ok(None)
+    return publish(stamp, text)
+
+
+def output_contents(outputs: list[Path], mut ledger: Ledger) -> Result[list[str], str]:
+    """Keep each expected output's file name and full-content digest in the producer's declared order."""
+    mut contents: list[str] = []
+    for output in outputs:
+        contents.append(f"{output.name()} {ledger.digest(output)?}")
+    return Ok(contents)
+
+
+def output_observations(outputs: list[Path]) -> Result[list[str], str]:
+    """Observe every output together so replacements during content verification cannot receive a proof."""
+    mut observations: list[str] = []
+    for output in outputs:
+        observations.append(observe(output)?.stamp)
+    return Ok(observations)
+
+
+def portable_ledger(directory: Path) -> Ledger:
+    """Reuse content digests only while the exact file generations that supplied them remain unchanged."""
+    return load_ledger(directory.joinpath("portable-observations.json"), SETTLE_SECONDS)

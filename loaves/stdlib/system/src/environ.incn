@@ -18,34 +18,11 @@ Example:
     ```
 """
 
-from rust::std::env import VarError, args_os, var as env_var
+from rust::std::env import args_os
+pub from std.primitives.environ import EnvironErrorKind
+from std.primitives.environ import read as _get_raw
 from std.traits.error import Error
 from std.traits.convert import TryFrom
-
-
-pub enum EnvironErrorKind(str):
-    """
-    Stable categories for environment read failures.
-
-    `Missing` reports an absent key, `InvalidKey` reports a key rejected before host lookup, `InvalidValue` reports a
-    typed conversion failure, `NotUnicode` reports a host value that cannot be represented as text, and `Other`
-    preserves forward compatibility with an unknown host category.
-    """
-
-    Missing = "missing"
-    InvalidKey = "invalid_key"
-    InvalidValue = "invalid_value"
-    NotUnicode = "not_unicode"
-    Other = "other"
-
-    def as_str(self) -> str:
-        """
-        Return the stable lowercase category spelling.
-
-        Returns:
-            One of `missing`, `invalid_key`, `invalid_value`, `not_unicode`, or `other`.
-        """
-        return self.value()
 
 
 @derive(Clone)
@@ -63,7 +40,7 @@ pub class EnvironError with Error:
     pub detail: str
 
     @staticmethod
-    def from_kind(kind: EnvironErrorKind, key: str, detail: str) -> Self:
+    pub def from_kind(kind: EnvironErrorKind, key: str, detail: str) -> Self:
         """
         Build an environment error from a stable category.
 
@@ -78,12 +55,12 @@ pub class EnvironError with Error:
         return EnvironError(_kind=kind, key=key, detail=detail)
 
     @staticmethod
-    def missing(key: str) -> Self:
+    pub def missing(key: str) -> Self:
         """Build the standard missing-variable error for `key`."""
         return EnvironError.from_kind(EnvironErrorKind.Missing, key, f"environment variable `{key}` is not set")
 
     @staticmethod
-    def invalid_key(key: str) -> Self:
+    pub def invalid_key(key: str) -> Self:
         """Build the standard error for an empty or host-invalid key."""
         return EnvironError.from_kind(
             EnvironErrorKind.InvalidKey,
@@ -92,7 +69,7 @@ pub class EnvironError with Error:
         )
 
     @staticmethod
-    def not_unicode(key: str) -> Self:
+    pub def not_unicode(key: str) -> Self:
         """Build the standard error for a host value that is not Unicode text."""
         return EnvironError.from_kind(
             EnvironErrorKind.NotUnicode,
@@ -101,7 +78,7 @@ pub class EnvironError with Error:
         )
 
     @staticmethod
-    def invalid_value(key: str, target: str) -> Self:
+    pub def invalid_value(key: str, target: str) -> Self:
         """
         Build the standard typed-read conversion error.
 
@@ -118,35 +95,17 @@ pub class EnvironError with Error:
             f"environment variable `{key}` could not be parsed or validated as `{target}`",
         )
 
-    def kind(self) -> EnvironErrorKind:
+    pub def kind(self) -> EnvironErrorKind:
         """Return the typed stable error category for branch-oriented handling."""
         return self._kind
 
-    def kind_name(self) -> str:
+    pub def kind_name(self) -> str:
         """Return the stable lowercase error category spelling."""
         return self._kind.as_str()
 
     def message(self) -> str:
         """Return the redacted human-readable error detail."""
         return self.detail
-
-
-def _get_raw(key: str) -> Result[str, EnvironErrorKind]:
-    """
-    Read a raw current-process environment value through direct Rust interop.
-
-    Returns:
-        `Ok(value)` for a present Unicode value, or `Err(kind)` with a stable `EnvironErrorKind`.
-        The non-Unicode error payload is discarded without being formatted, so observed environment values never
-        appear in an error. `EnvironErrorKind.Other` remains reserved for future host mappings.
-    """
-    if len(key) == 0 or key.contains("=") or key.contains("\0"):
-        return Err(EnvironErrorKind.InvalidKey)
-
-    match env_var(key):
-        Ok(value) => return Ok(value)
-        Err(VarError.NotPresent) => return Err(EnvironErrorKind.Missing)
-        Err(VarError.NotUnicode(_)) => return Err(EnvironErrorKind.NotUnicode)
 
 
 pub def get(key: str) -> Result[str, EnvironError]:

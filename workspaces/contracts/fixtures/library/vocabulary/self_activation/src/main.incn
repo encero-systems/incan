@@ -1,0 +1,9 @@
+# behavior: a vocabulary entry cannot activate its own registered surfaces
+# expect-exit: 1
+# expect-stderr-contains:
+#   vocabulary activation cycle
+#   self_vocab
+
+def main() -> None:
+    """Manifest preparation refuses the vocabulary cycle."""
+    pass

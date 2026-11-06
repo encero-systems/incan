@@ -1,0 +1,45 @@
+# behavior: computed frozen model constants share their values with descriptor constants and statics alongside frozen text lists
+# expect-stdout:
+#   2
+#   2
+#   2
+#   2
+#   2
+
+@derive(Descriptor)
+model Reference:
+    """One immutable documentation reference."""
+
+    pub label: FrozenStr
+    pub path: FrozenStr
+
+
+@derive(Descriptor)
+model Capability:
+    """A descriptor retaining frozen text and model collections."""
+
+    pub forms: FrozenList[str]
+    pub references: FrozenList[Reference]
+
+
+const FORMS: FrozenList[str] = ["check", "run"]
+const REFERENCES: FrozenList[Reference] = [
+    Reference(label="Reference", path="reference.md"),
+    Reference(label="Guide", path="guide.md"),
+]
+const DESCRIPTION: Capability = Capability(forms=FORMS, references=REFERENCES)
+static REGISTERED: Capability = Capability(forms=FORMS, references=REFERENCES)
+
+
+def count(values: FrozenList[Reference]) -> int:
+    """Measure the frozen collection through a function parameter."""
+    return len(values)
+
+
+def main() -> None:
+    """Observe the shared constant and both descriptor storage declarations."""
+    println(count(REFERENCES))
+    println(len(DESCRIPTION.forms))
+    println(len(DESCRIPTION.references))
+    println(len(REGISTERED.forms))
+    println(count(REGISTERED.references))

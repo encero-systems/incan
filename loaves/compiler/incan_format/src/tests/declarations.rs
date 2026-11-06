@@ -1,6 +1,6 @@
 //! Declaration formatting: models and `pub` field visibility, traits with supertraits and abstract methods, decorators
 //! and decorator factories, long function, method and class headers, generic methods, method trait targets, constrained
-//! primitive newtypes, `mut` parameters, `rust.module()` and enum methods, class, model, enum and trait body
+//! primitive newtypes, `mut` parameters, testing markers and enum methods, class, model, enum and trait body
 //! docstrings, value enums, module docstrings before `const` / `static`, rich newtypes, `rusttype` associated types,
 //! computed properties and partial declarations.
 
@@ -139,15 +139,15 @@ fn test_format_source_trait_with_supertraits() -> Result<(), FormatError> {
 }
 
 #[test]
-fn test_format_source_rust_allow_decorator() -> Result<(), FormatError> {
-    let source = r#"@rust.allow("dead_code","clippy::too_many_arguments")
-def MixedName() -> int:
-  return 1
+fn test_format_source_testing_marker_decorator() -> Result<(), FormatError> {
+    let source = r#"@marker(kind="skip",runner_only=true)
+def skipped() -> None:
+  pass
 "#;
     let formatted = format_source(source)?;
-    let expected = r#"@rust.allow("dead_code", "clippy::too_many_arguments")
-def MixedName() -> int:
-    return 1
+    let expected = r#"@marker(kind="skip", runner_only=true)
+def skipped() -> None:
+    pass
 "#;
     assert_eq!(formatted, expected);
     Ok(())
@@ -323,10 +323,8 @@ fn test_format_source_preserves_pub_class_field_visibility() -> Result<(), Forma
 }
 
 #[test]
-fn test_format_source_preserves_rust_module_and_enum_methods() -> Result<(), FormatError> {
+fn test_format_source_preserves_enum_methods() -> Result<(), FormatError> {
     let source = r#""""Runtime module docstring."""
-
-rust.module("incan_std_testing")
 
 from std.traits.error import Error
 
@@ -597,6 +595,7 @@ static COUNTER: int = 0
     Ok(())
 }
 
+/// A newtype's alias is authored once even when parser views share its declaration.
 #[test]
 fn test_format_source_preserves_rich_newtype_round_trip() -> Result<(), FormatError> {
     let source = r#"@derive(Clone)
@@ -606,6 +605,8 @@ pub type MutexGuard[T with Clone] = newtype RawMutexGuard[T]:
     Guard providing access to mutex-protected data.
     The lock is released when the guard goes out of scope.
     """
+
+    read = get
 
     def get(self) -> T:
         """Get the current value (by reference)"""
@@ -617,6 +618,7 @@ pub type MutexGuard[T with Clone] = newtype RawMutexGuard[T]:
 "#;
     let formatted = format_source(source)?;
     assert_eq!(formatted, source);
+    assert_eq!(format_source(&formatted)?, formatted);
     Ok(())
 }
 
@@ -750,5 +752,24 @@ trait Named:
 "#;
     assert_eq!(formatted, expected);
     assert_eq!(format_source(&formatted)?, expected);
+    Ok(())
+}
+
+/// Ownership sources survive both wrapped headers and abstract methods without changing their field path.
+#[test]
+fn explicit_result_sources_round_trip() -> Result<(), FormatError> {
+    let source = "def read(value: Borrowed[str]) -> Result[Borrowed[str], str] from value:\n    return Ok(value)\n\ntrait View:\n    def view(self) -> Borrowed[str] from self.name: ...\n";
+    let formatted = assert_format_round_trip_lex_parse(source)?;
+    assert!(formatted.contains("from value:"));
+    assert!(formatted.contains("from self.name\n"));
+    assert_eq!(format_source(&formatted)?, formatted);
+    let config = FormatConfig {
+        line_length: 45,
+        ..FormatConfig::default()
+    };
+    let wrapped = format_source_with_config(source, config.clone())?;
+    program_from_source(&wrapped)?;
+    assert!(wrapped.contains(") -> Result[Borrowed[str], str] from value:"));
+    assert_eq!(format_source_with_config(&wrapped, config)?, wrapped);
     Ok(())
 }

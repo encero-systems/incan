@@ -1,0 +1,5 @@
+# behavior: await is reserved and cannot be declared as a parameter name
+# expect-diagnostic: INCAN-P0001
+
+def value(await: int) -> int:
+    return 1

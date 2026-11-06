@@ -1,0 +1,38 @@
+# behavior: explicit native trait calls retain source model identity, shared loans and mutable arguments (#2256)
+# expect-stdout:
+#   true
+#   7
+#   7
+#   7
+
+"""Call native traits on source models through their imported declaration identities."""
+
+from rust::std::clone import Clone
+from rust::std::hash import DefaultHasher, Hash, Hasher
+
+
+@derive(Clone, Hash)
+model Key:
+    """Expose native cloning and hashing for an integer key."""
+
+    value: int
+
+
+def main() -> None:
+    """Observe distinct source keys' native hashes and the cloned source model."""
+    key = Key(value=7)
+    mut direct = DefaultHasher.new()
+    mut method = DefaultHasher.new()
+    Hash.hash(key, direct)
+    Hash.hash(Key(value=9), method)
+    println(Hasher.finish(direct) != Hasher.finish(method))
+    copied = Clone.clone(key)
+    println(copied.value)
+    println(key.value)
+    println(cloned_value(key))
+
+
+def cloned_value(key: &Key) -> int:
+    """Clone a borrowed source model through its native trait and retain the source result type."""
+    copied = Clone.clone(key)
+    return copied.value

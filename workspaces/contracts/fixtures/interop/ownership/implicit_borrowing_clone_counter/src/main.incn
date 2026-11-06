@@ -1,0 +1,263 @@
+# behavior: private helpers that only read a Rust tree value or a source model wrapping it walk from a field, parameter, helper chain, cursor, format, enum match, indexed list, builtin iteration and bodies with unrelated aggregates, results and closures without copying the tree (the crate's clone counter stays at 0); an explicit clone counts once; a child taken as an owned value counts its subtree; a snapshot taken before the owner is replaced counts the whole tree; a tree handed to functions declared over a reference, to a returned callable, to a trait default's callable, to a returned cursor, to a helper that clears it and to a walk over a reference parameter adds nothing; a helper handed the same tree twice costs one copy of it; forwarding an explicit exclusive reference mutates the original tree without copying it
+# expect-stdout:
+#   observe true clones 0
+#   is_table true clones 0
+#   inspect true clones 0
+#   format true clones 0
+#   match true clones 0
+#   index true clones 0
+#   iteration true true clones 0
+#   helpers true clones 0
+#   unrelated true clones 0
+#   model true true clones 0
+#   ref local true clones 0
+#   walk true clones 0
+#   selected true clones 1
+#   owned child true clones 3
+#   snapshot false replaced true clones 6
+#   ref param true true clones 6
+#   ref traverse true clones 6
+#   callback true clones 6
+#   pair true clones 9
+#   select true clones 9
+#   clear 0 clones 9
+#   trait callback true clones 9
+#   exclusive forward 0 clones 9
+
+# `Clone for Item` counts one per node it copies; `../README.md` derives every expected count.
+
+from rust::borrow_fixture import Item, clones, document
+
+
+model Envelope:
+    item: Item
+    values: list[int]
+
+
+def read_envelope(envelope: Envelope) -> bool:
+    return envelope.item.is_table()
+
+
+def traverse(item: Item, keys: list[str]) -> bool:
+    mut current = item
+    for key in keys:
+        match current.get(key):
+            Some(child) => current = child
+            None => return false
+    return current.is_integer()
+
+
+pub def observe(item: Item) -> bool:
+    return traverse(item, ["project", "count"])
+
+
+def is_table(item: Item) -> bool:
+    return item.is_table()
+
+
+def classify(item: Item) -> bool:
+    return is_table(item)
+
+
+pub def inspect(item: Item) -> bool:
+    return classify(item)
+
+
+def formatted(item: Item) -> bool:
+    return len(f"{item:?}") > 0
+
+
+def matched(item: Item) -> bool:
+    match item:
+        Item.Table(_) => return true
+        _ => return false
+
+
+def indexed(items: list[Item]) -> bool:
+    return items[0].is_table()
+
+
+def iterated(envelope: Envelope) -> bool:
+    for value in envelope.values:
+        if value < 0:
+            return false
+    return envelope.item.is_table()
+
+
+def selected_label(label: str) -> bool:
+    return label == "tree" and label in ["tree", "leaf"]
+
+
+def unrelated(item: Item) -> bool:
+    values = [1, 2]
+    callback: (int) -> int = (value) => value + 1
+    outcome: Result[int, str] = Ok(callback(values[0]))
+    match outcome:
+        Ok(_) => pass
+        Err(_) => pass
+    return item.is_table()
+
+
+def is_table_ref(item: &Item) -> bool:
+    return item.is_table()
+
+
+pub def check_ref(item: Item) -> bool:
+    return is_table_ref(item)
+
+
+def is_table_callback(item: Item) -> bool:
+    return item.is_table()
+
+
+pub def callback() -> (Item) -> bool:
+    return is_table_callback
+
+
+pub trait Factory:
+    def callback(self) -> (Item) -> bool:
+        return is_table_callback
+
+
+pub class Maker with Factory:
+    name: str
+
+
+pub def traverse_ref(item: &Item, keys: list[str]) -> bool:
+    mut current = item
+    for key in keys:
+        match current.get(key):
+            Some(child) => current = child
+            None => return false
+    return current.is_integer()
+
+
+def take_child(item: Item, key: str) -> bool:
+    mut current = item
+    match current.child(key):
+        Some(child) => current = child
+        None => return false
+    return current.is_table()
+
+
+def classify_pair(item: Item, other: Item) -> bool:
+    return item.is_table() and other.is_table()
+
+
+pub def observe_pair(item: Item) -> bool:
+    return classify_pair(item, item)
+
+
+def select_owned(item: Item) -> Item:
+    mut current = item
+    if current.is_table():
+        return current
+    current = Item.Integer(0)
+    return current
+
+
+def clear(item: Item) -> str:
+    mut current = item
+    current.clear()
+    return f"{current.child_count()}"
+
+
+pub class Reader:
+    def select(self, item: Item, keys: list[str]) -> Item:
+        mut current = item
+        for key in keys:
+            if let Some(span) = current.span():
+                assert span >= 0
+            match current.get(key):
+                Some(child) => current = child
+                None => return Item.Integer(0)
+        return current.clone()
+
+    pub def read(self, item: Item) -> Item:
+        return self.select(item, ["project", "count"])
+
+
+pub class Holder:
+    item: Item
+
+    pub def observe(self) -> bool:
+        return is_table(self.item)
+
+    pub def view(self) -> bool:
+        current: &Item = self.item
+        return current.is_table()
+
+    pub def walk(self, keys: list[str]) -> bool:
+        mut current = self.item
+        for key in keys:
+            match current.get(key):
+                Some(child) => current = child
+                None => return false
+        return current.is_integer()
+
+    pub def snapshot(mut self) -> bool:
+        current = self.item
+        self.item = Item.Integer(0)
+        return current.is_integer()
+
+    pub def replaced(self) -> bool:
+        return self.item.is_integer()
+
+
+def clear_ref(mut item: &mut Item) -> None:
+    """Clear a foreign owner through its declared exclusive loan."""
+    item.clear()
+
+
+def forward_clear_ref(mut item: &mut Item) -> None:
+    """Forward the same exclusive owner without creating an owned snapshot."""
+    clear_ref(item)
+
+
+def main() -> None:
+    println(f"observe {observe(document())} clones {clones()}")
+    holder = Holder(item=document())
+    println(f"is_table {holder.observe()} clones {clones()}")
+    println(f"inspect {inspect(document())} clones {clones()}")
+    println(f"format {formatted(document())} clones {clones()}")
+    println(f"match {matched(document())} clones {clones()}")
+    println(f"index {indexed([document()])} clones {clones()}")
+    envelope = Envelope(item=document(), values=[1, 2])
+    first_iteration = iterated(envelope)
+    second_iteration = iterated(envelope)
+    println(f"iteration {first_iteration} {second_iteration} clones {clones()}")
+    println(f"helpers {selected_label("tree")} clones {clones()}")
+    println(f"unrelated {unrelated(document())} clones {clones()}")
+    first_model_read = read_envelope(envelope)
+    second_model_read = read_envelope(envelope)
+    println(f"model {first_model_read} {second_model_read} clones {clones()}")
+    println(f"ref local {holder.view()} clones {clones()}")
+    walked = holder.walk(["project", "count"])
+    println(f"walk {walked} clones {clones()}")
+    reader = Reader()
+    selected = reader.read(document())
+    println(f"selected {selected.is_integer()} clones {clones()}")
+    owned_child = take_child(document(), "project")
+    println(f"owned child {owned_child} clones {clones()}")
+    mut owner = Holder(item=document())
+    taken = owner.snapshot()
+    println(f"snapshot {taken} replaced {owner.replaced()} clones {clones()}")
+    direct = is_table_ref(document())
+    through_return = check_ref(document())
+    println(f"ref param {direct} {through_return} clones {clones()}")
+    walked_ref = traverse_ref(document(), ["project", "count"])
+    println(f"ref traverse {walked_ref} clones {clones()}")
+    chosen = callback()
+    called = chosen(document())
+    println(f"callback {called} clones {clones()}")
+    paired = observe_pair(document())
+    println(f"pair {paired} clones {clones()}")
+    kept = select_owned(document())
+    println(f"select {kept.is_table()} clones {clones()}")
+    println(f"clear {clear(document())} clones {clones()}")
+    maker = Maker(name="maker")
+    from_default = maker.callback()
+    println(f"trait callback {from_default(document())} clones {clones()}")
+    mut exclusive = document()
+    forward_clear_ref(exclusive)
+    println(f"exclusive forward {exclusive.child_count()} clones {clones()}")

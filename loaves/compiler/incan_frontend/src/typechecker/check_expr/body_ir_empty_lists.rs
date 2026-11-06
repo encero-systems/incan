@@ -6,6 +6,7 @@ use crate::symbols::{ResolvedType, canonical_builtin_member_identity};
 use crate::typechecker::helpers::collection_type_id;
 use crate::typechecker::type_info::BodyIrEmptyListRequirement;
 use incan_lang::lang::builtins::BuiltinFnId;
+use incan_lang::lang::surface::string_methods::StringMethodId;
 use incan_lang::lang::types::collections::CollectionTypeId;
 
 impl TypeChecker {
@@ -41,8 +42,8 @@ impl TypeChecker {
             return;
         }
         let candidate = BodyIrEmptyListRequirement {
-            initializer: (assignment.value.span.start, assignment.value.span.end),
-            declaration_write: (assignment.name_span.start, assignment.name_span.end),
+            initializer: assignment.value.span,
+            declaration_write: assignment.name_span,
             list_name: name.clone(),
             element: None,
             invalidated: false,
@@ -75,6 +76,17 @@ impl TypeChecker {
             }
             return;
         }
+        if self.type_info.resolved_string_helper_call(expression.span) == Some(StringMethodId::Join) {
+            let Expr::MethodCall(_, _, type_args, arguments) = &expression.node else {
+                return;
+            };
+            if type_args.is_empty()
+                && let [CallArg::Positional(value)] = arguments.as_slice()
+            {
+                self.allow_body_ir_empty_string_list_read(value);
+            }
+            return;
+        }
         let Expr::MethodCall(receiver, _, type_args, arguments) = &expression.node else {
             return;
         };
@@ -89,7 +101,7 @@ impl TypeChecker {
             _ => None,
         };
         let actual = actual.filter(|ty| self.body_ir_requirement_is_closed(ty) && !matches!(ty, ResolvedType::Never));
-        let key = (receiver.span.start, receiver.span.end);
+        let key = receiver.span;
         let Some(identity) = self.type_info.references.resolved_identities.get(&key) else {
             return;
         };
@@ -114,7 +126,7 @@ impl TypeChecker {
         if !matches!(value.node, Expr::Ident(_)) {
             return;
         }
-        let key = (value.span.start, value.span.end);
+        let key = value.span;
         let Some(identity) = self.type_info.references.resolved_identities.get(&key) else {
             return;
         };
@@ -124,6 +136,63 @@ impl TypeChecker {
             .body_ir_empty_list_requirements
             .get_mut(identity)
         {
+            candidate.permitted_reads.insert(key);
+        }
+    }
+
+    /// Authorize one direct `str.join` list argument only after append established that the tracked element is `str`.
+    fn allow_body_ir_empty_string_list_read(&mut self, value: &Spanned<Expr>) {
+        if !matches!(value.node, Expr::Ident(_)) {
+            return;
+        }
+        let key = value.span;
+        let Some(identity) = self.type_info.references.resolved_identities.get(&key) else {
+            return;
+        };
+        let Some(candidate) = self
+            .type_info
+            .expressions
+            .body_ir_empty_list_requirements
+            .get_mut(identity)
+        else {
+            return;
+        };
+        if candidate.element == Some(ResolvedType::Str) {
+            candidate.permitted_reads.insert(key);
+        }
+    }
+
+    /// Authorize a direct return of one tracked empty-list binding when its declared result closes the same element.
+    ///
+    /// The append calls remain the element-type authority. A function result only permits the otherwise escaping read;
+    /// it cannot supply a missing element, widen a disagreement, or authorize an alias or projected expression.
+    pub(in crate::typechecker) fn allow_body_ir_empty_list_return(
+        &mut self,
+        value: &Spanned<Expr>,
+        expected: &ResolvedType,
+    ) {
+        if !matches!(value.node, Expr::Ident(_)) {
+            return;
+        }
+        let ResolvedType::Generic(name, elements) = expected else {
+            return;
+        };
+        if collection_type_id(name) != Some(CollectionTypeId::List) || elements.len() != 1 {
+            return;
+        }
+        let key = value.span;
+        let Some(identity) = self.type_info.references.resolved_identities.get(&key) else {
+            return;
+        };
+        let Some(candidate) = self
+            .type_info
+            .expressions
+            .body_ir_empty_list_requirements
+            .get_mut(identity)
+        else {
+            return;
+        };
+        if candidate.element.as_ref() == elements.first() {
             candidate.permitted_reads.insert(key);
         }
     }
@@ -143,9 +212,7 @@ impl TypeChecker {
                     .references
                     .resolved_write_identities
                     .iter()
-                    .any(|((start, end, _), selected)| {
-                        selected == &identity && (*start, *end) != candidate.declaration_write
-                    })
+                    .any(|((span, _), selected)| selected == &identity && *span != candidate.declaration_write)
                 || self
                     .type_info
                     .references

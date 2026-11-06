@@ -1,0 +1,464 @@
+"""Lower formatted strings and the display and debug operands they format."""
+
+from pub::incan_mir_plan import (
+    Carrier,
+    CalleeKind,
+    Constant,
+    Operand,
+    OperandKind,
+    Place,
+    PlanType,
+    Projection,
+    RvalueKind,
+    SourceSpan,
+    assign as plan_assign,
+    place as plan_place,
+)
+from frozen_plan import literal_text
+from rust::incan_semantics_core::body_ir import (
+    FormatPart as RustFormatPart,
+    FormatStyle as RustFormatStyle,
+    Operand as RustOperand,
+    OwnershipFact,
+    Place as RustPlace,
+    Rvalue as RustRvalue,
+)
+from element_places import is_element_place, element_place_type
+from option_tests import is_union_carrier
+from validation_errors import display_validation_error, validation_error_reference
+from model_values import debug_model_operand, display_model_operand
+from enum_display import display_enum_operand, native_enum_text, native_enum_owner, borrowed_enum_debug
+from value_enums import validate_layout
+from tuples import is_tuple_type, display_tuple, tuple_debug_formatted
+from text_plan import (
+    format_parts,
+    clone_text,
+    clone_text_reference,
+    owned_literal,
+    owned_slice_text,
+    owned_borrowed_text,
+)
+from options import format_carrier, clone_tuple_operand
+from numerics import has_sized_numeric, numeric_name, numeric_carrier
+from frame import place_type, Builder, temporary, forget_owned, drop_owned, terminate_call, external_call, read_place
+from collections import is_collection, is_owned_collection
+from lists import is_list, is_owned_list
+from checked_values import scalar_place
+from operators import operand_type
+from value_enum_methods import select_value_enum_raw, value_enum_raw_type
+from model_construction import clone_nominal_operand, lower_string_field_assignment
+from list_values import element_read, value_operand
+
+
+pub def lower_format(
+    mut builder: Builder,
+    destination: Place,
+    retained: &list[RustFormatPart],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Lower an f-string, retaining literal boundaries and the checked display or nominal Debug style."""
+    mut parts = [""]
+    mut values: list[Place] = []
+    for part in retained:
+        append_format_part(builder, part, parts, values, span)?
+    format_parts(builder, destination, parts, values, span)
+    return Ok(None)
+
+
+def append_format_part(
+    mut builder: Builder,
+    part: &RustFormatPart,
+    mut parts: list[str],
+    mut values: list[Place],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Add one f-string part: literal text extends the current text run, a value starts a new one.
+
+    `parts` always has one more entry than `values`: the text before, between and after the values.
+    """
+    match part:
+        RustFormatPart.Literal(text) => parts[-1] += str(text)
+        RustFormatPart.Expr(operand=value, style=style) =>
+            match style:
+                RustFormatStyle.Display => values.append(display_operand(builder, value, span)?)
+                RustFormatStyle.Debug => values.append(debug_operand(builder, value, span)?)
+                RustFormatStyle.TypeParameterDisplay => values.append(
+                    type_parameter_display_operand(builder, value, span)?,
+                )
+            parts.append("")
+    return Ok(None)
+
+
+def type_parameter_display_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
+    """Use the shared formatter's generic Display contract, including its copied borrowed-field observations."""
+    return display_value_operand(builder, value, span, true)
+
+
+def debug_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
+    """Borrow structural nominal places through their retained Debug implementation before materializing other values."""
+    match native_enum_text(builder, value, true, span)?:
+        Some(text) => return Ok(text)
+        None => pass
+    match value:
+        RustOperand.Place(read) =>
+            if is_element_place(builder, read.place)?:
+                # An indexed model, including an opaque native one, materializes once for its retained Debug call.
+                match element_place_type(builder, read.place)?:
+                    PlanType.Model(_owner, _name) => return debug_model_operand(builder, value, span)
+                    _ => pass
+            else:
+                match read.place.global():
+                    None =>
+                        place = scalar_place(builder, read.place, span)?
+                        match place_type(builder.locals, place):
+                            PlanType.Model(_owner, _name) => return debug_model_operand(builder, value, span)
+                            PlanType.Enum(owner, _name) => return debug_enum_operand(builder, place, owner, span)
+                            PlanType.ValidationError =>
+                                return debug_plan_operand(builder, validation_error_reference(builder, place, span)?, span)
+                            PlanType.ValidationErrorRef =>
+                                return debug_plan_operand(builder, validation_error_reference(builder, place, span)?, span)
+                            PlanType.StringRef =>
+                                return debug_plan_operand(builder, read_place(place, false, span), span)
+                            PlanType.StrRef => return debug_plan_operand(builder, read_place(place, false, span), span)
+                            _ => pass
+                    Some(_global) => pass
+        _ => pass
+    operand = value_operand(builder, value, span)?
+    ty = operand_type(builder, operand)?
+    match ty:
+        PlanType.Enum(owner, _name) =>
+            declared_debug = owner >= 0 and owner < len(builder.enums) and "Debug" in builder.enums[owner].derives
+            if native_enum_owner(builder, owner) or declared_debug:
+                return debug_plan_operand(builder, operand, span)
+        _ => pass
+    if (
+        has_sized_numeric(ty)
+        or ty in [
+            PlanType.Int,
+            PlanType.Float,
+            PlanType.Bool,
+            PlanType.Unit,
+            PlanType.String,
+            PlanType.StringRef,
+            PlanType.StrRef,
+        ]
+        or is_owned_list(ty)
+    ):
+        return debug_plan_operand(builder, operand, span)
+    return Err("unsupported Body IR nonmodel FormatStyle.Debug")
+
+
+def display_tuple_place(mut builder: Builder, value: RustPlace, span: SourceSpan) -> Result[Option[Place], str]:
+    """Display a whole local tuple while leaving global statics and other carriers on their existing paths."""
+    match value.local_id():
+        None => return Ok(None)
+        Some(_local) => pass
+    if len(value.projection) != 0:
+        return Ok(None)
+    target = scalar_place(builder, value, span)?
+    ty = place_type(builder.locals, target)
+    if not is_tuple_type(ty):
+        return Ok(None)
+    if tuple_debug_formatted(ty):
+        # A list or carrier element has no flat formatter; Debug of a snapshot spells the whole tuple as legacy
+        # does.
+        snapshot = clone_tuple_operand(builder, target, span)?
+        return Ok(Some(debug_plan_operand(builder, snapshot, span)?))
+    return Ok(Some(display_tuple(builder, target, span)?))
+
+
+pub def display_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
+    """Produce an owned `String` holding a value's display text, honoring the value's ownership fact."""
+    return display_value_operand(builder, value, span, false)
+
+
+def display_value_operand(
+    mut builder: Builder,
+    value: &RustOperand,
+    span: SourceSpan,
+    type_parameter: bool,
+) -> Result[Place, str]:
+    """
+    Produce an owned `String` holding a value's display text, honoring the value's ownership fact.
+
+    A value whose checked type is a type parameter displays as generic code displays it (see `display_plan_value`).
+    """
+    match display_model_operand(builder, value, span)?:
+        Some(text) => return Ok(text)
+        None => pass
+    match display_enum_operand(builder, value, span)?:
+        Some(text) => return Ok(text)
+        None => pass
+    # Indexed collection reads come first: their places are not model places, so the carrier check below cannot map
+    # them.
+    match value:
+        RustOperand.Place(read) =>
+            # Retained globals are scalar-only and have no frame-local slot for carrier inspection.
+            match read.place.global():
+                Some(_global) =>
+                    operand = value_operand(builder, value, span)?
+                    return display_plan_value(builder, operand, span, type_parameter)
+                None => pass
+            match element_read(builder, read.place, span)?:
+                Some(item) => return display_plan_value(builder, item, span, type_parameter)
+                None => pass
+            match display_tuple_place(builder, read.place, span)?:
+                Some(text) => return Ok(text)
+                None => pass
+        _ => pass
+    match value:
+        RustOperand.Place(read) =>
+            place = scalar_place(builder, read.place, span)?
+            if is_list(place_type(builder.locals, place)) or is_collection(place_type(builder.locals, place)):
+                operand = value_operand(builder, value, span)?
+                return display_plan_value(builder, operand, span, type_parameter)
+            match place_type(builder.locals, place):
+                PlanType.ValidationError => return display_validation_error(builder, place, span)
+                PlanType.ValidationErrorRef => return display_validation_error(builder, place, span)
+                PlanType.Enum(owner, name) =>
+                    if (
+                        owner >= len(builder.enums)
+                        and builder.intrinsics[owner - len(builder.enums)].carrier != Carrier.Declared
+                    ):
+                        result = format_carrier(builder, place, span)?
+                        if read.fact == OwnershipFact.Move:
+                            drop_owned(builder, place.local, span)
+                        return Ok(result)
+                    value_enum = value_enum_owner(builder, owner)?
+                    if value_enum >= 0:
+                        return display_value_enum(builder, value_enum, place, span)
+                _ => pass
+        _ => pass
+    # A cloned or borrowed string is copied into a new owned string; the original stays where it is.
+    match value:
+        RustOperand.Place(read) =>
+            match read.fact:
+                OwnershipFact.Clone => return clone_display_place(builder, read.place, span, type_parameter)
+                OwnershipFact.Borrow => return clone_display_place(builder, read.place, span, type_parameter)
+                _ => pass
+        RustOperand.Constant(constant) =>
+            match literal_text(constant):
+                Some(text) => return Ok(owned_literal(builder, text, span))
+                None => pass
+    operand = value_operand(builder, value, span)?
+    return display_plan_value(builder, operand, span, type_parameter)
+
+
+def value_enum_owner(mut builder: Builder, index: int) -> Result[int, str]:
+    """Find the value enum whose retained layout is source enum `index`, or -1 for any other enum."""
+    if index >= len(builder.enums):
+        return Ok(-1)
+    for owner in range(len(builder.value_enums)):
+        if builder.enums[index].canonical == builder.value_enums[owner].canonical:
+            validate_layout(builder.enums[index], builder.value_enums[owner])?
+            return Ok(owner)
+    return Ok(-1)
+
+
+def display_value_enum(mut builder: Builder, owner: int, source: Place, span: SourceSpan) -> Result[Place, str]:
+    """Display a value enum as its raw value, as legacy's Display does: the text itself, or the integer's digits."""
+    ty = value_enum_raw_type(builder, owner)
+    raw = temporary(builder, ty, span)
+    select_value_enum_raw(builder, owner, source, raw, span)?
+    if ty == PlanType.String:
+        return Ok(raw)
+    return display_plan_operand(builder, read_place(raw, false, span), span)
+
+
+pub def display_plan_operand(mut builder: Builder, operand: Operand, span: SourceSpan) -> Result[Place, str]:
+    """Format a materialized scalar without re-reading its source ownership fact."""
+    return display_plan_value(builder, operand, span, false)
+
+
+pub def display_plan_value(
+    mut builder: Builder,
+    operand: Operand,
+    span: SourceSpan,
+    type_parameter: bool,
+) -> Result[Place, str]:
+    """
+    Format a materialized scalar, as generic code formats it when its checked type is a type parameter, retaining a
+    native enum's own Display implementation. A retained shared string reference produces owned display text through
+    the ordinary text materialization boundary.
+
+    A list, set or dictionary displays through its structure, as legacy's Debug spells it. A shared scalar reference
+    retains its pointer once, then copies its numeric or boolean referent into the ordinary scalar formatter; a shared
+    frozen or static text reference displays through its native Display.
+    """
+    ty = operand_type(builder, operand)?
+    match ty:
+        PlanType.Enum(owner, _name) =>
+            if native_enum_owner(builder, owner):
+                return type_parameter_display(builder, operand, span)
+        PlanType.FrozenCollection(_name, _elements) => return debug_plan_operand(builder, operand, span)
+        PlanType.ScalarRef(elements) =>
+            if len(elements) != 1:
+                return Err("invalid Body IR scalar display reference arity")
+            if type_parameter:
+                return type_parameter_display(builder, operand, span)
+            referent = elements[0]
+            # Frozen text displays as its ordinary counterpart, through the borrowed carrier's native Display.
+            if referent == PlanType.StaticText or referent == PlanType.FrozenStr:
+                return native_format_text(builder, operand, false, span)
+            if (
+                not numeric_carrier(referent)
+                and referent not in [PlanType.Bool, PlanType.StaticBytes, PlanType.FrozenBytes]
+            ):
+                return Err("unsupported Body IR referenced display type")
+            reference = temporary(builder, ty, span)
+            builder.emit(plan_assign(reference, RvalueKind.Use(operand), span))
+            value = Place(local=reference.local, projection=Projection.Deref(referent), span=span)
+            return display_plan_value(builder, read_place(value, false, span), span, type_parameter)
+        _ => pass
+    # Generic code uses the argument's native Display, preserving generic float spelling and avoiding a cycle
+    # through sized numeric runtime formatters whose implementations use this same generic display operation.
+    if type_parameter and (ty == PlanType.Float or has_sized_numeric(ty)):
+        return type_parameter_display(builder, operand, span)
+    if is_owned_list(ty) or is_owned_collection(ty):
+        return debug_plan_operand(builder, operand, span)
+    if ty == PlanType.StringRef:
+        return clone_text_reference(builder, operand, span)
+    if ty == PlanType.String:
+        return display_string_operand(builder, operand, span)
+    if ty == PlanType.StringMutRef:
+        return exclusive_text_display(builder, operand, span)
+    if ty == PlanType.StrRef:
+        return Ok(owned_slice_text(builder, operand, span))
+    if ty == PlanType.StaticText:
+        return native_format_text(builder, operand, false, span)
+    if has_sized_numeric(ty):
+        result = temporary(builder, PlanType.String, span)
+        external_call(
+            builder,
+            f"incan_native_runtime::format_{numeric_name(ty)}",
+            [ty],
+            PlanType.String,
+            [operand],
+            result,
+            span,
+        )
+        return Ok(result)
+    mut name = ""
+    match ty:
+        PlanType.Decimal => name = "format_decimal"
+        PlanType.FrozenStr => name = "format_frozen"
+        PlanType.Int => name = "format_int"
+        PlanType.Float => name = "format_float"
+        PlanType.Bool => name = "format_bool"
+        _ => return Err("unsupported Body IR display type")
+    result = temporary(builder, PlanType.String, span)
+    external_call(builder, f"incan_native_runtime::{name}", [ty], PlanType.String, [operand], result, span)
+    return Ok(result)
+
+
+def exclusive_text_display(mut builder: Builder, operand: Operand, span: SourceSpan) -> Result[Place, str]:
+    """Format an exclusive String reference through a shared reborrow of its referent."""
+    mut reference = plan_place(0, span)
+    match operand.kind:
+        OperandKind.Move(place) => reference = place
+        OperandKind.Copy(place) => reference = place
+        _ => return Err("unsupported Body IR exclusive text display without a place")
+    referent = Place(local=reference.local, projection=Projection.Deref(PlanType.String), span=span)
+    shared = temporary(builder, PlanType.StringRef, span)
+    builder.emit(plan_assign(shared, RvalueKind.Borrow(referent), span))
+    return Ok(owned_borrowed_text(builder, read_place(shared, false, span), span))
+
+
+def debug_enum_operand(mut builder: Builder, place: Place, owner: int, span: SourceSpan) -> Result[Place, str]:
+    """Borrow a source enum's checked Debug implementation; unions and text Options retain their existing rendering."""
+    if owner >= 0 and owner < len(builder.enums):
+        declaration = builder.enums[owner]
+        if "Debug" in declaration.derives:
+            return borrowed_enum_debug(builder, place, owner, str(declaration.name), span)
+    if is_union_carrier(builder, owner):
+        copied = clone_nominal_operand(builder, place, span)?
+        return debug_plan_operand(builder, copied, span)
+    if owner >= len(builder.enums) and owner < len(builder.enums) + len(builder.intrinsics):
+        declaration = builder.intrinsics[owner - len(builder.enums)]
+        if declaration.carrier == Carrier.Option or declaration.carrier == Carrier.Result:
+            return borrowed_enum_debug(builder, place, owner, declaration.name, span)
+    return Err("unsupported Body IR nonmodel FormatStyle.Debug")
+
+
+def debug_plan_operand(mut builder: Builder, operand: Operand, span: SourceSpan) -> Result[Place, str]:
+    """Invoke legacy Debug on an admitted carrier after its read ownership has been materialized."""
+    return native_format_text(builder, operand, true, span)
+
+
+def type_parameter_display(mut builder: Builder, operand: Operand, span: SourceSpan) -> Result[Place, str]:
+    """Invoke the carrier's own Display, as generic code formats a type-parameter value."""
+    return native_format_text(builder, operand, false, span)
+
+
+pub def native_format_text(mut builder: Builder, operand: Operand, debug: bool, span: SourceSpan) -> Result[Place, str]:
+    """Format an exact owned or borrowed carrier with native Debug or Display, without a runtime cycle."""
+    ty = operand_type(builder, operand)?
+    result = temporary(builder, PlanType.String, span)
+    terminate_call(builder, CalleeKind.FormatValue(ty, debug), [operand], result, span)
+    builder.owned.append(result.local)
+    return Ok(result)
+
+
+def display_string_operand(mut builder: Builder, operand: Operand, span: SourceSpan) -> Result[Place, str]:
+    """Materialize checked text literals, retain moved strings and clone copied strings for display."""
+    match operand.kind:
+        OperandKind.Literal(Constant.Text(text)) => return Ok(owned_literal(builder, text, span))
+        OperandKind.Move(place) => return Ok(place)
+        OperandKind.Copy(place) => return clone_text(builder, place, span)
+        _ => return Err("unsupported Body IR string display ownership")
+
+
+def clone_display_place(
+    mut builder: Builder,
+    value: RustPlace,
+    span: SourceSpan,
+    type_parameter: bool,
+) -> Result[Place, str]:
+    """
+    Materialize borrowed text for display; native str slices, copyable decimal and frozen carriers keep their checked representation.
+
+    A scalar a type parameter's checked clone or borrow fact reads, once its instance or closed binding makes it
+    concrete, displays from a copy, in the type-parameter display style when the value's checked type is one.
+    """
+    place = scalar_place(builder, value, span)?
+    ty = place_type(builder.locals, place)
+    if (
+        ty in [PlanType.Decimal, PlanType.FrozenStr, PlanType.StringRef, PlanType.StrRef, PlanType.Bool, PlanType.Unit]
+        or numeric_carrier(ty)
+    ):
+        return display_plan_value(builder, read_place(place, false, span), span, type_parameter)
+    if place_type(builder.locals, place) != PlanType.String:
+        site = f"{builder.file}:{span.line}:{span.column} in {builder.name}"
+        return Err(
+            f"unsupported Body IR nonscalar display borrow at {site}; type {ty:?}; projection {place.projection:?}",
+        )
+    return clone_text(builder, place, span)
+
+
+pub def lower_string_assignment(
+    mut builder: Builder,
+    destination: Place,
+    value: &RustRvalue,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Evaluate a replacement before dropping its old value, preserving retained text ownership."""
+    if destination.projection != Projection.Whole:
+        return lower_string_field_assignment(builder, destination, value, span)
+    match value:
+        RustRvalue.Format(parts) =>
+            text = temporary(builder, PlanType.String, span)
+            lower_format(builder, text, parts, span)?
+            forget_owned(builder, text.local)
+            drop_owned(builder, destination.local, span)
+            builder.emit(plan_assign(destination, RvalueKind.Use(read_place(text, true, span)), span))
+            builder.owned.append(destination.local)
+            return Ok(None)
+        RustRvalue.Use(operand) =>
+            text = display_operand(builder, operand, span)?
+            forget_owned(builder, text.local)
+            drop_owned(builder, destination.local, span)
+            builder.emit(plan_assign(destination, RvalueKind.Use(read_place(text, true, span)), span))
+            builder.owned.append(destination.local)
+            return Ok(None)
+        _ => return Err("unsupported Body IR string Rvalue outside formatting")

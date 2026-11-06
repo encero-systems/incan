@@ -3,7 +3,7 @@
 `std.fs` is the standard-library module for filesystem paths, directory operations, metadata, and file handles.
 
 ```incan
-from std.fs import DirEntry, DiskUsage, File, FileLock, IoError, OpenFileMode, OpenOptions, Path, PathStat
+from std.fs import DirEntry, DiskUsage, File, FileLock, IoError, MappedFile, MappedView, OpenFileMode, OpenOptions, Path, PathStat
 ```
 
 The public surface is path-centric. Construct a `Path`, then call path or file-handle methods from there. Host failures return `Result[..., IoError]`; the error includes the affected `path`, a normalized `kind`, and a human-readable `message()`.
@@ -126,6 +126,36 @@ target.parent().sync_directory()?
 ```
 
 Use `path.lock_shared()` or `path.lock_exclusive()` to acquire a blocking advisory `FileLock`; `try_lock_shared()` and `try_lock_exclusive()` return `Ok(None)` when a conflicting lock is held. Locks apply to a stable sibling lock entry and are released when their guard leaves scope. They coordinate cooperative processes only, so they are not an authorization or mandatory-locking mechanism. Do not hold a blocking file lock across unrelated work or asynchronous suspension.
+
+`path.map_read()` maps a whole file read-only and returns `Result[MappedFile, IoError]`. Opening or mapping failure is an `IoError`. A mapping touches pages on demand; processes mapping the same immutable inode can share clean file-backed pages. This is not a promise about resident memory or page-cache sharing across different cloned inodes. Mapped bytes are read only through views; `MappedView.to_bytes()` is the only operation that copies them.
+
+The backing inode must not be modified or truncated until the mapping **and every derived view** are released. Read-only file permissions are not sufficient to establish immutability. Replacing a pathname by rename preserves the old mapped inode. Map only files whose publication protocol provides this guarantee, never a file an unrelated writer may edit in place.
+
+| Method | Result | Contract |
+| --- | --- | --- |
+| `MappedFile.len()` | `int` | Number of mapped bytes |
+| `MappedFile.view(offset: int, length: int)` | `Option[MappedView]` | Zero-copy view retaining the mapping |
+| `MappedView.len()` | `int` | Number of bytes in this view |
+| `MappedView.slice(offset: int, length: int)` | `Option[MappedView]` | Zero-copy subview, bounded by its parent view |
+| `MappedView.to_bytes()` | `bytes` | Explicit independent copy |
+| `MappedView.read_u8(offset: int)` / `read_i8(offset: int)` | `Option[u8]` / `Option[i8]` | One unsigned/signed byte |
+| `MappedView.read_u16_le(offset: int)` / `read_i16_le(offset: int)` | `Option[u16]` / `Option[i16]` | Little-endian 16-bit integer |
+| `MappedView.read_u32_le(offset: int)` / `read_i32_le(offset: int)` | `Option[u32]` / `Option[i32]` | Little-endian 32-bit integer |
+| `MappedView.read_u64_le(offset: int)` / `read_i64_le(offset: int)` | `Option[u64]` / `Option[i64]` | Little-endian 64-bit integer, preserving every bit |
+| `MappedView.read_f32_le(offset: int)` / `read_f64_le(offset: int)` | `Option[f32]` / `Option[f64]` | Little-endian IEEE-754 scalar |
+
+Offsets are zero-based. View offsets are relative to that view, not the file. Negative, overflowing, and past-end ranges return `None`; an empty range at the end is valid. Scalar reads accept unaligned offsets and return `None` unless the entire scalar fits. They allocate no heap buffer and do not cast bytes to native structs.
+
+A `MappedView` is an **owner-anchored view**, not a lexical borrow. Dropping the original `MappedFile` or a parent view is safe: each remaining view retains the shared mapping. Holding a small view therefore retains the whole virtual mapping until the last owner is released, though it does not eagerly load all its pages. Request-scoped code must release its views as well as its original handle.
+
+```incan
+from std.fs import Path
+
+mapped = Path("immutable.segment").map_read()?
+if let Some(header) = mapped.view(0, 16):
+    if let Some(count) = header.read_u64_le(8):
+        println(count)
+```
 
 See [Publish a file without exposing partial contents](../../how-to/file_io.md#publish-a-file-without-exposing-partial-contents) for the complete workflow, failure behavior, and portability limits.
 

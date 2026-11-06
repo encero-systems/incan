@@ -105,7 +105,7 @@ impl ValidationErrorsBuilder {
     /// Raise an aggregate validation error if any failures were collected.
     pub fn raise_if_any(self) {
         if !self.failures.is_empty() {
-            crate::errors::raise(ValidationErrors {
+            incan_std_primitives::errors::raise(ValidationErrors {
                 target: self.target,
                 failures: self.failures,
             });
@@ -119,7 +119,7 @@ impl ValidationErrorsBuilder {
 pub fn raise_validation_error(target: impl AsRef<str>, hook: impl AsRef<str>, error: impl Display) -> ! {
     let target = target.as_ref();
     let hook = hook.as_ref();
-    crate::errors::raise(format!(
+    incan_std_primitives::errors::raise(format!(
         "ValidationError: validated newtype construction failed for {target}::{hook}: {error}"
     ))
 }
@@ -130,7 +130,7 @@ pub fn raise_validation_error(target: impl AsRef<str>, hook: impl AsRef<str>, er
 pub fn raise_constraint_error(target: impl AsRef<str>, constraint: impl AsRef<str>) -> ! {
     let target = target.as_ref();
     let constraint = constraint.as_ref();
-    crate::errors::raise(format!(
+    incan_std_primitives::errors::raise(format!(
         "ValidationError: validated newtype construction failed for {target}: constraint {constraint} failed"
     ))
 }

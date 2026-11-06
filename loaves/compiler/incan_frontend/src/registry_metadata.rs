@@ -202,18 +202,18 @@ pub fn collect_checked_registry_metadata(
             registration_anchor: CheckedRegistrySourceAnchor {
                 id: format!(
                     "{module_identity}#describe.{}..{}",
-                    description.decorator_span.0, description.decorator_span.1
+                    description.decorator_span.start, description.decorator_span.end
                 ),
-                start: description.decorator_span.0,
-                end: description.decorator_span.1,
+                start: description.decorator_span.start,
+                end: description.decorator_span.end,
             },
             subject_anchor: CheckedRegistrySourceAnchor {
                 id: format!(
                     "{module_identity}#declaration.{}..{}",
-                    description.declaration_span.0, description.declaration_span.1
+                    description.declaration_span.start, description.declaration_span.end
                 ),
-                start: description.declaration_span.0,
-                end: description.declaration_span.1,
+                start: description.declaration_span.start,
+                end: description.declaration_span.end,
             },
             provenance: CheckedRegistryProvenance::CheckedDeclaration,
             reexport_paths: Vec::new(),
@@ -282,15 +282,15 @@ fn checked_explicit_entry(
         registration_anchor: CheckedRegistrySourceAnchor {
             id: format!(
                 "{module_identity}#static.{}..{}",
-                entry.declaration_span.0, entry.declaration_span.1
+                entry.declaration_span.start, entry.declaration_span.end
             ),
-            start: entry.declaration_span.0,
-            end: entry.declaration_span.1,
+            start: entry.declaration_span.start,
+            end: entry.declaration_span.end,
         },
         subject_anchor: CheckedRegistrySourceAnchor {
             id: subject_identity,
-            start: entry.subject_span.0,
-            end: entry.subject_span.1,
+            start: entry.subject_span.start,
+            end: entry.subject_span.end,
         },
         provenance,
         reexport_paths: Vec::new(),

@@ -2,6 +2,7 @@
 
 use super::args::fixed_elements;
 use super::{BodyBuilder, CanonicalSymbolId, HirSourceSpan, IncanPrimitiveType, IncanType, ast, bir, parameter_types};
+use incan_lang::lang::traits::{self, TraitId};
 
 impl BodyBuilder<'_, '_> {
     /// Retain the checked item projection and the single post-exhaustion reconstruction before native planning.
@@ -23,7 +24,7 @@ impl BodyBuilder<'_, '_> {
         let IncanType::Generic { base, args } = self.resolve_ty(receiver.span) else {
             return None;
         };
-        if base != "Iterator" || args.len() != 1 {
+        if base != traits::as_str(TraitId::Iterator) || args.len() != 1 {
             return None;
         }
         let IncanType::Named(owner) = &args[0] else {
@@ -67,7 +68,7 @@ impl BodyBuilder<'_, '_> {
         }
 
         // ---- Complete local layout and hook selection ----
-        let accepted = self.type_info.body_ir_iterator_sum_items.get(&(span.start, span.end));
+        let accepted = self.type_info.body_ir_iterator_sum_items.get(&span);
         let hook_matches = sum_hook_matches(
             identity,
             facts.checked_constructor.as_deref(),

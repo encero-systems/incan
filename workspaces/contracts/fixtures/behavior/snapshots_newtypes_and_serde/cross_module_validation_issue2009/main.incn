@@ -1,0 +1,12 @@
+# behavior: explicit newtype construction outside its module calls from_underlying exactly once (#2009)
+# expect-stdout:
+#   validated
+#   0.5
+
+from percentile import Percentile
+
+
+def main() -> None:
+    """Construct a valid value through the imported newtype."""
+    checked = Percentile(0.5)
+    println(checked.0)

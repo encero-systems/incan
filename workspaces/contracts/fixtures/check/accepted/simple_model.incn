@@ -1,0 +1,11 @@
+# behavior: a model with typed fields, one with a default, checks beside a function
+# expect-accepted:
+
+model User:
+    name: str
+    age: int = 0
+    email: str
+
+
+def greet(name: str) -> str:
+    return "Hello"

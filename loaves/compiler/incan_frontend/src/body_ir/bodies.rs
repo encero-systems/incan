@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::symbols::ResolvedType;
+use crate::typechecker::FunctionBindingInfo;
 use incan_lang::lang::decorators::{self, DecoratorId};
 
 /// Retain a nominal owner's methods and concrete property getters under their independent checked identities.
@@ -75,7 +76,7 @@ fn documented_trait_value_placeholder(
     type_info
         .declarations
         .method_bindings_by_span
-        .get(&(method.span.start, method.span.end))
+        .get(&method.span)
         .is_some_and(|binding| binding.return_type != ResolvedType::Unit)
 }
 
@@ -95,60 +96,34 @@ pub(super) fn lower_owner_property_bodies(
         .collect()
 }
 
-/// The delegation an `@rust.extern` declaration named `name` records, or `None` for an ordinary declaration (#2023).
-///
-/// The item is the declaration's own name in the file's `rust.module(...)` module, for functions and static methods
-/// alike, as the emitted route's delegation wrapper calls it. The checker refuses an extern in a file with no
-/// `rust.module(...)`, so that case never reaches lowering; it still lowers fail-closed, to a body whose only statement
-/// refuses, rather than to the placeholder.
-fn extern_delegation(
-    decorators: &[ast::Spanned<ast::Decorator>],
-    name: &str,
-    lowering_facts: &BodyIrLoweringFacts<'_, '_>,
-) -> Option<Result<bir::ExternDelegation, String>> {
-    let is_extern = decorators
-        .iter()
-        .any(|decorator| decorators::from_segments(&decorator.node.path.segments) == Some(DecoratorId::RustExtern));
-    if !is_extern {
-        return None;
-    }
-    Some(match lowering_facts.rust_module {
-        Some(module) => Ok(bir::ExternDelegation {
-            rust_module: module.to_string(),
-            rust_item: name.to_string(),
-        }),
-        None => Err(format!(
-            "`@rust.extern` declaration `{name}` in a file with no `rust.module(...)` binding"
-        )),
-    })
-}
-
 /// A refusal for a declaration whose binding a user-defined decorator chain replaced (RFC 036), or `None`.
 ///
 /// The checker rebinds the decorated name to the callable the chain returns, initialized once before `main`. Body IR
 /// has no representation for that binding: a call through the name still targets this declaration's own body. Lowering
 /// the body would run the undecorated function and skip the decorator's effects, so the declaration refuses by name
 /// until the rebinding is represented.
-fn decorator_rebinding(rebound: bool, name: &str) -> Option<Result<bir::ExternDelegation, String>> {
-    rebound.then(|| Err(format!("declaration `{name}` rebound by a user-defined decorator")))
+fn decorator_rebinding(rebound: bool, name: &str) -> Option<String> {
+    rebound.then(|| format!("declaration `{name}` rebound by a user-defined decorator"))
 }
 
-/// Lower a declaration's statements, unless it is an `@rust.extern` whose `...` placeholder must not become code.
+/// Lower an ordinary declaration's statements or retain a checked refusal for a rebound declaration.
 ///
-/// An ordinary body returns its trailing expression when it has a value-returning type (#2025). Returns the body's
-/// statements and its delegation. An extern's statements are empty (or a single refusal when its delegation could not
-/// be resolved), and its parameters are not dropped by the body: the delegated Rust item owns them.
+/// A body returns its trailing expression when it has a value-returning type (#2025). A rebound declaration cannot
+/// execute its undecorated body, so lowering records the refusal instead.
 fn lower_declaration_statements(
     builder: &mut BodyBuilder<'_, '_>,
-    delegation: Option<Result<bir::ExternDelegation, String>>,
+    refusal: Option<String>,
     source: &[ast::Spanned<ast::Statement>],
     root_scope: bir::ScopeId,
     span: HirSourceSpan,
-) -> (Vec<bir::Statement>, Option<bir::ExternDelegation>) {
+) -> Vec<bir::Statement> {
     let mut stmts = Vec::new();
-    match delegation {
-        Some(Ok(delegation)) => return (stmts, Some(delegation)),
-        Some(Err(description)) => builder.push_unsupported_stmt(description, span, &mut stmts),
+    if let Err(reason) = builder.input_body {
+        builder.push_unsupported_stmt(reason.to_owned(), span, &mut stmts);
+        return stmts;
+    }
+    match refusal {
+        Some(description) => builder.push_unsupported_stmt(description, span, &mut stmts),
         None => {
             builder.lower_block_into(source, root_scope, &mut stmts);
             let owner_return_type = builder.owner_return_type.clone();
@@ -156,7 +131,7 @@ fn lower_declaration_statements(
             builder.insert_scope_drops(&mut stmts, root_scope);
         }
     }
-    (stmts, None)
+    stmts
 }
 
 /// Lower a computed static's initializer into a body with no parameters that returns the storage carrier
@@ -167,7 +142,8 @@ fn lower_declaration_statements(
 /// never joins the module's bodies; a consumer runs it at most once, where legacy initializes the static.
 /// A sole local registry with checked literal method descriptions retains its registrations on this same value before
 /// publication. No intermediate source computation can observe that bounded profile, so initialization remains
-/// once-only.
+/// once-only. Scope cleanup may follow the terminal return; registrations precede that return without discarding
+/// its trailing drop facts.
 pub(super) fn lower_static_initializer_body(
     program: &ast::Program,
     storage: &ast::StaticDecl,
@@ -178,37 +154,54 @@ pub(super) fn lower_static_initializer_body(
 ) -> bir::Body {
     let mut builder = BodyBuilder::new(lowering_facts, ty.clone());
     if registry_effects::entry_type(storage, decl_span, lowering_facts.type_info).as_ref() == Some(ty) {
-        builder
-            .type_overrides
-            .insert((storage.value.span.start, storage.value.span.end), ty.clone());
+        builder.type_overrides.insert(storage.value.span, ty.clone());
     }
     if registry_descriptions::initialization_type(storage, lowering_facts.type_info).as_ref() == Some(ty)
         && let ast::Expr::MethodCall(receiver, _, _, _) = &storage.value.node
     {
-        builder
-            .type_overrides
-            .insert((storage.value.span.start, storage.value.span.end), ty.clone());
-        builder
-            .type_overrides
-            .insert((receiver.span.start, receiver.span.end), ty.clone());
+        builder.type_overrides.insert(storage.value.span, ty.clone());
+        builder.type_overrides.insert(receiver.span, ty.clone());
     }
     let root_scope = builder.new_scope(None, hir_span(decl_span));
     let source = [ast::Spanned::new(
         ast::Statement::Return(Some(storage.value.clone())),
         storage.value.span,
     )];
-    let (mut stmts, _) = lower_declaration_statements(&mut builder, None, &source, root_scope, hir_span(decl_span));
-    if let Some(bir::Statement {
-        kind: bir::StatementKind::Return { value: Some(value) },
-        ..
-    }) = stmts.last()
+    let mut stmts = lower_declaration_statements(&mut builder, None, &source, root_scope, hir_span(decl_span));
+    let terminal = stmts
+        .iter()
+        .rposition(|statement| !matches!(statement.kind, bir::StatementKind::Drop { .. }));
+    if let Some(index) = terminal
+        && let bir::StatementKind::Return { value: Some(value) } = &stmts[index].kind
     {
         let value = value.clone();
-        if let Some(returned) = stmts.pop() {
-            registry_descriptions::append_registrations(&mut builder, program, storage, &value, root_scope, &mut stmts);
-            stmts.push(returned);
-        }
+        let returned = stmts.remove(index);
+        let mut cleanup = stmts.split_off(index);
+        registry_descriptions::append_registrations(&mut builder, program, storage, &value, root_scope, &mut stmts);
+        stmts.push(returned);
+        stmts.append(&mut cleanup);
     }
+    finish_static_initializer_body(builder, canonical, ty, root_scope, hir_span(decl_span), stmts)
+}
+
+/// Lower a computed constant's initializer as a computed static's: a body with no parameters that returns the value,
+/// under the constant's own identity and declaration-span ids. A constant's initializer has no effects and nothing
+/// writes it, so running it once where the module initializes its storage observes what every read observes.
+pub(super) fn lower_constant_initializer_body(
+    item: &ast::ConstDecl,
+    decl_span: ast::Span,
+    canonical: &CanonicalSymbolId,
+    ty: &IncanType,
+    lowering_facts: &BodyIrLoweringFacts<'_, '_>,
+) -> bir::Body {
+    let mut builder = BodyBuilder::new(lowering_facts, ty.clone());
+    builder.type_overrides.insert(item.value.span, ty.clone());
+    let root_scope = builder.new_scope(None, hir_span(decl_span));
+    let source = [ast::Spanned::new(
+        ast::Statement::Return(Some(item.value.clone())),
+        item.value.span,
+    )];
+    let stmts = lower_declaration_statements(&mut builder, None, &source, root_scope, hir_span(decl_span));
     finish_static_initializer_body(builder, canonical, ty, root_scope, hir_span(decl_span), stmts)
 }
 
@@ -231,22 +224,27 @@ pub(super) fn finish_static_initializer_body(
     }
     let named_type_identities =
         builder.finish_type_identities(parameter_types::retained_type_identities(builder.type_info));
-    let direct_call_id = CompilerNodeId::declaration_span(builder.module_identity, span.start, span.end);
+    let direct_call_id = CompilerNodeId::declaration_at(builder.module_identity, span);
     bir::Body {
         type_parameters: Vec::new(),
+        trait_default_instantiation: None,
+        nominal_instantiation: Vec::new(),
         decl_id: direct_call_id.clone(),
         direct_call_id,
         canonical: Some(canonical.clone()),
         name: canonical.declaration_name.clone(),
         span,
         return_type: ty.clone(),
+        checked_input_profile: None,
+        explicit_input_bindings: std::mem::take(&mut builder.input_local_bindings),
+        returned_view: None,
         callable_representation: Some(bir::CallableRepresentation {
             function_pointer_locals: builder.function_pointer_locals,
             closure_holding_locals: builder.closure_holding_locals,
             closure_holding_parameters: Vec::new(),
             closure_holding_return: false,
         }),
-        named_type_identities,
+        named_type_identities: std::sync::Arc::new(named_type_identities),
         locals: builder.locals,
         params: Vec::new(),
         param_locals: Vec::new(),
@@ -258,7 +256,8 @@ pub(super) fn finish_static_initializer_body(
         runtime_requirements: builder.runtime_requirements,
         panic_facts: builder.panic_facts,
         is_async: false,
-        extern_delegation: None,
+        retired_rust_facade_wire: None,
+        native_attributes: Vec::new(),
     }
 }
 
@@ -268,8 +267,7 @@ pub(super) fn lower_function_body(
     decl_span: ast::Span,
     lowering_facts: &BodyIrLoweringFacts<'_, '_>,
 ) -> bir::Body {
-    let direct_call_id =
-        CompilerNodeId::declaration_span(lowering_facts.module_identity, decl_span.start, decl_span.end);
+    let direct_call_id = CompilerNodeId::declaration_at(lowering_facts.module_identity, decl_span);
     let decl_id = direct_call_id.clone();
     // The bare-name map is a compatibility projection and collapses top-level overloads. A body is one physical
     // declaration, so its parameter types must come from the same span-keyed fact the direct-call identity uses.
@@ -277,107 +275,60 @@ pub(super) fn lower_function_body(
         .type_info
         .declarations
         .function_bindings_by_span
-        .get(&(decl_span.start, decl_span.end));
+        .get(&decl_span);
     let type_parameters = crate::body_ir_parameter_names::source_parameter_names(&function.type_params);
     let shared_method_chain = lowering_facts
         .type_info
         .declarations
         .method_decorator_receiver_slots
-        .get(&(decl_span.start, decl_span.end))
+        .get(&decl_span)
         .is_some_and(|slot| !slot.mutable);
-    let owner_return_type = binding
-        .map(|binding| {
-            parameter_types::checked_context_type(
-                &binding.return_type,
-                lowering_facts.type_info,
-                &type_parameters,
-                lowering_facts.runtime_type_conflicts,
-            )
-        })
-        .map(|ty| {
-            if shared_method_chain {
-                decorated_bindings::planned_type(ty, lowering_facts.type_info)
-            } else {
-                ty
-            }
-        })
-        .unwrap_or(IncanType::Unknown);
+    let owner_return_type = function_return_type(binding, &type_parameters, shared_method_chain, lowering_facts);
 
     let mut builder = BodyBuilder::new(lowering_facts, owner_return_type.clone());
+    if let Some(owner) = binding.and_then(|binding| binding.identity.as_ref()) {
+        builder.input_body = lowering_facts.type_info.checked_input_body(owner);
+        builder.retain_input_transfer_subjects(function);
+    }
     builder.shared_method_chain = shared_method_chain;
     builder.type_parameters = type_parameters;
     let root_scope = builder.new_scope(None, hir_span(decl_span));
 
-    let mut param_locals = Vec::with_capacity(function.params.len());
-    for (index, param) in function.params.iter().enumerate() {
-        let mut ty = binding
-            .and_then(|b| b.params.get(index))
-            .map(|p| builder.checked_type(&p.ty))
-            .unwrap_or(IncanType::Unknown);
-        let shared_replacement = lowering_facts
-            .type_info
-            .declarations
-            .method_decorator_receiver_slots
-            .get(&(decl_span.start, decl_span.end))
-            .is_some_and(|slot| {
-                !slot.mutable && slot.role == crate::typechecker::MethodDecoratorReceiverRole::Replacement
-            });
-        if index == 0 && shared_replacement {
-            ty = IncanType::Ref(Box::new(ty));
-        }
-        if param.node.kind != ast::ParamKind::Normal {
-            ty = builder.checked_rest_parameter_type(param);
-        }
-        let local = builder.declare_new_local(
-            param.node.name.clone(),
-            ty,
-            root_scope,
-            hir_span(param.span),
-            &function.body,
-        );
-        builder.locals[local.index()].origin = bir::LocalOrigin::Parameter;
-        param_locals.push(local);
-    }
-
+    let param_locals = declare_function_parameters(&mut builder, function, binding, decl_span, root_scope);
     let mut params = Vec::with_capacity(function.params.len());
-    for (param, local) in function.params.iter().zip(param_locals.iter().copied()) {
-        let ty = builder.locals[local.index()].ty.clone();
-        params.push(bir::CallableParam {
-            local,
-            kind: parameter_types::source_parameter_kind(param.node.kind),
-            name: param.node.name.clone(),
-            ty,
-            span: hir_span(param.span),
-            default: builder.lower_callable_default(param.node.default.as_ref(), root_scope),
-            mutable: param.node.is_mut,
-        });
-    }
-
-    builder
-        .borrowed_parameters
-        .extend(params.iter().filter(|param| param.mutable).map(|param| param.local));
-    builder.owned_rest_parameters.extend(
-        params
-            .iter()
-            .filter(|param| param.kind != IncanCallableParamKind::Normal)
-            .map(|param| param.local),
+    lower_callable_parameters(
+        &mut builder,
+        &function.params,
+        &param_locals,
+        binding,
+        root_scope,
+        &mut params,
     );
+    retain_parameter_ownership(&mut builder, &params, false);
+    builder.prepare_returned_view(binding.and_then(|binding| binding.identity.as_ref()), &params, false);
+    builder.prepare_retained_result_source(binding.and_then(|binding| binding.identity.as_ref()), &params, false);
     let rebound = lowering_facts
         .type_info
         .declarations
         .decorated_function_bindings_by_span
-        .contains_key(&(decl_span.start, decl_span.end))
+        .contains_key(&decl_span)
         && !decorated_bindings::supports_function(function, decl_span, lowering_facts);
-    let (mut stmts, extern_delegation) = lower_declaration_statements(
+    let mut stmts = lower_declaration_statements(
         &mut builder,
-        decorator_rebinding(rebound, &function.name)
-            .or_else(|| extern_delegation(&function.decorators, &function.name, lowering_facts)),
+        decorator_rebinding(rebound, &function.name),
         &function.body,
         root_scope,
         hir_span(decl_span),
     );
     builder.retain_empty_collection_context(&stmts);
-    builder.retain_sdk_tuple_context(&mut stmts);
+
+    if function.is_async() {
+        builder.record_runtime_requirement(AbiV0RuntimeRequirement::AsyncRuntime);
+    }
+
+    let checked_input_profile = binding.and_then(|binding| binding.identity.as_ref()).and_then(|owner| {
+        builder.checked_function_input_profile(owner, function, &params, hir_span(decl_span), &mut stmts)
+    });
 
     if builder
         .locals
@@ -389,14 +340,20 @@ pub(super) fn lower_function_body(
 
     let named_type_identities =
         builder.finish_type_identities(parameter_types::retained_type_identities(lowering_facts.type_info));
+    let returned_view = result_dependency(&builder);
     bir::Body {
         type_parameters: builder.type_parameters,
+        trait_default_instantiation: None,
+        nominal_instantiation: Vec::new(),
         decl_id,
         direct_call_id,
         canonical: binding.and_then(|binding| binding.identity.clone()),
         name: function.name.clone(),
         span: hir_span(decl_span),
         return_type: owner_return_type,
+        checked_input_profile,
+        explicit_input_bindings: std::mem::take(&mut builder.input_local_bindings),
+        returned_view,
         callable_representation: Some(bir::CallableRepresentation {
             function_pointer_locals: builder.function_pointer_locals,
             closure_holding_locals: builder.closure_holding_locals,
@@ -411,7 +368,7 @@ pub(super) fn lower_function_body(
                 .type_info
                 .is_closure_returning_type(function.return_type.span),
         }),
-        named_type_identities,
+        named_type_identities: std::sync::Arc::new(named_type_identities),
         locals: builder.locals,
         params,
         param_locals,
@@ -423,7 +380,14 @@ pub(super) fn lower_function_body(
         runtime_requirements: builder.runtime_requirements,
         panic_facts: builder.panic_facts,
         is_async: function.is_async(),
-        extern_delegation,
+        retired_rust_facade_wire: None,
+        native_attributes: lowering_facts
+            .type_info
+            .declarations
+            .native_attribute_applications
+            .get(&decl_span)
+            .cloned()
+            .unwrap_or_default(),
     }
 }
 /// Lower one method declaration's body into Body IR v0, or `None` for an abstract method (`body: None` — a trait
@@ -435,7 +399,7 @@ pub(super) fn lower_function_body(
 /// declaration span (#1121) — mirroring exactly how [`lower_function_body`] consumes `function_bindings` for top-level
 /// `def` parameters. This lookup can only miss (falling back to [`IncanType::Unknown`], matching
 /// `lower_function_body`'s own fallback) when the typechecker genuinely produced no fact for this declaration, such as
-/// a method belonging to a declaration kind excluded from `TypeChecker::check_method_with_self_ty`'s call sites; it is
+/// a declaration that never reached method signature preparation; it is
 /// not the normal path for an ordinarily checked method. This does not change the accuracy of ownership facts computed
 /// for actual *reads* of those parameters inside the body: those go through [`BodyBuilder::resolve_ty`] at each read's
 /// own span, which is populated uniformly for every checked expression regardless of whether it sits in a function or a
@@ -456,6 +420,8 @@ pub(super) fn lower_method_body(
     lowering_facts: &BodyIrLoweringFacts<'_, '_>,
 ) -> Option<bir::Body> {
     let body_stmts = method.body.as_ref()?;
+    let checked_receiver = lowering_facts.type_info.qualify_semantic_type(receiver_ty.clone());
+    let receiver_ty = &checked_receiver;
 
     // Method names are not unique across a module the way top-level function names are (two classes can each
     // declare a method named `new`), so the method's CompilerNodeId is scoped under its owning declaration's name
@@ -464,108 +430,43 @@ pub(super) fn lower_method_body(
         lowering_facts.module_identity,
         &format!("{owner_name}::{}", method.name),
     );
-    let direct_call_id =
-        CompilerNodeId::declaration_span(lowering_facts.module_identity, decl_span.start, decl_span.end);
+    let direct_call_id = CompilerNodeId::declaration_at(lowering_facts.module_identity, decl_span);
     // Computed getters use their dedicated checked property frame in `lower_getter_body`.
     let binding = lowering_facts
         .type_info
         .declarations
         .method_bindings_by_span
-        .get(&(decl_span.start, decl_span.end));
+        .get(&decl_span);
     let mut type_parameters = owner_parameter_names(receiver_ty, owner_name, lowering_facts.type_info);
     type_parameters.extend(method.type_params.iter().map(|parameter| parameter.name.clone()));
-    let owner_return_type = binding
-        .map(|binding| {
-            parameter_types::checked_context_type(
-                &binding.return_type,
-                lowering_facts.type_info,
-                &type_parameters,
-                lowering_facts.runtime_type_conflicts,
-            )
-        })
-        .map(|ty| close_self_type(ty, receiver_ty))
-        .unwrap_or(IncanType::Unknown);
-
-    // Resolve a nominal Self return exactly as a Self parameter; trait defaults keep their open Self receiver.
-    let owner_return_type = if owner_return_type == IncanType::SelfType {
-        receiver_ty.clone()
-    } else {
-        owner_return_type
-    };
+    let owner_return_type = method_return_type(binding, &type_parameters, receiver_ty, lowering_facts);
     let mut builder = BodyBuilder::new(lowering_facts, owner_return_type.clone());
+    if let Some(owner) = binding.and_then(|binding| binding.identity.as_ref()) {
+        builder.input_body = lowering_facts.type_info.checked_input_body(owner);
+    }
     builder.type_parameters = type_parameters;
     builder.retain_newtype_implementation(owner_name);
     let root_scope = builder.new_scope(None, hir_span(decl_span));
 
-    let mut params = Vec::with_capacity(method.params.len() + 1);
-    let mut param_locals = Vec::with_capacity(method.params.len() + 1);
-    if let Some(receiver) = method.receiver {
-        let mutable = matches!(receiver, ast::Receiver::Mutable);
-        let receiver_span = method
-            .receiver_binding
-            .as_ref()
-            .map_or(decl_span, |binding| binding.span);
-        let self_local =
-            builder.declare_receiver_local(receiver_ty.clone(), mutable, root_scope, hir_span(receiver_span));
-        param_locals.push(self_local);
-        params.push(bir::CallableParam {
-            local: self_local,
-            kind: IncanCallableParamKind::Normal,
-            name: "self".to_string(),
-            ty: receiver_ty.clone(),
-            span: hir_span(decl_span),
-            default: bir::CallableParamDefault::Required,
-            mutable,
-        });
-    }
-
-    let mut ordinary_param_locals = Vec::with_capacity(method.params.len());
-    for (index, param) in method.params.iter().enumerate() {
-        let ty = binding
-            .and_then(|b| b.params.get(index))
-            .map(|p| builder.checked_type(&p.ty))
-            .unwrap_or(IncanType::Unknown);
-        let ty = if param.node.kind != ast::ParamKind::Normal {
-            builder.checked_rest_parameter_type(param)
-        } else {
-            close_self_type(ty, receiver_ty)
-        };
-        let local = builder.declare_new_local(
-            param.node.name.clone(),
-            ty,
-            root_scope,
-            hir_span(param.span),
-            body_stmts,
-        );
-        builder.locals[local.index()].origin = bir::LocalOrigin::Parameter;
-        param_locals.push(local);
-        ordinary_param_locals.push(local);
-    }
-
-    for (param, local) in method.params.iter().zip(ordinary_param_locals) {
-        let ty = builder.locals[local.index()].ty.clone();
-        params.push(bir::CallableParam {
-            local,
-            kind: parameter_types::source_parameter_kind(param.node.kind),
-            name: param.node.name.clone(),
-            ty,
-            span: hir_span(param.span),
-            default: builder.lower_callable_default(param.node.default.as_ref(), root_scope),
-            mutable: param.node.is_mut,
-        });
-    }
-
-    builder.borrowed_parameters.extend(
-        params
-            .iter()
-            .filter(|param| param.mutable && param.name != "self")
-            .map(|param| param.local),
+    let (params, param_locals) = lower_method_parameters(
+        &mut builder,
+        method,
+        binding,
+        receiver_ty,
+        body_stmts,
+        decl_span,
+        root_scope,
     );
-    builder.owned_rest_parameters.extend(
-        params
-            .iter()
-            .filter(|param| param.kind != IncanCallableParamKind::Normal)
-            .map(|param| param.local),
+    retain_parameter_ownership(&mut builder, &params, true);
+    builder.prepare_returned_view(
+        binding.and_then(|binding| binding.identity.as_ref()),
+        &params,
+        method.receiver.is_some(),
+    );
+    builder.prepare_retained_result_source(
+        binding.and_then(|binding| binding.identity.as_ref()),
+        &params,
+        method.receiver.is_some(),
     );
     let rebound = lowering_facts
         .type_info
@@ -573,15 +474,20 @@ pub(super) fn lower_method_body(
         .decorated_method_bindings
         .contains_key(&(owner_name.to_string(), method.name.clone()))
         && !decorated_bindings::supports_method(method, owner_name, lowering_facts.type_info);
-    let (stmts, extern_delegation) = lower_declaration_statements(
+    let mut stmts = lower_declaration_statements(
         &mut builder,
-        decorator_rebinding(rebound, &method.name)
-            .or_else(|| extern_delegation(&method.decorators, &method.name, lowering_facts)),
+        decorator_rebinding(rebound, &method.name),
         body_stmts,
         root_scope,
         hir_span(decl_span),
     );
     builder.retain_empty_collection_context(&stmts);
+    if method.is_async() {
+        builder.record_runtime_requirement(AbiV0RuntimeRequirement::AsyncRuntime);
+    }
+    let checked_input_profile = binding.and_then(|binding| binding.identity.as_ref()).and_then(|owner| {
+        builder.checked_method_input_profile(owner, method, &params, hir_span(decl_span), &mut stmts)
+    });
 
     if builder
         .locals
@@ -593,7 +499,10 @@ pub(super) fn lower_method_body(
 
     let named_type_identities =
         builder.finish_type_identities(parameter_types::retained_type_identities(lowering_facts.type_info));
+    let returned_view = result_dependency(&builder);
     Some(bir::Body {
+        trait_default_instantiation: None,
+        nominal_instantiation: Vec::new(),
         // Nominal receiver frames close their owner through layout specialization. Trait defaults instead retain
         // their owner binders until the checked adoption specializes them; publication must know the exact scope.
         type_parameters: if method.receiver.is_none() || *receiver_ty == IncanType::SelfType {
@@ -611,6 +520,9 @@ pub(super) fn lower_method_body(
         name: method.name.clone(),
         span: hir_span(decl_span),
         return_type: owner_return_type,
+        checked_input_profile,
+        explicit_input_bindings: std::mem::take(&mut builder.input_local_bindings),
+        returned_view,
         callable_representation: Some(bir::CallableRepresentation {
             function_pointer_locals: builder.function_pointer_locals,
             closure_holding_locals: builder.closure_holding_locals,
@@ -625,7 +537,7 @@ pub(super) fn lower_method_body(
                 .type_info
                 .is_closure_returning_type(method.return_type.span),
         }),
-        named_type_identities,
+        named_type_identities: std::sync::Arc::new(named_type_identities),
         locals: builder.locals,
         params,
         param_locals,
@@ -637,11 +549,293 @@ pub(super) fn lower_method_body(
         runtime_requirements: builder.runtime_requirements,
         panic_facts: builder.panic_facts,
         is_async: method.is_async(),
-        extern_delegation,
+        retired_rust_facade_wire: None,
+        native_attributes: Vec::new(),
     })
 }
+/// Resolve the checked return contract in a free function's binder context, applying a shared method decorator's
+/// planned carrier only when the checker retained a binding. Missing facts keep the existing unknown fallback.
+fn function_return_type(
+    binding: Option<&FunctionBindingInfo>,
+    type_parameters: &[String],
+    shared_method_chain: bool,
+    facts: &BodyIrLoweringFacts<'_, '_>,
+) -> IncanType {
+    binding
+        .map(|binding| {
+            parameter_types::checked_context_type(
+                &returned_value(binding, facts),
+                facts.type_info,
+                type_parameters,
+                facts.runtime_type_conflicts,
+            )
+        })
+        .map(|ty| {
+            if shared_method_chain {
+                decorated_bindings::planned_type(ty, facts.type_info)
+            } else {
+                ty
+            }
+        })
+        .map(|ty| carried_return_type(binding, ty, facts))
+        .unwrap_or(IncanType::Unknown)
+}
+
+/// Resolve a method's checked return in its owner context. Nominal `Self` returns close like `Self` parameters;
+/// trait defaults retain their open receiver and absent checked bindings remain unknown.
+fn method_return_type(
+    binding: Option<&FunctionBindingInfo>,
+    type_parameters: &[String],
+    receiver_ty: &IncanType,
+    facts: &BodyIrLoweringFacts<'_, '_>,
+) -> IncanType {
+    let ty = binding
+        .map(|binding| {
+            parameter_types::checked_context_type(
+                &returned_value(binding, facts),
+                facts.type_info,
+                type_parameters,
+                facts.runtime_type_conflicts,
+            )
+        })
+        .map(|ty| close_self_type(ty, receiver_ty))
+        .unwrap_or(IncanType::Unknown);
+    if ty == IncanType::SelfType {
+        receiver_ty.clone()
+    } else {
+        carried_return_type(binding, ty, facts)
+    }
+}
+
+/// A returned view's body returns its source's value type; the view's access travels as the body's returned view.
+/// The binding keeps the written mode for callers, as the checker's own body context does.
+fn returned_value(binding: &FunctionBindingInfo, facts: &BodyIrLoweringFacts<'_, '_>) -> ResolvedType {
+    let contract = binding
+        .identity
+        .as_ref()
+        .and_then(|identity| facts.type_info.declarations.ownership_contracts.get(identity));
+    crate::ownership_metadata::result_value_type(contract, &binding.return_type)
+        .unwrap_or_else(|_| binding.return_type.clone())
+}
+
+/// A carried view's body returns its carrier with the view's reference as the carrying payload, through the same
+/// `reference_carrier` its callers use for the call's result. Other bodies keep their checked return type.
+fn carried_return_type(
+    binding: Option<&FunctionBindingInfo>,
+    ty: IncanType,
+    facts: &BodyIrLoweringFacts<'_, '_>,
+) -> IncanType {
+    let contract = binding
+        .and_then(|binding| binding.identity.as_ref())
+        .and_then(|identity| facts.type_info.declarations.ownership_contracts.get(identity));
+    match crate::ownership_metadata::returned_view(contract) {
+        Ok(Some(view)) => match view.carried {
+            Some(payload) => super::returned_views::reference_carrier(ty, view.access, payload),
+            None => ty,
+        },
+        _ => ty,
+    }
+}
+
+/// Publish one result-source relationship without changing Body IR's positional representation. Shared and
+/// exclusive access remain returned views; owned access marks only a native result's retained parameter loan.
+fn result_dependency(builder: &BodyBuilder<'_, '_>) -> Option<bir::ReturnedView> {
+    builder
+        .returned_view
+        .as_ref()
+        .map(|source| source.view.clone())
+        .or_else(|| {
+            builder.retained_result_source.map(|slot| bir::ReturnedView {
+                slot,
+                access: incan_semantics_core::IncanInputAccess::Owned,
+                carried: None,
+            })
+        })
+}
+
+/// Declare every free-function parameter before lowering defaults, preserving the shared replacement receiver
+/// slot's reference type and the checked representation of rest parameters.
+fn declare_function_parameters(
+    builder: &mut BodyBuilder<'_, '_>,
+    function: &ast::FunctionDecl,
+    binding: Option<&FunctionBindingInfo>,
+    decl_span: ast::Span,
+    scope: bir::ScopeId,
+) -> Vec<bir::LocalId> {
+    let mut locals = Vec::with_capacity(function.params.len());
+    for (index, param) in function.params.iter().enumerate() {
+        let mut ty = binding
+            .and_then(|b| b.params.get(index))
+            .map(|p| {
+                super::input_access::value_type(
+                    builder,
+                    binding.and_then(|binding| binding.identity.as_ref()),
+                    index,
+                    &p.ty,
+                )
+            })
+            .unwrap_or(IncanType::Unknown);
+        let shared_replacement = builder
+            .type_info
+            .declarations
+            .method_decorator_receiver_slots
+            .get(&decl_span)
+            .is_some_and(|slot| {
+                !slot.mutable && slot.role == crate::typechecker::MethodDecoratorReceiverRole::Replacement
+            });
+        if index == 0 && shared_replacement {
+            ty = IncanType::Ref(Box::new(ty));
+        }
+        if param.node.kind != ast::ParamKind::Normal {
+            ty = builder.checked_rest_parameter_type(param);
+        }
+        let local = builder.declare_new_local(param.node.name.clone(), ty, scope, hir_span(param.span), &function.body);
+        builder.locals[local.index()].origin = bir::LocalOrigin::Parameter;
+        locals.push(local);
+    }
+    locals
+}
+
+/// Declare the optional receiver first, then every ordinary parameter, before evaluating any defaults. The
+/// checked receiver closes ordinary `Self` parameter types; rest parameters retain their own checked carrier.
+fn lower_method_parameters(
+    builder: &mut BodyBuilder<'_, '_>,
+    method: &ast::MethodDecl,
+    binding: Option<&FunctionBindingInfo>,
+    receiver_ty: &IncanType,
+    body: &[ast::Spanned<ast::Statement>],
+    decl_span: ast::Span,
+    scope: bir::ScopeId,
+) -> (Vec<bir::CallableParam>, Vec<bir::LocalId>) {
+    let mut params = Vec::with_capacity(method.params.len() + 1);
+    let mut param_locals = Vec::with_capacity(method.params.len() + 1);
+    if let Some(receiver) = method.receiver {
+        let mutable = matches!(receiver, ast::Receiver::Mutable);
+        let receiver_span = method
+            .receiver_binding
+            .as_ref()
+            .map_or(decl_span, |binding| binding.span);
+        let self_local = builder.declare_receiver_local(receiver_ty.clone(), mutable, scope, hir_span(receiver_span));
+        param_locals.push(self_local);
+        params.push(bir::CallableParam {
+            local: self_local,
+            kind: IncanCallableParamKind::Normal,
+            name: "self".to_string(),
+            ty: receiver_ty.clone(),
+            span: hir_span(decl_span),
+            default: bir::CallableParamDefault::Required,
+            mutable,
+            input_access: incan_semantics_core::IncanInputAccess::Inferred,
+            native_owned: false,
+        });
+    }
+    let mut ordinary_param_locals = Vec::with_capacity(method.params.len());
+    for (index, param) in method.params.iter().enumerate() {
+        let ty = binding
+            .and_then(|b| b.params.get(index))
+            .map(|p| {
+                super::input_access::value_type(
+                    builder,
+                    binding.and_then(|binding| binding.identity.as_ref()),
+                    index,
+                    &p.ty,
+                )
+            })
+            .unwrap_or(IncanType::Unknown);
+        let ty = if param.node.kind != ast::ParamKind::Normal {
+            builder.checked_rest_parameter_type(param)
+        } else {
+            close_self_type(ty, receiver_ty)
+        };
+        let local = builder.declare_new_local(param.node.name.clone(), ty, scope, hir_span(param.span), body);
+        builder.locals[local.index()].origin = bir::LocalOrigin::Parameter;
+        param_locals.push(local);
+        ordinary_param_locals.push(local);
+    }
+    lower_callable_parameters(
+        builder,
+        &method.params,
+        &ordinary_param_locals,
+        binding,
+        scope,
+        &mut params,
+    );
+    (params, param_locals)
+}
+
+/// Attach callable parameter contracts to already declared locals in source order. Default lowering sees the
+/// complete parameter frame, while native ownership comes from the same span-keyed checked binding.
+fn lower_callable_parameters(
+    builder: &mut BodyBuilder<'_, '_>,
+    source: &[ast::Spanned<ast::Param>],
+    locals: &[bir::LocalId],
+    binding: Option<&FunctionBindingInfo>,
+    scope: bir::ScopeId,
+    out: &mut Vec<bir::CallableParam>,
+) {
+    for (index, (param, local)) in source.iter().zip(locals.iter().copied()).enumerate() {
+        let ty = builder.locals[local.index()].ty.clone();
+        let mut parameter = bir::CallableParam {
+            local,
+            kind: parameter_types::source_parameter_kind(param.node.kind),
+            name: param.node.name.clone(),
+            ty,
+            span: hir_span(param.span),
+            default: builder.lower_callable_default(param.node.default.as_ref(), scope),
+            mutable: param.node.is_mut,
+            input_access: incan_semantics_core::IncanInputAccess::Inferred,
+            native_owned: binding
+                .and_then(|binding| binding.params.get(index))
+                .is_some_and(|parameter| {
+                    parameter_types::native_collection_parameter(&parameter.ty, builder.type_info)
+                }),
+        };
+        super::input_access::apply(
+            &mut parameter,
+            builder.type_info,
+            binding.and_then(|binding| binding.identity.as_ref()),
+            index,
+        );
+        out.push(parameter);
+    }
+}
+
+/// Seed parameter ownership from the retained callable contracts. Receiver borrowing is already recorded when a
+/// method receiver is declared, so method callers exclude it from this ordinary mutable-parameter pass.
+fn retain_parameter_ownership(
+    builder: &mut BodyBuilder<'_, '_>,
+    params: &[bir::CallableParam],
+    exclude_receiver: bool,
+) {
+    builder.borrowed_parameters.extend(
+        params
+            .iter()
+            .filter(|param| {
+                (!exclude_receiver || param.name != "self")
+                    && match param.input_access {
+                        incan_semantics_core::IncanInputAccess::Shared
+                        | incan_semantics_core::IncanInputAccess::InferredShared
+                        | incan_semantics_core::IncanInputAccess::Exclusive => true,
+                        incan_semantics_core::IncanInputAccess::Owned => false,
+                        incan_semantics_core::IncanInputAccess::Inferred => param.mutable && !param.native_owned,
+                    }
+            })
+            .map(|param| param.local),
+    );
+    builder.owned_parameters.extend(
+        params
+            .iter()
+            .filter(|param| {
+                param.input_access == incan_semantics_core::IncanInputAccess::Owned
+                    || (param.input_access.is_inferred()
+                        && (param.native_owned || param.kind != IncanCallableParamKind::Normal))
+            })
+            .map(|param| param.local),
+    );
+}
+
 /// Reconstruct the concrete `self` type for a method declared on `owner_name`, mirroring how
-/// `check_method_with_self_ty` (`loaves/compiler/incan_frontend/src/typechecker/check_decl.rs`) derives its own `self`
+/// `concrete_method_self_type` (`loaves/compiler/incan_frontend/src/typechecker/check_decl.rs`) derives its own `self`
 /// binding's type: a bare [`IncanType::Named`] for a non-generic owner, or an [`IncanType::Generic`] instantiated with
 /// the owner's own type parameters (as type variables) for a generic owner. That typechecker-side resolved type is
 /// transient checker state, not persisted anywhere in [`TypeCheckInfo`], so lowering rebuilds the equivalent type

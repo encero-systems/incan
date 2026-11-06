@@ -1,7 +1,0 @@
-"""Boolean literal helper used to select the nested union's bool payload variant."""
-
-from projection_builders import BoolLiteralExpr, bool_expr
-
-pub def always_true() -> BoolLiteralExpr:
-  """Return the public boolean expression that must lower to the canonical variant."""
-  return bool_expr(true)

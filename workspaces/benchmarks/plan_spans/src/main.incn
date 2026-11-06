@@ -1,0 +1,30 @@
+"""Retain many source locations while proving their file text shares one allocation beyond its creating scope."""
+
+from pub::incan_mir_plan import SourceSpan, source_span
+from rust::std::sync import Arc
+
+
+def retained_span() -> SourceSpan:
+    """Return a source location after its local file owner leaves scope."""
+    mut name = "x"
+    for exponent in range(13):
+        name = name + name
+    return source_span(file=f"/diagnostics/{name}.incn", line=17, column=9)
+
+
+def main() -> None:
+    """1. Retain copies. 2. Prove shared file storage. 3. Print the exact retained diagnostic and count."""
+    # 1. Retain many copies after the original file owner's scope has ended.
+    original = retained_span()
+    mut copies: list[SourceSpan] = []
+    for position in range(100000):
+        copies.append(original.clone())
+
+    # 2. A copied span retains the same file allocation rather than another owned string.
+    retained = copies[len(copies) - 1]
+    assert Arc.ptr_eq(original.file, retained.file), "copied source spans must share their file storage"
+
+    # 3. Diagnostic text and coordinates remain exact after their creating scope returns.
+    assert retained.line == 17 and retained.column == 9
+    println(f"{retained.file}:{retained.line}:{retained.column}")
+    println(len(copies))

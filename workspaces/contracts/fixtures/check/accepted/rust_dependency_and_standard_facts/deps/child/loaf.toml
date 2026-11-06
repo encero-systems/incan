@@ -1,0 +1,8 @@
+[project]
+name = "child-package"
+version = "0.1.0"
+
+[rust]
+name = "child_alias"
+type = "lib"
+edition = "2024"

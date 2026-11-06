@@ -1,0 +1,9 @@
+[project]
+name = "shared_features"
+version = "0.1.0"
+
+[project.features]
+default = ["poison"]
+poison = []
+alpha = []
+beta = []

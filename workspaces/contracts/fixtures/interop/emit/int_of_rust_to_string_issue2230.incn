@@ -1,0 +1,14 @@
+# behavior: int parses the string returned by a borrowed Rust String's to_string method (#2230)
+# expect-stdout:
+#   42
+
+from rust::std::collections import HashMap
+
+
+def main() -> None:
+    """Parse the display result of the borrowed String returned by a Rust lookup."""
+    mut values: HashMap[str, str] = HashMap.new()
+    values.insert("number", "42")
+    match values.get("number"):
+        Some(value) => println(int(value.to_string()))
+        None => println("missing")

@@ -1,0 +1,12 @@
+# behavior: an associated item a Rust type's metadata does not admit is refused at check time, not left untyped (rust-19)
+# expect-diagnostic: INCAN-T0001
+
+"""Rust associated items come only from the type's admitted metadata."""
+
+from rust::std::time import Duration
+
+
+def main() -> None:
+    """Read an associated item the metadata does not name."""
+    value = Duration.NOT_AN_ITEM
+    println("unreachable")

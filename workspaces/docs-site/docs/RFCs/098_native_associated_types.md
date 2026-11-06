@@ -335,7 +335,7 @@ This section is non-normative. The contract is the language behavior above; comp
 - **Typechecker / Symbol resolution**: trait metadata must record associated type declarations, adoption metadata and RFC 099 trait-owned capability metadata must record bindings, projections must resolve through active bounds and concrete implementations, and signature compatibility must substitute associated type bindings.
 - **IR Lowering**: checked associated type projections must remain visible enough for backend type lowering and diagnostics rather than degrading to unknown types.
 - **Emission**: Rust emission should lower native associated types to Rust associated type items where possible and substitute concrete bindings in generated method signatures as required.
-- **Stdlib / Runtime (`incan_stdlib`)**: stdlib traits such as streaming hashers, iterators, parsers, codecs, and adapters may use associated types to remove duplicated shape-specific abstractions.
+- **Stdlib / Runtime (`loaves/stdlib/`)**: stdlib traits such as streaming hashers, iterators, parsers, codecs, and adapters may use associated types to remove duplicated shape-specific abstractions.
 - **Formatter**: associated type declarations, targeted bindings, and projection types must format stably.
 - **Library manifests / checked API metadata**: public trait metadata must preserve associated type declarations, bindings, projections, trait-qualified targets, and degraded-state markers for downstream package consumers and generated documentation.
 - **LSP / Tooling**: completions, hover, go-to-definition, diagnostics, semantic inspection, and explanation commands should expose associated type members, concrete bindings, provenance, and ambiguity reasons.

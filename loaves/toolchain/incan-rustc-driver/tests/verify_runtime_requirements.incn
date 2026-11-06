@@ -1,0 +1,249 @@
+"""Exercise runtime closure selection through the direct installed-driver boundary."""
+
+from rust::std::process import Command, exit
+from rust::std::string import String as RustString
+from std.environ import args
+from std.fs import Path
+from std.json import JsonValue
+
+
+pub model Settings:
+    """Direct driver, sysroot, unit identifier, source checkout, template unit, and new evidence directory."""
+
+    pub driver: str
+    pub sysroot: str
+    pub builder: str
+    pub source_root: str
+    pub template: Path
+    pub scratch: Path
+
+
+def main() -> None:
+    """Parse the six historical operands, exercise each minimal closure, and retain all evidence."""
+    arguments = args().unwrap_or([])
+    match parse(arguments[1:]):
+        Ok(settings) =>
+            match verify(settings):
+                Ok(_) => exit(0)
+                Err(message) =>
+                    println(f"runtime requirements: {message}")
+                    exit(1)
+        Err(message) =>
+            println(f"runtime requirements: {message}")
+            exit(2)
+
+
+pub def parse(arguments: list[str]) -> Result[Settings, str]:
+    """Parse `DRIVER SYSROOT NATIVE_BUILDER SOURCE_ROOT TEMPLATE_UNIT NEW_SCRATCH`."""
+    if len(arguments) != 6:
+        return Err("expected DRIVER SYSROOT NATIVE_BUILDER SOURCE_ROOT TEMPLATE_UNIT NEW_SCRATCH")
+    return Ok(
+        Settings(
+            driver=arguments[0],
+            sysroot=arguments[1],
+            builder=arguments[2],
+            source_root=arguments[3],
+            template=Path(arguments[4]),
+            scratch=Path(arguments[5]),
+        ),
+    )
+
+
+pub def verify(settings: Settings) -> Result[None, str]:
+    """
+    Prove runtime requirements at the direct-driver boundary.
+
+    1. Compile four library fixtures with only the governed runtime Loaf retained.
+    2. Compile and execute a separate consumer against the minimal hex provider.
+    """
+    if settings.scratch.exists():
+        return Err(f"scratch directory already exists: {settings.scratch.0}")
+    settings.scratch.mkdir(true, false).map_err((error) => error.message())?
+    fixtures = Path(settings.source_root).joinpath(
+        "loaves/toolchain/incan-rustc-driver/tests/fixtures/runtime_dependencies",
+    )
+    if not fixtures.is_dir():
+        return Err(f"runtime dependency fixtures are absent: {fixtures.0}")
+    template = read_json(settings.template)?
+    runtime = runtime_loaves(template)?
+
+    # 1. Every case starts a fresh compiler process and retains no ordinary standard Loaf.
+    for name in ["empty", "identity", "bytes_loop", "hex"]:
+        project = settings.scratch.joinpath(name)
+        project.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+        _ = fixtures
+            .joinpath(f"{name}.incn")
+            .copy(project.joinpath("src/lib.incn"), true, true)
+            .map_err((error) => error.message())?
+        unit = project.joinpath("unit.json")
+        write_json(unit, library_unit(template, runtime, project, name)?)?
+        identify(settings, unit, project)?
+        output = project.joinpath(f"libruntime_requirement_{name}.rlib")
+        compile(settings, unit, f"runtime_requirement_{name}", output, true, project)?
+        if not output.is_file() or len(output.read_bytes().map_err((error) => error.message())?) == 0:
+            return Err(f"{name} produced no library")
+        println(f"PASS runtime requirement: {name} without ordinary core")
+
+    # 2. A separate consumer proves no success depended on retained compiler state.
+    project = settings.scratch.joinpath("consumer")
+    project.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    _ = fixtures
+        .joinpath("consumer.incn")
+        .copy(project.joinpath("src/main.incn"), true, true)
+        .map_err((error) => error.message())?
+    unit = project.joinpath("unit.json")
+    write_json(unit, consumer_unit(template, runtime, project, settings.scratch.joinpath("hex"))?)?
+    identify(settings, unit, project)?
+    output = project.joinpath("consumer")
+    compile(settings, unit, "runtime_requirement_consumer", output, false, project)?
+    result = run(output.0, [], project, project.joinpath("run"), {})?
+    if result.code != 0 or result.stdout.strip() != "core-free-consumer-ok":
+        return Err(f"core-free consumer failed with status {result.code}: {result.stderr.strip()}")
+    println("PASS runtime requirement: separately compiled core-free consumer")
+    return Ok(None)
+
+
+pub model Outcome:
+    """One direct child process's status and decoded streams."""
+
+    pub code: int
+    pub stdout: str
+    pub stderr: str
+
+
+def library_unit(template: JsonValue, runtime: list[JsonValue], project: Path, name: str) -> Result[JsonValue, str]:
+    """Project one library fixture onto the installed native-support template."""
+    mut fields = template.expect_object().map_err((error) => error.message())?
+    fields["project_root"] = JsonValue.string(project.0)
+    fields["source_root"] = JsonValue.string(project.joinpath("src").0)
+    fields["source"] = JsonValue.string(project.joinpath("src/lib.incn").0)
+    fields["package"] = JsonValue.string(f"runtime_requirement_{name}")
+    fields["loaves"] = JsonValue.array(runtime)
+    return Ok(JsonValue.object(fields))
+
+
+def consumer_unit(
+    template: JsonValue,
+    runtime: list[JsonValue],
+    project: Path,
+    provider: Path,
+) -> Result[JsonValue, str]:
+    """Project the consumer onto the same runtime closure plus the separately compiled hex provider."""
+    mut fields = template.expect_object().map_err((error) => error.message())?
+    fields["project_root"] = JsonValue.string(project.0)
+    fields["source_root"] = JsonValue.string(project.joinpath("src").0)
+    fields["source"] = JsonValue.string(project.joinpath("src/main.incn").0)
+    fields["package"] = JsonValue.string("runtime_requirement_consumer")
+    fields["kind"] = JsonValue.string("program")
+    mut loaves = [item for item in runtime]
+    loaves.append(
+        JsonValue.object(
+            {"dir": JsonValue.string(provider.0), "key": JsonValue.string("runtime_requirement_hex"), "name": JsonValue.string(
+                "runtime_requirement_hex",
+            ), "standard": JsonValue.bool(false), "toolchain_provided": JsonValue.bool(false)},
+        ),
+    )
+    fields["loaves"] = JsonValue.array(loaves)
+    mut externs = json_array(fields.get("externs"))?
+    externs.append(
+        JsonValue.object(
+            {"name": JsonValue.string("runtime_requirement_hex"), "path": JsonValue.string(
+                provider.joinpath("libruntime_requirement_hex.rlib").0,
+            )},
+        ),
+    )
+    fields["externs"] = JsonValue.array(externs)
+    mut search = json_array(fields.get("search"))?
+    search.append(JsonValue.string(provider.0))
+    fields["search"] = JsonValue.array(search)
+    return Ok(JsonValue.object(fields))
+
+
+def runtime_loaves(template: JsonValue) -> Result[list[JsonValue], str]:
+    """Keep exactly the installed runtime provider and refuse a template without it."""
+    loaves = template.require("loaves").and_then((value) => value.expect_array()).map_err((error) => error.message())?
+    mut runtime: list[JsonValue] = []
+    for loaf in loaves:
+        if json_text(loaf, "name")? == "incan_native_runtime":
+            runtime.append(loaf)
+    if len(runtime) != 1:
+        return Err("template must contain exactly one incan_native_runtime Loaf")
+    return Ok(runtime)
+
+
+def identify(settings: Settings, unit: Path, project: Path) -> Result[None, str]:
+    """Ask the source-built native helper to identify one projected unit."""
+    result = run(settings.builder, [settings.source_root, "identify", unit.0], project, project.joinpath("identify"), {})?
+    if result.code != 0:
+        return Err(f"identify failed with status {result.code}: {result.stderr.strip()}")
+    return Ok(None)
+
+
+def compile(settings: Settings, unit: Path, name: str, output: Path, library: bool, project: Path) -> Result[None, str]:
+    """Compile one identified unit directly with the installed driver."""
+    mut arguments = ["--unit", unit.0, name, output.0, settings.sysroot]
+    if library:
+        arguments.append("--library")
+    arguments += argument_lines(Path(unit.0 + ".arguments"))?
+    result = run(settings.driver, arguments, project, project.joinpath("build"), {"RUSTC_BOOTSTRAP": ""})?
+    if result.code != 0:
+        return Err(f"{name} failed with status {result.code}: {result.stderr.strip()}")
+    return Ok(None)
+
+
+def run(
+    command: str,
+    arguments: list[str],
+    directory: Path,
+    prefix: Path,
+    environment: Dict[str, str],
+) -> Result[Outcome, str]:
+    """Run one child and retain its complete streams beside the projected unit."""
+    mut process = Command.new(command)
+    process.current_dir(directory.0).env_remove("RUSTC_BOOTSTRAP")
+    for argument in arguments:
+        process.arg(argument)
+    for key in environment.keys():
+        if environment[key] != "":
+            process.env(key, environment[key])
+    output = process.output().map_err((error) => f"cannot run {command}: {error}")?
+    stdout = RustString.from_utf8_lossy(output.stdout).into_owned()
+    stderr = RustString.from_utf8_lossy(output.stderr).into_owned()
+    prefix.parent().mkdir(true, true).map_err((error) => error.message())?
+    Path(prefix.0 + ".stdout").write_text(stdout, "utf-8", "strict", None).map_err((error) => error.message())?
+    Path(prefix.0 + ".stderr").write_text(stderr, "utf-8", "strict", None).map_err((error) => error.message())?
+    code = match output.status.code():
+        Some(value) => int(value)
+        None => 128
+
+    return Ok(Outcome(code=code, stdout=stdout, stderr=stderr))
+
+
+def argument_lines(path: Path) -> Result[list[str], str]:
+    """Read the native helper's one-argument-per-line direct-driver response."""
+    source = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+    return Ok([line for line in source.split("\n") if line != ""])
+
+
+def json_array(value: Option[JsonValue]) -> Result[list[JsonValue], str]:
+    """Decode an optional JSON array as empty when the template omits it."""
+    match value:
+        Some(found) => return found.expect_array().map_err((error) => error.message())
+        None => return Ok([])
+
+
+def read_json(path: Path) -> Result[JsonValue, str]:
+    """Read one strict UTF-8 JSON document."""
+    source = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+    return JsonValue.parse(source).map_err((error) => error.message())
+
+
+def write_json(path: Path, value: JsonValue) -> Result[None, str]:
+    """Write one pretty JSON unit document with a trailing newline."""
+    source = value.to_pretty_json().map_err((error) => error.message())? + "\n"
+    return path.write_text(source, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+def json_text(value: JsonValue, key: str) -> Result[str, str]:
+    """Return one required JSON string field."""
+    return value.require(key).and_then((entry) => entry.expect_str()).map_err((error) => error.message())

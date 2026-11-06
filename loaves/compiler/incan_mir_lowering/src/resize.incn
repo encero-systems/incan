@@ -1,5 +1,6 @@
 """Checked builtin numeric resize calls reuse legacy casts and core policy functions."""
 
+from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import PlanType, Operand, Place, SourceSpan, RvalueKind, CalleeKind, ExternalFunction
 from pub::incan_mir_plan import assign as plan_assign
 from frame import Builder, terminate_call, place_type
@@ -35,12 +36,10 @@ pub def emit_resize(
     mut target = result
     if policy == "try_resize":
         _owner, declaration = carrier_layout(builder, result)?
-        if declaration.carrier != "Option" or len(declaration.variants) != 2:
+        if declaration.carrier != Carrier.Option or len(declaration.variants) != 2:
             return Err("invalid Body IR checked resize carrier")
-        mut payloads: list[PlanType] = []
-        for variant in declaration.variants:
-            if variant.name == "Some":
-                payloads = variant.fields
+        # An Option carrier lays out None then Some, so the payload is the second variant's.
+        payloads = declaration.variants[1].fields
         if len(payloads) != 1:
             return Err("invalid Body IR checked resize payload")
         target = payloads[0]
@@ -49,7 +48,7 @@ pub def emit_resize(
     if policy in ["resize", "wrapping_resize"]:
         builder.emit(plan_assign(output, RvalueKind.NumericCast(operand, source, target), span))
         return Ok(None)
-    path = f"incan_std_core::num::{policy}"
+    path = f"incan_std_primitives::num::{policy}"
     builder.externals.append(
         ExternalFunction(path=path, type_arguments=[source, target], parameters=[source], return_type=result, span=span),
     )

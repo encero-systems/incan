@@ -1,0 +1,22 @@
+# behavior: compiled library traits and bounds survive a package boundary: inferred and declared bounds of generic functions, inherent methods and trait defaults, and the methods a dependency's models get from the traits they adopt, are callable by a consumer that imports the models but not the traits, and library trait defaults call their concrete compiled methods and preserve mutable receivers
+# expect-stdout:
+#   1
+#   first
+#   2
+#   picked
+#   1
+#   5
+#   4
+#   3
+#   <linked>
+#   second
+#   second
+
+from generic_bounds import run_generic_bounds
+from trait_slot import run_trait_slot
+
+
+def main() -> None:
+    """Run each compiled-library observation in the order of the cases it carries."""
+    run_generic_bounds()
+    run_trait_slot()

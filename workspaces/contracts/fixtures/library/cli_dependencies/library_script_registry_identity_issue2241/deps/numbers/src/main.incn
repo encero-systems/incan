@@ -1,0 +1,6 @@
+from lib import encoded
+
+
+def main() -> None:
+    """Use the same registry crate from the sibling executable."""
+    println(encoded())

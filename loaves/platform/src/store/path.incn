@@ -1,0 +1,162 @@
+"""Store-private path and filesystem operations below the application-facing `std.fs` facade."""
+
+from std.primitives import decode_utf8
+from std.primitives.fs.locking import (
+    FileLock,
+    exclusive as lock_exclusive,
+    shared as lock_shared,
+    try_exclusive as try_lock_exclusive,
+)
+from std.primitives.fs.mapping import MappedFile, map_read
+from std.primitives.fs.path import PrimitivePath
+
+
+pub model StoreIoError:
+    """One store filesystem failure with its operation, path and host detail preserved."""
+
+    pub path: str
+    pub detail: str
+    pub operation: str = "store io"
+
+    pub def message(self) -> str:
+        """Return an actionable diagnostic naming the failed operation and path."""
+        return f"{self.operation} {self.path}: {self.detail}"
+
+
+pub model StorePathStat:
+    """The file length observed by one successful metadata read."""
+
+    pub length: int
+
+    pub def store_size(self) -> Result[int, StoreIoError]:
+        """Return the observed file length."""
+        return Ok(self.length)
+
+
+@derive(Clone)
+pub type StorePath = newtype str:
+    """A store-private filesystem path with only the substrate operations it requires."""
+
+    pub def primitive(self) -> PrimitivePath:
+        """Project this path into the foundational filesystem resource contract."""
+        return PrimitivePath(value=self.0)
+
+    pub def joinpath(self, segment: str) -> StorePath:
+        """Return a lexical child without querying the filesystem."""
+        return StorePath(self.primitive().join(segment).value)
+
+    pub def parent(self) -> StorePath:
+        """Return the lexical parent, or `.` when none is present."""
+        return StorePath(self.primitive().parent().value)
+
+    pub def name(self) -> str:
+        """Return the final path component, or an empty string when absent."""
+        return self.primitive().name()
+
+    pub def exists(self) -> bool:
+        """Return whether the path currently resolves to an entry."""
+        return self.primitive().exists()
+
+    pub def is_file(self) -> bool:
+        """Return whether the path currently resolves to a regular file."""
+        return self.primitive().is_file()
+
+    pub def is_dir(self) -> bool:
+        """Return whether the path currently resolves to a directory."""
+        return self.primitive().is_directory()
+
+    pub def is_symlink(self) -> bool:
+        """Return whether the path itself is a symbolic link."""
+        return self.primitive().is_symlink()
+
+    pub def store_mkdir(self, parents: bool, exist_ok: bool) -> Result[None, StoreIoError]:
+        """Create this directory with the requested parent and existing-directory behavior."""
+        return self.primitive().create_directory(parents, exist_ok).map_err((detail) => _io_error(self, detail))
+
+    pub def store_read_bytes(self) -> Result[bytes, StoreIoError]:
+        """Read this complete store metadata file as owned bytes."""
+        return self.primitive().read_all().map_err((detail) => _io_error(self, detail))
+
+    pub def store_write_bytes(self, data: bytes) -> Result[None, StoreIoError]:
+        """Replace this file with the supplied complete bytes."""
+        return self.primitive().write_all(data).map_err((detail) => _io_error(self, detail))
+
+    pub def store_read_text(self, encoding: str, errors: str) -> Result[str, StoreIoError]:
+        """Read strict UTF-8 store metadata; no other codec or error policy is accepted."""
+        if encoding != "utf-8" or errors != "strict":
+            return Err(_io_error(self, "store metadata requires strict UTF-8"))
+        decoded, text = decode_utf8(self.store_read_bytes()?, false)
+        if decoded:
+            return Ok(text)
+        return Err(_io_error(self, text))
+
+    pub def store_children(self) -> Result[list[StorePath], StoreIoError]:
+        """Return direct children in host iteration order."""
+        mut paths: list[StorePath] = []
+        for child in self.primitive().children().map_err((detail) => _io_error(self, detail))?:
+            paths.append(StorePath(child.value))
+        return Ok(paths)
+
+    pub def store_stat(self) -> Result[StorePathStat, StoreIoError]:
+        """Read file metadata and retain only the length the substrate consumes."""
+        return self
+            .primitive()
+            .length()
+            .map((length) => StorePathStat(length=length))
+            .map_err((detail) => _io_error(self, detail))
+
+    pub def store_copy(
+        self,
+        target: StorePath,
+        _follow_symlinks: bool,
+        _preserve_metadata: bool,
+    ) -> Result[StorePath, StoreIoError]:
+        """Copy a store payload file to an explicit staging path."""
+        self.primitive().copy_to(target.primitive()).map_err((detail) => _io_error(target, detail))?
+        return Ok(target)
+
+    pub def store_chmod(self, readonly: bool) -> Result[None, StoreIoError]:
+        """Set the host read-only bit used by canonical payload files."""
+        return self.primitive().set_readonly(readonly).map_err((detail) => _io_error(self, detail))
+
+    pub def store_unlink(self) -> Result[None, StoreIoError]:
+        """Remove one file or symbolic link."""
+        return self.primitive().remove().map_err((detail) => _io_error(self, detail))
+
+    pub def store_remove_tree(self) -> Result[None, StoreIoError]:
+        """Remove one staging directory tree without following a symlink root."""
+        if self.is_symlink():
+            return Err(_io_error(self, "remove_tree refuses to follow symbolic links"))
+        return self.primitive().remove_directory_tree().map_err((detail) => _io_error(self, detail))
+
+    pub def store_replace(self, target: StorePath) -> Result[StorePath, StoreIoError]:
+        """Atomically replace a non-directory target on the same filesystem."""
+        if self.is_dir() or (target.exists() and target.is_dir() and not target.is_symlink()):
+            return Err(_io_error(target, "replace requires a non-directory target"))
+        self.primitive().replace(target.primitive()).map_err((detail) => _io_error(target, detail))?
+        return Ok(target)
+
+    pub def store_sync(self) -> Result[None, StoreIoError]:
+        """Synchronize this file's complete contents and metadata through the host filesystem."""
+        return self.primitive().sync_all().map_err((detail) => _io_error(self, detail))
+
+    pub def store_map_read(self) -> Result[MappedFile, StoreIoError]:
+        """Map this immutable file through the foundational owner-anchored mapping contract."""
+        return map_read(self.primitive()).map_err((detail) => _io_error(self, detail))
+
+    pub def store_lock_shared(self) -> Result[FileLock, StoreIoError]:
+        """Acquire a blocking shared advisory lock for this stable lock path."""
+        return lock_shared(self.primitive()).map_err((detail) => _io_error(self, detail))
+
+    pub def store_lock_exclusive(self) -> Result[FileLock, StoreIoError]:
+        """Acquire a blocking exclusive advisory lock for this stable lock path."""
+        return lock_exclusive(self.primitive()).map_err((detail) => _io_error(self, detail))
+
+    pub def store_try_lock_exclusive(self) -> Result[Option[FileLock], StoreIoError]:
+        """Try to acquire an exclusive advisory lock without blocking."""
+        return try_lock_exclusive(self.primitive()).map_err((detail) => _io_error(self, detail))
+
+
+def _io_error(path: StorePath, detail: str) -> StoreIoError:
+    """Attach a host failure to the path on which the substrate operated."""
+    return StoreIoError(path=path.0, detail=detail)

@@ -31,11 +31,11 @@ pub(crate) struct NativeNewtypeFacts {
 /// Body-local refinements cannot outlive a conflicting write or an altered canonical selection.
 #[derive(Debug, Default, Clone)]
 struct NativeBodyFacts {
-    expressions: HashMap<(usize, usize), ResolvedType>,
-    assignments: HashMap<(usize, usize), ResolvedType>,
-    static_receivers: HashMap<(usize, usize), ResolvedType>,
-    parameters: HashMap<(usize, usize), Vec<CallableParam>>,
-    field_owners: HashMap<(usize, usize), CanonicalSymbolId>,
+    expressions: HashMap<crate::ast::Span, ResolvedType>,
+    assignments: HashMap<crate::ast::Span, ResolvedType>,
+    static_receivers: HashMap<crate::ast::Span, ResolvedType>,
+    parameters: HashMap<crate::ast::Span, Vec<CallableParam>>,
+    field_owners: HashMap<crate::ast::Span, CanonicalSymbolId>,
     guards: Vec<NativeFactGuard>,
 }
 
@@ -73,23 +73,19 @@ impl NativeFactGuard {
             }
             Self::Expression(span, ty, identities) => {
                 info.expr_type(*span) == Some(ty)
-                    && info.expressions.expression_type_identities.get(&(span.start, span.end)) == identities.as_ref()
+                    && info.expressions.expression_type_identities.get(&span) == identities.as_ref()
             }
             Self::Assignment(span, ty) => info.assignment_binding_type(*span) == Some(ty),
             Self::Constructor(span, binding) => info.constructor_field_binding(*span) == Some(binding),
-            Self::Method(span, binding) => {
-                info.declarations.method_bindings_by_span.get(&(span.start, span.end)) == Some(binding)
-            }
+            Self::Method(span, binding) => info.declarations.method_bindings_by_span.get(&span) == Some(binding),
             Self::MethodSelection(identity, span) => unique_method_span(identity, info) == Some(*span),
-            Self::TargetDeclarations(declarations) => declarations.iter().all(|(span, identity)| {
-                info.declarations.declaration_identities.get(&(span.start, span.end)) == Some(identity)
-            }),
-            Self::Function(span, binding) => {
-                info.declarations.function_bindings_by_span.get(&(span.start, span.end)) == Some(binding)
-            }
+            Self::TargetDeclarations(declarations) => declarations
+                .iter()
+                .all(|(span, identity)| info.declarations.declaration_identities.get(&span) == Some(identity)),
+            Self::Function(span, binding) => info.declarations.function_bindings_by_span.get(&span) == Some(binding),
             Self::Parameters(span, params) => info.call_site_callable_params(*span) == Some(params.as_slice()),
             Self::Owner(span, name, identity, construction, parameter, binder_identity) => {
-                info.declarations.declaration_identities.get(&(span.start, span.end)) == Some(identity)
+                info.declarations.declaration_identities.get(&span) == Some(identity)
                     && info.declarations.named_type_identities.get(name) == Some(identity)
                     && info.declarations.newtype_construction.get(name) == Some(construction.as_ref())
                     && info.declarations.named_type_identities.get(parameter) == binder_identity.as_ref()
@@ -117,28 +113,28 @@ impl NativeNewtypeFacts {
     pub(crate) fn expression_type(&self, span: Span, info: &TypeCheckInfo) -> Option<&ResolvedType> {
         self.valid_body(span, info, |body, key| body.expressions.contains_key(&key))?
             .expressions
-            .get(&(span.start, span.end))
+            .get(&span)
     }
 
     /// Keep native storage closure separate from the shared assignment types read by legacy emission.
     pub(crate) fn assignment_type(&self, span: Span, info: &TypeCheckInfo) -> Option<&ResolvedType> {
         self.valid_body(span, info, |body, key| body.assignments.contains_key(&key))?
             .assignments
-            .get(&(span.start, span.end))
+            .get(&span)
     }
 
     /// Retain distinct closed owner arguments for separate calls sharing one written static receiver.
     pub(crate) fn static_receiver_type(&self, span: Span, info: &TypeCheckInfo) -> Option<&ResolvedType> {
         self.valid_body(span, info, |body, key| body.static_receivers.contains_key(&key))?
             .static_receivers
-            .get(&(span.start, span.end))
+            .get(&span)
     }
 
     /// Supply the original selected method signature closed by its already checked native owner arguments.
     pub(crate) fn callable_params(&self, span: Span, info: &TypeCheckInfo) -> Option<&[CallableParam]> {
         self.valid_body(span, info, |body, key| body.parameters.contains_key(&key))?
             .parameters
-            .get(&(span.start, span.end))
+            .get(&span)
             .map(Vec::as_slice)
     }
 
@@ -146,7 +142,7 @@ impl NativeNewtypeFacts {
     pub(crate) fn field_owner(&self, span: Span, info: &TypeCheckInfo) -> Option<&CanonicalSymbolId> {
         self.valid_body(span, info, |body, key| body.field_owners.contains_key(&key))?
             .field_owners
-            .get(&(span.start, span.end))
+            .get(&span)
     }
 
     /// A damaged supporting fact invalidates every refinement for the body, including its earlier reads.
@@ -154,9 +150,9 @@ impl NativeNewtypeFacts {
         &self,
         span: Span,
         info: &TypeCheckInfo,
-        contains: impl Fn(&NativeBodyFacts, (usize, usize)) -> bool,
+        contains: impl Fn(&NativeBodyFacts, crate::ast::Span) -> bool,
     ) -> Option<&NativeBodyFacts> {
-        let key = (span.start, span.end);
+        let key = span;
         let mut matches = self.bodies.iter().filter(|body| contains(body, key));
         let body = matches.next()?;
         if matches.next().is_some() || !body.guards.iter().all(|guard| guard.agrees(info)) {

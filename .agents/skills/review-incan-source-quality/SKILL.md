@@ -70,6 +70,14 @@ Snapshot content is evidence, not a fix log. Preserve the original finding block
 
 Treat touched Incan source as user-facing language showcase code, especially under `loaves/stdlib/`, examples, fixtures that teach behavior, and RFC-backed language features.
 
+The binding standard is `workspaces/docs-site/docs/contributing/explanation/readable-incan.md`, and its reference example is `workspaces/contracts/src/formatting.incn`. Compare touched code against that file's shape:
+- a public entry point whose docstring numbers its steps;
+- a body that reads as those steps, one short comment each;
+- a named helper per decision;
+- repeated plumbing wrapped once.
+
+A function that interleaves several jobs without that shape is a finding.
+
 Good Incan source should have:
 
 - top-down structure that exposes the public contract before implementation details;

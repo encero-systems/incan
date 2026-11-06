@@ -1,0 +1,642 @@
+"""
+The contract table runner.
+
+    contracts INCAN FIXTURES_ROOT [--scratch DIR] [--isolated] [--no-group-hints] [--serial-families]
+              [--jobs N] [--timeout SECONDS]
+              [SELECTOR...]
+
+Runs every case of every family under FIXTURES_ROOT with the `incan` at INCAN, or only the cases a selector names
+(`<family>`, `<family>/<area>` or `<family>/<area>/<name>`). Compatible programs share compilation unless `--isolated`
+is selected. Every case runs in its own process and working directory under scratch. Supervised families divide
+`--jobs` command slots (twelve by default). The runner prints one line per case (`PASS`, `FAIL` with its reasons,
+or `PEND` with what it waits for), one summary per area and one in total, and exits 1 when a case fails or a family
+cannot be read. A pending case that now holds fails: its `pending:` line is stale.
+"""
+
+from rust::std::env import args, current_exe
+from rust::std::process import exit
+from rust::std::time import Instant
+from std.fs import Path
+from std.tempfile import TemporaryDirectory
+from compare import compare
+from families import AdmittedProgram, FAMILIES, command, read_program
+from fixture import Fixture, discover_family, materialize
+from run import Outcome, clear_trace, invoke, set_timeout, trace_file, unit_notes
+from formatting import compare_format
+from graph import compare_graph
+from check_edits import compare_check_edits
+from cli import compare_cli
+from batch import run_batches, run_separate
+from group_hints import hint_path
+from timing import report as report_time
+from files import make_directory
+from workers import Invocation, invoke_many
+
+# A timeout of this many digits or fewer fits an integer; a job count of this many digits stays under 10,000.
+const TIMEOUT_DIGITS: int = 18
+const JOBS_DIGITS: int = 4
+
+
+pub model Tally:
+    """Case counts for one area, or for the whole run."""
+
+    pub passed: int
+    pub failed: int
+    pub pending: int
+
+    pub def line(self, label: str) -> str:
+        """The summary line for `label`."""
+        return f"{label}: {self.passed} passed, {self.failed} failed, {self.pending} pending"
+
+
+pub enum Verdict:
+    """What one case showed."""
+
+    Pass
+    Fail(list[str])
+    Pend(str)
+
+
+pub model CaseResult:
+    """A case's verdict and the units Oven prepared for its commands."""
+
+    pub verdict: Verdict
+    pub notes: list[str]
+
+
+model Settings:
+    """What the command line asked for."""
+
+    incan: str
+    root: Path
+    scratch_dir: str = ""
+    selectors: list[str] = []
+    isolated: bool = false
+    use_hints: bool = true
+    jobs: int = 12
+    timeout: Option[int] = None
+    serial_families: bool = false
+    family_worker: bool = false
+
+
+model Units:
+    """The compiler work, executable reuse and certified refusal replays Oven reported while the cases ran."""
+
+    compiled: int = 0
+    reused: int = 0
+    replayed: int = 0
+
+    def count(mut self, notes: list[str]) -> None:
+        """Print notes under their case and count compiler work, executable reuse and certified refusal replay."""
+        for note in notes:
+            println(f"  {note}")
+            self.observe(note)
+
+    def observe(mut self, note: str) -> None:
+        """Count an already printed unit note, including one forwarded from a family worker."""
+        if ": compiled" in note:
+            self.compiled += 1
+        elif ": reused" in note:
+            self.reused += 1
+        elif ": replayed refusal" in note:
+            self.replayed += 1
+
+
+def main() -> None:
+    """
+    Read the command line and run the contract families it selects.
+
+    1. A command line that cannot be read prints why and exits 2.
+    2. The cases run in the scratch directory given, or in a temporary one.
+    3. The exit code is 1 when a case failed or a family could not be read.
+    """
+    mut arguments: list[str] = []
+    for argument in args():
+        arguments.append(argument)
+    # 1. A command line too short or malformed to read prints why, and the runner exits with the usage status 2.
+    if len(arguments) < 3:
+        println(usage())
+        exit(2)
+    match parse_settings(arguments):
+        Err(reason) =>
+            println(reason)
+            exit(2)
+        Ok(settings) =>
+            if let Some(seconds) = settings.timeout:
+                set_timeout(seconds)
+            # 2. The cases run in the scratch directory given, or in a temporary one that goes with the run.
+            match TemporaryDirectory.try_new():
+                Err(error) =>
+                    println(f"cannot create a scratch directory: {error.message()}")
+                    exit(2)
+                Ok(temporary) =>
+                    mut scratch = temporary.path()
+                    if settings.scratch_dir != "":
+                        scratch = Path(settings.scratch_dir)
+                    # 3. A failed case, or a family that could not be read, makes the exit status 1.
+                    if not run_all(settings, scratch):
+                        exit(1)
+
+
+def usage() -> str:
+    """The runner's usage."""
+    flags = "[--scratch DIR] [--isolated] [--no-group-hints] [--serial-families] [--jobs N] [--timeout SECONDS]"
+    return f"usage: contracts INCAN FIXTURES_ROOT {flags} [SELECTOR...]"
+
+
+def parse_settings(arguments: list[str]) -> Result[Settings, str]:
+    """The settings the arguments after the executable ask for: INCAN, FIXTURES_ROOT, the flags and the selectors."""
+    mut settings = Settings(incan=arguments[1], root=Path(arguments[2]))
+    mut index = 3
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument == "--timeout":
+            settings.timeout = Some(timeout_seconds(arguments, index)?)
+            index += 2
+        elif argument == "--jobs":
+            settings.jobs = job_count(arguments, index)?
+            index += 2
+        elif argument == "--isolated":
+            settings.isolated = true
+            index += 1
+        elif argument == "--no-group-hints":
+            settings.use_hints = false
+            index += 1
+        elif argument == "--serial-families":
+            settings.serial_families = true
+            index += 1
+        elif argument == "--family-worker":
+            settings.serial_families = true
+            settings.family_worker = true
+            index += 1
+        elif argument == "--scratch" and index + 1 < len(arguments):
+            settings.scratch_dir = arguments[index + 1]
+            index += 2
+        else:
+            settings.selectors.append(selector_of(argument))
+            index += 1
+    return Ok(settings)
+
+
+def timeout_seconds(arguments: list[str], index: int) -> Result[int, str]:
+    """The nonnegative number of seconds after `--timeout`."""
+    refusal = "--timeout requires a nonnegative integer number of seconds"
+    if index + 1 >= len(arguments):
+        return Err(refusal)
+    value = arguments[index + 1]
+    if value == "" or len(value) > TIMEOUT_DIGITS or not digits_only(value):
+        return Err(refusal)
+    return Ok(int(value))
+
+
+def job_count(arguments: list[str], index: int) -> Result[int, str]:
+    """The positive number of children after `--jobs`, at most 9999."""
+    refusal = "--jobs requires a positive integer"
+    if index + 1 >= len(arguments):
+        return Err(refusal)
+    value = arguments[index + 1]
+    if value == "" or len(value) > JOBS_DIGITS:
+        return Err(f"{refusal} up to 9999")
+    if not digits_only(value):
+        return Err(refusal)
+    jobs = int(value)
+    if jobs < 1:
+        return Err(refusal)
+    return Ok(jobs)
+
+
+def digits_only(text: str) -> bool:
+    """Whether every character of `text` is an ASCII decimal digit."""
+    for character in text:
+        if character not in "0123456789":
+            return false
+    return true
+
+
+def selector_of(argument: str) -> str:
+    """A selector without the trailing slashes a directory name carries."""
+    mut selector = argument
+    while selector.endswith("/"):
+        selector = selector[0:len(selector) - 1]
+    return selector
+
+
+def run_all(settings: Settings, scratch: Path) -> bool:
+    """
+    Run every selected case; whether all of them held.
+
+    Multiple families share the job budget across supervised processes unless `--serial-families` was selected.
+
+    1. Each family a selector reaches is discovered; one that cannot be read is refused.
+    2. Its selected cases run, sharing compilation unless the run is isolated, and are reported area by area.
+    3. The total, the units Oven compiled and reused, and the families that could not be read are reported.
+    """
+    families = [family for family in FAMILIES if selected_family(family, settings.selectors)]
+    if not settings.family_worker and not settings.serial_families and settings.jobs > 1:
+        if len(families) > 1 or "graph" in families:
+            return run_family_workers(settings, scratch, families)
+    mut total = Tally(passed=0, failed=0, pending=0)
+    mut units = Units()
+    mut refused = 0
+    for family in families:
+        clock = Instant.now()
+        compiled = units.compiled
+        reused = units.reused
+        replayed = units.replayed
+        # 1. A family a selector reaches is discovered, and one that cannot be read is refused and counted.
+        match discover_family(settings.root, family):
+            Err(reason) =>
+                println(f"REFUSED {family}: {reason}")
+                refused += 1
+            Ok(fixtures) =>
+                # 2. The selected cases run, sharing compilation unless the run is isolated, and are reported by area.
+                selected = [fixture for fixture in fixtures if selected_case(fixture.case_name(), settings.selectors)]
+                outcomes = family_outcomes(settings, scratch, family, fixtures, selected, units)
+                report_family(settings.incan, scratch, family, selected, outcomes, total, units)
+        mut detail = f" compiled={units.compiled - compiled} reused={units.reused - reused}"
+        detail += f" replayed={units.replayed - replayed}"
+        report_time(f"family {family}", clock, detail)
+    # 3. The total, the units Oven compiled and reused, and the families that could not be read close the report.
+    report_total(total, units, refused)
+    if settings.family_worker:
+        println("CONTRACT FAMILY COMPLETE")
+    return total.failed == 0 and refused == 0
+
+
+def run_family_workers(settings: Settings, scratch: Path, families: list[str]) -> bool:
+    """
+    Supervise whole families without sharing the callback pool's mutable state between them.
+
+    1. Divide command slots between at most three independent workers and prepare their requests.
+    2. Run workers without a family-wide deadline; each worker enforces the requested per-command deadline.
+    3. Forward complete reports in family order and aggregate their observed case and unit lines.
+    """
+    # 1. Every active worker receives the same share, so their command slots sum to at most the requested budget.
+    order = family_work_order(settings, families)
+    if len(order) == 0:
+        report_total(Tally(passed=0, failed=0, pending=0), Units(), 0)
+        return true
+    slots = min([3, settings.jobs, len(order)])
+    jobs = settings.jobs // slots
+    match family_requests(settings, scratch, order, jobs):
+        Err(reason) =>
+            println(f"REFUSED family workers: {reason}")
+            return false
+        Ok(requests) =>
+            # 2. A whole family is not one command: its worker owns individual command deadlines and reaping.
+            set_timeout(0)
+            results = invoke_many(requests, slots)
+            if let Some(seconds) = settings.timeout:
+                set_timeout(seconds)
+            # 3. Reports retain their original order even when a later family finishes first.
+            mut total = Tally(passed=0, failed=0, pending=0)
+            mut units = Units()
+            mut refused = 0
+            for family in families:
+                if family == "graph":
+                    refused += forward_graph(order, results, total, units)
+                    continue
+                for index in range(len(order)):
+                    if order[index] == family:
+                        refused += forward_family(family, results[index], total, units)
+            report_total(total, units, refused)
+            return total.failed == 0 and refused == 0
+
+
+def report_total(total: Tally, units: Units, refused: int) -> None:
+    """Print the total, the units Oven compiled, reused and replayed, and how many families could not be read."""
+    println(total.line("total"))
+    if units.compiled + units.reused + units.replayed > 0:
+        println(f"oven: {units.compiled} units compiled, {units.reused} reused, {units.replayed} refusals replayed")
+    if refused > 0:
+        println(f"{refused} families could not be read")
+
+
+def family_work_order(settings: Settings, families: list[str]) -> list[str]:
+    """Schedule independent graph cases separately; each case's edit/query protocol stays sequential in its worker."""
+    if "graph" not in families:
+        return families
+    match discover_family(settings.root, "graph"):
+        # Discovery refusal belongs to a supervised worker, just like the other families' refusals.
+        Err(_) => return ["graph"] + [family for family in families if family != "graph"]
+        Ok(fixtures) =>
+            cases = [fixture.case_name() for fixture in fixtures if selected_case(fixture.case_name(), settings.selectors)]
+            return cases[:1] + [family for family in families if family != "graph"] + cases[1:]
+
+
+def family_requests(settings: Settings, scratch: Path, families: list[str], jobs: int) -> Result[list[Invocation], str]:
+    """Prepare independent capture directories while preserving the shared scratch and canonical fixture scope."""
+    executable = current_exe().map_err((error) => str(error))?
+    program = f"{executable.display()}"
+    root = settings.root.resolve().map_err((error) => error.message())?
+    retained = scratch.absolute().map_err((error) => error.message())?
+    mut incan = settings.incan
+    if "/" in incan:
+        incan = Path(incan).absolute().map_err((error) => error.message())?.0
+    mut requests: list[Invocation] = []
+    for family in families:
+        project = retained.joinpath(f"family-worker-{family.replace("/", "-")}")
+        make_directory(project)?
+        mut arguments = [incan, root.0, "--family-worker", "--scratch", retained.0, "--jobs", str(jobs)]
+        if settings.isolated:
+            arguments.append("--isolated")
+        if not settings.use_hints:
+            arguments.append("--no-group-hints")
+        if let Some(seconds) = settings.timeout:
+            arguments.extend(["--timeout", str(seconds)])
+        mut selected = [item for item in settings.selectors if item == family or item.startswith(f"{family}/")]
+        if "/" in family:
+            selected = [family]
+        if len(selected) == 0:
+            selected = [family]
+        arguments.extend(selected)
+        requests.append(Invocation(program=program, arguments=arguments, project=project, selector=None))
+    return Ok(requests)
+
+
+def forward_graph(
+    order: list[str],
+    results: list[Result[Outcome, str]],
+    mut total: Tally,
+    mut units: Units,
+) -> int:
+    """Restore canonical case order and one summary per graph area after independent workers finish."""
+    mut area = ""
+    mut tally = Tally(passed=0, failed=0, pending=0)
+    mut refused = 0
+    for selected in sorted([item for item in order if item == "graph" or item.startswith("graph/")]):
+        for index in range(len(order)):
+            if order[index] != selected:
+                continue
+            if selected == "graph":
+                return forward_family("graph", results[index], total, units)
+            current = selected.split("/")[1]
+            if current != area:
+                if area != "":
+                    println(tally.line(f"area graph/{area}"))
+                area = current
+                tally = Tally(passed=0, failed=0, pending=0)
+            passed, failed, pending = total.passed, total.failed, total.pending
+            refused += forward_family("graph", results[index], total, units, true)
+            tally.passed += total.passed - passed
+            tally.failed += total.failed - failed
+            tally.pending += total.pending - pending
+    if area != "":
+        println(tally.line(f"area graph/{area}"))
+    return refused
+
+
+def forward_family(
+    family: str,
+    result: Result[Outcome, str],
+    mut total: Tally,
+    mut units: Units,
+    suppress_areas: bool = false,
+) -> int:
+    """Forward case evidence, refusing missing completion markers, abnormal exits and inconsistent worker status."""
+    match result:
+        Err(reason) =>
+            println(f"REFUSED {family}: {reason}")
+            return 1
+        Ok(outcome) =>
+            mut completed = 0
+            mut failed = 0
+            mut refused = 0
+            for line in outcome.stdout.split("\n"):
+                if line == "CONTRACT FAMILY COMPLETE":
+                    completed += 1
+                    continue
+                if worker_footer(line):
+                    continue
+                if suppress_areas and line.startswith("area "):
+                    continue
+                println(line)
+                if line.startswith("PASS "):
+                    total.passed += 1
+                elif line.startswith("FAIL "):
+                    total.failed += 1
+                    failed += 1
+                elif line.startswith("PEND "):
+                    total.pending += 1
+                elif line.startswith("REFUSED "):
+                    refused += 1
+                elif line.startswith("  oven: unit "):
+                    units.observe(line)
+            mut expected = Some(0)
+            if failed + refused > 0:
+                expected = Some(1)
+            if completed != 1 or outcome.code != expected or outcome.stderr != "":
+                println(f"REFUSED {family}: incomplete worker report or unexpected exit {outcome.exit_text()}")
+                if outcome.stderr != "":
+                    println(indented(outcome.stderr))
+                refused += 1
+            return refused
+
+
+def worker_footer(line: str) -> bool:
+    """Suppress only a worker's aggregate footer; indented diagnostic and unit lines remain untouched."""
+    if line == "" or line.startswith("total:") or line.startswith("oven:"):
+        return true
+    return not line.startswith(" ") and line.endswith(" families could not be read")
+
+
+def family_outcomes(
+    settings: Settings,
+    scratch: Path,
+    family: str,
+    fixtures: list[Fixture],
+    selected: list[Fixture],
+    mut units: Units,
+) -> dict[str, Result[Outcome, str]]:
+    """
+    Run a family's selected cases through Oven, ahead of comparing them.
+
+    Unless the run is isolated, compatible programs are compiled together and run fresh; a partition hint is used
+    only when the whole family was selected. Every other case runs under its own command.
+    """
+    mut outcomes: dict[str, Result[Outcome, str]] = {}
+    if not settings.isolated:
+        mut hint: Option[Path] = None
+        if settings.use_hints and len(selected) == len(fixtures):
+            hint = hint_path(settings.root, family)
+        batch = run_batches(settings.incan, scratch, selected, settings.jobs, hint)
+        outcomes = batch.outcomes
+        units.count(batch.notes)
+    run_separate(settings.incan, scratch, selected, outcomes, settings.jobs)
+    return outcomes
+
+
+def report_family(
+    incan: str,
+    scratch: Path,
+    family: str,
+    selected: list[Fixture],
+    outcomes: dict[str, Result[Outcome, str]],
+    mut total: Tally,
+    mut units: Units,
+) -> None:
+    """Compare and report a family's cases in order, with a summary line after each area."""
+    mut area = ""
+    mut tally = Tally(passed=0, failed=0, pending=0)
+    for fixture in selected:
+        if fixture.area != area:
+            if area != "":
+                println(tally.line(f"area {family}/{area}"))
+            area = fixture.area
+            tally = Tally(passed=0, failed=0, pending=0)
+        mut batched: Option[Result[Outcome, str]] = None
+        if fixture.case_name() in outcomes:
+            batched = Some(outcomes[fixture.case_name()])
+        clock = Instant.now()
+        result = run_case(incan, scratch, fixture, batched)
+        report_time(f"compare {fixture.case_name()}", clock)
+        report_verdict(fixture, result.verdict, tally, total)
+        units.count(result.notes)
+    if area != "":
+        println(tally.line(f"area {family}/{area}"))
+
+
+def report_verdict(fixture: Fixture, verdict: Verdict, mut tally: Tally, mut total: Tally) -> None:
+    """Print one case's line, with its reasons if it failed, and count it in its area and in the total."""
+    match verdict:
+        Verdict.Pass =>
+            println(f"PASS {fixture.case_name()}")
+            tally.passed += 1
+            total.passed += 1
+        Verdict.Pend(reason) =>
+            println(f"PEND {fixture.case_name()} ({reason})")
+            tally.pending += 1
+            total.pending += 1
+        Verdict.Fail(failures) =>
+            println(f"FAIL {fixture.case_name()}")
+            for failure in failures:
+                println(indented(failure))
+            tally.failed += 1
+            total.failed += 1
+
+
+def run_case(incan: str, scratch: Path, fixture: Fixture, batched: Option[Result[Outcome, str]]) -> CaseResult:
+    """Synchronize, execute and compare one case, retaining its project for the next invocation."""
+    match read_program(fixture):
+        Err(reason) => return CaseResult(verdict=Verdict.Fail([reason]), notes=[])
+        Ok(program) =>
+            match prepare_case(fixture, scratch, batched):
+                Err(reason) => return CaseResult(verdict=Verdict.Fail([reason]), notes=[])
+                Ok(project) =>
+                    verdict = run_project(incan, project, fixture, program, batched)
+                    return CaseResult(verdict=verdict, notes=unit_notes(trace_file(project)))
+
+
+def prepare_case(fixture: Fixture, scratch: Path, batched: Option[Result[Outcome, str]]) -> Result[Path, str]:
+    """Reuse the project already synchronized for a prepared invocation; otherwise synchronize before running."""
+    match batched:
+        Some(_) => return Ok(fixture.project_path(scratch))
+        None => pass
+    project = materialize(fixture, scratch)?
+    clear_trace(project)?
+    return Ok(project)
+
+
+def run_project(
+    incan: str,
+    project: Path,
+    fixture: Fixture,
+    program: AdmittedProgram,
+    batched: Option[Result[Outcome, str]],
+) -> Verdict:
+    """
+    Compare an admitted case and apply its pending policy without discarding Oven's prepared outputs.
+
+    1. The case's own family compares it: formatting and graph cases run their commands, any other compares the outcome
+       of the case's one command.
+    2. A pending case that still fails is pending, and one that now holds is stale.
+    3. Otherwise the case passes or fails with its reasons.
+    """
+    header = program.header
+    # 1. The case's own family compares it, so formatting and graph cases run commands that others do not.
+    failures = case_failures(incan, project, fixture, program, batched)
+    # 2. A pending case that still fails is pending, and one that now holds is stale and fails.
+    match header.pending:
+        Some(reason) =>
+            if len(failures) == 0:
+                return Verdict.Fail([f"the case holds, so its `pending: {reason}` line is stale; remove it"])
+            return Verdict.Pend(reason)
+        None => pass
+    # 3. Any other case passes without failures, and fails with them otherwise.
+    if len(failures) == 0:
+        return Verdict.Pass
+    return Verdict.Fail(failures)
+
+
+def case_failures(
+    incan: str,
+    project: Path,
+    fixture: Fixture,
+    program: AdmittedProgram,
+    batched: Option[Result[Outcome, str]],
+) -> list[str]:
+    """The reasons a case's expectations are not met, or none when they are."""
+    header = program.header
+    mut failures: list[str] = []
+    if fixture.family == "project" and header.declares("cli-commands"):
+        match compare_cli(incan, project, header):
+            Err(reason) => failures.append(reason)
+            Ok(found) => failures = found
+    elif fixture.family == "check" and header.declares("check-edits"):
+        match compare_check_edits(incan, project, header, command(fixture, header), fixture):
+            Err(reason) => failures.append(reason)
+            Ok(found) => failures = found
+    elif fixture.family == "format":
+        match compare_format(incan, project, header, program.source):
+            Err(reason) => failures.append(reason)
+            Ok(found) => failures = found
+    elif fixture.family == "graph":
+        match compare_graph(incan, project, header):
+            Err(reason) => failures.append(reason)
+            Ok(found) => failures = found
+    else:
+        mut result: Result[Outcome, str] = Err("case did not run")
+        match batched:
+            Some(outcome) => result = outcome
+            None => result = invoke(incan, command(fixture, header), project)
+        match result:
+            Err(reason) => failures.append(reason)
+            Ok(outcome) =>
+                failures = compare(fixture.family, header, outcome)
+                if len(failures) > 0 and outcome.stderr.strip() != "":
+                    failures.append(f"stderr:\n{tail(outcome.stderr)}")
+    return failures
+
+
+def selected_family(family: str, selectors: list[str]) -> bool:
+    """Whether any selector reaches into `family`."""
+    if len(selectors) == 0:
+        return true
+    for selector in selectors:
+        if selector == family or selector.startswith(f"{family}/"):
+            return true
+    return false
+
+
+def selected_case(name: str, selectors: list[str]) -> bool:
+    """Whether a selector names the case `name`, its area or its family."""
+    if len(selectors) == 0:
+        return true
+    for selector in selectors:
+        if name == selector or name.startswith(f"{selector}/"):
+            return true
+    return false
+
+
+def tail(text: str) -> str:
+    """The last 40 lines of `text`, as a report shows them."""
+    lines = text.strip().split("\n")
+    mut start = 0
+    if len(lines) > 40:
+        start = len(lines) - 40
+    return "\n".join([f"    {line}" for line in lines[start:]])
+
+
+def indented(text: str) -> str:
+    """A failure as a report shows it under its case."""
+    return "\n".join([f"  {line}" for line in text.split("\n")])

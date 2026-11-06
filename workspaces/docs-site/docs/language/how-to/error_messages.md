@@ -4,7 +4,7 @@ Incan’s compiler errors are designed to be **actionable**: they show you what 
 
 ## Reading Error Output
 
-```bash
+```text
 type error: Type mismatch: expected 'Result[str, str]', found 'str'
   --> examples/demo.incn:8:5
     |
@@ -30,7 +30,7 @@ type error: Type mismatch: expected 'Result[str, str]', found 'str'
 
 **Error:**
 
-```bash
+```text
 Type mismatch: expected 'Result[User, Error]', found 'User'
 ```
 
@@ -52,7 +52,7 @@ def get_user(id: int) -> Result[User, Error]:
 
 **Error:**
 
-```bash
+```text
 Type mismatch: expected 'str', found 'Result[str, Error]'
 ```
 
@@ -82,7 +82,7 @@ def greet_safe() -> str:
 
 **Error:**
 
-```bash
+```text
 Cannot use '?' on type 'int' - expected Result[T, E]
 ```
 
@@ -104,7 +104,7 @@ def double(x: int) -> int:
 
 **Error:**
 
-```bash
+```text
 Cannot mutate 'count' - variable is immutable
 ```
 
@@ -132,7 +132,7 @@ def counter() -> int:
 
 **Error:**
 
-```bash
+```text
 Method 'increment' assigns to 'self.value' but takes 'self'
 ```
 
@@ -157,7 +157,7 @@ model Counter:
 
 **Error:**
 
-```bash
+```text
 Type 'Point' does not implement trait 'Eq'
 ```
 
@@ -193,7 +193,7 @@ if p1 == p2:
 
 **Error:**
 
-```bash
+```text
 Type mismatch: expected 'bool', found 'Option[User]'
 ```
 
@@ -230,7 +230,7 @@ while let Some(user) = current:
 
 **Error:**
 
-```bash
+```text
 'println' cannot print the Point value 'point'
 ```
 
@@ -270,7 +270,7 @@ def main() -> None:
 
 **Error:**
 
-```bash
+```text
 List annotation 'List' is missing its element type
 ```
 
@@ -292,7 +292,7 @@ maybe: Option[int] = None
 
 **Error:**
 
-```bash
+```text
 The function '__incan_original_target' starts with '__incan_', a prefix reserved for names the compiler generates
 ```
 

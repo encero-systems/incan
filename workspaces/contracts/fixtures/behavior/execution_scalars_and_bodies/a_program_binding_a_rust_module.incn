@@ -1,0 +1,10 @@
+# behavior: rust.module is refused with the retired-interop diagnostic required by RFC 171
+# expect-diagnostic: INCAN-P0001
+
+"""The retired module facade cannot bind Rust implementations or macros."""
+rust.module("incan_std_primitives")
+
+
+def program_result() -> int:
+    """Provide a declaration after the refused directive so parsing continues deterministically."""
+    return 42

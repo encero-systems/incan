@@ -26,6 +26,7 @@ impl<'a> Parser<'a> {
         self.expect_punct(PunctuationId::RParen, "Expected ')' after parameters")?;
         self.expect_punct(PunctuationId::Arrow, "Expected '->' before return type")?;
         let return_type = self.type_expr()?;
+        let result_source = self.result_source()?;
         self.expect_punct(PunctuationId::Colon, "Expected ':' after return type")?;
         self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
         self.expect_suite_indent("Expected indented block")?;
@@ -42,6 +43,7 @@ impl<'a> Parser<'a> {
             type_params,
             params,
             return_type,
+            result_source,
             body,
         })
     }
@@ -53,6 +55,11 @@ impl<'a> Parser<'a> {
         allow_abstract: bool,
     ) -> Result<Spanned<MethodDecl>, CompileError> {
         let start = self.current_span().start;
+        let visibility = if self.match_keyword(KeywordId::Pub) {
+            Visibility::Public
+        } else {
+            Visibility::Private
+        };
         let mut surface_modifiers = Vec::new();
         while let Some(id) = self.match_surface_keyword(KeywordSurfaceKind::DeclarationModifier) {
             surface_modifiers.push(SurfaceModifier {
@@ -83,6 +90,8 @@ impl<'a> Parser<'a> {
             return Err(errors::method_trait_target_after_return_type(self.current_span()));
         }
 
+        let result_source = self.result_source()?;
+
         // Check for abstract method (no body), ellipsis, or block.
         let body = if self.check(&TokenKind::Newline) {
             if !allow_abstract {
@@ -107,6 +116,7 @@ impl<'a> Parser<'a> {
 
         Ok(Spanned::new(
             MethodDecl {
+                visibility,
                 decorators,
                 surface_modifiers,
                 name,
@@ -116,10 +126,41 @@ impl<'a> Parser<'a> {
                 params,
                 trait_target,
                 return_type,
+                result_source,
                 body,
             },
             Span::new(start, end),
         ))
+    }
+
+    /// Parse one optional static result-source path after a callable return annotation.
+    ///
+    /// Delimiters remain with the declaration parser, so calls, indexing and multiple sources are rejected instead of
+    /// being swallowed as a general expression.
+    fn result_source(&mut self) -> Result<Option<Spanned<ResultSource>>, CompileError> {
+        if !self.match_keyword(KeywordId::From) {
+            return Ok(None);
+        }
+        let start = self.tokens[self.pos - 1].span.start;
+        let binding_span = self.current_span();
+        let binding = if self.match_keyword(KeywordId::SelfKw) {
+            "self".to_string()
+        } else {
+            self.identifier()?
+        };
+        let mut fields = Vec::new();
+        while self.match_punct(PunctuationId::Dot) {
+            let span = self.current_span();
+            fields.push(Spanned::new(self.identifier()?, span));
+        }
+        let end = self.tokens[self.pos - 1].span.end;
+        Ok(Some(Spanned::new(
+            ResultSource {
+                binding: Spanned::new(binding, binding_span),
+                fields,
+            },
+            Span::new(start, end),
+        )))
     }
 
     /// Parse an RFC 046 computed property declaration in a member-bearing type body.

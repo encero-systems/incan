@@ -1,0 +1,7 @@
+# behavior: std.reflection names used without their import are refused
+# expect-diagnostic: INCAN-T0001
+
+"""Invalid fixture: std.reflection import missing"""
+
+def describe(fields: List[FieldInfo]) -> None:
+    pass

@@ -93,7 +93,7 @@
         "incan.lsp.path": {
           "type": "string",
           "default": "",
-          "description": "Literal path to the incan-lsp binary. Leave empty to use workspace binary discovery, then PATH."
+          "description": "Literal path to incan-lsp. Leave empty to look beside incan on PATH, then for incan-lsp on PATH."
         },
         "incan.compiler.path": {
           "type": "string",

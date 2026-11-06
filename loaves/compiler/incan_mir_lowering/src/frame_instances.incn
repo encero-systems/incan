@@ -1,0 +1,499 @@
+"""Lower closed instances of generic frames and decorator frames, and merge their external signatures."""
+
+from pub::incan_mir_plan import Carrier, ExternalFunction, Function, GenericLoan, EnumDeclaration, StaticCell, PlanType
+from layout_types import native_source_type
+from signature_lifetimes import signature_lifetimes, generic_loans
+from rust::incan_semantics_core import IncanType as RustType
+from rust::incan_semantics_core::body_ir import Body as RustBody, DecoratedInitialization
+from classes import body_module_identity
+from program_context import ProgramContext, retain_nominal_tables
+from native_type_identity import ConstructorIndex
+from rust::std::collections import BTreeMap
+from nominal_instances import NominalInstance, retain_frame_nominals
+from table_views import borrowed_at
+from decorator_caches import DecoratorFrame, validate_binding_policy, frame_signature, cached_binding_frames
+from decls import library_item, library_enum_item
+from unions import collect_unions
+from options import retain_body_carriers
+from async_ import evaluator_name
+from type_parameters import (
+    Instance,
+    instantiate,
+    callable_storage_arguments,
+    merge_instance_requests,
+    instance_queue,
+    enqueue_instances,
+)
+from runtime_calls import retain_runtime_instances, runtime_redirects, redirect_runtime_calls
+from runtime_requirements import RuntimeRetention
+from lowering import BodyIrModule
+from checked_values import location
+from program_refusals import append_generator_constructor
+from function_frames import lower_function
+
+
+def retain_generic_decorator_frames(
+    module: &BodyIrModule,
+    program: ProgramContext,
+    body: &RustBody,
+    arguments: list[RustType],
+    owned_callable_slots: list[int],
+    unions: list[RustType],
+    source: str,
+    file: str,
+    mut intrinsics: list[EnumDeclaration],
+    mut functions: list[Function],
+    mut names: FunctionNames,
+    mut externals: list[ExternalFunction],
+    mut instances: list[Instance],
+    mut cells: list[StaticCell],
+) -> Result[None, str]:
+    """
+    Close a retained original and its sole initializer with the wrapper's authenticated ordered arguments.
+
+    The closed instance's storage cell takes the next slot after the unit's source statics and earlier instance cells.
+    """
+    for binding_position in range(len(module.decorated_bindings)):
+        binding = borrowed_at(module.decorated_bindings, binding_position)
+        if binding.original_body.canonical != body.canonical:
+            continue
+        validate_binding_policy(binding)?
+        if binding.initialization != DecoratedInitialization.PerInstantiation:
+            continue
+        match binding.initializer:
+            None => pass
+            Some(template) =>
+                if len(owned_callable_slots) != 0:
+                    return Err("unsupported Body IR generic decorated wrapper with owned closure parameters")
+                original = instantiate(binding.original_body, arguments, [])?
+                function, runtime, pending, synthesized = lower_function(
+                    module,
+                    program,
+                    original,
+                    unions,
+                    source,
+                    file,
+                    intrinsics,
+                    arguments,
+                    DecoratorFrame.Original,
+                )?
+                signature = frame_signature(function)
+                original_name = function.name
+                retain_instance(functions, names, function)?
+                append_synthesized(functions, names, synthesized)?
+                merge_externals(externals, runtime)?
+                merge_instance_requests(instances, pending)
+                initializer = instantiate(template, arguments, [])?
+                init_function, init_runtime, init_pending, init_synthesized = lower_function(
+                    module,
+                    program,
+                    initializer,
+                    unions,
+                    source,
+                    file,
+                    intrinsics,
+                    arguments,
+                    DecoratorFrame.Initializer,
+                )?
+                # Decorators generic over the whole callable return the original's exact closed signature.
+                if init_function.return_type != PlanType.FunctionPointer(signature):
+                    return Err("unsupported Body IR generic decorator initializer outside its original's signature")
+                initializer_name = init_function.name
+                retain_instance(functions, names, init_function)?
+                append_synthesized(functions, names, init_synthesized)?
+                merge_externals(externals, init_runtime)?
+                merge_instance_requests(instances, init_pending)
+                cell, frames, cache_runtime = cached_binding_frames(
+                    program,
+                    binding,
+                    evaluator_name(module, body),
+                    original_name,
+                    initializer_name,
+                    signature,
+                    len(program.statics.as_ref()) + len(cells),
+                    unions,
+                    intrinsics,
+                    location(body.span, source, file),
+                )?
+                cells.append(cell)
+                for frame in frames:
+                    retain_instance(functions, names, frame)?
+                merge_externals(externals, cache_runtime)?
+    return Ok(None)
+
+
+pub def lower_instances(
+    template_constructors: &ConstructorIndex,
+    mut context: &mut BodyIrModule,
+    templates: &BodyIrModule,
+    mut program: ProgramContext,
+    mut instances: list[Instance],
+    unions: list[RustType],
+    sources: list[str],
+    files: list[str],
+    owners: list[str],
+    mut functions: list[Function],
+    mut externals: list[ExternalFunction],
+    mut intrinsics: list[EnumDeclaration],
+    mut nominal_instances: list[NominalInstance],
+    mut cells: list[StaticCell],
+) -> Result[RuntimeRetention, str]:
+    """
+    Drain checked instances through an explicit foreign mutable loan and append native layouts in place.
+
+    All producers merge requests through request_instance, preserving the first equivalent checked frame.
+    Each closed instance of a generic decorated function appends its storage cell to `cells`.
+    Imported Rust values written as `mut T` are owned parameters, so only `&mut T` preserves this module's storage.
+    Callers that publish source declarations restore their original nominal-table length after retaining the layouts.
+    Final runtime call selections are applied once after the queue closes.
+    A call to a runtime declaration this attempt has not loaded stays unbound while the queue drains; the attempt then
+    reports every missing declaration together and publishes nothing.
+    The caller's program context retains each appended layout and constructor-index generation in place.
+    """
+    mut queue = instance_queue()
+    mut runtime_unions = list(unions)
+    mut redirects = runtime_redirects()
+    mut names = function_names()
+    governed_runtime = len(context.runtime_callable_bindings) != 0 or governed_runtime_module(owners)
+    if governed_runtime:
+        retain_runtime_instances(
+            template_constructors,
+            program,
+            context,
+            templates,
+            functions,
+            externals,
+            instances,
+            intrinsics,
+            nominal_instances,
+            runtime_unions,
+            redirects,
+        )?
+    enqueue_instances(queue, instances)
+    while let Some(request) = queue.pending.pop_front():
+        arguments = request.arguments
+        owned_callable_slots = request.owned_callable_slots
+        original_callable = request.original_callable
+        body = instantiate(request.body, arguments, owned_callable_slots)?
+        storage_arguments = callable_storage_arguments(request.body, arguments, owned_callable_slots)?
+        lifetimes = signature_lifetimes(request.body, arguments)?
+        declarations = retain_frame_nominals(template_constructors, context, templates, body, nominal_instances)?
+        for declaration in declarations:
+            context.nominal_declarations.push(declaration.clone())
+        if len(declarations) != 0:
+            runtime_unions = collect_unions(context)
+        role, source_index = instance_frame_selection(body, original_callable, owners)?
+        retain_nominal_tables(program, context)?
+        constructors = program.constructors.as_ref()
+        retain_body_carriers(constructors, context, intrinsics, body, files[source_index])?
+        retain_generic_decorator_frames(
+            context,
+            program,
+            body,
+            arguments,
+            owned_callable_slots,
+            unions,
+            sources[source_index],
+            files[source_index],
+            intrinsics,
+            functions,
+            names,
+            externals,
+            instances,
+            cells,
+        )?
+        enqueue_instances(queue, instances)
+        mut scheduled = lower_instance_frame(
+            context,
+            program,
+            request,
+            body,
+            role,
+            storage_arguments,
+            lifetimes,
+            unions,
+            runtime_unions,
+            sources[source_index],
+            files[source_index],
+            intrinsics,
+            functions,
+            names,
+            externals,
+        )?
+        enqueue_instances(queue, scheduled)
+        if governed_runtime:
+            retain_runtime_instances(
+                template_constructors,
+                program,
+                context,
+                templates,
+                functions,
+                externals,
+                instances,
+                intrinsics,
+                nominal_instances,
+                runtime_unions,
+                redirects,
+            )?
+            enqueue_instances(queue, instances)
+    # The restart that remains: the driver discards this whole attempt and plans again from the closure the missing
+    # declarations extend. Invariant: no call binds to a missing declaration, and a refused attempt publishes nothing.
+    # A declaration selected only inside a missing one's body surfaces on the next attempt, so attempts grow with
+    # nesting depth, not with call count. DD-0013's stage E2 removes the restart with prepared keyed reads.
+    if len(redirects.missing) != 0:
+        return Ok(RuntimeRetention.NeedsRuntime(redirects.missing))
+    redirect_runtime_calls(functions, redirects)?
+    return Ok(RuntimeRetention.Complete)
+
+
+def lower_instance_frame(
+    context: &BodyIrModule,
+    program: ProgramContext,
+    request: &Instance,
+    body: &RustBody,
+    role: DecoratorFrame,
+    storage_arguments: list[RustType],
+    lifetimes: list[list[str]],
+    unions: list[RustType],
+    runtime_unions: &list[RustType],
+    source: str,
+    file: str,
+    mut intrinsics: list[EnumDeclaration],
+    mut functions: list[Function],
+    mut names: FunctionNames,
+    mut externals: list[ExternalFunction],
+) -> Result[list[Instance], str]:
+    """Lower one closed instance frame, retain it with the functions it synthesizes, and return its own requests."""
+    diagnostic_context = f"{body.name} at {file}"
+    function, runtime, pending, synthesized = lower_function(
+        context,
+        program,
+        body,
+        unions,
+        source,
+        file,
+        intrinsics,
+        storage_arguments,
+        role,
+    ).map_err((reason) => f"{reason} in {diagnostic_context}")?
+    mut retained_function = function
+    retained_function.signature_lifetimes = lifetimes
+    retained_function.generic_loans = instance_loans(program, context, request, runtime_unions, intrinsics)?
+    retain_instance(functions, names, retained_function)?
+    append_synthesized(functions, names, synthesized)?
+    append_generator_constructor(program.constructors.as_ref(), functions, context, body, source, file, intrinsics)?
+    _ = merge_externals(externals, runtime)?
+    return Ok(pending)
+
+
+def instance_loans(
+    program: &ProgramContext,
+    context: &BodyIrModule,
+    request: &Instance,
+    unions: &list[RustType],
+    intrinsics: &list[EnumDeclaration],
+) -> Result[list[GenericLoan], str]:
+    """Retain the same canonical argument storage used by native instantiation for signature-loan verification."""
+    constructors = program.constructors.as_ref()
+    mut retained: list[PlanType] = []
+    for argument in request.arguments:
+        retained.append(
+            native_source_type(
+                constructors,
+                context.nominal_declarations,
+                context.enum_declarations,
+                unions,
+                argument,
+                intrinsics,
+            )?,
+        )
+    return Ok(generic_loans(request.body, retained))
+
+
+def governed_runtime_module(owners: &list[str]) -> bool:
+    """Retain the existing runtime-module selection before scheduling its governed source bodies."""
+    for owner in owners:
+        if owner.startswith("pub::incan_native_runtime::"):
+            return true
+    return false
+
+
+def instance_frame_selection(
+    body: RustBody,
+    original_callable: bool,
+    owners: list[str],
+) -> Result[tuple[DecoratorFrame, int], str]:
+    """Keep the checked execution role and last matching source owner, refusing an instance without provenance."""
+    mut role = DecoratorFrame.Normal
+    if original_callable:
+        role = DecoratorFrame.Original
+    owner = body_module_identity(body)?
+    mut source_index = -1
+    for index in range(len(owners)):
+        if owners[index] == owner:
+            source_index = index
+    if source_index < 0:
+        return Err("unsupported Body IR instance without source provenance")
+    return Ok((role, source_index))
+
+
+pub model FunctionNames:
+    """
+    Positions of one plan function list by symbol. Plan function lists only grow, so each lookup first indexes the
+    rows any producer appended since the previous one, starting from `indexed`.
+    """
+
+    pub positions: BTreeMap[str, list[int]]
+    pub indexed: int
+
+
+pub def function_names() -> FunctionNames:
+    """Start an index for one plan function list; its first lookup indexes the rows already retained."""
+    positions: BTreeMap[str, list[int]] = BTreeMap.new()
+    return FunctionNames(positions=positions, indexed=0)
+
+
+pub def named_functions(mut names: FunctionNames, functions: &list[Function], name: str) -> list[int]:
+    """Index the rows appended since the last lookup, then return this symbol's positions in list order."""
+    while names.indexed < len(functions):
+        names.positions.entry(str(borrowed_at(functions, names.indexed).name)).or_insert([]).push(names.indexed)
+        names.indexed += 1
+    mut found: list[int] = []
+    match names.positions.get(name):
+        Some(indexed) =>
+            for position in indexed:
+                found.append(int(position.clone()))
+        None => pass
+    return found
+
+
+def retain_instance(mut functions: list[Function], mut names: FunctionNames, function: Function) -> Result[None, str]:
+    """Refuse a native instance symbol that collides with another retained source declaration."""
+    if len(named_functions(names, functions, function.name)) != 0:
+        return Err(f"unsupported Body IR type parameter instance symbol collision {function.name}")
+    functions.append(function)
+    return Ok(None)
+
+
+pub def append_synthesized(
+    mut functions: list[Function],
+    mut names: FunctionNames,
+    additions: list[Function],
+) -> Result[None, str]:
+    """Add closure bodies and constructors once; two functions sharing one item's forwarding environment agree on it."""
+    for addition in additions:
+        mut present = false
+        for position in named_functions(names, functions, addition.name):
+            if borrowed_at(functions, position) != addition:
+                return Err(f"invalid Body IR synthesized function collision {addition.name}")
+            present = true
+        if not present:
+            functions.append(addition)
+    return Ok(None)
+
+
+pub def merge_externals(mut externals: list[ExternalFunction], additions: list[ExternalFunction]) -> Result[None, str]:
+    """Retain one exact signature per native path and instantiation; report both checked signatures on conflict."""
+    for external in additions:
+        mut found = false
+        for position in range(len(externals)):
+            retained = borrowed_at(externals, position)
+            if retained.path == external.path and retained.type_arguments == external.type_arguments:
+                if retained.parameters != external.parameters or retained.return_type != external.return_type:
+                    return Err(conflicting_external_signatures(retained, external))
+                found = true
+        if not found:
+            externals.append(external)
+    return Ok(None)
+
+
+pub model ExternalIndex:
+    """Positions of each native path's signatures in an externals list that only grows while the index is in use."""
+
+    pub positions: BTreeMap[str, list[int]]
+    pub indexed: int
+
+
+pub def external_index() -> ExternalIndex:
+    """Start an empty index; `merge_indexed` indexes the list's existing entries before its first merge."""
+    positions: BTreeMap[str, list[int]] = BTreeMap.new()
+    return ExternalIndex(positions=positions, indexed=0)
+
+
+pub def merge_indexed(
+    mut externals: list[ExternalFunction],
+    mut index: ExternalIndex,
+    additions: list[ExternalFunction],
+) -> Result[None, str]:
+    """
+    Merge as `merge_externals` does, finding a path's retained signatures by key instead of scanning every entry.
+    Entries another helper appended since the last merge are indexed first, so the index stays exact while the list
+    only grows.
+    """
+    for external in additions:
+        while index.indexed < len(externals):
+            appended = borrowed_at(externals, index.indexed)
+            index.positions.entry(str(appended.path)).or_insert([]).push(index.indexed)
+            index.indexed += 1
+        mut found = false
+        match index.positions.get(external.path):
+            Some(positions) =>
+                for position in positions:
+                    retained = borrowed_at(externals, int(position.clone()))
+                    if retained.type_arguments == external.type_arguments:
+                        if retained.parameters != external.parameters or retained.return_type != external.return_type:
+                            return Err(conflicting_external_signatures(retained, external))
+                        found = true
+            None => pass
+        if not found:
+            externals.append(external)
+    return Ok(None)
+
+
+def conflicting_external_signatures(retained: &ExternalFunction, external: &ExternalFunction) -> str:
+    """Keep each conflicting checked signature and source location in the native merge refusal."""
+    target = f"unsupported Body IR conflicting native call signatures for {external.path}"
+    arguments = f" with {external.type_arguments:?}:"
+    prior = f" ({retained.parameters:?}) -> {retained.return_type:?}"
+    prior_location = f" at {retained.span.file}:{retained.span.line}:{retained.span.column};"
+    current = f" ({external.parameters:?}) -> {external.return_type:?}"
+    current_location = f" at {external.span.file}:{external.span.line}:{external.span.column}"
+    return target + arguments + prior + prior_location + current + current_location
+
+
+pub def entry_result(module: &BodyIrModule, ty: PlanType, mut intrinsics: list[EnumDeclaration]) -> bool:
+    """
+    Report whether a native main's result is a `Result` with a unit success, which Rust's entry point reports itself.
+
+    The error side must be text or a type an SDK crate owns: legacy's entry point reports an error through its Debug,
+    which both have.
+    """
+    match ty:
+        PlanType.Enum(owner, _name) =>
+            index = owner - len(module.enum_declarations)
+            if index < 0 or index >= len(intrinsics):
+                return false
+            declaration = intrinsics[index]
+            if declaration.carrier != Carrier.Result or len(declaration.variants) != 2:
+                return false
+            success = declaration.variants[0].fields
+            failure = declaration.variants[1].fields
+            if len(failure) != 1 or (len(success) != 0 and success != [PlanType.Unit]):
+                return false
+            return entry_error(module, failure[0])
+        _ => return false
+
+
+def entry_error(module: &BodyIrModule, ty: PlanType) -> bool:
+    """Report whether an entry result's error is text or an SDK crate's model or enum."""
+    match ty:
+        PlanType.String => return true
+        PlanType.Model(index, _name) =>
+            if index >= len(module.nominal_declarations):
+                return false
+            return library_item(borrowed_at(module.nominal_declarations, index)) != ""
+        PlanType.Enum(index, _name) =>
+            if index >= len(module.enum_declarations):
+                return false
+            return library_enum_item(borrowed_at(module.enum_declarations, index)) != ""
+        _ => return false

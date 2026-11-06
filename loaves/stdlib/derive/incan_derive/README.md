@@ -129,7 +129,7 @@ You should never need to use these macros directly - the compiler handles it.
 
 ### Testing
 
-Derive macros are tested indirectly through the Incan compiler test suite: the codegen snapshot roots under `loaves/compiler/incan_emit/tests/` and the integration roots under `loaves/toolchain/incan-cli/tests/` exercise every derive the emitter names.
+Derive behavior is tested through programs in `workspaces/contracts/fixtures/behavior/snapshots_models_and_classes/` and `workspaces/contracts/fixtures/behavior/snapshots_newtypes_and_serde/`. The former emitter and CLI test roots were removed.
 
 ### Adding New Macros
 
@@ -137,8 +137,8 @@ When adding a new derive macro:
 
 1. Define the trait in the owning stdlib facet (`incan_std_core` for reflection)
 2. Implement the proc macro here
-3. Update the compiler's `lower.rs` to emit the derive
-4. Add snapshot tests in `loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs`
+3. Update checked derive handling and native lowering for the declaration
+4. Extend a matching case under `workspaces/contracts/fixtures/behavior/`
 
 ## Version Compatibility
 

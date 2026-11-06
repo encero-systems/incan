@@ -32,7 +32,7 @@ impl<'a> Parser<'a> {
                 return Err(err);
             }
 
-            if self.starts_surface_function_decl() {
+            if self.starts_method_decl() {
                 parsing_methods = true;
                 methods.push(self.method_decl(method_decorators, false)?);
             } else {
@@ -80,10 +80,7 @@ impl<'a> Parser<'a> {
         }
 
         let ty = self.type_expr()?;
-        self.expect_punct(
-            PunctuationId::RParen,
-            "Expected ')' after value enum type specifier",
-        )?;
+        self.expect_punct(PunctuationId::RParen, "Expected ')' after value enum type specifier")?;
 
         let value_type = match &ty.node {
             Type::Simple(name) if name == "str" => ValueEnumType::Str,

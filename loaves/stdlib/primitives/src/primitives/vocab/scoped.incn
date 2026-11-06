@@ -1,0 +1,106 @@
+"""Describe import-owned glyphs and leading-dot paths without assigning them host-language semantics."""
+
+from rust::serde import Deserialize as RustDeserialize, Serialize as RustSerialize
+from crate.primitives.vocab.transport import decode_vocab, encode_vocab
+
+
+pub model ScopedSurfaceEligibility:
+    """A descriptor's positive declaration, clause or call-argument position."""
+
+    pub declaration: str
+    pub clause: Option[str] = None
+    pub call: Option[str] = None
+    pub position: str = "DeclarationBody"
+
+    pub def call_argument(declaration: str, call: str) -> Self:
+        """Accept the surface in an argument to the named call inside the owning declaration."""
+        return ScopedSurfaceEligibility(declaration=declaration, call=Some(call), position="CallArgument")
+
+
+pub enum ScopedSurfaceFamily(str):
+    """Whether the surface is an operator, a binding or an expression form."""
+
+    OperatorLike = "OperatorLike"
+    BindingLike = "BindingLike"
+    ExpressionForm = "ExpressionForm"
+
+
+pub enum ScopedSurfaceSyntax:
+    """A literal glyph or a leading-dot path with explicit segment-count bounds."""
+
+    Glyph(str)
+    LeadingDotPath(int, Option[int])
+
+
+@derive(RustSerialize, RustDeserialize)
+pub enum ScopedSurfaceReceiver:
+    """The declaration, clause or provider-defined context supplying a leading-dot receiver."""
+
+    OwningDeclaration
+    Clause(str)
+    Custom(str)
+
+    pub def custom(key: str) -> Self:
+        """Name a receiver policy interpreted by the provider's desugarer."""
+        return ScopedSurfaceReceiver.Custom(key)
+
+    pub def to_json(self) -> str:
+        """Encode the receiver context retained in structured vocabulary syntax."""
+        return encode_vocab(self)
+
+    pub def from_json(source: str) -> Result[ScopedSurfaceReceiver, str]:
+        """Decode the receiver context retained in structured vocabulary syntax."""
+        return decode_vocab[ScopedSurfaceReceiver](source)
+
+
+pub model ScopedSurfaceDescriptor:
+    """One positively scoped parser surface, with optional receiver context and pairwise formatting."""
+
+    pub key: str
+    pub syntax: ScopedSurfaceSyntax
+    pub family: ScopedSurfaceFamily = ScopedSurfaceFamily.OperatorLike
+    pub eligible_in: list[ScopedSurfaceEligibility] = []
+    pub receiver: Option[ScopedSurfaceReceiver] = None
+    pub pairwise: bool = false
+
+    pub def operator(key: str, glyph: str) -> Self:
+        """Register an operator-like glyph without assigning a builtin operation to it."""
+        return ScopedSurfaceDescriptor(key=key, syntax=ScopedSurfaceSyntax.Glyph(glyph))
+
+    pub def binding(key: str, glyph: str) -> Self:
+        """Register a binding-like glyph whose meaning belongs to its desugarer."""
+        return ScopedSurfaceDescriptor(
+            key=key,
+            syntax=ScopedSurfaceSyntax.Glyph(glyph),
+            family=ScopedSurfaceFamily.BindingLike,
+        )
+
+    pub def leading_dot_path(key: str) -> Self:
+        """Register a leading-dot path with at least one segment and no upper segment-count bound."""
+        return ScopedSurfaceDescriptor(
+            key=key,
+            syntax=ScopedSurfaceSyntax.LeadingDotPath(1, None),
+            family=ScopedSurfaceFamily.ExpressionForm,
+        )
+
+    pub def in_declaration_body(self, declaration: str) -> Self:
+        """Append a positive declaration-body position."""
+        return self.with_eligibilities([ScopedSurfaceEligibility(declaration=declaration)])
+
+    pub def with_eligibilities(self, eligible_in: list[ScopedSurfaceEligibility]) -> Self:
+        """Append positive positions in declaration order."""
+        mut result = self
+        result.eligible_in = result.eligible_in + eligible_in
+        return result
+
+    pub def with_receiver(self, receiver: ScopedSurfaceReceiver) -> Self:
+        """Set the receiver policy retained in accepted leading-dot syntax."""
+        mut result = self
+        result.receiver = Some(receiver)
+        return result
+
+    pub def pairwise_chain(self) -> Self:
+        """Preserve repeated operator occurrences as pairwise links for formatting."""
+        mut result = self
+        result.pairwise = true
+        return result

@@ -1,0 +1,77 @@
+# behavior: a free function can return a view of a borrowed parameter's place, directly or carried in a `Result`; its caller can pass and store shared or exclusive direct results without a wrapper, write through a reborrowed list element, and retain the declared source through the aggregate's last use (#2500).
+# expect-stdout:
+#   6
+#   1
+#   Utrecht!
+#   Leiden
+#   7
+#   6
+
+"""Return views of a parameter's field from free functions."""
+
+
+class Entry:
+    pub key: str
+    pub size: int
+
+
+def key_of(entry: Borrowed[Entry]) -> Borrowed[str] from entry.key:
+    return entry.key
+
+
+def edit_key(mut entry: BorrowedMut[Entry]) -> Reference[str] from entry.key:
+    return entry.key
+
+
+def checked_key(entry: Borrowed[Entry]) -> Result[Borrowed[str], str] from entry.key:
+    if entry.size == 0:
+        return Err("empty")
+    return Ok(entry.key)
+
+
+def measured(key: Borrowed[str]) -> int:
+    return len(key)
+
+
+def describe(entry: Borrowed[Entry]) -> int:
+    return measured(key_of(entry)) + entry.size
+
+
+def shout(mut entry: BorrowedMut[Entry]) -> None:
+    mut key = edit_key(entry)
+    key = "Utrecht!"
+
+
+def checked_length(entry: Borrowed[Entry]) -> Result[int, str]:
+    key = checked_key(entry)?
+    return Ok(len(key) + 1)
+
+
+def retained_length(entry: Borrowed[Entry]) -> Owned[int] from entry.key:
+    return len(entry.key)
+
+
+def stored_view_count(entry: Borrowed[Entry]) -> int:
+    keys = [key_of(entry)]
+    return len(keys)
+
+
+def edit_stored_view(mut entry: BorrowedMut[Entry]) -> None:
+    mut keys = [edit_key(entry)]
+    mut key: BorrowedMut[str] = keys[0]
+    key = "Leiden"
+
+
+def main() -> None:
+    mut entry = Entry(key="ada", size=3)
+    println(describe(entry))
+    println(stored_view_count(entry))
+    shout(entry)
+    println(entry.key)
+    edit_stored_view(entry)
+    println(entry.key)
+    match checked_length(entry):
+        Ok(length) => println(length)
+        Err(reason) => println(reason)
+    length = retained_length(entry)
+    println(length)

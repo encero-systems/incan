@@ -6,6 +6,7 @@ use super::TypeChecker;
 use super::type_info::BodyIrClassInheritance;
 use crate::ast::{Declaration, ParamKind, Program};
 use crate::symbols::{ClassInfo, ResolvedType, TypeInfo};
+use incan_lang::lang::derives::{self, DeriveId};
 use incan_semantics_core::body_ir::{ClassInheritance, ClassMethodImplementation};
 
 impl TypeChecker {
@@ -102,9 +103,9 @@ impl TypeChecker {
 }
 
 /// Bound inheritance to concrete ordinary instance methods and fields whose executable frames are proven here.
+/// Checked trait adoptions remain independent of the parent layout and nearest implementation identities.
 fn plain_class(info: &ClassInfo) -> bool {
     info.type_params.is_empty()
-        && info.traits.is_empty()
         && info.properties.is_empty()
         && info.method_aliases.is_empty()
         && info.field_defaults.is_empty()
@@ -112,7 +113,7 @@ fn plain_class(info: &ClassInfo) -> bool {
         && info
             .derives
             .iter()
-            .all(|derive| matches!(derive.as_str(), "Debug" | "Clone"))
+            .all(|derive| matches!(derives::from_str(derive), Some(DeriveId::Debug | DeriveId::Clone)))
         && info
             .fields
             .values()

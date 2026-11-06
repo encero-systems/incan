@@ -1,0 +1,2 @@
+"""Source vocabulary backed by an exported Rust derive macro import."""
+pub from rust::serde import Serialize

@@ -1,0 +1,665 @@
+"""Foundational vocabulary descriptors, surfaces and library manifests."""
+
+from rust::serde import Deserialize as RustDeserialize, Serialize as RustSerialize
+from rust::serde_json import Error as JsonError, from_str, to_string
+from rust::std::panic import panic_any
+from scoped import ScopedSurfaceDescriptor, ScopedSurfaceEligibility
+from crate.primitives.vocab._versions import VOCAB_METADATA_VERSION
+
+
+pub enum KeywordActivation:
+    """Where descriptors become available to the parser."""
+
+    Always
+    OnImport(str)
+
+    pub def on_import(namespace: str) -> Self:
+        """Activate when the module imports the specified namespace."""
+        return KeywordActivation.OnImport(namespace)
+
+
+pub enum KeywordPlacement:
+    """The declaration positions accepting a registered keyword."""
+
+    TopLevel
+    InBlock(list[str])
+
+    pub def in_block(parents: list[str]) -> Self:
+        """Limit a keyword to the named parent declarations."""
+        return KeywordPlacement.InBlock(parents)
+
+
+pub enum KeywordSurfaceKind(str):
+    """Parser constructs selected by low-level keyword registrations."""
+
+    FunctionDecl = "FunctionDecl"
+    TypeDecl = "TypeDecl"
+    ConditionalChain = "ConditionalChain"
+    ForLoop = "ForLoop"
+    WhileLoop = "WhileLoop"
+    MatchBlock = "MatchBlock"
+    TryBlock = "TryBlock"
+    ImportStatement = "ImportStatement"
+    ControlFlow = "ControlFlow"
+    BindingDecl = "BindingDecl"
+    BlockDeclaration = "BlockDeclaration"
+    BlockContextKeyword = "BlockContextKeyword"
+    SubBlock = "SubBlock"
+
+
+pub enum DeclarationHeadKind(str):
+    """Structured payload following a declaration keyword."""
+
+    NoHead = "None"
+    HeaderArguments = "HeaderArguments"
+    Signature = "Signature"
+    Mixed = "Mixed"
+
+
+pub enum DeclarationBodyKind(str):
+    """The host and DSL forms accepted inside a declaration."""
+
+    Clauses = "Clauses"
+    Statements = "Statements"
+    Mixed = "Mixed"
+
+
+pub enum ClauseBodyKind(str):
+    """The payload parser used by a clause."""
+
+    Expression = "Expression"
+    ExpressionList = "ExpressionList"
+    Type = "Type"
+    FieldSet = "FieldSet"
+    NestedItems = "NestedItems"
+
+
+pub enum ClauseCardinality(str):
+    """The permitted number of occurrences in one declaration."""
+
+    Required = "Required"
+    Optional = "Optional"
+    Repeating = "Repeating"
+
+
+pub enum ClausePlacement:
+    """Relative clause ordering recorded for parser validation."""
+
+    Anywhere
+    Before(str)
+    After(str)
+
+
+pub enum DesugarTarget(str):
+    """The host syntax position occupied by an expanded declaration."""
+
+    Declarations = "Declarations"
+    Statements = "Statements"
+    Expression = "Expression"
+
+
+pub model KeywordSpec:
+    """One keyword and its parser surface and placement."""
+
+    pub name: str
+    pub surface_kind: KeywordSurfaceKind = KeywordSurfaceKind.BlockDeclaration
+    pub compound_tokens: list[str] = []
+    pub placement: KeywordPlacement = KeywordPlacement.TopLevel
+
+    pub def new(name: str, surface_kind: KeywordSurfaceKind) -> Self:
+        """Construct a top-level keyword of the requested kind."""
+        return KeywordSpec(name=name, surface_kind=surface_kind)
+
+    pub def block(name: str) -> Self:
+        """Construct a top-level declaration keyword."""
+        return KeywordSpec(name=name)
+
+    pub def block_context(name: str, parent: str) -> Self:
+        """Construct a clause keyword owned by a declaration."""
+        return KeywordSpec.new(name, KeywordSurfaceKind.BlockContextKeyword).in_block(parent)
+
+    pub def sub_block(name: str, parent: str) -> Self:
+        """Construct a nested block keyword owned by a declaration."""
+        return KeywordSpec.new(name, KeywordSurfaceKind.SubBlock).in_block(parent)
+
+    pub def in_block(self, parent: str) -> Self:
+        """Return this keyword restricted to one parent."""
+        return self.with_placement(KeywordPlacement.InBlock([parent]))
+
+    pub def in_blocks(self, parents: list[str]) -> Self:
+        """Return this keyword restricted to any of the named parents."""
+        return self.with_placement(KeywordPlacement.InBlock(parents))
+
+    pub def with_placement(self, placement: KeywordPlacement) -> Self:
+        """Return this keyword with the supplied placement."""
+        mut result = self
+        result.placement = placement
+        return result
+
+    pub def with_compound_tokens(self, tokens: list[str]) -> Self:
+        """Return this keyword with its compound spelling tail."""
+        mut result = self
+        result.compound_tokens = tokens
+        return result
+
+
+pub model KeywordRegistration:
+    """A group of keywords with one activation rule."""
+
+    pub activation: KeywordActivation = KeywordActivation.Always
+    pub keywords: list[KeywordSpec] = []
+    pub valid_decorators: list[str] = []
+
+    pub def new(activation: KeywordActivation) -> Self:
+        """Construct an empty keyword group."""
+        return KeywordRegistration(activation=activation)
+
+    pub def on_import(namespace: str) -> Self:
+        """Construct a keyword group activated by an import."""
+        return KeywordRegistration.new(KeywordActivation.on_import(namespace))
+
+    pub def always_on() -> Self:
+        """Construct a keyword group active in every module."""
+        return KeywordRegistration()
+
+    pub def with_keyword(self, keyword: KeywordSpec) -> Self:
+        """Append one keyword to this group."""
+        mut result = self
+        result.keywords.append(keyword)
+        return result
+
+    pub def with_keywords(self, keywords: list[KeywordSpec]) -> Self:
+        """Append keywords in declaration order."""
+        mut result = self
+        result.keywords = result.keywords + keywords
+        return result
+
+    pub def with_valid_decorator(self, decorator: str) -> Self:
+        """Admit one decorator on this group's declarations."""
+        mut result = self
+        result.valid_decorators.append(decorator)
+        return result
+
+    pub def with_valid_decorators(self, decorators: list[str]) -> Self:
+        """Append decorators valid on this group's declarations."""
+        mut result = self
+        result.valid_decorators = result.valid_decorators + decorators
+        return result
+
+
+pub enum ExpressionItemModifierKind(str):
+    """The trailing payload accepted after an expression-list item."""
+
+    Alias = "Alias"
+    Expression = "Expression"
+
+
+pub model ExpressionItemModifierSurface:
+    """A trailing clause-item keyword and its payload parser."""
+
+    pub keyword: str
+    pub kind: ExpressionItemModifierKind = ExpressionItemModifierKind.Alias
+
+    pub def alias(keyword: str) -> Self:
+        """Construct an identifier alias modifier."""
+        return ExpressionItemModifierSurface(keyword=keyword)
+
+    pub def expr(keyword: str) -> Self:
+        """Construct a modifier whose payload is an expression."""
+        return ExpressionItemModifierSurface(keyword=keyword, kind=ExpressionItemModifierKind.Expression)
+
+
+pub model ClauseSurface:
+    """A clause's spelling, payload, cardinality and ordering."""
+
+    pub keyword: str
+    pub compound_tokens: list[str] = []
+    pub body_kind: ClauseBodyKind = ClauseBodyKind.Expression
+    pub expression_item_modifiers: list[ExpressionItemModifierSurface] = []
+    pub cardinality: ClauseCardinality = ClauseCardinality.Optional
+    pub placement: ClausePlacement = ClausePlacement.Anywhere
+
+    pub def new(keyword: str, body_kind: ClauseBodyKind) -> Self:
+        """Construct a clause with the payload's standard modifiers."""
+        mut result = ClauseSurface(keyword=keyword, body_kind=body_kind)
+        if body_kind == ClauseBodyKind.ExpressionList:
+            result.expression_item_modifiers = [ExpressionItemModifierSurface.alias("as")]
+        return result
+
+    pub def from_spelling(spelling: str, body_kind: ClauseBodyKind) -> Self:
+        """Split a compound spelling into the leading keyword and tail."""
+        words = spelling.split_whitespace()
+        mut result = ClauseSurface.new(words[0], body_kind)
+        result.compound_tokens = words[1:]
+        return result
+
+    pub def expr(spelling: str) -> Self:
+        """Construct a single-expression clause."""
+        return ClauseSurface.from_spelling(spelling, ClauseBodyKind.Expression)
+
+    pub def expr_list(spelling: str) -> Self:
+        """Construct an expression-list clause with the standard alias modifier."""
+        return ClauseSurface.from_spelling(spelling, ClauseBodyKind.ExpressionList)
+
+    pub def fields(spelling: str) -> Self:
+        """Construct a field-set clause."""
+        return ClauseSurface.from_spelling(spelling, ClauseBodyKind.FieldSet)
+
+    pub def type_ref(spelling: str) -> Self:
+        """Construct a type-position clause."""
+        return ClauseSurface.from_spelling(spelling, ClauseBodyKind.Type)
+
+    pub def nested_items(spelling: str) -> Self:
+        """Construct a clause containing nested items."""
+        return ClauseSurface.from_spelling(spelling, ClauseBodyKind.NestedItems)
+
+    pub def required(self) -> Self:
+        """Require exactly one occurrence."""
+        mut result = self
+        result.cardinality = ClauseCardinality.Required
+        return result
+
+    pub def optional(self) -> Self:
+        """Permit at most one occurrence."""
+        mut result = self
+        result.cardinality = ClauseCardinality.Optional
+        return result
+
+    pub def repeating(self) -> Self:
+        """Permit multiple occurrences."""
+        mut result = self
+        result.cardinality = ClauseCardinality.Repeating
+        return result
+
+    pub def before(self, other: str) -> Self:
+        """Record that this clause precedes another."""
+        mut result = self
+        result.placement = ClausePlacement.Before(other)
+        return result
+
+    pub def after(self, other: str) -> Self:
+        """Record that this clause follows another."""
+        mut result = self
+        result.placement = ClausePlacement.After(other)
+        return result
+
+    pub def with_compound_tokens(self, tokens: list[str]) -> Self:
+        """Replace this clause's compound spelling tail."""
+        mut result = self
+        result.compound_tokens = tokens
+        return result
+
+    pub def with_expression_item_modifier(self, modifier: ExpressionItemModifierSurface) -> Self:
+        """Append a modifier unless its keyword is already registered."""
+        mut result = self
+        for existing in result.expression_item_modifiers:
+            if existing.keyword == modifier.keyword:
+                return result
+        result.expression_item_modifiers.append(modifier)
+        return result
+
+    pub def with_expression_item_modifiers(self, modifiers: list[ExpressionItemModifierSurface]) -> Self:
+        """Append modifiers, keeping the first descriptor for each keyword."""
+        mut result = self
+        for modifier in modifiers:
+            result = result.with_expression_item_modifier(modifier)
+        return result
+
+
+pub model DeclarationSurface:
+    """A declaration's head, body, clauses and nested declarations."""
+
+    pub keyword: str
+    pub compound_tokens: list[str] = []
+    pub placement: KeywordPlacement = KeywordPlacement.TopLevel
+    pub head_kind: DeclarationHeadKind = DeclarationHeadKind.NoHead
+    pub body_kind: DeclarationBodyKind = DeclarationBodyKind.Mixed
+    pub desugars_to: DesugarTarget = DesugarTarget.Statements
+    pub clauses: list[ClauseSurface] = []
+    pub declarations: list[DeclarationSurface] = []
+
+    pub def named(spelling: str) -> Self:
+        """Construct a declaration from its complete keyword spelling."""
+        words = spelling.split_whitespace()
+        return DeclarationSurface(keyword=words[0], compound_tokens=words[1:])
+
+    pub def new(keyword: str) -> Self:
+        """Construct a declaration without splitting its keyword."""
+        return DeclarationSurface(keyword=keyword)
+
+    pub def with_header_args(self) -> Self:
+        """Accept header arguments after the declaration name."""
+        return self.with_head_kind(DeclarationHeadKind.HeaderArguments)
+
+    pub def with_signature_head(self) -> Self:
+        """Accept a function-like declaration signature."""
+        return self.with_head_kind(DeclarationHeadKind.Signature)
+
+    pub def with_head_kind(self, kind: DeclarationHeadKind) -> Self:
+        """Select the declaration's head parser."""
+        mut result = self
+        result.head_kind = kind
+        return result
+
+    pub def with_clause_body(self) -> Self:
+        """Accept a clause-oriented body."""
+        return self.with_body_kind(DeclarationBodyKind.Clauses)
+
+    pub def with_statement_body(self) -> Self:
+        """Accept ordinary host statements."""
+        return self.with_body_kind(DeclarationBodyKind.Statements)
+
+    pub def with_mixed_body(self) -> Self:
+        """Accept clauses and host statements."""
+        return self.with_body_kind(DeclarationBodyKind.Mixed)
+
+    pub def with_body_kind(self, kind: DeclarationBodyKind) -> Self:
+        """Select the declaration's body parser."""
+        mut result = self
+        result.body_kind = kind
+        return result
+
+    pub def desugars_to_expression(self) -> Self:
+        """Record expression output position."""
+        return self.with_target(DesugarTarget.Expression)
+
+    pub def desugars_to_statements(self) -> Self:
+        """Record statement output position."""
+        return self.with_target(DesugarTarget.Statements)
+
+    pub def desugars_to_declarations(self) -> Self:
+        """Record compilation-unit declaration output position."""
+        return self.with_target(DesugarTarget.Declarations)
+
+    pub def with_target(self, target: DesugarTarget) -> Self:
+        """Select the expanded declaration's host position."""
+        mut result = self
+        result.desugars_to = target
+        return result
+
+    pub def in_block(self, parent: str) -> Self:
+        """Restrict this declaration to a named parent."""
+        return self.with_placement(KeywordPlacement.InBlock([parent]))
+
+    pub def with_placement(self, placement: KeywordPlacement) -> Self:
+        """Replace this declaration's placement."""
+        mut result = self
+        result.placement = placement
+        return result
+
+    pub def with_compound_tokens(self, tokens: list[str]) -> Self:
+        """Replace this declaration's compound spelling tail."""
+        mut result = self
+        result.compound_tokens = tokens
+        return result
+
+    pub def with_clause(self, clause: ClauseSurface) -> Self:
+        """Append one clause to this declaration."""
+        return self.with_clauses([clause])
+
+    pub def with_clauses(self, clauses: list[ClauseSurface]) -> Self:
+        """Append clauses in their authored order."""
+        mut result = self
+        result.clauses = result.clauses + clauses
+        return result
+
+    pub def with_declaration(self, declaration: DeclarationSurface) -> Self:
+        """Append one declaration restricted to this parent."""
+        mut result = self
+        result.declarations.append(declaration.in_block(self.keyword))
+        return result
+
+    pub def with_declarations(self, declarations: list[DeclarationSurface]) -> Self:
+        """Append declarations restricted to this parent."""
+        mut result = self
+        for declaration in declarations:
+            result = result.with_declaration(declaration)
+        return result
+
+    pub def keywords(self) -> list[KeywordSpec]:
+        """Derive parser keywords once from this declaration and its children."""
+        declaration = KeywordSpec.block(self.keyword).with_compound_tokens(self.compound_tokens)
+        mut keywords = [declaration.with_placement(self.placement)]
+        for clause in self.clauses:
+            keyword = clause_keyword(clause, self.keyword)
+            keywords.append(keyword)
+        for child in self.declarations:
+            keywords = keywords + child.keywords()
+        return keywords
+
+
+@derive(RustSerialize, RustDeserialize)
+pub enum EmbeddedFragmentSubmode(str):
+    """Fixed lexical grammars; descriptors cannot install arbitrary parser grammars."""
+
+    Markup = "Markup"
+    Style = "Style"
+    RawText = "RawText"
+    RegexTemplate = "RegexTemplate"
+    SelectorDeclarationValue = "SelectorDeclarationValue"
+    TypePosition = "TypePosition"
+
+    pub def to_json(self) -> str:
+        """Encode this fragment submode through its existing JSON surface."""
+        match to_string(self):
+            Ok(text) => return text
+            Err(error) => panic_any(str(error))
+
+    pub def from_json(source: str) -> Result[Self, str]:
+        """Decode this fragment submode and retain the native decoder's diagnostic text."""
+        result: Result[EmbeddedFragmentSubmode, JsonError] = from_str(source)
+        return result.map_err((error) => str(error))
+
+
+pub model EmbeddedFragmentDescriptor:
+    """An owned lexical submode with its stable artifact identity and eligible positions."""
+
+    pub key: str
+    pub submode: EmbeddedFragmentSubmode
+    pub artifact_key: str
+    pub eligible_in: list[ScopedSurfaceEligibility] = []
+    pub layout_sensitive: bool = false
+
+    pub def new(key: str, submode: EmbeddedFragmentSubmode, artifact_key: str) -> Self:
+        """Construct a descriptor with no eligible source positions."""
+        return EmbeddedFragmentDescriptor(key=key, submode=submode, artifact_key=artifact_key)
+
+    pub def in_declaration_body(self, declaration: str) -> Self:
+        """Claim the body of the named owning declaration."""
+        return self.with_eligibility(ScopedSurfaceEligibility(declaration=declaration))
+
+    pub def in_clause_body(self, declaration: str, clause: str) -> Self:
+        """Claim a clause body inside the named owning declaration."""
+        return self.with_eligibility(
+            ScopedSurfaceEligibility(declaration=declaration, clause=Some(clause), position="ClauseBody"),
+        )
+
+    pub def in_call_argument(self, declaration: str, call: str) -> Self:
+        """Claim arguments to a named call inside the owning declaration."""
+        return self.with_eligibility(
+            ScopedSurfaceEligibility(declaration=declaration, call=Some(call), position="CallArgument"),
+        )
+
+    pub def with_eligibility(self, eligibility: ScopedSurfaceEligibility) -> Self:
+        """Add a positive position while preserving previously registered positions."""
+        mut result = self
+        result.eligible_in.append(eligibility)
+        return result
+
+
+pub model DslSurface:
+    """Declarations sharing one activation rule."""
+
+    pub activation: KeywordActivation = KeywordActivation.Always
+    pub declarations: list[DeclarationSurface] = []
+    pub embedded_fragments: list[EmbeddedFragmentDescriptor] = []
+    pub scoped_surfaces: list[ScopedSurfaceDescriptor] = []
+
+    pub def new(activation: KeywordActivation) -> Self:
+        """Construct an empty surface with an explicit activation rule."""
+        return DslSurface(activation=activation)
+
+    pub def on_import(namespace: str) -> Self:
+        """Activate this surface when its namespace is imported."""
+        return DslSurface.new(KeywordActivation.on_import(namespace))
+
+    pub def always_on() -> Self:
+        """Activate this surface in every consumer module."""
+        return DslSurface()
+
+    pub def with_declaration(self, declaration: DeclarationSurface) -> Self:
+        """Append one declaration."""
+        return self.with_declarations([declaration])
+
+    pub def with_declarations(self, declarations: list[DeclarationSurface]) -> Self:
+        """Append declarations in their authored order."""
+        mut result = self
+        result.declarations = result.declarations + declarations
+        return result
+
+    pub def with_embedded_fragment(self, fragment: EmbeddedFragmentDescriptor) -> Self:
+        """Attach an owned fragment descriptor without changing its parser or formatter semantics."""
+        mut result = self
+        result.embedded_fragments.append(fragment)
+        return result
+
+    pub def with_scoped_surface(self, surface: ScopedSurfaceDescriptor) -> Self:
+        """Append one descriptor-owned glyph or leading-dot surface."""
+        return self.with_scoped_surfaces([surface])
+
+    pub def with_scoped_surfaces(self, surfaces: list[ScopedSurfaceDescriptor]) -> Self:
+        """Append scoped surfaces in declaration order."""
+        mut result = self
+        result.scoped_surfaces = result.scoped_surfaces + surfaces
+        return result
+
+    pub def keyword_registration(self) -> KeywordRegistration:
+        """Derive the parser keyword group from the authored declarations."""
+        mut result = KeywordRegistration.new(self.activation)
+        for declaration in self.declarations:
+            result = result.with_keywords(declaration.keywords())
+        return result
+
+
+pub model LibraryManifest:
+    """Additional library metadata in the vocabulary descriptor format."""
+
+    pub modules: list[ModuleExport] = []
+
+    pub def new() -> Self:
+        """Construct an empty version-one library metadata value."""
+        return LibraryManifest()
+
+
+pub enum TypeRef:
+    """Structured type references in library metadata."""
+
+    Named(str)
+    Generic(str, list[TypeRef])
+    Optional(list[TypeRef])
+    Union(list[TypeRef])
+
+    pub def named(name: str) -> Self:
+        """Construct a named metadata type reference."""
+        return TypeRef.Named(name)
+
+
+pub model FunctionExport:
+    """An exported function's parameters, result and asynchronous contract."""
+
+    pub name: str
+    pub params: list[Tuple[str, TypeRef]] = []
+    pub return_type: Option[TypeRef] = None
+    pub is_async: bool = false
+
+
+pub enum TypeExportKind(str):
+    """The high-level kind of a library's exported type."""
+
+    Model = "Model"
+    Class = "Class"
+    Enum = "Enum"
+    Trait = "Trait"
+    Newtype = "Newtype"
+
+
+pub model FieldExport:
+    """A library field's name, type and default availability."""
+
+    pub name: str
+    pub field_type: TypeRef
+    pub has_default: bool = false
+
+
+pub model TypeExport:
+    """An exported library type and its declared public members."""
+
+    pub name: str
+    pub kind: TypeExportKind = TypeExportKind.Model
+    pub type_params: list[str] = []
+    pub fields: list[FieldExport] = []
+    pub methods: list[FunctionExport] = []
+
+
+pub model ModuleExport:
+    """A module path and its exported functions and types."""
+
+    pub path: str
+    pub functions: list[FunctionExport] = []
+    pub types: list[TypeExport] = []
+
+
+pub model VocabRegistration:
+    """The producer's versioned registration, serialized once into published metadata."""
+
+    pub metadata_version: int = VOCAB_METADATA_VERSION
+    pub keyword_registrations: list[KeywordRegistration] = []
+    pub dsl_surfaces: list[DslSurface] = []
+    pub library_manifest: LibraryManifest = LibraryManifest()
+    pub custom_desugaring: bool = false
+
+    pub def new() -> Self:
+        """Construct an empty registration under the current schema."""
+        return VocabRegistration()
+
+    pub def with_surface(self, surface: DslSurface) -> Self:
+        """Append one activated DSL surface."""
+        return self.with_surfaces([surface])
+
+    pub def with_surfaces(self, surfaces: list[DslSurface]) -> Self:
+        """Append activated surfaces in their authored order."""
+        mut result = self
+        result.dsl_surfaces = result.dsl_surfaces + surfaces
+        return result
+
+    pub def with_keyword_registration(self, registration: KeywordRegistration) -> Self:
+        """Append one low-level keyword group."""
+        mut result = self
+        result.keyword_registrations.append(registration)
+        return result
+
+    pub def with_keyword_registrations(self, registrations: list[KeywordRegistration]) -> Self:
+        """Append low-level keyword groups in their authored order."""
+        mut result = self
+        result.keyword_registrations = result.keyword_registrations + registrations
+        return result
+
+    pub def with_library_manifest(self, manifest: LibraryManifest) -> Self:
+        """Replace the additional library metadata."""
+        mut result = self
+        result.library_manifest = manifest
+        return result
+
+    pub def with_desugarer(self) -> Self:
+        """Require the entry's public typed desugar export when this vocabulary is built."""
+        mut result = self
+        result.custom_desugaring = true
+        return result
+
+
+def clause_keyword(clause: ClauseSurface, parent: str) -> KeywordSpec:
+    """Select the parser surface kind from a clause's authored payload kind."""
+    mut kind = KeywordSurfaceKind.BlockContextKeyword
+    if clause.body_kind == ClauseBodyKind.NestedItems:
+        kind = KeywordSurfaceKind.SubBlock
+    return KeywordSpec.new(clause.keyword, kind).with_compound_tokens(clause.compound_tokens).in_block(parent)

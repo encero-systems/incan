@@ -1,0 +1,12 @@
+# behavior: a public class re-exported through two facades is constructible from the consumer with only its public and defaulted fields, private defaults staying provider-owned (#886)
+# expect-stdout:
+#   visible
+#   sealed 9
+
+from crate.public_api import ExportedVault as PublicVault
+
+
+def main() -> None:
+    vault = PublicVault(label="visible", revision=9)
+    println(vault.label)
+    println(vault.describe())

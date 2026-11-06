@@ -1,0 +1,704 @@
+"""Measure first-output and completion latency across three reproducible Incan project shapes."""
+
+from rust::std::env import current_exe
+from rust::std::fs import File
+from rust::std::io import BufRead, BufReader, Read
+from rust::std::process import Command, Stdio, exit
+from rust::std::string import String as RustString
+from rust::std::time import Instant
+from std.environ import get_or
+from std.fs import Path
+from std.tempfile import TemporaryDirectory
+from report import Settings as ReportSettings, render
+
+
+pub model Settings:
+    """Measured Oven, installed home, matching sources, sample range, evidence root, and report path."""
+
+    pub oven: Path
+    pub home: Path
+    pub stdlib: Path
+    pub samples: int
+    pub first_round: int
+    pub scratch: Path
+    pub report: Path
+
+
+pub model Measurement:
+    """One command's optional first-output time, completion time, status, and decoded streams."""
+
+    pub first_ms: Option[float]
+    pub completion_ms: float
+    pub code: int
+    pub stdout: str
+    pub stderr: str
+
+
+def main() -> None:
+    """Read the historical environment inputs, collect every subject and metric, then render the retained table."""
+    match settings():
+        Ok(selected) =>
+            match run(selected):
+                Ok(path) =>
+                    println(path.0)
+                    exit(0)
+                Err(message) =>
+                    println(f"dev-loop benchmark: {message}")
+                    exit(1)
+        Err(message) =>
+            println(f"dev-loop benchmark: {message}")
+            exit(2)
+
+
+pub def settings() -> Result[Settings, str]:
+    """Select required toolchain paths and positive sample controls from the historical environment variables."""
+    oven = Path(get_or("INCAN", ""))
+    home = Path(get_or("INCAN_HOME", ""))
+    stdlib = Path(get_or("INCAN_STDLIB", ""))
+    if oven.0 == "" or home.0 == "" or stdlib.0 == "":
+        return Err("set INCAN, INCAN_HOME, and INCAN_STDLIB")
+    samples = positive(get_or("SAMPLES", "15"), "SAMPLES")?
+    if samples < 15:
+        return Err("SAMPLES must be at least 15")
+    first_round = positive(get_or("START_ROUND", "1"), "START_ROUND")?
+    if first_round > samples:
+        return Err("START_ROUND must be within SAMPLES")
+    directory = source_directory()?
+    scratch = Path(get_or("BENCH_SCRATCH", directory.joinpath("target").0))
+    report = Path(get_or("DEV_LOOP_REPORT", directory.parent().joinpath("results/dev_loop.md").0))
+    return Ok(
+        Settings(
+            oven=oven,
+            home=home,
+            stdlib=stdlib,
+            samples=samples,
+            first_round=first_round,
+            scratch=scratch,
+            report=report,
+        ),
+    )
+
+
+pub def run(settings: Settings) -> Result[Path, str]:
+    """
+    Collect and report the development loop.
+
+    1. Create one retained evidence directory and three project shapes.
+    2. Rotate every subject through unchanged, edited, warm, cold, and first-launch metrics.
+    3. Render the retained TSV without repeating a measured command.
+    """
+    directory = source_directory()?
+    settings.scratch.mkdir(true, true).map_err((error) => error.message())?
+    temporary = TemporaryDirectory
+        .try_new_with("dev-loop.", "", Some(settings.scratch))
+        .map_err((error) => error.message())?
+    output = temporary.persist().map_err((error) => error.message())?
+    environment = toolchain_environment(settings)
+
+    # 1. Retain the measured manifest and harness sources beside the raw samples.
+    manifest = settings.home.joinpath("toolchains/0.6.0-dev.8/toolchain.json")
+    _ = manifest.copy(output.joinpath("toolchain.json"), true, true).map_err((error) => error.message())?
+    _ = directory
+        .joinpath("run.incn")
+        .copy(output.joinpath("measure-run.incn"), true, true)
+        .map_err((error) => error.message())?
+    _ = directory
+        .joinpath("report.incn")
+        .copy(output.joinpath("report.incn"), true, true)
+        .map_err((error) => error.message())?
+    table = output.joinpath("times.tsv")
+    table
+        .write_text(
+            "subject\tmetric\tsample\tfirst_output_ms\tcompletion_ms\tstatus\ttarget_ms\n",
+            "utf-8",
+            "strict",
+            None,
+        )
+        .map_err((error) => error.message())?
+    retain_load(output.joinpath("start-load.txt"))?
+    for subject in ["single", "modules", "library"]:
+        create_project(output.joinpath(subject), subject, 1000)?
+
+    # 2. Subject rotation distributes changing host load across the three shapes.
+    for round in range(settings.first_round, settings.samples + 1):
+        for subject in ["single", "modules", "library"]:
+            measure_subject(settings, output, table, environment, subject, round)?
+
+    # 3. Reporting reads only the retained table and returns failure after publishing failed samples.
+    return render(
+        ReportSettings(samples=output, report=settings.report, oven=settings.oven, home=settings.home, table=table),
+    )
+
+
+def measure_subject(
+    settings: Settings,
+    output: Path,
+    table: Path,
+    environment: Dict[str, str],
+    subject: str,
+    round: int,
+) -> Result[None, str]:
+    """Collect every ordered metric for one project shape in one sample round."""
+    project = output.joinpath(subject)
+    entry = entry_source(project, subject)
+    after_check = measure_run_and_check(
+        settings,
+        output,
+        table,
+        environment,
+        project,
+        entry,
+        subject,
+        round,
+        1000 + round * 3,
+    )?
+    after_test = measure_test_and_tools(
+        settings,
+        output,
+        table,
+        environment,
+        project,
+        entry,
+        subject,
+        round,
+        after_check,
+    )?
+    measure_builds(settings, output, table, environment, project, entry, subject, round, after_test)?
+    return measure_first_run(settings, output, table, environment, subject, round, after_test)
+
+
+def measure_run_and_check(
+    settings: Settings,
+    output: Path,
+    table: Path,
+    environment: Dict[str, str],
+    project: Path,
+    entry: Path,
+    subject: str,
+    round: int,
+    first_generation: int,
+) -> Result[int, str]:
+    """Measure unchanged and edited run and check operations, returning the latest generation."""
+    write_value(project, subject, first_generation)?
+    condition(settings.oven, ["run", entry.0], project, output.joinpath(f"{subject}-condition-run.log"), environment)?
+    measure(
+        settings.oven,
+        ["run", entry.0],
+        project,
+        output,
+        table,
+        subject,
+        "run_unchanged",
+        round,
+        Some(str(first_generation)),
+        Some(50),
+        environment,
+        "",
+    )?
+    run_edit_generation = first_generation + 1
+    write_value(project, subject, run_edit_generation)?
+    measure(
+        settings.oven,
+        ["run", entry.0],
+        project,
+        output,
+        table,
+        subject,
+        "run_edit",
+        round,
+        Some(str(run_edit_generation)),
+        Some(250),
+        environment,
+        "",
+    )?
+
+    condition(settings.oven, ["check", entry.0], project, output.joinpath(f"{subject}-condition-check.log"), environment)?
+    measure(
+        settings.oven,
+        ["check", entry.0],
+        project,
+        output,
+        table,
+        subject,
+        "check_unchanged",
+        round,
+        None,
+        None,
+        environment,
+        "",
+    )?
+    check_edit_generation = run_edit_generation + 1
+    write_value(project, subject, check_edit_generation)?
+    measure(
+        settings.oven,
+        ["check", entry.0],
+        project,
+        output,
+        table,
+        subject,
+        "check_edit",
+        round,
+        None,
+        None,
+        environment,
+        "",
+    )?
+    return Ok(check_edit_generation)
+
+
+def measure_test_and_tools(
+    settings: Settings,
+    output: Path,
+    table: Path,
+    environment: Dict[str, str],
+    project: Path,
+    entry: Path,
+    subject: str,
+    round: int,
+    first_generation: int,
+) -> Result[int, str]:
+    """Measure unchanged and edited tests, formatting, and an unchanged codegraph query."""
+    test_source = project.joinpath("tests/test_value.incn")
+    condition(
+        settings.oven,
+        ["test", test_source.0],
+        project,
+        output.joinpath(f"{subject}-condition-test.log"),
+        environment,
+    )?
+    measure(
+        settings.oven,
+        ["test", test_source.0],
+        project,
+        output,
+        table,
+        subject,
+        "test_unchanged",
+        round,
+        None,
+        Some(100),
+        environment,
+        "test_value.incn::test_value PASSED",
+    )?
+    test_edit_generation = first_generation + 1
+    write_value(project, subject, test_edit_generation)?
+    measure(
+        settings.oven,
+        ["test", test_source.0],
+        project,
+        output,
+        table,
+        subject,
+        "test_edit",
+        round,
+        None,
+        Some(400),
+        environment,
+        "test_value.incn::test_value PASSED",
+    )?
+    measure(
+        settings.oven,
+        ["fmt", "--check", entry.0],
+        project,
+        output,
+        table,
+        subject,
+        "fmt_check",
+        round,
+        None,
+        None,
+        environment,
+        "",
+    )?
+
+    graph_arguments = ["inspect", "codegraph", entry.0, "--query", "defs", "value"]
+    condition(settings.oven, graph_arguments, project, output.joinpath(f"{subject}-condition-graph.log"), environment)?
+    measure(
+        settings.oven,
+        graph_arguments,
+        project,
+        output,
+        table,
+        subject,
+        "graph_unchanged",
+        round,
+        None,
+        None,
+        environment,
+        "value",
+    )?
+    return Ok(test_edit_generation)
+
+
+def measure_builds(
+    settings: Settings,
+    output: Path,
+    table: Path,
+    environment: Dict[str, str],
+    project: Path,
+    entry: Path,
+    subject: str,
+    round: int,
+    generation: int,
+) -> Result[None, str]:
+    """Measure warm and cold debug and release builds plus direct debug launches."""
+    for profile in ["debug", "release"]:
+        condition(
+            settings.oven,
+            ["build", entry.0, "--profile", profile],
+            project,
+            output.joinpath(f"{subject}-condition-{profile}.log"),
+            environment,
+        )?
+        measure(
+            settings.oven,
+            ["build", entry.0, "--profile", profile],
+            project,
+            output,
+            table,
+            subject,
+            f"build_{profile}_warm",
+            round,
+            None,
+            None,
+            environment,
+            "",
+        )?
+        cold = output.joinpath(f"{subject}-{profile}-cold-{round}")
+        create_project(cold, subject, generation)?
+        cold_entry = entry_source(cold, subject)
+        measure(
+            settings.oven,
+            ["build", cold_entry.0, "--profile", profile],
+            cold,
+            output,
+            table,
+            subject,
+            f"build_{profile}_cold",
+            round,
+            None,
+            None,
+            environment,
+            "",
+        )?
+        binary = cold.joinpath("target/incan/debug/bin/dev_loop")
+        if profile == "debug" and binary.is_file():
+            measure(
+                binary,
+                [],
+                cold,
+                output,
+                table,
+                subject,
+                "direct_first_launch",
+                round,
+                Some(str(generation)),
+                None,
+                environment,
+                "",
+            )?
+            measure(
+                binary,
+                [],
+                cold,
+                output,
+                table,
+                subject,
+                "direct_repeat_launch",
+                round,
+                Some(str(generation)),
+                None,
+                environment,
+                "",
+            )?
+    return Ok(None)
+
+
+def measure_first_run(
+    settings: Settings,
+    output: Path,
+    table: Path,
+    environment: Dict[str, str],
+    subject: str,
+    round: int,
+    generation: int,
+) -> Result[None, str]:
+    """Measure the first run of a fresh project after installed dependencies and caches are warm."""
+    fresh = output.joinpath(f"{subject}-first-{round}")
+    create_project(fresh, subject, generation)?
+    fresh_entry = entry_source(fresh, subject)
+    measure(
+        settings.oven,
+        ["run", fresh_entry.0],
+        fresh,
+        output,
+        table,
+        subject,
+        "run_first",
+        round,
+        Some(str(generation)),
+        Some(1000),
+        environment,
+        "",
+    )?
+    return Ok(None)
+
+
+def write_value(project: Path, subject: str, generation: int) -> Result[None, str]:
+    """Replace the value provider for one project shape with the selected observable generation."""
+    mut destination = project.joinpath("src/values.incn")
+    if subject == "single":
+        destination = project.joinpath("src/app.incn")
+    elif subject == "library":
+        destination = project.joinpath("deps/values/src/lib.incn")
+    mut source = "\"\"\"Expose the current positive generation for freshness checks.\"\"\"\n\n\n"
+    source += "pub def value() -> int:\n    \"\"\"Return the generation stored in this source file.\"\"\"\n"
+    source += f"    return {generation}\n"
+    if subject == "single":
+        source += "\n\ndef main() -> None:\n    \"\"\"Print the current generation immediately.\"\"\"\n"
+        source += "    println(value())\n"
+    return destination.write_text(source, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+def create_project(project: Path, subject: str, generation: int) -> Result[None, str]:
+    """Create a single-file, module, or path-library project with one execution test."""
+    project.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    project.joinpath("tests").mkdir(true, true).map_err((error) => error.message())?
+    mut entry = "main"
+    mut imported = "values"
+    if subject == "single":
+        entry = "app"
+    mut manifest = f"[project]\nname = \"dev_loop\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/{entry}.incn\"\n"
+    if subject == "library":
+        imported = "pub::values"
+        project.joinpath("deps/values/src").mkdir(true, true).map_err((error) => error.message())?
+        manifest += "\n[dependencies]\nvalues = { path = \"deps/values\" }\n"
+        project
+            .joinpath("deps/values/loaf.toml")
+            .write_text("[project]\nname = \"values\"\nversion = \"0.1.0\"\n", "utf-8", "strict", None)
+            .map_err((error) => error.message())?
+    project.joinpath("loaf.toml").write_text(manifest, "utf-8", "strict", None).map_err((error) => error.message())?
+    if subject != "single":
+        main_source = f"\"\"\"Print a value supplied by another module.\"\"\"\n\nfrom {imported} import value\n\n\ndef main() -> None:\n    \"\"\"Print the current generation immediately.\"\"\"\n    println(value())\n"
+        project
+            .joinpath("src/main.incn")
+            .write_text(main_source, "utf-8", "strict", None)
+            .map_err((error) => error.message())?
+    if subject == "single":
+        imported = "app"
+    test_source = f"\"\"\"Execute the tested function after every source generation.\"\"\"\n\nfrom {imported} import value\n\n\ndef test_value() -> None:\n    \"\"\"A changed implementation must still return a positive value.\"\"\"\n    assert value() > 0\n"
+    project
+        .joinpath("tests/test_value.incn")
+        .write_text(test_source, "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    return write_value(project, subject, generation)
+
+
+def measure(
+    command: Path,
+    arguments: list[str],
+    directory: Path,
+    output: Path,
+    table: Path,
+    subject: str,
+    metric: str,
+    sample: int,
+    expected: Option[str],
+    target: Option[int],
+    environment: Dict[str, str],
+    required_output: str,
+) -> Result[None, str]:
+    """Measure one command, retain its streams, validate observable output, and append its stable TSV row."""
+    prefix = output.joinpath(f"{subject}-{metric}-{sample}")
+    retain_load(Path(prefix.0 + ".load"))?
+    measured = timed(command, arguments, directory, prefix, expected, environment)?
+    mut code = int(measured.code)
+    if code == 0 and required_output != "" and required_output not in measured.stdout:
+        code = 1
+    mut first = "-"
+    if let Some(first_ms) = measured.first_ms:
+        first = decimal(first_ms)
+    mut target_text = "-"
+    if let Some(target_ms) = target:
+        target_text = str(target_ms)
+    row = f"{subject}\t{metric}\t{sample}\t{first}\t{decimal(measured.completion_ms)}\t{code}\t{target_text}\n"
+    source = table.read_text("utf-8", "strict").map_err((error) => error.message())? + row
+    return table.write_text(source, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+def timed(
+    command: Path,
+    arguments: list[str],
+    directory: Path,
+    prefix: Path,
+    expected: Option[str],
+    environment: Dict[str, str],
+) -> Result[Measurement, str]:
+    """Measure completion, and time the first stdout line when an exact observable value is required."""
+    if expected is None:
+        return timed_completion(command, arguments, directory, prefix, environment)
+    return timed_first_output(command, arguments, directory, prefix, expected.unwrap_or(""), environment)
+
+
+def timed_completion(
+    command: Path,
+    arguments: list[str],
+    directory: Path,
+    prefix: Path,
+    environment: Dict[str, str],
+) -> Result[Measurement, str]:
+    """Measure one command through completion with captured streams."""
+    mut process = prepared(command, arguments, directory, environment)
+    started = Instant.now()
+    output = process.output().map_err((error) => f"cannot run {command.0}: {error}")?
+    elapsed = started.elapsed().as_secs_f64() * 1000.0
+    stdout = RustString.from_utf8_lossy(output.stdout).into_owned()
+    stderr = RustString.from_utf8_lossy(output.stderr).into_owned()
+    retain_streams(prefix, stdout, stderr)?
+    return Ok(
+        Measurement(
+            first_ms=None,
+            completion_ms=elapsed,
+            code=status_code(output.status.code()),
+            stdout=stdout,
+            stderr=stderr,
+        ),
+    )
+
+
+def timed_first_output(
+    command: Path,
+    arguments: list[str],
+    directory: Path,
+    prefix: Path,
+    expected: str,
+    environment: Dict[str, str],
+) -> Result[Measurement, str]:
+    """Time the first stdout line, then completion, while retaining the full stream and exact expected value."""
+    stderr_path = Path(prefix.0 + ".stderr")
+    errors = File.create(stderr_path.0).map_err((error) => str(error))?
+    mut process = prepared(command, arguments, directory, environment)
+    process.stdout(Stdio.piped()).stderr(errors)
+    started = Instant.now()
+    mut child = process.spawn().map_err((error) => f"cannot run {command.0}: {error}")?
+    stream = match child.stdout.take():
+        Some(found) => found
+        None => return Err(f"{command.0} has no captured stdout")
+
+    mut reader = BufReader.new(stream)
+    mut first_line = RustString.new()
+    count = reader.read_line(first_line).map_err((error) => error.to_string())?
+    mut first_ms: Option[float] = None
+    mut code = 0
+    if count == 0:
+        code = 1
+    else:
+        first_ms = Some(started.elapsed().as_secs_f64() * 1000.0)
+        if str(first_line).strip() != expected:
+            code = 1
+    mut remainder = RustString.new()
+    _ = reader.read_to_string(remainder).map_err((error) => error.to_string())?
+    status = child.wait().map_err((error) => error.to_string())?
+    if not status.success():
+        code = status_code(status.code())
+    completion = started.elapsed().as_secs_f64() * 1000.0
+    stdout = str(first_line) + str(remainder)
+    Path(prefix.0 + ".stdout").write_text(stdout, "utf-8", "strict", None).map_err((error) => error.message())?
+    stderr = stderr_path.read_text("utf-8", "replace").map_err((error) => error.message())?
+    return Ok(Measurement(first_ms=first_ms, completion_ms=completion, code=code, stdout=stdout, stderr=stderr))
+
+
+def prepared(command: Path, arguments: list[str], directory: Path, environment: Dict[str, str]) -> Command:
+    """Create one benchmark child with the selected directory and complete toolchain environment."""
+    mut process = Command.new(command.0)
+    process.current_dir(directory.0).env_remove("RUSTC_BOOTSTRAP")
+    for argument in arguments:
+        process.arg(argument)
+    for key in environment.keys():
+        process.env(key, environment[key])
+    return process
+
+
+def condition(
+    command: Path,
+    arguments: list[str],
+    directory: Path,
+    log: Path,
+    environment: Dict[str, str],
+) -> Result[None, str]:
+    """Run one untimed conditioning command and retain its output without accepting it as a sample."""
+    output = prepared(command, arguments, directory, environment)
+        .output()
+        .map_err((error) => f"cannot run {command.0}: {error}")?
+    text = str(RustString.from_utf8_lossy(output.stdout)) + str(RustString.from_utf8_lossy(output.stderr))
+    return log.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+def retain_streams(prefix: Path, stdout: str, stderr: str) -> Result[None, str]:
+    """Retain one measured command's complete decoded streams."""
+    Path(prefix.0 + ".stdout").write_text(stdout, "utf-8", "strict", None).map_err((error) => error.message())?
+    return Path(prefix.0 + ".stderr").write_text(stderr, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+def retain_load(path: Path) -> Result[None, str]:
+    """Retain one host uptime/load reading beside a condition or measurement."""
+    output = Command.new("uptime").output().map_err((error) => f"cannot run uptime: {error}")?
+    if not output.status.success():
+        return Err("uptime failed")
+    source = RustString.from_utf8_lossy(output.stdout).into_owned()
+    return path.write_text(source, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+def entry_source(project: Path, subject: str) -> Path:
+    """Return the main source for one project shape."""
+    if subject == "single":
+        return project.joinpath("src/app.incn")
+    return project.joinpath("src/main.incn")
+
+
+def toolchain_environment(settings: Settings) -> Dict[str, str]:
+    """Return the matching installed home and standard source selection for every measured command."""
+    return {"INCAN_HOME": settings.home.0, "INCAN_STDLIB": settings.stdlib.0}
+
+
+def status_code(code: Option[i32]) -> int:
+    """Return a child exit code, using 128 for signal-only termination."""
+    match code:
+        Some(value) => return int(value)
+        None => return 128
+
+
+def decimal(value: float) -> str:
+    """Format a non-negative millisecond value with three fractional digits."""
+    scaled = int(value * 1000.0 + 0.5)
+    mut fraction = str(scaled % 1000)
+    while len(fraction) < 3:
+        fraction = "0" + fraction
+    return f"{scaled // 1000}.{fraction}"
+
+
+def positive(value: str, name: str) -> Result[int, str]:
+    """Parse one strictly positive decimal setting."""
+    if value == "":
+        return Err(f"{name} must be a positive integer")
+    for character in value:
+        if character not in "0123456789":
+            return Err(f"{name} must be a positive integer")
+    parsed = int(value)
+    if parsed <= 0:
+        return Err(f"{name} must be a positive integer")
+    return Ok(parsed)
+
+
+def source_directory() -> Result[Path, str]:
+    """Find the dev-loop sources above this program's Oven output directory."""
+    binary = current_exe().map_err((error) => error.to_string())?
+    mut directory = Path(binary.to_string_lossy().into_owned()).parent()
+    while true:
+        candidate = directory.joinpath("workspaces/benchmarks/dev_loop")
+        if candidate.joinpath("run.incn").is_file():
+            return Ok(candidate)
+        parent = directory.parent()
+        if parent.0 in [directory.0, "", "."]:
+            return Err("cannot find the dev-loop benchmark sources")
+        directory = parent

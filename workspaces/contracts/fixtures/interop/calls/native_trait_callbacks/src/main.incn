@@ -1,0 +1,63 @@
+# behavior: source classes implement Rust traits and pass as borrowed trait objects beside a native instance; stateful instances keep their own state and write a field of a Rust struct whose other fields the program cannot hold (#2481)
+# expect-stdout:
+#   native [] 1 1
+#   defaults [] 1 1
+#   one [first] 1 1
+#   1 0
+#   two [second] 1 1
+#   three [second] 1 1
+#   1 2
+#   first 1
+#   second 2
+
+"""Hand native and source callbacks to a Rust host that lends them its configuration."""
+
+from rust::tiny_driver import Callbacks, Config, Quiet, Reporter, announce, run_compiler
+
+
+class Defaults with Callbacks:
+    """Keep every default the Rust trait provides."""
+
+    marker: int = 0
+
+
+class Hooks with Callbacks, Reporter:
+    """Count the host's calls and add this instance's flag on each one."""
+
+    pub calls: int = 0
+    flag: str
+
+    def config(mut self, mut config: &mut Config) -> None:
+        """Record the call and add the flag to the configuration the host lends."""
+        self.calls += 1
+        config.crate_cfg.append(self.flag)
+
+    def report(self) -> str:
+        """Describe this instance by its flag and call count."""
+        return f"{self.flag} {self.calls}"
+
+
+def main() -> None:
+    """
+    Run the host with each kind of callback.
+
+    1. A native callback and a class keeping every default change nothing.
+    2. Two stateful instances each count only their own calls.
+    3. Each instance reports through a shared trait object.
+    """
+    # 1. A native callback and a class keeping every default change nothing.
+    mut native = Quiet.default()
+    run_compiler(["native"], native)
+    mut defaults = Defaults()
+    run_compiler(["defaults"], defaults)
+    # 2. Two stateful instances each count only their own calls.
+    mut first = Hooks(flag="first")
+    mut second = Hooks(flag="second")
+    run_compiler(["one"], first)
+    println(f"{first.calls} {second.calls}")
+    run_compiler(["two"], second)
+    run_compiler(["three"], second)
+    println(f"{first.calls} {second.calls}")
+    # 3. Each instance reports through a shared trait object.
+    println(announce(first))
+    println(announce(second))

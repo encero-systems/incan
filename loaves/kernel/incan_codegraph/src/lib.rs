@@ -1,14 +1,16 @@
 //! Storage-agnostic codegraph records for Incan tooling.
 //!
-//! This crate owns the JSONL wire shape for compiler-backed codegraph exports. It deliberately has no dependency on
-//! compiler internals, graph databases, embeddings, MCP servers, or storage engines: the compiler extracts facts, and
-//! downstream tools decide how to index or visualize them.
+//! This crate owns the wire shape and portable indexed binary artifacts for compiler-backed codegraph exports. It has
+//! no dependency on compiler internals, graph databases, embeddings, MCP servers, or storage engines: the compiler
+//! extracts facts, and downstream tools decide how to index or visualize them.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub mod artifact;
+
 /// Current codegraph JSONL schema version.
-pub const CODEGRAPH_SCHEMA_VERSION: u32 = 8;
+pub const CODEGRAPH_SCHEMA_VERSION: u32 = 9;
 
 /// A declaration identity that survives edits.
 ///
@@ -111,191 +113,28 @@ pub struct CodegraphPackage {
     pub root_path: Option<String>,
 }
 
-/// Backend-neutral provider, SDK-component, and package-feature context for one project represented in an export.
+/// The Loaves one project represented in an export reads (DD-0007).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodegraphSemanticContext {
     /// Canonical project root whose selection produced this context.
     pub project_root: String,
-    /// Active SDK and component projection, when the toolchain is component-aware.
-    pub sdk: Option<CodegraphSdkProjection>,
-    /// Public package-feature closures participating in this project graph.
-    pub packages: Vec<CodegraphPackageFeatureProjection>,
-    /// Exact compiled-provider records known to the shared compiler plan.
-    pub providers: Vec<CodegraphProviderProjection>,
+    /// The Loaves the project's session indexed.
+    pub loaves: Vec<CodegraphLoafProjection>,
 }
 
-/// Active SDK identity and expanded component selection.
+/// One Loaf a project reads.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CodegraphSdkProjection {
-    /// Stable SDK identity.
-    pub identity: String,
-    /// Selected release-owned profile name.
-    pub profile: String,
-    /// Every component known to the SDK, including unavailable and disabled components.
-    pub components: Vec<CodegraphSdkComponentProjection>,
-}
-
-/// Availability, enablement, dependencies, and selection provenance for one SDK component.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CodegraphSdkComponentProjection {
-    /// Stable component id.
-    pub id: String,
-    /// Component version from the active inventory.
+pub struct CodegraphLoafProjection {
+    /// The key the project indexes the Loaf by: the dependency key, or the standard package's name.
+    pub key: String,
+    /// Package name.
+    pub name: String,
+    /// Package version.
     pub version: String,
-    /// Whether this installation contains an integrity-checked artifact for the component.
-    pub available: bool,
-    /// Whether project/profile resolution enabled the component.
-    pub enabled: bool,
-    /// Whether the SDK requires the component in every profile.
-    pub mandatory: bool,
-    /// Direct component dependencies.
-    pub dependencies: Vec<String>,
-    /// Reason the component entered the expanded selection, when enabled.
-    pub reason: Option<CodegraphComponentSelectionReason>,
-}
-
-/// Stable reason that one SDK component entered the expanded project selection.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", content = "source", rename_all = "snake_case")]
-pub enum CodegraphComponentSelectionReason {
-    /// Component is mandatory for this SDK release.
-    Mandatory,
-    /// Component belongs to the selected SDK profile.
-    Profile(String),
-    /// Project manifest selected the component explicitly.
-    Explicit,
-    /// Another selected component requires this component.
-    Dependency(String),
-}
-
-/// Additive public feature closure for one concrete package root.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CodegraphPackageFeatureProjection {
-    /// Declared package name.
-    pub package: String,
-    /// Concrete package root used for path-dependency unification.
-    pub project_root: String,
-    /// Unified active public feature set.
-    pub active_features: Vec<String>,
-    /// Optional Incan dependencies activated by the feature closure.
-    pub active_optional_dependencies: Vec<String>,
-    /// Public feature requests sent to active dependency packages.
-    pub dependency_features: Vec<CodegraphDependencyFeatureProjection>,
-    /// SDK components required by the active package feature projection.
-    pub required_sdk_components: Vec<String>,
-    /// Stable activation provenance for each active feature.
-    pub reasons: Vec<CodegraphFeatureReasonProjection>,
-}
-
-/// Public features requested from one active Incan dependency.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CodegraphDependencyFeatureProjection {
-    /// Dependency key from the requesting manifest.
-    pub dependency: String,
-    /// Unified requested feature set.
-    pub features: Vec<String>,
-}
-
-/// Activation provenance for one active public package feature.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CodegraphFeatureReasonProjection {
-    /// Active package-owned feature.
-    pub feature: String,
-    /// Every reason that contributed the feature to the additive closure.
-    pub reasons: Vec<CodegraphFeatureActivationReason>,
-}
-
-/// Stable reason that one public feature entered a package projection.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", content = "source", rename_all = "snake_case")]
-pub enum CodegraphFeatureActivationReason {
-    /// Conventional package default selected the feature.
-    Default,
-    /// Command or parent request selected the feature explicitly.
-    Requested,
-    /// `--all-features` selected the feature.
-    AllFeatures,
-    /// Another local feature includes this feature.
-    IncludedBy(String),
-    /// A parent package dependency edge requested this feature.
-    DependencyRequest {
-        /// Requesting package name.
-        package: String,
-        /// Dependency key on the requesting package.
-        dependency: String,
-    },
-}
-
-/// Exact provider identity, state, semantic use, implementation closure, artifact, and authority provenance.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CodegraphProviderProjection {
-    /// Stable provider identity including version, digest, and feature projection.
-    pub identity: String,
-    /// Provider artifact availability.
-    pub available: bool,
-    /// Provider enablement after component and package-feature resolution.
-    pub enabled: bool,
-    /// Provider participation derived from reached canonical modules.
-    pub participation: CodegraphProviderParticipation,
-    /// Authority chain that introduced the provider.
-    pub provenance: CodegraphProviderProvenance,
-    /// Exact canonical modules claimed by the provider.
-    pub namespace_claims: Vec<Vec<String>>,
-    /// Canonical provider modules reached by this compilation graph.
-    pub used_modules: Vec<Vec<String>>,
-    /// Public feature projection used by this physical artifact.
-    pub active_features: Vec<String>,
-    /// Private implementation facets selected by semantic use.
-    pub implementation_facets: Vec<String>,
-    /// Backend requirements derived from selected facets.
-    pub backend_requirements: Vec<String>,
-    /// Relocatable or installed artifact-manifest location, when available.
-    pub manifest_path: Option<String>,
-}
-
-/// Provider participation state with availability, enablement, and semantic use kept distinct.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CodegraphProviderParticipation {
-    /// Provider artifact is absent from the active installation or artifact store.
-    Unavailable,
-    /// Provider is available but disabled by the selected semantic graph.
-    Disabled,
-    /// Provider is enabled and available but no claimed module is reached.
-    Enabled,
-    /// At least one claimed module is reached by the compilation graph.
-    Used,
-}
-
-/// Authority and source chain that introduced one provider record.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum CodegraphProviderProvenance {
-    /// Ordinary Incan dependency selected from a project graph.
-    ProjectDependency {
-        /// Dependency key used under `pub::<key>`.
-        dependency_key: String,
-        /// Manifest that declared the dependency.
-        manifest_path: String,
-    },
-    /// Provider authorized by the active SDK inventory.
-    Sdk {
-        /// Active SDK identity.
-        sdk_identity: String,
-        /// SDK component that supplies the provider.
-        component_id: String,
-        /// Inventory file that granted reserved namespace authority, when installed.
-        inventory_path: Option<String>,
-    },
-    /// Ordinary standard loaf bound to its original compiler-owned source publication.
-    StandardPublication {
-        /// Exact package whose pinned policy owns the namespaces.
-        package_name: String,
-        /// Original authored declaration of the publisher.
-        manifest_path: String,
-    },
-    /// Compiler-owned symbolic provider without a compiled artifact.
-    Compiler,
+    /// Content digest of the Loaf's manifest.
+    pub digest: String,
+    /// Whether the Loaf is a standard package, which owns `std.*` namespaces, rather than a dependency.
+    pub standard: bool,
 }
 
 /// Export mode recorded in the header.
@@ -1143,176 +982,4 @@ pub fn to_jsonl(records: &[CodegraphRecord]) -> Result<String, serde_json::Error
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{
-        CODEGRAPH_SCHEMA_VERSION, CodegraphCanonicalSymbolId, CodegraphDiagnosticRecord,
-        CodegraphDiagnosticRelatedDeclaration, CodegraphFileRecord, CodegraphHeaderRecord, CodegraphIdentitySpan,
-        CodegraphLanguage, CodegraphMode, CodegraphNamespaceRecord, CodegraphProvenance, CodegraphRecord,
-        CodegraphReferenceRecord, CodegraphSourceSpan, CodegraphSymbolOrigin, to_jsonl,
-    };
-
-    #[test]
-    fn jsonl_emits_header_then_facts() -> Result<(), Box<dyn std::error::Error>> {
-        let records = vec![
-            CodegraphRecord::Header(CodegraphHeaderRecord {
-                schema_version: CODEGRAPH_SCHEMA_VERSION,
-                compiler_version: "0.4.0-dev.5".to_string(),
-                mode: CodegraphMode::Strict,
-                root_path: "src/main.incn".to_string(),
-                languages: vec![CodegraphLanguage::Incan],
-                package: None,
-                semantic_contexts: Vec::new(),
-                degraded: false,
-            }),
-            CodegraphRecord::File(CodegraphFileRecord {
-                id: "file:src/main.incn".to_string(),
-                language: CodegraphLanguage::Incan,
-                path: "src/main.incn".to_string(),
-                size_bytes: 12,
-                provenance: CodegraphProvenance::Source,
-                degraded: false,
-            }),
-        ];
-
-        let jsonl = to_jsonl(&records)?;
-        let lines = jsonl.lines().collect::<Vec<_>>();
-
-        assert_eq!(lines.len(), 2);
-        assert!(lines[0].contains("\"record\":\"header\""));
-        assert!(lines[0].contains(&format!("\"schema_version\":{CODEGRAPH_SCHEMA_VERSION}")));
-        assert!(lines[1].contains("\"record\":\"file\""));
-        Ok(())
-    }
-
-    #[test]
-    fn canonical_identity_is_structured_and_independent_of_reference_spelling() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let identity = CodegraphCanonicalSymbolId {
-            namespace: "ordinary_lexical".to_string(),
-            origin: CodegraphSymbolOrigin::Module {
-                path: vec!["provider".to_string()],
-            },
-            declaration_name: "helper".to_string(),
-            declaration_kind: "function".to_string(),
-            scope_discriminant: None,
-            declaration_span: CodegraphIdentitySpan { start: 4, end: 31 },
-        };
-        let record = CodegraphRecord::Reference(CodegraphReferenceRecord {
-            id: "reference:consumer:0".to_string(),
-            language: CodegraphLanguage::Incan,
-            module_id: "module:consumer".to_string(),
-            owner_id: None,
-            name: "renamed_helper".to_string(),
-            kind: "identifier".to_string(),
-            target_id: None,
-            canonical_identity: Some(identity.clone()),
-            canonical_owner: None,
-            stable_identity: None,
-            span: None,
-            provenance: CodegraphProvenance::Checked,
-            degraded: false,
-        });
-
-        let encoded = serde_json::to_value(&record)?;
-        assert_eq!(encoded["name"], "renamed_helper");
-        assert_eq!(encoded["canonical_identity"]["declaration_name"], "helper");
-        assert_eq!(encoded["canonical_identity"]["origin"]["kind"], "module");
-        assert_eq!(serde_json::from_value::<CodegraphRecord>(encoded)?, record);
-        Ok(())
-    }
-
-    #[test]
-    fn reference_records_without_checked_owner_remain_readable() -> Result<(), Box<dyn std::error::Error>> {
-        let value = serde_json::json!({
-            "record": "reference", "id": "reference:main:1", "language": "incan", "module_id": "module:main",
-            "owner_id": null, "name": "alias", "kind": "identifier", "target_id": null,
-            "canonical_identity": null, "span": null, "provenance": "source", "degraded": false
-        });
-        let record: CodegraphRecord = serde_json::from_value(value)?;
-        let CodegraphRecord::Reference(reference) = record else {
-            return Err("expected reference".into());
-        };
-        assert_eq!(reference.canonical_owner, None);
-        Ok(())
-    }
-
-    #[test]
-    fn diagnostic_records_without_origin_remain_readable() -> Result<(), Box<dyn std::error::Error>> {
-        let record = CodegraphRecord::Diagnostic(CodegraphDiagnosticRecord {
-            id: "diagnostic:0".to_string(),
-            language: CodegraphLanguage::Incan,
-            code: "INCAN-T0001".to_string(),
-            severity: "error".to_string(),
-            phase: "typecheck".to_string(),
-            origin: "typechecker".to_string(),
-            message: "type mismatch".to_string(),
-            primary_span: CodegraphSourceSpan {
-                file: "main.incn".to_string(),
-                start: 0,
-                end: 1,
-                start_line: 1,
-                start_column: 1,
-                end_line: 1,
-                end_column: 2,
-            },
-            notes: Vec::new(),
-            hints: Vec::new(),
-            expected: None,
-            actual: None,
-            related_spans: Vec::new(),
-            related_declarations: vec![CodegraphDiagnosticRelatedDeclaration {
-                identity: CodegraphCanonicalSymbolId {
-                    namespace: "ordinary_lexical".to_string(),
-                    origin: CodegraphSymbolOrigin::Package {
-                        library: "provider".to_string(),
-                        module_path: vec!["api".to_string()],
-                    },
-                    declaration_name: "expected_value".to_string(),
-                    declaration_kind: "function".to_string(),
-                    scope_discriminant: None,
-                    declaration_span: CodegraphIdentitySpan { start: 7, end: 42 },
-                },
-                label: "previous declaration".to_string(),
-            }],
-            explain: "incan explain INCAN-T0001".to_string(),
-            provenance: CodegraphProvenance::Diagnostic,
-            degraded: true,
-        });
-        let mut legacy = serde_json::to_value(record)?;
-        legacy.as_object_mut().ok_or("expected record object")?.remove("origin");
-
-        let parsed: CodegraphRecord = serde_json::from_value(legacy)?;
-        let CodegraphRecord::Diagnostic(diagnostic) = parsed else {
-            return Err("expected diagnostic record".into());
-        };
-        assert_eq!(diagnostic.origin, "unknown");
-        assert_eq!(diagnostic.related_declarations.len(), 1);
-        assert_eq!(
-            diagnostic.related_declarations[0].identity.declaration_name,
-            "expected_value"
-        );
-        Ok(())
-    }
-
-    /// The namespace record round-trips under its own `record` tag.
-    ///
-    /// The JSONL export is a published contract, so a new variant has to be checked at the wire rather than only
-    /// through the producer that builds it: the tag is what a consumer matches on, and nothing else in the schema
-    /// would fail if it were wrong.
-    #[test]
-    fn namespace_records_round_trip_under_their_own_tag() -> Result<(), Box<dyn std::error::Error>> {
-        let record = CodegraphRecord::Namespace(CodegraphNamespaceRecord {
-            id: "namespace:std.encoding".to_string(),
-            language: CodegraphLanguage::Incan,
-            namespace_path: vec!["std".to_string(), "encoding".to_string()],
-            name: "encoding".to_string(),
-            provenance: CodegraphProvenance::Syntax,
-            degraded: false,
-        });
-        let encoded = serde_json::to_value(&record)?;
-        assert_eq!(encoded["record"], "namespace");
-        assert_eq!(encoded["namespace_path"][1], "encoding");
-        assert_eq!(serde_json::from_value::<CodegraphRecord>(encoded)?, record);
-        Ok(())
-    }
-}
+mod tests;

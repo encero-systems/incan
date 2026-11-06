@@ -62,6 +62,23 @@ impl TypeChecker {
         }
     }
 
+    /// Project an original destination template to the storage kind already selected for a literal. Type-parameter
+    /// positions remain explicit so contextual nominal retention cannot re-own a caller's substituted arguments.
+    pub(in crate::typechecker::check_expr) fn literal_storage_template<'ty>(
+        &self,
+        literal: &ResolvedType,
+        template: &'ty ResolvedType,
+    ) -> Option<&'ty ResolvedType> {
+        let is_kind = |ty: &ResolvedType| {
+            (Self::list_element_type(literal).is_some() && Self::list_element_type(ty).is_some())
+                || (Self::dict_entry_types(literal).is_some() && Self::dict_entry_types(ty).is_some())
+                || literal
+                    .tuple_elements()
+                    .is_some_and(|items| ty.tuple_elements().is_some_and(|other| items.len() == other.len()))
+        };
+        self.collection_literal_destination(template, &is_kind)
+    }
+
     /// Refuse a collection literal whose own elements leave part of its type open (`[]`, `[None]`, `(None, 1)`, `{}`)
     /// at a destination holding two or more types of its kind, such as `list[int] | list[str]` (#1832).
     ///
@@ -82,12 +99,11 @@ impl TypeChecker {
         }
         let is_list = Self::list_element_type(literal_ty).is_some();
         let is_dict = Self::dict_entry_types(literal_ty).is_some();
-        let tuple_arity = Self::tuple_element_types(literal_ty).map(<[ResolvedType]>::len);
+        let tuple_arity = literal_ty.tuple_elements().map(<[ResolvedType]>::len);
         let is_kind = |ty: &ResolvedType| {
             (is_list && Self::list_element_type(ty).is_some())
                 || (is_dict && Self::dict_entry_types(ty).is_some())
-                || tuple_arity
-                    .is_some_and(|arity| Self::tuple_element_types(ty).is_some_and(|items| items.len() == arity))
+                || tuple_arity.is_some_and(|arity| ty.tuple_elements().is_some_and(|items| items.len() == arity))
         };
         let Some(kinds) = self.collection_literal_kinds(expected, &is_kind) else {
             return;
@@ -168,19 +184,6 @@ impl TypeChecker {
                 if collection_type_id(name.as_str()) == Some(CollectionTypeId::Dict) && args.len() == 2 =>
             {
                 Some((&args[0], &args[1]))
-            }
-            _ => None,
-        }
-    }
-
-    /// Return the element types of a tuple type, spelled either `tuple[...]` or as a tuple literal's own type.
-    fn tuple_element_types(ty: &ResolvedType) -> Option<&[ResolvedType]> {
-        match ty {
-            ResolvedType::Tuple(items) => Some(items.as_slice()),
-            ResolvedType::Generic(name, items)
-                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Tuple) =>
-            {
-                Some(items.as_slice())
             }
             _ => None,
         }
@@ -432,9 +435,9 @@ impl TypeChecker {
         let arity = elems.len();
         let Some(expected_elems) = self
             .collection_literal_destination(expected, &|ty| {
-                Self::tuple_element_types(ty).is_some_and(|items| items.len() == arity)
+                ty.tuple_elements().is_some_and(|items| items.len() == arity)
             })
-            .and_then(Self::tuple_element_types)
+            .and_then(ResolvedType::tuple_elements)
             .map(<[ResolvedType]>::to_vec)
         else {
             return self.check_tuple(elems);
@@ -537,8 +540,8 @@ impl TypeChecker {
 
     /// Type-check a set literal, refusing an element type that does not implement `Eq` and `Hash` (#1758).
     ///
-    /// A destination `set[T]` annotation whose element type lacks `Eq` or `Hash` was refused where it is written, so
-    /// the literal is not refused a second time for it. The element type still comes from the first element.
+    /// A destination `set[T]` annotation gives every literal member its expected type. When `T` lacks `Eq` or `Hash`,
+    /// the annotation was refused where it is written, so the literal is not refused a second time for it.
     pub(in crate::typechecker::check_expr) fn check_set_with_expected(
         &mut self,
         elems: &[Spanned<Expr>],
@@ -554,7 +557,7 @@ impl TypeChecker {
         };
         let annotation_reported = self.annotation_reports_unhashable_member(expected_elem);
         let elem_ty = if let Some(first) = elems.first() {
-            let elem_ty = self.check_expr(first);
+            let elem_ty = self.check_expr_with_expected(first, expected_elem);
             if !annotation_reported {
                 self.refuse_unhashable_collection_member(HashedCollectionRole::SetElement, &elem_ty, first.span);
             }
@@ -564,7 +567,7 @@ impl TypeChecker {
         };
 
         for elem in elems.iter().skip(1) {
-            self.check_expr(elem);
+            self.check_expr_with_expected(elem, expected_elem);
         }
 
         set_ty(elem_ty)

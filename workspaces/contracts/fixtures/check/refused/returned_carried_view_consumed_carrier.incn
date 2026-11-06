@@ -1,0 +1,19 @@
+# behavior: a `match` on a local bound to a call that carries a view consumes the local; matching it again is refused (#2500).
+# expect-diagnostic: INCAN-T0123
+
+class Counter:
+    pub value: int
+
+    pub def bump(mut self) -> Result[Reference[Self], str] from self:
+        self.value += 1
+        return Ok(self)
+
+
+def bump_twice(mut counter: BorrowedMut[Counter]) -> int:
+    result = counter.bump()
+    match result:
+        Ok(_) => pass
+        Err(_) => pass
+    match result:
+        Ok(view) => return view.value
+        Err(_) => return 0

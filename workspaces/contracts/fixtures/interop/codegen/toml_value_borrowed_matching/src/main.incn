@@ -1,0 +1,34 @@
+# behavior: a borrowed rust::toml Value, shared or mutable, matches its String variant twice and yields the payload text (#1448)
+# expect-stdout:
+#   hello
+#   true
+#   hello
+#   true
+
+from rust::toml import Value as RawValue
+
+
+pub def inspect(value: &RawValue) -> bool:
+    match value:
+        RawValue.String(text) =>
+            println(text)
+        _ => pass
+    match value:
+        RawValue.String(_) => return true
+        _ => return false
+
+
+pub def inspect_mut(value: &mut RawValue) -> bool:
+    match value:
+        RawValue.String(text) =>
+            println(text)
+        _ => pass
+    match value:
+        RawValue.String(_) => return true
+        _ => return false
+
+
+def main() -> None:
+    mut value = RawValue.String("hello")
+    println(inspect(value))
+    println(inspect_mut(value))

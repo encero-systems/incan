@@ -1,0 +1,10 @@
+[project]
+name = "rust_supertrait_serde"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+serde = { loaf = "crates-io/serde", version = "1", features = ["derive"] }
+serde_json = { loaf = "crates-io/serde_json", version = "1" }

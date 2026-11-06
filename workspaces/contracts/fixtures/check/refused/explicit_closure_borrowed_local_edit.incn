@@ -1,0 +1,9 @@
+# behavior: a closure that captures a borrowed local keeps that local's owner borrowed while the closure can still be called; changing the owner before its last call is refused (#2500).
+# expect-diagnostic: INCAN-T0126
+
+def conflict(start: int) -> int:
+    mut owned = start + 1
+    view: Borrowed[int] = owned
+    read: () -> int = () => view + 1
+    owned += 10
+    return read()

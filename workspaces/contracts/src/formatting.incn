@@ -1,0 +1,78 @@
+"""Compare formatting text, check-mode immutability and repeated formatting through the public command."""
+
+from std.fs import Path
+from header import Header
+from run import invoke
+
+
+pub def compare_format(incan: str, project: Path, header: Header, source: str) -> Result[list[str], str]:
+    """
+    Run a format case's four checks through `incan fmt` and return one message per broken check.
+
+    1. `--check` on the original exits with the expected code and writes nothing.
+    2. Formatting writes exactly the expected text.
+    3. `--check` accepts the formatted text.
+    4. Formatting the formatted text again changes nothing.
+    """
+    original = without_header(source)
+    expected = "\n".join(header.items("expect-formatted")) + "\n"
+    path = project.joinpath("src").joinpath("main.incn")
+    write(path, original)?
+    mut failures: list[str] = []
+
+    # 1. Check mode reports whether formatting would change the input, and never writes.
+    check_code = initial_check_code(header, original, expected)
+    before = invoke(incan, ["fmt", "--check", "src/main.incn"], project)?
+    if before.code != Some(check_code):
+        failures.append(f"initial --check: expected {check_code}, got {before.exit_text()}: {before.stderr}")
+    if read(path)? != original:
+        failures.append("--check changed the input")
+
+    # 2. Formatting writes exactly the expected text.
+    formatted = invoke(incan, ["fmt", "src/main.incn"], project)?
+    if formatted.code != Some(0):
+        failures.append(f"fmt failed: {formatted.exit_text()}: {formatted.stderr}")
+    actual = read(path)?
+    if actual != expected:
+        failures.append(f"formatted text differs\nexpected:\n{expected}\nactual:\n{actual}")
+
+    # 3. The formatted text passes check mode.
+    after = invoke(incan, ["fmt", "--check", "src/main.incn"], project)?
+    if after.code != Some(0):
+        failures.append(f"formatted --check failed: {after.exit_text()}: {after.stderr}")
+
+    # 4. Formatting is stable: a second run succeeds and leaves the text as it was.
+    repeated = invoke(incan, ["fmt", "src/main.incn"], project)?
+    if repeated.code != Some(0) or read(path)? != actual:
+        failures.append("repeated formatting failed or changed the output")
+    return Ok(failures)
+
+
+def without_header(source: str) -> str:
+    """The case's program: its source after the leading `#` header lines and the blank line that ends them."""
+    lines = source.split("\n")
+    mut start = 0
+    while start < len(lines) and lines[start].startswith("#"):
+        start += 1
+    if start < len(lines) and lines[start] == "":
+        start += 1
+    return "\n".join(lines[start:])
+
+
+def initial_check_code(header: Header, original: str, expected: str) -> int:
+    """The initial check's exit code: `expect-exit:` when stated, otherwise 1 when formatting changes the input."""
+    if header.declares("expect-exit"):
+        return header.expected_exit()
+    if original != expected:
+        return 1
+    return 0
+
+
+def read(path: Path) -> Result[str, str]:
+    """Read a case file as strict UTF-8."""
+    return path.read_text("utf-8", "strict").map_err((error) => error.message())
+
+
+def write(path: Path, text: str) -> Result[None, str]:
+    """Write a case file as strict UTF-8."""
+    return path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())

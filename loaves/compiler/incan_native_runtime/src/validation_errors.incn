@@ -15,4 +15,4 @@ pub def make_coded_validation_error(message: str, code: str) -> NativeValidation
 
 pub def format_validation_error(value: &NativeValidationError) -> str:
     """Borrow the actual runtime Display so later reads retain the error's owned payload."""
-    return str(value)
+    return value.to_string()

@@ -1,0 +1,71 @@
+# behavior: String constants, defaults, assignments, nested arguments and literal patterns keep their single-line or triple-quoted spelling, escapes, Unicode and embedded indentation.
+# expect-formatted:
+#   const FIRST: str = "hello"
+#   const SECOND: str = '''hello'''
+#   const THIRD: str = "hello"
+#   const FOURTH: str = """hello"""
+#
+#
+#   def message(text: str = """héllo""") -> str:
+#       """Preserve text spelling in defaults and assignments."""
+#       value = '''
+#       # Embedded text, not a comment.
+#         keep indentation
+#       '''
+#       value = """other"""
+#       return value
+#
+#
+#   def print_nested() -> None:
+#       """Print triple-quoted text in nested expressions."""
+#       println('''a\nb''', ["""quote: " and \\ path"""])
+#
+#
+#   def choose(value: str) -> int:
+#       """Choose a result from literal text patterns."""
+#       match value:
+#           """hello""" => return 1
+#           "world" => return 2
+#           _ => return 0
+#
+#
+#   def stylesheet() -> str:
+#       """The page stylesheet."""
+#       return """
+#   body { margin: 0; }
+#
+#
+#   .panel { padding: 8px; }
+#   """
+
+const FIRST:str='hello'
+const SECOND:str='''hello'''
+const THIRD:str="hello"
+const FOURTH:str="""hello"""
+def message(text:str="""héllo""")->str:
+    """Preserve text spelling in defaults and assignments."""
+    value='''
+    # Embedded text, not a comment.
+      keep indentation
+    '''
+    value="""other"""
+    return value
+def print_nested()->None:
+    """Print triple-quoted text in nested expressions."""
+    println('''a\nb''',["""quote: " and \\ path"""])
+def choose(value:str)->int:
+    """Choose a result from literal text patterns."""
+    match value:
+        """hello""" => return 1
+        'world' => return 2
+        _ => return 0
+
+
+def stylesheet() -> str:
+    """The page stylesheet."""
+    return """
+body { margin: 0; }
+
+
+.panel { padding: 8px; }
+"""

@@ -1,0 +1,243 @@
+"""Language-neutral v1 control-message models; strings name descriptors, never record payloads."""
+
+
+pub model Hello:
+    """Client identity and bounded transport limits, before admitting work."""
+
+    pub store_id: str
+    pub profile: str
+    pub service_generation: str
+    pub compiler_generation: str
+    pub peer_uid: u32
+    pub credits: int
+    pub payload_limit: int
+
+
+pub model Welcome:
+    """Exact negotiated service identity and transport limits."""
+
+    pub store_id: str
+    pub profile: str
+    pub service_generation: str
+    pub compiler_generation: str
+    pub peer_uid: u32
+    pub credits: int
+    pub payload_limit: int
+
+
+pub model Submit:
+    """Command and immutable descriptor handles; no decoded dependency closure."""
+
+    pub command: str
+    pub view: str
+    pub input_selection: str
+    pub requested_roots: str
+    pub options: str
+    pub observation_policy: str
+
+
+pub model Accepted:
+    """Capture and interest tokens; acceptance does not imply capture or completion."""
+
+    pub capture_token: str
+    pub interest_token: str
+
+
+pub model Captured:
+    """Immutable epoch and snapshot handles; capture is a separate producer."""
+
+    pub epoch: str
+    pub snapshot: str
+
+
+pub model Prepare:
+    """Compiler-owned preparation descriptors for one stage."""
+
+    pub stage: str
+    pub snapshot: str
+    pub demand_root: str
+    pub producer_profile: str
+
+
+pub model NeedPrerequisite:
+    """Earlier-rank scheduling input; never a diagnostic or absence witness."""
+
+    pub keys_root: str
+    pub earlier_rank: int
+
+
+pub model Evaluate:
+    """Ready work and activation descriptors under one resource reservation."""
+
+    pub work_root: str
+    pub snapshot: str
+    pub prepared_root: str
+    pub reservation: str
+    pub cancellation_generation: int
+
+
+pub model Produced:
+    """Staged results and evidence roots, awaiting publication and selection."""
+
+    pub staged_root: str
+    pub witness_root: str
+    pub diagnostic_root: str
+    pub counter_root: str
+
+
+pub model Query:
+    """Snapshot-bound read-only query with bounded page limits."""
+
+    pub snapshot: str
+    pub query_root: str
+    pub cursor: str
+    pub row_limit: int
+    pub byte_limit: int
+
+
+pub model Page:
+    """Bounded result and continuation handles at the requested snapshot."""
+
+    pub snapshot: str
+    pub rows_root: str
+    pub cursor: str
+
+
+pub model Event:
+    """Bounded status and trace handle; never program console bytes."""
+
+    pub status: str
+    pub trace_handle: str
+
+
+pub model Complete:
+    """Caller-specific snapshot, admission, leased handles and binding outcome."""
+
+    pub snapshot: str
+    pub admission_proof: str
+    pub result_handles: str
+    pub binding_outcome: BindingOutcome
+    pub status: CompletionStatus
+    pub observation_handle: str
+
+
+pub model Cancel:
+    """Detach one interest; other interests may keep shared work alive."""
+
+    pub interest_token: str
+
+
+pub model Cancelled:
+    """Interest detachment and effect-stop outcome."""
+
+    pub interest_token: str
+    pub effects_stopped: EffectDisposition
+
+
+pub model Resolve:
+    """Transaction identity and Committed, NotCommitted or Unknown outcome."""
+
+    pub transaction: str
+    pub outcome: Resolution
+
+
+pub model Pin:
+    """Scoped snapshot or execution lease over named allowed roots."""
+
+    pub snapshot: str
+    pub allowed_roots: str
+    pub lease_id: str
+    pub purpose: str
+
+
+pub model Release:
+    """Release exactly the named scoped lease."""
+
+    pub lease_id: str
+
+
+pub model Drain:
+    """Refuse new work and settle existing interests before relinquishing ownership."""
+
+    pub reason: str
+
+
+pub model Stop:
+    """Cancel remaining interests and relinquish service ownership."""
+
+    pub reason: str
+
+
+pub model Ack:
+    """Control-lane acknowledgment of one exact data sequence."""
+
+    pub sequence: u64
+
+
+pub model Refused:
+    """Typed numeric refusal code and bounded command context."""
+
+    pub code: int
+    pub command: str
+    pub detail: str
+
+
+pub enum BindingOutcome:
+    """Closed v1 outcomes with explicit binary variant tags."""
+
+    Selected
+    NotSelected
+    Rejected
+    Superseded
+
+
+pub enum CompletionStatus:
+    """Closed v1 outcomes with explicit binary variant tags."""
+
+    Success
+    Unavailable
+    Failed
+    Cancelled
+
+
+pub enum Resolution:
+    """Closed v1 outcomes with explicit binary variant tags."""
+
+    Committed
+    NotCommitted
+    Unknown
+
+
+pub enum EffectDisposition:
+    """Closed v1 outcomes with explicit binary variant tags."""
+
+    Stopped
+    Pending
+    NoEffects
+
+
+pub enum Message:
+    """Every engine message family with an explicit binary tag."""
+
+    Hello(Hello)
+    Welcome(Welcome)
+    Submit(Submit)
+    Accepted(Accepted)
+    Captured(Captured)
+    Prepare(Prepare)
+    NeedPrerequisite(NeedPrerequisite)
+    Evaluate(Evaluate)
+    Produced(Produced)
+    Query(Query)
+    Page(Page)
+    Event(Event)
+    Complete(Complete)
+    Cancel(Cancel)
+    Cancelled(Cancelled)
+    Resolve(Resolve)
+    Pin(Pin)
+    Release(Release)
+    Drain(Drain)
+    Stop(Stop)
+    Ack(Ack)
+    Refused(Refused)

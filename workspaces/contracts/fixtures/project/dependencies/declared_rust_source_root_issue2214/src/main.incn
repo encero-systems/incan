@@ -1,0 +1,9 @@
+# behavior: a custom source root links a Rust dependency whose artifact path contains equals (#2214)
+# cli-commands:
+#   run app=source/code/main.incn
+# expect-stdout:
+#   42
+
+def main() -> None:
+    """Describe the dependency without needing any Rust declarations."""
+    println(42)

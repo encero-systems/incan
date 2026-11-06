@@ -1,0 +1,8 @@
+"""Keep a proved ordinary call neighborhood beside the expanded vocabulary call."""
+
+from pub::words import marker
+
+
+pub def helper() -> int:
+    """Return the ordinary library value through an authored provider."""
+    return marker()

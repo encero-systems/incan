@@ -1,0 +1,380 @@
+# behavior: Native generic calls preserve explicit and opaque loans, binders, callbacks and independent owners, close binders projected from source collections, as for Command.args, Command.envs and Vec.extend, retain exclusive authority through mutable slice dereferences, contextually type range literals, fix a method's open result at a typed use, take an impl binder from a borrowed Option receiver before projecting copied's owned result, and take a local's open owner arguments from its first type-dependent use after length and emptiness reads, as for HashMap.new with insert, Vec.new with push, a typed parameter, a typed return and an annotated place, pass a `str` constant to a generic Rust parameter as a `str` value passes, select an implicit native trait method through its bound, and infer a source generic from a native slice view (#2256, #2432, #2434, #2436, #2481, #2590)
+# expect-stdout:
+#   7
+#   leaf
+#   8
+#   16
+#   8
+#   16
+#   true
+#   2
+#   1
+#   true
+#   leaf
+#   ea
+#   typed channel
+#   thread 42
+#   stored 3
+#   3
+#   2
+#   3
+#   2
+#   1
+#   true
+#   true
+#   true
+#   2
+#   2
+#   0
+#   1
+#   1
+#   1
+#   2
+#   7
+#   42
+#   false
+
+"""Retain generic instantiations, scalar and text loans, and a nonreturning native result in one case."""
+
+from rust::incan_std_primitives::strings import str_slice_byte_range
+from rust::std::collections import HashMap, VecDeque
+from rust::std::convert import identity
+from rust::std::fmt import Display
+from rust::std::ffi import CString
+from rust::std::hash import DefaultHasher, Hash, Hasher
+from rust::std::iter import Iterator as NativeIterator
+from rust::std::mem import size_of_val, swap
+from rust::std::ops import Index
+from rust::std::path import Path
+from rust::std::process import Command, exit
+from rust::std::primitive import usize
+from rust::std::string import String as RustString, ToString
+from rust::std::sync import Arc, Mutex
+from rust::std::sync::mpsc import Sender as NativeSender, Receiver as NativeReceiver, channel as native_channel
+from rust::std::thread import panicking, spawn
+from rust::std::vec import Vec
+
+const PROGRAM: str = "true"
+const FLAG: str = "--version"
+const ENTRY: str = "frozen"
+
+
+model Pair:
+    """Two integer fields with a distinct native size."""
+
+    first: int
+    second: int
+
+
+model TextView:
+    """Keep text owned by a source receiver while reading individual Unicode scalars."""
+
+    value: str
+
+    def at(self, index: int) -> str:
+        """Read one scalar without consuming the receiver's text."""
+        return self.value[index]
+
+
+model Entry:
+    """One model element retained through an Arc slice view."""
+
+    value: int
+
+
+def render[T with (Display, ToString)](value: T) -> str:
+    """Call a native trait method through the type parameter's declared bound."""
+    return value.to_string()
+
+
+def first[T](values: &list[T]) -> &T:
+    """Return the first element of a source collection through Rust's checked Index signature."""
+    slot: usize = 0.wrapping_resize()
+    return Index.index(values, slot)
+
+
+def show_bound_native_values() -> None:
+    """Observe an implicit native trait result and a source binder inferred from an Arc slice."""
+    println(render(7))
+    entries = Arc.new([Entry(value=42)])
+    selected = first(entries.as_ref())
+    println(selected.value)
+
+
+def measure[Payload](value: Payload) -> int:
+    """Query the size of the instantiated source value without moving it."""
+    return size_of_val(value)
+
+
+def measure_again[Element](value: Element) -> int:
+    """Retain a second declaration's binder environment on the same native item."""
+    return size_of_val(value)
+
+
+def finish() -> int:
+    """A native nonreturning result ends a source function with an ordinary return type."""
+    return exit(0i32)
+
+
+def show_generic_instantiations() -> None:
+    """Observe concrete identity results and separately instantiated source binders."""
+    println(identity(7))
+    println(identity("leaf"))
+    println(measure(1))
+    println(measure(Pair(first=2, second=3)))
+    println(measure_again(4))
+    println(size_of_val(Pair(first=5, second=6)))
+
+
+def show_scalar_references() -> None:
+    """Observe the caller's values after their mutable Rust loans end."""
+    mut left = 1
+    mut right = 2
+    println(size_of_val(left) == size_of_val(7))
+    swap(left, right)
+    println(left)
+    println(right)
+
+
+def show_text_references() -> None:
+    """Keep the owner usable after both reference forms cross Rust boundaries."""
+    text = "leaf"
+    println(size_of_val(text) == size_of_val("leaf"))
+    println(text)
+    println(str_slice_byte_range(text, 1, 3))
+    shared: Arc[str] = Arc.new(text)
+    assert shared.as_str() == "leaf"
+    assert shared.as_str() == "leaf"
+    assert text[0] == "l"
+    assert text[-1] == "f"
+    unicode_text = "Aé🙂"
+    assert unicode_text[1] == "é"
+    assert unicode_text[-1] == "🙂"
+    view = TextView(value=unicode_text)
+    assert view.at(1) == "é"
+    assert view.at(-1) == "🙂"
+    assert view.value == unicode_text
+
+
+def show_typed_factory() -> None:
+    """Infer a native factory's element from the tuple destination and use both returned handles."""
+    pair: Tuple[NativeSender[str], NativeReceiver[str]] = native_channel()
+    tx, rx = pair
+    match tx.send("typed channel"):
+        Ok(_) => pass
+        Err(_) =>
+            assert false
+    match rx.recv():
+        Ok(value) => println(value)
+        Err(_) =>
+            assert false
+
+
+def retained_callback() -> () -> str:
+    """Return an owned callback whose captured string outlives its creating frame."""
+    text = "retained"
+    return () => text
+
+
+def show_thread_capture() -> None:
+    """Join direct and locally retained Rust callbacks that own integer and string captures."""
+    number = 42
+    text = "thread"
+    worker = spawn(() => f"{text} {number}")
+    match worker.join():
+        Ok(value) => println(value)
+        Err(_) =>
+            assert false
+    count = 3
+    label = "stored"
+    callback = () => f"{label} {count}"
+    retained_worker = spawn(callback)
+    match retained_worker.join():
+        Ok(value) => println(value)
+        Err(_) =>
+            assert false
+
+
+def native_mapping() -> HashMap[RustString, int]:
+    """Return an imported map without changing another foreign owner's receiver frame."""
+    return HashMap.new()
+
+
+def borrowed_tuple_is_poisoned(value: &Tuple[Mutex[int], int]) -> bool:
+    """Borrow a foreign element through the checked shared tuple-parameter frame."""
+    handle: &Mutex[int] = value[0]
+    return handle.is_poisoned()
+
+
+def check_foreign_values() -> None:
+    """Verify escaping captures, tuple field loans, concrete trait returns, and independent native frames."""
+    callback = retained_callback()
+    assert callback() == "retained"
+    assert callback() == "retained"
+    handles = (Mutex.new(3), 7)
+    assert not handles.0.is_poisoned()
+    assert not handles.0.is_poisoned()
+    handle: &Mutex[int] = handles.0
+    assert not handle.is_poisoned()
+    assert not handles.0.is_poisoned()
+    indexed: &Mutex[int] = handles[0]
+    assert not indexed.is_poisoned()
+    typed_tuple: Tuple[Mutex[int], int] = (Mutex.new(4), 8)
+    typed_view: &Mutex[int] = typed_tuple[0]
+    assert not typed_view.is_poisoned()
+    assert not borrowed_tuple_is_poisoned(handles)
+    mut state = DefaultHasher.new()
+    Hash.hash(RustString.from("item"), state)
+    value: u64 = Hasher.finish(state)
+    assert value > 0u64
+    method_value: u64 = state.finish()
+    assert method_value == value
+    assert Path.new(".").exists()
+    assert native_mapping().len() == 0usize
+
+
+def check_native_cursor_forwarding() -> None:
+    """Keep an opaque returned loan tied to its source, independently of another parameter of the same native type."""
+    mut left: RustString = "abc"
+    mut right: RustString = "de"
+    cursor = retained_first(left.chars(), right.chars())
+    right.push_str("f")
+    assert cursor.count() == 3usize
+    left.push_str("g")
+    assert left.as_str() == "abcg"
+    assert right.as_str() == "def"
+
+
+def retained_first[T, U](left: T, right: U) -> T:
+    """Transfer only the first parameter's value and loans into the result."""
+    return left
+
+
+def show_projected_binders() -> None:
+    """Pass source collections to binders a native bound projects: each item type closes from the collection."""
+    mut command = Command.new("true")
+    command.args(["one", "two", "three"])
+    command.envs({"FIRST": "1", "SECOND": "2"})
+    println(command.get_args().len())
+    println(command.get_envs().len())
+    mut values: Vec[int] = Vec.new()
+    values.extend([1, 2, 3])
+    removed = values.drain(0..1)
+    assert removed.count() == 1usize
+    values.push(1)
+    values.sort_by_key((value) => str(value))
+    assert str(values[0]) == "1"
+    assert str(values[2]) == "3"
+    println(values.len())
+
+
+def show_frozen_text_arguments() -> None:
+    """Pass `str` constants to generic Rust parameters as `str` values pass, beside an explicit `str(...)` control."""
+    mut command = Command.new(PROGRAM)
+    command.arg(FLAG)
+    command.arg(str(FLAG))
+    command.env(ENTRY, FLAG)
+    println(command.get_args().len())
+    println(command.get_envs().len())
+    println(command.output().is_ok())
+    joined = Path.new(".").join(ENTRY)
+    println(joined.ends_with(ENTRY))
+    println(CString.new(ENTRY).is_ok())
+
+
+def vector_length(values: Vec[int]) -> usize:
+    """Read a native vector whose element type fixes the open owner argument of the caller's local."""
+    return values.len()
+
+
+def collected() -> Vec[int]:
+    """Return a local whose open owner argument the typed return fixes."""
+    values = Vec.new()
+    return values
+
+
+def inferred_total(values: Vec[int]) -> int:
+    """Fix a native method's own open result parameter at a typed return."""
+    total = values.into_iter().sum()
+    return total
+
+
+def show_first_use_arguments() -> None:
+    """Take each local's open owner arguments from its first use, then use the local as the type it fixed."""
+    mut table = HashMap.new()
+    assert len(table) == 0
+    assert table.is_empty()
+    table.insert("a", 1)
+    table.insert("b", 2)
+    println(table.len())
+    mut queue = VecDeque.new()
+    assert len(queue) == 0
+    assert queue.is_empty()
+    queue.push_back(2)
+    assert len(queue) == 1
+    mut values = Vec.new()
+    values.push(4)
+    values.push(5)
+    println(values.len())
+    assert inferred_total(values) == 9
+    mut passed = Vec.new()
+    println(vector_length(passed))
+    passed.push(7)
+    println(vector_length(passed))
+    mut returned = collected()
+    returned.push(9)
+    println(returned.len())
+    placed = Vec.new()
+    mut held: Vec[str] = placed
+    held.push("x")
+    println(held.len())
+
+
+def show_copied_option_payload() -> None:
+    """Copy a borrowed scalar from a Rust Option whose receiver fixes the impl binder."""
+    mut counts: HashMap[str, int] = HashMap.new()
+    counts.insert("one", 1)
+    current = counts.get("one").copied().unwrap_or(0)
+    println(current + 1)
+
+
+def show_nonreturning_call() -> None:
+    """Print the result of the selected Rust function, then end the program through a nonreturning one."""
+    println(panicking())
+    query = panicking
+    assert not query()
+    assert not query()
+    finish()
+    println("unreachable")
+
+
+def main() -> None:
+    """
+    Observe checked native calls and keep the nonreturning observation last.
+
+    1. Exercise generic instantiations and scalar references.
+    2. Exercise text references and typed native factories.
+    3. Check owned captures, joined Rust callbacks, tuple loans, trait returns, native frames and retained cursors.
+    4. Observe projected binders, frozen text arguments and owner arguments fixed by a local's first use.
+    5. Observe native trait and slice-bound source generics.
+    6. Observe a native nonreturning call, which ends the program.
+    """
+    # 1. Exercise generic instantiations and scalar references.
+    show_generic_instantiations()
+    show_scalar_references()
+    # 2. Exercise text references and typed native factories.
+    show_text_references()
+    show_typed_factory()
+    # 3. Check owned captures, joined Rust callbacks, tuple loans, trait returns, native frames and retained cursors.
+    check_foreign_values()
+    show_thread_capture()
+    check_native_cursor_forwarding()
+    # 4. Observe projected binders, frozen text arguments and owner arguments fixed by a local's first use.
+    show_projected_binders()
+    show_frozen_text_arguments()
+    show_first_use_arguments()
+    show_copied_option_payload()
+    # 5. Observe native trait and slice-bound source generics.
+    show_bound_native_values()
+    # 6. Observe a native nonreturning call, which ends the program.
+    show_nonreturning_call()

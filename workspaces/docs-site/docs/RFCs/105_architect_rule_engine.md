@@ -459,7 +459,7 @@ Experimental peer-baseline analysis is a later consumer of the same fact and que
 - **Rust inspection / compiler facts**: Rust-only and mixed Loaves require declaration, reference, call, visibility, reachability, public-contract, and provenance facts in the same RFC 106 identities and relationships used for Incan. Dynamic Rust reachability must retain RFC 106's lower-bound semantics.
 - **IR Lowering**: No required impact.
 - **Emission**: No required impact.
-- **Stdlib / Runtime (`incan_stdlib`)**: No required runtime impact, though stdlib feature surfaces such as Result combinators and iterator adapters inform idiom rules.
+- **Stdlib / Runtime (`loaves/stdlib/`)**: No required runtime impact, though stdlib feature surfaces such as Result combinators and iterator adapters inform idiom rules.
 - **Formatter**: RFC 105 itself requires no formatter changes. RFC 127 requires the formatter to remain callable as a library after Architect applies safe fixes; the formatter still owns canonical representation rather than lint evaluation.
 - **LSP / Tooling**: The JSON findings format should be usable by editors, agents, CI, and future diagnostics-style surfaces. Editor consumers must see the same selected source authority and language provenance as the CLI.
 - **CLI / Project tooling**: `incan architect` needs direct-source and Oven-selected scope handling, profiles, stable text/JSON output, suppression support, and baseline support. Future peer-baseline tooling needs opt-in invocation and schema-, compiler-, Oven-plan-, and graph-versioned snapshots.

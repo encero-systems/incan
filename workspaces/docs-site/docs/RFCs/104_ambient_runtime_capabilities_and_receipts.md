@@ -525,7 +525,7 @@ Generated build artifacts and run reports should be ordinary artifacts that RFC 
 
 ## Layers affected
 
-- **Stdlib / Runtime (`incan_stdlib`)**: host-boundary modules need capability checks, receipt emission, redaction handling, and report integration.
+- **Stdlib / Runtime (`loaves/stdlib/`)**: host-boundary modules need capability checks, receipt emission, redaction handling, and report integration.
 - **Runtime attestation and redaction commitments**: signing and verifying boundary-attested receipts and host-signed report anchors (signer key id/generation, algorithm, signature, verification material) and generating/verifying keyed redaction commitments or encrypted audit envelopes needs dedicated cryptographic primitives, likely a distinct crate boundary from ordinary receipt emission.
 - **Tooling / CLI**: run, test, action, and build commands need report output, governed-mode grants, denial diagnostics, machine-readable schemas, host-ceiling resolution, and a verification surface for signed receipt/report evidence and redaction commitments.
 - **Package metadata**: packages need a way to publish capability declarations and receipt schemas.

@@ -1,0 +1,276 @@
+"""Construct plain models and replace their fields."""
+
+from pub::incan_mir_plan import (
+    CalleeKind,
+    ExternalFunction,
+    Operand,
+    Place,
+    PlanType,
+    TupleElement,
+    tuple_element_type,
+    Projection,
+    RvalueKind,
+    SourceSpan,
+    TerminatorKind,
+    Unwind,
+    assign as plan_assign,
+)
+from explicit_arguments import reference_contract
+from layout_types import stored_field_type, native_source_type
+from rust::incan_semantics_core::body_ir import (
+    AggregateKind as RustAggregateKind,
+    ArgumentBinding as RustArgumentBinding,
+    ArgumentElement as RustArgumentElement,
+    Constant as RustConstant,
+    Operand as RustOperand,
+    Rvalue as RustRvalue,
+)
+from ranges import range_aggregate
+from decls import library_enum_item
+from element_places import is_element_place
+from models import constructor_index
+from enums import variant_index
+from tuples import tuple_aggregate, carrier_element
+from text_plan import owned_literal
+from options import carrier_payload_value
+from frame import place_type, Builder, temporary, forget_owned, cleanup_exit, terminate_call, read_place
+from defaults import model_default_arguments
+from lowering import BodyIrModule
+from checked_values import scalar_operand, scalar_place
+from operators import operand_type
+from statements import borrowed_payload, carrier_payload
+from call_arguments import tuple_pointer_element
+from builtin_calls import clone_enum_reference, clone_model_reference, coerce_numeric_operand
+from formatting import display_operand, lower_format
+from list_values import value_operand
+from carrier_operands import boundary_operand
+from result_carriers import frozen_operand
+
+
+pub def clone_nominal_operand(mut builder: Builder, value: Place, span: SourceSpan) -> Result[Operand, str]:
+    """
+    Materialize the checker's clone fact through a source nominal's real derived Clone implementation.
+
+    A shared model reference, such as a receiver, already is the borrow that Clone takes. An immutable scalar
+    reference, including a text reference, or function pointer copies the value through the ordinary carrier-payload read.
+    """
+    match place_type(builder.locals, value):
+        PlanType.FunctionPointer(_signature) => return carrier_payload_value(builder, value, span)
+        PlanType.ScalarRef(_elements) => return carrier_payload_value(builder, value, span)
+        PlanType.TupleRef(_elements) => return Ok(read_place(value, false, span))
+        PlanType.FrozenCollectionRef(_name, _elements) => return Ok(read_place(value, false, span))
+        PlanType.StringRef => return carrier_payload_value(builder, value, span)
+        PlanType.ValidationError => return carrier_payload_value(builder, value, span)
+        PlanType.ValidationErrorRef =>
+            owned = Place(local=value.local, projection=Projection.Deref(PlanType.ValidationError), span=span)
+            return carrier_payload_value(builder, owned, span)
+        PlanType.ModelRef(index, name) =>
+            return Ok(clone_model_reference(builder, read_place(value, false, span), index, name, span))
+        PlanType.EnumRef(index, name) =>
+            return Ok(clone_enum_reference(builder, read_place(value, false, span), index, name, span))
+        PlanType.Model(index, name) =>
+            reference = temporary(builder, PlanType.ModelRef(index, name), span)
+            builder.emit(plan_assign(reference, RvalueKind.Borrow(value), span))
+            return Ok(clone_model_reference(builder, read_place(reference, false, span), index, name, span))
+        PlanType.Enum(index, name) =>
+            # SDK enums own their Clone implementation; the local derive callee cannot validate a foreign layout.
+            if index < len(builder.enums) and library_enum_item(builder.enums[index]) != "":
+                return carrier_payload_value(builder, value, span)
+            reference = temporary(builder, PlanType.EnumRef(index, name), span)
+            builder.emit(plan_assign(reference, RvalueKind.Borrow(value), span))
+            return Ok(clone_enum_reference(builder, read_place(reference, false, span), index, name, span))
+        _ =>
+            site = f"{builder.file}:{span.line}:{span.column} in {builder.name}"
+            return Err(
+                f"unsupported Body IR ownership Clone outside models or formatting at {site}; type {place_type(
+                    builder.locals,
+                    value,
+                ):?}; projection {value.projection:?}",
+            )
+
+
+pub def checked_aggregate(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    kind: &RustAggregateKind,
+    elements: &list[RustArgumentElement],
+    expected: PlanType,
+    span: SourceSpan,
+) -> Result[RvalueKind, str]:
+    """Materialize a tuple or a proven plain-model constructor with its retained field order and ownership."""
+    match kind:
+        RustAggregateKind.EnumVariant(target) =>
+            owner, variant = variant_index(builder.enums, target, expected)?
+            if len(elements) != len(builder.enums[owner].variants[variant].fields):
+                return Err("invalid Body IR enum constructor payload count")
+            mut operands: list[Operand] = []
+            for slot in range(len(elements)):
+                match elements[slot].as_one():
+                    Some(value) =>
+                        field_type = builder.enums[owner].variants[variant].fields[slot]
+                        ty = native_source_type(
+                            builder.constructors,
+                            builder.nominals,
+                            builder.enums,
+                            builder.unions,
+                            field_type,
+                            builder.intrinsics,
+                        )?
+                        if ty == PlanType.String:
+                            text = display_operand(builder, value, span)?
+                            operands.append(read_place(text, true, span))
+                        elif ty == PlanType.FrozenStr:
+                            operands.append(frozen_operand(builder, value, span)?)
+                        else:
+                            operands.append(boundary_operand(builder, value, ty, span)?)
+                    None => return Err("unsupported Body IR spread enum payload")
+            return Ok(RvalueKind.Enum(owner, variant, operands))
+        RustAggregateKind.Tuple =>
+            mut element_types: list[TupleElement] = []
+            match expected:
+                PlanType.Tuple(types) => element_types = types
+                _ => pass
+            mut operands: list[Operand] = []
+            for slot in range(len(elements)):
+                element = elements[slot]
+                match element.as_one():
+                    Some(value) =>
+                        # A tuple carrying a view holds the view's loan in its reference element.
+                        if slot < len(element_types) and builder.carries_view and borrowed_payload(value):
+                            field = tuple_element_type(element_types[slot])
+                            match reference_contract(field):
+                                Ok(_contract) =>
+                                    operands.append(carrier_payload(builder, value, field, span)?)
+                                    continue
+                                Err(_reason) => pass
+                        # A list or carrier element takes the destination element's exact carrier, `None` included.
+                        if (
+                            slot < len(element_types)
+                            and (carrier_element(element_types[slot]) or tuple_pointer_element(element_types[slot]))
+                        ):
+                            operands.append(
+                                boundary_operand(builder, value, tuple_element_type(element_types[slot]), span)?,
+                            )
+                            continue
+                        match value:
+                            RustOperand.Constant(constant) =>
+                                match constant:
+                                    RustConstant.Str(text) =>
+                                        operands.append(read_place(owned_literal(builder, str(text), span), true, span))
+                                    _ => operands.append(scalar_operand(builder, value, span)?)
+                            RustOperand.Place(read) =>
+                                # A list or dictionary element is already a materialized copy the tuple can own.
+                                if is_element_place(builder, read.place)?:
+                                    operands.append(value_operand(builder, value, span)?)
+                                    continue
+                                target = scalar_place(builder, read.place, span)?
+                                if place_type(builder.locals, target) == PlanType.String:
+                                    operands.append(read_place(display_operand(builder, value, span)?, true, span))
+                                else:
+                                    operands.append(scalar_operand(builder, value, span)?)
+                    None => return Err("unsupported Body IR spread tuple element")
+            return Ok(tuple_aggregate(operands))
+        RustAggregateKind.Constructor(target) =>
+            index = constructor_index(builder.nominals, target, len(elements), expected)?
+            match target.binding:
+                RustArgumentBinding.Resolved(arguments=_arguments, defaulted_slots=defaults) =>
+                    if len(defaults) == 0:
+                        operands = model_field_operands(builder, index, elements, span)?
+                        return Ok(RvalueKind.Model(index, operands))
+                _ => return Err("unsupported Body IR unresolved model constructor")
+            operands = model_default_arguments(module, builder, index, target.binding, elements, span)?
+            return Ok(RvalueKind.Model(index, operands))
+        RustAggregateKind.Range => return range_value(builder, elements, expected, span)
+        _ => return Err("unsupported Body IR Aggregate outside plain models")
+
+
+def range_value(
+    mut builder: Builder,
+    elements: &list[RustArgumentElement],
+    expected: PlanType,
+    span: SourceSpan,
+) -> Result[RvalueKind, str]:
+    """Copy a source range's checked scalar fields, in Body IR's declared order, into its native layout."""
+    mut fields: list[Operand] = []
+    mut types: list[PlanType] = []
+    for element in elements:
+        match element.as_one():
+            Some(value) =>
+                field = scalar_operand(builder, value, span)?
+                fields.append(field)
+                types.append(operand_type(builder, field)?)
+            None => return Err("unsupported Body IR spread range field")
+    return range_aggregate(expected, fields, types)
+
+
+def model_field_operands(
+    mut builder: Builder,
+    index: int,
+    elements: &list[RustArgumentElement],
+    span: SourceSpan,
+) -> Result[list[Operand], str]:
+    """Materialize canonical fields with their checked concrete types, preserving string and model ownership facts."""
+    declaration = builder.nominals[index]
+    mut operands: list[Operand] = []
+    for slot in range(len(elements)):
+        match elements[slot].as_one():
+            Some(value) =>
+                field_type = stored_field_type(
+                    builder.constructors,
+                    builder.nominals,
+                    builder.enums,
+                    builder.unions,
+                    declaration,
+                    slot,
+                    builder.intrinsics,
+                )?
+                if field_type == PlanType.String:
+                    text = display_operand(builder, value, span)?
+                    operands.append(read_place(text, true, span))
+                else:
+                    match field_type:
+                        PlanType.Boxed(referent) =>
+                            operand = boundary_operand(builder, value, referent[0], span)?
+                            stored = coerce_numeric_operand(builder, operand, referent[0], span)?
+                            operands.append(boxed_operand(builder, stored, referent[0], span))
+                        _ =>
+                            operand = boundary_operand(builder, value, field_type, span)?
+                            # Generic inference has already selected this field's carrier; retain its widening just
+                            # as a call slot does.
+                            operands.append(coerce_numeric_operand(builder, operand, field_type, span)?)
+            None => return Err("unsupported Body IR spread model field")
+    return Ok(operands)
+
+
+def boxed_operand(mut builder: Builder, value: Operand, referent: PlanType, span: SourceSpan) -> Operand:
+    """Move a checked field value onto the heap for a boxed class field, as `Box::new` does."""
+    path = "std::boxed::Box::new"
+    boxed = PlanType.Boxed([referent])
+    builder.externals.append(
+        ExternalFunction(path=path, type_arguments=[referent], parameters=[referent], return_type=boxed, span=span),
+    )
+    destination = temporary(builder, boxed, span)
+    terminate_call(builder, CalleeKind.Instantiated(path, [referent]), [value], destination, span)
+    builder.owned.append(destination.local)
+    return read_place(destination, true, span)
+
+
+pub def lower_string_field_assignment(
+    mut builder: Builder,
+    destination: Place,
+    value: &RustRvalue,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Replace a projected string after evaluating its new value, retaining the containing owner or borrowed slot."""
+    mut replacement = temporary(builder, PlanType.String, span)
+    match value:
+        RustRvalue.Use(operand) => replacement = display_operand(builder, operand, span)?
+        RustRvalue.Format(parts) => lower_format(builder, replacement, parts, span)?
+        _ => return Err("unsupported Body IR string field Rvalue outside formatting")
+    continuation = builder.new_block(span)
+    cleanup = cleanup_exit(builder, span)
+    builder.finish(TerminatorKind.Drop(destination, continuation, Unwind.Cleanup(cleanup)), span)
+    builder.current = continuation
+    forget_owned(builder, replacement.local)
+    builder.emit(plan_assign(destination, RvalueKind.Use(read_place(replacement, true, span)), span))
+    return Ok(None)

@@ -1,0 +1,15 @@
+# behavior: a generic function calls a trait method that a generic model of another module implements by formatting its payload, and runs for the payloads it is given
+# expect-stdout:
+#   held 5
+#   held five
+
+from shapes import Holder
+
+
+def describe[U with Display](held: Holder[U]) -> str:
+    return held.show()
+
+
+def main() -> None:
+    println(describe(Holder(value=5)))
+    println(describe(Holder(value="five")))

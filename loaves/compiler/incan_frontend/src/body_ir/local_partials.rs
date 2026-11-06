@@ -53,7 +53,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     .type_info
                     .expressions
                     .local_partial_method_targets
-                    .get(&(span.start, span.end))
+                    .get(&span)
                     .ok_or("partial method target without checked value-receiver facts")?;
                 let canonical = self
                     .type_info
@@ -71,8 +71,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         native_trait_delegation: None,
                         name: name.clone(),
                         intrinsic_carrier: None,
-                        reflection: None,
-                        sdk_trait: None,
+                        operation: None,
+                        loaf_trait: None,
+                        trait_arguments: None,
                         canonical: Some(canonical.clone()),
                         type_args: Vec::new(),
                         binding: bir::ArgumentBinding::resolved_positional(params.len()),
@@ -98,20 +99,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         partial: &ast::PartialExpr,
         span: ast::Span,
     ) -> Result<Vec<IncanType>, String> {
-        let arguments = self
-            .type_info
-            .calls
-            .call_site_monomorph_type_args
-            .get(&(span.start, span.end));
-        if !partial.type_args.is_empty() && arguments.is_none_or(|arguments| arguments.len() != partial.type_args.len())
-        {
-            return Err("partial function without checked instance arguments".to_owned());
-        }
-        Ok(arguments
-            .into_iter()
-            .flatten()
-            .map(|argument| self.checked_type(argument))
-            .collect())
+        self.call_site_type_arguments(span, &partial.type_args)
+            .map_err(|_| "partial function without checked instance arguments".to_owned())
     }
 
     /// Retain the checked function instance, original defaults and exact declaration identity without reopening
@@ -136,8 +125,20 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if binding.identity.as_ref() != Some(selected) {
             return Err("partial function differs from its checked declaration".to_owned());
         }
-        let (params, result) = match self.type_info.expr_type(partial.target.span) {
-            Some(ResolvedType::Function(params, result)) => (params.as_slice(), result.as_ref()),
+        let callable = self
+            .type_info
+            .declarations
+            .body_ir_decorator_applications
+            .get(&partial.target.span)
+            .map(|application| {
+                crate::resolved_type_subst::substitute_resolved_type(
+                    &application.callable_type,
+                    &application.type_bindings,
+                )
+            })
+            .or_else(|| self.type_info.expr_type(partial.target.span).cloned());
+        let (params, result) = match callable {
+            Some(ResolvedType::Function(params, result)) => (params, *result),
             None if partial.type_args.is_empty()
                 && partial.args.is_empty()
                 && self.local_nongeneric_functions.contains(selected)
@@ -147,7 +148,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     .any(|parameter| self.leaves_type_open(&self.checked_type(&parameter.ty)))
                 && !self.leaves_type_open(&self.checked_type(&binding.return_type)) =>
             {
-                (binding.params.as_slice(), &binding.return_type)
+                (binding.params.clone(), binding.return_type.clone())
             }
             _ => return Err("partial function without a checked target signature".to_owned()),
         };
@@ -156,17 +157,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             self.local_function_declarations
                 .get(name)
                 .and_then(|candidates| match candidates.as_slice() {
-                    [span] => Some(CompilerNodeId::declaration_span(
-                        self.module_identity,
-                        span.start,
-                        span.end,
-                    )),
+                    [span] => Some(CompilerNodeId::declaration_at(self.module_identity, *span)),
                     _ => None,
                 });
         Ok(PartialTarget {
             name: name.to_string(),
-            params: params.to_vec(),
-            result: self.checked_type(result),
+            result: self.checked_type(&result),
             callee: bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
                 receiver_type: None,
                 name: name.to_string(),
@@ -176,6 +172,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 type_args,
                 binding: bir::ArgumentBinding::resolved_positional(params.len()),
             })),
+            params,
             receiver: None,
             defaults: self.function_default_sources.get(name).cloned(),
         })
@@ -245,6 +242,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 params,
                 captured_operands: frame.operands,
                 body: Box::new(bir::ClosureBody {
+                    native_storage: None,
                     original_callable: None,
                     consumes_environment: false,
                     function_item: false,
@@ -345,10 +343,19 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             let Some(name) = &param.name else {
                 continue;
             };
-            let ty = checked
-                .get(index)
-                .map(|param| param.ty.clone())
-                .unwrap_or_else(|| self.checked_type(&param.ty));
+            let owner = match &target.callee {
+                bir::Callee::Function(bir::CallableTarget::Named(target)) => target.canonical.as_ref(),
+                bir::Callee::Method(target) => target.canonical.as_ref(),
+                _ => None,
+            };
+            let ty = match super::input_access::selected(self.type_info, owner, index) {
+                Ok(incan_semantics_core::IncanInputAccess::Inferred) => checked
+                    .get(index)
+                    .map(|param| param.ty.clone())
+                    .unwrap_or_else(|| self.checked_type(&param.ty)),
+                Ok(_) => super::input_access::value_type(self, owner, index, &param.ty),
+                Err(reason) => IncanType::Unsupported(reason.into()),
+            };
             let ty = super::variadics::parameter_storage_type(ty, param.kind);
             let previous = self.bindings.get(name).copied();
             let local = self.declare_new_local_with_reads(name.clone(), ty.clone(), frame.scope, span, 1);
@@ -368,7 +375,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     None => bir::CallableParamDefault::Required,
                 },
             };
-            params.push(bir::CallableParam {
+            let mut projected = bir::CallableParam {
                 local,
                 kind: parameter_types::source_parameter_kind(param.kind),
                 name: name.clone(),
@@ -376,8 +383,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 span: source.map_or(span, |source| hir_span(source.param_span)),
                 default,
                 mutable: param.is_mut,
-            });
-            if param.is_mut {
+                input_access: checked
+                    .get(index)
+                    .map_or(incan_semantics_core::IncanInputAccess::Inferred, |parameter| {
+                        parameter.input_access
+                    }),
+                native_owned: parameter_types::native_collection_parameter(&param.ty, self.type_info),
+            };
+            super::input_access::apply(&mut projected, self.type_info, owner, index);
+            params.push(projected);
+            if params.last().is_some_and(|parameter| parameter.native_owned) {
+                self.owned_parameters.insert(local);
+            } else if param.is_mut {
                 self.borrowed_parameters.insert(local);
             }
             frame.saved.push((name.clone(), previous));

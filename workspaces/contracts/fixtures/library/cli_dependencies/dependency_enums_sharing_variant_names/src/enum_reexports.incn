@@ -1,0 +1,45 @@
+"""A consumer matching enum aliases the dependency reexports through two modules."""
+
+from pub::enums import RelayedPacket as LocalPacket, Other
+from rust::enums import PublicAddress, public_receipt
+
+
+def packet_value(packet: LocalPacket) -> int:
+    match packet:
+        case LocalPacket.Value(value):
+            return value
+        case LocalPacket.Empty:
+            return 0
+
+
+def other_value(packet: Other) -> int:
+    match packet:
+        case Other.Empty:
+            return -1
+        case Other.Value(value):
+            return value
+
+
+def cloned_packet_value(packet: LocalPacket) -> int:
+    """Use the reexported enum's compiled Clone implementation."""
+    return packet_value(packet.clone())
+
+
+def cloned_other_value(packet: Other) -> int:
+    """Keep a same-spelled variant in a distinct enum's Clone implementation."""
+    return other_value(packet.clone())
+
+
+pub def run_enum_reexports() -> None:
+    """Observe a public facade's Rust import and clones through both enum aliases."""
+    println(PublicAddress.LOCALHOST.is_loopback())
+    receipt = public_receipt()
+    println(receipt.amount)
+    println(packet_value(LocalPacket.Value(41)))
+    println(packet_value(LocalPacket.Empty))
+    println(other_value(Other.Value(42)))
+    println(other_value(Other.Empty))
+    println(cloned_packet_value(LocalPacket.Value(43)))
+    println(cloned_packet_value(LocalPacket.Empty))
+    println(cloned_other_value(Other.Value(44)))
+    println(cloned_other_value(Other.Empty))

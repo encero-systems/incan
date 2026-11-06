@@ -1,0 +1,96 @@
+# behavior: A match arm whose body is one statement the parser accepts inline (break, break with a value, continue, return, pass or an assignment) is written inline.
+# expect-formatted:
+#   def leave_loop() -> None:
+#       """Leave the loop from a match arm."""
+#       for value in range(3):
+#           match value:
+#               _ => break
+#
+#
+#   def break_value() -> int:
+#       """Return the value supplied by a break arm."""
+#       return loop:
+#           match 0:
+#               _ => break 1
+#
+#
+#   def continue_loop() -> None:
+#       """Continue the loop from a match arm."""
+#       for value in range(3):
+#           match value:
+#               _ => continue
+#
+#
+#   def return_or_pass() -> None:
+#       """Return or pass according to the matched value."""
+#       for value in range(3):
+#           match value:
+#               0 => return
+#               _ => pass
+#
+#
+#   def choose(value: int) -> int:
+#       """Return a result from a match arm."""
+#       match value:
+#           _ => return 1
+#
+#
+#   def count_zeros(items: list[int]) -> int:
+#       """Count zero-valued items through an assignment arm."""
+#       mut total = 0
+#       for item in items:
+#           match item:
+#               0 => total += 1
+#               _ => pass
+#       return total
+
+def leave_loop() -> None:
+    """Leave the loop from a match arm."""
+    for value in range(3):
+        match value:
+            _ =>
+                break
+
+
+def break_value() -> int:
+    """Return the value supplied by a break arm."""
+    return loop:
+        match 0:
+            _ =>
+                break 1
+
+
+def continue_loop() -> None:
+    """Continue the loop from a match arm."""
+    for value in range(3):
+        match value:
+            _ =>
+                continue
+
+
+def return_or_pass() -> None:
+    """Return or pass according to the matched value."""
+    for value in range(3):
+        match value:
+            0 =>
+                return
+            _ =>
+                pass
+
+
+def choose(value:int)->int:
+    """Return a result from a match arm."""
+    match value:
+        _ =>
+            return 1
+
+
+def count_zeros(items: list[int]) -> int:
+    """Count zero-valued items through an assignment arm."""
+    mut total = 0
+    for item in items:
+        match item:
+            0 =>
+                total += 1
+            _ => pass
+    return total

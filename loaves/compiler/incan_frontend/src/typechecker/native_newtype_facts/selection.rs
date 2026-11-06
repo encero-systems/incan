@@ -32,14 +32,8 @@ impl<'source> TargetDomain<'source> {
             if let Declaration::Newtype(source) = &declaration.node
                 && !source.type_params.is_empty()
             {
-                let identity = info
-                    .declarations
-                    .declaration_identities
-                    .get(&(declaration.span.start, declaration.span.end))?;
-                if identity.kind != SemanticSourceTargetKind::Newtype
-                    || identity.declaration_span.start != declaration.span.start
-                    || identity.declaration_span.end != declaration.span.end
-                {
+                let identity = info.declarations.declaration_identities.get(&declaration.span)?;
+                if identity.kind != SemanticSourceTargetKind::Newtype || identity.declaration_span != declaration.span {
                     return None;
                 }
                 declarations.push((declaration.span, identity.clone()));
@@ -59,10 +53,10 @@ impl<'source> TargetDomain<'source> {
         identity.kind == SemanticSourceTargetKind::Method
             && self.owners.iter().any(|(owner, source)| {
                 owner.origin == identity.origin
-                    && source.methods.iter().any(|method| {
-                        identity.declaration_span.start == method.span.start
-                            && identity.declaration_span.end == method.span.end
-                    })
+                    && source
+                        .methods
+                        .iter()
+                        .any(|method| identity.declaration_span == method.span)
             })
     }
 }
@@ -137,7 +131,7 @@ pub(super) fn collect_owners<'source>(
                 return None;
             };
             let span = declaration.span;
-            let identity = info.declarations.declaration_identities.get(&(span.start, span.end))?;
+            let identity = info.declarations.declaration_identities.get(&span)?;
             let construction = info.declarations.newtype_construction.get(&source.name)?;
             let parameter = source.type_params.first()?;
             let frame = OwnerFrame {
@@ -170,14 +164,13 @@ pub(super) fn selected_method<'source>(
     for owner in owners {
         for method in &owner.source.methods {
             let span = method.span;
-            let Some(binding) = info.declarations.method_bindings_by_span.get(&(span.start, span.end)) else {
+            let Some(binding) = info.declarations.method_bindings_by_span.get(&span) else {
                 continue;
             };
             if span == selected
                 && identity.kind == SemanticSourceTargetKind::Method
                 && identity.origin == owner.identity.origin
-                && identity.declaration_span.start == span.start
-                && identity.declaration_span.end == span.end
+                && identity.declaration_span == span
                 && binding.identity.as_ref() == Some(identity)
                 && !binding.is_async
                 && method.node.type_params.is_empty()
@@ -207,14 +200,11 @@ pub(super) fn unique_method_span(identity: &CanonicalSymbolId, info: &TypeCheckI
         .method_bindings_by_span
         .iter()
         .filter(|(_, binding)| binding.identity.as_ref() == Some(identity));
-    let ((start, end), _) = candidates.next()?;
+    let (span, _) = candidates.next()?;
     if candidates.next().is_some() {
         return None;
     }
-    Some(Span {
-        start: *start,
-        end: *end,
-    })
+    Some(*span)
 }
 
 impl OwnerFrame<'_> {
