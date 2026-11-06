@@ -32,27 +32,27 @@ class Animal:
     def speak(self) -> str:
         return "..."
 
-    def describe(self) -> str:
+    pub def describe(self) -> str:
         return f"{self.name} is {self.age} years old"
 
 
 class Dog extends Animal:
     breed: str
 
-    def speak(self) -> str:
+    pub def speak(self) -> str:
         return f"{self.name} says: Woof!"
 
-    def fetch(self) -> str:
+    pub def fetch(self) -> str:
         return f"{self.name} fetches the ball!"
 
 
 class Cat extends Animal:
     indoor: bool
 
-    def speak(self) -> str:
+    pub def speak(self) -> str:
         return f"{self.name} says: Meow!"
 
-    def nap(self) -> str:
+    pub def nap(self) -> str:
         return f"{self.name} is napping..."
 
 

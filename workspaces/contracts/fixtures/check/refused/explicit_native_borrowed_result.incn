@@ -1,10 +1,10 @@
-# behavior: a native method whose result borrows its receiver, such as `HashMap.get`, cannot yet be called from an explicit body; its result would keep the receiver borrowed (#2500).
+# behavior: an explicit body refuses a native borrowed result whose Rust signature has no admitted Incan owner, and names the temporary-producing call (#2500).
 # expect-diagnostic: INCAN-T0123
 
-from rust::std::collections import HashMap
+from rust::std::io import Cursor, Read
 
 
-def lookup(counts: Borrowed[HashMap[str, int]], key: str) -> int:
-    match counts.get(key):
-        Some(value) => return value
-        None => return 0
+def borrow_temporary(marker: Borrowed[int]) -> None:
+    reader = Read.by_ref(Cursor.new(b"abc"))
+    println(marker)
+    reader.take(1u64)

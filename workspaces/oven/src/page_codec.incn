@@ -11,7 +11,7 @@ pub model Reader:
     pub view: MappedView
     pub offset: int = 0
 
-    def number(mut self) -> Result[int, str]:
+    pub def number(mut self) -> Result[int, str]:
         """Read a nonnegative length or tag without stepping outside the page."""
         match self.view.read_u64_le(self.offset):
             None => return Err("page scalar runs past the page")
@@ -22,7 +22,7 @@ pub model Reader:
                     return Err("page scalar is outside the supported range")
                 return Ok(result)
 
-    def text(mut self) -> Result[str, str]:
+    pub def text(mut self) -> Result[str, str]:
         """Copy one checked UTF-8 field."""
         size = self.number()?
         if size > self.view.len() - self.offset:
@@ -36,14 +36,14 @@ pub model Reader:
                     .map((value) => str(value))
                     .map_err((_) => "page text is not UTF-8")
 
-    def count(mut self, minimum: int = 8) -> Result[int, str]:
+    pub def count(mut self, minimum: int = 8) -> Result[int, str]:
         """Bound a collection by the minimum encoded size of each member."""
         count = self.number()?
         if count > (self.view.len() - self.offset) // minimum:
             return Err("page collection runs past the page")
         return Ok(count)
 
-    def texts(mut self) -> Result[list[str], str]:
+    pub def texts(mut self) -> Result[list[str], str]:
         """Decode ordinary vectors with one native string split; fields containing its separator use explicit lengths."""
         count = self.number()?
         tag = self.number()?
@@ -68,14 +68,14 @@ pub model Reader:
             return Err("noncanonical page vector encoding")
         return Ok(values)
 
-    def flag(mut self) -> Result[bool, str]:
+    pub def flag(mut self) -> Result[bool, str]:
         """Accept exactly the two boolean encodings."""
         value = self.number()?
         if value > 1:
             return Err("page flag is not a boolean")
         return Ok(value == 1)
 
-    def optional(mut self) -> Result[Option[str], str]:
+    pub def optional(mut self) -> Result[Option[str], str]:
         """Read an optional string without conflating absence and an empty string."""
         if self.flag()?:
             return Ok(Some(self.text()?))

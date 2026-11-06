@@ -1,6 +1,7 @@
 """Plan value types and source spans: scalars, sized numerics, list leaves, tuple elements and their projections."""
 
 from rust::std::sync import Arc
+from rust::incan_semantics_core import CanonicalSymbolId
 
 
 @derive(Clone, PartialEq)
@@ -75,6 +76,8 @@ pub enum ListLeaf:
     FrozenStr
     FrozenBytes
     FunctionPointer(list[PlanType])
+    # A zero-sized type token preserves its represented checked carrier when stored in a collection.
+    TypeToken(list[PlanType])
     List(list[ListLeaf], int)
     Dict(list[ListLeaf])
     Set(list[ListLeaf])
@@ -82,7 +85,7 @@ pub enum ListLeaf:
     USize
     # Exact-width numeric storage uses the same carrier table as scalar overflow results.
     Numeric(SizedNumeric)
-    # A local collection may hold an exact shared reference without copying its referent into the collection.
+    # A local collection may hold an exact shared or exclusive reference without copying its referent into the collection.
     Reference(list[PlanType])
 
 
@@ -174,7 +177,7 @@ pub enum PlanType:
     FrozenCollection(str, list[PlanType])
     # A shared view of the same baked storage; comparisons never consume or clone its elements.
     FrozenCollectionRef(str, list[PlanType])
-    # The existing SDK's zero-sized marker with exactly one checked represented primitive type.
+    # The existing SDK's zero-sized marker with exactly one checked represented type.
     TypeToken(list[PlanType])
     # Exact static string storage, including generic arguments, distinct from a borrowed native StrRef view.
     StaticText
@@ -255,6 +258,9 @@ pub enum PlanType:
     # A class field that reaches its own class by value is stored on the heap: exactly one owned referent. Reads
     # dereference it and construction boxes the checked value, so the source value keeps its referent type.
     Boxed(list[PlanType])
+    # Canonical source-trait identity admitted only as a TypeToken's represented type. This remains last so older
+    # serialized plan discriminants keep their existing values.
+    Trait(CanonicalSymbolId)
 
 
 pub def list_leaf_type(leaf: ListLeaf) -> PlanType:
@@ -275,6 +281,7 @@ pub def list_leaf_type(leaf: ListLeaf) -> PlanType:
         ListLeaf.FrozenStr => return PlanType.FrozenStr
         ListLeaf.FrozenBytes => return PlanType.FrozenBytes
         ListLeaf.FunctionPointer(signature) => return PlanType.FunctionPointer(signature)
+        ListLeaf.TypeToken(represented) => return PlanType.TypeToken(represented)
         ListLeaf.List(element, depth) => return PlanType.List(element[0], depth)
         ListLeaf.Dict(entry) => return PlanType.Dict(entry[0], entry[1])
         ListLeaf.Set(element) => return PlanType.Set(element[0])

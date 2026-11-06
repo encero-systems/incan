@@ -9,13 +9,16 @@ from std.environ import get_or
 from std.encoding.hex import hexlify
 from std.hash import file_digest, sha256
 from std.io import BytesIO
-from store_index import Entry, Location, build, entries as index_entries
+from pub::incan_platform.store.index import Entry, Location
+from pub::incan_platform.store.index import build as build_index, entries as index_entries
+from store_path_conversion import collect_layouts, store_path
 from std.fs import Path
 from pub::incan_platform.durability import sync_ordered
 from pub::incan_platform.trace import Clock, Operation, WorkObserver, begin as begin_span
-from segment_files import observe_work
+from pub::incan_platform.store.files import StoreError, observe_work
+from pub::incan_platform.store.repair import quarantine_record, repair_current
 from scratch import scratch_directory
-from segment_store import (
+from pub::incan_platform.store import (
     EXPECT_ABSENT,
     EXPECT_ABSENT_OR_DAMAGED,
     Lookup,
@@ -24,24 +27,19 @@ from segment_store import (
     commit,
     commit_group,
     commit_pinned,
-    compact,
     delete,
     get,
     keys,
     lookup,
     owned,
     put,
-    snapshot,
     fork,
     read_counts,
     lease,
     view_snapshot,
     durable_syncs,
 )
-from segment_files import StoreError
-from segment_payloads import payload_intact, payload_path, put_payload
-from segment_collection import collect_layouts
-from segment_repair import quarantine_record, repair_current
+from store_path_conversion import compact, payload_intact, payload_path, put_payload, snapshot
 
 static observed_work: dict[str, int] = {}
 
@@ -443,7 +441,7 @@ pub def test_injected_128_bit_locator_collision_resolves_by_full_key() -> Result
     digest = hexlify(sha256.digest(contents))
     root.joinpath("segments").joinpath(f"{digest}.seg").write_bytes(contents).map_err((error) => error.message())?
     mut entries: list[Entry] = []
-    for entry in index_entries(root, original.index).map_err((error) => error.detail)?:
+    for entry in index_entries(store_path(root), original.index).map_err((error) => error.detail)?:
         match entry.location:
             None =>
                 assert false, "fixture requires a leaf location"
@@ -464,7 +462,7 @@ pub def test_injected_128_bit_locator_collision_resolves_by_full_key() -> Result
                     ),
                 )
     mut collided = original
-    collided.index = build(root.joinpath("indexes"), entries).map_err((error) => error.detail)?
+    collided.index = build_index(store_path(root.joinpath("indexes")), entries).map_err((error) => error.detail)?
     assert text(lookup(collided, "left")) == "one"
     assert text(lookup(collided, "right")) == "two"
     assert text(lookup(collided, "neither")) == "<absent>"

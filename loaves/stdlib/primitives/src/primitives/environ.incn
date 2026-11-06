@@ -19,7 +19,7 @@ pub enum EnvironErrorKind(str):
     NotUnicode = "not_unicode"
     Other = "other"
 
-    def as_str(self) -> str:
+    pub def as_str(self) -> str:
         """
         Return the stable lowercase category spelling.
 

@@ -280,13 +280,7 @@ impl TypeChecker {
                         .insert(format!("{module_path}.{}", tr.name), info.clone());
                 }
             }
-            let mut paths = Self::rust_derive_paths_from_trait(tr);
-            if paths.is_empty()
-                && let Some(module) = &module_ast.rust_module_path
-                && let Some(path) = self.checked_native_derive_macro(&format!("{}::{}", module.node, tr.name))
-            {
-                paths.push(path);
-            }
+            let paths = Self::rust_derive_paths_from_trait(tr);
             if paths.is_empty() {
                 continue;
             }

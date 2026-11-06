@@ -8,7 +8,6 @@
 
 """Web route registration fixture for RFC 023."""
 
-import std.async
 from rust::std::io import Read, Write
 from rust::std::net import TcpStream
 from rust::std::process import exit, id

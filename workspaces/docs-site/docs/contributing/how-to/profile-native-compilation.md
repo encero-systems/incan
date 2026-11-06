@@ -44,7 +44,7 @@ Debug builds of Rust facets, libraries, binaries and test harnesses use rustc in
 INCAN_RUST_INCREMENTAL=1 incan build loaves/toolchain/incan-rustc-driver --profile release
 ```
 
-Set `INCAN_RUST_INCREMENTAL=0` to disable it, including for debug builds. An unset variable enables it only for debug; `1` enables it for release iteration as well. Ordinary release builds and `scripts/release-dev8.sh` qualification remain non-incremental. Use qualification outputs for packaging; iteration changes rustc's code generation policy and symbol namespace.
+Set `INCAN_RUST_INCREMENTAL=0` to disable it, including for debug builds. An unset variable enables it only for debug; `1` enables it for release iteration as well. Ordinary release builds and `scripts/release.incn` qualification remain non-incremental. Use qualification outputs for packaging; iteration changes rustc's code generation policy and symbol namespace.
 
 Scratch lives below the requesting build's `target/incan/rust/<profile>/`, separately for each library, binary and test role. It can be removed to recover disk space without invalidating the source or published artifacts. The scratch directory is never part of a unit identity, store record or bundle. Freshness still checks all source and linked inputs; a stable iteration symbol namespace lets rustc reuse unchanged work across edits. Incan-generated native units remain non-incremental because their pinned adapter does not yet track per-definition query inputs.
 

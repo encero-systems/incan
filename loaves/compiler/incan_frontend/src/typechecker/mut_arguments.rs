@@ -115,6 +115,8 @@ struct PendingMutArgument {
     /// The argument's type, spelled for the refusal, when a value of it cannot be copied (a `Generator`, a type
     /// holding one); decided at the call, where the caller's type parameters are in scope.
     uncopyable_type: Option<String>,
+    /// Whether a public native field is still reached through a shared native owner and cannot grant exclusive access.
+    shared_native_field: bool,
     span: Span,
     /// The declaration span of the local the call went through (`f(items)` after `f = extend`), when it did.
     through_local: Option<Span>,
@@ -541,13 +543,17 @@ impl MutBodyLocal {
             };
             let changes =
                 known_callee.is_none_or(|callee| effects.changed.contains(&(callee.clone(), argument.param.clone())));
-            let immutable_place = match &argument.place {
-                ArgumentPlace::Immutable { binding } => Some(match binding {
-                    Some(name) => MutArgumentPlace::Binding(name.clone()),
-                    None => MutArgumentPlace::Field,
-                }),
-                ArgumentPlace::Detached { place } => Some(place.clone()),
-                ArgumentPlace::Temporary | ArgumentPlace::Mutable { .. } => None,
+            let immutable_place = if argument.shared_native_field {
+                Some(MutArgumentPlace::Field)
+            } else {
+                match &argument.place {
+                    ArgumentPlace::Immutable { binding } => Some(match binding {
+                        Some(name) => MutArgumentPlace::Binding(name.clone()),
+                        None => MutArgumentPlace::Field,
+                    }),
+                    ArgumentPlace::Detached { place } => Some(place.clone()),
+                    ArgumentPlace::Temporary | ArgumentPlace::Mutable { .. } => None,
+                }
             };
             let Some(place) = immutable_place else {
                 continue;
@@ -557,7 +563,9 @@ impl MutBodyLocal {
             } else {
                 MutParameterLabel::Named(&argument.param)
             };
-            let error = if changes {
+            let error = if argument.shared_native_field {
+                errors::shared_native_field_to_mut_parameter(parameter, &argument.callee_name, argument.span)
+            } else if changes {
                 errors::immutable_argument_to_mut_parameter(
                     parameter,
                     &argument.callee_name,

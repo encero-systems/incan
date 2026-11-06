@@ -4,7 +4,6 @@
 # expect-exit: 101
 
 """Nested frames keep the checked contract."""
-import std.async
 
 def generated(value: int) -> Generator[int]:
     """Yield the fixture values for lazy iteration."""

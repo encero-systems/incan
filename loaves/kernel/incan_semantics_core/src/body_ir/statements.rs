@@ -63,9 +63,9 @@ pub enum HelperOp {
     /// Lists are the one non-string builtin whose `+` the typechecker accepts through a dedicated branch rather than
     /// through a `__add__` hook. Because that branch resolves no operator dispatch, nothing downstream would mark the
     /// operation as a call, and a plain [`BinOp::Add`] would have contradicted the Rust-emission backend outright:
-    /// `determine_binop_plan` routes list `+` to `incan_std_core::collections::list_concat`, so no addition is emitted
-    /// for it at all. Naming the concatenation as its own helper is what keeps the two backends stating the same
-    /// thing.
+    /// `determine_binop_plan` routes list `+` to `incan_std_primitives::collections::list_concat`, so no addition is
+    /// emitted for it at all. Naming the concatenation as its own helper is what keeps the two backends stating the
+    /// same thing.
     ///
     /// This is specifically *not* an argument that a collection operand cannot sit under a [`BinOp`]. That same
     /// backend emits comparisons as an infix operator, so `==` on two lists is faithfully a primitive, and refusing

@@ -398,6 +398,12 @@ pub enum CheckedParamDefault {
         args: Vec<CheckedParamDefaultArg>,
         signature: Option<CheckedParamDefaultCallSignature>,
     },
+    /// A static method call whose receiver resolves to an exported type.
+    MethodCall {
+        receiver_path: Vec<String>,
+        method: String,
+        args: Vec<CheckedParamDefaultArg>,
+    },
     Unsupported,
 }
 

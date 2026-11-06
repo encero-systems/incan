@@ -29,17 +29,17 @@ pub model Tag with Marker:
 pub class Codec:
     pub name: str
 
-    def pick[T with Marker](self, items: list[T]) -> Result[T, str]:
+    pub def pick[T with Marker](self, items: list[T]) -> Result[T, str]:
         for item in items:
             return Ok(item)
         return Err("empty")
 
-    def pick_plain[T](self, items: list[T]) -> Result[T, str]:
+    pub def pick_plain[T](self, items: list[T]) -> Result[T, str]:
         for item in items:
             return Ok(item)
         return Err("empty")
 
-    def decode[T with Marker](self, decoded: Decoded[T]) -> Result[T, str]:
+    pub def decode[T with Marker](self, decoded: Decoded[T]) -> Result[T, str]:
         return Ok(decoded.value)
 
 

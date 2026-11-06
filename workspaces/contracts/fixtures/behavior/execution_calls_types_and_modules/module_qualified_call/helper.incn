@@ -1,4 +1,68 @@
-"""Provide the sibling declarations used by the fixture."""
+"""Provide published declarations reached through a module binding and direct imports."""
+
+
+pub class Thing:
+    """A public class constructed through its declaring module."""
+
+    pub name: str
+
+    @staticmethod
+    pub def named(name: str) -> Thing:
+        """Construct a thing through the imported type namespace."""
+        return Thing(name=name)
+
+    pub def label(self) -> str:
+        """Return the field through the declaring type's instance method."""
+        return f"thing {self.name}"
+
+
+pub enum Mode:
+    """A public enum whose variant is selected through its type namespace."""
+
+    Ready
+
+
+pub trait Marker:
+    """Expose one method through a qualified trait bound."""
+
+    def number(self) -> int
+
+
+pub model Marked with Marker:
+    """Adopt the qualified marker trait."""
+
+    pub value: int
+
+    def number(self) -> int:
+        return self.value
+
+
+pub const NUMBER: int = 11
+
+
 pub def bump(value: int) -> int:
     """Return the fixture expression `value + 1`."""
     return value + 1
+
+
+pub def keep(func: (int) -> int) -> (int) -> int:
+    """Return one concrete callable after recording decoration."""
+    println("concrete decorator")
+    return func
+
+
+pub def preserve[F](func: F) -> F:
+    """Return any callable through the decorator's checked generic instance."""
+    println("generic decorator")
+    return func
+
+
+pub def factory[F](label: str) -> ((F) -> F):
+    """Return an identity decorator after recording factory evaluation."""
+    println(label)
+    return (func) => func
+
+
+def hidden() -> int:
+    """Remain private to prove a module binding cannot reach it."""
+    return 99

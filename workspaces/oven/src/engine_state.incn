@@ -18,7 +18,7 @@ pub model Identity:
     pub compiler_generation: str
     pub uid: u32
 
-    def hello(self) -> Hello:
+    pub def hello(self) -> Hello:
         """Offer the exact engine identity and fixed v1 transport limits."""
         return Hello(
             store_id=self.store_id,
@@ -53,7 +53,7 @@ pub class ServiceState:
     pub stopping: bool = false
     pub last_active: int = 0
 
-    def negotiate(self, hello: Hello, peer_uid: u32) -> Result[Welcome, Refusal]:
+    pub def negotiate(self, hello: Hello, peer_uid: u32) -> Result[Welcome, Refusal]:
         """Check OS identity and all full protocol/profile/generation/store identities before work."""
         expected = self.identity
         if peer_uid != expected.uid or hello.peer_uid != peer_uid:
@@ -80,7 +80,7 @@ pub class ServiceState:
             ),
         )
 
-    def accept(mut self, request: bytes, work: str, token: str) -> Result[None, Refusal]:
+    pub def accept(mut self, request: bytes, work: str, token: str) -> Result[None, Refusal]:
         """Accept at most sixteen control interests; drained services never accept another submit."""
         if self.draining or self.stopping:
             return Err(Refusal(kind=RefusalKind.Draining, detail="engine is draining"))
@@ -94,7 +94,7 @@ pub class ServiceState:
         self.interests.append(Interest(request=request, token=token, work=work))
         return Ok(None)
 
-    def detach(mut self, request: bytes, token: str) -> Result[None, Refusal]:
+    pub def detach(mut self, request: bytes, token: str) -> Result[None, Refusal]:
         """Detach exactly the matching interest; a token never authorizes another request."""
         for interest in self.interests:
             if interest.request == request and interest.token == token:
@@ -102,7 +102,7 @@ pub class ServiceState:
                 return Ok(None)
         return Err(Refusal(kind=RefusalKind.Identity, detail="unknown request interest"))
 
-    def pin(mut self, lease: str) -> Result[None, Refusal]:
+    pub def pin(mut self, lease: str) -> Result[None, Refusal]:
         """Retain one scoped reader interest; this stage does not issue durable execution leases."""
         if lease == "" or lease in self.pins:
             return Err(Refusal(kind=RefusalKind.Identity, detail="invalid or duplicate reader lease"))
@@ -111,7 +111,7 @@ pub class ServiceState:
         self.pins.append(lease)
         return Ok(None)
 
-    def release(mut self, lease: str) -> Result[None, Refusal]:
+    pub def release(mut self, lease: str) -> Result[None, Refusal]:
         """Release a known scoped reader, leaving all other readers pinned."""
         if lease not in self.pins:
             return Err(Refusal(kind=RefusalKind.Identity, detail="unknown reader lease"))
@@ -122,7 +122,7 @@ pub class ServiceState:
         """Whether a client, worker, effect, request or pinned reader prevents idle retirement."""
         return self.clients > 0 or self.workers > 0 or self.effects > 0 or len(self.pins) > 0 or len(self.interests) > 0
 
-    def exits(mut self, now: int, timeout: int = IDLE_SECONDS) -> bool:
+    pub def exits(mut self, now: int, timeout: int = IDLE_SECONDS) -> bool:
         """Drain waits for admitted work and readers; idle retirement starts only after all interests leave."""
         if self.busy():
             self.last_active = now

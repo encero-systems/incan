@@ -83,6 +83,8 @@ mod native_call_state;
 mod native_newtype_facts;
 mod native_storage;
 pub(crate) use native_storage::native_frozen_constructor;
+mod namespace_resolution;
+pub(crate) use namespace_resolution::ResolvedNamespaceMemberKind;
 mod nominal_identities;
 mod nominal_scope;
 mod nominal_type_param_bounds;
@@ -108,9 +110,7 @@ pub use declaration_views::{CheckEnvironmentView, CheckedBindingView, Declaratio
 mod trait_bound_relations;
 mod type_info;
 pub(crate) use type_info::{ClassLayoutInfo, RustCheckedCall};
-pub(crate) use validate_rust_module::is_trivial_body;
 mod union_member_identity;
-mod validate_rust_module;
 mod web_routes;
 
 pub use const_eval::ConstValue;
@@ -313,6 +313,37 @@ impl ResolvedDependencyMember {
     }
 }
 
+/// One source re-export link retained for canonical declaration lookup and cycle diagnostics.
+#[derive(Debug, Clone)]
+pub(super) struct DependencyMemberReexport {
+    /// Module path written by the re-export.
+    target_module: ImportPath,
+    /// Declaration name written by the re-export.
+    target_name: String,
+    /// Source owner whose coordinate system contains `declaration_span`.
+    declaration_origin: SymbolOrigin,
+    /// Span of the source import that creates the link.
+    declaration_span: Span,
+}
+
+/// One name-link location in a cycle, in traversal order.
+#[derive(Debug, Clone)]
+pub(super) struct DependencyMemberLinkLocation {
+    /// Canonical module/member spelling of the link.
+    spelling: String,
+    /// Source owner whose coordinate system contains `declaration_span`.
+    declaration_origin: SymbolOrigin,
+    /// Span of the import statement that creates the link, in that module's source coordinates.
+    declaration_span: Span,
+}
+
+/// Why following dependency member links could not reach a declaration.
+#[derive(Debug, Clone)]
+pub(super) enum DependencyMemberResolutionFailure {
+    /// Following re-export bindings returned to a link already on the active walk.
+    LinkLoop { links: Vec<DependencyMemberLinkLocation> },
+}
+
 /// Canonical identity for one type or trait exported through a compiled public-library dependency.
 ///
 /// Local aliases and provider-qualified internal signature spellings map to this value. Admitted artifacts compare
@@ -496,6 +527,9 @@ pub struct TypeChecker {
     body_open_diagnostics: Vec<CompileError>,
     /// Completed declaration/default/initializer outputs, separate from callable statement outputs.
     checked_declarations: Vec<std::sync::Arc<body_check::CheckedBodyView>>,
+    /// Callable bodies that produced a checked lazy result and therefore need retained-result ownership analysis.
+    /// The marker is consumed when that body's flow is finalized; it never becomes a published semantic fact.
+    lazy_result_bodies: HashSet<CanonicalSymbolId>,
     /// Nested producer diagnostic intervals used only while capturing independently owned outputs.
     diagnostic_owner_ranges: Vec<(std::ops::Range<usize>, std::ops::Range<usize>)>,
     /// Symbol table populated during the first pass.
@@ -597,6 +631,9 @@ pub struct TypeChecker {
     /// The target span of the local partial expression being checked, where a generic function may be named as a value
     /// so the partial can instantiate it (RFC 084).
     pub(in crate::typechecker) generic_partial_target_span: Option<crate::ast::Span>,
+    /// The path span currently being checked as a user-defined decorator value. A generic function is a value only at
+    /// this boundary, where the decorated callable supplies the function's type arguments (RFC 036).
+    pub(in crate::typechecker) decorator_callable_span: Option<crate::ast::Span>,
     /// The generic function a local partial's target named at [`Self::generic_partial_target_span`], taken by the
     /// partial expression check to instantiate it.
     pub(in crate::typechecker) generic_partial_target: Option<check_expr::GenericPartialTarget>,
@@ -641,6 +678,11 @@ pub struct TypeChecker {
     /// Exact factory call currently collecting partial type arguments for Body IR. Ordinary calls and synthesized
     /// probes never publish into the decorator snapshot; the enclosing value is restored after factory checking.
     body_ir_decorator_factory_span: Option<Span>,
+    /// Declared type-parameter order of the decorator callable currently selected as a value.
+    ///
+    /// The checker fills this from the same symbol or module-member resolution that produced the callable type. The
+    /// subsequent decorator application consumes it once to retain ordered native instance arguments.
+    decorator_callable_type_params: Vec<String>,
     /// Function symbols collected in the current module pass, keyed by source name.
     ///
     /// The checker imports dependency modules into one ambient symbol table. Same-name overload grouping is
@@ -667,6 +709,11 @@ pub struct TypeChecker {
     /// names such a type is an ordinary nominal, and the collection pass can meet the annotation before it meets the
     /// declaration, so the bare-collection refusal consults this set rather than the symbol table alone (#1749).
     source_type_declaration_names: HashSet<String>,
+    /// Transparent aliases the current program declares, recorded before source-order collection.
+    ///
+    /// Callable display provenance needs to recognize a forward-declared alias without changing the semantic
+    /// resolver's declaration-order rules.
+    source_type_alias_names: HashSet<String>,
     /// The callable whose signature and body annotations are being checked, when one is active.
     ///
     /// An unknown type name inside a callable is most likely a type parameter that was never declared, so the
@@ -751,7 +798,7 @@ pub struct TypeChecker {
     /// A facade does not own what it re-exports, so an identity must follow this link to the declaring module instead
     /// of naming the facade. Stored as the written import path plus the original name, resolved with the facade's own
     /// module path as the resolution base.
-    pub dependency_member_reexports: HashMap<String, HashMap<String, (ImportPath, String)>>,
+    pub dependency_member_reexports: HashMap<String, HashMap<String, DependencyMemberReexport>>,
     /// Public-library re-export links omitted by the frozen source-member cache; only private Body IR call checking
     /// follows these links. Direct source declarations and ordinary import resolution remain authoritative.
     body_ir_dependency_pub_reexports: HashMap<String, HashMap<String, (ImportPath, String)>>,
@@ -831,10 +878,9 @@ pub struct TypeChecker {
     pub current_module_path: Option<Vec<String>>,
     /// Source import aliases with declaration origins known from the dependency import graph.
     pub source_import_targets: HashMap<String, SourceTargetInfo>,
-    /// Declared Rust crate names from `loaf.toml [rust-dependencies]` (RFC 023 / RFC 013).
+    /// Declared Rust crate names from `loaf.toml [rust-dependencies]` (RFC 013).
     ///
-    /// Used to validate that `rust.module()` paths reference known crates. When `None`, crate validation is skipped
-    /// (e.g. single-file mode without a manifest).
+    /// Direct Rust imports and derives use this set to reject undeclared crates. Single-file mode may omit it.
     pub declared_crate_names: Option<HashSet<String>>,
     /// Local names bound to `std.testing` marker decorators via imports.
     ///
@@ -1011,6 +1057,25 @@ pub fn numeric_type_id_for_compat(ty: &ResolvedType) -> Option<NumericTypeId> {
         ResolvedType::Numeric(id) => Some(*id),
         _ => None,
     }
+}
+
+/// Return whether a function body contains only an optional docstring followed by `pass` placeholders.
+///
+/// Rusttype declaration validation uses this source-level predicate independently of RFC 171's retired extern
+/// surface, so it remains part of the typechecker's shared declaration vocabulary.
+pub(crate) fn is_trivial_body(body: &[Spanned<Statement>]) -> bool {
+    let first_non_docstring = body
+        .iter()
+        .position(|statement| {
+            !matches!(
+                &statement.node,
+                Statement::Expr(expression) if matches!(&expression.node, Expr::Literal(Literal::String(_)))
+            )
+        })
+        .unwrap_or(body.len());
+    body[first_non_docstring..]
+        .iter()
+        .all(|statement| matches!(statement.node, Statement::Pass))
 }
 
 /// Convenience function to type-check an AST

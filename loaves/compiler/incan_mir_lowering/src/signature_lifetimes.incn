@@ -1,6 +1,6 @@
 """Preserve generic reference binders before specialization erases their relationship in concrete frame types."""
 
-from rust::incan_semantics_core import IncanType as RustType
+from rust::incan_semantics_core import IncanInputAccess, IncanType as RustType
 from rust::incan_semantics_core::body_ir import Body
 from pub::incan_mir_plan import GenericLoan, PlanType
 
@@ -55,7 +55,7 @@ def element_generic_loans(
 pub def signature_lifetimes(body: &Body, arguments: list[RustType]) -> Result[list[list[str]], str]:
     """
     Retain generic loans: 1. Visit original parameters. 2. Visit the result. 3. Tie a returned view to its source.
-    4. Omit unneeded annotations.
+    4. Preserve source elision made ambiguous by specialization. 5. Omit unneeded annotations.
 
     Each reference introduced by one type argument has a distinct binder, reused at every occurrence of that
     argument. Source-written references remain elided; they never acquire a substituted argument's binder.
@@ -70,22 +70,58 @@ pub def signature_lifetimes(body: &Body, arguments: list[RustType]) -> Result[li
     # reference is the result itself; a carried view's is the first reference of its carrying payload.
     match body.returned_view:
         Some(view) =>
-            slot = int(view.slot)
-            signature[slot] = ["view"] + signature[slot]
-            result = signature[len(signature) - 1]
-            match view.carried:
-                Some(payload) =>
-                    position = payload_reference(body.return_type, int(payload), body.type_parameters, arguments)
-                    if position >= len(result):
-                        return Err("carried returned view has no payload reference")
-                    signature[len(signature) - 1] = result[:position] + ["view"] + result[position + 1:]
-                None => signature[len(signature) - 1] = ["view"] + result
-            return Ok(signature)
+            if view.access != IncanInputAccess.Owned:
+                slot = int(view.slot)
+                signature[slot] = ["view"] + signature[slot]
+                result = signature[len(signature) - 1]
+                match view.carried:
+                    Some(payload) =>
+                        position = payload_reference(body.return_type, int(payload), body.type_parameters, arguments)
+                        if position >= len(result):
+                            return Err("carried returned view has no payload reference")
+                        signature[len(signature) - 1] = result[:position] + ["view"] + result[position + 1:]
+                    None => signature[len(signature) - 1] = ["view"] + result
+                return Ok(signature)
         None => pass
-    # 4. Omit annotations when specialization introduces no generic loans, including transformed generators.
+    # 4. A generic source signature with one elided input loan ties an elided output to it. If substituting a
+    # reference type adds another loan, retain that original relationship explicitly instead of asking rustc to
+    # reconstruct it from the now-concrete signature.
+    if has_generic_loans(signature):
+        retain_unique_source_elision(signature)
+    # 5. Omit annotations when specialization introduces no generic loans, including transformed generators.
     if has_generic_loans(signature):
         return Ok(signature)
     return Ok([])
+
+
+def retain_unique_source_elision(mut signature: list[list[str]]) -> None:
+    """Name the one source-written input loan and every source-elided result loan after generic substitution adds ambiguity."""
+    if len(signature) < 2:
+        return
+    mut input_elisions = 0
+    for slot in range(len(signature) - 1):
+        for name in signature[slot]:
+            if name == "":
+                input_elisions += 1
+    if input_elisions != 1:
+        return
+    result = signature[len(signature) - 1]
+    if "" not in result:
+        return
+    for slot in range(len(signature) - 1):
+        signature[slot] = named_source_elisions(signature[slot])
+    signature[len(signature) - 1] = named_source_elisions(result)
+
+
+def named_source_elisions(names: list[str]) -> list[str]:
+    """Replace source-written elision markers while preserving generic loan names and reference order."""
+    mut retained: list[str] = []
+    for name in names:
+        if name == "":
+            retained.append("elided")
+        else:
+            retained.append(name)
+    return retained
 
 
 def payload_reference(result: &RustType, payload: int, names: list[str], arguments: list[RustType]) -> int:

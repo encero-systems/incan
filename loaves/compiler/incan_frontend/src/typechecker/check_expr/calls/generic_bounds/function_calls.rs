@@ -27,6 +27,7 @@ impl TypeChecker {
             self.type_info.record_resolved_identity(call_site_span, identity);
         }
         let first_error = self.errors.len();
+        self.refuse_inaccessible_method(method, &method_info, receiver_ty, call_site_span);
         let result = self.check_generic_method_call(
             method,
             method_info,
@@ -184,6 +185,14 @@ impl TypeChecker {
         }
         self.settle_constructor_argument_sides(&info.type_params, &params_with_explicit, args, &mut type_bindings);
         Self::close_instantiation_from_bindings(&mut instantiation, &type_bindings, &info.type_params);
+        if self.errors.len() == errors_before_call {
+            self.settle_native_call_arguments_at_instantiation(
+                &info.type_params,
+                &params_with_explicit,
+                args,
+                &type_bindings,
+            );
+        }
         if self.errors.len() == errors_before_call {
             self.refuse_conflicting_type_arguments(func_name, &info.type_params, &arguments, &type_bindings);
         }

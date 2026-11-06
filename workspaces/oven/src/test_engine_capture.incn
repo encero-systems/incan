@@ -20,7 +20,7 @@ from engine_capture import (
     decoded_epoch,
 )
 from engine_epochs import capture_submit, prepare_submit, after_projection
-from segment_store import commit
+from pub::incan_platform.store import commit
 from engine_messages import Submit
 
 const PIN: str = """{"schema": "incan.toolchain/1", "driver": "bin/driver", "sysroot": "sysroot",

@@ -205,9 +205,23 @@ Incan `str` values can satisfy Rust `String` or shared `&str` parameters, and `b
 
 For imported Rust free functions with checked parameter names, keyword arguments bind by those names. A name missing from the signature is refused rather than guessed.
 
-## Rust lint annotations {#targeted-generated-rust-lint-suppression}
+<a id="targeted-generated-rust-lint-suppression"></a>
 
-Oven's native build does not run Clippy or generate Rust source attributes. The checker validates `@rust.allow(...)` arguments, but that annotation does not admit an unsupported signature or satisfy a trait bound. Resolve a source error at its reported span rather than adding a lint allowance to the declaration.
+## Migrate retired Rust facades
+
+Import each Rust item directly. `rust.module(...)` and `@rust.extern` are removed; an Incan-shaped API is an ordinary Incan function that calls a private `rust::` import:
+
+```incan
+from rust::native_clock import now as native_now
+
+
+pub def now() -> int:
+    return native_now()
+```
+
+An exported Rust derive or attribute macro is imported the same way. `@derive(Serialize)` accepts an inspected derive macro imported with `from rust::serde import Serialize`, and a directly imported attribute macro can decorate a function.
+
+`@rust.allow(...)` is also removed. Native compilation generates no Rust source item on which to carry that annotation, so delete it rather than replacing it. The checker reports each retired form with its direct migration.
 
 ## Diagnose a refused call
 

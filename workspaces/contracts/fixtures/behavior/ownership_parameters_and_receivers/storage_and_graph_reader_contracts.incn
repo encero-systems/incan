@@ -1,0 +1,57 @@
+# behavior: memory graph and reusable-buffer views borrow their actual sources until their last use, after which the source can be replaced (#2500, #2519, #2524).
+# expect-stdout:
+#   10
+#   2
+#   4
+"""Exercise the RFC 164 ownership shapes required by storage and graph readers."""
+
+
+class ColumnBuffer:
+    pub values: list[int]
+
+
+class ReusableBatch:
+    pub buffer: ColumnBuffer
+
+    pub def column(self) -> Borrowed[ColumnBuffer] from self.buffer:
+        """Borrow the current reusable buffer contents."""
+        return self.buffer
+
+    pub def refill(mut self, first: int, second: int) -> None:
+        """Replace the buffer after every dependent view has ended."""
+        self.buffer = ColumnBuffer(values=[first, second])
+
+
+class GraphState:
+    pub nodes: list[int]
+
+
+class MemoryGraph:
+    pub state: GraphState
+
+    pub def read_view(self) -> Borrowed[GraphState] from self.state:
+        """Borrow the in-memory graph state selected by this reader."""
+        return self.state
+
+
+def refill_after_column_use(mut reusable: BorrowedMut[ReusableBatch]) -> None:
+    """Release a borrowed column at last use before refilling its buffer."""
+    column = reusable.column()
+    println(column.values[0])
+    reusable.refill(50, 60)
+
+
+def replace_after_graph_read(mut graph: BorrowedMut[MemoryGraph]) -> None:
+    """Release a graph read view at last use before replacing its state."""
+    view = graph.read_view()
+    println(view.nodes[1])
+    graph.state = GraphState(nodes=[3, 4])
+    println(graph.state.nodes[1])
+
+
+def main() -> None:
+    """Run the borrowed reader shapes."""
+    mut reusable = ReusableBatch(buffer=ColumnBuffer(values=[10, 20]))
+    refill_after_column_use(reusable)
+    mut graph = MemoryGraph(state=GraphState(nodes=[1, 2]))
+    replace_after_graph_read(graph)

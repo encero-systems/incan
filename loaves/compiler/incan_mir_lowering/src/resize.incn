@@ -48,7 +48,7 @@ pub def emit_resize(
     if policy in ["resize", "wrapping_resize"]:
         builder.emit(plan_assign(output, RvalueKind.NumericCast(operand, source, target), span))
         return Ok(None)
-    path = f"incan_std_core::num::{policy}"
+    path = f"incan_std_primitives::num::{policy}"
     builder.externals.append(
         ExternalFunction(path=path, type_arguments=[source, target], parameters=[source], return_type=result, span=span),
     )

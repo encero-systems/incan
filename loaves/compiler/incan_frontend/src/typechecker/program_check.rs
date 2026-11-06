@@ -133,6 +133,7 @@ impl TypeChecker {
         self.validate_source_type_names = false;
         self.unknown_source_type_names_emitted.clear();
         self.source_type_declaration_names = Self::collect_source_type_declaration_names(&program.declarations);
+        self.source_type_alias_names = Self::collect_source_type_alias_names(&program.declarations);
         self.const_decls.clear();
         self.static_decls.clear();
         self.local_function_decls.clear();
@@ -215,7 +216,7 @@ impl TypeChecker {
         self.resolve_pending_trait_supertraits();
         self.finalize_supertrait_graph();
         self.merge_supertrait_requires_into_traits();
-        self.settle_trait_implementation_visibility(&program.declarations);
+        self.settle_method_scopes(&program.declarations);
         self.validate_static_dependencies();
         self.collect_testing_fixture_names(program);
         // Every signature is collected, so the function-typed parameters and returns that hold capturing closures
@@ -294,8 +295,6 @@ impl TypeChecker {
         self.record_body_ir_class_inheritance(program);
         self.record_method_decorator_receiver_slots(program);
 
-        // ---- RFC 023: validate rust.module() and @rust.extern rules ----
-        self.validate_rust_module_and_extern(program);
         self.validate_source_type_names = false;
         // The module is checked; its inferred hashed type parameters now join its exported signatures (#1758).
         self.export_inferred_hash_key_bounds();

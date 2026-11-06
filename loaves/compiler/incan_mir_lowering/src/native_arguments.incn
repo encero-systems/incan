@@ -29,7 +29,7 @@ pub def native_argument_names(module: &BodyIrModule) -> Result[list[str], str]:
     return Ok(names)
 
 
-def foreign_storage(origin: &SymbolOrigin) -> bool:
+def foreign_storage(origin: SymbolOrigin) -> bool:
     """Distinguish an extracted Rust ADT from an Incan Loaf's compiled storage declaration."""
     match origin:
         SymbolOrigin.RustCrate(_path) => return true

@@ -1,7 +1,6 @@
 # behavior: a route handler with a scalar parameter that no {segment} of the path binds is refused at check time
 # expect-diagnostic: INCAN-T0108
 
-import std.async
 from std.web import route, POST
 
 

@@ -1,0 +1,31 @@
+"""Complete-line output with host failures returned as primitive text details."""
+
+from rust::std::io import stderr, stdout, Stderr, Stdout, Write
+from rust::std::string import String as RuntimeString
+from rust::std::vec import Vec
+
+
+pub def write_line[W with Write](mut stream: W, value: &str) -> Result[None, str]:
+    """
+    Write one complete UTF-8 line to an owned native output stream.
+
+    The returned error is the host's actual write failure text. Surface-specific diagnostics remain with their caller,
+    so this primitive has no dependency on higher-level formatting or I/O error declarations.
+    """
+    mut bytes: Vec[u8] = RuntimeString.from(value).into_bytes()
+    bytes.push(10u8)
+    match stream.write_all(bytes):
+        Ok(_) => return Ok(None)
+        Err(error) => return Err(f"{error}")
+
+
+pub def write_stdout_line(value: &str) -> Result[None, str]:
+    """Write one complete UTF-8 line to standard output and return any host failure."""
+    mut stream: Stdout = stdout()
+    return write_line(stream, value)
+
+
+pub def write_stderr_line(value: &str) -> Result[None, str]:
+    """Write one complete UTF-8 line to standard error and return any host failure."""
+    mut stream: Stderr = stderr()
+    return write_line(stream, value)

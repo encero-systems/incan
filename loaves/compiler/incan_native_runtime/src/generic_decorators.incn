@@ -6,7 +6,7 @@ from rust::std::string import String as RustString
 from rust::std::thread import current, ThreadId
 from rust::std::panic import catch_unwind, resume_unwind
 from rust::std::mem import drop
-from rust::incan_std_core::errors import raise_value_error
+from rust::incan_std_primitives::errors import raise_value_error
 
 
 # Runs a closed instance's decorators and stores their result in that instance's typed storage cell.

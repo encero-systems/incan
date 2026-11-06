@@ -59,7 +59,7 @@ pub model Reservation:
     pub live: bool = false
     pub allocated: int = 0
 
-    def outstanding(self) -> int:
+    pub def outstanding(self) -> int:
         """The bytes this reservation still holds back from other admissions."""
         if not self.live:
             return 0
@@ -79,7 +79,7 @@ pub model Collectable:
     pub staging: int = 0
     pub staging_bytes: int = 0
 
-    def bytes(self) -> int:
+    pub def bytes(self) -> int:
         """The logical bytes collection would remove; superseded layout files are not estimated."""
         return self.payload_bytes + self.staging_bytes
 

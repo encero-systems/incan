@@ -121,14 +121,14 @@ pub def checked_list_argument(
                 match read.place.global():
                     Some(_global) => return Err("unsupported Body IR mutable static borrow through source function")
                     None => pass
-            if mutable and read.fact != OwnershipFact.MutBorrow and read.fact != OwnershipFact.Move:
+            if mutable and read.fact != OwnershipFact.MutBorrow and read.fact != OwnershipFact.Move and not has_slice_projection(read.place):
                 return Err("unsupported Body IR list argument without mutable borrow fact")
             if is_element_place(builder, read.place)?:
-                # A shared parameter reads an indexed or sliced list through a copy that stays owned until its scope
-                # ends.
-                if not mutable:
+                # A shared parameter and a fresh projected owner read through a copy that stays owned until its scope
+                # ends. A slice is such an owner: its Move fact distinguishes it from stored indexed list storage.
+                if not mutable or read.fact == OwnershipFact.Move or has_slice_projection(read.place):
                     copied = materialized_receiver(builder, read.place, span)?
-                    return list_borrow(builder, copied, false, span)
+                    return list_borrow(builder, copied, mutable, span)
                 # An exclusive argument reaches the list stored in the container, so its change lands there.
                 stored = mutable_element_place(builder, read.place, span)?
                 return list_borrow(builder, stored, true, span)
@@ -150,6 +150,15 @@ pub def checked_list_argument(
                     return list_borrow(builder, literal_place, false, span)
                 _ => return Err("unsupported Body IR constant list argument")
         _ => return Err("unsupported Body IR constant list argument")
+
+
+def has_slice_projection(source: &RustPlace) -> bool:
+    """Recognize a projection that materializes a fresh sequence owner instead of naming stored element storage."""
+    for projection in source.projection:
+        match projection:
+            PlaceElem.Slice(start=_start, end=_end, step=_step) => return true
+            _ => pass
+    return false
 
 
 pub def cloned_list(mut builder: Builder, source: Place, span: SourceSpan) -> Result[Place, str]:
@@ -229,7 +238,7 @@ pub def value_operand(mut builder: Builder, value: &RustOperand, span: SourceSpa
             return scalar_operand(builder, value, span)
 
 
-pub def element_read(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Option[Operand], str]:
+pub def element_read(mut builder: Builder, source: RustPlace, span: SourceSpan) -> Result[Option[Operand], str]:
     """Copy a collection element or text slice without changing its source storage; `None` for structural places."""
     match source.local_id():
         Some(local) =>
@@ -269,7 +278,7 @@ pub def element_read(mut builder: Builder, source: &RustPlace, span: SourceSpan)
     return Ok(Some(indexed_read(builder, source, span)?))
 
 
-pub def indexed_read(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Operand, str]:
+pub def indexed_read(mut builder: Builder, source: RustPlace, span: SourceSpan) -> Result[Operand, str]:
     """Use the retained list projection and legacy negative-index error behavior; a final slice copies a new list."""
     if len(source.projection) == 0:
         return Err("unsupported Body IR list read without index")
@@ -331,7 +340,7 @@ pub def sequence_read_storage(mut builder: Builder, source: Place, span: SourceS
 def read_indexed_element(
     mut builder: Builder,
     place: Place,
-    source: &RustPlace,
+    source: RustPlace,
     slot: int,
     span: SourceSpan,
 ) -> Result[Place, str]:
@@ -374,7 +383,7 @@ def read_native_text_array(
             result = temporary(builder, result_type, span)
             instantiated_external_call(
                 builder,
-                "incan_std_core::collections::list_get",
+                "incan_std_primitives::collections::list_get",
                 [PlanType.StrRef],
                 [PlanType.SliceRef(elements), PlanType.Int],
                 result_type,
@@ -392,7 +401,7 @@ def read_text_element(mut builder: Builder, place: Place, index: Operand, span: 
     output = temporary(builder, PlanType.String, span)
     instantiated_external_call(
         builder,
-        "incan_std_core::strings::str_index",
+        "incan_std_primitives::strings::str_index",
         [PlanType.StringRef],
         [PlanType.StringRef, PlanType.Int],
         PlanType.String,
@@ -451,7 +460,7 @@ def sequence_slice_bounds(mut builder: Builder, projection: &PlaceElem, span: So
 def read_sequence_slice(
     mut builder: Builder,
     place: Place,
-    projection: &PlaceElem,
+    projection: PlaceElem,
     span: SourceSpan,
 ) -> Result[Place, str]:
     """Copy a typed string or list slice through its own legacy runtime boundary."""
@@ -474,7 +483,7 @@ def read_sequence_slice(
     )
 
 
-def read_list_slice(mut builder: Builder, place: Place, projection: &PlaceElem, span: SourceSpan) -> Result[Place, str]:
+def read_list_slice(mut builder: Builder, place: Place, projection: PlaceElem, span: SourceSpan) -> Result[Place, str]:
     """Copy the selected elements into a new owned list through legacy's Python-style slice helper."""
     leaf, depth = require_list_shape(place_type(builder.locals, place), "unsupported Body IR slicing non-list")?
     bounds = sequence_slice_bounds(builder, projection, span)?
@@ -585,7 +594,7 @@ pub def list_base_place(mut builder: Builder, source: &RustPlace, span: SourceSp
 
 pub def list_index_operand(
     mut builder: Builder,
-    source: &RustPlace,
+    source: RustPlace,
     slot: int,
     span: SourceSpan,
 ) -> Result[Operand, str]:
@@ -598,7 +607,7 @@ pub def list_index_operand(
 pub def list_assignment(
     mut builder: Builder,
     destination: Place,
-    value: &RustRvalue,
+    value: RustRvalue,
     span: SourceSpan,
 ) -> Result[None, str]:
     """Construct list literals or transfer checked list values, dropping an initialized destination first."""
@@ -685,7 +694,7 @@ pub def append_list_value(
 pub def frozen_list_assignment(
     mut builder: Builder,
     target: Place,
-    value: &RustRvalue,
+    value: RustRvalue,
     span: SourceSpan,
 ) -> Result[None, str]:
     """

@@ -92,7 +92,7 @@ Each of these is refused (`INCAN-T0001`):
 
 ## Decorators (`@staticmethod`, `@classmethod`, `@requires`) {#decorators-staticmethod-requires}
 
-`@derive(...)` is specified [above](#derive), and `@requires(...)` under [Traits](#requires-adopter-contract). `@rust.extern`, `@rust.allow(...)` and user-defined decorators are in [Decorators](language.md#decorators).
+`@derive(...)` is specified [above](#derive), and `@requires(...)` under [Traits](#requires-adopter-contract). User-defined decorators are in [Decorators](language.md#decorators); removed Rust facade forms and their migrations are in [Rust interop](../how-to/rust_interop.md#migrate-retired-rust-facades).
 
 ### `@staticmethod`
 
@@ -102,14 +102,14 @@ Each of these is refused (`INCAN-T0001`):
 - It is called on the type, `TypeName.method(...)`. A call through an instance is refused (`INCAN-T0001`).
 - A static method and a field may share a name: `TimeDelta.days(7)` calls the method and `delta.days` reads the field.
 - A generic static method may return `Self`; `Box[int].make(1)` fixes the owner's type arguments.
-- It combines with `@rust.extern` for Rust-backed static methods.
+- A Rust-backed static method has an ordinary Incan body that calls a directly imported Rust function.
 
 ```incan
 class Temperature:
     pub celsius: float
 
     @staticmethod
-    def from_fahrenheit(f: float) -> Temperature:
+    pub def from_fahrenheit(f: float) -> Temperature:
         return Temperature(celsius=(f - 32.0) / 1.8)
 
 def main() -> None:
@@ -130,7 +130,7 @@ class Box[T with Clone]:
     pub value: T
 
     @classmethod
-    def make(cls, value: T) -> Self:
+    pub def make(cls, value: T) -> Self:
         return cls(value=value)
 
 def main() -> None:

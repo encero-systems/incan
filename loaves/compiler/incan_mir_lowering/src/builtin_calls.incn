@@ -129,7 +129,7 @@ pub def lower_numeric_helper(
         PlanType.Int => suffix = "i64"
         PlanType.Float => suffix = "f64"
         _ => return Err("unsupported Body IR division or modulo type")
-    path = f"incan_std_core::num::{operation}_{suffix}"
+    path = f"incan_std_primitives::num::{operation}_{suffix}"
     arguments = [value_operand(builder, left, span)?, value_operand(builder, right, span)?]
     external_call(builder, path, [ty, ty], ty, arguments, destination, span)
     return Ok(None)
@@ -170,7 +170,7 @@ pub def lower_runtime_helper(
             output = temporary(builder, PlanType.Never, span)
             external_call(
                 builder,
-                "incan_std_core::errors::raise_value_error",
+                "incan_std_primitives::errors::raise_value_error",
                 [PlanType.StrRef],
                 PlanType.Never,
                 operands,
@@ -713,7 +713,7 @@ pub def validate_exact_float(mut builder: Builder, target: Place, span: SourceSp
         operand = read_place(target, false, span)
         external_call(
             builder,
-            "incan_std_core::num::require_finite_f32",
+            "incan_std_primitives::num::require_finite_f32",
             [PlanType.F32],
             PlanType.F32,
             [operand],

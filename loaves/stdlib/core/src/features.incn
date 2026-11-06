@@ -41,7 +41,6 @@ from crate.features._descriptors import fallible_iteration_forms, fallible_itera
 from crate.features._descriptors import result_combinators_forms, result_combinators_references
 from crate.features._descriptors import protocol_hooks_forms, protocol_hooks_references
 from crate.features._descriptors import rust_trait_adoption_forms, rust_trait_adoption_references
-from crate.features._descriptors import rust_allow_forms, rust_allow_references
 from crate.features._descriptors import scoped_dsl_surfaces_forms, scoped_dsl_surfaces_references
 from crate.features._descriptors import std_web_forms, std_web_references
 from crate.features._descriptors import std_math_forms, std_math_references
@@ -287,7 +286,7 @@ static type_tokens_reflection: RegistryEntry[FeatureId, FeatureDescriptor] = fea
         rfc="RFC 107",
         stability=FeatureStability.Stable,
         activation="Use explicit type arguments for compile-time reflection, or call an overload that expects `Type[T]`.",
-        summary="Primitive type arguments expose stable source names, model type tokens carry checked source type evidence, and expected `Type[T]` parameters let visible type names select precise overloads without making types general runtime values.",
+        summary="Primitive type arguments expose stable source names. Explicit `Type[T]` contexts admit checked primitive, model, enum, trait, alias, constrained-scalar and newtype tokens for storage and precise overload selection; constrained generic overloads map explicit type arguments to precise results without making types general runtime values.",
         canonical_forms=type_tokens_reflection_forms,
         prefer_over="String target names, dummy schema values, or helper families used only to recover type-specific return types.",
         references=type_tokens_reflection_references,
@@ -614,23 +613,6 @@ static rust_trait_adoption: RegistryEntry[FeatureId, FeatureDescriptor] = featur
         canonical_forms=rust_trait_adoption_forms,
         prefer_over="Writing Rust-shaped `impl Trait for Type` concepts in comments or custom backend code.",
         references=rust_trait_adoption_references,
-    ),
-)
-static rust_allow: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
-    key=FeatureId("RustAllow"),
-    subject=RegistrySubject.current_unit(),
-    descriptor=FeatureDescriptor(
-        id=FeatureId("RustAllow"),
-        name="Checked Rust lint annotations",
-        category=FeatureCategory.Interop,
-        since="0.3",
-        rfc="RFC 057",
-        stability=FeatureStability.Stable,
-        activation="Use `@rust.allow(...)` on supported declarations.",
-        summary="The checker validates declaration-local `@rust.allow` names and attachments. Native compilation does not generate Rust source attributes or run Clippy.",
-        canonical_forms=rust_allow_forms,
-        prefer_over="Broad lint groups or annotations used to hide a source type error.",
-        references=rust_allow_references,
     ),
 )
 static scoped_dsl_surfaces: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
@@ -1015,12 +997,12 @@ static async_await: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry
         name="Async and await",
         category=FeatureCategory.Async,
         since="0.2",
-        rfc="RFC 023",
+        rfc="RFC 172",
         stability=FeatureStability.Stable,
-        activation="Import `std.async` or one of its submodules.",
-        summary="`async` and `await` are import-activated soft keywords backed by compiled `std.async` modules, with native task, timeout and runtime support.",
+        activation="Use `async def` or `await`; import `std.async` only for library APIs.",
+        summary="`async` and `await` are reserved language syntax, while compiled `std.async` modules provide native tasks, timeouts and runtime support.",
         canonical_forms=async_await_forms,
-        prefer_over="Threading async behavior through synchronous wrappers or relying on pre-0.2 ambient async syntax.",
+        prefer_over="Threading async behavior through synchronous wrappers or importing a library only to activate syntax.",
         references=async_await_references,
     ),
 )
@@ -1032,10 +1014,10 @@ static async_race: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
         name="Async race and awaitability",
         category=FeatureCategory.Async,
         since="0.3",
-        rfc="RFC 039",
+        rfc="RFC 172",
         stability=FeatureStability.Stable,
-        activation="Import `std.async.race` or the relevant async prelude helpers.",
-        summary="`Awaitable[T]`, `race for`, and helper-style race composition support first-ready async workflows.",
+        activation="Use `race for`; import `std.async.race` only for `Awaitable[T]` and helper APIs.",
+        summary="Language-owned `race for`, `Awaitable[T]`, and helper-style race composition support first-ready async workflows.",
         canonical_forms=async_race_forms,
         prefer_over="Legacy `std.async.select` or hand-rolled polling loops.",
         references=async_race_references,

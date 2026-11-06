@@ -18,6 +18,10 @@
 //! ```
 
 use super::registry::{LangItemInfo, RFC, RfcId, Since, Stability};
+use super::surface::{
+    dict_methods::DictMethodId, frozen_dict_methods::FrozenDictMethodId, frozen_list_methods::FrozenListMethodId,
+    frozen_set_methods::FrozenSetMethodId, list_methods::ListMethodId, set_methods::SetMethodId,
+};
 
 /// Stable identifier for a builtin function.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -40,6 +44,98 @@ pub enum BuiltinFnId {
     WriteFile,
     JsonStringify,
     IsInstance,
+}
+
+/// Stable checker-selected identity for a compiler-owned builtin method.
+///
+/// The receiver-family variants preserve distinctions that a method spelling alone cannot carry. This enum is the
+/// semantic operation key transported through Body IR; canonical symbol identity remains separate provenance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum BuiltinMethodId {
+    /// Mutable and query operations on `List[T]`.
+    List(ListMethodId),
+    /// Borrow or consume a `List[T]` as its lazy iterator state.
+    ListIter,
+    /// Mutable and query operations on `Dict[K, V]`.
+    Dict(DictMethodId),
+    /// Mutable and query operations on `Set[T]`.
+    Set(SetMethodId),
+    /// Query operations on `FrozenList[T]`.
+    FrozenList(FrozenListMethodId),
+    /// Query operations on `FrozenDict[K, V]`.
+    FrozenDict(FrozenDictMethodId),
+    /// Query operations on `FrozenSet[T]`.
+    FrozenSet(FrozenSetMethodId),
+}
+
+impl BuiltinMethodId {
+    /// Return the compiler-owned receiver family used in canonical provenance.
+    pub fn owner(self) -> &'static str {
+        use super::types::collections::{CollectionTypeId, as_str};
+
+        match self {
+            Self::List(_) | Self::ListIter => as_str(CollectionTypeId::List),
+            Self::Dict(_) => as_str(CollectionTypeId::Dict),
+            Self::Set(_) => as_str(CollectionTypeId::Set),
+            Self::FrozenList(_) => as_str(CollectionTypeId::FrozenList),
+            Self::FrozenDict(_) => as_str(CollectionTypeId::FrozenDict),
+            Self::FrozenSet(_) => as_str(CollectionTypeId::FrozenSet),
+        }
+    }
+
+    /// Return the canonical member spelling used only to validate retained provenance.
+    pub fn member(self) -> &'static str {
+        match self {
+            Self::List(method) => super::surface::list_methods::as_str(method),
+            Self::ListIter => {
+                super::surface::iterator_methods::as_str(super::surface::iterator_methods::IteratorMethodId::Iter)
+            }
+            Self::Dict(method) => super::surface::dict_methods::as_str(method),
+            Self::Set(method) => super::surface::set_methods::as_str(method),
+            Self::FrozenList(method) => super::surface::frozen_list_methods::as_str(method),
+            Self::FrozenDict(method) => super::surface::frozen_dict_methods::as_str(method),
+            Self::FrozenSet(method) => super::surface::frozen_set_methods::as_str(method),
+        }
+    }
+
+    /// Return whether this operation requires exclusive receiver access.
+    pub const fn changes_receiver(self) -> bool {
+        match self {
+            Self::List(method) => super::surface::list_methods::changes_receiver(method),
+            Self::Dict(method) => super::surface::dict_methods::changes_receiver(method),
+            Self::Set(method) => super::surface::set_methods::changes_receiver(method),
+            Self::ListIter | Self::FrozenList(_) | Self::FrozenDict(_) | Self::FrozenSet(_) => false,
+        }
+    }
+}
+
+/// Resolve the canonical owner and member stored by a checked-body record to its stable builtin method identity.
+pub fn method_from_parts(owner: &str, member: &str) -> Option<BuiltinMethodId> {
+    use super::types::collections::{CollectionTypeId, from_str};
+
+    match from_str(owner)? {
+        CollectionTypeId::List => match super::surface::list_methods::from_str(member) {
+            Some(method) => Some(BuiltinMethodId::List(method)),
+            None if super::surface::iterator_methods::from_str(member)
+                == Some(super::surface::iterator_methods::IteratorMethodId::Iter) =>
+            {
+                Some(BuiltinMethodId::ListIter)
+            }
+            None => None,
+        },
+        CollectionTypeId::Dict => super::surface::dict_methods::from_str(member).map(BuiltinMethodId::Dict),
+        CollectionTypeId::Set => super::surface::set_methods::from_str(member).map(BuiltinMethodId::Set),
+        CollectionTypeId::FrozenList => {
+            super::surface::frozen_list_methods::from_str(member).map(BuiltinMethodId::FrozenList)
+        }
+        CollectionTypeId::FrozenDict => {
+            super::surface::frozen_dict_methods::from_str(member).map(BuiltinMethodId::FrozenDict)
+        }
+        CollectionTypeId::FrozenSet => {
+            super::surface::frozen_set_methods::from_str(member).map(BuiltinMethodId::FrozenSet)
+        }
+        _ => None,
+    }
 }
 
 /// Metadata for a builtin function.
@@ -326,13 +422,22 @@ const fn info(
 
 #[cfg(test)]
 mod tests {
-    use super::{BuiltinFnId, protected_binding_builtin};
+    use super::{BuiltinFnId, BuiltinMethodId, method_from_parts, protected_binding_builtin};
+    use crate::lang::surface::{list_methods::ListMethodId, set_methods::SetMethodId};
 
-    /// Protect the selected builtin's canonical spelling and aliases without changing unrelated builtins.
+    /// Protect function aliases and collection-method effects through their typed registry identities.
     #[test]
-    fn protected_binding_policy_includes_print_and_its_registered_aliases() {
+    fn builtin_registry_owns_aliases_and_method_effects() {
         assert_eq!(protected_binding_builtin("print"), Some(BuiltinFnId::Print));
         assert_eq!(protected_binding_builtin("println"), Some(BuiltinFnId::Print));
         assert_eq!(protected_binding_builtin("len"), None);
+        assert!(BuiltinMethodId::List(ListMethodId::Append).changes_receiver());
+        assert!(!BuiltinMethodId::List(ListMethodId::Contains).changes_receiver());
+        assert!(BuiltinMethodId::Set(SetMethodId::Add).changes_receiver());
+        let operation = BuiltinMethodId::ListIter;
+        assert_eq!(
+            method_from_parts(operation.owner(), operation.member()),
+            Some(operation)
+        );
     }
 }

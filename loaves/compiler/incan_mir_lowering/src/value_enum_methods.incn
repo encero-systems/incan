@@ -52,7 +52,7 @@ from list_methods import argument_place, argument_value, call_destination
 
 def value_enum_receiver_place(
     mut builder: Builder,
-    argument: &RustArgumentElement,
+    argument: RustArgumentElement,
     span: SourceSpan,
 ) -> Result[Place, str]:
     """Keep the checked receiver's dereference and field projections before reading its native enum discriminant."""
@@ -377,7 +377,7 @@ pub def lower_enum_message(
         texts = [text_literal(name, span), text_literal("", span)]
         external_call(
             builder,
-            "incan_std_core::strings::str_concat",
+            "incan_std_primitives::strings::str_concat",
             [PlanType.StrRef, PlanType.StrRef],
             PlanType.String,
             texts,

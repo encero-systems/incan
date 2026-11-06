@@ -10,7 +10,7 @@ from std.datetime import DateTime
 class Counter:
     value: int
 
-    def next(self) -> int:
+    pub def next(self) -> int:
         return self.value + 1
 
     def timestamp(self) -> str:
@@ -20,11 +20,11 @@ class Counter:
 
 class Factory:
     @classmethod
-    def answer(cls) -> int:
+    pub def answer(cls) -> int:
         return 42
 
     @staticmethod
-    def twice(value: int) -> int:
+    pub def twice(value: int) -> int:
         return value * 2
 
 

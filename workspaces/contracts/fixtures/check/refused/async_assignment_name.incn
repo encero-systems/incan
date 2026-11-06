@@ -1,0 +1,4 @@
+# behavior: async is reserved and cannot be declared as an assignment name
+# expect-diagnostic: INCAN-P0001
+
+async = 1

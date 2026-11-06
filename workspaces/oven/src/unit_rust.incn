@@ -73,7 +73,8 @@ pub def compile_incan_library(
     Prepare one activated Incan provider after the shared graph prepared all its dependencies.
 
     1. Describe the provider with its already selected features and profile.
-    2. Bind the graph's exact artifacts without selecting or compiling dependencies again.
+    2. Bind the graph's exact artifacts without selecting or compiling dependencies again, granting import authority
+       to the provider's own Rust facet.
     3. Compile or reuse the library at the consumer's selected artifact path.
     """
     # 1. Defaults have already contributed to the local graph's closure.
@@ -82,7 +83,14 @@ pub def compile_incan_library(
     unit.kind = "library"
     # 2. A provider sees the same selected artifacts as every other consumer in this graph.
     unit.loaves = rebase_loaves(unit.loaves, loaves)
-    unit.externs = [NativeCrate(name=alias, path=artifact) for alias, artifact in bindings]
+    own = rust_facet(unit.project_root, false, reader)?
+    unit.externs = []
+    for alias, artifact in bindings:
+        native = NativeCrate(name=alias, path=artifact)
+        if own.kind != "" and alias == own.crate_name:
+            unit = add_rust_root(unit, native)?
+        else:
+            unit = add_extern(unit, native)?
     unit.search = search
     ready = prepare_linked(unit, toolchain)?
     # 3. The ordinary library stamp preserves a current artifact for either language's consumer.

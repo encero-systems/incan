@@ -29,6 +29,7 @@ pub(super) fn build_module_seed_observed(
 ) -> bir::BodyIrModule {
     let provider_operations = context.provider_operations;
     let registry_package = context.registry_package;
+    let include_inline_tests = context.include_inline_tests;
     let module_identity = match context.library_package {
         Some(package) => incan_semantics_core::package_module_identity(package, module_path),
         None => body_ir_module_identity(module_path),
@@ -99,11 +100,10 @@ pub(super) fn build_module_seed_observed(
         module_identity: &module_identity,
         registry_package,
         provider_operations,
-        rust_module: program.rust_module_path.as_ref().map(|path| path.node.as_str()),
     };
     defaults::attach_nominal_field_defaults(program, &mut nominal_declarations, &lowering_facts);
     defaults::attach_method_partial_defaults(program, &mut nominal_declarations, &lowering_facts);
-    let mut bodies = lower_source_bodies(program, &lowering_facts, observer);
+    let mut bodies = lower_source_bodies(program, &lowering_facts, include_inline_tests, observer);
     let mut static_declarations = collect_source_storage(program, &lowering_facts, &constant_declarations);
     let decorated_bindings =
         decorated_bindings::collect(program, &lowering_facts, &mut bodies, &mut static_declarations);
@@ -126,7 +126,10 @@ pub(super) fn build_module_seed_observed(
             &enum_declarations,
         ),
         enum_declarations,
-        loaf_callables: rust_calls::declarations(type_info),
+        loaf_callables: rust_calls::declarations(type_info)
+            .into_iter()
+            .chain(runtime_nominals::members(type_info))
+            .collect(),
         native_union_declarations: Vec::new(),
         static_declarations,
         module_id,
@@ -270,11 +273,13 @@ pub(super) fn collect_published_constants(
 }
 
 /// Lower executable declarations in source order using the module's already collected checked facts. Inline test
-/// functions remain in the checked module for test-unit selection; ordinary program and library roots never select
-/// them. Attribute externs and transparent native stubs supply compiler adapters rather than executable source bodies.
+/// functions enter Body IR only for a test unit; ordinary program and library compilations must not carry their bodies
+/// or test-only calls. Attribute externs and transparent native stubs supply compiler adapters rather than executable
+/// source bodies.
 pub(super) fn lower_source_bodies(
     program: &ast::Program,
     facts: &BodyIrLoweringFacts<'_, '_>,
+    include_inline_tests: bool,
     observer: &mut dyn FnMut(
         &ast::FunctionDecl,
         ast::Span,
@@ -290,21 +295,12 @@ pub(super) fn lower_source_bodies(
                 ast::Declaration::Partial(partial) => {
                     vec![partials::lower_source_partial(partial, decl.span, facts)]
                 }
-                ast::Declaration::Function(_)
-                    if facts
-                        .type_info
-                        .declarations
-                        .native_attribute_externs
-                        .contains_key(&decl.span) =>
-                {
-                    Vec::new()
-                }
                 ast::Declaration::Function(function) => {
                     let body = lower_function_body(function, decl.span, facts);
                     let selected = observer(function, decl.span, facts, &body);
                     vec![selected.unwrap_or(body)]
                 }
-                ast::Declaration::TestModule(test_module) => test_module
+                ast::Declaration::TestModule(test_module) if include_inline_tests => test_module
                     .body
                     .iter()
                     .filter_map(|nested| match &nested.node {
@@ -315,6 +311,7 @@ pub(super) fn lower_source_bodies(
                         _ => None,
                     })
                     .collect(),
+                ast::Declaration::TestModule(_) => Vec::new(),
                 ast::Declaration::Model(model) => lower_owner_member_bodies(
                     &model.methods,
                     &model.properties,
@@ -370,7 +367,6 @@ pub(super) fn retain_module_representations(
     nominal_carriers::retain(module, type_info, context);
     primitive_adapters::retain(module);
     union_layouts::retain(module);
-    shared_reads::retain(module, program);
 }
 
 /// Collect the identity-bearing leaves of `ty` with their structural paths below `path`, through generic arguments and

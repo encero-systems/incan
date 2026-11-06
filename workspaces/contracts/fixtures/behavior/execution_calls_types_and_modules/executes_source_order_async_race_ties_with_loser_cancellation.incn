@@ -4,7 +4,6 @@
 
 
 """Executes source order async race ties with loser cancellation."""
-import std.async
 
 async def first() -> int:
   """Return `1` for this fixture."""

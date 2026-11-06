@@ -1,7 +1,7 @@
 """
 The home bakery: one store per Incan home that every project, test and CI step asks for its units (DD-0012, RFC 124).
 
-Units are records in the home's segment store (`segment_store`), keyed by unit identity. A unit record names its kind,
+Units are records in the home's platform store, keyed by unit identity. A unit record names its kind,
 its name, the identities it reaches and each payload file: a path inside the unit, the content digest it is stored
 under, its size and whether it is a program. Payload files are content-named files of the store, which rustc and the
 OS read as files. `target/` folders hold views of them: copy-on-write clones a user may run, edit or strip.
@@ -39,24 +39,30 @@ from observation import observe, trace
 from publication import publish
 from unit_publication import record_path, record_verified_payload, source_origins
 from storage_admission import extend, release, reserve, tree_bytes
-from segment_store import (
+from pub::incan_platform.store import (
     EXPECT_REPAIR,
     Lookup,
     Snapshot,
     Transaction,
     begin,
-    claim as claim_key,
     commit,
     get,
     keys,
     lookup as store_lookup,
     owned,
     put,
+)
+from pub::incan_platform.store.files import StoreError
+from pub::incan_platform.store.repair import quarantine_record
+from store_path_conversion import (
+    claim as claim_key,
+    payload_intact,
+    payload_path,
+    prepare_payloads,
+    quarantine_payload,
+    readmit_payload,
     snapshot,
 )
-from segment_files import StoreError
-from segment_payloads import payload_intact, payload_path, prepare_payloads
-from segment_repair import quarantine_payload, quarantine_record, readmit_payload
 from unit import UnitDescription
 from unit_freshness import Key, fingerprint
 from bakery_records import Fact, FactFile, claim_file, decode_fact, encode_fact, record_key, staging_root, store_failure
@@ -464,7 +470,11 @@ def same_file(source: Path, view: Path) -> bool:
             match metadata(view.0):
                 Err(_) => return false
                 Ok(copied) =>
-                    return original.len() == copied.len() and original.mtime() == copied.mtime() and original.mtime_nsec() == copied.mtime_nsec()
+                    return (
+                        original.len() == copied.len()
+                        and original.mtime() == copied.mtime()
+                        and original.mtime_nsec() == copied.mtime_nsec()
+                    )
 
 
 def all_same(store: Path, files: list[FactFile], view: Path, prefix: str) -> bool:
@@ -579,11 +589,11 @@ def bind_library(store: Path, fact: Fact) -> Result[Path, str]:
         else:
             target.symlink_to(source).map_err((error) => error.message())?
     if not selected.joinpath(VIEW_RECORD).is_file():
-        marker = JsonValue.object({
-            "identity": JsonValue.string(fact.identity),
-            "layout": JsonValue.string(layout),
-            "fact": JsonValue.string(encode_fact(fact, "library bindings")?),
-        })
+        marker = JsonValue.object(
+            {"identity": JsonValue.string(fact.identity), "layout": JsonValue.string(layout), "fact": JsonValue.string(
+                encode_fact(fact, "library bindings")?,
+            )},
+        )
         publish(selected.joinpath(VIEW_RECORD), json_text(marker)?)?
     admit_views(fact.files, selected, "")?
     return Ok(selected)

@@ -8,7 +8,7 @@ pub model Index:
 
     pub owners: dict[str, int]
 
-    def value(self) -> int:
+    pub def value(self) -> int:
         """Return the first recorded owner."""
         return self.owners["first"]
 

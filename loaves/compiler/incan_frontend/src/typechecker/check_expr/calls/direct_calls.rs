@@ -1,6 +1,7 @@
 //! Call checking entry points and direct calls to compiler-known, field-constructor, module, class and builtin callees.
 
 use super::*;
+use crate::typechecker::ResolvedNamespaceMemberKind;
 
 impl TypeChecker {
     /// Read a nongeneric variant's declared positional payload signature for contextual checking and both constructor
@@ -117,22 +118,6 @@ impl TypeChecker {
         {
             return Some(result);
         }
-        if let Expr::Field(base, member) = &callee.node
-            && let Some((_, module_path)) = self.imported_module_for_expr(base)
-            && module_path.len() >= 2
-            && module_path.first().is_some_and(|segment| segment == "pub")
-            && let Err(source_modules) =
-                self.resolve_pub_library_module_symbol_member(&module_path[1], &module_path[2..], member)
-        {
-            self.errors.push(errors::pub_library_module_member_ambiguous(
-                &module_path[1],
-                &module_path[2..],
-                member,
-                &source_modules,
-                span,
-            ));
-            return Some(ResolvedType::Unknown);
-        }
         if let Some(name) = Self::explicit_builtin_member_name(callee) {
             let result = self.check_explicit_builtin_call(name, args, span);
             if let Some(builtin) = self.type_info.resolved_builtin_call(span)
@@ -213,76 +198,130 @@ impl TypeChecker {
         if let Expr::Field(base, method) = &callee.node
             && let Some((module_name, module_path)) = self.imported_module_for_expr(base)
         {
+            self.record_module_namespace_reference(base.span, &module_path);
             // Ensure lowering marks the receiver identifier as a module-path binding.
-            let _ = self.check_ident(module_name.as_str(), base.span);
-            let is_public_library_module =
-                module_path.len() >= 2 && module_path.first().is_some_and(|segment| segment == "pub");
-            let resolved = if is_public_library_module {
-                match self.resolve_pub_library_module_symbol_member(&module_path[1], &module_path[2..], method) {
-                    Ok(resolved) => resolved.map(|resolved| {
-                        (
-                            resolved.kind,
-                            resolved.canonical,
-                            resolved.source_module_path,
-                            resolved.source_name,
-                            Some(module_path[1].clone()),
-                        )
-                    }),
-                    Err(source_modules) => {
-                        self.errors.push(errors::pub_library_module_member_ambiguous(
-                            &module_path[1],
-                            &module_path[2..],
-                            method,
-                            &source_modules,
-                            span,
-                        ));
-                        return Some(ResolvedType::Unknown);
-                    }
+            if let Some((head, head_span)) = Self::dotted_namespace_head(base) {
+                let _ = self.check_ident(head, head_span);
+            }
+            let resolved = match self.resolve_module_namespace_member(&module_path, method) {
+                Ok(resolved) => resolved,
+                Err(failure) => {
+                    self.report_namespace_resolution_failure(failure, span);
+                    return Some(ResolvedType::Unknown);
                 }
-            } else {
-                self.resolve_imported_module_function_member_with_source(&module_path, method.as_str())
-                    .map(|(kind, source_module_path)| {
-                        let canonical = self.imported_module_callable_identity(&module_path, method);
-                        (kind, canonical, source_module_path, method.clone(), None)
-                    })
             };
-            if let Some((kind, canonical, source_module_path, source_name, public_library)) = resolved {
-                let callable = format!("{module_name}.{method}");
-                if is_public_library_module
-                    && let Some(projection) = self.lookup_pub_library_module_partial_projection(
-                        &module_path[1],
-                        &module_path[2..],
-                        method,
-                        &callable,
-                    )
-                {
-                    self.type_info.record_partial_projection(projection);
+            let identity = resolved.canonical.clone();
+            let surface_rust_item = resolved.surface_rust_item.clone();
+            let kind = match resolved.kind {
+                ResolvedNamespaceMemberKind::SurfaceType(surface) => {
+                    return Some(self.check_module_surface_constructor(
+                        surface,
+                        identity,
+                        surface_rust_item,
+                        call.type_args,
+                        call.args,
+                        call.span,
+                        call.callee.span,
+                    ));
                 }
-                let source_kind = match &kind {
-                    SymbolKind::Type(type_info) => Self::source_target_kind_for_type_info(type_info).unwrap_or("type"),
-                    _ => "function",
-                };
-                self.record_source_target(span, source_module_path.clone(), source_name.clone(), source_kind);
+                ResolvedNamespaceMemberKind::Symbol(kind) => kind,
+                ResolvedNamespaceMemberKind::Method(_) => return Some(ResolvedType::Unknown),
+            };
+            let callable = format!("{module_name}.{method}");
+            if let Some(library) = resolved.public_library.as_deref()
+                && let Some((_, rest)) = self.loaf_module(&module_path)
+                && let Some(projection) =
+                    self.lookup_pub_library_module_partial_projection(library, &rest, method, &callable)
+            {
+                self.type_info.record_partial_projection(projection);
+            }
+            let source_kind = match &kind {
+                SymbolKind::Type(type_info) => Self::source_target_kind_for_type_info(type_info).unwrap_or("type"),
+                _ => "function",
+            };
+            if let Some(source_module_path) = resolved.source_module_path.as_ref() {
+                self.record_source_target(
+                    span,
+                    source_module_path.clone(),
+                    resolved.source_name.clone(),
+                    source_kind,
+                );
                 self.record_source_target(
                     callee.span,
                     source_module_path.clone(),
-                    source_name.clone(),
+                    resolved.source_name.clone(),
                     source_kind,
                 );
-                if let Some(identity) = canonical {
-                    self.type_info.record_resolved_identity(callee.span, identity);
-                }
-                return Some(self.check_resolved_module_direct_call(
-                    call,
-                    &callable,
-                    kind,
-                    source_module_path,
-                    source_name,
-                    public_library,
-                ));
             }
+            if let Some(identity) = resolved.canonical {
+                self.type_info.record_resolved_identity(callee.span, identity);
+            }
+            return Some(self.check_resolved_module_direct_call(
+                call,
+                &callable,
+                kind,
+                resolved.source_module_path.unwrap_or_default(),
+                resolved.source_name,
+                resolved.public_library,
+            ));
         }
         None
+    }
+
+    /// Check a compiler-owned surface constructor reached through its published standard-library module.
+    ///
+    /// Surface declarations such as `std.web.Html` deliberately have no source AST entry in the Loaf cache. Their
+    /// registry ownership is the same authority used by a direct import, so the qualified form retains that builtin
+    /// identity and constructor contract rather than falling through to value-method lookup.
+    pub(in crate::typechecker::check_expr) fn check_module_surface_constructor(
+        &mut self,
+        surface: SurfaceTypeId,
+        identity: Option<CanonicalSymbolId>,
+        rust_item: Option<RustItemInfo>,
+        type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        span: Span,
+        callee_span: Span,
+    ) -> ResolvedType {
+        let member = surface_types::as_str(surface);
+        if surface != SurfaceTypeId::Html {
+            self.check_call_args(args);
+            return ResolvedType::Unknown;
+        }
+        if !type_args.is_empty() {
+            self.errors
+                .push(errors::explicit_call_site_type_args_not_supported(span));
+        }
+        let parameters = [CallableParam::positional(ResolvedType::Str)];
+        self.check_call_arg_types_for_params(args, &parameters);
+        self.type_info.record_call_site_callable_params_exact(span, &parameters);
+        let identity = identity.or_else(|| self.surface_type_identity(surface));
+        let native_path = identity
+            .as_ref()
+            .and_then(incan_semantics_core::body_ir::native_nominal_item);
+        let checked_layout = rust_item.and_then(|info| {
+            let metadata = info.metadata.as_deref()?;
+            match &metadata.kind {
+                RustItemKind::Type(layout) => Some((info.path, layout.clone())),
+                _ => None,
+            }
+        });
+        if let Some((path, layout)) = checked_layout {
+            self.retain_rust_layout(&path, &layout);
+        }
+        let result = native_path.map_or_else(|| ResolvedType::Named(member.to_string()), ResolvedType::RustPath);
+        if let Some(identity) = identity {
+            self.record_body_ir_html_constructor_with_owner(args, span, &identity);
+            if callee_span != span {
+                self.type_info.record_resolved_identity(callee_span, identity);
+            }
+        }
+        self.record_expr_type(callee_span, result.clone());
+        self.type_info
+            .expressions
+            .ident_kinds
+            .insert(callee_span, IdentKind::TypeName);
+        result
     }
 
     /// Check a resolved module function, overload set or public constructor using its retained declaration facts.
@@ -335,11 +374,15 @@ impl TypeChecker {
             ),
             (
                 SymbolKind::Type(type_info @ (TypeInfo::Model(_) | TypeInfo::Class(_) | TypeInfo::Newtype(_))),
-                Some(library),
+                library,
             ) => {
-                let mut source_type_path = source_module_path.iter().skip(2).cloned().collect::<Vec<_>>();
-                source_type_path.push(source_name);
-                let canonical_name = canonical_public_library_type_name(&library, &source_type_path.join("::"));
+                let canonical_name = if let Some(library) = library {
+                    let mut source_type_path = source_module_path.iter().skip(2).cloned().collect::<Vec<_>>();
+                    source_type_path.push(source_name.clone());
+                    canonical_public_library_type_name(&library, &source_type_path.join("::"))
+                } else {
+                    source_name
+                };
                 self.check_public_module_type_constructor_call(
                     PublicModuleConstructorContext {
                         display_name: callable,
@@ -352,6 +395,10 @@ impl TypeChecker {
                     callee.span,
                 )
             }
+            (SymbolKind::RustItem(info), _) => match self.check_declared_rust_direct_call(&info, call) {
+                Some(result) => result,
+                None => ResolvedType::Unknown,
+            },
             _ => ResolvedType::Unknown,
         }
     }

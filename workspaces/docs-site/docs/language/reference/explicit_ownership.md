@@ -15,6 +15,8 @@ Each annotation takes exactly one type argument. These are canonical prelude dec
 
 Owning a value does not erase the dependencies it holds: an owned value that retains a borrow keeps its source borrowed. Shared access follows the underlying type's checked interior-mutability operations; it is not a promise of deep immutability.
 
+This applies both to declared result-source relationships and to compiler-defined lazy results. `list.iter()` and a generator expression over a list place retain a shared dependency on that place; iterator adapters, aggregates, closures and builtin result carriers preserve it. A moved or temporary list transfers its storage to the lazy result instead. No form implicitly clones the complete list.
+
 ## Inputs
 
 A `Borrowed[T]` parameter receives shared access and a `BorrowedMut[T]` parameter exclusive access to the caller's storage; neither copies the argument. An `Owned[T]` parameter transfers a non-Copy argument, so the caller cannot use it afterward, and copies a Copy argument. A method's receiver is a borrowed input: `self` grants shared access and `mut self` exclusive, writable access. An explicit mode takes precedence over the parameter's inferred passing mode; the body cannot weaken it.
@@ -27,7 +29,7 @@ def replace(mut value: BorrowedMut[int]) -> None:
 def main() -> int:
     mut value = 3
     replace(value)
-    return value  # 9
+    return value  # accepted: returns 9
 ```
 
 A call borrows each borrowed argument from existing storage for the invocation. A fresh expression supplies temporary storage for that call. Borrowing a variable through parentheses preserves that variable's permissions; it does not create a fresh writable owner. Assigning to a writable borrowed parameter replaces the caller's value; assigning to a mutable owned parameter replaces the callee's own value. Immutable, static and interop access restrictions still apply: an annotation cannot grant permission to change a source that is otherwise read-only.
@@ -125,8 +127,8 @@ A call that returns a view borrows the source argument for as long as the view i
 def main() -> None:
     mut customer = Customer(name="Sam", address=Address(city="Utrecht"))
     mut address = customer.edit_address()
-    customer.name = "Samuel"  # a disjoint sibling field
-    address.city = "Rotterdam"  # writes customer.address.city
+    customer.name = "Samuel"  # accepted: a disjoint sibling field
+    address.city = "Rotterdam"  # accepted: writes customer.address.city
 ```
 
 A returned view can itself be the source of a further view or a fluent call; every derived view keeps the original source dependency. A view placed in a `Result`, an `Option`, a tuple or another value keeps its dependency through that value.
@@ -188,7 +190,7 @@ def add_or_grow(mut buffer: BorrowedMut[SampleBuffer], sample: int) -> int:
     match buffer.append(sample):
         Ok(view) => return len(view.samples)
         Err(_) =>
-            buffer.capacity += 1  # the error arm holds no view
+            buffer.capacity += 1  # accepted: the error arm holds no view
             return 0
 ```
 
@@ -199,7 +201,7 @@ class Tag:
     pub name: str
     pub hits: int
 
-    def label(self) -> Tuple[int, Borrowed[str]] from self.name:
+    pub def label(self) -> Tuple[int, Borrowed[str]] from self.name:
         return (self.hits, self.name)
 
 
@@ -226,12 +228,12 @@ def after_last_call(start: int) -> int:
     view: Borrowed[int] = owned
     read: () -> int = () => view + 1
     seen = read()
-    owned += 10  # after the closure's last call
+    owned += 10  # accepted: after the closure's last call
     return seen + owned
 
 
 def label_width(name: Borrowed[str], pad: int) -> int:
-    width: (int) -> int = (extra) => len(name) + pad + extra  # holds a reference to name
+    width: (int) -> int = (extra) => len(name) + pad + extra  # accepted: holds a reference to name
     return width(1) + width(2)
 ```
 
@@ -246,7 +248,7 @@ from rust::std::collections import HashMap
 
 
 def add(mut counts: BorrowedMut[HashMap[str, int]], key: str) -> bool:
-    counts.insert(key, 1)  # moves key into the map
+    counts.insert(key, 1)  # accepted: moves key into the map
     return counts.contains_key("b")
 
 
@@ -256,7 +258,7 @@ def hits(counts: Borrowed[HashMap[str, int]], key: str) -> int:
         None => return 0
 ```
 
-A native result that borrows its receiver or an input, such as the `Option<&V>` that `HashMap.get` returns, is a returned view of that source: the source stays borrowed while the result is used. The native lifetime relationship is preserved as declared; it is not reconstructed from parameter names. A native lifetime relationship that one source cannot express, and a native string or slice representation that differs from the Incan type it would be read as, are refused with `INCAN-T0123`. An Incan callable called from native code keeps the same access and source contract.
+A native result that borrows its receiver or an input is expressed with the same Incan modes as any other borrowed result: a shared result is `Borrowed[T]` and an exclusive result is `BorrowedMut[T]`. `HashMap.get`, for example, carries a shared view in its `Option` result. The Rust signature supplies the relationship: receiver lifetime elision selects the receiver, otherwise ordinary elision selects the sole reference input, and a named result lifetime retains every input carrying that lifetime. `Option` and `Result` payloads and native owner types with lifetime parameters keep those loans until their last dependent use. A static result retains no caller-owned source. If the signature gives no admitted Incan owner, the call is refused with `INCAN-T0123`; the compiler never guesses an owner or clones the value. An Incan callable called from native code keeps the same access and source contract.
 
 ## Async bodies
 

@@ -32,6 +32,11 @@ pub(crate) struct CheckedOwnedLocal<'a> {
 }
 
 impl<'a> CheckedInputBody<'a> {
+    /// Whether this aggregate expression physically stores references retained by its checked owned local.
+    pub(crate) fn dependent_value(&self, span: HirSourceSpan) -> bool {
+        self.graph.dependent_values.contains(&span)
+    }
+
     /// Select the initializer retained by this exact declaration. The body proof has already authenticated its
     /// event index, Copy/Move agreement and canonical destination; no source-span search reconstructs the edge.
     pub(crate) fn owned_local(

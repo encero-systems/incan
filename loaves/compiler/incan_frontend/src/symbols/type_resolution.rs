@@ -173,9 +173,17 @@ where
         return ResolvedType::RustPath(format!("{}<{rendered_args}>", info.path));
     }
     if name == "Type" {
-        return ResolvedType::TypeToken(Box::new(
-            resolved_args.first().cloned().unwrap_or(ResolvedType::Unknown),
-        ));
+        let represented = resolved_args.first().cloned().unwrap_or(ResolvedType::Unknown);
+        let represented = match &represented {
+            ResolvedType::Named(name) => symbols
+                .module_type_identity(name)
+                .filter(|identity| identity.kind == SemanticSourceTargetKind::Trait)
+                .cloned()
+                .map(ResolvedType::Trait)
+                .unwrap_or(represented),
+            _ => represented,
+        };
+        return ResolvedType::TypeToken(Box::new(represented));
     }
     if let Some(id) = collections::from_str(name) {
         return ResolvedType::builtin_generic(id, resolved_args);
@@ -266,29 +274,33 @@ pub fn render_resolved_type_as_rust_arg(ty: &ResolvedType) -> String {
         ResolvedType::Bool => "bool".to_string(),
         ResolvedType::Str => "String".to_string(),
         ResolvedType::Bytes => "Vec<u8>".to_string(),
-        ResolvedType::FrozenStr => "incan_std_core::frozen::FrozenStr".to_string(),
-        ResolvedType::FrozenBytes => "incan_std_core::frozen::FrozenBytes".to_string(),
+        ResolvedType::FrozenStr => "incan_std_primitives::frozen::FrozenStr".to_string(),
+        ResolvedType::FrozenBytes => "incan_std_primitives::frozen::FrozenBytes".to_string(),
         ResolvedType::FrozenList(inner) => format!(
-            "incan_std_core::frozen::FrozenList<{}>",
+            "incan_std_primitives::frozen::FrozenList<{}>",
             render_resolved_type_as_rust_arg(inner)
         ),
         ResolvedType::FrozenDict(key, value) => format!(
-            "incan_std_core::frozen::FrozenDict<{}, {}>",
+            "incan_std_primitives::frozen::FrozenDict<{}, {}>",
             render_resolved_type_as_rust_arg(key),
             render_resolved_type_as_rust_arg(value)
         ),
         ResolvedType::FrozenSet(inner) => format!(
-            "incan_std_core::frozen::FrozenSet<{}>",
+            "incan_std_primitives::frozen::FrozenSet<{}>",
             render_resolved_type_as_rust_arg(inner)
         ),
         ResolvedType::Unit => "()".to_string(),
         ResolvedType::Named(name) => name
             .strip_prefix("pub::")
             .map_or_else(|| name.clone(), ToString::to_string),
+        ResolvedType::Trait(identity) => identity.declaration_name.clone(),
         ResolvedType::TypeVar(name) => name.clone(),
         ResolvedType::Generic(name, args) => {
             if collections::from_str(name.as_str()) == Some(CollectionTypeId::Tuple) {
                 return render_rust_tuple(args);
+            }
+            if args.is_empty() {
+                return name.clone();
             }
             if name == "[]"
                 && let [element] = args.as_slice()
@@ -301,10 +313,10 @@ pub fn render_resolved_type_as_rust_arg(ty: &ResolvedType) -> String {
                 Some(CollectionTypeId::Set) => "std::collections::HashSet",
                 Some(CollectionTypeId::Option) => "Option",
                 Some(CollectionTypeId::Result) => "Result",
-                Some(CollectionTypeId::FrozenList) => "incan_std_core::frozen::FrozenList",
-                Some(CollectionTypeId::FrozenDict) => "incan_std_core::frozen::FrozenDict",
-                Some(CollectionTypeId::FrozenSet) => "incan_std_core::frozen::FrozenSet",
-                Some(CollectionTypeId::Generator) => "incan_std_core::iter::Generator",
+                Some(CollectionTypeId::FrozenList) => "incan_std_primitives::frozen::FrozenList",
+                Some(CollectionTypeId::FrozenDict) => "incan_std_primitives::frozen::FrozenDict",
+                Some(CollectionTypeId::FrozenSet) => "incan_std_primitives::frozen::FrozenSet",
+                Some(CollectionTypeId::Generator) => "incan_std_primitives::iter::Generator",
                 Some(CollectionTypeId::Tuple) | None => name,
             };
             let rendered_args = args

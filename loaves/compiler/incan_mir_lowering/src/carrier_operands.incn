@@ -35,6 +35,7 @@ from frame import (
     place_type,
     Builder,
     temporary,
+    dereferenced_place,
     forget_owned,
     bind_read_value,
     track_rvalue_moves,
@@ -109,6 +110,9 @@ pub def boundary_plan_operand(
 ) -> Result[Operand, str]:
     """Convert an evaluated value to its checked boundary carrier, retaining exact native aliases, tuple layouts and ownership without repeating source effects."""
     source = operand_type(builder, value)?
+    match copied_native_scalar_referent(value, source, target, span)?:
+        Some(copied) => return Ok(copied)
+        None => pass
     if source == PlanType.FrozenBytes and target == PlanType.List(ListLeaf.U8, 1):
         frozen = temporary(builder, source, span)
         builder.emit(plan_assign(frozen, RvalueKind.Use(value), span))
@@ -201,6 +205,26 @@ pub def boundary_plan_operand(
             builder.emit(plan_assign(output, operation, span))
             builder.owned.append(output.local)
             return Ok(read_place(output, true, span))
+
+
+def copied_native_scalar_referent(
+    value: Operand,
+    source: PlanType,
+    target: PlanType,
+    span: SourceSpan,
+) -> Result[Option[Operand], str]:
+    """Copy a signature-borrowed scalar through its native reference when the checked boundary expects its referent."""
+    mut elements: list[PlanType] = []
+    match source:
+        (PlanType.ScalarRef(items) | PlanType.ScalarMutRef(items)) => elements = items
+        _ => return Ok(None)
+    if len(elements) != 1 or elements[0] != target:
+        return Ok(None)
+    match value.kind:
+        (OperandKind.Copy(place) | OperandKind.Move(place)) =>
+            referent = dereferenced_place(place, target, span)?
+            return Ok(Some(read_place(referent, false, span)))
+        _ => return Err("invalid Body IR native scalar reference operand")
 
 
 def converted_carrier_operand(
@@ -379,7 +403,7 @@ def bind_shared_enum_payload(
     mut builder: Builder,
     local: int,
     payload: Place,
-    fact: &OwnershipFact,
+    fact: OwnershipFact,
     span: SourceSpan,
 ) -> Result[bool, str]:
     """Preserve a checker-retained shared reference binding: copy a reference payload or borrow its owned nominal field. Match declaration slots rather than diagnostic names, and never materialize owned text or move an owner's payload into a reference slot."""
@@ -408,7 +432,7 @@ pub def bind_enum_fields(
     mut builder: Builder,
     source: Place,
     variant: int,
-    fields: &list[RustPattern],
+    fields: list[RustPattern],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Bind checked enum payload slots through the same downcast and ownership path for source enums and unions."""
@@ -457,8 +481,8 @@ def moved_native_enum_payload(
     mut builder: Builder,
     source: Place,
     payload: Place,
-    fields: &list[RustPattern],
-    fact: &OwnershipFact,
+    fields: list[RustPattern],
+    fact: OwnershipFact,
     span: SourceSpan,
 ) -> Result[Operand, str]:
     """

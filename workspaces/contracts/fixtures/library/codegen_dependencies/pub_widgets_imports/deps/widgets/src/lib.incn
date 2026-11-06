@@ -14,7 +14,7 @@ pub model Mapper[T, U]:
 
     pub transform: (T) -> U
 
-    def apply(self, value: T) -> U:
+    pub def apply(self, value: T) -> U:
         """Apply the stored callback to one value."""
         transform = self.transform
         return transform(value)

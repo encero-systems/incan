@@ -171,6 +171,45 @@ pub(crate) struct ReturnedView<'a> {
     pub carried: Option<usize>,
 }
 
+/// Select one top-level owned result independently of whether it retains a declared source. `Owned[T]` is a
+/// boundary contract rather than a runtime wrapper, so callers and bodies use the underlying `T` value in both
+/// forms. Nested owned components need aggregate dependency facts and remain outside this projection.
+pub(crate) fn owned_result(
+    contract: Option<&CheckedOwnershipContract>,
+) -> Result<Option<&AccessMode<crate::symbols::ResolvedType>>, &'static str> {
+    use incan_lang::lang::types::ownership::OwnershipMode;
+    let Some(contract) = contract else { return Ok(None) };
+    if contract.schema_version != 1 {
+        return Err("unsupported checked ownership contract schema");
+    }
+    let mut results = contract.modes.iter().filter(|mode| mode.component.parameter.is_none());
+    let Some(mode) = results.next() else { return Ok(None) };
+    if mode.mode != OwnershipMode::Owned || !mode.component.children.is_empty() {
+        return Ok(None);
+    }
+    if results.next().is_some() {
+        return Err("an owned result with nested access needs aggregate dependency facts");
+    }
+    Ok(Some(mode))
+}
+
+/// A top-level owned result that retains the declaration's one result-source dependency.
+pub(crate) fn owned_result_source(
+    contract: Option<&CheckedOwnershipContract>,
+) -> Result<
+    Option<(
+        &AccessMode<crate::symbols::ResolvedType>,
+        &ResultDependency<incan_semantics_core::CanonicalSymbolId>,
+    )>,
+    &'static str,
+> {
+    let Some(contract) = contract else { return Ok(None) };
+    let Some(mode) = owned_result(Some(contract))? else {
+        return Ok(None);
+    };
+    Ok(contract.result_source.as_ref().map(|source| (mode, source)))
+}
+
 /// Resolve a direct or carried returned view. Owned aggregates retaining a dependency and views nested elsewhere in a
 /// result type need aggregate dependency facts and stay refused; absence of both result facts is an ordinary result.
 pub(crate) fn returned_view(
@@ -185,7 +224,8 @@ pub(crate) fn returned_view(
     let mut results = contract.modes.iter().filter(|mode| mode.component.parameter.is_none());
     match (results.next(), &contract.result_source) {
         (None, None) => Ok(None),
-        (None, Some(_)) => Err("an owned result that retains a source dependency requires aggregate dependency facts"),
+        (None, Some(_)) => Err("a result source has no returned access mode"),
+        (Some(mode), None) if mode.mode == OwnershipMode::Owned && mode.component.children.is_empty() => Ok(None),
         (Some(_), None) => Err("borrowed result has no source dependency"),
         (Some(mode), Some(source)) => {
             let carried = match mode.component.children.as_slice() {
@@ -201,7 +241,10 @@ pub(crate) fn returned_view(
                 OwnershipMode::Reference => IncanInputAccess::Exclusive,
                 OwnershipMode::Borrowed => IncanInputAccess::Shared,
                 OwnershipMode::BorrowedMut => return Err("returned exclusive access is written Reference[T]"),
-                OwnershipMode::Owned => return Err("an owned result cannot retain access to its source"),
+                OwnershipMode::Owned if carried.is_none() => return Ok(None),
+                OwnershipMode::Owned => {
+                    return Err("an owned result with nested access needs aggregate dependency facts");
+                }
             };
             Ok(Some(ReturnedView {
                 mode,
@@ -221,6 +264,9 @@ pub(crate) fn result_value_type(
     result: &crate::symbols::ResolvedType,
 ) -> Result<crate::symbols::ResolvedType, &'static str> {
     use crate::symbols::ResolvedType;
+    if let Some(mode) = owned_result(contract)? {
+        return Ok(mode.underlying.clone());
+    }
     let Some(view) = returned_view(contract)? else {
         return Ok(result.clone());
     };

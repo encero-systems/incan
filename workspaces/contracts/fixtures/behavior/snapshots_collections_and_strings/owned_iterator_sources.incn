@@ -44,6 +44,48 @@ def generator_reused(values: list[int]) -> int:
     return len(generated) + first
 
 
+def adapters_end_before_mutation() -> int:
+    """End a carried dependency at its terminal call before changing the source."""
+    mut values = [1, 2, 3]
+    total = values.iter().map(double).take(2).sum()
+    values.append(total)
+    return values[3]
+
+
+def explicit_snapshot_is_independent() -> int:
+    """Keep an explicitly cloned source independent from later source changes."""
+    mut values = [1, 2, 3]
+    generated = values.clone().iter()
+    values.append(4)
+    return generated.sum() + values[3]
+
+
+def returned_local_source() -> Generator[int]:
+    """Transfer a local list into its escaping generator."""
+    values = [2, 4, 6]
+    return (value for value in values)
+
+
+def branch_last_use(selected: bool) -> int:
+    """End the dependency independently on a branch that consumes it and a branch that never does."""
+    mut values = [1, 2, 3]
+    generated = values.iter()
+    if selected:
+        total = generated.sum()
+        values.append(total)
+    else:
+        values.append(4)
+    return values[3]
+
+
+def nested_source_ends_before_mutation() -> int:
+    """Carry a nested-list dependency through a generator, then change the outer list after collection."""
+    mut rows = [[1, 2], [3]]
+    lengths = (len(row) for row in rows).collect()
+    rows.append([4, 5, 6])
+    return lengths[0] + len(rows[2])
+
+
 def main() -> None:
     """1. Exercise flat sources. 2. Compare nested iterator forms and reread their original source."""
     # 1. Exercise flat sources.
@@ -57,6 +99,12 @@ def main() -> None:
     println(generated_direct[0])
     println(reused_iter)
     println(reused_gen)
+    assert adapters_end_before_mutation() == 6
+    assert explicit_snapshot_is_independent() == 10
+    assert returned_local_source().sum() == 12
+    assert branch_last_use(true) == 6
+    assert branch_last_use(false) == 4
+    assert nested_source_ends_before_mutation() == 5
 
     # 2. Compare nested iterator forms and reread their original source.
     show_nested_sources()

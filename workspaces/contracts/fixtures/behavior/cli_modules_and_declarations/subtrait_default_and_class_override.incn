@@ -64,10 +64,10 @@ class Animal with Root:
     def grow(self) -> int:
         return 1
 
-    def feed(self) -> int:
+    pub def feed(self) -> int:
         return self.grow()
 
-    def twice(self) -> int:
+    pub def twice(self) -> int:
         return self.feed() + self.feed()
 
 
@@ -77,7 +77,7 @@ class Dog extends Animal:
 
 
 class Puppy extends Dog:
-    def total(self) -> int:
+    pub def total(self) -> int:
         return self.twice()
 
 

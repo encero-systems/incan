@@ -10,6 +10,7 @@ use crate::typechecker::{IdentKind, OpenRustGenericCall};
 use incan_lang::interop::{
     RustCollectionFamily, RustFunctionSig, RustItemKind, RustItemMetadata, RustMethodSig, RustTypeInfo,
 };
+use incan_lang::lang::surface::types as surface_types;
 use incan_lang::lang::types::numerics::{self, NumericTypeId};
 
 /// The signature and owner context selected before validating an inherent method's written arguments.
@@ -25,21 +26,26 @@ struct InherentSpecialization {
 }
 
 impl TypeChecker {
-    /// Retain an imported native value's inherent length method through ordinary metadata dispatch. Builtin source
-    /// collections and text keep their own length contract; native lengths return int or usize. No native identity
-    /// or missing method is invented.
+    /// Retain an imported native value's inherent length method through ordinary metadata dispatch.
+    ///
+    /// A binding may expose a source collection while retaining a native borrowed carrier, such as `&[u8]` behind
+    /// `bytes`; that executable carrier selects its own `len`. Ordinary source collections and text keep their builtin
+    /// length contract, and native lengths return int or usize. No native identity or missing method is invented.
     pub(in crate::typechecker) fn retain_native_length_call(
         &mut self,
         receiver: &crate::ast::Spanned<crate::ast::Expr>,
         ty: &ResolvedType,
         span: crate::ast::Span,
     ) -> bool {
-        if matches!(ty, ResolvedType::Generic(name, _) if crate::typechecker::helpers::collection_type_id(name).is_some())
-            || matches!(ty, ResolvedType::RustPath(path) if self.rust_array_parts(path).is_some())
+        let native = self.rust_native_value_type(receiver).unwrap_or_else(|| ty.clone());
+        if (&native == ty
+            && matches!(ty, ResolvedType::Generic(name, _)
+                if crate::typechecker::helpers::collection_type_id(name).is_some()))
+            || matches!(&native, ResolvedType::RustPath(path) if self.rust_array_parts(path).is_some())
         {
             return false;
         }
-        let Some((path, _, _, _)) = self.rust_identity_for_type(ty) else {
+        let Some(path) = self.rust_canonical_path_for_receiver_type(&native) else {
             return false;
         };
         let Some(metadata) = self.rust_item_metadata_for_path(&path) else {
@@ -313,6 +319,17 @@ impl TypeChecker {
         )
     }
 
+    /// Normalize a compatibility facet's inspected impl owner to the declaration that actually owns the method.
+    fn canonical_runtime_method(selected: &RustMethodSig) -> RustMethodSig {
+        let mut canonical = selected.clone();
+        if let Some(template) = canonical.impl_self_type.as_deref()
+            && let Some(owner) = canonical_runtime_rust_display(template)
+        {
+            canonical.impl_self_type = Some(owner);
+        }
+        canonical
+    }
+
     /// Check receiver mutability, specialize the selected signature, validate arguments and retain that same callee.
     fn check_native_inherent_method(
         &mut self,
@@ -322,6 +339,8 @@ impl TypeChecker {
         receiver_is_type: bool,
         preserves_shape: bool,
     ) -> Option<ResolvedType> {
+        let selected = Self::canonical_runtime_method(selected);
+
         // ---- Receiver contract ----
         let errors_before = self.errors.len();
         let signature = &selected.signature;
@@ -383,7 +402,7 @@ impl TypeChecker {
             .map(|receiver| self.rust_closed_owner(&receiver, owner, call.rust_path))
             .map(|receiver| self.primitive_receiver(receiver, owner));
         let retained = self.retain_checked_rust_method(
-            selected,
+            &selected,
             if specialized.specializes_owner {
                 &[]
             } else {
@@ -412,6 +431,7 @@ impl TypeChecker {
             .get(&call.span)
             .map(|checked| self.rust_source_result_type(&checked.return_type, &result))
             .unwrap_or(result);
+        let result = self.native_borrowed_source_result(call.span, result);
         if receiver_is_type
             && signature.return_type.trim() == "Self"
             && let Some(rusttype) = self.rusttype_associated_receiver(&call)
@@ -674,4 +694,11 @@ impl TypeChecker {
         }
         native
     }
+}
+
+/// Preserve generic arguments while canonicalizing a runtime surface type's compatibility crate spelling.
+fn canonical_runtime_rust_display(display: &str) -> Option<String> {
+    let canonical = surface_types::canonical_runtime_rust_path(display)?;
+    let suffix = display.find('<').map_or("", |index| &display[index..]);
+    Some(format!("{canonical}{suffix}"))
 }

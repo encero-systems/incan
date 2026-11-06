@@ -130,16 +130,6 @@ impl TypeCheckInfo {
         self.references.resolved_write_types.insert(key, ty);
     }
 
-    /// Return whether the identifier at `span` resolved to the ambient `std.logging` logger binding.
-    pub fn is_ambient_logger_binding(&self, span: Span) -> bool {
-        self.expressions.ambient_logger_bindings.contains(&span)
-    }
-
-    /// Record that an identifier resolved to the ambient `std.logging` logger binding.
-    pub fn record_ambient_logger_binding(&mut self, span: Span) {
-        self.expressions.ambient_logger_bindings.insert(span);
-    }
-
     /// Return whether the `dict.get(key)` call at `span` only has its result read (see
     /// [`ExpressionArtifacts::read_only_dict_lookups`]).
     pub fn is_read_only_dict_lookup(&self, span: Span) -> bool {
@@ -334,6 +324,11 @@ impl TypeCheckInfo {
         self.calls.resolved_builtin_calls.get(&call_span).copied()
     }
 
+    /// Return the compiler-owned builtin method selected for one checked call.
+    pub fn resolved_builtin_method_call(&self, call_span: Span) -> Option<BuiltinMethodId> {
+        self.calls.resolved_builtin_method_calls.get(&call_span).copied()
+    }
+
     /// Return the `message()` call a declared type displays through, or `None` when it has a `Display` of its own or
     /// does not adopt `Error`.
     ///
@@ -352,6 +347,11 @@ impl TypeCheckInfo {
     /// Record the compiler-owned builtin selected for one checked call.
     pub fn record_resolved_builtin_call(&mut self, call_span: Span, builtin: BuiltinFnId) {
         self.calls.resolved_builtin_calls.insert(call_span, builtin);
+    }
+
+    /// Record the compiler-owned builtin method selected for one checked call.
+    pub fn record_resolved_builtin_method_call(&mut self, call_span: Span, builtin: BuiltinMethodId) {
+        self.calls.resolved_builtin_method_calls.insert(call_span, builtin);
     }
 
     /// Record the checked target fact for one compiler-owned `isinstance` call.

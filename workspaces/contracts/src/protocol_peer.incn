@@ -67,14 +67,14 @@ pub class Peer:
                     Ok(_) => return Ok(None)
                     Err(error) => return Err(f"cannot write protocol input: {error}")
 
-    def notify(mut self, method: str, params: JsonValue) -> Result[None, str]:
+    pub def notify(mut self, method: str, params: JsonValue) -> Result[None, str]:
         """Omit null parameters for parameterless LSP notifications."""
         mut envelope = {"jsonrpc": JsonValue.string("2.0"), "method": JsonValue.string(method)}
         if not params.is_null():
             envelope["params"] = params
         return self.send(JsonValue.object(envelope))
 
-    def request(mut self, identifier: int, method: str, params: JsonValue) -> Result[JsonValue, str]:
+    pub def request(mut self, identifier: int, method: str, params: JsonValue) -> Result[JsonValue, str]:
         """Read the matching result while allowing intervening server notifications."""
         mut envelope = {"jsonrpc": JsonValue.string("2.0"), "id": JsonValue.int(identifier), "method": JsonValue.string(
             method,
@@ -92,7 +92,7 @@ pub class Peer:
                 None => pass
         return Err(f"protocol response did not arrive within {MAX_RESPONSE_MESSAGES} messages")
 
-    def diagnostics(mut self, uri: str, version: int) -> Result[None, str]:
+    pub def diagnostics(mut self, uri: str, version: int) -> Result[None, str]:
         """Wait for the LSP's completed checking pass before asking navigation questions."""
         for attempt in range(MAX_RESPONSE_MESSAGES):
             reply = self.receive()?
@@ -146,7 +146,7 @@ pub class Peer:
                 return parse(decode(line.getvalue())?).map_err((error) => error.message())
             line.write_bytes(byte).map_err((error) => error.message())?
 
-    def finish(mut self) -> Result[None, str]:
+    pub def finish(mut self) -> Result[None, str]:
         """Close stdin before waiting so a pending transport read observes EOF, including after LSP exit."""
         closed: Option[Rc[RefCell[UnixStream]]] = take(self.input)
         close_pipe(closed)

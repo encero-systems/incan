@@ -1,0 +1,9 @@
+# behavior: a compiled dependency's unmarked method is private to its type, so a consumer's call to it is refused at check time (#2570)
+# expect-diagnostic: INCAN-T0001
+from pub::ledger import Ledger
+
+
+def main() -> None:
+    ledger = Ledger(total=4)
+    println(ledger.report())
+    println(ledger.checksum())

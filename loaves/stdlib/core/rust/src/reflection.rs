@@ -3,7 +3,7 @@
 //! The `HasFieldInfo` trait provides introspection capabilities for structured types, allowing generated code to query
 //! field names and types at runtime.
 
-use crate::frozen::{FrozenDict, FrozenList, FrozenStr};
+use incan_std_primitives::frozen::{FrozenDict, FrozenList, FrozenStr};
 use std::marker::PhantomData;
 
 /// Provides reflection information about a type's fields.

@@ -1,7 +1,6 @@
 # behavior: a route handler declared to return an int is refused at check time because an int has no response form
 # expect-diagnostic: INCAN-T0107
 
-import std.async
 from std.web import route, GET, POST
 
 

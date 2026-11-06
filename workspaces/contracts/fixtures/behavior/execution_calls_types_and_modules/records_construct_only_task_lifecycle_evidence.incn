@@ -4,7 +4,6 @@
 
 
 """Records construct only task lifecycle evidence."""
-import std.async
 
 async def child() -> int:
   """Fail the assertion when this callable is reached."""

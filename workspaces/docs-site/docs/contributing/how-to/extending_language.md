@@ -26,6 +26,6 @@ Update formatting, source diagnostics and graph facts when the language surface 
 
 ## Validate and document
 
-Run the focused case, then affected whole families. Audit changed Rust functions for rustdoc and changed Incan for readable structure. Run `make pre-commit-fast`, `make reference-contract-check` for references and `make docs-build`.
+Run the focused case, then affected whole families. Audit changed Rust functions for rustdoc and changed Incan for readable structure. Run `make pre-commit` and `make docs` for documentation changes.
 
 Public references state syntax, types, defaults and refusals. Task procedures belong in how-tos; rationale belongs in explanations.

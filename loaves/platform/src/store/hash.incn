@@ -1,0 +1,54 @@
+"""Store hashing through SHA-256 and bounded primitive file reads."""
+
+from rust::sha2 import Digest, Sha256
+from std.primitives.fs import open_read, read_chunk
+from std.primitives.fs.mapping import MappedView
+from crate.store.path import StoreIoError, StorePath as Path
+
+
+pub class Sha256Hasher:
+    """Incremental store SHA-256 state over owned bytes and immutable mapped views."""
+
+    handle: Sha256
+
+    pub def update(mut self, chunk: bytes) -> None:
+        """Add owned bytes to this digest."""
+        Digest.update(self.handle, chunk.as_slice())
+
+    pub def update_view(mut self, view: MappedView) -> None:
+        """Add a mapped view without copying it out of its owner."""
+        Digest.update(self.handle, view.0)
+
+    pub def finalize_bytes(mut self) -> bytes:
+        """Return the digest and reset this handle for another stream."""
+        return self.handle.finalize_reset().to_vec()
+
+
+pub class sha256:
+    """Store SHA-256 constructors and one-shot hashing."""
+
+    @staticmethod
+    pub def digest(data: bytes) -> bytes:
+        """Return the SHA-256 digest of `data`."""
+        mut hasher = sha256.new()
+        hasher.update(data)
+        return hasher.finalize_bytes()
+
+    @staticmethod
+    pub def new() -> Sha256Hasher:
+        """Create empty incremental SHA-256 state."""
+        return Sha256Hasher(handle=Sha256.new())
+
+
+pub def file_digest(path: Path, algorithm: str) -> Result[bytes, StoreIoError]:
+    """Hash a file in bounded chunks; the store format currently admits only SHA-256."""
+    if algorithm != "sha256":
+        return Err(StoreIoError(path=path.0, detail=f"unsupported store digest algorithm {algorithm}"))
+    file = open_read(path.primitive()).map_err((detail) => StoreIoError(path=path.0, detail=detail))?
+    mut hasher = sha256.new()
+    loop:
+        chunk = read_chunk(file, 65536).map_err((detail) => StoreIoError(path=path.0, detail=detail))?
+        if len(chunk) == 0:
+            break
+        hasher.update(chunk)
+    return Ok(hasher.finalize_bytes())

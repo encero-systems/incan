@@ -31,6 +31,10 @@ pub(super) fn project_diagnostics(
             row.extend(error.notes().iter().cloned());
             row.push(error.hints().len().to_string());
             row.extend(error.hints().iter().cloned());
+            match error.primary_label() {
+                Some(label) => row.extend(["primary-label".into(), label.into()]),
+                None => row.push("no-primary-label".into()),
+            }
             match (error.expected(), error.actual()) {
                 (Some(expected), Some(actual)) => {
                     row.extend(["expected-actual".into(), expected.into(), actual.into()])
@@ -78,6 +82,11 @@ pub(super) fn read_diagnostic(
     }
     for hint in strings(&mut values)? {
         error = error.with_hint(hint);
+    }
+    match next(&mut values)? {
+        "primary-label" => error = error.with_primary_label(next(&mut values)?),
+        "no-primary-label" => {}
+        _ => return Err(NodeBindingError::MissingNode),
     }
     match next(&mut values)? {
         "expected-actual" => {

@@ -407,17 +407,18 @@ pub(super) fn format_param(param: &ParamExport) -> String {
     };
     let marker = if param.is_mut { "mut " } else { "" };
     let default = if param.has_default { " = ..." } else { "" };
-    format!(
-        "{prefix}{marker}{}: {}{default}",
-        param.name,
-        format_type_ref(&param.ty)
-    )
+    let type_name = param
+        .surface_type_name
+        .clone()
+        .unwrap_or_else(|| format_type_ref(&param.ty));
+    format!("{prefix}{marker}{}: {}{default}", param.name, type_name)
 }
 
 /// Format a manifest-level type reference for concise hover display.
 pub(super) fn format_type_ref(ty: &TypeRef) -> String {
     match ty {
         TypeRef::Named { name, .. } => name.clone(),
+        TypeRef::Trait { identity } => identity.declaration_name.clone(),
         TypeRef::Applied { name, args, .. } => {
             format!(
                 "{name}[{}]",

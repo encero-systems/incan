@@ -31,21 +31,21 @@ from pub::incan_mir_plan import assign as plan_assign, block as plan_block, plac
 from frame import Builder, temporary, terminate_call, literal
 
 
-pub def is_computed_static(declaration: &StaticDeclaration) -> bool:
+pub def is_computed_static(declaration: StaticDeclaration) -> bool:
     """Report whether a static's initializer is a computed body rather than an effect-free literal."""
     match declaration.initial:
         StaticInitializer.Computed(_body) => return true
         _ => return false
 
 
-pub def has_native_static_cell(declaration: &StaticDeclaration) -> bool:
+pub def has_native_static_cell(declaration: StaticDeclaration) -> bool:
     """Keep computed values and literal lists or dictionaries in guarded cells without making literals effectful."""
     match declaration.initial:
         StaticInitializer.List(_) | StaticInitializer.Dict(_) => return true
         _ => return is_computed_static(declaration)
 
 
-pub def static_owner(declaration: &StaticDeclaration) -> str:
+pub def static_owner(declaration: StaticDeclaration) -> str:
     """The declaring module of a static, read from its canonical identity."""
     match canonical_module_identity(declaration.canonical):
         Some(owner) => return owner

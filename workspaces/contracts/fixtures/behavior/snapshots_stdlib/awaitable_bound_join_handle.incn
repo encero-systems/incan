@@ -2,7 +2,6 @@
 # expect-stdout:
 #   9
 
-import std.async
 from std.async.task import spawn, JoinHandle, TaskJoinError
 
 

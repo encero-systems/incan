@@ -4,10 +4,12 @@ from std.derives.collection import Iterator
 from std.derives.copying import Clone
 from std.rust import Static
 from std.traits.callable import Callable1
-from rust::incan_std_core::iter import (
+from rust::incan_std_primitives::iter import (
     Generator as NativeGenerator,
     range as native_range,
     batch as native_batch,
+    enumerate as native_enumerate,
+    zip as native_zip,
     nonnegative_count,
 )
 from rust::std::iter import (
@@ -17,7 +19,6 @@ from rust::std::iter import (
     Repeat,
     Map,
     once as native_once,
-    successors,
     repeat as native_repeat,
 )
 from rust::std::clone import Clone as NativeClone
@@ -33,7 +34,7 @@ pub def poll_generator[T with Clone](values: &mut NativeGenerator[T], mut output
     """Poll once: 1. Advance the borrowed generator. 2. Append an item on success, preserving output on exhaustion."""
     # 1. Advance the borrowed generator.
     mut iterator = values
-    match iterator.next():
+    match iterator.poll():
         Some(value) =>
             # 2. Append the owned item.
             output.append(value)
@@ -259,7 +260,7 @@ def next_prefix_item(cursor: &PrefixFields) -> Option[int]:
     """Keep the native mutable iterator loan inside one poll; no loan escapes with its owned integer result."""
     mut loan: RefMut[NativeGenerator[int]] = cursor[0].borrow_mut()
     mut iterator: &mut NativeGenerator[int] = loan.deref_mut()
-    return iterator.next()
+    return iterator.poll()
 
 
 pub def flat_map_int_generator[U with (Clone, Static)](
@@ -312,23 +313,19 @@ pub def any_text_callable_generator[F with Callable1[str, bool]](values: Generat
 
 
 pub def enumerate_generator[T with (Clone, Static)](values: Generator[T]) -> Generator[tuple[int, T]]:
-    """Pair items with signed positions lazily: 1. Create the index stream. 2. Pair it with the source."""
-    # 1. Create the index stream.
-    indices: NativeGenerator[int] = NativeGenerator.new(successors(Some(0), next_index))
-    # 2. Pair it with the source.
+    """Pair source items with signed positions lazily through the primitive native iterator boundary."""
     native: NativeGenerator[T] = values
-    return NativeGenerator.new(indices.zip(native))
+    return native_enumerate(native)
 
 
 pub def zip_generators[T with (Clone, Static), U with (Clone, Static)](
     left: Generator[T],
     right: Generator[U],
 ) -> Generator[tuple[T, U]]:
-    """Pair items until either source is exhausted: 1. Retain the left source. 2. Wrap its zip with the right."""
-    # 1. Retain the left source.
-    native: NativeGenerator[T] = left
-    # 2. Wrap the native zip.
-    return NativeGenerator.new(native.zip(right))
+    """Pair items lazily through the primitive native boundary, polling left before right until either is exhausted."""
+    left_native: NativeGenerator[T] = left
+    right_native: NativeGenerator[U] = right
+    return native_zip(left_native, right_native)
 
 
 pub def map_int_generator[U with (Clone, Static)](values: Generator[int], transform: (int) -> U) -> Generator[U]:
@@ -426,8 +423,3 @@ pub def for_each_int_generator(values: Generator[int], action: (int) -> None) ->
     native: NativeGenerator[int] = values
     # 2. Visit every remaining item.
     native.for_each(action)
-
-
-def next_index(previous: &int) -> Option[int]:
-    """Advance the private signed index stream using the language's integer arithmetic."""
-    return Some(previous.clone() + 1)

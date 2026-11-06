@@ -202,7 +202,7 @@ def payload_tests(
     source: Place,
     owner: int,
     slot: int,
-    fields: &list[RustPattern],
+    fields: list[RustPattern],
     selected: int,
     rejected: int,
     span: SourceSpan,
@@ -262,7 +262,7 @@ def all_bound_in_place(patterns: &list[RustPattern]) -> list[bool]:
 pub def nominal_field(
     mut builder: Builder,
     source: Place,
-    target: &NominalPatternTarget,
+    target: NominalPatternTarget,
     name: str,
     span: SourceSpan,
 ) -> Result[Place, str]:

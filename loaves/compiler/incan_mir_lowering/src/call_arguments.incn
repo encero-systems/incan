@@ -11,7 +11,7 @@ from pub::incan_mir_plan import (
     assign as plan_assign,
     place as plan_place,
 )
-from explicit_arguments import argument_access, explicit_place_argument
+from explicit_arguments import argument_access, explicit_place_argument, reference_contract
 from layout_types import native_source_type
 from rust::incan_semantics_core import IncanInputAccess
 from rust::incan_semantics_core::body_ir import (
@@ -26,7 +26,7 @@ from rust::incan_semantics_core::body_ir import (
 )
 from generators import generator_reference, is_generator_type, is_generator_reference
 from frozen_equality import frozen_reference_type, frozen_place, borrow_frozen
-from element_places import is_element_place
+from element_places import is_element_place, element_place_type
 from element_borrows import shared_element_place
 from validation_errors import validation_error_reference
 from text_plan import owned_literal
@@ -51,8 +51,8 @@ from carrier_operands import boundary_operand
 
 pub def call_parameter_type(
     mut builder: Builder,
-    body: &RustBody,
-    parameter: &RustCallableParam,
+    body: RustBody,
+    parameter: RustCallableParam,
 ) -> Result[PlanType, str]:
     """
     The representation a call passes for one declared parameter, shared by functions and methods.
@@ -75,7 +75,7 @@ pub def call_parameter_type(
     return stored_parameter_type(body, parameter, ty)
 
 
-pub def stored_parameter_type(body: &RustBody, parameter: &RustCallableParam, ty: PlanType) -> Result[PlanType, str]:
+pub def stored_parameter_type(body: RustBody, parameter: &RustCallableParam, ty: PlanType) -> Result[PlanType, str]:
     """
     A deferred producer owns its value parameters; ordinary frames retain the shared collection ABI.
 
@@ -101,7 +101,7 @@ pub def lacks_exclusive_parameter(ty: PlanType) -> bool:
         None => return true
 
 
-pub def has_defaulted_slots(binding: &RustArgumentBinding) -> bool:
+pub def has_defaulted_slots(binding: RustArgumentBinding) -> bool:
     """Report whether a resolved call leaves at least one declared slot to its default."""
     match binding:
         RustArgumentBinding.Resolved(arguments=_arguments, defaulted_slots=defaults) => return len(defaults) != 0
@@ -294,7 +294,9 @@ def explicit_argument_operand(
     span: SourceSpan,
     access: IncanInputAccess,
 ) -> Result[Operand, str]:
-    """Consume checked storage or a fresh owned literal; borrowed constants must already have retained call storage."""
+    """Consume checked storage or materialize fresh inferred-shared and owned literals for this invocation."""
+    if access == IncanInputAccess.InferredShared:
+        return inferred_shared_argument(builder, value, ty, span)
     match value:
         RustOperand.Place(read) =>
             match read.place.global():
@@ -307,6 +309,112 @@ def explicit_argument_operand(
         RustOperand.Constant(constant) => return explicit_constant_argument(builder, constant, ty, access, span)
 
 
+def inferred_shared_argument(
+    mut builder: Builder,
+    value: &RustOperand,
+    expected: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """
+    Lend a plain input whose callee published shared access.
+
+    That access already decided to lend, so the read's ownership fact, which describes a by-value call, decides nothing
+    here. Only this frame's plan types are exact after instantiation.
+
+    1. Lend a stored owner of the selected type, a reference to it, or a shared list element directly.
+    2. Use the ordinary lending route of a carrier that has one; it applies conversions such as a range becoming a list.
+    3. Apply any other checked conversion to fresh storage and lend that.
+    """
+    match reference_contract(expected):
+        Err(_reason) => return call_argument_operand(builder, value, expected, span)
+        Ok((referent, writable)) =>
+            if writable:
+                return Err("invalid Body IR inferred shared reference carrier")
+            # 1. Exact storage needs no copy and no conversion.
+            match exact_shared_storage(builder, value, referent, span)?:
+                Some(source) =>
+                    return explicit_place_argument(
+                        builder,
+                        source,
+                        OwnershipFact.Borrow,
+                        expected,
+                        IncanInputAccess.InferredShared,
+                        span,
+                    )
+                None => pass
+            # 2. These carriers already lend through the route an ordinary parameter of that carrier takes.
+            if has_ordinary_lending_route(expected):
+                return call_argument_operand(builder, value, expected, span)
+            # 3. A union member becoming its union, for example, has no storage of the selected type yet.
+            return materialized_shared_argument(builder, value, expected, referent, span)
+
+
+def exact_shared_storage(
+    mut builder: Builder,
+    value: &RustOperand,
+    referent: PlanType,
+    span: SourceSpan,
+) -> Result[Option[Place], str]:
+    """Reach storage that already holds the selected type, or a reference to it, without copying or converting."""
+    match value:
+        RustOperand.Constant(_constant) => return Ok(None)
+        RustOperand.Place(read) =>
+            match read.place.global():
+                Some(_global) => return Ok(None)
+                None => pass
+            if is_element_place(builder, read.place)?:
+                match element_place_type(builder, read.place):
+                    Ok(element) =>
+                        if element == referent:
+                            return shared_element_place(builder, read.place, span)
+                    Err(_reason) => pass
+                return Ok(None)
+            source = scalar_place(builder, read.place, span)?
+            actual = place_type(builder.locals, source)
+            if actual == referent:
+                return Ok(Some(source))
+            match reference_contract(actual):
+                Ok((held, _held_writable)) =>
+                    if held == referent:
+                        return Ok(Some(source))
+                Err(_reason) => pass
+            return Ok(None)
+
+
+def has_ordinary_lending_route(ty: PlanType) -> bool:
+    """Whether `call_argument_operand` lends this reference carrier itself, including its call-site conversions."""
+    if is_list(ty) or is_collection(ty):
+        return true
+    match ty:
+        PlanType.ValidationErrorRef => return true
+        PlanType.SliceRef(_elements) => return true
+        PlanType.ScalarRef(_elements) => return true
+        _ => return false
+
+
+def materialized_shared_argument(
+    mut builder: Builder,
+    value: &RustOperand,
+    expected: PlanType,
+    referent: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Apply a checked conversion to fresh owned storage, then lend that exact storage for this invocation."""
+    materialized = call_argument_operand(builder, value, referent, span)?
+    if operand_type(builder, materialized)? != referent:
+        return Err("unsupported Body IR inferred shared materialization mismatch")
+    storage = temporary(builder, referent, span)
+    builder.emit(plan_assign(storage, RvalueKind.Use(materialized), span))
+    return explicit_place_argument(
+        builder,
+        storage,
+        OwnershipFact.Borrow,
+        expected,
+        IncanInputAccess.InferredShared,
+        span,
+    )
+
+
 def explicit_constant_argument(
     mut builder: Builder,
     constant: &RustConstant,
@@ -314,7 +422,7 @@ def explicit_constant_argument(
     access: IncanInputAccess,
     span: SourceSpan,
 ) -> Result[Operand, str]:
-    """A fresh owned literal has no earlier owner to retain or clone; shared/exclusive input storage stays mandatory."""
+    """Give an inferred-shared fresh literal invocation storage; explicit loans still require authored storage."""
     if access != IncanInputAccess.Owned:
         return Err("unsupported Body IR borrowed constant without retained local storage")
     match constant:
@@ -399,6 +507,10 @@ def loop_variable_copy(mut builder: Builder, value: &RustOperand, span: SourceSp
             match read.place.global():
                 Some(_global) => return Ok(None)
                 None => pass
+            # A slice or indexed projection is an argument value, not the binding of a copied loop item. Its ordinary
+            # projected-argument path materializes the fresh owner or reaches the checked element storage.
+            if is_element_place(builder, read.place)?:
+                return Ok(None)
             root = list_root_place(builder, read.place, span)?
             if not is_list(place_type(builder.locals, root)):
                 return Ok(None)

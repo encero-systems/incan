@@ -1,6 +1,7 @@
 //! Conversion of checked exports into manifest exports.
 
 use super::*;
+use crate::library_exports::CheckedParamDefaultArg;
 
 /// Rewrite source-owned type references to the selected public export names.
 pub(super) fn rewrite_type_ref_names(
@@ -55,7 +56,11 @@ pub(super) fn rewrite_type_ref_names(
                 rewrite_type_ref_names(member, owner_module_path, public_names, source_paths_by_leaf);
             }
         }
-        TypeRef::TypeParam { .. } | TypeRef::SelfType | TypeRef::RustPath { .. } | TypeRef::Unknown => {}
+        TypeRef::Trait { .. }
+        | TypeRef::TypeParam { .. }
+        | TypeRef::SelfType
+        | TypeRef::RustPath { .. }
+        | TypeRef::Unknown => {}
     }
 }
 
@@ -244,8 +249,34 @@ pub fn param_default_from_checked(value: &CheckedParamDefault) -> Option<ParamDe
                     .map(param_default_call_signature_from_checked)
                     .map(Box::new),
             }),
+        CheckedParamDefault::MethodCall {
+            receiver_path,
+            method,
+            args,
+        } => method_call_default_from_checked(receiver_path, method, args),
         CheckedParamDefault::Unsupported => None,
     }
+}
+
+/// Convert a checked static method call into replayable manifest metadata.
+fn method_call_default_from_checked(
+    receiver_path: &[String],
+    method: &str,
+    args: &[CheckedParamDefaultArg],
+) -> Option<ParamDefaultExport> {
+    args.iter()
+        .map(|arg| {
+            Some(ParamDefaultCallArgExport {
+                name: arg.name.clone(),
+                value: param_default_from_checked(&arg.value)?,
+            })
+        })
+        .collect::<Option<Vec<_>>>()
+        .map(|args| ParamDefaultExport::MethodCall {
+            receiver_path: receiver_path.to_vec(),
+            method: method.to_owned(),
+            args,
+        })
 }
 
 /// Convert a checked default-helper callable surface into manifest metadata.
@@ -337,6 +368,7 @@ pub fn params_from_checked(params: &[CallableParam], defaults: &[Option<CheckedP
             Some(ParamExport {
                 name: param.name.clone()?,
                 ty: type_ref_from_resolved(&param.ty),
+                surface_type_name: param.surface_type_name.clone(),
                 kind: param_kind_from_ast(param.kind),
                 has_default,
                 is_mut: param.is_mut,

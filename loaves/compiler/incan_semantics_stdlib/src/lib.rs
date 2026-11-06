@@ -1,7 +1,7 @@
 //! Stdlib semantics pack for parser/typechecker/lowering dispatch.
 //!
 //! This crate provides [`StdlibSemanticsPack`], the default [`SurfaceSemanticsPack`] implementation that maps Incan's
-//! stdlib soft keywords and decorators to their pipeline behaviors.
+//! language surface keywords and stdlib decorators to their pipeline behaviors.
 //!
 //! All compiler consumers share the complete pack. Source imports and provider catalogs determine which surface
 //! constructs are available to a program; compiler build features do not change that contract.
@@ -36,7 +36,7 @@ impl SurfaceSemanticsPack for StdlibSemanticsPack {
         None
     }
 
-    /// Classify the operand payload of the activated await expression.
+    /// Classify the operand payload of the language-owned await expression.
     fn expression_payload_for_soft_keyword(&self, keyword: KeywordId) -> Option<SurfaceExprPayloadKind> {
         if keyword == KeywordId::Await {
             return Some(SurfaceExprPayloadKind::PrefixUnary);
@@ -44,7 +44,7 @@ impl SurfaceSemanticsPack for StdlibSemanticsPack {
         None
     }
 
-    /// Classify the marker payload of an activated async declaration modifier.
+    /// Classify the marker payload of the language-owned async declaration modifier.
     fn modifier_payload_for_soft_keyword(&self, keyword: KeywordId) -> Option<SurfaceModifierKind> {
         if keyword == KeywordId::Async {
             return Some(SurfaceModifierKind::PrefixMarker);

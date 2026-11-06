@@ -16,7 +16,7 @@ from closures import closure_capture_type
 from table_views import borrowed_at
 
 
-pub def first_clause_item(body: &RustGeneratorBody) -> Result[int, str]:
+pub def first_clause_item(body: RustGeneratorBody) -> Result[int, str]:
     """
     Return the Body IR local the deferred body polls each first-source item into.
 
@@ -34,7 +34,7 @@ pub def first_clause_item(body: &RustGeneratorBody) -> Result[int, str]:
         _ => return Err("unsupported Body IR generator expression body shape")
 
 
-def source_iterator(body: &RustGeneratorBody) -> Result[int, str]:
+def source_iterator(body: RustGeneratorBody) -> Result[int, str]:
     """Require the builtin iterator materialized from exactly the captured first source."""
     match body.stmts[0].kind:
         RustStatementKind.Assign(place=place, rvalue=value) =>
@@ -65,7 +65,7 @@ def operand_reads(value: &RustOperand, local: int) -> bool:
         _ => return false
 
 
-def polled_item(kind: &RustStatementKind, iterator: int) -> Result[int, str]:
+def polled_item(kind: RustStatementKind, iterator: int) -> Result[int, str]:
     """Read the builtin poll of the source iterator into one whole item local."""
     match kind:
         RustStatementKind.IterNext(destination=destination, iterator=polled, protocol=protocol) =>

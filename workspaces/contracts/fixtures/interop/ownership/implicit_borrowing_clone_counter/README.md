@@ -9,6 +9,7 @@ Each expected line of the program (`main.incn`) is a program step, the step's re
 | `observe` | `observe` -> `traverse`, a cursor over `get` children | 0 | `get(&self) -> Option<&Item>` is a shared receiver borrow; `item` and `current` are lent |
 | `is_table` | `Holder.observe` -> private `is_table(self.item)` | 0 | `is_table` is only ever a direct callee, so it takes `&Item`; the field is lent |
 | `inspect` | `inspect` -> `classify` -> `is_table` | 0 | the private helpers take `&Item` and the public entry lends its parameter |
+| `shapes` | format, enum match, index, iteration, string comparison/membership and unrelated body forms | 0 | each operation observes its input; unrelated aggregates, results and closures do not change that ownership proof |
 | `ref local` | `Holder.view`: `current: &Item = self.item` | 0 | a reference-typed local is a borrow, never a materialization |
 | `walk` | `Holder.walk`: cursor started from `self.item` | 0 | the cursor is proven shared and the owner is not read again in the body |
 | `selected` | `Reader.read` -> `select`, ending in `current.clone()` | +1 = 1 | the explicit clone copies the `Integer(7)` leaf; the walk to it lends |

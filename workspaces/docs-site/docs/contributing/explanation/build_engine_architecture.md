@@ -13,20 +13,21 @@ These rules govern every component below and every review of its implementation.
 1. **One home, no split brains.** Each fact, mechanism and decision has exactly one home. No second cache, ledger, freshness check, scheduler, trace channel or storage path exists beside the one named here. The [Code map](#code-map) names that home per component and flags every place where the reused code still has two.
 2. **Simple, directed implementations.** Each component does one job in one direction of dependency. Engine policy calls the compiler's producer contracts and the store's substrate contracts; neither calls back into engine policy.
 3. **Clear, deliberate APIs.** Each component's API is named, minimal and documented as a contract: inputs, outputs, outcomes and ownership. No component reaches into another's internals. A typed outcome replaces every string-parsed error.
-4. **A platform layer that std builds on.** Implementations may be lower level than usual. The platform owns the primitives (store substrate, mapping, durable I/O, IPC, process control, resource probes, tracing). `std` and the engine are peers on top of it. `std` wraps the platform for users and never reimplements it.
+4. **One foundation below the platform and library stack.** `std.primitives` owns the foundational contracts and native mechanisms. The platform imports that package as its sole standard dependency and owns the OS-facing store substrate, mapping, durable I/O, IPC, process control, resource probes and tracing. Other standard packages and the engine sit above the platform and never reimplement either layer.
 5. **The platform wraps, it does not reimplement.** The platform reaches OS and Rust facilities thinly, through Incan interop. Low level means precise and minimal, not homegrown.
 6. **Incan only, no Cargo.** Engine policy, planning, scheduling, admission, tests, tracing and reader APIs are Incan. The only Rust authored for the engine and record service is the three bootstrap adapters in [Language and platform boundary](#language-and-platform-boundary). There is no Cargo invocation, including acquisition, and no Python component.
 
 ## Layers
 
-![Layers: OS facilities, the platform, std and the engine](build_engine_layers.svg)
+![Layers: OS facilities, std.primitives, the platform, other standard packages and the engine](build_engine_layers.svg)
 
 | Layer | Owns | Does not own |
 | --- | --- | --- |
 | 1. OS and Rust facilities | `mmap`, file and directory sync, atomic rename, locks, clones, sockets and pipes, peer credentials, process spawn and groups, limits, clocks | Anything Incan-specific |
-| 2. Platform | Store substrate (`incan_platform.store`, RFC 165), memory mapping with lifetime-safe views, durable I/O and publication ordering, IPC and peer identity, process control and groups, resource probes, tracing | Compiler meaning, package policy, user-facing ergonomics |
-| 3. `std` | User-facing surfaces over the platform (`std.fs`, `std.process`, `std.db`, `std.graph` and peers) | A second implementation of any platform primitive |
-| 3. Engine and compiler record service | Requests, ranked work, scheduling, claims, selection, readers, run and test | Storage layout, OS access outside the platform |
+| 2. `std.primitives` | Foundational values, errors, traits, async mechanisms and vocabulary contracts, backed directly by native dependencies where needed | Higher-level library policy or a dependency on another standard package |
+| 3. Platform | Store substrate (`incan_platform.store`, RFC 165), memory mapping with lifetime-safe views, durable I/O and publication ordering, IPC and peer identity, process control and groups, resource probes, tracing | Compiler meaning, package policy, user-facing ergonomics, or a standard dependency other than `std.primitives` |
+| 4. Other standard packages | User-facing surfaces over the platform and primitives (`std.fs`, `std.process`, `std.db`, `std.graph` and peers) | A second implementation of a foundational or platform mechanism |
+| 4. Engine and compiler record service | Requests, ranked work, scheduling, claims, selection, readers, run and test | Storage layout, OS access outside the platform |
 
 The store substrate is the one RFC 165 specifies. `std.db` is its public typed surface; the engine and the compiler record service consume the substrate contract directly, as RFC 165 permits, so opening the compiler's own facts never depends on a query library. Families, record identities, revisions, views, snapshots, transactions, relationships, read traces and sealed sets mean what RFC 165 defines; a read witness here is one entry of an RFC 165 read trace. The bakery adds only its compiler families and the engine's policy. Readers traverse stored relationships through RFC 166's `GraphRead` protocol in `std.graph`, over the same snapshot, never through a second in-memory graph.
 
@@ -320,10 +321,14 @@ Stages S1 to S4 build the store (the bakery on the platform store substrate; S1 
 | 10 | E4 Scheduler, memory, lifecycle | Antichain scheduling, CPU and memory tokens, fairness, shared-interest cancellation, worker recycling, crash matrices | E3, S2 leases and collection |
 | 11 | E5 Test, run and readers | Harness partitioning, fresh per-case execution, explicit replay, LSP overlays, MCP and graph pages, contract runner | E4 |
 | 12 | S4 Distribution qualification | Same sets from local bake, bundle and registry; trust refusals, upgrades, platforms and filesystems, Baseline-comparable workloads | E5 |
-| 13 | E6 Native incremental proof | Override audit, tracked per-definition inputs, qualified seeds, fixed CGUs, edited and cold baseline comparisons | E2 to E5 |
-| 14 | E7 Default switch and removal | Default engine, full census and CI phases, removal of obsolete authority in a separate cleanup, including the hand-ordered release script | E6, S4, the acceptance report |
+| 13 | E7 Default switch and removal | Default engine, full census and CI phases, and removal of the first engine's obsolete authority in a separate cleanup | E5, S4, the acceptance report |
+| 14 | E6 Native incremental proof | Override audit, tracked per-definition inputs, qualified seeds, fixed CGUs, edited and cold baseline comparisons | E2 to E5; qualified independently of the default switch |
 
 E1 is split in two so the engine's own proofs do not wait for the compiler's per-declaration producers. E1a proves the engine's mechanics with one record per compiled unit: the compiler already works in units, and RFC 124 gives each unit an identity from its compiled inputs. E1b swaps that one producer for the per-declaration producers of the producer map's first slice; the engine does not change. The rule that a compiler adapter must not repackage whole-program results as per-declaration records still holds: E1a's records are unit records and are named so.
+
+E1b, S3 and the ranked-graph part of E2 are delivered as one implementation slice: per-declaration producers are not useful until the compiler can consume their records, and record reads do not establish demand-driven reuse until the typed graph owns their dependencies. E6 is a separate qualification of per-function native recompilation; its proof can mature independently and does not block selecting the record engine as the default after the E7 correctness and distribution acceptance holds.
+
+Release orchestration is already an Incan program rather than shell authority. Its typed native-build graph currently expresses the admitted bootstrap dependency order. At E3, the engine's typed Loaf graph replaces that hand-ordered graph inside `release.incn`; this is a change of build authority, not a second release route. The shell release scripts were removed with the Incan release program and are therefore not part of E7 cleanup.
 
 ## Proof by stage
 
@@ -500,15 +505,15 @@ One home per component. **Reused** means existing code that the component builds
 
 ### Platform
 
-The platform is one Loaf, `incan_platform` in `loaves/platform`, below `std`. Oven, the store, the compiler worker host and `std` depend on it. A primitive stays at the home the State column names until it moves into that Loaf. `std.db` (RFC 165, #2519) wraps the store substrate for users and `std.graph` (RFC 166, #2524) supplies the graph reading protocol; neither is a second store or graph implementation.
+The platform is one Loaf, `incan_platform` in `loaves/platform`, between foundational `std.primitives` and every other standard package. It may import `std.primitives` and no other standard Loaf. Oven, the store, the compiler worker host and higher-level standard packages depend on the platform. `std.db` (RFC 165, #2519) wraps the store substrate for users and `std.graph` (RFC 166, #2524) supplies the graph reading protocol; neither is a second store or graph implementation.
 
 | Component | One home | State | API contract | Two-home flags |
 | --- | --- | --- | --- | --- |
-| Store substrate (`incan_platform.store`, RFC 165) | Platform store module; first implementation `workspaces/oven/src/segment_store.incn` | Reused: 65c314587 (`ab0fbc970` typed outcomes, validated transactions, synced publication) | `snapshot`, `lookup → Present / Deleted / Absent / DbError`, `begin`, `put`, `delete`, `commit` | Lives in Oven while its home is the platform; moves under S2. Read and lookup paths `get` (`Option[bytes]`) and `lookup` coexist; `get` goes. The reused code still names the outcomes `Found` and `StoreError`; S1 renames them to RFC 165's `RecordState` and `DbError` |
+| Store substrate (`incan_platform.store`, RFC 165) | `loaves/platform/src/store.incn` and `loaves/platform/src/store/` | Moved under the platform in S2; canonical segment and manifest formats remain version 3 | `snapshot`, `lookup → Found / Deleted / Absent / StoreError`, `begin`, `put`, `delete`, `commit`, claims, leases, payloads, collection and repair | Oven retains one path-conversion adapter and store policy only; RFC 165 surface renaming and the removal of the compatibility `get` path remain later contract work |
 | Bakery families and claims | `workspaces/oven/src/bakery.incn`, `unit_publication.incn` | Reused: 65c314587 | Unit records, claim-once, views | Claim locks belong to the substrate, the claim protocol to the engine; the reused code keeps both here until E1 |
-| Sealed record sets | `workspaces/oven/src/sealed_set.incn` | Reused: two versions, f00035a66 and 0b1899ede | Seal, verify, admit once | **Two implementations of one mechanism**; one is kept in S2 |
+| Sealed record sets | `workspaces/oven/src/sealed_set.incn` | One current implementation | Seal, verify, admit once | One implementation remains; there is no second sealed-set authority in the current tree |
 | Memory mapping | Platform mapping primitive with lifetime-safe views: the shape of `loaves/stdlib/system/src/fs/mapping.incn` and `loaves/stdlib/system/rust/src/mapping.rs` at 296b28e4b | Reused | Map read-only, borrow bounded views, scalar reads, owner-anchored lifetime | `std.fs` mapping becomes a thin wrapper over the platform primitive; the copying `MappedFile.read()` of c9d9d70fa / 65c314587 is a second mapping API and goes |
-| Durable I/O and publication ordering | Platform durable-I/O module | To be built (the reused store syncs publication inside `segment_store.incn`) | Sync file, sync directory, atomic replace, persistent locks | Sync logic embedded in the store; extracted to the platform in S1 |
+| Durable I/O and publication ordering | Platform durable-I/O module | Store publication syncs through the platform boundary | Sync file, sync directory, atomic replace, persistent locks | Store policy uses the platform implementation; Oven has no second store module |
 | IPC and peer identity | Platform IPC module | Reused in part: endpoint and pooling in `workspaces/oven/src/owner_endpoint.incn`, `compiler_worker.incn` (#2483) | Bounded framed transport, peer credentials, credits | Two protocols in the reused code (owner and compiler worker); `incan.engine/1` and `incan.compiler-worker/1` stay distinct by design, framing has one home |
 | Process control and groups | Platform process module | To be built | Spawn, process group, birth evidence, cancel with grace | — |
 | Resource probes | Platform probes module | To be built | CPU limit, effective memory, footprint, observer coverage | — |
@@ -541,7 +546,7 @@ The platform is one Loaf, `incan_platform` in `loaves/platform`, below `std`. Ov
 | Readers | Engine query surface | Reused in part: `workspaces/oven/src/graph_context_index.incn`, `workspaces/contracts/src/graph.incn` (#2484) | `Query` / `Page`, typed cursors; graph reads through an RFC 166 `GraphRead` adapter over stored relationships | In-memory node and link structures duplicate the store; replaced by the `GraphRead` adapter in S3 |
 | Profiling and proofs | Engine over platform tracing | To be built | `oven inspect run <id> --proofs`, `--engine-report` | See tracing flag |
 | Engine selector | Engine entry in `workspaces/oven/src/main.incn` | To be built | `INCAN_ENGINE=legacy\|records` | Temporary by design; removed at E7 |
-| Toolchain release | `oven bake` of the toolchain's Loaf graph | To be built (the hand-ordered `scripts/release-dev8.sh` stands in) | Bake the driver, runtime and std as units in dependency order; pack the admitted set | The script orders compilation by hand and compiles std with the previous toolchain's driver; it retires at E7 |
+| Toolchain release | `oven bake` of the toolchain's Loaf graph | To be built; `scripts/release.incn` currently supplies a typed, hand-ordered native-build graph | Bake the driver, runtime and std as units in dependency order; pack the admitted set | E3 replaces the hand-ordered graph inside the Incan release program; no shell release authority remains |
 
 ## Language and platform boundary
 
@@ -1169,7 +1174,7 @@ During coexistence, legacy stores/ledgers remain legacy authority only for legac
 | `compiler_worker.incn` / driver worker loop | Bounded correlated record protocol and request-lifetime workers; retain proven endpoint/console fixes |
 | `unit*.incn` / `rust_units.incn` | Keep project/provider semantics; replace whole-descriptor freshness/compilation orchestration with typed selection/native descriptor records |
 | Per-project observations/stamps | Immutable evaluation/read evidence and result bindings in the shared store |
-| `bakery.incn` / `segment_store.incn` | The engine calls the agreed substrate and admission API; additions to the store go through that API |
+| `bakery.incn` / the `segment_*` compatibility adapters | The engine calls `incan_platform.store`; additions to the substrate go through the platform API, while admission and collection policy remain in Oven |
 | `jec.incn` / timing sinks | Adapter over built-in structured observation, not a competing logger |
 | `testing.incn` / contract batch runner | Typed case/harness requests and one resource scheduler; unchanged expected semantics |
 | Driver `frontend.rs` / `adapter.rs` | Retain language/native authority; expose record-scoped inputs and audited native query tracking |

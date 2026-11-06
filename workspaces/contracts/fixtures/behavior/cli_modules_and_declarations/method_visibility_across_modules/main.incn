@@ -1,0 +1,21 @@
+# behavior: a `pub` method, an alias of one and a method implementing a public trait are callable from another module, a method implementing a module-private trait is callable in that trait's module, an unmarked helper serves its type's own methods, a language hook serves `==`, a subclass's `pub` override replaces its parent's, and an unmarked method of a model without `pub` is callable across its module, as its unmarked fields are (#2570)
+# expect-stdout:
+#   6
+#   6
+#   box
+#   3
+#   true
+#   derived 7
+#   4
+from shapes import Box, Derived, draft_size, measured
+
+
+def main() -> None:
+    value = Box(size=3)
+    println(value.doubled())
+    println(value.twice())
+    println(value.name())
+    println(measured(value))
+    println(value == Box(size=3))
+    println(Derived(id=7).label())
+    println(draft_size(2))

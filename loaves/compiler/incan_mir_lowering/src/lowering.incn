@@ -126,7 +126,7 @@ def validate_declarations_and_bodies(module: &BodyIrModule, modules: &list[BodyI
 
 
 pub def unit_plan(
-    modules: &list[BodyIrModule],
+    modules: list[BodyIrModule],
     sources: list[str],
     files: list[str],
     entry: int,

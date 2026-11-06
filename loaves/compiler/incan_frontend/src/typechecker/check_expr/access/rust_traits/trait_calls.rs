@@ -1,8 +1,70 @@
 //! Native element conversion, Rust trait associated and declared method calls, and iteration hooks.
 
 use super::*;
+use crate::typechecker::check_expr::access::MethodCallSite;
 
 impl TypeChecker {
+    /// Select an implicit method call through exactly one imported Rust trait bound on an active type parameter.
+    ///
+    /// The bound is the authority for the call; metadata supplies the declared native signature and the existing
+    /// declared-trait path retains its executable result. Competing trait declarations remain unresolved rather than
+    /// choosing by spelling, and concrete implementation discovery stays rustc's responsibility.
+    pub(in crate::typechecker::check_expr::access) fn resolve_bound_rust_trait_method(
+        &mut self,
+        call: &MethodCallSite<'_>,
+        receiver: &ResolvedType,
+        arg_types: &[ResolvedType],
+    ) -> Option<ResolvedType> {
+        let name = self.generic_placeholder_name(receiver)?;
+        let bounds = self.innermost_type_param_bounds(name)?.to_vec();
+        let mut selected = None;
+        for bound in bounds {
+            let path = if bound.name.contains("::") {
+                Some(bound.name.trim_start_matches("::").to_owned())
+            } else {
+                self.rust_canonical_path_for_receiver_type(&ResolvedType::Named(bound.name.clone()))
+            };
+            let Some(path) = path else { continue };
+            let Some(metadata) = self.rust_item_metadata_for_path(&path) else {
+                continue;
+            };
+            let RustItemKind::Trait(info) = &metadata.kind else {
+                continue;
+            };
+            let declares = info
+                .items
+                .iter()
+                .any(|item| matches!(item, RustTraitAssoc::Function { name, .. } if name == call.method));
+            if !declares {
+                continue;
+            }
+            if selected.as_ref().is_some_and(|(previous, _)| previous != &path) {
+                return None;
+            }
+            selected = Some((path, metadata));
+        }
+        let (path, metadata) = selected?;
+        let RustItemKind::Trait(info) = &metadata.kind else {
+            return None;
+        };
+        self.resolve_rust_declared_trait_method(
+            RustPathMethodCall {
+                rust_path: &path,
+                method: call.method,
+                receiver_metadata: None,
+                receiver_binding: None,
+                receiver_expr: call.base,
+                type_args: call.type_args,
+                args: call.args,
+                arg_types,
+                receiver_span: call.base.span,
+                expected_return_ty: call.expected_return_ty,
+                span: call.span,
+            },
+            info,
+        )
+    }
+
     /// Select an owned per-element From conversion using the same metadata candidates as explicit native calls.
     /// The typed placeholder supplies no executable expression or source identity; only the checked element type
     /// participates in inference, and exact input/output carriers must match before a call is retained.
@@ -58,6 +120,7 @@ impl TypeChecker {
             let retained = crate::typechecker::RustCheckedCall {
                 storage: None,
                 source_type_parameters: self.native_call_type_parameters(),
+                signature_loans: Self::native_signature_loan_identities(&candidate.signature),
                 receiver_adjustments: Vec::new(),
                 path: candidate.path,
                 type_arguments: candidate.arguments,
@@ -165,6 +228,7 @@ impl TypeChecker {
             crate::typechecker::type_info::RustCheckedCall {
                 storage: None,
                 source_type_parameters: self.native_call_type_parameters(),
+                signature_loans: Self::native_signature_loan_identities(&signature),
                 receiver_adjustments: Vec::new(),
                 path,
                 type_arguments: arguments,
@@ -293,7 +357,7 @@ impl TypeChecker {
         if self.errors.len() == errors_before {
             self.retain_selected_rust_trait_call(&call, selected)?;
         }
-        Some(result)
+        Some(self.native_borrowed_source_result(call.span, result))
     }
 
     /// Retain an explicit native trait call on a concrete receiver or a parameter with an innermost native bound.
@@ -462,6 +526,7 @@ impl TypeChecker {
         Some(crate::typechecker::type_info::RustCheckedCall {
             storage: None,
             source_type_parameters: self.native_call_type_parameters(),
+            signature_loans: Self::native_signature_loan_identities(&selected.signature),
             receiver_adjustments: Vec::new(),
             path: selected.path,
             type_arguments: selected.arguments,
@@ -567,6 +632,6 @@ impl TypeChecker {
             },
         )?;
         self.type_info.rust.checked_calls.get_mut(&call.span)?.has_receiver = false;
-        Some(result)
+        Some(self.native_borrowed_source_result(call.span, result))
     }
 }

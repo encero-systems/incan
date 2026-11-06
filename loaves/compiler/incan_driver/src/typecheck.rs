@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::backend::c_abi::{CAbiVerificationPlan, ClangToolchain, verify_checked_c_binding};
 use crate::diagnostics::{
-    CliDiagnostic, CliDiagnosticFailure, parser_warning_diagnostics, render_module_warnings,
+    CliDiagnostic, CliDiagnosticFailure, CliDiagnosticSource, parser_warning_diagnostics, render_module_warnings,
     typecheck_diagnostic_phase, typecheck_warning_diagnostics,
 };
 use crate::modules::{imported_module_deps_for, module_key_index, register_module_path_segments};
@@ -18,6 +18,7 @@ use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::typechecker::{CBindingDescriptor, TypeCheckInfo};
 use incan_frontend::{diagnostics, typechecker};
 use incan_lang::lang::standard_packages::StandardPackageNamespacePolicy;
+use incan_semantics_core::SymbolOrigin;
 
 /// Products retained from one dependency-safe typechecking pass.
 pub struct TypecheckedModules {
@@ -57,6 +58,24 @@ pub fn typecheck_modules(
     let mut diagnostics_out = Vec::new();
     let mut warnings_out = Vec::new();
     let mut type_infos = Vec::with_capacity(modules.len());
+    let related_sources = modules
+        .iter()
+        .map(|module| {
+            let origin = package
+                .map(|library| SymbolOrigin::Package {
+                    library: library.to_string(),
+                    module_path: module.path_segments.clone(),
+                })
+                .unwrap_or_else(|| SymbolOrigin::Module(module.path_segments.clone()));
+            (
+                origin,
+                CliDiagnosticSource {
+                    file_path: module.file_path.to_string_lossy().to_string(),
+                    source: module.source.clone(),
+                },
+            )
+        })
+        .collect();
 
     for (idx, module) in modules.iter().enumerate() {
         let deps_for_module = imported_module_deps_for(modules, idx, &module_idx_by_key, own_standard_package);
@@ -97,7 +116,7 @@ pub fn typecheck_modules(
                 diagnostics_out.extend(errs.into_iter().map(|error| CliDiagnostic {
                     file_path: module.file_path.to_string_lossy().to_string(),
                     source: module.source.clone(),
-                    phase: typecheck_diagnostic_phase(module, error.span),
+                    phase: typecheck_diagnostic_phase(module, &error),
                     error,
                 }));
             }
@@ -116,6 +135,7 @@ pub fn typecheck_modules(
     } else {
         Err(CliDiagnosticFailure {
             diagnostics: diagnostics_out,
+            related_sources,
             warnings: warnings_out,
         })
     }

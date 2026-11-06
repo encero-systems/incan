@@ -14,7 +14,7 @@ class _Native:
     """Own a Clone native state that has no Debug implementation."""
     handle: Xxh32
 
-    def digest(self) -> u32:
+    pub def digest(self) -> u32:
         """Read the native state through its checked shared receiver."""
         return self.handle.digest()
 

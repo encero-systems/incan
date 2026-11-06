@@ -5,7 +5,7 @@ from rust::std::sync::mpsc import Sender, Receiver, channel
 from rust::std::time import Duration
 from rust::std::sync::atomic import AtomicUsize, Ordering
 from rust::std::convert import AsRef
-from rust::incan_std_core::errors import raise_value_error
+from rust::incan_std_primitives::errors import raise_value_error
 
 const SIGNAL_TIMEOUT_SECONDS: u64 = 10
 
@@ -19,7 +19,7 @@ pub model InitializationGate:
     pub release_sender: Sender[bool]
     pub attempts: Arc[AtomicUsize]
 
-    def snapshot(self) -> InitializationGate:
+    pub def snapshot(self) -> InitializationGate:
         """Release a static guard with independent handles to the same channels and attempt count."""
         return InitializationGate(
             started=self.started,

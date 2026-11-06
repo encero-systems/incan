@@ -3,7 +3,6 @@
 
 """An attribute macro receives literals, scalar constants or lists of them."""
 
-import std.async
 from std.web import route
 
 const ROUTES: FrozenList[str] = ["GET"]

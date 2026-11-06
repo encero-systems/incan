@@ -118,14 +118,14 @@ From the Incan repo root:
 
 | Step | Command | Notes |
 |------|---------|--------|
-| Format | `make fmt` | Writes sources; `make fmt-check` for read-only. Nightly rustfmt required (see Makefile). |
+| Format | `make fmt` | Writes sources; `make pre-commit` for read-only. Nightly rustfmt required (see Makefile). |
 | Focused contracts | `incan run workspaces/contracts/src/main.incn -- INCAN workspaces/contracts/fixtures SELECTOR` | Replace `INCAN` with the compiler under test and `SELECTOR` with a family/area/name or family/area. |
 | Commit contracts | Same runner command with the affected family selectors | Run whole families at commit points; record counts and regressions. |
-| Spelling | `make us-english-check` | Required before every commit. |
-| Rustdoc | `make rustdoc-gate` | Changed Rust functions and methods need rustdoc. |
-| Fast gate | `make pre-commit-fast` | Formatting, spelling, rustdoc, and skill-table checks; does not run contracts. |
+| Spelling | `incan run scripts/check_us_english.incn` | Required before every commit. |
+| Rustdoc | `incan run scripts/check_changed_rustdocs.incn` | Changed Rust functions and methods need rustdoc. |
+| Fast gate | `make pre-commit` | Formatting, spelling, rustdoc, and skill-table checks; does not run contracts. |
 
-Run `make fmt` after Rust edits, the relevant contracts, then `make pre-commit-fast`. Oven builds and runs units; there is no Cargo project and no separate smoke target. Verify additional commands against the current Makefile and Oven CLI rather than guessing replacements.
+Run `make fmt` after Rust edits, the relevant contracts, then `make pre-commit`. Oven builds and runs units; there is no Cargo project and no separate smoke target. Verify additional commands against the current Makefile and Oven CLI rather than guessing replacements.
 
 **Project rules:** no `.unwrap()` / `.expect()` in Incan (see `AGENTS.md`).
 

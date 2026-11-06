@@ -6,7 +6,7 @@ pub model Account:
 
     pub type_ [alias="type"]: str
 
-    def get_type(self) -> str:
+    pub def get_type(self) -> str:
         """Read the same stored field through its alias."""
         return self.type
 

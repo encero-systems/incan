@@ -97,7 +97,7 @@ pub def lower_result_combinator(
         None => return Err("unsupported Body IR discarded Result combinator result")
 
 
-def owned_receiver(mut builder: Builder, argument: &RustArgumentElement, span: SourceSpan) -> Result[Place, str]:
+def owned_receiver(mut builder: Builder, argument: RustArgumentElement, span: SourceSpan) -> Result[Place, str]:
     """
     Hold the receiver in a fresh owned temporary.
 
@@ -124,7 +124,7 @@ def owned_receiver(mut builder: Builder, argument: &RustArgumentElement, span: S
         None => return Err("unsupported Body IR Result combinator spread receiver")
 
 
-def callback_place(mut builder: Builder, argument: &RustArgumentElement, span: SourceSpan) -> Result[Place, str]:
+def callback_place(mut builder: Builder, argument: RustArgumentElement, span: SourceSpan) -> Result[Place, str]:
     """The local holding the callback; a callback is only ever borrowed or copied, never consumed."""
     match argument.as_one():
         Some(RustOperand.Place(read)) =>

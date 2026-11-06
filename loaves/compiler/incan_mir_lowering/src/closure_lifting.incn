@@ -75,6 +75,7 @@ from operators import operand_type
 from statements import finish_return, is_nominal_type, is_owned_callable, lower_statement, return_operand
 from callable_calls import owned_callable_value
 from list_values import list_borrow, value_operand
+from list_methods import borrowed_list_generator_call
 from list_iteration import frozen_list_snapshot
 from hashed_collections import cloned_collection
 
@@ -559,7 +560,7 @@ pub def lower_generator_expression(
     if len(captures) != len(body.capture_locals):
         return Err("invalid Body IR generator expression capture layout")
     item_local = first_clause_item(body)?
-    mut evaluated = value_operand(builder, source, span)?
+    mut evaluated = generator_source_value(builder, source, span)?
     if builder.consuming_closure_frame:
         match operand_type(builder, evaluated)?:
             PlanType.ZipIterator(_left, _right) => pass
@@ -607,6 +608,26 @@ pub def lower_generator_expression(
     construct_chain(builder, first, callable, target, span)?
     builder.owned.append(target.local)
     return Ok(None)
+
+
+def generator_source_value(mut builder: Builder, source: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
+    """Borrow a stored list source for a lazy expression, while moving independently owned sources as before."""
+    match source:
+        RustOperand.Place(read) =>
+            root = scalar_place(builder, read.place, span)?
+            match list_shape(place_type(builder.locals, root)):
+                Some((leaf, depth)) =>
+                    if read.fact == OwnershipFact.Move and place_type(builder.locals, root) == PlanType.List(leaf, depth):
+                        return Ok(read_place(root, true, span))
+                    reference = list_borrow(builder, root, false, span)?
+                    result = PlanType.Generator(leaf, depth - 1)
+                    output = temporary(builder, result, span)
+                    borrowed_list_generator_call(builder, reference, leaf, depth, output, span)?
+                    builder.owned.append(output.local)
+                    return Ok(read_place(output, true, span))
+                None => pass
+        _ => pass
+    return value_operand(builder, source, span)
 
 
 pub def step_callable(

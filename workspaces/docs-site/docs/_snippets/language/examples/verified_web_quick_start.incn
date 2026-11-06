@@ -1,6 +1,5 @@
 from std.web import App, route, Response, Json
 from std.serde import json
-import std.async
 
 
 @derive(json)

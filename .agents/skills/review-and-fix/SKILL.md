@@ -64,12 +64,12 @@ The repair pass should aim to leave the worktree in a strong verified state:
 
 - `make fmt`
 - the smallest relevant contract selector during development, then affected whole families at commit points; use the runner documented in `workspaces/contracts/README.md`
-- `make pre-commit-fast` (includes `make fmt-check`, `make us-english-check`, `make rustdoc-gate`, and `make agents-doc-sync`)
+- `make pre-commit` (includes `make pre-commit`, `incan run scripts/check_us_english.incn`, `incan run scripts/check_changed_rustdocs.incn`, and `incan run scripts/check_agents_doc_sync.incn`)
 - when language registries or generated-reference inputs change, inspect the generator and its current entry point before regenerating; the Makefile and Oven CLI define commands, and no replacement generator command is assumed
 
 Use `incan inspect codegraph PATH --query defs TERM` or `--query callers TERM` before grep for declaration and call relationships. Oven owns builds and execution; never run Cargo.
 
-Repairs extend an existing case before adding one; add only when no same-area case can carry the behavior. Keep the whole suite under about 3,000 tests, name guarded bugs in `# behavior:`, and use one producer Loaf carrying all declarations per library case. Change design records only when a decision changes, in a sentence or two; keep decisions, boundaries, consequences, and non-goals under about 1,000 words, with mechanisms in commit messages and rustdoc. Run `make us-english-check` before every commit.
+Repairs extend an existing case before adding one; add only when no same-area case can carry the behavior. Keep the whole suite under about 3,000 tests, name guarded bugs in `# behavior:`, and use one producer Loaf carrying all declarations per library case. Change design records only when a decision changes, in a sentence or two; keep decisions, boundaries, consequences, and non-goals under about 1,000 words, with mechanisms in commit messages and rustdoc. Run `incan run scripts/check_us_english.incn` before every commit.
 
 If the broad gate fails for unrelated environmental reasons, report that explicitly as residual risk instead of
 pretending the loop is clean.

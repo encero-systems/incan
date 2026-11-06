@@ -35,13 +35,13 @@ from observation import trace_boundary
 from installation_page import begin_command as begin_installation_command
 from owner_service import serve_owner
 from graph_inspection import inspect_codegraph, options as graph_options
-from graph_mcp import serve_graph, parse_path
+from graph_mcp import serve_graph, options as mcp_options
 from toolchain_archive import toolchain_command, parse_arguments as archive_options
 from cli_help import help_hint, unknown_option
 from command_help import UNIT_VALUE_OPTIONS, command_help, usage, version_text
 from surfaces import OVEN, invoked, misplaced
 from pub::incan_platform.trace import WorkObserver
-from segment_files import observe_work
+from pub::incan_platform.store.files import observe_work
 from trace_adapter import finish as finish_trace
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
@@ -170,9 +170,9 @@ def dispatch(command: str, rest: list[str]) -> None:
             Ok(options) => finish("inspect", inspect_codegraph(options))
         return
     if command == "mcp":
-        match parse_path(rest):
+        match mcp_options(rest):
             Err(reason) => argument_error("mcp", reason)
-            Ok(path) => finish("mcp", serve_graph(path))
+            Ok(options) => finish("mcp", serve_graph(options))
         return
     if command == "toolchain":
         match archive_options(rest):

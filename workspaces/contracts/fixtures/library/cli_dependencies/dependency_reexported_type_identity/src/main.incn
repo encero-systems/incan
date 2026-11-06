@@ -1,4 +1,4 @@
-# behavior: a dependency's declarations keep one identity through every module that republishes them: a type published at its declaring module, at a directory facade and at the package root is one type to its consumer, a value spelled through one path is accepted where another is expected, a model reached only as the element type of another model's list field has its declaration's fields and methods even when the root publishes a different model under its name, and a pattern names a type imported after the signature that returns it (#1561); a module that re-exports a dependency's renamed function under a further name hands its consumers a callable name (#1751); a dependency whose root-level and nested modules re-export another module's declarations spelled from the package root (`crate.inner`), through two modules and under a new name, for a function, a model, an enum and a const, builds, and its consumer uses each name through every module that publishes it (#1561); and a library can call a sibling module through a bare module import while its own script shares that module (#2237); standard-library functions and types keep their identities through aliased and transitive public re-exports (#2510); ordinary published overloads retain selected identities and local result types through source bridges (#2514)
+# behavior: a dependency's declarations keep one identity through every module that republishes them: a type published at its declaring module, at a directory facade and at the package root is one type to its consumer, a value spelled through one path is accepted where another path's type is expected, a model reached only as another model's list element has its fields and methods even when the root publishes a namesake, and a pattern names a type imported after the returning signature (#1561); a module that re-exports a dependency's renamed function under a further name hands consumers one callable name (#1751); root and nested modules re-export functions, models, enums and constants through aliases and facade chains (#1561); a Loaf re-exports another Loaf's model and enum after three source links, and their field, method and variant resolve through both plain and aliased imports (#2675); a library calls a sibling module through a bare module import while its script shares that module (#2237); standard-library declarations keep identity through transitive public aliases (#2510); and published ordinary, generic and type-token overloads retain selected identities and precise local result types through source bridges and aliases (#1033, #2514)
 # expect-stdout:
 #   2
 #   0 a#0
@@ -19,6 +19,8 @@
 #   hi relay
 #   warm 3 root text
 #   cool 3 middle text
+#   7 14 active
+#   8 16 active
 #   hello world
 
 from standard_reexports import run_standard_reexports
@@ -26,6 +28,7 @@ from library_module_import import run_library_module_import
 from renamed_export import run_renamed_export
 from submodule_reexports import run_submodule_reexports
 from type_identity import run_type_identity
+from linked_type_members import run_linked_type_members
 
 
 def main() -> None:
@@ -34,4 +37,5 @@ def main() -> None:
     run_type_identity()
     run_renamed_export()
     run_submodule_reexports()
+    run_linked_type_members()
     run_library_module_import()

@@ -46,8 +46,8 @@ pub struct Body {
     /// of the parameter inventory, so a body whose profile is lost still exposes its explicit-input obligation.
     #[serde(default)]
     pub explicit_input_bindings: Vec<ExplicitInputBinding>,
-    /// The result is a view of one source place, returned as a reference that borrows a parameter slot. Callers
-    /// alias the substituted place rather than holding the reference; the field path is in the ownership contract.
+    /// The result depends on one source place. Shared or exclusive access returns a view whose callers alias the
+    /// substituted place; owned access retains the parameter loan inside an ordinary owned native result.
     #[serde(default)]
     pub returned_view: Option<ReturnedView>,
     /// Checked nominal bindings used by this body's retained type positions. Publication prunes unused bindings,
@@ -91,13 +91,13 @@ pub struct Body {
     /// [`StatementKind::Yield`] would therefore be wrong, not merely a different implementation. This is the first
     /// declaration-level fact `Body` carries; see [`Self::is_generator`]'s docs for why that one stayed derived.
     pub is_async: bool,
-    /// The Rust function this body delegates to, when the source declaration is `@rust.extern` (#2023).
+    /// Positional wire tombstone for the removed RFC 171 Rust-facade delegation slot.
     ///
-    /// An extern declaration's source body is a `...` placeholder: what runs is the Rust item of the same name in the
-    /// module the file binds with `rust.module(...)`. Such a body carries this fact and an empty [`Self::block`], so
-    /// there is nothing a consumer could execute by mistake. A consumer either calls the named Rust item or refuses
-    /// the call; it must never run the empty block as if it were the function.
-    pub extern_delegation: Option<ExternDelegation>,
+    /// Postcard encodes struct fields by position. Keeping an always-`None` pair here lets the next compiler
+    /// generation read interfaces produced from the same facade-free source by the preceding generation without
+    /// retaining an extern-delegation type or behavior. No checker, lowering stage, or consumer may interpret it.
+    #[doc(hidden)]
+    pub retired_rust_facade_wire: Option<(String, String)>,
     /// Native attribute macros the source declaration applies, in written order (#2256).
     ///
     /// The checker selects each from a decorator that names an exported attribute macro in the providing Loaf's
@@ -150,22 +150,6 @@ pub enum NativeAttributeValue {
     Bool(bool),
     /// A bracketed list of values.
     List(Vec<NativeAttributeValue>),
-}
-
-/// The Rust item an `@rust.extern` declaration delegates to.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ExternDelegation {
-    /// The checked `rust.module(...)` path of the declaring file, such as `incan_std_testing`.
-    pub rust_module: String,
-    /// The Rust item's name inside that module; the source declaration's own name.
-    pub rust_item: String,
-}
-
-impl ExternDelegation {
-    /// The delegated item's Rust path, `module::item`.
-    pub fn rust_path(&self) -> String {
-        format!("{}::{}", self.rust_module, self.rust_item)
-    }
 }
 
 /// The checked source body admitted by the current direct-input implementation profile. This is not inferred from
@@ -343,9 +327,6 @@ impl Body {
                 let _ = writeln!(&mut out, "    {}", param.render_snapshot());
             }
         }
-        if let Some(delegation) = &self.extern_delegation {
-            let _ = writeln!(&mut out, "  extern rust {}", delegation.rust_path());
-        }
         render_block(&mut out, &self.block, 1);
         if !self.runtime_requirements.is_empty() {
             let _ = writeln!(&mut out, "  runtime_requirements:");
@@ -391,7 +372,7 @@ impl Body {
                 return Some("explicit input access lacks a checked body profile");
             }
             if self.returned_view.is_some() {
-                return Some("returned view lacks a checked body profile");
+                return Some("result dependency lacks a checked body profile");
             }
             return (!self.explicit_input_bindings.is_empty())
                 .then_some("explicit local binding lacks a checked body profile");
@@ -403,7 +384,11 @@ impl Body {
         }
         if let Some(view) = &self.returned_view {
             let source = self.params.get(view.slot);
-            if !matches!(
+            if view.access == crate::IncanInputAccess::Owned {
+                if view.carried.is_some() || source.is_none_or(|source| source.input_access.is_inferred()) {
+                    return Some("owned result dependency must retain one explicit parameter slot");
+                }
+            } else if !matches!(
                 view.access,
                 crate::IncanInputAccess::Shared | crate::IncanInputAccess::Exclusive
             ) || source.is_none_or(|source| source.input_access == crate::IncanInputAccess::Owned)
@@ -433,7 +418,6 @@ impl Body {
             crate::SemanticSourceTargetKind::Function | crate::SemanticSourceTargetKind::Method
         ) || self.is_async
             || self.is_generator()
-            || self.extern_delegation.is_some()
             || !self.native_attributes.is_empty()
         {
             return Some("explicit input profile does not admit this callable boundary");

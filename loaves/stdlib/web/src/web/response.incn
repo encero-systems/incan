@@ -23,8 +23,6 @@ Example:
         return Response.redirect("/new-location")
     ```
 """
-rust.module("incan_std_web")
-
 # Re-export Axum response tuple structs directly.
 # This preserves constructor ergonomics (`Json(value)`, `Html("<h1>...")`) in user code.
 pub from rust::axum import Json
@@ -59,27 +57,29 @@ Example:
 """
 
 from rust::axum::response import Response as AxumRawResponse
-from std.web.macros import IntoResponse
+from rust::incan_std_web import (
+    response_html as native_response_html,
+    response_ok as native_response_ok,
+    response_redirect as native_response_redirect,
+    response_status as native_response_status,
+)
+from rust::incan_web_macros import IntoResponse
 
-@rust.extern
 def response_html(content: str) -> AxumRawResponse:
     """Create an HTML response (200 OK)."""
-    ...
+    return native_response_html(content)
 
-@rust.extern
 def response_ok() -> AxumRawResponse:
     """Create an empty 200 OK response."""
-    ...
+    return native_response_ok()
 
-@rust.extern
 def response_status(code: int, body: str) -> AxumRawResponse:
     """Create a response with a custom status code and body."""
-    ...
+    return native_response_status(code, body)
 
-@rust.extern
 def response_redirect(location: str) -> AxumRawResponse:
     """Create a 302 redirect response."""
-    ...
+    return native_response_redirect(location)
 
 @derive(IntoResponse)
 pub type Response = newtype AxumRawResponse:
@@ -104,21 +104,21 @@ pub type Response = newtype AxumRawResponse:
     """
 
     @staticmethod
-    def html(content: str) -> Response:
+    pub def html(content: str) -> Response:
         """Create an HTML response (200 OK)."""
         return Response(response_html(content))
 
     @staticmethod
-    def ok() -> Response:
+    pub def ok() -> Response:
         """Create an empty 200 OK response."""
         return Response(response_ok())
 
     @staticmethod
-    def status(code: int, body: str) -> Response:
+    pub def status(code: int, body: str) -> Response:
         """Create a response with a custom status code."""
         return Response(response_status(code, body))
 
     @staticmethod
-    def redirect(location: str) -> Response:
+    pub def redirect(location: str) -> Response:
         """Create a 302 redirect response."""
         return Response(response_redirect(location))

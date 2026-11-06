@@ -8,9 +8,9 @@ from files import make_directory, read
 from observation import trace
 from publication import publish
 from sealed_set import payload_references as sealed_payload_references
-from segment_store import Snapshot, begin, commit, delete, get, keys, snapshot
-from segment_files import StoreError
-from segment_collection import collect_records
+from pub::incan_platform.store import Snapshot, begin, commit, delete, get, keys
+from pub::incan_platform.store.files import StoreError
+from store_path_conversion import collect_records, snapshot
 from storage_admission import Collectable, read_reservations, release, tree_bytes
 from unit_freshness import fingerprint
 

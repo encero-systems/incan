@@ -13,10 +13,12 @@ impl TypeChecker {
             .params
             .iter()
             .map(|p| {
+                let surface_type_name = self.alias_surface_type_name(&p.node.ty.node);
                 let ty = self.resolve_type_checked(&p.node.ty);
                 let is_mut = self.def_param_shows_changes_to_caller(&p.node, &ty);
                 CallableParam::named_with_default(p.node.name.clone(), ty, p.node.kind, p.node.default.is_some())
                     .with_mut(is_mut)
+                    .with_surface_type_name(surface_type_name)
             })
             .collect();
         let return_type = self.resolve_type_checked(&func.return_type);
@@ -40,6 +42,20 @@ impl TypeChecker {
             type_param_bound_details,
             emitted_name: None,
         };
+
+        let duplicates_type_token_signature = existing_module_function_id
+            .and_then(|existing_id| self.symbols.get(existing_id))
+            .is_some_and(|existing_symbol| match &existing_symbol.kind {
+                SymbolKind::Function(existing) => type_token_overload_signatures_identical(existing, &info),
+                SymbolKind::FunctionOverloads(overloads) => overloads
+                    .iter()
+                    .any(|overload| type_token_overload_signatures_identical(&overload.info, &info)),
+                _ => false,
+            });
+        if duplicates_type_token_signature {
+            self.errors
+                .push(errors::duplicate_type_token_overload(&func.name, span));
+        }
 
         let existing_identity = existing_module_function_id
             .and_then(|existing_id| self.symbols.identity_of(existing_id))
@@ -162,4 +178,23 @@ impl TypeChecker {
 
         (type_param_bounds, type_param_bound_details)
     }
+}
+
+/// Return whether two overloads expose the same alias-normalized type-token dispatch surface.
+///
+/// Return types do not participate in overload selection. Parameter names and defaults describe call syntax rather
+/// than dispatch identity, while parameter kinds and `mut` markers do change how arguments bind. Type annotations
+/// have already passed through transparent-alias expansion before this comparison.
+fn type_token_overload_signatures_identical(left: &FunctionInfo, right: &FunctionInfo) -> bool {
+    left.params
+        .iter()
+        .any(|param| matches!(&param.ty, ResolvedType::TypeToken(_)))
+        && left.params.len() == right.params.len()
+        && left
+            .params
+            .iter()
+            .zip(&right.params)
+            .all(|(left, right)| left.ty == right.ty && left.kind == right.kind && left.is_mut == right.is_mut)
+        && left.type_params == right.type_params
+        && left.type_param_bounds == right.type_param_bounds
 }

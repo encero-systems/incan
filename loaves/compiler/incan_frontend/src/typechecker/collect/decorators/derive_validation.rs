@@ -181,18 +181,24 @@ impl TypeChecker {
             return true;
         }
 
-        if self
-            .lookup_symbol(name)
-            .is_some_and(|symbol| matches!(symbol.kind, SymbolKind::RustItem(_)))
-        {
+        if self.rust_import_path_for_local_name(name).is_some() {
             return true;
         }
 
-        if self
-            .lookup_symbol(name)
-            .is_some_and(|symbol| matches!(symbol.kind, SymbolKind::Module(_)))
-            && let Some(module_path) = self.module_path_for_imported_name(name)
+        // A qualified trait is a member of its module namespace, not a request for every derive published by the
+        // module. Resolve it before the module-level `__derives__` shorthand so `json.Serialize` keeps its exact
+        // trait identity while bare `json` still expands the module's declared derive set.
+        let resolved = self.derive_trait_path(name);
+        if resolved.len() >= 2
+            && self.imported_trait_is_derivable(&resolved[..resolved.len() - 1], &resolved[resolved.len() - 1])
         {
+            if let Some((canonical, info)) = self.resolve_qualified_trait(name) {
+                self.define_hidden_trait_symbol(&canonical, info, span);
+            }
+            return true;
+        }
+
+        if let Some(module_path) = self.module_path_for_imported_name(name) {
             if self.lookup_derivable_traits(&module_path).is_some() {
                 return true;
             }
@@ -206,18 +212,6 @@ impl TypeChecker {
             && let Some(module_path) = self.module_path_for_imported_name(name)
             && self.lookup_derivable_traits(&module_path).is_some()
         {
-            return true;
-        }
-
-        // Allow custom derives imported from stdlib modules backed by rust.module(...), whether the trait was imported
-        // by name or is named through its module (`json.Serialize`, #1885).
-        let resolved = self.derive_trait_path(name);
-        if resolved.len() >= 2
-            && self.imported_trait_is_derivable(&resolved[..resolved.len() - 1], &resolved[resolved.len() - 1])
-        {
-            if let Some((canonical, info)) = self.resolve_qualified_trait(name) {
-                self.define_hidden_trait_symbol(&canonical, info, span);
-            }
             return true;
         }
 

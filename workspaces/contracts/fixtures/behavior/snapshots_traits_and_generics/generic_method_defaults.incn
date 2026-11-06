@@ -11,7 +11,7 @@
 class Box[T with Clone]:
     pub value: T
 
-    def join(self, other: Box[T], suffix: str = "") -> Box[T]:
+    pub def join(self, other: Box[T], suffix: str = "") -> Box[T]:
         return other
 
 

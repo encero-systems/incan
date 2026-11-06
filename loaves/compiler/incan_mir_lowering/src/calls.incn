@@ -237,7 +237,7 @@ def lower_delegated_call(
             return instantiated_external_call(builder, path, type_arguments, parameters, result, operands, output, span)
 
 
-pub def native_delegation(delegation: &RustLoafCallable) -> bool:
+pub def native_delegation(delegation: RustLoafCallable) -> bool:
     """Distinguish metadata-selected Rust items from compiled source Loaf signatures before admitting local carriers."""
     match delegation.canonical.origin:
         SymbolOrigin.RustCrate(_path) => return true

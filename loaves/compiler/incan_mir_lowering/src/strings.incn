@@ -7,7 +7,7 @@ from frame import Builder, temporary, external_call
 from lists import is_list
 
 
-pub def text_helper(helper: &HelperOp) -> Option[tuple[str, PlanType]]:
+pub def text_helper(helper: HelperOp) -> Option[tuple[str, PlanType]]:
     """Select text-only helpers whose parameters borrow strings and whose runtime semantics match legacy."""
     match helper:
         HelperOp.StrConcat => return Some(("concat_text", PlanType.String))
@@ -42,15 +42,25 @@ pub def text_method(member: str, receiver: PlanType) -> Option[tuple[str, PlanTy
     """Select canonical string methods without admitting a same-named user declaration."""
     if receiver not in [PlanType.String, PlanType.StringRef, PlanType.FrozenStr]:
         return None
-    for owner in [stringlike_name(StringLikeId.Str), stringlike_name(StringLikeId.FrozenStr)]:
-        if member == f"{owner}.to_string":
-            return Some(("clone_text", PlanType.String))
-        if member == f"{owner}.startswith":
-            return Some(("starts_text", PlanType.Bool))
-        if member == f"{owner}.endswith":
-            return Some(("ends_text", PlanType.Bool))
-        if member == f"{owner}.split_whitespace":
-            return Some(("split_whitespace_text", PlanType.List(ListLeaf.Str, 1)))
+    string_method = text_method_for_owner(member, stringlike_name(StringLikeId.Str))
+    if string_method is not None:
+        return string_method
+    frozen_string_method = text_method_for_owner(member, stringlike_name(StringLikeId.FrozenStr))
+    if frozen_string_method is not None:
+        return frozen_string_method
+    return None
+
+
+def text_method_for_owner(member: str, owner: str) -> Option[tuple[str, PlanType]]:
+    """Select one canonical string owner's helper without storing a native borrowed name."""
+    if member == f"{owner}.to_string":
+        return Some(("clone_text", PlanType.String))
+    if member == f"{owner}.startswith":
+        return Some(("starts_text", PlanType.Bool))
+    if member == f"{owner}.endswith":
+        return Some(("ends_text", PlanType.Bool))
+    if member == f"{owner}.split_whitespace":
+        return Some(("split_whitespace_text", PlanType.List(ListLeaf.Str, 1)))
     return None
 
 

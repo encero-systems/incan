@@ -1,6 +1,8 @@
 //! For-pattern bindings, general and non-range iteration, dictionary values, and in-place item changes.
 
 use super::*;
+use incan_lang::lang::builtins::BuiltinMethodId;
+use incan_lang::lang::surface::dict_methods::DictMethodId;
 
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Declare the local each produced item of a `for` loop is written into.
@@ -298,9 +300,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if !type_args.is_empty() || !args.is_empty() {
             return None;
         }
-        let identity = self.type_info.resolved_identity(expr.span)?;
-        if identity.origin != incan_semantics_core::SymbolOrigin::Builtin || identity.declaration_name != "Dict.values"
-        {
+        if self.type_info.resolved_builtin_method_call(expr.span) != Some(BuiltinMethodId::Dict(DictMethodId::Values)) {
             return None;
         }
         self.resolve_ty(source.span)

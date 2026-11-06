@@ -1,0 +1,837 @@
+"""Build, verify, pack, and optionally prove one source toolchain generation without publishing it."""
+
+from rust::std::env::consts import ARCH, OS
+from rust::std::io import Cursor
+from rust::std::process import Command, exit
+from rust::std::string import String as RustString
+from rust::std::time import Instant
+from rust::tar @ "0.4" import Archive
+from std.compression.gzip import decompress as decompress_gzip
+from std.environ import args, get_or
+from std.fs import Path
+from std.json import JsonValue
+from check_support import repository_root, write_stderr
+from native_build import (
+    NativeContext,
+    build_runtime,
+    build_source_interfaces,
+    build_standard_packages,
+    build_support_tool,
+    build_tool,
+    publish_support,
+    require_unique_runtime_root,
+)
+from release_support import (
+    FAMILIES,
+    TOOLCHAIN_DIRECTORY,
+    BaselineReport,
+    Counts,
+    ReleaseOptions,
+    Step,
+    append_timing,
+    check_baseline,
+    counts_json,
+    digest,
+    log_tail,
+    parse_release_options,
+    release_receipt,
+    run_step,
+    write_json,
+)
+from relink_driver import Relink, absolute_manifest, run as relink
+from verify_fixed_point import prove_fixed_point
+
+
+pub model ReleasePaths:
+    """Stable release output, source, lane, home, toolchain, and bundle paths."""
+
+    pub output: Path
+    pub source: Path
+    pub lane: Path
+    pub home: Path
+    pub toolchain: Path
+    pub bundle: Path
+
+
+pub model ReleaseRun:
+    """Release-wide source, seed, host, caller settings, and retained path selection."""
+
+    pub root: Path
+    pub options: ReleaseOptions
+    pub paths: ReleasePaths
+    pub seed_home: Path
+    pub seed_oven: Path
+    pub seed_lsp: Path
+    pub target: str
+    pub started: Instant
+
+
+pub model Candidate:
+    """Candidate build context and its shipped Oven, LSP, and contract runner."""
+
+    pub context: NativeContext
+    pub oven: Path
+    pub lsp: Path
+    pub runner: Path
+
+
+def main() -> None:
+    """Run release qualification, reporting argument refusals as status 2 and release refusals as status 1."""
+    arguments = args().unwrap_or([])
+    match parse_release_options(arguments[1:]):
+        Ok(options) =>
+            match release(options):
+                Ok(receipt) =>
+                    println(f"release receipt: {receipt.0}")
+                    exit(0)
+                Err(message) =>
+                    write_stderr(message + "\n")
+                    exit(1)
+        Err(message) =>
+            write_stderr(message + "\n")
+            exit(2)
+
+
+pub def release(options: ReleaseOptions) -> Result[Path, str]:
+    """
+    Produce one host release in seven directed phases.
+
+    1. Materialize the selected committed source and a seed-bound candidate home.
+    2. Build the source support closure without an installed runtime provider.
+    3. Build and select the candidate compiler, runtime, and standard Loaves.
+    4. Build and pack the shipped Oven and language server plus the contract runner.
+    5. Compare the candidate census with the seed census and committed PASS baseline.
+    6. Install the bundle into a second home and repeat installed verification.
+    7. When requested, rebuild DD-0010's six named artifacts and require byte identity.
+    """
+    run = prepare_release(options)?
+
+    # 1. A release builds a full committed tree while its orchestration remains this compiled Incan program.
+    phase(run, "checkout")?
+    materialize_source(run)?
+    phase(run, "seed-home")?
+    prepare_candidate_home(run)?
+
+    # 2. The seed compiles the support helper; that helper publishes one fresh source support generation.
+    phase(run, "source-closure")?
+    mut candidate = build_source_closure(run)?
+
+    # 3. Candidate compiler selection precedes runtime and standard production through that compiler.
+    phase(run, "candidate-compiler")?
+    candidate = build_candidate_compiler(run, candidate)?
+
+    # 4. Shipped tools and archive are all built from the selected source and candidate home.
+    phase(run, "bundle")?
+    candidate = build_bundle(run, candidate)?
+
+    # 5. Direct outcomes may repair seed failures but may not lose its cases, PASS keys, or committed baseline.
+    phase(run, "direct-verification")?
+    reference = reference_census(run)?
+    direct = direct_census(run, candidate)?
+    compare_reference(run, reference, direct)?
+
+    # 6. A fresh home, source path, and Rust sysroot prove the packed toolchain rather than the build tree.
+    phase(run, "installed-verification")?
+    installed = installed_verification(run, candidate)?
+    compare_installed(run, direct, installed)?
+
+    # 7. Fixed-point work is an explicit release gate because it intentionally doubles native production.
+    if run.options.prove_fixed_point:
+        phase(run, "fixed-point")?
+        prove_fixed_point(candidate.context)?
+    complete_receipt(run, direct.counts)?
+    return Ok(run.paths.output.joinpath("receipt.json"))
+
+
+def prepare_release(options: ReleaseOptions) -> Result[ReleaseRun, str]:
+    """Validate host and seed inputs, create the output layout, and publish an initial refused receipt."""
+    root = repository_root()?
+    if options.output.exists():
+        return Err(f"output already exists: {options.output.0}")
+    seed_text = get_or("INCAN_HOME", "")
+    if seed_text == "":
+        return Err("INCAN_HOME must select the installed seed toolchain")
+    seed_home = Path(seed_text).resolve().map_err((error) => error.message())?
+    seed_oven = seed_home.joinpath("bin/incan")
+    seed_lsp = Path(get_or("INCAN_LSP", seed_home.joinpath("bin/incan-lsp").0))
+    if not seed_oven.is_file():
+        return Err(f"missing seed Oven: {seed_oven.0}")
+    if not seed_lsp.is_file():
+        return Err(f"missing seed language server: {seed_lsp.0}")
+    target = host_target()?
+    options.output.mkdir(true, false).map_err((error) => error.message())?
+    output = options.output.resolve().map_err((error) => error.message())?
+    paths = release_paths(output)
+    paths.bundle.mkdir(true, true).map_err((error) => error.message())?
+    paths.lane.joinpath("out").mkdir(true, true).map_err((error) => error.message())?
+    paths.output.joinpath("timings.tsv").write_text("", "utf-8", "strict", None).map_err((error) => error.message())?
+    run = ReleaseRun(
+        root=root,
+        options=options,
+        paths=paths,
+        seed_home=seed_home,
+        seed_oven=seed_oven,
+        seed_lsp=seed_lsp,
+        target=target,
+        started=Instant.now(),
+    )
+    phase(run, "initializing")?
+    return Ok(run)
+
+
+def release_paths(output: Path) -> ReleasePaths:
+    """Lay out every release-owned path below one caller-selected output directory."""
+    home = output.joinpath("build-home")
+    return ReleasePaths(
+        output=output,
+        source=output.joinpath("source"),
+        lane=output.joinpath("lane"),
+        home=home,
+        toolchain=home.joinpath(TOOLCHAIN_DIRECTORY),
+        bundle=output.joinpath("bundle"),
+    )
+
+
+def materialize_source(run: ReleaseRun) -> Result[None, str]:
+    """Clone and detach the exact committed source, refusing a SHA absent from this repository."""
+    resolved = command_text("git", ["-C", run.root.0, "rev-parse", "--verify", f"{run.options.source_sha}^{{commit}}"])?
+    if resolved.strip() != run.options.source_sha:
+        return Err("SHA does not identify the requested full source commit")
+    require_release_step(
+        run,
+        release_step(
+            run,
+            "clone",
+            "git",
+            ["clone", "--shared", "--no-checkout", run.root.0, run.paths.source.0],
+            run.root,
+            {},
+        ),
+    )?
+    require_release_step(
+        run,
+        release_step(
+            run,
+            "source-checkout",
+            "git",
+            ["-C", run.paths.source.0, "checkout", "--detach", run.options.source_sha],
+            run.root,
+            {},
+        ),
+    )?
+    if command_text("git", ["-C", run.paths.source.0, "status", "--porcelain"])?.strip() != "":
+        return Err("source checkout is dirty")
+    run.paths.lane.joinpath("incan").symlink_to(run.paths.source).map_err((error) => error.message())?
+    return Ok(None)
+
+
+def prepare_candidate_home(run: ReleaseRun) -> Result[None, str]:
+    """Select immutable seed artifacts by absolute identity inside a fresh writable candidate home."""
+    seed = run.seed_home.joinpath(TOOLCHAIN_DIRECTORY)
+    run.paths.toolchain.mkdir(true, true).map_err((error) => error.message())?
+    manifest = JsonValue
+        .parse(seed.joinpath("toolchain.json").read_text("utf-8", "strict").map_err((error) => error.message())?)
+        .map_err((error) => error.message())?
+    run.paths.toolchain
+        .joinpath("toolchain.json")
+        .write_text(absolute_manifest(manifest, seed.0)?, "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    share_seed_tree(seed, run.paths.toolchain, "loaves")?
+    share_seed_tree(seed, run.paths.toolchain, "native")?
+    share_seed_tree(seed, run.paths.toolchain, "registry")?
+    sysroot = manifest_string(read_json(run.paths.toolchain.joinpath("toolchain.json"))?, "sysroot")?
+    run.paths.toolchain.joinpath("sysroot").symlink_to(Path(sysroot)).map_err((error) => error.message())?
+    preserve_registry_lock(run.paths.toolchain)?
+    retain_seed_digests(run, seed)?
+    if run.target == "x86_64-unknown-linux-gnu":
+        clang_started = Instant.now()
+        clang = fetch_c_toolchain(run)?
+        append_timing(run.paths.output.joinpath("timings.tsv"), "c-toolchain", clang_started.elapsed().as_secs_f64())?
+        set_manifest_string(run.paths.toolchain.joinpath("toolchain.json"), "c_compiler", clang.0)?
+    rust_step = release_step(
+        run,
+        "rust",
+        "rustup",
+        ["run", "1.98.0", "rustc", "-vV"],
+        run.paths.source,
+        {"RUSTUP_TOOLCHAIN": "1.98.0"},
+    )
+    require_release_step(run, rust_step)?
+    return Ok(None)
+
+
+def build_source_closure(run: ReleaseRun) -> Result[Candidate, str]:
+    """Build the conductor and fresh support/runtime/standard source closure with the released seed."""
+    seed_context = native_context(run, run.seed_oven, run.seed_home)
+    conductor = build_tool(seed_context, "oven", false, "conductor-build")?
+    context = native_context(run, conductor, run.paths.home)
+    helper = build_support_tool(context, run.seed_home)?
+    withdraw_seed_providers(run)?
+    publish_support(context, helper)?
+    interfaces_started = Instant.now()
+    interfaces = build_source_interfaces(context, helper)?
+    append_timing(
+        run.paths.output.joinpath("timings.tsv"),
+        "source-interfaces",
+        interfaces_started.elapsed().as_secs_f64(),
+    )?
+    _ = build_runtime(context, helper, Some(interfaces), true, "candidate-")?
+    require_unique_runtime_root(context)?
+    build_standard_packages(context, helper, "")?
+    return Ok(Candidate(context=context, oven=conductor, lsp=Path(""), runner=Path("")))
+
+
+def build_candidate_compiler(run: ReleaseRun, candidate: Candidate) -> Result[Candidate, str]:
+    """Build the source compiler, then rebuild checking interfaces and shipped providers through it."""
+    driver_started = Instant.now()
+    relink(
+        Relink(
+            repo=run.paths.source,
+            bootstrap=run.paths.lane.joinpath("bootstrap"),
+            toolchain_home=run.paths.home,
+            builder=candidate.oven.0,
+            stdlib=run.paths.source.joinpath("loaves/stdlib").0,
+            profile="release",
+            refresh=false,
+            log=run.paths.output.joinpath("driver-build.log"),
+        ),
+    )?
+    append_timing(run.paths.output.joinpath("timings.tsv"), "driver-build", driver_started.elapsed().as_secs_f64())?
+    context = native_context(run, candidate.oven, run.paths.home)
+    helper = run.paths.lane.joinpath("out/native-builds/toolchain-native")
+    interfaces_started = Instant.now()
+    interfaces = build_source_interfaces(context, helper, "candidate-")?
+    append_timing(
+        run.paths.output.joinpath("timings.tsv"),
+        "candidate-source-interfaces",
+        interfaces_started.elapsed().as_secs_f64(),
+    )?
+    _ = build_runtime(context, helper, Some(interfaces), true)?
+    require_unique_runtime_root(context)?
+    build_standard_packages(context, helper, "candidate-")?
+    return Ok(Candidate(context=context, oven=candidate.oven, lsp=candidate.lsp, runner=candidate.runner))
+
+
+def build_bundle(run: ReleaseRun, candidate: Candidate) -> Result[Candidate, str]:
+    """Build the shipped tools and runner, copy the bundle tools, and pack the installed candidate toolchain."""
+    oven = build_tool(candidate.context, "oven", true, "oven-build")?
+    bundle_oven = run.paths.bundle.joinpath("incan")
+    _ = oven.copy(bundle_oven, true, true).map_err((error) => error.message())?
+    context = native_context(run, bundle_oven, run.paths.home)
+    lsp = build_tool(context, "lsp", false, "lsp-build")?
+    bundle_lsp = run.paths.bundle.joinpath("incan-lsp")
+    _ = lsp.copy(bundle_lsp, true, true).map_err((error) => error.message())?
+    runner = build_tool(context, "contracts", false, "runner-build")?
+    require_release_step(
+        run,
+        release_step(
+            run,
+            "pack",
+            bundle_oven.0,
+            ["toolchain", "pack", run.paths.bundle.joinpath("toolchain.tar.zst").0],
+            run.paths.source,
+            build_environment(run, run.paths.home, bundle_oven),
+        ),
+    )?
+    return Ok(Candidate(context=context, oven=bundle_oven, lsp=bundle_lsp, runner=runner))
+
+
+def reference_census(run: ReleaseRun) -> Result[Path, str]:
+    """Measure the released seed against the same committed fixture tree before judging candidate outcomes."""
+    project = run.paths.source.joinpath("workspaces/contracts")
+    require_release_step(
+        run,
+        release_step(
+            run,
+            "reference-runner-build",
+            run.seed_oven.0,
+            ["build", project.0, "--profile", "release"],
+            run.paths.source,
+            build_environment(run, run.seed_home, run.seed_oven),
+        ),
+    )?
+    runner = project.joinpath("target/incan/release/bin/contracts")
+    log = run.paths.output.joinpath("reference-contracts.log")
+    mut environment = build_environment(run, run.seed_home, run.seed_oven)
+    environment["INCAN_LSP"] = run.seed_lsp.0
+    code = timed_release_step(
+        run,
+        census_step(run, "reference-contracts", runner, run.seed_oven, environment, log, false),
+    )?
+    if code > 1:
+        return Err(f"reference runner exited {code}")
+    return Ok(log)
+
+
+def direct_census(run: ReleaseRun, candidate: Candidate) -> Result[BaselineReport, str]:
+    """Run the candidate directly and enforce the committed PASS baseline."""
+    log = run.paths.output.joinpath("baseline-contracts.log")
+    mut environment = build_environment(run, run.paths.home, candidate.oven)
+    environment["INCAN_LSP"] = candidate.lsp.0
+    code = timed_release_step(
+        run,
+        census_step(run, "baseline-contracts", candidate.runner, candidate.oven, environment, log, false),
+    )?
+    if code > 1:
+        return Err(f"candidate runner exited {code}")
+    report = check_baseline(
+        release_baseline(run)?.read_text("utf-8", "strict").map_err((error) => error.message())?,
+        log.read_text("utf-8", "strict").map_err((error) => error.message())?,
+    )?
+    write_json(run.paths.output.joinpath("counts.json"), counts_json(report.counts))?
+    return Ok(report)
+
+
+def release_baseline(run: ReleaseRun) -> Result[Path, str]:
+    """Select the qualified tree's baseline, with the current tree only for an uncommitted rename proof."""
+    relative = "workspaces/contracts/pass-baseline.txt"
+    qualified = run.paths.source.joinpath(relative)
+    if qualified.is_file():
+        return Ok(qualified)
+    current = run.root.joinpath(relative)
+    current_head = command_text("git", ["-C", run.root.0, "rev-parse", "HEAD"])?.strip()
+    if current_head == run.options.source_sha and current.is_file():
+        return Ok(current)
+    return Err(f"release PASS baseline is absent: {qualified.0}")
+
+
+def installed_verification(run: ReleaseRun, candidate: Candidate) -> Result[Path, str]:
+    """Install the packed candidate into a second home and run the Incan installed-verification program."""
+    verification = run.paths.output.joinpath("verification-source")
+    require_release_step(
+        run,
+        release_step(
+            run,
+            "verification-clone",
+            "git",
+            ["clone", "--shared", "--no-checkout", run.root.0, verification.0],
+            run.root,
+            {},
+        ),
+    )?
+    require_release_step(
+        run,
+        release_step(
+            run,
+            "verification-checkout",
+            "git",
+            ["-C", verification.0, "checkout", "--detach", run.options.source_sha],
+            run.root,
+            {},
+        ),
+    )?
+    rust_started = Instant.now()
+    rustup_home = relocate_rust(run)?
+    append_timing(run.paths.output.joinpath("timings.tsv"), "relocated-rust", rust_started.elapsed().as_secs_f64())?
+    home = run.paths.output.joinpath("verification-home")
+    home.joinpath("bin").mkdir(true, true).map_err((error) => error.message())?
+    _ = candidate.oven.copy(home.joinpath("bin/incan"), true, true).map_err((error) => error.message())?
+    _ = candidate.lsp.copy(home.joinpath("bin/incan-lsp"), true, true).map_err((error) => error.message())?
+    mut environment = build_environment(run, home, home.joinpath("bin/incan"))
+    environment["RUSTUP_HOME"] = rustup_home.0
+    environment["INCAN_LSP"] = home.joinpath("bin/incan-lsp").0
+    require_release_step(
+        run,
+        release_step(
+            run,
+            "installed-toolchain",
+            home.joinpath("bin/incan").0,
+            ["toolchain", "install", run.paths.bundle.joinpath("toolchain.tar.zst").0],
+            verification,
+            environment,
+        ),
+    )?
+    environment["INCAN_RELEASE_ARCHIVE"] = run.paths.bundle.joinpath("toolchain.tar.zst").0
+    environment["INCAN_BUILDER_HOME"] = run.paths.home.0
+    environment["INCAN_BUILDER_SOURCE"] = run.paths.source.0
+    require_release_step(
+        run,
+        release_step(
+            run,
+            "installed-ci",
+            home.joinpath("bin/incan").0,
+            [
+                "run",
+                run.root.joinpath("scripts/verify_installation.incn").0,
+                "--",
+                run.paths.output.joinpath("ci").0,
+                "--jobs",
+                str(run.options.jobs),
+                "--timeout",
+                str(run.options.timeout_seconds),
+            ],
+            verification,
+            environment,
+            20,
+        ),
+    )?
+    runs = run.paths.output.joinpath("ci").glob("run.*").map_err((error) => error.message())?
+    if len(runs) != 1 or not runs[0].joinpath("contracts.log").is_file():
+        return Err("expected one installed census")
+    return Ok(runs[0].joinpath("contracts.log"))
+
+
+def compare_reference(run: ReleaseRun, reference: Path, direct: BaselineReport) -> Result[None, str]:
+    """Require candidate case keys to equal the seed census and every seed PASS key to remain passing."""
+    reference_report = census_results(reference)?
+    if reference_report.result_keys != direct.result_keys:
+        write_difference(run.paths.output.joinpath("integration-parity.diff"), reference_report, direct)?
+        return Err("candidate case keys differ from the integration census")
+    for key in reference_report.result_keys:
+        if reference_report.result_statuses[key] == "PASS" and direct.result_statuses[key] != "PASS":
+            return Err(f"candidate lost integration PASS: {key}")
+    return Ok(None)
+
+
+def compare_installed(run: ReleaseRun, direct: BaselineReport, installed: Path) -> Result[None, str]:
+    """Require a fresh installation to reproduce every direct candidate outcome exactly."""
+    installed_report = census_results(installed)?
+    if installed_report.result_keys != direct.result_keys:
+        write_difference(run.paths.output.joinpath("parity.diff"), direct, installed_report)?
+        return Err("installed case keys differ from direct candidate outcomes")
+    for key in direct.result_keys:
+        if direct.result_statuses[key] != installed_report.result_statuses[key]:
+            write_difference(run.paths.output.joinpath("parity.diff"), direct, installed_report)?
+            return Err(f"installed outcome differs: {key}")
+    return Ok(None)
+
+
+def census_results(log: Path) -> Result[BaselineReport, str]:
+    """Parse a complete census with its own PASS keys as a temporary baseline."""
+    text = log.read_text("utf-8", "strict").map_err((error) => error.message())?
+    mut baseline: list[str] = []
+    for line in text.split("\n"):
+        fields = line.split(" ")
+        if len(fields) >= 2 and fields[0] == "PASS":
+            baseline.append(fields[1])
+    return check_baseline("\n".join(baseline) + "\n", text)
+
+
+def census_step(
+    run: ReleaseRun,
+    name: str,
+    runner: Path,
+    oven: Path,
+    environment: Dict[str, str],
+    log: Path,
+    isolated: bool,
+) -> Step:
+    """Create one complete eight-family contract invocation."""
+    mut arguments = [
+        oven.0,
+        run.paths.source.joinpath("workspaces/contracts/fixtures").0,
+        "--scratch",
+        run.paths.output.joinpath(f"{name}-scratch").0,
+        "--jobs",
+        str(run.options.jobs),
+        "--timeout",
+        str(run.options.timeout_seconds),
+    ]
+    if isolated:
+        arguments.append("--isolated")
+    arguments += [family for family in FAMILIES]
+    return Step(
+        name=name,
+        executable=runner.0,
+        arguments=arguments,
+        environment=environment,
+        remove_environment=["RUSTC_BOOTSTRAP"],
+        directory=Some(run.paths.source),
+        log=log,
+        timeout_seconds=run.options.timeout_seconds * 20,
+    )
+
+
+def native_context(run: ReleaseRun, builder: Path, home: Path) -> NativeContext:
+    """Create the explicit native-production context for one selected Oven and home."""
+    return NativeContext(
+        repo=run.paths.source,
+        lane=run.paths.lane,
+        home=home,
+        builder=builder.0,
+        stdlib=run.paths.source.joinpath("loaves/stdlib").0,
+        evidence=run.paths.output,
+        timings=run.paths.output.joinpath("timings.tsv"),
+        timeout_seconds=run.options.timeout_seconds,
+    )
+
+
+def build_environment(run: ReleaseRun, home: Path, oven: Path) -> Dict[str, str]:
+    """Return the release-owned environment supplied independently to one child process."""
+    return {"INCAN_HOME": home.0, "INCAN_STDLIB": run.paths.source.joinpath("loaves/stdlib").0, "INCAN_NO_BANNER": "1", "OVEN_OWNER": "off", "RUSTUP_TOOLCHAIN": "1.98.0", "INCAN_RUST_INCREMENTAL": "0", "DEV8_LANE": run.paths.lane.0, "SELFBUILD_HOME": home.0, "SELFBUILD_OVEN": oven.0, "SELFBUILD_STDLIB": run.paths.source.joinpath(
+        "loaves/stdlib",
+    ).0}
+
+
+def withdraw_seed_providers(run: ReleaseRun) -> Result[None, str]:
+    """Remove the borrowed Loaf selection before publishing candidate support, runtime, and standard providers."""
+    loaves = run.paths.toolchain.joinpath("loaves")
+    if not loaves.is_symlink():
+        return Err("expected the disposable seed Loaf link")
+    loaves.unlink().map_err((error) => error.message())?
+    path = run.paths.toolchain.joinpath("toolchain.json")
+    mut fields = read_json(path)?.expect_object().map_err((error) => error.message())?
+    fields["externs"] = JsonValue.array([])
+    fields["search"] = JsonValue.array([])
+    return replace_json(path, JsonValue.object(fields))
+
+
+def share_seed_tree(seed: Path, destination: Path, name: str) -> Result[None, str]:
+    """Link one immutable seed tree into the candidate home when the seed publishes it."""
+    source = seed.joinpath(name)
+    if source.exists():
+        destination.joinpath(name).symlink_to(source).map_err((error) => error.message())?
+    return Ok(None)
+
+
+def preserve_registry_lock(toolchain: Path) -> Result[None, str]:
+    """Keep a relative registry-lock path meaningful after the seed manifest becomes candidate-owned."""
+    path = toolchain.joinpath("toolchain.json")
+    value = read_json(path)?
+    lock = optional_string(value, "registry_lock")?
+    if lock == "":
+        return Ok(None)
+    record = Path(lock)
+    if not record.is_file():
+        return Err(f"seed registry producer record is absent: {lock}")
+    linked = toolchain.joinpath("registry-producer")
+    linked.symlink_to(record.parent()).map_err((error) => error.message())?
+    return set_manifest_string(path, "registry_lock", f"registry-producer/{record.name()}")
+
+
+def retain_seed_digests(run: ReleaseRun, seed: Path) -> Result[None, str]:
+    """Retain the selected seed command and manifest digests."""
+    mut text = f"{digest(run.seed_oven)?}  {run.seed_oven.0}\n"
+    text += f"{digest(seed.joinpath("toolchain.json"))?}  {seed.0}/toolchain.json\n"
+    return run.paths.output
+        .joinpath("seed.sha256")
+        .write_text(text, "utf-8", "strict", None)
+        .map_err((error) => error.message())
+
+
+def relocate_rust(run: ReleaseRun) -> Result[Path, str]:
+    """Copy the pinned sysroot to a second Rust home with different path and file identities."""
+    sysroot = Path(command_text("rustup", ["run", "1.98.0", "rustc", "--print", "sysroot"])?.strip())
+    home = run.paths.output.joinpath("rustup")
+    destination = home.joinpath("toolchains").joinpath(sysroot.name())
+    destination.parent().mkdir(true, true).map_err((error) => error.message())?
+    _ = sysroot.copy(destination, true, true).map_err((error) => error.message())?
+    return Ok(home)
+
+
+def fetch_c_toolchain(run: ReleaseRun) -> Result[Path, str]:
+    """Pull the pinned Linux Clang artifact with oras and unpack its sole gzip-compressed tar layer in Incan."""
+    pins = read_json(run.paths.source.joinpath("scripts/c-toolchain.json"))?
+    registry = manifest_string(pins, "registry")?
+    clang = pins.require("clang").and_then((value) => value.require(run.target)).map_err((error) => error.message())?
+    repository = manifest_string(clang, "repository")?
+    digest_value = manifest_string(clang, "digest")?
+    download = run.paths.output.joinpath("c-toolchain-download")
+    require_release_step(
+        run,
+        release_step(
+            run,
+            "c-toolchain-pull",
+            "oras",
+            ["pull", f"{registry}/{repository}@{digest_value}", "--output", download.0],
+            run.paths.source,
+            {},
+        ),
+    )?
+    archives = download.rglob("*.tar.gz").map_err((error) => error.message())?
+    if len(archives) != 1:
+        return Err("pinned Clang artifact must contain one .tar.gz layer")
+    unpacked = run.paths.output.joinpath("c-toolchain-unpacked")
+    unpacked.mkdir(true, true).map_err((error) => error.message())?
+    bytes = decompress_gzip(archives[0].read_bytes().map_err((error) => error.message())?).map_err(
+        (error) => error.message(),
+    )?
+    mut archive = Archive.new(Cursor.new(bytes))
+    archive.unpack(unpacked.0).map_err((error) => error.to_string())?
+    roots = [path for path in unpacked.iterdir().map_err((error) => error.message())? if path.is_dir()]
+    if len(roots) != 1 or not roots[0].joinpath("bin/clang").is_file():
+        return Err("pinned Clang archive has an unexpected root")
+    destination = run.paths.toolchain.joinpath("c-toolchain/clang")
+    destination.parent().mkdir(true, true).map_err((error) => error.message())?
+    _ = roots[0].move(destination).map_err((error) => error.message())?
+    download.remove_tree().map_err((error) => error.message())?
+    unpacked.remove_tree().map_err((error) => error.message())?
+    return Ok(destination.joinpath("bin/clang"))
+
+
+def release_step(
+    run: ReleaseRun,
+    name: str,
+    executable: str,
+    arguments: list[str],
+    directory: Path,
+    environment: Dict[str, str],
+    timeout_multiplier: int = 1,
+) -> Step:
+    """Create one release child process with complete output and an explicit per-child environment."""
+    return Step(
+        name=name,
+        executable=executable,
+        arguments=arguments,
+        environment=environment,
+        remove_environment=["RUSTC_BOOTSTRAP", "INCAN_LSP"],
+        directory=Some(directory),
+        log=run.paths.output.joinpath(f"{name}.log"),
+        timeout_seconds=run.options.timeout_seconds * timeout_multiplier,
+    )
+
+
+def timed_release_step(run: ReleaseRun, child: Step) -> Result[int, str]:
+    """Run one release phase and append its wall duration even when the child refuses."""
+    name = str(child.name)
+    log = child.log.clone()
+    started = Instant.now()
+    outcome = run_step(child)
+    append_timing(run.paths.output.joinpath("timings.tsv"), name, started.elapsed().as_secs_f64())?
+    code = match outcome:
+        Ok(observed) => observed
+        Err(message) => return Err(f"{message}\n{log_tail(log)}")
+
+    return Ok(code)
+
+
+def require_release_step(run: ReleaseRun, child: Step) -> Result[None, str]:
+    """Require one timed release child to succeed while preserving its exact named log."""
+    name = str(child.name)
+    log = child.log.clone()
+    code = timed_release_step(run, child)?
+    if code != 0:
+        return Err(f"{name} failed with status {code}; log: {log.0}\n{log_tail(log)}")
+    return Ok(None)
+
+
+def phase(run: ReleaseRun, name: str) -> Result[None, str]:
+    """Publish a refused receipt naming the phase before any of its work starts."""
+    return write_receipt(run, name, "refused", 1, None, JsonValue.null())
+
+
+def complete_receipt(run: ReleaseRun, counts: Counts) -> Result[None, str]:
+    """Publish the successful receipt with artifact digests, counts, Oven results, and fixed-point mode."""
+    mut oven_tests = JsonValue.null()
+    runs = run.paths.output.joinpath("ci").glob("run.*").map_err((error) => error.message())?
+    if len(runs) == 1 and runs[0].joinpath("oven-tests.json").is_file():
+        oven_tests = read_json(runs[0].joinpath("oven-tests.json"))?
+        _ = runs[0]
+            .joinpath("oven-tests.json")
+            .copy(run.paths.output.joinpath("oven-tests.json"), true, true)
+            .map_err((error) => error.message())?
+    return write_receipt(run, "complete", "passed", 0, Some(counts), oven_tests)
+
+
+def write_receipt(
+    run: ReleaseRun,
+    phase_name: str,
+    outcome: str,
+    code: int,
+    counts: Option[Counts],
+    oven_tests: JsonValue,
+) -> Result[None, str]:
+    """Write the stable release rehearsal receipt, retaining partial artifact evidence on refusal."""
+    mut artifacts: Dict[str, JsonValue] = {}
+    for name in ["toolchain.tar.zst", "incan", "incan-lsp"]:
+        path = run.paths.bundle.joinpath(name)
+        if path.is_file():
+            artifacts[name] = JsonValue.string(digest(path)?)
+    mut contracts = JsonValue.null()
+    if let Some(observed) = counts:
+        contracts = counts_json(observed)
+    mut compiler_build = "native"
+    if run.options.prove_fixed_point:
+        compiler_build = "native-fixed-point"
+    mut parity = JsonValue.null()
+    if outcome == "passed":
+        parity = JsonValue.bool(true)
+    value = release_receipt(
+        run.options.source_sha,
+        run.target,
+        outcome,
+        phase_name,
+        code,
+        run.started.elapsed().as_secs().saturating_resize[int](),
+        artifacts,
+        compiler_build,
+        contracts,
+        oven_tests,
+        parity,
+    )
+    return write_json(run.paths.output.joinpath("receipt.json"), value)
+
+
+def write_difference(path: Path, left: BaselineReport, right: BaselineReport) -> Result[None, str]:
+    """Retain deterministic differing case outcomes without calling an external diff tool."""
+    mut lines: list[str] = []
+    keys = sorted(list(set(left.result_keys + right.result_keys)))
+    for key in keys:
+        mut left_status = "MISSING"
+        mut right_status = "MISSING"
+        if key in left.result_statuses:
+            left_status = left.result_statuses[key]
+        if key in right.result_statuses:
+            right_status = right.result_statuses[key]
+        if left_status != right_status:
+            lines.append(f"{key}\t{left_status}\t{right_status}")
+    return path.write_text("\n".join(lines) + "\n", "utf-8", "strict", None).map_err((error) => error.message())
+
+
+def host_target() -> Result[str, str]:
+    """Map the two supported native release hosts to their Rust target triples."""
+    if OS == "macos" and ARCH == "aarch64":
+        return Ok("aarch64-apple-darwin")
+    if OS == "linux" and ARCH == "x86_64":
+        return Ok("x86_64-unknown-linux-gnu")
+    return Err(f"supported hosts: macOS arm64 and Linux x86_64; observed {OS}/{ARCH}")
+
+
+def command_text(executable: str, arguments: list[str]) -> Result[str, str]:
+    """Run a small read-only command whose stdout is the result rather than release evidence."""
+    mut command = Command.new(executable)
+    for argument in arguments:
+        command.arg(argument)
+    output = command.output().map_err((error) => f"cannot run {executable}: {error}")?
+    stdout = RustString.from_utf8_lossy(output.stdout).into_owned()
+    if not output.status.success():
+        stderr = RustString.from_utf8_lossy(output.stderr).into_owned()
+        return Err(f"{executable} failed: {stderr}")
+    return Ok(stdout)
+
+
+def read_json(path: Path) -> Result[JsonValue, str]:
+    """Read one UTF-8 JSON document."""
+    text = path.read_text("utf-8", "strict").map_err((error) => f"{path.0}: {error.message()}")?
+    return JsonValue.parse(text).map_err((error) => f"{path.0}: {error.message()}")
+
+
+def replace_json(path: Path, value: JsonValue) -> Result[None, str]:
+    """Publish pretty JSON through one same-directory staged file."""
+    staged = Path(f"{path.0}.next")
+    staged
+        .write_text(value.to_pretty_json().map_err((error) => error.message())? + "\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    if path.exists() or path.is_symlink():
+        path.unlink().map_err((error) => error.message())?
+    _ = staged.move(path).map_err((error) => error.message())?
+    return Ok(None)
+
+
+def set_manifest_string(path: Path, key: str, value: str) -> Result[None, str]:
+    """Replace one string field in a JSON document atomically."""
+    mut fields = read_json(path)?.expect_object().map_err((error) => error.message())?
+    fields[key] = JsonValue.string(value)
+    return replace_json(path, JsonValue.object(fields))
+
+
+def manifest_string(value: JsonValue, key: str) -> Result[str, str]:
+    """Read one required JSON object string."""
+    return value.require(key).and_then((entry) => entry.expect_str()).map_err((error) => f"{key}: {error.message()}")
+
+
+def optional_string(value: JsonValue, key: str) -> Result[str, str]:
+    """Read one optional JSON object string as empty when absent."""
+    match value.get(key):
+        Some(entry) => return entry.expect_str().map_err((error) => f"{key}: {error.message()}")
+        None => return Ok("")

@@ -64,7 +64,12 @@ impl VisitTypeRefs for TypeRef {
             | Self::Ref { inner }
             | Self::MutParam { inner } => inner.visit_type_refs(visit),
             Self::Tuple { elements } => elements.visit_type_refs(visit),
-            Self::Named { .. } | Self::TypeParam { .. } | Self::SelfType | Self::RustPath { .. } | Self::Unknown => {}
+            Self::Named { .. }
+            | Self::Trait { .. }
+            | Self::TypeParam { .. }
+            | Self::SelfType
+            | Self::RustPath { .. }
+            | Self::Unknown => {}
         }
     }
 }
@@ -170,6 +175,7 @@ impl VisitTypeRefs for ParamDefaultExport {
                 args.visit_type_refs(visit);
                 signature.visit_type_refs(visit);
             }
+            Self::MethodCall { args, .. } => args.visit_type_refs(visit),
             Self::Int(_)
             | Self::Float(_)
             | Self::Bool(_)

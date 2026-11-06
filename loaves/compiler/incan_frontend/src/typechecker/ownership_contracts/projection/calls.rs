@@ -12,6 +12,9 @@ pub(crate) enum CheckedInputSource {
     Place {
         root: CanonicalSymbolId,
         fields: Vec<CanonicalSymbolId>,
+        /// Zero-based projection positions that select an element. The checked expression span owns evaluation;
+        /// Body IR authenticates that each position remains an index instead of a field.
+        elements: Vec<usize>,
     },
     /// A stored aggregate owns its carrier while retaining a checked loan to one borrowed component.
     CarriedLocal,
@@ -30,8 +33,9 @@ pub(crate) struct CheckedInputArgument {
 
 /// A method receiver borrowed for one invocation: shared for `self`, exclusive for `mut self`.
 pub(crate) struct CheckedInputReceiver {
-    pub source: CheckedInputSource,
+    pub source: Option<CheckedInputSource>,
     pub exclusive: bool,
+    pub owned: bool,
 }
 
 /// Instantiated value parameters and authenticated source access belong to one selected invocation.
@@ -76,20 +80,29 @@ impl<'a> CheckedInputBody<'a> {
                 source,
             });
         }
-        let receiver = invocation
-            .receiver
-            .map(|loan| {
-                let loan = self
-                    .graph
-                    .loans
-                    .get(loan.0)
-                    .ok_or("explicit method receiver has no checked loan")?;
-                Ok::<_, &'static str>(CheckedInputReceiver {
-                    source: project_source(&loan.source)?,
-                    exclusive: loan.kind == flow::LoanKind::Exclusive,
-                })
+        let receiver = if invocation.receiver_owned {
+            Some(CheckedInputReceiver {
+                source: invocation.receiver_source.as_ref().map(project_source).transpose()?,
+                exclusive: false,
+                owned: true,
             })
-            .transpose()?;
+        } else {
+            invocation
+                .receiver
+                .map(|loan| {
+                    let loan = self
+                        .graph
+                        .loans
+                        .get(loan.0)
+                        .ok_or("explicit method receiver has no checked loan")?;
+                    Ok::<_, &'static str>(CheckedInputReceiver {
+                        source: Some(project_source(&loan.source)?),
+                        exclusive: loan.kind == flow::LoanKind::Exclusive,
+                        owned: false,
+                    })
+                })
+                .transpose()?
+        };
         Ok(CheckedInputInvocation {
             parameters: &call.parameters,
             arguments,
@@ -167,17 +180,17 @@ pub(super) fn project_source(source: &flow::Place) -> Result<CheckedInputSource,
     match &source.root {
         flow::Root::Binding(root) => {
             let mut fields = Vec::with_capacity(source.projection.len());
-            for projection in &source.projection {
+            let mut elements = Vec::new();
+            for (position, projection) in source.projection.iter().enumerate() {
                 match projection {
                     flow::Projection::Field(field) => fields.push(field.clone()),
-                    flow::Projection::Element(_) => {
-                        return Err("explicit indexed input requires evaluated index storage proof");
-                    }
+                    flow::Projection::Element(_) => elements.push(position),
                 }
             }
             Ok(CheckedInputSource::Place {
                 root: root.clone(),
                 fields,
+                elements,
             })
         }
         flow::Root::Temporary { .. } if source.projection.is_empty() => Ok(CheckedInputSource::Temporary),

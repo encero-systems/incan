@@ -12,7 +12,7 @@ class Counter:
     value: int
 
     @keep
-    def bump(mut self, by: int) -> int:
+    pub def bump(mut self, by: int) -> int:
         self.value += by
         return self.value
 

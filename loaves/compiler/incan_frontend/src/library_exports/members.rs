@@ -177,6 +177,23 @@ pub fn qualify_checked_default_for_manifest(
                 })
                 .transpose()?,
         }),
+        CheckedParamDefault::MethodCall {
+            receiver_path,
+            method,
+            args,
+        } => Ok(CheckedParamDefault::MethodCall {
+            receiver_path: qualify_path(receiver_path),
+            method: method.clone(),
+            args: args
+                .iter()
+                .map(|arg| {
+                    Ok(CheckedParamDefaultArg {
+                        name: arg.name.clone(),
+                        value: qualify_checked_default_for_manifest(&arg.value, provider, type_params)?,
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?,
+        }),
         CheckedParamDefault::Int(_)
         | CheckedParamDefault::Float(_)
         | CheckedParamDefault::Bool(_)
@@ -262,7 +279,7 @@ pub(super) fn checked_method_from_info(name: &str, info: &MethodInfo) -> Checked
         ownership: None,
         name: name.to_string(),
         canonical: info.identity.clone(),
-        visibility: info.visibility,
+        visibility: info.scope.published_visibility(),
         alias_of: info.alias_of.clone(),
         type_params: info
             .type_params

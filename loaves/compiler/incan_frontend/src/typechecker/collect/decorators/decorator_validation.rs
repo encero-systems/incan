@@ -1,4 +1,4 @@
-//! Native attribute applications, decorator validation, Rust `allow` and derive arguments, and decorator ids.
+//! Native attribute applications, decorator validation, testing markers, derive arguments, and decorator ids.
 
 use super::*;
 
@@ -18,34 +18,22 @@ impl TypeChecker {
         derivable.then(|| metadata.canonical_path.clone())
     }
 
-    /// Return whether the Loaf owning this resolved path declares it as an extern-backed decorator function.
+    /// Return the canonical path of an imported Rust attribute macro used as a bare decorator.
     ///
-    /// The path names a public namespace, so a function declared in one of the namespace's source modules counts the
-    /// same way an import of that name would find it.
-    pub(in crate::typechecker) fn provider_declares_decorator_function(&self, resolved: &[String]) -> bool {
-        self.provider_decorator_function(resolved).is_some()
-    }
-
-    /// The extern-backed decorator function the Loaf owning this resolved path declares, from its published API.
-    pub(super) fn provider_decorator_function(&self, resolved: &[String]) -> Option<&ApiFunction> {
-        let (function_name, module_path) = resolved.split_last()?;
-        let (library, provider_module_path) = self.loaf_module(module_path)?;
-        let manifest = self.loaves.manifest(&library)?;
-        Self::api_modules_for_public_namespace(manifest, &provider_module_path)
-            .into_iter()
-            .flat_map(|module| module.declarations.iter())
-            .find_map(|declaration| match declaration {
-                ApiDeclaration::Function(function)
-                    if function.name == *function_name
-                        && function
-                            .decorators
-                            .iter()
-                            .any(|decorator| decorator.path.as_slice() == ["rust", "extern"]) =>
-                {
-                    Some(function)
-                }
-                _ => None,
-            })
+    /// Direct and compiled-library reexports both bind as [`SymbolKind::RustItem`], so the inspected Rust metadata is
+    /// the sole authority. A function-shaped facade cannot grant attribute-macro behavior.
+    pub(in crate::typechecker) fn imported_attribute_macro_path(&self, decorator: &Decorator) -> Option<String> {
+        let [name] = decorator.path.segments.as_slice() else {
+            return None;
+        };
+        let info = self.rust_item_info_for_local_name(name)?;
+        let metadata = info.metadata.or_else(|| self.rust_item_metadata_for_path(&info.path))?;
+        match &metadata.kind {
+            incan_lang::interop::RustItemKind::Macro(macro_info) if macro_info.is_attribute() => {
+                Some(metadata.canonical_path.clone())
+            }
+            _ => None,
+        }
     }
 
     /// Record the native attribute macros a function's decorators apply (#2256).
@@ -61,11 +49,7 @@ impl TypeChecker {
     ) {
         let mut applications = Vec::new();
         for decorator in decorators {
-            let resolved = resolve_decorator_path(&decorator.node, &self.symbols);
-            let Some(path) = self
-                .provider_decorator_function(&resolved)
-                .and_then(|function| function.native_attribute.clone())
-            else {
+            let Some(path) = self.imported_attribute_macro_path(&decorator.node) else {
                 continue;
             };
             let mut arguments = Vec::new();
@@ -181,15 +165,19 @@ impl TypeChecker {
         target: DecoratorValidationTarget,
     ) {
         for dec in decorators {
+            if dec.node.path.segments == ["rust", "extern"] {
+                self.errors.push(errors::retired_rust_extern(dec.span));
+                continue;
+            }
+            if dec.node.path.segments == ["rust", "allow"] {
+                self.errors.push(errors::retired_rust_allow(dec.span));
+                continue;
+            }
             let resolved = resolve_decorator_path(&dec.node, &self.symbols);
-            let feature = self.surface_context.decorator_feature_for_path(&resolved);
-
             let Some(id) = decorators::from_segments(&resolved) else {
-                let is_stdlib_decorator_function = feature
-                    == Some(SurfaceFeatureKey::Decorator(DecoratorFeature::StdlibDecoratorFunction))
-                    && resolved.len() >= 3
-                    && self.provider_declares_decorator_function(&resolved);
-                if is_stdlib_decorator_function {
+                if self.imported_attribute_macro_path(&dec.node).is_some()
+                    || self.is_checked_testing_marker_decorator(&dec.node)
+                {
                     continue;
                 }
 
@@ -233,40 +221,46 @@ impl TypeChecker {
                 },
             );
 
-            if id == DecoratorId::RustAllow {
-                self.validate_rust_allow_args(dec);
+            if id == DecoratorId::Marker {
+                self.validate_testing_marker_args(dec);
             }
         }
     }
 
-    /// Validate RFC 057 `@rust.allow(...)` arguments.
-    ///
-    /// The decorator is intentionally item-scoped and accepts only explicit lint paths so generated code can emit
-    /// targeted `#[allow(...)]` attributes without introducing broad crate- or module-level suppression.
-    pub fn validate_rust_allow_args(&mut self, dec: &Spanned<Decorator>) {
-        let mut seen = HashSet::new();
-        let mut positional_count = 0usize;
-
-        for arg in &dec.node.args {
-            match arg {
-                DecoratorArg::Positional(expr) => {
-                    positional_count += 1;
-                    let Expr::Literal(Literal::String(name)) = &expr.node else {
-                        self.errors
-                            .push(errors::rust_allow_requires_positional_string(expr.span));
-                        continue;
-                    };
-                    self.validate_single_rust_allow_lint(name, expr.span, &mut seen);
+    /// Validate the checked metadata shape accepted by RFC 171's `@marker(...)` declaration annotation.
+    pub fn validate_testing_marker_args(&mut self, dec: &Spanned<Decorator>) {
+        let mut kind = false;
+        let mut runner_only = false;
+        for argument in &dec.node.args {
+            let DecoratorArg::Named(name, DecoratorArgValue::Expr(value)) = argument else {
+                self.errors.push(errors::invalid_testing_marker_annotation(
+                    "arguments must be named literal values",
+                    dec.span,
+                ));
+                continue;
+            };
+            match (name.as_str(), &value.node) {
+                ("kind", Expr::Literal(Literal::String(_))) => kind = true,
+                ("runner_only", Expr::Literal(Literal::Bool(true))) => runner_only = true,
+                ("scope_arg" | "autouse_arg", Expr::Literal(Literal::String(_))) => {}
+                ("scopes", Expr::List(values))
+                    if values.len() == 3
+                        && values.iter().all(|entry| {
+                            matches!(entry, ListEntry::Element(value) if matches!(&value.node, Expr::Literal(Literal::String(_))))
+                        }) =>
+                {
                 }
-                DecoratorArg::Named(name, _) => {
-                    self.errors.push(errors::rust_allow_rejects_named_args(name, dec.span));
-                }
+                _ => self.errors.push(errors::invalid_testing_marker_annotation(
+                    &format!("invalid `{name}` value"),
+                    value.span,
+                )),
             }
         }
-
-        if positional_count == 0 {
-            self.errors
-                .push(errors::rust_allow_requires_positional_string(dec.span));
+        if !kind || !runner_only {
+            self.errors.push(errors::invalid_testing_marker_annotation(
+                "`kind` and `runner_only=true` are required",
+                dec.span,
+            ));
         }
     }
 
@@ -384,10 +378,27 @@ impl TypeChecker {
 
     /// Return the Rust path imported for a local derive binding name.
     pub(in crate::typechecker) fn rust_import_path_for_local_name(&self, name: &str) -> Option<String> {
-        self.lookup_symbol(name).and_then(|symbol| match &symbol.kind {
-            SymbolKind::RustItem(info) => Some(info.path.clone()),
+        self.rust_item_info_for_local_name(name).map(|info| info.path)
+    }
+
+    /// Resolve a local binding to the Rust item it imports, following one source-module reexport boundary.
+    ///
+    /// Direct `rust::` bindings already carry [`RustItemInfo`]. A source facade such as `native_macros.incn` keeps
+    /// the same item in the dependency registry while its consumer binding may retain only the source import path;
+    /// resolving that checked path preserves the Rust identity without restoring a function-shaped facade.
+    fn rust_item_info_for_local_name(&self, name: &str) -> Option<crate::symbols::RustItemInfo> {
+        if let Some(symbol) = self.lookup_symbol(name)
+            && let SymbolKind::RustItem(info) = &symbol.kind
+        {
+            return Some(info.clone());
+        }
+        let path = self.import_binding_path(name)?;
+        let (item_name, module_path) = path.split_last()?;
+        let module = ImportPath::simple(module_path.to_vec());
+        match self.dependency_member_symbol_for_path(&module, item_name)? {
+            SymbolKind::RustItem(info) => Some(info),
             _ => None,
-        })
+        }
     }
 
     /// Return whether a string Rust derive path names a crate available to generated Rust.
@@ -448,23 +459,6 @@ impl TypeChecker {
         )
     }
 
-    /// Reject RFC 057 `@rust.allow(...)` on declarations that do not own a supported Rust item boundary.
-    ///
-    /// Parser syntax allows decorators on several declaration forms. This helper keeps the semantic support matrix
-    /// explicit so adding a new declaration kind does not silently inherit Rust lint suppression behavior.
-    pub fn reject_rust_allow_on_unsupported_declaration(
-        &mut self,
-        decorators: &[Spanned<Decorator>],
-        kind: &'static str,
-    ) {
-        for dec in decorators {
-            if self.decorator_id(&dec.node) == Some(DecoratorId::RustAllow) {
-                self.errors
-                    .push(errors::rust_allow_unsupported_attachment(kind, dec.span));
-            }
-        }
-    }
-
     /// Return whether this decorator should be handled as an RFC 036 user-defined decorator candidate.
     ///
     /// Compiler-owned decorators and stdlib marker decorators keep their existing compiler semantics. Unknown paths in
@@ -482,62 +476,28 @@ impl TypeChecker {
             return false;
         }
 
-        let feature = self.surface_context.decorator_feature_for_path(&resolved);
-        let is_stdlib_decorator_function = feature
-            == Some(SurfaceFeatureKey::Decorator(DecoratorFeature::StdlibDecoratorFunction))
-            && resolved.len() >= 3
-            && self.provider_declares_decorator_function(&resolved);
-        !is_stdlib_decorator_function
+        self.imported_attribute_macro_path(dec).is_none() && !self.is_checked_testing_marker_decorator(dec)
+    }
+
+    /// Return whether a bare decorator is a checked `std.testing` marker imported under its active local binding.
+    ///
+    /// Marker behavior comes from the provider manifest's `@marker(...)` metadata. The imported function itself is
+    /// not applied as an RFC 036 runtime decorator, and no Rust interop annotation grants this classification.
+    fn is_checked_testing_marker_decorator(&self, decorator: &Decorator) -> bool {
+        let [name] = decorator.path.segments.as_slice() else {
+            return false;
+        };
+        if !self.testing_marker_import_bindings.contains(name) {
+            return false;
+        }
+        self.testing_marker_semantics.as_ref().is_some_and(|semantics| {
+            crate::testing_markers::resolve_testing_marker_kind(decorator, &self.symbols, semantics).is_some()
+        })
     }
 
     /// Resolve a decorator identifier through checked source bindings.
     pub fn decorator_id(&self, dec: &Decorator) -> Option<DecoratorId> {
         let resolved = resolve_decorator_path(dec, &self.symbols);
         decorators::from_segments(&resolved)
-    }
-
-    /// Validate one lint name passed to `@rust.allow`.
-    pub(super) fn validate_single_rust_allow_lint(&mut self, name: &str, span: Span, seen: &mut HashSet<String>) {
-        if name.is_empty() || name.trim() != name || !Self::is_valid_rust_lint_path(name) {
-            self.errors.push(errors::rust_allow_invalid_lint_name(name, span));
-            return;
-        }
-
-        if Self::is_broad_rust_lint_group(name) {
-            self.errors.push(errors::rust_allow_broad_lint_group(name, span));
-            return;
-        }
-
-        if !seen.insert(name.to_string()) {
-            self.errors.push(errors::rust_allow_duplicate_lint(name, span));
-        }
-    }
-
-    /// Return whether a Rust lint path has valid syntax.
-    pub(super) fn is_valid_rust_lint_path(name: &str) -> bool {
-        name.split("::").all(Self::is_valid_rust_lint_segment)
-    }
-
-    /// Return whether one Rust lint path segment is valid.
-    pub(super) fn is_valid_rust_lint_segment(segment: &str) -> bool {
-        let mut chars = segment.chars();
-        let Some(first) = chars.next() else {
-            return false;
-        };
-        (first == '_' || first.is_ascii_alphabetic()) && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
-    }
-
-    /// Return whether a Rust lint group is too broad for `@rust.allow`.
-    pub(super) fn is_broad_rust_lint_group(name: &str) -> bool {
-        matches!(
-            name,
-            "warnings"
-                | "unused"
-                | "clippy::all"
-                | "clippy::pedantic"
-                | "clippy::nursery"
-                | "clippy::restriction"
-                | "clippy::cargo"
-        )
     }
 }

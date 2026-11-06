@@ -1,4 +1,4 @@
-# behavior: Native generic calls preserve explicit and opaque loans, binders, callbacks and independent owners, close binders projected from source collections, as for Command.args, Command.envs and Vec.extend, retain exclusive authority through mutable slice dereferences, contextually type range literals, fix a method's open result at a typed use, and take a local's open owner arguments from its first type-dependent use after length and emptiness reads, as for HashMap.new with insert, Vec.new with push, a typed parameter, a typed return and an annotated place, and pass a `str` constant to a generic Rust parameter, as for Command.new, Command.arg, Command.env, Path.join and CString.new, as a `str` value passes (#2256, #2432, #2481, #2590)
+# behavior: Native generic calls preserve explicit and opaque loans, binders, callbacks and independent owners, close binders projected from source collections, as for Command.args, Command.envs and Vec.extend, retain exclusive authority through mutable slice dereferences, contextually type range literals, fix a method's open result at a typed use, take an impl binder from a borrowed Option receiver before projecting copied's owned result, and take a local's open owner arguments from its first type-dependent use after length and emptiness reads, as for HashMap.new with insert, Vec.new with push, a typed parameter, a typed return and an annotated place, pass a `str` constant to a generic Rust parameter as a `str` value passes, select an implicit native trait method through its bound, and infer a source generic from a native slice view (#2256, #2432, #2434, #2436, #2481, #2590)
 # expect-stdout:
 #   7
 #   leaf
@@ -29,20 +29,26 @@
 #   1
 #   1
 #   1
+#   2
+#   7
+#   42
 #   false
 
 """Retain generic instantiations, scalar and text loans, and a nonreturning native result in one case."""
 
-from rust::incan_std_core::strings import str_slice_byte_range
-from rust::std::convert import identity
+from rust::incan_std_primitives::strings import str_slice_byte_range
 from rust::std::collections import HashMap, VecDeque
+from rust::std::convert import identity
+from rust::std::fmt import Display
 from rust::std::ffi import CString
 from rust::std::hash import DefaultHasher, Hash, Hasher
 from rust::std::iter import Iterator as NativeIterator
 from rust::std::mem import size_of_val, swap
+from rust::std::ops import Index
 from rust::std::path import Path
 from rust::std::process import Command, exit
-from rust::std::string import String as RustString
+from rust::std::primitive import usize
+from rust::std::string import String as RustString, ToString
 from rust::std::sync import Arc, Mutex
 from rust::std::sync::mpsc import Sender as NativeSender, Receiver as NativeReceiver, channel as native_channel
 from rust::std::thread import panicking, spawn
@@ -68,6 +74,31 @@ model TextView:
     def at(self, index: int) -> str:
         """Read one scalar without consuming the receiver's text."""
         return self.value[index]
+
+
+model Entry:
+    """One model element retained through an Arc slice view."""
+
+    value: int
+
+
+def render[T with (Display, ToString)](value: T) -> str:
+    """Call a native trait method through the type parameter's declared bound."""
+    return value.to_string()
+
+
+def first[T](values: &list[T]) -> &T:
+    """Return the first element of a source collection through Rust's checked Index signature."""
+    slot: usize = 0.wrapping_resize()
+    return Index.index(values, slot)
+
+
+def show_bound_native_values() -> None:
+    """Observe an implicit native trait result and a source binder inferred from an Arc slice."""
+    println(render(7))
+    entries = Arc.new([Entry(value=42)])
+    selected = first(entries.as_ref())
+    println(selected.value)
 
 
 def measure[Payload](value: Payload) -> int:
@@ -299,6 +330,14 @@ def show_first_use_arguments() -> None:
     println(held.len())
 
 
+def show_copied_option_payload() -> None:
+    """Copy a borrowed scalar from a Rust Option whose receiver fixes the impl binder."""
+    mut counts: HashMap[str, int] = HashMap.new()
+    counts.insert("one", 1)
+    current = counts.get("one").copied().unwrap_or(0)
+    println(current + 1)
+
+
 def show_nonreturning_call() -> None:
     """Print the result of the selected Rust function, then end the program through a nonreturning one."""
     println(panicking())
@@ -317,7 +356,8 @@ def main() -> None:
     2. Exercise text references and typed native factories.
     3. Check owned captures, joined Rust callbacks, tuple loans, trait returns, native frames and retained cursors.
     4. Observe projected binders, frozen text arguments and owner arguments fixed by a local's first use.
-    5. Observe a native nonreturning call, which ends the program.
+    5. Observe native trait and slice-bound source generics.
+    6. Observe a native nonreturning call, which ends the program.
     """
     # 1. Exercise generic instantiations and scalar references.
     show_generic_instantiations()
@@ -333,5 +373,8 @@ def main() -> None:
     show_projected_binders()
     show_frozen_text_arguments()
     show_first_use_arguments()
-    # 5. Observe a native nonreturning call, which ends the program.
+    show_copied_option_payload()
+    # 5. Observe native trait and slice-bound source generics.
+    show_bound_native_values()
+    # 6. Observe a native nonreturning call, which ends the program.
     show_nonreturning_call()

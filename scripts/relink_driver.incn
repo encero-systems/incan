@@ -16,21 +16,22 @@ from std.fs import Path
 from std.hash import file_digest
 from std.json import JsonValue
 from check_support import write_stderr
+from release_support import TOOLCHAIN_DIRECTORY
 
-const TOOLCHAIN: str = "toolchains/0.6.0-dev.8"
 const DRIVER_LOAF: str = "loaves/toolchain/incan-rustc-driver"
 
 
-model Relink:
+pub model Relink:
     """One relink's selected lane, toolchain and build settings."""
 
-    repo: Path
-    bootstrap: Path
-    toolchain_home: Path
-    builder: str
-    stdlib: str
-    profile: str
-    refresh: bool
+    pub repo: Path
+    pub bootstrap: Path
+    pub toolchain_home: Path
+    pub builder: str
+    pub stdlib: str
+    pub profile: str
+    pub refresh: bool
+    pub log: Path
 
 
 def main() -> None:
@@ -73,14 +74,15 @@ def options() -> Result[Relink, str]:
             stdlib=get_or("SELFBUILD_STDLIB", repo.joinpath("loaves/stdlib").0),
             profile=profile,
             refresh=refresh,
+            log=Path(get_or("INCAN_RELINK_LOG", lane.joinpath("bootstrap/driver-build.log").0)),
         ),
     )
 
 
-def run(relink: Relink) -> Result[None, str]:
+pub def run(relink: Relink) -> Result[None, str]:
     """Build the driver against a compiler home bound to the installation, then install it unless asked not to."""
     started = Instant.now()
-    toolchain = relink.toolchain_home.joinpath(TOOLCHAIN)
+    toolchain = relink.toolchain_home.joinpath(TOOLCHAIN_DIRECTORY)
     if relink.refresh:
         # Withdraw only the generated library stamp; Oven recompiles the lowering through the installed driver.
         stamp = relink.repo.joinpath(
@@ -92,8 +94,7 @@ def run(relink: Relink) -> Result[None, str]:
     compiler_home = relink.toolchain_home.joinpath("compiler-build")
     prepare_compiler_home(relink.toolchain_home, compiler_home)?
     prepared = started.elapsed().as_secs_f64()
-    log = Path(get_or("INCAN_RELINK_LOG", relink.bootstrap.joinpath(f"driver-build-{relink.profile}.log").0))
-    build_driver(relink, sysroot, compiler_home, log)?
+    build_driver(relink, sysroot, compiler_home, relink.log)?
     compiled = started.elapsed().as_secs_f64()
     built = relink.repo.joinpath(f"{DRIVER_LOAF}/target/incan/rust/{relink.profile}/bin/incan-rustc-driver")
     if not built.is_file():
@@ -123,8 +124,8 @@ def prepare_compiler_home(installed_home: Path, compiler_home: Path) -> Result[N
     compiler = compiler_home.resolve().map_err((error) => error.message())?
     if installed.0 == compiler.0:
         return Err("compiler home must be distinct from the installation")
-    selected = installed.joinpath(TOOLCHAIN)
-    destination = compiler.joinpath(TOOLCHAIN)
+    selected = installed.joinpath(TOOLCHAIN_DIRECTORY)
+    destination = compiler.joinpath(TOOLCHAIN_DIRECTORY)
     if not selected.joinpath("toolchain.json").is_file():
         return Err(f"missing installed manifest: {selected.0}/toolchain.json")
     destination.mkdir(true, true).map_err((error) => error.message())?
@@ -154,7 +155,7 @@ def share_tree(selected: Path, destination: Path, tree: str) -> Result[None, str
     return link.symlink_to(source).map_err((error) => error.message())
 
 
-def absolute_manifest(manifest: JsonValue, base: str) -> Result[str, str]:
+pub def absolute_manifest(manifest: JsonValue, base: str) -> Result[str, str]:
     """The installed manifest with every artifact path absolute, so a compiler home reads the installed files."""
     mut fields = manifest.expect_object().map_err((error) => error.message())?
     for key in ["driver", "sysroot"]:

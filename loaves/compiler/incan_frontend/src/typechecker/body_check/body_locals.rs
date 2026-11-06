@@ -77,6 +77,7 @@ impl BodyLocal {
         checker.type_info.rust.checked_layouts = std::mem::take(&mut self.rust.checked_layouts);
         checker.type_info.rust.checked_enums = std::mem::take(&mut self.rust.checked_enums);
         checker.type_info.rust.declared_conversions = std::mem::take(&mut self.rust.declared_conversions);
+        checker.type_info.rust.validated_rusttype_edges = std::mem::take(&mut self.rust.validated_rusttype_edges);
         checker.type_info.rust.rusttype_canonical_paths = std::mem::take(&mut self.rust.rusttype_canonical_paths);
         checker.type_info.rust.item_public_paths = std::mem::take(&mut self.rust.item_public_paths);
         checker.type_info.rust.trait_imports = std::mem::take(&mut self.rust.trait_imports);
@@ -112,6 +113,7 @@ impl BodyLocal {
         enclosing.rust.checked_layouts = std::mem::take(&mut self.rust.checked_layouts);
         enclosing.rust.checked_enums = std::mem::take(&mut self.rust.checked_enums);
         enclosing.rust.declared_conversions = std::mem::take(&mut self.rust.declared_conversions);
+        enclosing.rust.validated_rusttype_edges = std::mem::take(&mut self.rust.validated_rusttype_edges);
         enclosing.rust.rusttype_canonical_paths = std::mem::take(&mut self.rust.rusttype_canonical_paths);
         enclosing.rust.item_public_paths = std::mem::take(&mut self.rust.item_public_paths);
         enclosing.rust.trait_imports = std::mem::take(&mut self.rust.trait_imports);

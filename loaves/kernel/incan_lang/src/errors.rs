@@ -3,7 +3,7 @@
 //! The semantic core (`incan_lang`) must stay **pure/deterministic** and must not panic. Instead, it provides a typed
 //! exception taxonomy (`ErrorKind`) and canonical formatting (`IncanError` implements `Display`).
 //!
-//! The runtime facets (`incan_std_core` and the others) may choose to `panic!` with these formatted errors.
+//! Runtime facets such as `incan_std_primitives` may choose to `panic!` with these formatted errors.
 //!
 //! ## Goals
 //! - Avoid “stringly-typed” exception identity (`"ValueError: ..."` scattered across the repo).

@@ -19,9 +19,10 @@ from pub::incan_mir_plan import (
     ListLeaf,
     BinaryOp,
     TerminatorKind,
+    TupleElement,
 )
 from pub::incan_mir_plan import assign as plan_assign
-from frame import Builder, temporary, literal, read_place, external_call, place_type, drop_owned
+from frame import Builder, temporary, literal, read_place, external_call, place_type, drop_owned, forget_owned
 from layout_types import native_source_type
 from checked_values import scalar_operand, scalar_place
 from sequence_builtins import text_argument
@@ -33,6 +34,8 @@ from text_plan import owned_literal
 from builtins import list_call
 from enums import enum_owner
 from options import assign_carrier
+from text_primitives import decode_utf8 as primitive_decode_utf8
+from tuples import tuple_fields
 
 
 pub def lower_checked_bridge(
@@ -157,7 +160,15 @@ def make_string(
 ) -> Result[None, str]:
     """Validate and allocate owned terminated storage before a foreign pointer can be produced."""
     text = text_argument(builder, arguments, 0, span)?
-    external_call(builder, "incan_native_runtime::checked_c_string", [PlanType.StringRef], ty, [text], output, span)
+    external_call(
+        builder,
+        "incan_stdlib_primitives::nul_terminated_utf8",
+        [PlanType.StringRef],
+        ty,
+        [text],
+        output,
+        span,
+    )
     builder.owned.append(output.local)
     return Ok(None)
 
@@ -250,15 +261,32 @@ def copy_utf8(
     # 3. Both outcomes initialize one ordinary owned Result and release the temporary buffer.
     builder.current = found
     reference = list_borrow(builder, copied, false, span)?
-    external_call(
+    decoded = primitive_decode_utf8(
         builder,
-        "incan_native_runtime::checked_c_utf8",
-        [PlanType.ListRef(ListLeaf.U8, 1)],
-        ty,
-        [reference],
-        output,
+        reference,
+        PlanType.ListRef(ListLeaf.U8, 1),
+        literal(Constant.Bool(false), span),
         span,
     )
+    decoded_type = PlanType.Tuple([TupleElement.Bool, TupleElement.String])
+    decoded_fields = tuple_fields(decoded, decoded_type, span)?
+    invalid_utf8 = builder.new_block(span)
+    valid_utf8 = builder.new_block(span)
+    decoded_after = builder.new_block(span)
+    builder.finish(TerminatorKind.SwitchBool(read_place(decoded_fields[0], false, span), invalid_utf8, valid_utf8), span)
+    forget_owned(builder, decoded.local)
+    decoded_owners = builder.owned
+    owner = enum_owner(ty)?
+    builder.current = invalid_utf8
+    assign_carrier(builder, output, owner, 1, [read_place(decoded_fields[1], true, span)], span)
+    builder.finish(TerminatorKind.Goto(decoded_after), span)
+    decoded_retained = builder.owned
+    builder.current = valid_utf8
+    builder.owned = decoded_owners
+    assign_carrier(builder, output, owner, 0, [read_place(decoded_fields[1], true, span)], span)
+    builder.finish(TerminatorKind.Goto(decoded_after), span)
+    builder.current = decoded_after
+    builder.owned = decoded_retained
     builder.finish(TerminatorKind.Goto(after), span)
     builder.current = missing
     refuse_result(builder, output, ty, "C string has no terminator within max_bytes", after, span)?

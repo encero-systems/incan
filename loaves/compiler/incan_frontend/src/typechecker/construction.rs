@@ -20,6 +20,7 @@ impl TypeChecker {
             body_checks: Vec::new(),
             checked_bodies: Vec::new(),
             checked_declarations: Vec::new(),
+            lazy_result_bodies: HashSet::new(),
             diagnostic_owner_ranges: Vec::new(),
             body_open_diagnostics: Vec::new(),
             symbols: SymbolTable::new(),
@@ -63,6 +64,7 @@ impl TypeChecker {
             type_receiver_spans: Vec::new(),
             type_token_value_spans: Vec::new(),
             generic_partial_target_span: None,
+            decorator_callable_span: None,
             generic_partial_target: None,
             loop_stack: Vec::new(),
             iteration_borrows: Vec::new(),
@@ -82,6 +84,7 @@ impl TypeChecker {
             current_module_public_declarations: HashSet::new(),
             receiver_plan_inputs: Default::default(),
             body_ir_decorator_factory_span: None,
+            decorator_callable_type_params: Vec::new(),
             current_module_function_symbols: HashMap::new(),
             type_aliases: NominalInventory::default(),
             rejected_member_bindings: HashSet::new(),
@@ -89,6 +92,7 @@ impl TypeChecker {
             validate_source_type_names: false,
             unknown_source_type_names_emitted: HashSet::new(),
             source_type_declaration_names: HashSet::new(),
+            source_type_alias_names: HashSet::new(),
             annotation_owner: None,
             static_decl_positions: HashMap::new(),
             checking_registry_entry_static_initializer: false,
@@ -147,10 +151,7 @@ impl TypeChecker {
         }
     }
 
-    /// Set the declared Rust crate names from `loaf.toml [rust-dependencies]`.
-    ///
-    /// When set, `rust.module()` path validation will check that the first segment of the path is either a facet
-    /// or a crate declared here.
+    /// Set the declared Rust crate names from `loaf.toml [rust-dependencies]` for checked direct imports and derives.
     pub fn set_declared_crate_names(&mut self, names: HashSet<String>) {
         self.declared_crate_names = Some(names);
     }

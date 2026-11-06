@@ -142,8 +142,7 @@ pub const TESTING_MARKER_TIMEOUT: &str = "timeout";
 /// Runtime marker name for `std.testing.parametrize`.
 pub const TESTING_MARKER_PARAMETRIZE: &str = "parametrize";
 
-/// Runner-only marker names that must have matching `@rust.extern` metadata in
-/// `loaves/stdlib/testing/src/testing.incn`.
+/// Runner-only marker names that must have matching checked `@marker(...)` metadata in `std.testing`.
 pub const RUNNER_ONLY_MARKER_NAMES: &[&str] = &[
     TESTING_MARKER_TEST,
     TESTING_MARKER_FIXTURE,

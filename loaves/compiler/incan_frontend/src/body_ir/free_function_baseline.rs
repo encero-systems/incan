@@ -47,13 +47,6 @@ pub fn verify_module(
         let ast::Declaration::Function(function) = &declaration.node else {
             continue;
         };
-        if info
-            .declarations
-            .native_attribute_externs
-            .contains_key(&declaration.span)
-        {
-            continue;
-        }
         let select = |body: &&bir::Body| body.span == super::hir_span(declaration.span) && body.name == function.name;
         let before = expected
             .bodies
@@ -204,6 +197,7 @@ fn shared_inputs(source: &TypeCheckInfo) -> TypeCheckInfo {
     target.rust.checked_layouts = source.rust.checked_layouts.clone();
     target.rust.checked_enums = source.rust.checked_enums.clone();
     target.rust.declared_conversions = source.rust.declared_conversions.clone();
+    target.rust.validated_rusttype_edges = source.rust.validated_rusttype_edges.clone();
     target.rust.rusttype_canonical_paths = source.rust.rusttype_canonical_paths.clone();
     target.rust.item_public_paths = source.rust.item_public_paths.clone();
     target.rust.trait_imports = source.rust.trait_imports.clone();

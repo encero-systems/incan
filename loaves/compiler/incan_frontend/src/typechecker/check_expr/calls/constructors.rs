@@ -9,6 +9,7 @@ use crate::typechecker::helpers::option_ty;
 use crate::typechecker::type_info::ConstructorFieldBinding;
 use incan_lang::lang::conventions::TYPE_CONSTRUCTOR_HOOK;
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
+use incan_semantics_core::CanonicalSymbolId;
 
 mod class_constructors;
 mod value_constructors;

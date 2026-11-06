@@ -1,4 +1,34 @@
 """Provide the sibling declarations used by the fixture."""
+
+
 pub def compute(value: int) -> int:
     """Return the fixture expression `value + 1`."""
     return value + 1
+
+
+pub model IntTarget:
+    pub value: int
+
+
+pub model FloatTarget:
+    pub value: float
+
+
+pub model TraitTarget:
+    pub value: str
+
+
+pub trait Selectable:
+    def select(self) -> str: ...
+
+
+pub def select_target(value: int, target: Type[int]) -> IntTarget:
+    return IntTarget(value=value)
+
+
+pub def select_target(value: int, target: Type[float]) -> FloatTarget:
+    return FloatTarget(value=float(value))
+
+
+pub def select_target(value: int, target: Type[Selectable]) -> TraitTarget:
+    return TraitTarget(value=f"trait {value}")

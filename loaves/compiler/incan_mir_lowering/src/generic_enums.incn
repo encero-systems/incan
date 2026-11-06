@@ -54,7 +54,7 @@ pub def generic_enums(
     return Ok(templates)
 
 
-def published(declaration: &RustEnumDeclaration, closed: &BodyIrModule, referenced: list[str]) -> bool:
+def published(declaration: RustEnumDeclaration, closed: BodyIrModule, referenced: list[str]) -> bool:
     """Whether a source enum gets a template: it is generic, defined in Incan, and exported, lowered or referenced."""
     if len(declaration.type_parameters) == 0 or declaration.native_item != "":
         return false
@@ -63,7 +63,7 @@ def published(declaration: &RustEnumDeclaration, closed: &BodyIrModule, referenc
     return len(closed_instances(declaration, closed)) > 0
 
 
-def closed_instances(declaration: &RustEnumDeclaration, closed: &BodyIrModule) -> list[RustEnumDeclaration]:
+def closed_instances(declaration: RustEnumDeclaration, closed: &BodyIrModule) -> list[RustEnumDeclaration]:
     """The closed instances of `declaration` the library lowered, such as `Pair[int]` for `Pair[T]`."""
     return [instance for instance in closed.enum_declarations if instance.canonical == declaration.canonical]
 

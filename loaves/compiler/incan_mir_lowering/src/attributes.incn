@@ -25,14 +25,14 @@ def native_attribute(attribute: &RustNativeAttribute) -> NativeAttribute:
     return NativeAttribute(path=str(attribute.path), arguments=arguments)
 
 
-def argument_name(argument: &RustAttributeArgument) -> str:
+def argument_name(argument: RustAttributeArgument) -> str:
     """The keyword an argument was written under, or the empty name of a positional one."""
     match argument.name.clone():
         Some(name) => return str(name)
         None => return ""
 
 
-def attribute_value(value: &RustAttributeValue) -> AttributeValue:
+def attribute_value(value: RustAttributeValue) -> AttributeValue:
     """One literal, or a list of them, in the plan's spelling."""
     match value.clone():
         RustAttributeValue.Text(text) => return AttributeValue.Text(str(text))
@@ -42,7 +42,7 @@ def attribute_value(value: &RustAttributeValue) -> AttributeValue:
         RustAttributeValue.List(items) => return AttributeValue.List(attribute_values(items))
 
 
-def attribute_values(items: &list[RustAttributeValue]) -> list[AttributeValue]:
+def attribute_values(items: list[RustAttributeValue]) -> list[AttributeValue]:
     """The elements of one written list, each in the plan's spelling."""
     mut elements: list[AttributeValue] = []
     for item in items:

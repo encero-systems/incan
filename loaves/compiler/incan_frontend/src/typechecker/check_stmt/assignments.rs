@@ -172,8 +172,87 @@ impl TypeChecker {
         }
 
         let ty = self.new_assignment_binding_type(assign, annotated_ty, value_ty);
+        let ty = self.retain_qualified_assignment_binding_owner(assign, ty);
         self.declare_assignment_binding(assign, ty, is_mutable, introduces_binding, span);
+        self.retain_qualified_assignment_storage(assign, span);
         self.record_explicit_local_mode(assign, explicit_mode, is_mutable);
+    }
+
+    /// Preserve a module-qualified annotation's selected nominal owner after source compatibility is checked.
+    ///
+    /// The checker already uses a private module-qualified nominal spelling to distinguish equal-named declarations
+    /// in unions. Reuse that spelling for an explicitly qualified local so later field and method selection cannot
+    /// fall back to another imported declaration's short name. The corresponding carrier binding lets Body IR place
+    /// the same canonical owner. Generic arguments remain exactly as checked; only the nominal head is replaced.
+    fn retain_qualified_assignment_binding_owner(
+        &mut self,
+        assign: &AssignmentStmt,
+        binding: ResolvedType,
+    ) -> ResolvedType {
+        let Some(identity) = self.qualified_assignment_identity(assign) else {
+            return binding;
+        };
+        let module_path = match &identity.origin {
+            incan_semantics_core::SymbolOrigin::Module(path) => path.clone(),
+            incan_semantics_core::SymbolOrigin::Package { module_path, .. } => module_path.clone(),
+            _ => return binding,
+        };
+        let Some(carrier) = incan_semantics_core::body_ir::nominal_carrier_key(&identity) else {
+            return binding;
+        };
+        let qualified = module_qualified_nominal_name(&module_path, &identity.declaration_name);
+        self.type_info
+            .declarations
+            .named_type_identities
+            .insert(carrier, identity.clone());
+        self.type_info
+            .declarations
+            .named_type_identities
+            .insert(qualified.clone(), identity);
+        match binding {
+            ResolvedType::Named(_) => ResolvedType::Named(qualified),
+            ResolvedType::Generic(_, arguments) => ResolvedType::Generic(qualified, arguments),
+            other => other,
+        }
+    }
+
+    /// Project a checker-qualified local binding to its canonical executable carrier for Body IR storage.
+    fn retain_qualified_assignment_storage(&mut self, assign: &AssignmentStmt, span: Span) {
+        let Some(identity) = self.qualified_assignment_identity(assign) else {
+            return;
+        };
+        let Some(carrier) = incan_semantics_core::body_ir::nominal_carrier_key(&identity) else {
+            return;
+        };
+        let Some(binding) = self.type_info.expressions.assignment_binding_types.get_mut(&span) else {
+            return;
+        };
+        match binding {
+            ResolvedType::Named(_) => *binding = ResolvedType::Named(carrier.clone()),
+            ResolvedType::Generic(_, arguments) => {
+                *binding = ResolvedType::Generic(carrier.clone(), arguments.clone());
+            }
+            _ => return,
+        }
+        self.type_info
+            .declarations
+            .named_type_identities
+            .insert(carrier, identity);
+    }
+
+    /// Return the canonical nominal selected for a dotted assignment annotation.
+    fn qualified_assignment_identity(
+        &self,
+        assign: &AssignmentStmt,
+    ) -> Option<incan_semantics_core::CanonicalSymbolId> {
+        let annotation = assign.ty.as_ref()?;
+        let segments = match &annotation.node {
+            Type::Dotted(segments) | Type::DottedGeneric(segments, _) => segments,
+            _ => return None,
+        };
+        self.type_info
+            .qualified_type_reference(&segments.join("."))
+            .map(|reference| reference.identity.clone())
     }
 
     /// Preserve the requested mode on this exact newly declared local and callable. Capturing it before lookup is

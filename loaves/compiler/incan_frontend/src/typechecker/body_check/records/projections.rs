@@ -39,7 +39,7 @@ pub(crate) fn project(
             positions.nodes.owner().render_compact(),
             positions.nodes.root().to_owned(),
             if declaration { "declaration" } else { "final" }.into(),
-            "incan.checker-free-functions/9".into(),
+            "incan.checker-free-functions/10".into(),
         ],
     );
     Ok(fields)
@@ -87,6 +87,15 @@ pub(super) fn project_calls(
             positions.nodes.anchor(*span)?.path,
             "call".into(),
             incan_lang::lang::builtins::as_str(*builtin).into(),
+        ]);
+    }
+    for (span, builtin) in &local.calls.resolved_builtin_method_calls {
+        fields.push(vec![
+            "builtin".into(),
+            positions.nodes.anchor(*span)?.path,
+            "method".into(),
+            builtin.owner().into(),
+            builtin.member().into(),
         ]);
     }
     for (selector, values) in [

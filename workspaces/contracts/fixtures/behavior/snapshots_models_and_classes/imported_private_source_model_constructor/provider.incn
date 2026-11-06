@@ -3,5 +3,5 @@ pub model Vault:
     pub label: str
     revision: int = 7
 
-    def describe(self) -> str:
+    pub def describe(self) -> str:
         return f"{self.secret} {self.revision}"

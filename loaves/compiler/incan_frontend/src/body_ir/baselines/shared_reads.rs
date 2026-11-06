@@ -48,7 +48,6 @@ pub(super) fn retain(module: &mut bir::BodyIrModule, program: &ast::Program) {
                 || body.canonical.as_ref().is_some_and(|id| escaped.contains(id))
                 || !matches!(body.return_type, IncanType::Primitive(_))
                 || !body.return_type.abi_v0_facts().ownership.is_trivially_copy()
-                || body.extern_delegation.is_some()
                 || !body.native_attributes.is_empty()
             {
                 continue;

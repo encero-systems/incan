@@ -12,18 +12,18 @@ pub class Process:
 
     child: Rc[RefCell[Child]]
 
-    def pid(self) -> int:
+    pub def pid(self) -> int:
         """The OS identifier belonging to this retained child handle."""
         return int(self.child.borrow().id())
 
-    def poll(mut self) -> Result[Option[bool], str]:
+    pub def poll(mut self) -> Result[Option[bool], str]:
         """Reap a finished child and report its success; None means it is still running."""
         found = self.child.borrow_mut().try_wait().map_err((error) => str(error))?
         match found:
             None => return Ok(None)
             Some(status) => return Ok(Some(status.success()))
 
-    def terminate(mut self) -> Result[None, str]:
+    pub def terminate(mut self) -> Result[None, str]:
         """Kill and reap only this caller's child after a failed startup deadline."""
         self.child.borrow_mut().kill().map_err((error) => str(error))?
         self.child.borrow_mut().wait().map_err((error) => str(error))?

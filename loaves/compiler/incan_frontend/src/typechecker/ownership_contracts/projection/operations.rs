@@ -224,6 +224,10 @@ impl CheckedInputBody<'_> {
             Expr::Paren(inner) | Expr::Unary(_, inner) | Expr::Field(inner, _) | Expr::Try(inner) => {
                 self.visit_operation_expression(inner, parameters, execution, seen)?;
             }
+            Expr::Index(base, index) => {
+                self.visit_operation_expression(base, parameters, execution, seen)?;
+                self.visit_operation_expression(index, parameters, execution, seen)?;
+            }
             Expr::Binary(left, _, right) => {
                 self.visit_operation_expression(left, parameters, execution, seen)?;
                 self.visit_operation_expression(right, parameters, execution, seen)?;
@@ -249,94 +253,10 @@ impl CheckedInputBody<'_> {
                 self.require_operation(expression.span, &operands, parameters, execution, seen)?;
             }
             Expr::Call(callee, _, arguments) => {
-                self.visit_operation_expression(callee, parameters, execution, seen)?;
-                let mut operands = Vec::new();
-                for argument in arguments {
-                    let (CallArg::Positional(value) | CallArg::Named(_, value)) = argument else {
-                        return Err("operation coverage needs checked fixed call arguments");
-                    };
-                    self.visit_operation_expression(value, parameters, execution, seen)?;
-                    operands.push(value);
-                }
-                if matches!(
-                    self.facts.resolved_builtin_call(expression.span),
-                    Some(BuiltinFnId::Print | BuiltinFnId::Len)
-                ) {
-                    self.require_operation(expression.span, &operands, parameters, execution, seen)?;
-                } else if self.facts.protocols.explicit_input_calls.contains_key(&expression.span) {
-                    self.validate_call_expression(expression.span, arguments)?;
-                    if !seen.invocations.insert(expression.span) {
-                        return Err("source call has duplicate retained evaluation");
-                    }
-                }
-            }
-            // A builtin list method reads or changes its receiver place in place; it has no checked invocation.
-            Expr::MethodCall(receiver, method, _, arguments)
-                if super::super::builtins::list_method_writes(self.facts, receiver, method, expression.span)
-                    .is_some() =>
-            {
-                self.visit_operation_expression(receiver, parameters, execution, seen)?;
-                for argument in arguments {
-                    let CallArg::Positional(value) = argument else {
-                        return Err("operation coverage needs positional list method arguments");
-                    };
-                    self.visit_operation_expression(value, parameters, execution, seen)?;
-                }
-            }
-            // A native associated function written on its type has no receiver; it is called like a free function.
-            Expr::MethodCall(_, _, _, arguments) if self.facts.native_associated_call(expression.span) => {
-                for argument in arguments {
-                    let (CallArg::Positional(value) | CallArg::Named(_, value)) = argument else {
-                        return Err("operation coverage needs checked fixed call arguments");
-                    };
-                    self.visit_operation_expression(value, parameters, execution, seen)?;
-                }
-                self.validate_call_expression(expression.span, arguments)?;
-                if !seen.invocations.insert(expression.span) {
-                    return Err("source call has duplicate retained evaluation");
-                }
+                self.visit_call_operation(expression, callee, arguments, parameters, execution, seen)?
             }
             Expr::MethodCall(receiver, _, _, arguments) => {
-                self.visit_operation_expression(receiver, parameters, execution, seen)?;
-                for argument in arguments {
-                    let (CallArg::Positional(value) | CallArg::Named(_, value)) = argument else {
-                        return Err("operation coverage needs checked fixed call arguments");
-                    };
-                    self.visit_operation_expression(value, parameters, execution, seen)?;
-                }
-                // Only checked invocations reach this profile; the receiver loan must name the written receiver.
-                let loan = self
-                    .graph
-                    .invocations
-                    .get(&expression.span)
-                    .and_then(|invocation| invocation.receiver)
-                    .and_then(|loan| self.graph.loans.get(loan.0))
-                    .ok_or("method call has no checked receiver loan")?;
-                // A chained receiver reborrows its inner call's result loan on the same substituted place, including
-                // a carried view that `?` takes out of its carrier, or the view `?` takes out of a local holding that
-                // carrier, which reborrows the local's loan keyed to the same call.
-                let inner = super::super::builtins::view_call(receiver);
-                let authenticated = match self.call_place(receiver)? {
-                    Some((source, _)) => source == loan.source,
-                    None => loan
-                        .parent
-                        .and_then(|parent| self.graph.loans.get(parent.0))
-                        .is_some_and(|parent| {
-                            parent.span == self.view_call_span(receiver)
-                                && parent.source == loan.source
-                                && (self.graph.invocations.contains_key(&inner.span)
-                                    || self
-                                        .carrier_loan(inner)
-                                        .is_some_and(|(carrier, _)| parent.parent == Some(carrier)))
-                        }),
-                };
-                if !authenticated {
-                    return Err("method receiver differs from its checked source loan");
-                }
-                self.validate_call_expression(expression.span, arguments)?;
-                if !seen.invocations.insert(expression.span) {
-                    return Err("source call has duplicate retained evaluation");
-                }
+                self.visit_method_operation(expression, receiver, arguments, parameters, execution, seen)?
             }
             Expr::List(entries) => {
                 for entry in entries {
@@ -351,6 +271,32 @@ impl CheckedInputBody<'_> {
                     self.visit_operation_expression(element, parameters, execution, seen)?;
                 }
             }
+            Expr::ListComp(comprehension) => {
+                self.visit_comprehension(
+                    &comprehension.clauses,
+                    &[&comprehension.expr],
+                    parameters,
+                    execution,
+                    seen,
+                )?;
+            }
+            Expr::DictComp(comprehension) => {
+                self.visit_comprehension(
+                    &comprehension.clauses,
+                    &[&comprehension.key, &comprehension.value],
+                    parameters,
+                    execution,
+                    seen,
+                )?;
+            }
+            // A generator evaluates only its first iterable when it is created. Its produced value, filters and
+            // later clauses run when a terminal reader advances it and are represented by the retained result.
+            Expr::Generator(generator) => {
+                let Some(crate::ast::ComprehensionClause::For { iter, .. }) = generator.clauses.first() else {
+                    return Err("operation coverage requires a generator source");
+                };
+                self.visit_operation_expression(iter, parameters, execution, seen)?;
+            }
             // A bound closure's body runs in its own frame when the closure is called; building it reads or borrows
             // only its captures, which its retained closure record covers.
             Expr::Closure(..) if self.graph.closures.contains_key(&expression.span) => {}
@@ -361,6 +307,159 @@ impl CheckedInputBody<'_> {
                 }
             }
             _ => return Err("operation coverage requires an admitted expression"),
+        }
+        Ok(())
+    }
+
+    /// Validate one free call from its selected builtin operands or explicit invocation record.
+    fn visit_call_operation(
+        &self,
+        expression: &Spanned<Expr>,
+        callee: &Spanned<Expr>,
+        arguments: &[CallArg],
+        parameters: &BTreeSet<CanonicalSymbolId>,
+        execution: &[usize],
+        seen: &mut SourceCoverage,
+    ) -> Result<(), &'static str> {
+        self.visit_operation_expression(callee, parameters, execution, seen)?;
+        let builtin = self.facts.resolved_builtin_call(expression.span);
+        let mut operands = Vec::new();
+        for (index, argument) in arguments.iter().enumerate() {
+            let (CallArg::Positional(value) | CallArg::Named(_, value)) = argument else {
+                return Err("operation coverage needs checked fixed call arguments");
+            };
+            if builtin == Some(BuiltinFnId::IsInstance) && index == 1 {
+                continue;
+            }
+            self.visit_operation_expression(value, parameters, execution, seen)?;
+            operands.push(value);
+        }
+        if builtin.is_some() {
+            return self.require_operation(expression.span, &operands, parameters, execution, seen);
+        }
+        if self.facts.protocols.explicit_input_calls.contains_key(&expression.span) {
+            self.record_invocation(expression.span, arguments, seen)?;
+        }
+        Ok(())
+    }
+
+    /// Validate one method call using its selected lazy, builtin-list, view or ordinary invocation boundary.
+    fn visit_method_operation(
+        &self,
+        expression: &Spanned<Expr>,
+        receiver: &Spanned<Expr>,
+        arguments: &[CallArg],
+        parameters: &BTreeSet<CanonicalSymbolId>,
+        execution: &[usize],
+        seen: &mut SourceCoverage,
+    ) -> Result<(), &'static str> {
+        self.visit_operation_expression(receiver, parameters, execution, seen)?;
+        let retained = super::super::builtins::retained_iterator_method(self.facts, expression.span).is_some();
+        let list = super::super::builtins::list_method_writes(self.facts, expression.span).is_some();
+        let view = super::super::builtins::byte_slice_view(self.facts, expression).is_some();
+        if view {
+            return Ok(());
+        }
+        for argument in arguments {
+            let value = match argument {
+                CallArg::Positional(value) => value,
+                CallArg::Named(_, value) if !list => value,
+                _ if list => return Err("operation coverage needs positional list method arguments"),
+                _ => return Err("operation coverage needs checked fixed call arguments"),
+            };
+            self.visit_operation_expression(value, parameters, execution, seen)?;
+        }
+        if retained || list {
+            return Ok(());
+        }
+        if !self.facts.native_associated_call(expression.span) {
+            self.authenticate_method_receiver(expression, receiver)?;
+        }
+        self.record_invocation(expression.span, arguments, seen)
+    }
+
+    /// Prove that a checked borrowed receiver names the written place or its authenticated chained temporary.
+    fn authenticate_method_receiver(
+        &self,
+        expression: &Spanned<Expr>,
+        receiver: &Spanned<Expr>,
+    ) -> Result<(), &'static str> {
+        let invocation = self
+            .graph
+            .invocations
+            .get(&expression.span)
+            .ok_or("method call has no checked invocation")?;
+        if invocation.receiver_owned {
+            return Ok(());
+        }
+        let loan = invocation
+            .receiver
+            .and_then(|loan| self.graph.loans.get(loan.0))
+            .ok_or("method call has no checked receiver loan")?;
+        let inner = super::super::builtins::view_call(receiver);
+        let authenticated = match self.call_place(receiver)? {
+            Some((source, _)) => source == loan.source,
+            None => match &loan.source.root {
+                flow::Root::Temporary {
+                    owner,
+                    expression: actual_expression,
+                    invocation,
+                } => {
+                    owner == self.canonical_owner()
+                        && *actual_expression == receiver.span
+                        && *invocation == expression.span
+                        && loan.source.projection.is_empty()
+                }
+                flow::Root::Binding(_) => loan
+                    .parent
+                    .and_then(|parent| self.graph.loans.get(parent.0))
+                    .is_some_and(|parent| {
+                        parent.span == self.view_call_span(receiver)
+                            && parent.source == loan.source
+                            && (self.graph.invocations.contains_key(&inner.span)
+                                || self
+                                    .carrier_loan(inner)
+                                    .is_some_and(|(carrier, _)| parent.parent == Some(carrier)))
+                    }),
+            },
+        };
+        authenticated
+            .then_some(())
+            .ok_or("method receiver differs from its checked source loan")
+    }
+
+    /// Validate an invocation's checked arguments once and retain its unique source evaluation marker.
+    fn record_invocation(
+        &self,
+        span: HirSourceSpan,
+        arguments: &[CallArg],
+        seen: &mut SourceCoverage,
+    ) -> Result<(), &'static str> {
+        self.validate_call_expression(span, arguments)?;
+        if !seen.invocations.insert(span) {
+            return Err("source call has duplicate retained evaluation");
+        }
+        Ok(())
+    }
+
+    /// Validate eager comprehension sources, filters and produced values in their source evaluation order.
+    fn visit_comprehension(
+        &self,
+        clauses: &[crate::ast::ComprehensionClause],
+        output: &[&Spanned<Expr>],
+        parameters: &BTreeSet<CanonicalSymbolId>,
+        execution: &[usize],
+        seen: &mut SourceCoverage,
+    ) -> Result<(), &'static str> {
+        for clause in clauses {
+            let value = match clause {
+                crate::ast::ComprehensionClause::For { iter, .. } => iter,
+                crate::ast::ComprehensionClause::If(condition) => condition,
+            };
+            self.visit_operation_expression(value, parameters, execution, seen)?;
+        }
+        for value in output {
+            self.visit_operation_expression(value, parameters, execution, seen)?;
         }
         Ok(())
     }

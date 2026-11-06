@@ -448,10 +448,10 @@ pub struct MethodTarget {
     /// Checked compiler-owned Option/Result receiver for intrinsic carrier methods; source methods retain no carrier.
     #[serde(default)]
     pub intrinsic_carrier: Option<String>,
-    /// Compiler-generated field reflection selected through the checker's generated-member ownership table.
-    /// Source methods and older publications carry None, so a spelling alone never grants reflection behavior.
+    /// Compiler-owned builtin or reflection operation selected through the checker's semantic tables.
+    /// Source methods and older publications carry None, so a spelling alone never grants compiler behavior.
     #[serde(default)]
-    pub reflection: Option<ReflectionOperation>,
+    pub operation: Option<ReflectionOperation>,
     /// Exact Loaf trait selected by checking, including its trait arguments. The receiver layout remains in args[0].
     /// Calls without checked trait dispatch into a Loaf retain None.
     #[serde(default)]
@@ -480,11 +480,97 @@ pub struct MethodTarget {
 }
 
 impl MethodTarget {
+    /// Return the checker-selected builtin operation, separate from its canonical provenance.
+    pub fn builtin_operation(&self) -> Option<BuiltinMethodId> {
+        match self.operation {
+            Some(ReflectionOperation::Builtin(operation)) => Some(operation),
+            _ => None,
+        }
+    }
+
+    /// Return whether checking selected a compiler-owned builtin operation for this call.
+    pub fn has_builtin_selection(&self) -> bool {
+        self.builtin_operation().is_some()
+    }
+
+    /// Return the selected list operation without exposing the umbrella identity to native-layout consumers.
+    pub fn builtin_list(&self) -> Option<incan_lang::lang::surface::list_methods::ListMethodId> {
+        match self.builtin_operation() {
+            Some(BuiltinMethodId::List(method)) => Some(method),
+            _ => None,
+        }
+    }
+
+    /// Return whether this call selects the list iterator operation.
+    pub fn is_builtin_list_iter(&self) -> bool {
+        self.builtin_operation() == Some(BuiltinMethodId::ListIter)
+    }
+
+    /// Return the selected dictionary operation without reclassifying canonical provenance.
+    pub fn builtin_dict(&self) -> Option<incan_lang::lang::surface::dict_methods::DictMethodId> {
+        match self.builtin_operation() {
+            Some(BuiltinMethodId::Dict(method)) => Some(method),
+            _ => None,
+        }
+    }
+
+    /// Return the selected set operation without reclassifying canonical provenance.
+    pub fn builtin_set(&self) -> Option<incan_lang::lang::surface::set_methods::SetMethodId> {
+        match self.builtin_operation() {
+            Some(BuiltinMethodId::Set(method)) => Some(method),
+            _ => None,
+        }
+    }
+
+    /// Return the selected frozen-list operation without reclassifying canonical provenance.
+    pub fn builtin_frozen_list(&self) -> Option<incan_lang::lang::surface::frozen_list_methods::FrozenListMethodId> {
+        match self.builtin_operation() {
+            Some(BuiltinMethodId::FrozenList(method)) => Some(method),
+            _ => None,
+        }
+    }
+
+    /// Return the selected frozen-dictionary operation without reclassifying canonical provenance.
+    pub fn builtin_frozen_dict(&self) -> Option<incan_lang::lang::surface::frozen_dict_methods::FrozenDictMethodId> {
+        match self.builtin_operation() {
+            Some(BuiltinMethodId::FrozenDict(method)) => Some(method),
+            _ => None,
+        }
+    }
+
+    /// Return the selected frozen-set operation without reclassifying canonical provenance.
+    pub fn builtin_frozen_set(&self) -> Option<incan_lang::lang::surface::frozen_set_methods::FrozenSetMethodId> {
+        match self.builtin_operation() {
+            Some(BuiltinMethodId::FrozenSet(method)) => Some(method),
+            _ => None,
+        }
+    }
+
+    /// Validate that the checker-selected builtin operation and canonical provenance name the same registry member.
+    pub fn has_valid_builtin_selection(&self) -> bool {
+        let Some(operation) = self.builtin_operation() else {
+            return true;
+        };
+        let Some(canonical) = &self.canonical else {
+            return false;
+        };
+        let Some((owner, member)) = canonical.declaration_name.split_once('.') else {
+            return false;
+        };
+        canonical.origin == crate::SymbolOrigin::Builtin
+            && canonical.namespace == crate::SymbolNamespace::Member
+            && canonical.kind == crate::SemanticSourceTargetKind::Method
+            && canonical.scope_discriminant.is_none()
+            && canonical.declaration_span == crate::HirSourceSpan::new(0, 0)
+            && owner == operation.owner()
+            && member == operation.member()
+    }
+
     /// Authenticate generic metadata against its checked binder without treating a method spelling as authority.
     /// Publication additionally proves that the binder belongs to its enclosing callable before rebasing either
     /// identity; native lowering checks the concrete receiver's retained reflection capability.
     pub fn has_valid_generic_metadata(&self) -> bool {
-        let Some(ReflectionOperation::GenericMetadata(owner)) = &self.reflection else {
+        let Some(ReflectionOperation::GenericMetadata(owner)) = &self.operation else {
             return false;
         };
         let Some(member) = &self.canonical else {
@@ -531,7 +617,7 @@ impl MethodTarget {
         Self {
             name: name.into(),
             intrinsic_carrier: None,
-            reflection: None,
+            operation: None,
             loaf_trait: None,
             trait_arguments: None,
             canonical: None,
@@ -569,7 +655,7 @@ pub struct LoafTraitCall {
     pub receiver_type: Option<IncanType>,
 }
 
-/// Checked reflection operation and its receiver-dependent result contract, retained before generic substitution.
+/// Checked compiler-owned method operation retained before native lowering or generic substitution.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ReflectionOperation {
     /// Return the declaring nominal's immutable metadata without consuming its receiver.
@@ -584,6 +670,8 @@ pub enum ReflectionOperation {
     StringItems,
     /// Return immutable metadata after substituting this checked generic binder with its reflectable declaration.
     GenericMetadata(CanonicalSymbolId),
+    /// Execute the exact builtin method selected by checking without reclassifying its spelling downstream.
+    Builtin(BuiltinMethodId),
 }
 
 impl PartialEq<str> for MethodTarget {

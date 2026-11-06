@@ -14,18 +14,18 @@ pub def direct_view_access(body: &RustBody) -> Option[IncanInputAccess]:
     """The access of a body's direct returned view; a carried view returns an owned carrier and has none."""
     match body.returned_view:
         Some(view) =>
-            if view.carried.is_none():
+            if view.access != IncanInputAccess.Owned and view.carried.is_none():
                 return Some(view.access)
         None => pass
     return None
 
 
 pub def validate_source_input_call(builder: &Builder, callee: &RustBody) -> Result[None, str]:
-    """Authenticate the caller independently of the selected source callee; lifted frames inherit no permission."""
+    """Authenticate source-authored input modes; compiler-inferred shared access needs no source permission."""
     # A returned view obliges its caller to alias the substituted place under a checked profile.
     mut explicit = callee.returned_view.is_some()
     for parameter in callee.params:
-        if parameter.input_access != IncanInputAccess.Inferred:
+        if parameter.input_access in [IncanInputAccess.Shared, IncanInputAccess.Exclusive, IncanInputAccess.Owned]:
             explicit = true
     if not explicit:
         return Ok(None)
@@ -81,7 +81,7 @@ pub def explicit_place_argument(
 
 
 pub def explicit_input_operation(
-    locals: &list[Local],
+    locals: list[Local],
     source: Place,
     fact: OwnershipFact,
     expected: PlanType,
@@ -107,7 +107,7 @@ pub def explicit_input_operation(
             return Err("unsupported Body IR explicit owned argument without a whole moved owner")
         return Ok(RvalueKind.Use(read_place(source, true, span)))
     exclusive = access == IncanInputAccess.Exclusive
-    if access != IncanInputAccess.Shared and not exclusive:
+    if access not in [IncanInputAccess.Shared, IncanInputAccess.InferredShared] and not exclusive:
         return Err("invalid Body IR explicit argument access")
     if (exclusive and fact != OwnershipFact.MutBorrow) or (not exclusive and fact != OwnershipFact.Borrow):
         return Err("unsupported Body IR explicit argument without its checked borrow fact")

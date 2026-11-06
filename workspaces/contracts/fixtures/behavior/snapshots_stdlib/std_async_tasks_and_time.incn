@@ -1,4 +1,4 @@
-# behavior: an async main bootstraps the runtime, spawned and blocking tasks run to completion, sleep, sleep_ms and yield_now yield, timeout and timeout_ms resolve an awaited value or report expiry through the error's message, and timeout_join_ms hands back the live handle of a task that outlives its deadline
+# behavior: an async main bootstraps the runtime, spawned unit and value tasks and blocking tasks run to completion, a statement match treats None as its discarded unit result, sleep, sleep_ms and yield_now yield, timeout and timeout_ms resolve an awaited value or report expiry through the error's message, and timeout_join_ms hands back the live handle of a task that outlives its deadline
 # expect-stdout:
 #   async main running
 #   1
@@ -8,7 +8,6 @@
 #   still running
 #   3
 
-import std.async
 from std.async.task import spawn, spawn_blocking, yield_now, JoinHandle
 from std.async.time import sleep, sleep_ms, timeout, timeout_ms, timeout_join_ms, TimeoutError, TimeoutJoinOutcome
 
@@ -24,6 +23,10 @@ async def slow() -> int:
     return 3
 
 
+async def quiet() -> None:
+    pass
+
+
 def blocking() -> int:
     return 2
 
@@ -34,6 +37,9 @@ def launch() -> JoinHandle[int]:
 
 async def main() -> None:
     println("async main running")
+    match await spawn(quiet()):
+        Ok(_) => None
+        Err(error) => println(f"unit task failed: {error.message()}")
     match await launch():
         Ok(value) => println(value)
         Err(error) => println(f"join failed: {error.message()}")

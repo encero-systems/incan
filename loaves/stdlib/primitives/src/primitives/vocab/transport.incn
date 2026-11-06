@@ -1,0 +1,19 @@
+"""Provide JSON transport methods for foundational vocabulary protocol values."""
+
+from rust::serde import Serialize as RustSerialize
+from rust::serde::de import DeserializeOwned
+from rust::serde_json import Error as JsonError, from_str, to_string
+from rust::std::panic import panic_any
+
+
+pub def encode_vocab[T with RustSerialize](value: T) -> str:
+    """Encode one concrete foundational protocol type through its stable JSON representation."""
+    match to_string(value):
+        Ok(text) => return text
+        Err(error) => panic_any(str(error))
+
+
+pub def decode_vocab[T with DeserializeOwned](source: str) -> Result[T, str]:
+    """Decode one concrete foundational protocol type and retain the native decoder's diagnostic text."""
+    result: Result[T, JsonError] = from_str(source)
+    return result.map_err((error) => str(error))

@@ -283,6 +283,17 @@ pub fn pub_modifier_not_allowed_on_trait_implementation(
     ))
 }
 
+/// Report `pub` on a language hook, a method the language calls by its name, which is public by rule (#2570).
+pub fn pub_modifier_not_allowed_on_language_hook(type_name: &str, method: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Method '{method}' on '{type_name}' is a language hook and cannot be marked `pub`"),
+        span,
+    )
+    .with_hint(format!(
+        "Remove `pub`; the language calls '{method}' by its name, so it is public wherever '{type_name}' is"
+    ))
+}
+
 /// Report duplicate concrete methods that cannot be assigned to distinct same-family trait obligations.
 pub fn duplicate_method_not_trait_backed(type_name: &str, method: &str, span: Span) -> CompileError {
     CompileError::type_error(

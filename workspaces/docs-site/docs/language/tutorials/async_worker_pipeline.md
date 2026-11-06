@@ -23,7 +23,7 @@ This tutorial runs several independent jobs, preserves their typed results, and 
 
 ## Step 1: Define a worker
 
-Importing `std.async` activates Incan's async syntax and runtime support:
+Async syntax is always available. Import the task and timer APIs this worker uses:
 
 ```incan
 from std.async.task import spawn

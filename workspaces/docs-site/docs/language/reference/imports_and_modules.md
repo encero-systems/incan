@@ -59,9 +59,13 @@ from ...db.schema import Database         # accepted
 
 ### Module bindings
 
-`import models` binds the module. Its public functions are called through the binding, `models.parse(path)`, and its public types and traits are named through it in any annotation: `models.Config` is the declaration `from models import Config` binds.
+An import binds a link to the declaration or module it names; an alias or re-export binds another link, not a declaration with contents of its own. Name lookup resolves the head in the current scope, follows links to their declared node, and then resolves each following segment in that node's namespace. A module namespace contains its visible functions, types, traits, constants, submodules and reexports. A type namespace contains its associated members, including static methods and enum variants; a value namespace contains its fields and methods. A package namespace exposing a child module's names follows the same link rule.
 
-Refused (`INCAN-T0001`): a qualified annotation whose root is not a module binding, or whose member is not a type or trait the module declares. The name `c` bound by `from std.interop import c` is not a module binding; its members, such as `c.i32`, are specified in [`std.interop`](stdlib/interop.md).
+The source position applies its operation after resolution. A call calls a function, constructs a type or invokes another callable member; an annotation uses a type or trait; a value reference reads the selected declaration; and a decorator applies the selected callable. `models.parse(path)` therefore calls the same declaration as `from models import parse`, and `models.Config` names the same declaration as `from models import Config` in annotations and constructor calls.
+
+Refused (`INCAN-T0001`): a namespace does not expose the requested member, including when that member is private, or the head does not provide a namespace for the remaining path. The diagnostic names the namespace and member once. The name `c` bound by `from std.interop import c` is not a module binding; its members, such as `c.i32`, are specified in [`std.interop`](stdlib/interop.md).
+
+Refused (`INCAN-T0001`): following name links returns to a link already on the active lookup walk. The diagnostic lists the loop in order and identifies where each link is written. A cycle between modules remains accepted when resolving the requested name does not repeat a name link.
 
 ```incan
 import models
@@ -263,10 +267,10 @@ The standard-library modules are listed in the [language reference](language.md#
 
 ## Soft keywords
 
-- `async` and `await` are keywords only after an import whose path begins with `std.async`, such as `import std.async` or `from std.async.time import sleep`, from the next declaration on. `from std import async` does not activate them. `race for` requires the same import.
+- `async` and `await` are reserved words in every module. `async def`, `await`, and `race for <name>:` need no import.
+- Refused (`INCAN-P0001`): a variable, parameter, field, function, or other declaration named `async` or `await`.
+- A reserved word may occur in a module path. `import std.async` and `from std import async` bind the module, and `async.sleep(0.1)` resolves through that binding. An explicit alias named `async` or `await` is refused (`INCAN-P0001`).
 - A library's vocabulary keywords are keywords after an import of its provider namespace.
-
-Refused (`INCAN-P0001`): `async` or `await` as a keyword before the import.
 
 ## Rust crate imports
 

@@ -1,4 +1,4 @@
-# behavior: a bounded channel carries values sent through the sender and a clone to the receiver, drains its buffer after close, and a Mutex guards a counter incremented by two tasks
+# behavior: channels drain after close, Mutex guards task updates, and an async source Semaphore method retains its receiver loan
 # expect-stdout:
 #   sent
 #   received 1
@@ -6,11 +6,11 @@
 #   received 3
 #   closed
 #   counter 6
+#   permit acquired
 
-import std.async
 from std.async.channel import channel
 from std.async.task import spawn
-from std.async.sync import Mutex
+from std.async.sync import Mutex, Semaphore
 
 
 async def increment(counter: Mutex[int], times: int) -> None:
@@ -53,3 +53,7 @@ async def main() -> None:
         Err(error) => println(f"join failed: {error.message()}")
     guard = await counter.lock()
     println(f"counter {guard.get()}")
+    semaphore = Semaphore.new(1)
+    match await semaphore.acquire():
+        Ok(_permit) => println("permit acquired")
+        Err(error) => println(f"acquire failed: {error.message()}")

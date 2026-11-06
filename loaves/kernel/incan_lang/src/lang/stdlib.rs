@@ -33,8 +33,8 @@ pub const STDLIB_WEB_ROUTE_DECORATOR: &str = "route";
 
 /// The proc-macro crate that backs `std.web.routing.route`.
 ///
-/// A `@rust.extern` stdlib function bound to this crate is emitted as a passthrough Rust attribute; the checker uses
-/// the same binding to know which decorated functions are route handlers and to check their signatures.
+/// The directly imported `route` attribute macro is retained as a passthrough Rust attribute; the checker uses its
+/// inspected canonical path to identify route handlers and check their signatures.
 pub const STDLIB_WEB_MACROS_CRATE: &str = "incan_web_macros";
 
 /// `std.web.macros.IntoResponse`, the derive that makes a wrapper type usable as a route handler's return type.
@@ -89,6 +89,8 @@ pub const JSON_VALUE_RUST_PATH: &str = "incan_std_data::json::JsonValue";
 pub mod facets {
     /// The mandatory facet every generated program links.
     pub const CORE: &str = "incan_std_core";
+    /// Foundational native mechanisms owned by `std.primitives`.
+    pub const PRIMITIVES: &str = "incan_std_primitives";
     /// `std.json`, `std.serde` and the ordinal-map helpers behind `std.collections`.
     pub const DATA: &str = "incan_std_data";
     /// `std.async`.
@@ -98,7 +100,7 @@ pub mod facets {
     /// `std.testing`.
     pub const TESTING: &str = "incan_std_testing";
     /// Every facet, the mandatory one first.
-    pub const ALL: [&str; 5] = [CORE, DATA, ASYNC, WEB, TESTING];
+    pub const ALL: [&str; 6] = [CORE, PRIMITIVES, DATA, ASYNC, WEB, TESTING];
 
     /// The facet a namespace's generated code links: the namespace's own facet, or the mandatory core facet.
     pub fn for_namespace(namespace: &str) -> &'static str {
@@ -109,14 +111,16 @@ pub mod facets {
 
     /// Whether a namespace's runtime module is the crate root of its facet rather than a module inside it.
     ///
-    /// The core and data facets keep one module per namespace (`incan_std_core::strings`, `incan_std_data::json`);
+    /// The primitive and data facets keep one module per responsibility (`incan_std_primitives::strings`,
+    /// `incan_std_data::json`);
     /// the async, web and testing facets serve a single namespace and are that module themselves, so a path into
     /// them starts at the crate (`incan_std_async::task`, never `incan_std_async::r#async::task`).
     pub fn namespace_is_facet_root(namespace: &str) -> bool {
         matches!(for_namespace(namespace), ASYNC | WEB | TESTING)
     }
 
-    /// Whether a `::`-qualified Rust path starts with one of the facets, as `incan_std_core::strings::str_len` does.
+    /// Whether a `::`-qualified Rust path starts with one of the facets, as
+    /// `incan_std_primitives::strings::str_len` does.
     pub fn path_names_a_facet(path: &str) -> bool {
         path.split("::").next().is_some_and(is_facet)
     }
@@ -297,9 +301,6 @@ pub struct StdlibNamespace {
     /// The Rust facet this namespace's generated code links beyond the mandatory [`facets::CORE`], or `None` when
     /// the core facet serves it.
     pub facet: Option<&'static str>,
-    /// Rust extern ownership names used by this namespace; component Loaf manifests own registry requirements and
-    /// features.
-    pub extra_crate_deps: &'static [StdlibExtraCrateDep],
     /// Known submodules for validation and LSP completion. Empty for leaf modules.
     pub submodules: &'static [&'static str],
     /// When `true`, this namespace is handled entirely by the typechecker with no corresponding `.incn` stub file or
@@ -308,24 +309,6 @@ pub struct StdlibNamespace {
     /// `std.rust` is the canonical example: `Send`, `Sync`, etc. map to native Rust traits that are already in scope
     /// and must not be re-declared or imported in generated code.
     pub typechecker_only: bool,
-}
-
-/// Additional crate dependency needed by a stdlib namespace.
-#[derive(Debug, Clone, Copy)]
-pub struct StdlibExtraCrateDep {
-    /// Cargo dependency key.
-    pub crate_name: &'static str,
-    /// Namespace ownership of a declared registry Loaf or a local toolchain support path.
-    pub source: StdlibExtraCrateSource,
-}
-
-/// Source descriptor for a namespace-provided extra crate dependency.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StdlibExtraCrateSource {
-    /// Path dependency rooted at compiler workspace root.
-    Path(&'static str),
-    /// Registry Loaf whose requirement and features belong to its component manifest.
-    Declared,
 }
 
 /// Builtin trait identity for stdlib method-stub lookup.
@@ -365,39 +348,6 @@ pub fn find_namespace(name: &str) -> Option<&'static StdlibNamespace> {
     STDLIB_NAMESPACES.iter().find(|ns| ns.name == name)
 }
 
-/// Look up an extra Cargo crate dependency declared by any registered stdlib namespace.
-///
-/// This is the registry boundary for compiler subsystems that need stdlib-managed dependency metadata without
-/// duplicating namespace traversal or crate version knowledge.
-#[must_use]
-pub fn find_extra_crate_dep(crate_name: &str) -> Option<&'static StdlibExtraCrateDep> {
-    extra_crate_deps().find(|dep| dep.crate_name == crate_name)
-}
-
-/// Return whether a crate is supplied by the workspace as a stdlib-managed path dependency.
-#[must_use]
-pub fn is_path_extra_crate_dep(crate_name: &str) -> bool {
-    find_extra_crate_dep(crate_name).is_some_and(|dep| matches!(dep.source, StdlibExtraCrateSource::Path(_)))
-}
-
-/// Return the published Cargo package name when a stdlib-managed Rust crate imports under a different crate key.
-#[must_use]
-pub fn extra_crate_package_alias(crate_name: &str) -> Option<&'static str> {
-    match crate_name {
-        "md5" => Some("md-5"),
-        "xxhash_rust" => Some("xxhash-rust"),
-        _ => None,
-    }
-}
-
-/// Iterate over every extra Cargo crate dependency declared by registered stdlib namespaces.
-///
-/// Consumers that need to filter by dependency source can use this iterator while keeping namespace traversal
-/// centralized in the stdlib registry.
-pub fn extra_crate_deps() -> impl Iterator<Item = &'static StdlibExtraCrateDep> {
-    STDLIB_NAMESPACES.iter().flat_map(|ns| ns.extra_crate_deps)
-}
-
 /// Return the stdlib module path that owns fallback method signatures for a builtin trait name.
 ///
 /// The returned segments can be passed to the typechecker's stdlib cache to load the full `.incn` trait declaration
@@ -425,7 +375,7 @@ pub fn soft_keywords_for_import(path: &[String]) -> Vec<keywords::KeywordId> {
     if path.len() < 2 || path[0] != STDLIB_ROOT {
         return Vec::new();
     }
-    keywords::soft_keywords_for_namespace(&path[1])
+    keywords::soft_keywords_for_namespace(&path[1..].join("."))
 }
 
 /// Check if a module path matches a known Incan stdlib module.

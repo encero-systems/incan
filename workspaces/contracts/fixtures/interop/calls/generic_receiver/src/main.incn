@@ -29,7 +29,7 @@ from rust::regex import Regex, Captures as NativeCaptures
 from rust::sha2 import Digest, Sha224
 from rust::sha3 import Shake128
 from rust::sha3::digest import ExtendableOutputReset, Update, XofReader
-from rust::incan_std_core::frozen import FrozenList as RuntimeFrozenList
+from rust::incan_std_primitives::frozen import FrozenList as RuntimeFrozenList
 from rust::std::cell import Cell
 from rust::std::clone import Clone as NativeClone
 from rust::std::collections import HashSet
@@ -47,8 +47,8 @@ from rust::std::vec import Vec, IntoIter as VectorIterator
 from rust::xxhash_rust::xxh32 import Xxh32, xxh32
 from rust::xxhash_rust::xxh64 import Xxh64, xxh64
 from rust::xxhash_rust::xxh3 import Xxh3Default, xxh3_64, xxh3_128
-from rust::incan_std_core::iter import nonnegative_count, batch as native_batch, Generator as NativeGenerator
-from rust::incan_std_core::errors import raise_index_error
+from rust::incan_std_primitives::iter import nonnegative_count, batch as native_batch, Generator as NativeGenerator
+from rust::incan_std_primitives::errors import raise_index_error
 from std.derives.copying import Clone
 from std.derives.comparison import Ord
 from std.traits.callable import Callable1
@@ -76,19 +76,19 @@ class GenericReader:
         decoded = self.decode(value)?
         return Ok(decoded.item)
 
-    def integer(self) -> Result[int, str]:
+    pub def integer(self) -> Result[int, str]:
         """Close the scalar frame without exposing its intermediate layout."""
         return self.read(7)
 
-    def native(self) -> Result[Duration, str]:
+    pub def native(self) -> Result[Duration, str]:
         """Close a native-value frame through the same method chain."""
         return self.read(Duration.from_secs(9u64))
 
-    def apply[F with Callable1[int, int]](self, value: int, transform: F) -> int:
+    pub def apply[F with Callable1[int, int]](self, value: int, transform: F) -> int:
         """Invoke a generic callback while retaining its captured environment."""
         return transform(value)
 
-    def keep[F with Callable1[int, int]](self, transform: F) -> F:
+    pub def keep[F with Callable1[int, int]](self, transform: F) -> F:
         """Return a callback with its captured environment owned by the caller."""
         return transform
 
@@ -98,11 +98,11 @@ class DigestOwner:
 
     handle: Sha224
 
-    def update(mut self, chunk: bytes) -> None:
+    pub def update(mut self, chunk: bytes) -> None:
         """Bind the native method's anonymous by-value input parameter."""
         Digest.update(self.handle, chunk.as_slice())
 
-    def finish(mut self) -> bytes:
+    pub def finish(mut self) -> bytes:
         """Return the selected digest output and reset the native owner."""
         return self.handle.finalize_reset().to_vec()
 
@@ -327,10 +327,10 @@ def captured_chain[F with (Callable1[int, Generator[int]], Static)](source: Gene
 
 
 def native_batches[T with (Clone, Static)](source: Generator[T], size: int) -> Generator[list[T]]:
-    """1. Retain the native source. 2. Wrap a batch adapter whose iterator owner comes from its blanket impl."""
+    """1. Retain the native source. 2. Wrap a batch adapter over that exact iterator."""
     # 1. Retain the native source.
     native: NativeGenerator[T] = source
-    # 2. Keep the normalized associated iterator type in the native adapter's arguments.
+    # 2. Preserve the concrete native iterator type in the adapter's arguments.
     return NativeGenerator.new(native_batch(native, size))
 
 

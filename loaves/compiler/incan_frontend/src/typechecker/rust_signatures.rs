@@ -3,6 +3,37 @@
 use super::*;
 
 impl TypeChecker {
+    /// Derive one checked call's loan identities from its retained Rust signature. Explicit lifetime names and type
+    /// parameters keep their declaration identity; ordinary elision selects the receiver or sole reference input.
+    pub(super) fn native_signature_loan_identities(signature: &RustFunctionSig) -> Vec<Vec<String>> {
+        let mut slots = signature
+            .params
+            .iter()
+            .map(|parameter| native_signature_tokens(&parameter.type_display, &signature.type_params))
+            .collect::<Vec<_>>();
+        let mut result = native_signature_tokens(&signature.return_type, &signature.type_params);
+        if native_display_has_elided_loan(&signature.return_type, &result) {
+            let source = if Self::rust_signature_has_receiver(signature) {
+                Some(0)
+            } else {
+                let references = signature
+                    .params
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, parameter)| native_display_has_reference(&parameter.type_display))
+                    .map(|(index, _)| index)
+                    .collect::<Vec<_>>();
+                (references.len() == 1).then(|| references[0])
+            };
+            if let Some(source) = source {
+                push_identity(&mut slots[source], "elided");
+                push_identity(&mut result, "elided");
+            }
+        }
+        slots.push(result);
+        slots
+    }
+
     /// Build a Rust function type from a signature whose displays may use `crate::` relative to `rust_path`.
     pub fn resolved_function_type_from_rust_sig_for_owner_path(
         &self,
@@ -232,6 +263,7 @@ impl TypeChecker {
     pub(super) fn rust_display_without_lifetimes(rust_ty: &str) -> String {
         Self::strip_borrow_lifetimes(rust_ty)
             .replace("'static ", "")
+            .replace("<>", "")
             .trim_start_matches("::")
             .to_string()
     }
@@ -869,5 +901,65 @@ impl TypeChecker {
     ) -> ResolvedType {
         let display = self.rust_display_for_owner_path(rust_ty, owner_path);
         self.resolved_rust_boundary_target_from_param_display(display.as_str())
+    }
+}
+
+/// Collect named lifetime and type-parameter identities from one portable Rust display. Static lifetimes deliberately
+/// contribute no identity; an anonymous lifetime is retained as the elision marker.
+fn native_signature_tokens(display: &str, type_parameters: &[String]) -> Vec<String> {
+    let characters = display.chars().collect::<Vec<_>>();
+    let mut tokens = Vec::new();
+    let mut index = 0;
+    while index < characters.len() {
+        if characters[index] == '\'' {
+            let start = index + 1;
+            index = start;
+            while index < characters.len() && (characters[index].is_alphanumeric() || characters[index] == '_') {
+                index += 1;
+            }
+            let name = characters[start..index].iter().collect::<String>();
+            match name.as_str() {
+                "" | "static" => {}
+                "_" => push_identity(&mut tokens, "elided"),
+                _ => push_identity(&mut tokens, &format!("lifetime:{name}")),
+            }
+            continue;
+        }
+        if characters[index].is_alphabetic() || characters[index] == '_' {
+            let start = index;
+            index += 1;
+            while index < characters.len() && (characters[index].is_alphanumeric() || characters[index] == '_') {
+                index += 1;
+            }
+            let name = characters[start..index].iter().collect::<String>();
+            if name == "Self" || type_parameters.contains(&name) {
+                push_identity(&mut tokens, &format!("type:{name}"));
+            }
+            continue;
+        }
+        index += 1;
+    }
+    tokens
+}
+
+/// Whether an output display contains an anonymous caller-bounded loan after excluding explicit named and static
+/// lifetime contracts. Bare references are precisely the Rust lifetime-elision surface.
+fn native_display_has_elided_loan(display: &str, tokens: &[String]) -> bool {
+    tokens.iter().any(|token| token == "elided")
+        || (native_display_has_reference(display)
+            && !display.contains("'static")
+            && !tokens.iter().any(|token| token.starts_with("lifetime:")))
+}
+
+/// Whether a Rust display structurally names a reference. Callable displays are already selected and validated by
+/// the native boundary; this scan only decides the language-defined elision source.
+fn native_display_has_reference(display: &str) -> bool {
+    display.chars().any(|character| character == '&')
+}
+
+/// Append one signature-local identity once, preserving its first structural occurrence for deterministic facts.
+fn push_identity(tokens: &mut Vec<String>, identity: &str) {
+    if !tokens.iter().any(|token| token == identity) {
+        tokens.push(identity.to_owned());
     }
 }

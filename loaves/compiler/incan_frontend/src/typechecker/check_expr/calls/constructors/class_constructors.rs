@@ -432,6 +432,18 @@ impl TypeChecker {
         args: &[CallArg],
         span: Span,
     ) {
+        if let Some(owner) = self.surface_type_identity(SurfaceTypeId::Html) {
+            self.record_body_ir_html_constructor_with_owner(args, span, &owner);
+        }
+    }
+
+    /// Record Html's native tuple owner from an already resolved qualified or lexical binding.
+    pub(in crate::typechecker::check_expr::calls) fn record_body_ir_html_constructor_with_owner(
+        &mut self,
+        args: &[CallArg],
+        span: Span,
+        owner: &CanonicalSymbolId,
+    ) {
         let [CallArg::Positional(value)] = args else {
             return;
         };
@@ -445,8 +457,8 @@ impl TypeChecker {
                 _ => false,
             },
         };
-        if is_string && let Some(owner) = self.surface_type_identity(SurfaceTypeId::Html) {
-            self.type_info.record_body_ir_native_constructor(span, owner);
+        if is_string {
+            self.type_info.record_body_ir_native_constructor(span, owner.clone());
             self.type_info
                 .calls
                 .body_ir_native_argument_types

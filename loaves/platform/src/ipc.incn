@@ -4,11 +4,11 @@ Bounded IPC over Unix sockets: length-framed byte payloads, per-direction data c
 It carries bytes and the OS identity of the peer, nothing else: what a payload encodes belongs to its protocol.
 """
 
-from rust::std::fs import File, Permissions, set_permissions
+from rust::std::fs import File, Permissions, remove_file, set_permissions, symlink_metadata
 from rust::std::io import ErrorKind, Read, Write
 from rust::std::net import Shutdown
 from rust::std::os::fd import AsRawFd
-from rust::std::os::unix::fs import PermissionsExt
+from rust::std::os::unix::fs import MetadataExt, PermissionsExt
 from rust::std::os::unix::net import UnixListener, UnixStream
 from rust::std::cell import RefCell
 from rust::std::rc import Rc
@@ -37,7 +37,7 @@ pub class Connection:
     # out of the cell, which releases its descriptor at once for every holder of the connection.
     stream: Rc[RefCell[Option[UnixStream]]]
 
-    def peer(self) -> Result[PeerIdentity, str]:
+    pub def peer(self) -> Result[PeerIdentity, str]:
         """Read OS peer credentials; the standard wrapper uses getpeereid or SO_PEERCRED."""
         match self.stream.borrow().as_ref():
             None => return Err(CLOSED)
@@ -47,7 +47,7 @@ pub class Connection:
                     Ok(found) =>
                         return Ok(PeerIdentity(uid=found.uid, gid=found.gid, pid=found.pid.map((pid) => int(pid))))
 
-    def close(self) -> Result[None, str]:
+    pub def close(self) -> Result[None, str]:
         """
         Close both directions of this socket and release its descriptor, for every holder of this connection at once.
         Closing a closed connection does nothing.
@@ -60,7 +60,7 @@ pub class Connection:
             # The descriptor is released when `open` goes out of scope, whether or not the shutdown succeeds.
             Some(open) => return open.shutdown(Shutdown.Both).map_err((error) => f"cannot close socket: {error}")
 
-    def descriptor(self) -> int:
+    pub def descriptor(self) -> int:
         """
         The OS descriptor number of this socket while the connection is open, and -1 once it is closed. It lends the
         socket to native code that only observes it; ownership stays with this connection.
@@ -69,7 +69,7 @@ pub class Connection:
             None => return -1
             Some(open) => return int(open.as_raw_fd())
 
-    def read_part(mut self, count: int, bound: int) -> Result[bytes, str]:
+    pub def read_part(mut self, count: int, bound: int) -> Result[bytes, str]:
         """Read exactly a bounded part, checking its length before allocating the receive buffer."""
         if count < 0 or count > bound:
             return Err("transport read exceeds its bound")
@@ -79,7 +79,7 @@ pub class Connection:
             Some(open) => open.read_exact(payload).map_err((error) => f"cannot read frame: {error}")?
         return Ok(payload)
 
-    def send(mut self, payload: bytes) -> Result[None, str]:
+    pub def send(mut self, payload: bytes) -> Result[None, str]:
         """
         Write one frame.
 
@@ -95,7 +95,7 @@ pub class Connection:
         # 3. The payload follows.
         return self.write_part(payload, "the frame")
 
-    def write_part(mut self, part: bytes, what: str) -> Result[None, str]:
+    pub def write_part(mut self, part: bytes, what: str) -> Result[None, str]:
         """Write all of one part of a frame; a failure names the part."""
         match self.stream.borrow_mut().as_mut():
             None => return Err(CLOSED)
@@ -104,7 +104,7 @@ pub class Connection:
                     Ok(_) => return Ok(None)
                     Err(error) => return Err(f"cannot write {what}: {error}")
 
-    def receive(mut self) -> Result[bytes, str]:
+    pub def receive(mut self) -> Result[bytes, str]:
         """
         Read one frame's payload. A header that is not a length, a length over the bound or a payload cut short
         refuses it.
@@ -118,7 +118,7 @@ pub class Connection:
         # 2. A payload cut short is an error, not a shorter frame.
         return self.read_part(size, MAX_FRAME)
 
-    def wait_at_most(mut self, seconds: u64) -> None:
+    pub def wait_at_most(mut self, seconds: u64) -> None:
         """Bound each read by `seconds`; 0 removes the bound, which a long build needs."""
         mut limit: Option[Duration] = None
         if seconds != 0:
@@ -129,7 +129,7 @@ pub class Connection:
             None => pass
             Some(open) => _ = open.set_read_timeout(limit)
 
-    def write_at_most(mut self, seconds: u64) -> None:
+    pub def write_at_most(mut self, seconds: u64) -> None:
         """Bound each write by `seconds`."""
         # A timeout the system refuses leaves the socket unbounded, which only delays a stuck peer's refusal. A closed
         # connection has no writes left to bound.
@@ -137,7 +137,7 @@ pub class Connection:
             None => pass
             Some(open) => _ = open.set_write_timeout(Some(Duration.from_secs(seconds)))
 
-    def readable(self) -> Result[bool, str]:
+    pub def readable(self) -> Result[bool, str]:
         """Ask the OS whether a byte or EOF is waiting, without consuming or retaining protocol data."""
         match self.stream.borrow().as_ref():
             None => return Err(CLOSED)
@@ -206,7 +206,7 @@ pub class Listener:
 
     pub socket: Rc[RefCell[UnixListener]]
 
-    def accept(mut self) -> Result[Connection, str]:
+    pub def accept(mut self) -> Result[Connection, str]:
         """Take the next client."""
         match self.socket.borrow_mut().accept():
             Ok(accepted) =>
@@ -214,7 +214,7 @@ pub class Listener:
                 return Ok(connection(stream))
             Err(error) => return Err(f"cannot accept: {error}")
 
-    def poll(mut self) -> Result[Option[Connection], str]:
+    pub def poll(mut self) -> Result[Option[Connection], str]:
         """
         The next client if one is waiting, without waiting for one; the listener must be non-blocking. The client's
         connection blocks, with the bounds its caller sets, as an accepted one does: some systems, macOS among them,
@@ -231,7 +231,7 @@ pub class Listener:
                     return Ok(None)
                 return Err(f"cannot accept: {error}")
 
-    def stop_blocking(mut self, path: str) -> Result[None, str]:
+    pub def stop_blocking(mut self, path: str) -> Result[None, str]:
         """Make `accept` return at once when no client waits, which `poll` relies on."""
         match self.socket.borrow_mut().set_nonblocking(true):
             Ok(_) => return Ok(None)
@@ -293,6 +293,52 @@ pub def stale(path: str) -> bool:
         Err(_) => return false
 
 
+pub model SocketFile:
+    """
+    The socket file a listener bound, and the directory it belongs to: its path, owner, file identity at bind time,
+    and the private directory of the home whose clients reach it.
+
+    A resident process retires once nothing can reach it any more: when its path no longer leads to this file, or the
+    directory it belongs to is gone. It removes only this file, so a replacement's socket at the same path survives.
+    """
+
+    pub path: str
+    pub uid: u32
+    pub device: u64
+    pub inode: u64
+    pub directory: str
+
+
+pub def socket_file(path: str, directory: str) -> Result[SocketFile, str]:
+    """The owner and identity of the socket file just bound at `path`, belonging to `directory`."""
+    match symlink_metadata(path):
+        Ok(found) =>
+            return Ok(SocketFile(path=path, uid=found.uid(), device=found.dev(), inode=found.ino(), directory=directory))
+        Err(error) => return Err(f"cannot read the socket {path}: {error}")
+
+
+pub def bound(socket: SocketFile) -> bool:
+    """Whether the file at the socket's path is still the socket file that was bound there."""
+    match symlink_metadata(socket.path):
+        Ok(found) => return found.dev() == socket.device and found.ino() == socket.inode
+        Err(_) => return false
+
+
+pub def reachable(socket: SocketFile) -> bool:
+    """Whether a client can still reach the socket: its path leads to the bound file, and its directory exists."""
+    if not bound(socket):
+        return false
+    match symlink_metadata(socket.directory):
+        Ok(found) => return found.file_type().is_dir()
+        Err(_) => return false
+
+
+pub def withdraw(socket: SocketFile) -> None:
+    """Remove the socket file only while it is still the one that was bound."""
+    if bound(socket):
+        _ = remove_file(socket.path)
+
+
 pub def session_id() -> Result[bytes, str]:
     """Obtain a fresh 128-bit connection identity from the OS entropy source, never from a clock or PID."""
     mut source = File.open("/dev/urandom").map_err((error) => f"cannot open OS entropy source: {error}")?
@@ -314,19 +360,19 @@ pub class Credits:
     # The outstanding sequences, as decimal text.
     outstanding: list[str] = []
 
-    def held(self) -> int:
+    pub def held(self) -> int:
         """How many credits are spent."""
         return len(self.outstanding)
 
-    def exhausted(self) -> bool:
+    pub def exhausted(self) -> bool:
         """Whether every credit is spent, so the next data frame must wait."""
         return len(self.outstanding) >= self.limit
 
-    def holds(self, sequence: u64) -> bool:
+    pub def holds(self, sequence: u64) -> bool:
         """Whether the frame `sequence` holds a credit."""
         return str(sequence) in self.outstanding
 
-    def spend(mut self, sequence: u64) -> Result[None, str]:
+    pub def spend(mut self, sequence: u64) -> Result[None, str]:
         """Spend a credit on the frame `sequence`; with none left, or one already spent on it, it is refused."""
         if self.exhausted():
             return Err("no data credit is left")
@@ -335,7 +381,7 @@ pub class Credits:
         self.outstanding.append(str(sequence))
         return Ok(None)
 
-    def regain(mut self, sequence: u64) -> Result[None, str]:
+    pub def regain(mut self, sequence: u64) -> Result[None, str]:
         """Return the credit the frame `sequence` holds; a frame that holds none is refused."""
         if not self.holds(sequence):
             return Err("no outstanding frame has that sequence")

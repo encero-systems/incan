@@ -4,7 +4,6 @@
 #   got 3
 #   got true
 
-import std.async
 from std.async.channel import channel, oneshot, unbounded_channel
 
 

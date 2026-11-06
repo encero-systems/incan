@@ -33,7 +33,6 @@ pub(super) fn append_expressions(target: &mut ExpressionArtifacts, local: Expres
         assignment_binding_types,
         computed_property_accesses,
         ident_kinds,
-        ambient_logger_bindings,
         value_destination_types,
         numeric_conversion_destinations,
         read_only_dict_lookups,
@@ -62,7 +61,6 @@ pub(super) fn append_expressions(target: &mut ExpressionArtifacts, local: Expres
     target.assignment_binding_types.extend(assignment_binding_types);
     target.computed_property_accesses.extend(computed_property_accesses);
     target.ident_kinds.extend(ident_kinds);
-    target.ambient_logger_bindings.extend(ambient_logger_bindings);
     target.value_destination_types.extend(value_destination_types);
     target
         .numeric_conversion_destinations
@@ -111,6 +109,7 @@ pub(super) fn append_calls(target: &mut CallArtifacts, local: CallArtifacts) {
         inferred_call_result_types,
         mutable_receiver_method_calls,
         resolved_builtin_calls,
+        resolved_builtin_method_calls,
         fixed_unpack_plans,
         call_site_monomorph_type_args,
         isinstance_targets,
@@ -162,6 +161,9 @@ pub(super) fn append_calls(target: &mut CallArtifacts, local: CallArtifacts) {
         .mutable_receiver_method_calls
         .extend(mutable_receiver_method_calls);
     target.resolved_builtin_calls.extend(resolved_builtin_calls);
+    target
+        .resolved_builtin_method_calls
+        .extend(resolved_builtin_method_calls);
     target.fixed_unpack_plans.extend(fixed_unpack_plans);
     target
         .call_site_monomorph_type_args
@@ -230,6 +232,7 @@ pub(super) fn append_rust(target: &mut RustInteropArtifacts, local: RustInteropA
         checked_calls,
         argument_adjustments,
         declared_conversions,
+        validated_rusttype_edges,
         element_adjustments,
         field_adjustments,
         field_projection_paths,
@@ -264,6 +267,7 @@ pub(super) fn append_rust(target: &mut RustInteropArtifacts, local: RustInteropA
     target.checked_calls.extend(checked_calls);
     target.argument_adjustments.extend(argument_adjustments);
     target.declared_conversions.extend(declared_conversions);
+    target.validated_rusttype_edges.extend(validated_rusttype_edges);
     target.element_adjustments.extend(element_adjustments);
     target.field_adjustments.extend(field_adjustments);
     target.field_projection_paths.extend(field_projection_paths);

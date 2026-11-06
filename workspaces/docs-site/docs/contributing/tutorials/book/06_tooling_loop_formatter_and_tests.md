@@ -12,6 +12,6 @@ Use the smallest selector from `workspaces/contracts/README.md` to demonstrate t
 
 ## Finish the local gate
 
-Run `make pre-commit-fast`, `make reference-contract-check` for reference changes and `make docs-build` for documentation. These check different boundaries; formatting success is not proof of runtime behavior.
+Run `make pre-commit` and `make docs` for documentation. These check different boundaries; formatting success is not proof of runtime behavior.
 
 See [Formatting](../../../tooling/how-to/formatting.md) and [Testing](../../../tooling/how-to/testing.md).

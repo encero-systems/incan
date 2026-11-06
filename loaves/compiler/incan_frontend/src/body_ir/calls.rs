@@ -3,10 +3,10 @@
 use super::args::*;
 use super::primitives::*;
 use super::*;
-use incan_lang::lang::builtins::BuiltinFnId;
+use incan_lang::lang::builtins::{BuiltinFnId, BuiltinMethodId};
 use incan_lang::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
+use incan_lang::lang::surface::list_methods::ListMethodId;
 use incan_lang::lang::surface::result_methods::ResultMethodId;
-use incan_lang::lang::surface::{dict_methods, list_methods, set_methods};
 use incan_semantics_core::SymbolOrigin;
 
 mod argument_binding;
@@ -76,20 +76,9 @@ fn slot_ordered_pair(elements: Vec<bir::ArgumentElement>, binding: &bir::Argumen
     Some([first, second])
 }
 
-/// Read receiver exclusivity from the canonical builtin collection registry, never from a source method's spelling.
-fn collection_method_changes_receiver(identity: &CanonicalSymbolId) -> bool {
-    if identity.origin != incan_semantics_core::SymbolOrigin::Builtin {
-        return false;
-    }
-    let Some((family, member)) = identity.declaration_name.split_once('.') else {
-        return false;
-    };
-    match family {
-        "List" => list_methods::from_str(member).is_some_and(list_methods::changes_receiver),
-        "Set" => set_methods::from_str(member).is_some_and(set_methods::changes_receiver),
-        "Dict" => dict_methods::from_str(member).is_some_and(dict_methods::changes_receiver),
-        _ => false,
-    }
+/// Read receiver exclusivity from the checker-selected builtin operation.
+fn collection_method_changes_receiver(operation: BuiltinMethodId) -> bool {
+    operation.changes_receiver()
 }
 
 /// The type a `Type.member(..)` call is made on, when its receiver identifier names a type rather than a value.

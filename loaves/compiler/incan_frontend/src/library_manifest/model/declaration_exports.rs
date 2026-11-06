@@ -34,6 +34,9 @@ pub struct MethodExport {
 pub struct ParamExport {
     pub name: String,
     pub ty: TypeRef,
+    /// Authored alias-bearing type spelling retained only for presentation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface_type_name: Option<String>,
     #[serde(default)]
     pub kind: ParamKindExport,
     #[serde(default)]
@@ -65,6 +68,12 @@ pub enum ParamDefaultExport {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         signature: Option<Box<ParamDefaultCallSignatureExport>>,
     },
+    /// A replayable static method call used as a parameter default.
+    MethodCall {
+        receiver_path: Vec<String>,
+        method: String,
+        args: Vec<ParamDefaultCallArgExport>,
+    },
     Unsupported,
 }
 
@@ -79,6 +88,13 @@ impl ParamDefaultExport {
                 .iter()
                 .all(|entry| entry.key.is_materializable() && entry.value.is_materializable()),
             Self::Call { path, args, .. } => !path.is_empty() && args.iter().all(|arg| arg.value.is_materializable()),
+            Self::MethodCall {
+                receiver_path,
+                method,
+                args,
+            } => {
+                !receiver_path.is_empty() && !method.is_empty() && args.iter().all(|arg| arg.value.is_materializable())
+            }
             Self::Unsupported => false,
         }
     }

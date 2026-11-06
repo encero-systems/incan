@@ -1,6 +1,7 @@
 //! Standard-library type usage, type reference identities, and qualified type annotations.
 
 use super::*;
+use crate::typechecker::ResolvedNamespaceMemberKind;
 
 impl TypeChecker {
     pub(super) fn validate_stdlib_type_usage(&mut self, ty: &Spanned<Type>) {
@@ -255,93 +256,47 @@ impl TypeChecker {
     /// Loaf-qualified spelling -- so values checked against either spelling of the same declaration are compatible.
     /// `None` means no type was proven; it never means "assume the written path".
     pub(super) fn qualified_type_declaration(&mut self, segments: &[String]) -> Option<QualifiedTypeReferenceInfo> {
-        let (root, remainder) = segments.split_first()?;
-        let (name, nested_module) = remainder.split_last()?;
-        let mut module_path = self.lookup_symbol(root).and_then(|symbol| match &symbol.kind {
-            SymbolKind::Module(info) if !info.is_python => Some(info.path.clone()),
-            _ => None,
-        })?;
-        module_path.extend(nested_module.iter().cloned());
-
-        // A Rust item a Loaf module re-exports is that Rust item, spelled qualified or not.
-        if let Some((library, rest)) = self.loaf_module(&module_path)
-            && let Ok(Some(member)) = self.resolve_pub_library_module_symbol_member(&library, &rest, name)
-            && let SymbolKind::RustItem(info) = &member.kind
-            && let Some(identity) = member.canonical.clone()
-        {
-            return Some(QualifiedTypeReferenceInfo {
-                identity,
-                module_path,
-                resolved: ResolvedType::RustPath(info.path.clone()),
-            });
-        }
-
-        // Compiler-known surface types have no source declaration for the stdlib cache to return. Their registry
-        // ownership is nevertheless the same proof a direct `from std.web import Html` uses, so retain that stable
-        // builtin identity and canonical resolved spelling for a qualified annotation as well (#1824).
-        if let Some(surface_type) = surface_types::from_str(name)
-            && surface_types::stdlib_module_path(surface_type).is_some_and(|owner| owner == module_path.join("."))
-        {
-            let canonical = surface_types::as_str(surface_type).to_string();
-            return Some(QualifiedTypeReferenceInfo {
-                identity: CanonicalSymbolId {
-                    namespace: SymbolNamespace::OrdinaryLexical,
-                    origin: SymbolOrigin::Builtin,
-                    declaration_name: canonical.clone(),
-                    kind: SemanticSourceTargetKind::Builtin,
-                    scope_discriminant: None,
-                    declaration_span: HirSourceSpan::new(0, 0),
-                },
-                module_path,
-                resolved: ResolvedType::Named(canonical),
-            });
-        }
-
-        // ---- Loaf module: the checked manifest owns both the identity and the qualified type name ----
-        if let Some((library, rest)) = self.loaf_module(&module_path) {
-            let resolved = self
-                .resolve_pub_library_module_symbol_member(&library, &rest, name)
-                .ok()
-                .flatten()?;
-            if !matches!(resolved.kind, SymbolKind::Type(_) | SymbolKind::Trait(_)) {
-                return None;
+        let name = segments.last()?;
+        let member = self.resolve_qualified_name(segments).ok()?;
+        let identity = member.canonical?;
+        let module_path = member.namespace_path.clone();
+        let resolved = match member.kind {
+            ResolvedNamespaceMemberKind::SurfaceType(surface) => {
+                incan_semantics_core::body_ir::native_nominal_item(&identity).map_or_else(
+                    || ResolvedType::Named(surface_types::as_str(surface).to_string()),
+                    ResolvedType::RustPath,
+                )
             }
-            let identity = resolved.canonical?;
-            let root_len = self.loaf_binding_root(&library).len();
-            let mut source_type_path = resolved
-                .source_module_path
-                .iter()
-                .skip(root_len)
-                .cloned()
-                .collect::<Vec<_>>();
-            source_type_path.push(resolved.source_name);
-            let canonical_name = canonical_public_library_type_name(&library, &source_type_path.join("::"));
-            return Some(QualifiedTypeReferenceInfo {
-                identity,
-                module_path,
-                resolved: ResolvedType::Named(canonical_name),
-            });
-        }
-
-        // ---- Source module: the member registry proves the kind and the identity ----
-        let import = ImportPath::simple(module_path.clone());
-        let member_kind = self.dependency_member_symbol_for_path(&import, name);
-        let type_like = member_kind
-            .as_ref()
-            .is_some_and(|kind| matches!(kind, SymbolKind::Type(_) | SymbolKind::Trait(_)));
-        if !type_like {
-            return None;
-        }
-        let identity = self.dependency_member_identity(&import, name)?;
-        // A direct import of a type alias registers its target and lets alias expansion replace the name; the
-        // qualified spelling registers nothing local, so the target is the resolved type here. A generic alias
-        // needs its arguments substituted, which only the local alias registry does, so it keeps the nominal name.
-        let resolved = match member_kind {
-            Some(SymbolKind::Type(TypeInfo::TypeAlias)) => self
-                .dependency_member_type_alias_for_path(&import, name)
-                .filter(|alias| alias.type_params.is_empty())
-                .map_or_else(|| ResolvedType::Named(name.clone()), |alias| alias.target),
-            _ => ResolvedType::Named(name.clone()),
+            ResolvedNamespaceMemberKind::Symbol(SymbolKind::RustItem(info)) => ResolvedType::RustPath(info.path),
+            ResolvedNamespaceMemberKind::Symbol(SymbolKind::Type(TypeInfo::TypeAlias))
+                if member.public_library.is_none() =>
+            {
+                let import = ImportPath::simple(module_path.clone());
+                self.dependency_member_type_alias_for_path(&import, name)
+                    .filter(|alias| alias.type_params.is_empty())
+                    .map_or_else(|| ResolvedType::Named(name.clone()), |alias| alias.target)
+            }
+            ResolvedNamespaceMemberKind::Symbol(SymbolKind::Type(_) | SymbolKind::Trait(_)) => {
+                if let Some(library) = member.public_library.as_deref() {
+                    let root_len = self.loaf_binding_root(library).len();
+                    let mut source_type_path = member
+                        .source_module_path
+                        .as_deref()
+                        .unwrap_or_default()
+                        .iter()
+                        .skip(root_len)
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    source_type_path.push(member.source_name);
+                    ResolvedType::Named(canonical_public_library_type_name(
+                        library,
+                        &source_type_path.join("::"),
+                    ))
+                } else {
+                    ResolvedType::Named(member.source_name)
+                }
+            }
+            ResolvedNamespaceMemberKind::Symbol(_) | ResolvedNamespaceMemberKind::Method(_) => return None,
         };
         Some(QualifiedTypeReferenceInfo {
             identity,

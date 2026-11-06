@@ -57,9 +57,15 @@ pub(super) fn retain_declared_type(ty: &mut IncanType, identities: &Identities) 
 pub(super) fn retain(module: &mut bir::BodyIrModule, facts: &TypeCheckInfo, context: &[bir::BodyIrModule]) {
     retain_return_owners(module, context);
     let constructors = constructor_arguments::collect(module, context);
+    let module_identities = super::parameter_types::retained_type_identities(facts);
     for declaration in &mut module.nominal_declarations {
         for ty in &mut declaration.field_types {
             qualify_type(ty, None, &declaration.named_type_identities);
+        }
+        for adoption in &mut declaration.trait_adoptions {
+            for argument in &mut adoption.arguments {
+                qualify_type(argument, None, &declaration.named_type_identities);
+            }
         }
         if let Some(body) = &mut declaration.field_default_body {
             retain_body(body, facts, &constructors);
@@ -76,6 +82,14 @@ pub(super) fn retain(module: &mut bir::BodyIrModule, facts: &TypeCheckInfo, cont
             for ty in &mut variant.fields {
                 qualify_type(ty, None, &declaration.named_type_identities);
             }
+        }
+    }
+    for implementation in &mut module.trait_implementations {
+        for argument in &mut implementation.slot_arguments {
+            qualify_type(argument, None, &module_identities);
+        }
+        for binding in &mut implementation.type_arguments {
+            qualify_type(&mut binding.argument, None, &module_identities);
         }
     }
     for body in &mut module.bodies {

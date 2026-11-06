@@ -34,6 +34,14 @@ impl TypeChecker {
     /// arms run. In `match connected.stream.borrow_mut().write_all(sent):` the `RefMut` guard then no longer borrows
     /// `connected` when an arm returns, and so moves, `connected`.
     pub(in crate::typechecker) fn note_loan_free_scrutinee(&mut self, ty: &ResolvedType, span: Span) {
+        if !self.type_holds_native_loan(ty) {
+            self.type_info.record_loan_free_scrutinee(span);
+        }
+    }
+
+    /// Whether a checked value can retain a native loan through an explicit reference, an open type or a native
+    /// owner whose declaration has lifetime parameters. Structural carrier arguments are visited recursively.
+    pub(in crate::typechecker) fn type_holds_native_loan(&self, ty: &ResolvedType) -> bool {
         let holds_loan = RefCell::new(false);
         map_resolved_type_leaves(ty, &|node| {
             let open_or_borrowed = matches!(
@@ -51,9 +59,21 @@ impl TypeChecker {
             }
             None
         });
-        if !holds_loan.into_inner() {
-            self.type_info.record_loan_free_scrutinee(span);
-        }
+        holds_loan.into_inner()
+    }
+
+    /// Whether a native result structurally retains a Rust loan. Unlike the conservative scrutinee check, open source
+    /// types are not loans by themselves: only references and native owners with lifetime parameters establish one.
+    pub(in crate::typechecker) fn type_holds_native_signature_loan(&self, ty: &ResolvedType) -> bool {
+        let holds_loan = RefCell::new(false);
+        map_resolved_type_leaves(ty, &|node| {
+            let borrowed = matches!(node, ResolvedType::Ref(_) | ResolvedType::RefMut(_));
+            if !*holds_loan.borrow() && (borrowed || self.rust_type_path_with_lifetimes(node).is_some()) {
+                *holds_loan.borrow_mut() = true;
+            }
+            None
+        });
+        holds_loan.into_inner()
     }
 
     /// Return the path of the first Rust type `ty` names, at any depth, whose metadata declares lifetime parameters.
@@ -71,7 +91,7 @@ impl TypeChecker {
     }
 
     /// Return the Rust path one type node names when that Rust type declares lifetime parameters.
-    fn rust_type_path_with_lifetimes(&self, node: &ResolvedType) -> Option<String> {
+    pub(in crate::typechecker) fn rust_type_path_with_lifetimes(&self, node: &ResolvedType) -> Option<String> {
         if !matches!(
             node,
             ResolvedType::RustPath(_) | ResolvedType::Generic(..) | ResolvedType::Named(_)

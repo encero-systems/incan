@@ -102,7 +102,7 @@ pub(super) fn lower_getter_body(
         runtime_requirements: builder.runtime_requirements,
         panic_facts: builder.panic_facts,
         is_async: false,
-        extern_delegation: None,
+        retired_rust_facade_wire: None,
         native_attributes: Vec::new(),
     })
 }
@@ -159,7 +159,7 @@ impl BodyBuilder<'_, '_> {
                 name,
                 canonical: Some(canonical),
                 intrinsic_carrier: None,
-                reflection: None,
+                operation: None,
                 loaf_trait: None,
                 trait_arguments: None,
                 type_args: Vec::new(),

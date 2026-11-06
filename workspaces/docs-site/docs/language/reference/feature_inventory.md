@@ -27,7 +27,7 @@ This inventory describes the source-authored public features in the compiler's c
 | Abstract traits and supertraits | TypeSystem | 0.2 | None. | `trait OrderedCollection[T] with Collection[T]:`<br>`def first(values: Collection[int]) -> int:` | Trait names are abstract annotation types, and traits can adopt supertraits with `with`. | Hidden generic bounds or duplicated method requirements when a trait annotation names the concept. | [Derives and traits](derives_and_traits.md#traits-authoring), [Derives and traits explained](../explanation/derives_and_traits.md) |
 | Source-defined derives and trait contracts | TypeSystem | 0.2 | Import the relevant `std.derives.*`, `std.traits.*`, or derivable module. | `@derive(json)`<br>`model Row with Serialize:`<br>`T with Clone` | Derive and trait surfaces are authored as named stdlib capability contracts rather than compiler folklore. | Backend-only helper shims or comments that claim derive behavior without source-visible contracts. | [Derives and traits](derives_and_traits.md), [std.derives](stdlib/derives.md), [std.traits](stdlib/traits.md) |
 | Model field metadata and reflection | TypeSystem | 0.2 | None for field metadata; import `std.reflection` helpers when needed. | `name as "wire_name": str`<br>`user.__fields__()` | Model fields can carry aliases/descriptions and reflection exposes typed `FieldInfo` metadata. | Stringly schema maps that duplicate model field names and wire aliases. | [Reflection](reflection.md), [std.reflection](stdlib/reflection.md), [Release 0.2](../../release_notes/0_2.md) |
-| Type tokens and type-argument reflection | TypeSystem | 0.3 | Use explicit type arguments for compile-time reflection, or call an overload that expects `Type[T]`. | `T.__class_name__()`<br>`def cast(expr: ColumnExpr, target: Type[int]) -> IntColumnExpr:`<br>`def accepts_schema(value: Type[MySchema]) -> str:`<br>`cast(col("amount"), int)` | Primitive type arguments expose stable source names, model type tokens carry checked source type evidence, and expected `Type[T]` parameters let visible type names select precise overloads without making types general runtime values. | String target names, dummy schema values, or helper families used only to recover type-specific return types. | [Reflection](reflection.md), [std.reflection](stdlib/reflection.md), [RFC 107 north star](../../RFCs/107_type_directed_library_apis.md), [Release 0.3](../../release_notes/0_3.md) |
+| Type tokens and type-argument reflection | TypeSystem | 0.3 | Use explicit type arguments for compile-time reflection, or call an overload that expects `Type[T]`. | `T.__class_name__()`<br>`def cast(expr: ColumnExpr, target: Type[int]) -> IntColumnExpr:`<br>`def cast[T with Int](expr: ColumnExpr) -> IntColumnExpr:`<br>`def accepts_schema(value: Type[MySchema]) -> str:`<br>`cast(col("amount"), int)` | Primitive type arguments expose stable source names. Explicit `Type[T]` contexts admit checked primitive, model, enum, trait, alias, constrained-scalar and newtype tokens for storage and precise overload selection; constrained generic overloads map explicit type arguments to precise results without making types general runtime values. | String target names, dummy schema values, or helper families used only to recover type-specific return types. | [Reflection](reflection.md), [std.reflection](stdlib/reflection.md), [RFC 107 north star](../../RFCs/107_type_directed_library_apis.md), [Release 0.3](../../release_notes/0_3.md), [Release 0.6](../../release_notes/0_6.md) |
 | Value enums | TypeSystem | 0.3 | None. | `enum Level(str):`<br>`WARN = "WARN"`<br>`Level.from_value(raw)` | Enums can use `str` or `int` backing values while preserving enum type safety. | Loose string/int constants or duplicate parsing helpers around enum-like values. | [Enums explained](../explanation/enums.md), [Modeling with enums](../how-to/modeling_with_enums.md), [Release 0.3](../../release_notes/0_3.md) |
 | Union types and narrowing | TypeSystem | 0.3 | None. | `value: int \| str`<br>`if isinstance(value, int):`<br>`match value:` | Closed anonymous unions support `Union[A, B]`, `A \| B`, narrowing, and exhaustive match type patterns. | Untyped `Any`-like values, parallel option fields, or manual tag/payload models for closed alternatives. | [Union types](union_types.md), [Release 0.3](../../release_notes/0_3.md) |
 | Validated newtypes and checked coercion | TypeSystem | 0.3 | None. | `type UserId = newtype int[ge=0]:`<br>`Email.new(value)`<br>`@no_implicit_coercion` | Newtypes can validate primitive constraints and participate in checked construction/coercion. | Raw primitives passed across APIs with comments describing expected invariants. | [Newtypes](newtypes.md), [Book: newtypes](../tutorials/book/12_newtypes.md), [Release 0.3](../../release_notes/0_3.md) |
@@ -47,7 +47,6 @@ This inventory describes the source-authored public features in the compiler's c
 | `Result[T, E]` combinators | Stdlib | 0.3 | Use `Result[T, E]` values. | `result.map(transform)`<br>`result.and_then(validate)`<br>`result.inspect(log_success)` | `Result` values support branch-local transforms, fallible chaining, recovery, and inspection taps. | Nested matches that only rewrap `Ok` / `Err` around one transformed branch. | [std.result](stdlib/result.md), [Fallible and infallible paths](../tutorials/fallible_and_infallible_paths.md), [Release 0.3](../../release_notes/0_3.md) |
 | Protocol hooks for core syntax | TypeSystem | 0.3 | Define compatible dunder hooks and adopt/document the corresponding trait vocabulary where useful. | `def __len__(self) -> int:`<br>`def __iter__(self) -> Iterator[T]:`<br>`def __call__(self, value: T) -> U:` | User-defined types can participate in truthiness, length, membership, iteration, indexing, assignment, and calls. | Special-casing custom types in caller code instead of giving the type the expected protocol. | [Traits as language hooks](../explanation/traits_as_language_hooks.md), [Collection protocols](stdlib_traits/collection_protocols.md), [Operators](stdlib_traits/operators.md) |
 | Rust trait adoption from Incan | Interop | 0.3 | Import the Rust trait metadata and adopt with `with TraitName`. | `type UserId = rusttype i64 with Display:`<br>`def fmt(self, f: Formatter) for Display -> Result[None, FmtError]:`<br>`type Output for Add[int] = UserId` | Newtype and rusttype declarations can author Rust trait impls with Incan adoption syntax. | Writing Rust-shaped `impl Trait for Type` concepts in comments or custom backend code. | [Rust interop](../how-to/rust_interop.md), [Derives and traits](derives_and_traits.md), [Release 0.3](../../release_notes/0_3.md) |
-| Checked Rust lint annotations | Interop | 0.3 | Use `@rust.allow(...)` on supported declarations. | `@rust.allow("dead_code")`<br>`def helper() -> None:` | The checker validates declaration-local `@rust.allow` names and attachments. Native compilation does not generate Rust source attributes or run Clippy. | Broad lint groups or annotations used to hide a source type error. | [Rust interop](../how-to/rust_interop.md#targeted-generated-rust-lint-suppression), [Release 0.3](../../release_notes/0_3.md) |
 | Scoped DSL surfaces | Syntax | 0.3 | Import a vocab package that publishes scoped surface descriptors. | `query:`<br>`.field`<br>`\|>`<br>`sum(value)` | Library vocab crates can activate declaration, clause, glyph, leading-dot, and scoped symbol syntax inside their own DSL blocks. | Global parser changes for syntax that only belongs to one imported DSL. | [Authoring vocab crates](../../contributing/how-to/authoring_vocab_crates.md), [Release 0.3](../../release_notes/0_3.md) |
 | `std.web` hosted web framework | Stdlib | 0.2 | Import from `std.web` or submodules such as `std.web.routing`. | `from std.web.routing import route`<br>`from std.web.response import Json`<br>`@route("/health")` | `std.web` provides hosted web app, routing, request, response and macro surfaces through compiled standard packages and their checked native dependencies. | Compiler-special-cased web wrappers or direct Axum wiring for ordinary hosted Incan web apps. | [Imports and modules](imports_and_modules.md), [Web framework tutorial](../tutorials/web_framework.md), [Release 0.2](../../release_notes/0_2.md) |
 | `std.math` numeric helpers | Stdlib | 0.2 | Import `std.math`. | `import std.math`<br>`math.sqrt(9.0)`<br>`math.gcd(12, 18)`<br>`math.is_float_like("1.25e3")` | `std.math` provides mathematical constants, integer gcd/lcm helpers, floating-point functions, and numeric-string shape checks. | Direct Rust math imports or project-local numeric string probes for ordinary numeric helper calls. | [std.math](stdlib/math.md), [Release 0.2](../../release_notes/0_2.md) |
@@ -70,8 +69,8 @@ This inventory describes the source-authored public features in the compiler's c
 | `std.checksum` CRC32 helpers | Stdlib | 0.5 | Import from `std.checksum`. | `from std.checksum import crc32`<br>`crc32.value(b"abc")`<br>`crc32.digest(b"abc")`<br>`h = crc32.new()` | `std.checksum` exposes CRC32 value, digest-byte, and incremental helpers for compatibility and accidental-corruption checks, separate from `std.hash` hashing contracts. | Project-local Rust shims or `std.hash` helpers when a protocol explicitly requires CRC32 checksum semantics. | [std.checksum](stdlib/checksum.md), [Hashing data](../how-to/hashing_data.md), [RFC 065 checksum boundary](../../RFCs/closed/implemented/065_std_hash.md#checksum-boundary), [Release 0.5](../../release_notes/0_5.md) |
 | Testing assertions and markers | Testing | 0.3 | Use `assert` directly; import marker/helper APIs from `std.testing`. | `assert value == expected`<br>`assert call() raises ValueError`<br>`@parametrize("case", cases)` | Tests can use language assertions, raises checks, helper assertions, fixtures, parametrization, and marker decorators. | Ad hoc panic helpers or external test metadata formats for ordinary Incan tests. | [std.testing](stdlib/testing.md), [Testing how-to](../how-to/testing_stdlib.md), [Release 0.3](../../release_notes/0_3.md) |
 | `incan test` runner | Testing | 0.3 | Run `incan test`. | `module tests:`<br>`incan test --list`<br>`incan test --format json --junit report.xml` | The runner owns discovery, inline test modules, stable ids, selection, fixtures, parametrization, reporting, shuffling, and scheduling. | Project-local scripts that duplicate core test discovery and reporting behavior. | [Tooling: testing](../../tooling/how-to/testing.md), [std.testing](stdlib/testing.md), [Release 0.3](../../release_notes/0_3.md) |
-| Async and await | Async | 0.2 | Import `std.async` or one of its submodules. | `from std.async.time import sleep`<br>`async def main() -> None:`<br>`await sleep(1)` | `async` and `await` are import-activated soft keywords backed by compiled `std.async` modules, with native task, timeout and runtime support. | Threading async behavior through synchronous wrappers or relying on pre-0.2 ambient async syntax. | [Async programming](../how-to/async_programming.md), [std.async](stdlib/async.md), [Release 0.2](../../release_notes/0_2.md) |
-| Async race and awaitability | Async | 0.3 | Import `std.async.race` or the relevant async prelude helpers. | `race for value:`<br>`arm(task)`<br>`race(arms)` | `Awaitable[T]`, `race for`, and helper-style race composition support first-ready async workflows. | Legacy `std.async.select` or hand-rolled polling loops. | [Awaitable trait](stdlib_traits/awaitable.md), [Async programming](../how-to/async_programming.md), [Release 0.3](../../release_notes/0_3.md) |
+| Async and await | Async | 0.2 | Use `async def` or `await`; import `std.async` only for library APIs. | `from std.async.time import sleep`<br>`async def main() -> None:`<br>`await sleep(1)` | `async` and `await` are reserved language syntax, while compiled `std.async` modules provide native tasks, timeouts and runtime support. | Threading async behavior through synchronous wrappers or importing a library only to activate syntax. | [Async programming](../how-to/async_programming.md), [std.async](stdlib/async.md), [Release 0.2](../../release_notes/0_2.md) |
+| Async race and awaitability | Async | 0.3 | Use `race for`; import `std.async.race` only for `Awaitable[T]` and helper APIs. | `race for value:`<br>`arm(task)`<br>`race(arms)` | Language-owned `race for`, `Awaitable[T]`, and helper-style race composition support first-ready async workflows. | Legacy `std.async.select` or hand-rolled polling loops. | [Awaitable trait](stdlib_traits/awaitable.md), [Async programming](../how-to/async_programming.md), [Release 0.3](../../release_notes/0_3.md) |
 | Project lifecycle tooling | Tooling | 0.3 | Declare the project and scripts in `loaf.toml`, then pass an explicit source path to Oven. | `loaf.toml`<br>`oven describe-unit src/main.incn`<br>`incan build src/main.incn` | Oven reads project manifests, selects compilation inputs and prepares declared dependencies before checking, building, running or testing source. | Duplicated project resolution in compiler and editor tools. | [Project lifecycle](project_lifecycle.md), [Project lifecycle how-to](../how-to/project_lifecycle.md), [Release 0.3](../../release_notes/0_3.md) |
 | Path-linked multi-package projects | Tooling | 0.5 | Declare path dependencies and select a package's source explicitly. | `[dependencies]`<br>`helper = { path = "../helper" }`<br>`incan build src/main.incn` | Oven prepares the selected package's active path dependency graph, with checked public aliases and unified package features. | Implicit cross-project dependency activation or copying a dependency's source into its consumer. | [Project lifecycle](project_lifecycle.md), [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.5](../../release_notes/0_5.md) |
 | Toolchain installer and release manifest | Tooling | 0.4 | Pack an installed toolchain and install the resulting native archive. | `incan toolchain pack toolchain.tar.zst`<br>`incan toolchain install toolchain.tar.zst` | Oven verifies a staged archive's portable manifest, binds the local Rust sysroot and checks the compiler identity before publishing an installation. | Treating Cargo, repository checkouts, and package-manager adapters as separate sources of install truth. | [Install and run](../../tooling/how-to/install_and_run.md), [Release 0.4](../../release_notes/0_4.md) |
@@ -303,14 +302,15 @@ Canonical forms:
 - **Stability:** `Stable`
 - **Activation:** Use explicit type arguments for compile-time reflection, or call an overload that expects `Type[T]`.
 - **Use instead of:** String target names, dummy schema values, or helper families used only to recover type-specific return types.
-- **References:** [Reflection](reflection.md), [std.reflection](stdlib/reflection.md), [RFC 107 north star](../../RFCs/107_type_directed_library_apis.md), [Release 0.3](../../release_notes/0_3.md)
+- **References:** [Reflection](reflection.md), [std.reflection](stdlib/reflection.md), [RFC 107 north star](../../RFCs/107_type_directed_library_apis.md), [Release 0.3](../../release_notes/0_3.md), [Release 0.6](../../release_notes/0_6.md)
 
-Primitive type arguments expose stable source names, model type tokens carry checked source type evidence, and expected `Type[T]` parameters let visible type names select precise overloads without making types general runtime values.
+Primitive type arguments expose stable source names. Explicit `Type[T]` contexts admit checked primitive, model, enum, trait, alias, constrained-scalar and newtype tokens for storage and precise overload selection; constrained generic overloads map explicit type arguments to precise results without making types general runtime values.
 
 Canonical forms:
 
 - `T.__class_name__()`
 - `def cast(expr: ColumnExpr, target: Type[int]) -> IntColumnExpr:`
+- `def cast[T with Int](expr: ColumnExpr) -> IntColumnExpr:`
 - `def accepts_schema(value: Type[MySchema]) -> str:`
 - `cast(col("amount"), int)`
 
@@ -669,24 +669,6 @@ Canonical forms:
 - `type UserId = rusttype i64 with Display:`
 - `def fmt(self, f: Formatter) for Display -> Result[None, FmtError]:`
 - `type Output for Add[int] = UserId`
-
-### Checked Rust lint annotations
-
-- **Id:** `RustAllow`
-- **Category:** `Interop`
-- **Since:** `0.3`
-- **RFC:** `RFC 057`
-- **Stability:** `Stable`
-- **Activation:** Use `@rust.allow(...)` on supported declarations.
-- **Use instead of:** Broad lint groups or annotations used to hide a source type error.
-- **References:** [Rust interop](../how-to/rust_interop.md#targeted-generated-rust-lint-suppression), [Release 0.3](../../release_notes/0_3.md)
-
-The checker validates declaration-local `@rust.allow` names and attachments. Native compilation does not generate Rust source attributes or run Clippy.
-
-Canonical forms:
-
-- `@rust.allow("dead_code")`
-- `def helper() -> None:`
 
 ### Scoped DSL surfaces
 
@@ -1118,13 +1100,13 @@ Canonical forms:
 - **Id:** `AsyncAwait`
 - **Category:** `Async`
 - **Since:** `0.2`
-- **RFC:** `RFC 023`
+- **RFC:** `RFC 172`
 - **Stability:** `Stable`
-- **Activation:** Import `std.async` or one of its submodules.
-- **Use instead of:** Threading async behavior through synchronous wrappers or relying on pre-0.2 ambient async syntax.
+- **Activation:** Use `async def` or `await`; import `std.async` only for library APIs.
+- **Use instead of:** Threading async behavior through synchronous wrappers or importing a library only to activate syntax.
 - **References:** [Async programming](../how-to/async_programming.md), [std.async](stdlib/async.md), [Release 0.2](../../release_notes/0_2.md)
 
-`async` and `await` are import-activated soft keywords backed by compiled `std.async` modules, with native task, timeout and runtime support.
+`async` and `await` are reserved language syntax, while compiled `std.async` modules provide native tasks, timeouts and runtime support.
 
 Canonical forms:
 
@@ -1137,13 +1119,13 @@ Canonical forms:
 - **Id:** `AsyncRace`
 - **Category:** `Async`
 - **Since:** `0.3`
-- **RFC:** `RFC 039`
+- **RFC:** `RFC 172`
 - **Stability:** `Stable`
-- **Activation:** Import `std.async.race` or the relevant async prelude helpers.
+- **Activation:** Use `race for`; import `std.async.race` only for `Awaitable[T]` and helper APIs.
 - **Use instead of:** Legacy `std.async.select` or hand-rolled polling loops.
 - **References:** [Awaitable trait](stdlib_traits/awaitable.md), [Async programming](../how-to/async_programming.md), [Release 0.3](../../release_notes/0_3.md)
 
-`Awaitable[T]`, `race for`, and helper-style race composition support first-ready async workflows.
+Language-owned `race for`, `Awaitable[T]`, and helper-style race composition support first-ready async workflows.
 
 Canonical forms:
 

@@ -213,15 +213,8 @@ impl TypeChecker {
         item_name: &str,
     ) -> Option<CanonicalSymbolId> {
         let (root, nested) = module_segments.split_first()?;
-        let module_path = {
-            let symbol = self.lookup_symbol(root)?;
-            let SymbolKind::Module(info) = &symbol.kind else {
-                return None;
-            };
-            let mut path = info.path.clone();
-            path.extend(nested.iter().cloned());
-            path
-        };
+        let mut module_path = self.module_namespace_path(root)?;
+        module_path.extend(nested.iter().cloned());
         self.loaf_member_identity(&module_path, item_name)
     }
 
@@ -466,7 +459,7 @@ impl TypeChecker {
         self.validate_source_type_names = false;
         self.collect_declarations_for_check(&test_module.body);
         self.resolve_forward_type_references(&test_module.body);
-        self.settle_trait_implementation_visibility(&test_module.body);
+        self.settle_method_scopes(&test_module.body);
         self.record_local_nominal_type_param_bounds(&test_module.body);
         self.infer_hash_key_type_params(&test_module.body, false);
         self.validate_source_type_names = previous_validation_state;

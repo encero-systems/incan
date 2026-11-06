@@ -90,6 +90,7 @@ impl TypeChecker {
             ResolvedType::Ref(_)
             | ResolvedType::RefMut(_)
             | ResolvedType::TypeToken(_)
+            | ResolvedType::Trait(_)
             | ResolvedType::Function(_, _)
             | ResolvedType::SelfType => true,
             ResolvedType::TypeVar(name) => self.active_type_param_has_builtin_bound(name, TraitId::Clone),
@@ -320,6 +321,7 @@ impl TypeChecker {
             .map(|param| CallableParam {
                 name: param.name.clone(),
                 ty: self.substitute_self_in_resolved_type(param.ty.clone(), receiver_ty),
+                surface_type_name: param.surface_type_name.clone(),
                 kind: param.kind,
                 has_default: param.has_default,
                 is_partial_preset: param.is_partial_preset,

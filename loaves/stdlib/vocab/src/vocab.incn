@@ -1,11 +1,13 @@
-"""Build versioned vocabulary descriptors in Incan for producer-side publication."""
+"""Publish primitive vocabulary contracts and run their compiler-owned transport adapters."""
 
 from rust::std::io import Write, stdin, stdout
-pub from scoped import ScopedSurfaceDescriptor, ScopedSurfaceEligibility, ScopedSurfaceFamily
-pub from scoped import ScopedSurfaceReceiver, ScopedSurfaceSyntax
-pub from crate.vocab._descriptors import (
-    VOCAB_METADATA_VERSION,
-    VOCAB_SYNTAX_VERSION,
+from std.json import JsonValue
+pub from std.primitives.vocab import (
+    ScopedSurfaceDescriptor,
+    ScopedSurfaceEligibility,
+    ScopedSurfaceFamily,
+    ScopedSurfaceReceiver,
+    ScopedSurfaceSyntax,
     KeywordActivation,
     KeywordPlacement,
     KeywordSurfaceKind,
@@ -32,8 +34,6 @@ pub from crate.vocab._descriptors import (
     TypeExport,
     ModuleExport,
     VocabRegistration,
-)
-pub from crate.vocab._syntax import (
     Span,
     IncanExpr,
     IncanExprKind,
@@ -71,6 +71,35 @@ pub from crate.vocab._syntax import (
     DesugarReply,
     DesugarBatchResponse,
 )
+# Compatibility constants mirror the primitive authority; importing a const creates a second public declaration.
+pub const VOCAB_METADATA_VERSION: int = 1
+pub const VOCAB_SYNTAX_VERSION: int = 3
+
+
+pub def registration_metadata(registration: VocabRegistration) -> JsonValue:
+    """
+    Encode the compiler's versioned vocabulary metadata without moving publication into primitives.
+
+    1. Derive parser keyword groups from the registered surfaces.
+    2. Encode the registration using the descriptor reader's schema.
+    """
+    # 1. Parser keywords come from the same foundational declaration descriptors.
+    mut registrations = registration.keyword_registrations
+    for surface in registration.dsl_surfaces:
+        registrations.append(surface.keyword_registration())
+    # 2. Publication keeps the existing schema and executable marker above the foundational contracts.
+    mut desugarer = JsonValue.null()
+    if registration.custom_desugaring:
+        desugarer = JsonValue.object(
+            {"artifact_kind": JsonValue.string("NativeWorker"), "abi_version": JsonValue.int(VOCAB_SYNTAX_VERSION)},
+        )
+    return JsonValue.object(
+        {"metadata_version": JsonValue.int(registration.metadata_version), "keyword_registrations": JsonValue.array(
+            [keyword_registration_json(value) for value in registrations],
+        ), "dsl_surfaces": JsonValue.array([dsl_surface_json(value) for value in registration.dsl_surfaces]), "library_manifest": library_manifest_json(
+            registration.library_manifest,
+        ), "desugarer": desugarer},
+    )
 
 
 pub def run_desugar_worker(desugar: (DesugarRequest) -> Result[DesugarResponse, DesugarError]) -> Result[None, str]:
@@ -100,3 +129,235 @@ pub def run_desugar_worker(desugar: (DesugarRequest) -> Result[DesugarResponse, 
         println(DesugarBatchResponse(batch=number, responses=replies).to_json())
         stdout().flush().map_err((error) => f"cannot flush desugar response: {error}")?
     return Ok(None)
+
+
+def keyword_activation_json(activation: KeywordActivation) -> JsonValue:
+    """Encode the existing externally tagged activation contract."""
+    match activation:
+        KeywordActivation.Always => return JsonValue.string("Always")
+        KeywordActivation.OnImport(namespace) =>
+            return tagged("OnImport", JsonValue.object({"namespace": JsonValue.string(namespace)}))
+
+
+def keyword_placement_json(placement: KeywordPlacement) -> JsonValue:
+    """Encode the descriptor reader's placement representation."""
+    match placement:
+        KeywordPlacement.TopLevel => return JsonValue.string("TopLevel")
+        KeywordPlacement.InBlock(parents) => return tagged("InBlock", texts(parents))
+
+
+def clause_placement_json(placement: ClausePlacement) -> JsonValue:
+    """Encode relative clause ordering through the existing descriptor tags."""
+    match placement:
+        ClausePlacement.Anywhere => return JsonValue.string("Anywhere")
+        ClausePlacement.Before(other) => return tagged("Before", JsonValue.string(other))
+        ClausePlacement.After(other) => return tagged("After", JsonValue.string(other))
+
+
+def keyword_spec_json(keyword: KeywordSpec) -> JsonValue:
+    """Encode one low-level keyword using the compiler's descriptor shape."""
+    return JsonValue.object(
+        {"name": JsonValue.string(keyword.name), "surface_kind": JsonValue.string(keyword.surface_kind.value()), "compound_tokens": texts(
+            keyword.compound_tokens,
+        ), "placement": keyword_placement_json(keyword.placement)},
+    )
+
+
+def keyword_registration_json(registration: KeywordRegistration) -> JsonValue:
+    """Encode one keyword group through the published metadata transport."""
+    return JsonValue.object(
+        {"activation": keyword_activation_json(registration.activation), "keywords": JsonValue.array(
+            [keyword_spec_json(keyword) for keyword in registration.keywords],
+        ), "valid_decorators": texts(registration.valid_decorators)},
+    )
+
+
+def expression_item_modifier_json(modifier: ExpressionItemModifierSurface) -> JsonValue:
+    """Encode a trailing clause-item modifier."""
+    return JsonValue.object(
+        {"keyword": JsonValue.string(modifier.keyword), "kind": JsonValue.string(modifier.kind.value())},
+    )
+
+
+def clause_surface_json(clause: ClauseSurface) -> JsonValue:
+    """Encode one clause descriptor without changing its transport shape."""
+    return JsonValue.object(
+        {"keyword": JsonValue.string(clause.keyword), "compound_tokens": texts(clause.compound_tokens), "body_kind": JsonValue.string(
+            clause.body_kind.value(),
+        ), "expression_item_modifiers": JsonValue.array(
+            [expression_item_modifier_json(item) for item in clause.expression_item_modifiers],
+        ), "cardinality": JsonValue.string(clause.cardinality.value()), "placement": clause_placement_json(
+            clause.placement,
+        )},
+    )
+
+
+def declaration_surface_json(declaration: DeclarationSurface) -> JsonValue:
+    """Encode one recursive declaration descriptor."""
+    return JsonValue.object(
+        {"keyword": JsonValue.string(declaration.keyword), "compound_tokens": texts(declaration.compound_tokens), "placement": keyword_placement_json(
+            declaration.placement,
+        ), "head_kind": JsonValue.string(declaration.head_kind.value()), "body_kind": JsonValue.string(
+            declaration.body_kind.value(),
+        ), "desugars_to": JsonValue.string(declaration.desugars_to.value()), "clauses": JsonValue.array(
+            [clause_surface_json(clause) for clause in declaration.clauses],
+        ), "declarations": JsonValue.array([declaration_surface_json(child) for child in declaration.declarations])},
+    )
+
+
+def scoped_eligibility_json(eligibility: ScopedSurfaceEligibility) -> JsonValue:
+    """Encode one positive scoped-surface position."""
+    return JsonValue.object(
+        {"declaration": JsonValue.string(eligibility.declaration), "clause": optional_text(eligibility.clause), "call": optional_text(
+            eligibility.call,
+        ), "position": JsonValue.string(eligibility.position)},
+    )
+
+
+def scoped_syntax_json(syntax: ScopedSurfaceSyntax) -> JsonValue:
+    """Encode one parser-owned scoped syntax descriptor."""
+    match syntax:
+        ScopedSurfaceSyntax.Glyph(spelling) =>
+            return JsonValue.object({"Glyph": JsonValue.object({"spelling": JsonValue.string(spelling)})})
+        ScopedSurfaceSyntax.LeadingDotPath(minimum, maximum) =>
+            mut limit = JsonValue.null()
+            if let Some(value) = maximum:
+                limit = JsonValue.int(value)
+            return JsonValue.object(
+                {"LeadingDotPath": JsonValue.object({"min_segments": JsonValue.int(minimum), "max_segments": limit})},
+            )
+
+
+def scoped_receiver_json(receiver: Option[ScopedSurfaceReceiver]) -> JsonValue:
+    """Encode an optional receiver policy independently of worker syntax serialization."""
+    if let Some(value) = receiver:
+        match value:
+            ScopedSurfaceReceiver.OwningDeclaration => return JsonValue.string("OwningDeclaration")
+            ScopedSurfaceReceiver.Clause(clause) =>
+                return JsonValue.object({"Clause": JsonValue.object({"clause": JsonValue.string(clause)})})
+            ScopedSurfaceReceiver.Custom(key) =>
+                return JsonValue.object({"Custom": JsonValue.object({"key": JsonValue.string(key)})})
+    return JsonValue.null()
+
+
+def scoped_surface_json(surface: ScopedSurfaceDescriptor) -> JsonValue:
+    """Encode a scoped surface while keeping misuse diagnostics disabled outside positive positions."""
+    mut chain = "None"
+    if surface.pairwise:
+        chain = "Pairwise"
+    return JsonValue.object(
+        {"key": JsonValue.string(surface.key), "family": JsonValue.string(surface.family.value()), "syntax": scoped_syntax_json(
+            surface.syntax,
+        ), "eligible_in": JsonValue.array([scoped_eligibility_json(value) for value in surface.eligible_in]), "misuse_scope": JsonValue.string(
+            "None",
+        ), "receiver": scoped_receiver_json(surface.receiver), "diagnostics": JsonValue.array([]), "format_hint": JsonValue.object(
+            {"chain_mode": JsonValue.string(chain)},
+        )},
+    )
+
+
+def embedded_fragment_json(fragment: EmbeddedFragmentDescriptor) -> JsonValue:
+    """Encode an embedded-fragment descriptor through ordinary vocabulary metadata."""
+    return JsonValue.object(
+        {"key": JsonValue.string(fragment.key), "submode": JsonValue.string(fragment.submode.value()), "artifact_key": JsonValue.string(
+            fragment.artifact_key,
+        ), "eligible_in": JsonValue.array([scoped_eligibility_json(position) for position in fragment.eligible_in]), "misuse_scope": JsonValue.string(
+            "None",
+        ), "diagnostics": JsonValue.array([]), "format_hint": JsonValue.object(
+            {"layout_sensitive": JsonValue.bool(fragment.layout_sensitive)},
+        )},
+    )
+
+
+def dsl_surface_json(surface: DslSurface) -> JsonValue:
+    """Encode one activated vocabulary surface."""
+    return JsonValue.object(
+        {"activation": keyword_activation_json(surface.activation), "declarations": JsonValue.array(
+            [declaration_surface_json(declaration) for declaration in surface.declarations],
+        ), "embedded_fragments": JsonValue.array(
+            [embedded_fragment_json(fragment) for fragment in surface.embedded_fragments],
+        ), "scoped_surfaces": JsonValue.array([scoped_surface_json(scoped) for scoped in surface.scoped_surfaces])},
+    )
+
+
+def library_manifest_json(manifest: LibraryManifest) -> JsonValue:
+    """Encode the compiler's library metadata without a second wire format."""
+    return JsonValue.object(
+        {"format_version": JsonValue.string("V1"), "modules": JsonValue.array(
+            [module_export_json(module) for module in manifest.modules],
+        )},
+    )
+
+
+def type_ref_json(reference: TypeRef) -> JsonValue:
+    """Encode an externally tagged library type reference."""
+    match reference:
+        TypeRef.Named(name) => return tagged("Named", JsonValue.string(name))
+        TypeRef.Generic(name, arguments) =>
+            return tagged(
+                "Generic",
+                JsonValue.array(
+                    [JsonValue.string(name), JsonValue.array([type_ref_json(argument) for argument in arguments])],
+                ),
+            )
+        TypeRef.Optional(inner) => return tagged("Optional", type_ref_json(inner[0]))
+        TypeRef.Union(members) => return tagged("Union", JsonValue.array([type_ref_json(member) for member in members]))
+
+
+def function_export_json(function: FunctionExport) -> JsonValue:
+    """Encode an exported function's public contract."""
+    mut returned = JsonValue.null()
+    if let Some(reference) = function.return_type:
+        returned = type_ref_json(reference)
+    params = [JsonValue.array([JsonValue.string(name), type_ref_json(reference)]) for name, reference in function.params]
+    return JsonValue.object(
+        {"name": JsonValue.string(function.name), "params": JsonValue.array(params), "return_type": returned, "is_async": JsonValue.bool(
+            function.is_async,
+        )},
+    )
+
+
+def field_export_json(field: FieldExport) -> JsonValue:
+    """Encode one exported field."""
+    return JsonValue.object(
+        {"name": JsonValue.string(field.name), "field_type": type_ref_json(field.field_type), "has_default": JsonValue.bool(
+            field.has_default,
+        )},
+    )
+
+
+def type_export_json(exported: TypeExport) -> JsonValue:
+    """Encode one exported type and its public members."""
+    return JsonValue.object(
+        {"name": JsonValue.string(exported.name), "kind": JsonValue.string(exported.kind.value()), "type_params": texts(
+            exported.type_params,
+        ), "fields": JsonValue.array([field_export_json(field) for field in exported.fields]), "methods": JsonValue.array(
+            [function_export_json(method) for method in exported.methods],
+        )},
+    )
+
+
+def module_export_json(module: ModuleExport) -> JsonValue:
+    """Encode one module's exported functions and types."""
+    return JsonValue.object(
+        {"path": JsonValue.string(module.path), "functions": JsonValue.array(
+            [function_export_json(function) for function in module.functions],
+        ), "types": JsonValue.array([type_export_json(exported) for exported in module.types])},
+    )
+
+
+def optional_text(value: Option[str]) -> JsonValue:
+    """Encode an optional descriptor string once."""
+    if let Some(text) = value:
+        return JsonValue.string(text)
+    return JsonValue.null()
+
+
+def texts(values: list[str]) -> JsonValue:
+    """Encode a string list without repeating descriptor plumbing."""
+    return JsonValue.array([JsonValue.string(value) for value in values])
+
+
+def tagged(name: str, payload: JsonValue) -> JsonValue:
+    """Encode one externally tagged descriptor variant."""
+    return JsonValue.object({name: payload})

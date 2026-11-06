@@ -337,8 +337,12 @@ fn source_flow_tracks_inputs_through_branches_and_loops() -> Result<(), Box<dyn 
 /// and dependency facts exist; a partial graph cannot count as validation of the whole callable.
 #[test]
 fn source_flow_refuses_unprojected_dependencies() -> Result<(), Box<dyn std::error::Error>> {
+    let builtin = source_graph("def show(value: Borrowed[int]) -> int:\n    return abs(value)\n")?;
+    assert!(
+        builtin.is_ok(),
+        "a selected core builtin must retain its checked operands"
+    );
     for source in [
-        "def show(value: Borrowed[int]) -> int:\n    return abs(value)\n",
         "def local(value: Borrowed[str]) -> None:\n    let view: Reference[str] = value\n",
         "def temporary() -> None:\n    let view: Borrowed[str] = \"temporary\"\n",
     ] {

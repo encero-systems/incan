@@ -4,7 +4,7 @@
 //! along with its severity ([`ErrorKind`]) and plain-text rendering helpers.
 
 use crate::ast::Span;
-use incan_semantics_core::CanonicalSymbolId;
+use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
 
 /// A secondary source location that explains one compiler diagnostic.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,6 +34,7 @@ pub struct RelatedDeclaration {
 /// while still retaining rich facts when a producer supplies them.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 struct StructuredDiagnosticDetails {
+    primary_label: Option<String>,
     notes: Vec<String>,
     hints: Vec<String>,
     related_spans: Vec<RelatedSpan>,
@@ -120,6 +121,12 @@ impl CompileError {
         self
     }
 
+    /// Label the primary source range with the role it plays in this diagnostic.
+    pub fn with_primary_label(mut self, label: impl Into<String>) -> Self {
+        self.structured_details_mut().primary_label = Some(label.into());
+        self
+    }
+
     /// Append an actionable hint ("= hint: …") to this error.
     pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
         self.structured_details_mut().hints.push(hint.into());
@@ -163,6 +170,13 @@ impl CompileError {
     /// Return contextual notes in insertion order, borrowing an empty slice when none were supplied.
     pub fn notes(&self) -> &[String] {
         self.details.as_deref().map_or(&[], |details| details.notes.as_slice())
+    }
+
+    /// Return the compiler-owned label for the primary source range, when one was supplied.
+    pub fn primary_label(&self) -> Option<&str> {
+        self.details
+            .as_deref()
+            .and_then(|details| details.primary_label.as_deref())
     }
 
     /// Return actionable hints in insertion order, borrowing an empty slice when none were supplied.
@@ -223,6 +237,7 @@ impl CompileError {
                 .map(|related| related.identity.declaration_span)
                 .collect();
             Box::new(RecipeDetails {
+                primary_label: details.primary_label,
                 notes: details.notes,
                 hints: details.hints,
                 related_labels: details.related_spans.into_iter().map(|related| related.label).collect(),
@@ -262,6 +277,7 @@ pub struct DiagnosticRecipe {
 /// Supplementary prose and structured facts of a recipe; related locations keep only their labels.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RecipeDetails {
+    primary_label: Option<String>,
     notes: Vec<String>,
     hints: Vec<String>,
     related_labels: Vec<String>,
@@ -312,6 +328,7 @@ impl DiagnosticRecipe {
                     return None;
                 }
                 Some(Box::new(StructuredDiagnosticDetails {
+                    primary_label: details.primary_label.clone(),
                     notes: details.notes.clone(),
                     hints: details.hints.clone(),
                     related_spans: details
@@ -380,86 +397,202 @@ impl std::fmt::Display for ErrorKind {
 /// Produces a rustc-style diagnostic with colored header, source line, underline caret, notes and hints. Useful for
 /// CLI error handling where errors are collected into a `Result` instead of printed immediately.
 pub fn format_error(file_name: &str, source: &str, error: &CompileError) -> String {
-    let (line_num, col_num, line_text) = get_line_info(source, error.span.start);
+    format_error_with_related_sources(file_name, source, error, |_| None)
+}
 
-    // Color codes
+/// Format a diagnostic while resolving related declarations into the source files their canonical origins own.
+///
+/// A declaration whose source is unavailable remains a named package/module note; its provider-local byte offsets
+/// are never interpreted in the primary file's coordinate system.
+pub fn format_error_with_related_sources<'a>(
+    file_name: &str,
+    source: &str,
+    error: &CompileError,
+    mut source_for_origin: impl FnMut(&SymbolOrigin) -> Option<(&'a str, &'a str)>,
+) -> String {
     let red = "\x1b[31m";
     let cyan = "\x1b[36m";
     let yellow = "\x1b[33m";
     let bold = "\x1b[1m";
     let reset = "\x1b[0m";
-
     let kind_color = match error.kind {
         ErrorKind::Error | ErrorKind::Syntax | ErrorKind::Type => red,
         ErrorKind::Warning | ErrorKind::Lint => yellow,
     };
-
-    let mut out = String::new();
-
-    // Header
-    out.push_str(&format!(
-        "{bold}{kind_color}{kind}{reset}{bold}: {message}{reset}\n",
-        kind = error.kind,
-        message = error.message,
-    ));
-
-    // Location
-    out.push_str(&format!(
-        "  {cyan}-->{reset} {file}:{line}:{col}\n",
-        file = file_name,
-        line = line_num,
-        col = col_num,
-    ));
-
-    // Source line with line number
-    let line_num_width = format!("{}", line_num).len();
-    out.push_str(&format!("  {cyan}{:>width$} |{reset}\n", "", width = line_num_width));
-    out.push_str(&format!(
-        "  {cyan}{:>width$} |{reset} {}\n",
-        line_num,
-        line_text,
-        width = line_num_width
-    ));
-
-    // Caret pointing to error
-    let underline_len = if error.span.end > error.span.start && col_num > 0 {
-        let start_offset = error.span.start.saturating_sub(col_num.saturating_sub(1));
-        let end_in_line = error.span.end.saturating_sub(start_offset);
-        end_in_line
-            .min(line_text.len())
-            .saturating_sub(col_num.saturating_sub(1))
-            .max(1)
-    } else {
-        1
+    let heading = match error.stable_code() {
+        Some(code) => format!("{}[{code}]", severity_name(error.kind)),
+        None => error.kind.to_string(),
     };
-
-    out.push_str(&format!(
-        "  {cyan}{:>width$} |{reset} {}{kind_color}{}{reset}\n",
-        "",
-        " ".repeat(col_num - 1),
-        "^".repeat(underline_len),
-        width = line_num_width
-    ));
-
-    // Notes
+    let mut out = format!(
+        "{bold}{kind_color}{heading}{reset}{bold}: {message}{reset}\n",
+        message = error.message,
+    );
+    let mut unresolved = Vec::new();
+    for related in error.related_declarations() {
+        match source_for_origin(&related.identity.origin) {
+            Some((related_file, related_source)) => render_source_annotations(
+                &mut out,
+                related_file,
+                related_source,
+                &mut [SourceAnnotation {
+                    span: related.identity.declaration_span,
+                    label: Some(&related.label),
+                    style: SourceAnnotationStyle::Related,
+                }],
+                kind_color,
+                cyan,
+                reset,
+            ),
+            None => unresolved.push(related),
+        }
+    }
+    let primary_label = error.primary_label().or_else(|| {
+        error
+            .related_spans()
+            .iter()
+            .find(|related| related.span == error.span)
+            .map(|related| related.label.as_str())
+    });
+    let mut annotations = vec![SourceAnnotation {
+        span: error.span,
+        label: primary_label,
+        style: SourceAnnotationStyle::Primary,
+    }];
+    annotations.extend(
+        error
+            .related_spans()
+            .iter()
+            .filter(|related| related.span != error.span)
+            .map(|related| SourceAnnotation {
+                span: related.span,
+                label: Some(related.label.as_str()),
+                style: SourceAnnotationStyle::Related,
+            }),
+    );
+    render_source_annotations(&mut out, file_name, source, &mut annotations, kind_color, cyan, reset);
     for note in error.notes() {
         out.push_str(&format!("  {cyan}= note:{reset} {}\n", note));
     }
-
-    for related in error.related_declarations() {
+    for related in unresolved {
         out.push_str(&format!(
-            "  {cyan}= note:{reset} {}: {}\n",
+            "  {cyan}= note:{reset} {} ({})\n",
             related.label,
-            related.identity.render_compact()
+            display_origin(&related.identity.origin),
         ));
     }
-
-    // Hints
     for hint in error.hints() {
         out.push_str(&format!("  {cyan}= hint:{reset} {}\n", hint));
     }
-
     out
+}
+
+/// The visual role of one source annotation.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SourceAnnotationStyle {
+    /// The source range at which the diagnostic is reported.
+    Primary,
+    /// Compiler-owned evidence related to the primary range.
+    Related,
+}
+
+/// One labeled source range rendered by the shared diagnostic gutter.
+#[derive(Clone, Copy)]
+struct SourceAnnotation<'a> {
+    span: Span,
+    label: Option<&'a str>,
+    style: SourceAnnotationStyle,
+}
+
+/// Render labeled ranges from one source through the established rustc-style gutter.
+///
+/// Primary diagnostics and cross-file declarations use this same renderer. The location header points at the primary
+/// annotation when the block has one, while the labeled ranges remain in source order.
+fn render_source_annotations(
+    out: &mut String,
+    file_name: &str,
+    source: &str,
+    annotations: &mut [SourceAnnotation<'_>],
+    kind_color: &str,
+    cyan: &str,
+    reset: &str,
+) {
+    let Some(location) = annotations
+        .iter()
+        .find(|annotation| annotation.style == SourceAnnotationStyle::Primary)
+        .or_else(|| annotations.first())
+        .map(|annotation| annotation.span)
+    else {
+        return;
+    };
+    let (line, column, _) = get_line_info(source, location.start);
+    out.push_str(&format!("  {cyan}-->{reset} {file_name}:{line}:{column}\n"));
+    annotations.sort_by_key(|annotation| {
+        (
+            annotation.span.start,
+            annotation.style == SourceAnnotationStyle::Related,
+        )
+    });
+    let width = annotations
+        .iter()
+        .map(|annotation| get_line_info(source, annotation.span.start).0)
+        .max()
+        .unwrap_or(1)
+        .to_string()
+        .len();
+    out.push_str(&format!("  {cyan}{:>width$} |{reset}\n", ""));
+    let mut shown_line = None;
+    for annotation in annotations {
+        let (line, column, text) = get_line_info(source, annotation.span.start);
+        if shown_line != Some(line) {
+            out.push_str(&format!("  {cyan}{line:>width$} |{reset} {text}\n"));
+            shown_line = Some(line);
+        }
+        let (color, marker) = match annotation.style {
+            SourceAnnotationStyle::Primary => (kind_color, '^'),
+            SourceAnnotationStyle::Related => (cyan, '-'),
+        };
+        let underline = marker.to_string().repeat(underline_len(annotation.span, column, text));
+        let label = annotation.label.map_or(String::new(), |label| format!(" {label}"));
+        out.push_str(&format!(
+            "  {cyan}{:>width$} |{reset} {}{color}{underline}{reset}{label}\n",
+            "",
+            " ".repeat(column.saturating_sub(1)),
+        ));
+    }
+}
+
+/// Collapse type and syntax subclasses to the user-facing severity used beside a stable catalog code.
+fn severity_name(kind: ErrorKind) -> &'static str {
+    match kind {
+        ErrorKind::Error | ErrorKind::Syntax | ErrorKind::Type => "error",
+        ErrorKind::Warning => "warning",
+        ErrorKind::Lint => "lint",
+    }
+}
+
+/// Name an unavailable source by its semantic owner without leaking meaningless provider-local byte offsets.
+fn display_origin(origin: &SymbolOrigin) -> String {
+    match origin {
+        SymbolOrigin::Module(path) => format!("module `{}`", path.join(".")),
+        SymbolOrigin::Package { library, module_path } => {
+            format!("package `{library}`, module `{}`", module_path.join("."))
+        }
+        SymbolOrigin::RustCrate(path) => format!("Rust item `{}`", path.join("::")),
+        SymbolOrigin::Builtin => "compiler builtin".to_string(),
+    }
+}
+
+/// Measure one underline within its first source line, clamping a multiline span at that line's end.
+fn underline_len(span: Span, column: usize, line_text: &str) -> usize {
+    if span.end <= span.start || column == 0 {
+        return 1;
+    }
+    let line_start = span.start.saturating_sub(column.saturating_sub(1));
+    span.end
+        .saturating_sub(line_start)
+        .min(line_text.len())
+        .saturating_sub(column.saturating_sub(1))
+        .max(1)
 }
 
 /// Print an error with source context (simple implementation)
@@ -500,18 +633,20 @@ mod tests {
 
     /// Supplementary text and tooling facts preserve diagnostic content without growing the common error carrier.
     #[test]
-    fn structured_details_stay_out_of_the_common_error_layout() {
+    fn structured_details_stay_out_of_the_common_error_layout() -> Result<(), Box<dyn std::error::Error>> {
         let bare = CompileError::type_error("type mismatch".to_string(), Span::new(8, 11));
         assert!(bare.notes().is_empty());
         assert!(bare.hints().is_empty());
         assert!(bare.details.is_none());
         let error = bare
+            .with_primary_label("used here")
             .with_note("the operand is text")
             .with_hint("convert the operand")
             .with_expected_actual("int", "str")
             .with_related_span(Span::new(0, 3), "value declared here");
 
         assert_eq!(error.expected(), Some("int"));
+        assert_eq!(error.primary_label(), Some("used here"));
         assert_eq!(error.notes(), ["the operand is text"]);
         assert_eq!(error.hints(), ["convert the operand"]);
         assert_eq!(error.actual(), Some("str"));
@@ -527,7 +662,7 @@ mod tests {
             related: vec![Span::new(12, 15)],
             declarations: Vec::new(),
         };
-        let rebound = recipe.diagnostic(&moved).expect("one range per related label");
+        let rebound = recipe.diagnostic(&moved).ok_or("one range per related label")?;
         assert_eq!(rebound.into_recipe(), (recipe.clone(), moved));
         let missing = DiagnosticRanges {
             primary: Span::new(20, 23),
@@ -541,6 +676,7 @@ mod tests {
             std::mem::size_of::<CompileError>(),
             std::mem::size_of::<Span>()
         );
+        Ok(())
     }
 
     #[test]
@@ -561,5 +697,14 @@ mod tests {
         assert_eq!(line, 2);
         assert_eq!(col, 4);
         assert_eq!(text, "line 2");
+
+        let error = CompileError::type_error("conflict".into(), Span::new(14, 16))
+            .with_stable_code("INCAN-T0001")
+            .with_related_span(Span::new(0, 6), "reader starts here")
+            .with_related_span(Span::new(14, 16), "source changes here");
+        let rendered = format_error("sample.incn", source, &error);
+        assert!(rendered.contains("error[INCAN-T0001]"));
+        assert!(rendered.contains("reader starts here"));
+        assert!(rendered.contains("source changes here"));
     }
 }

@@ -4,7 +4,7 @@ from std.encoding.hex import hexlify
 from std.hash import sha256
 
 pub const CHECKER_SCHEMA: str = "incan.checker-fields/9"
-pub const CHECKER_PROFILE: str = "incan.checker-free-functions/9"
+pub const CHECKER_PROFILE: str = "incan.checker-free-functions/10"
 const MAX_RECORD_BYTES: int = 65536
 const MAX_FIELDS: int = 4096
 
@@ -444,7 +444,7 @@ def parameters_end(values: list[str], offset: int, depth: int) -> Result[int, Co
 
 
 def diagnostic_end(values: list[str]) -> Result[int, CodecFault]:
-    """Diagnostics retain recipe prose, optional catalog code, ordered notes/hints and structural related ranges."""
+    """Diagnostics retain recipe prose, optional catalog code, ordered notes/hints, labels and structural ranges."""
     if len(values) < 7 or values[0] not in ["error", "syntax", "type", "warning", "lint"]:
         return Err(CodecFault.Malformed)
     mut end = 3
@@ -455,6 +455,14 @@ def diagnostic_end(values: list[str]) -> Result[int, CodecFault]:
         end += 1 + count
         if end >= len(values):
             return Err(CodecFault.Malformed)
+    if values[end] == "primary-label":
+        end += 2
+    elif values[end] == "no-primary-label":
+        end += 1
+    else:
+        return Err(CodecFault.Malformed)
+    if end >= len(values):
+        return Err(CodecFault.Malformed)
     if values[end] == "expected-actual":
         end += 3
     elif values[end] == "no-expected-actual":
@@ -531,10 +539,10 @@ class InputFields:
     offset: int = 0
     strict_indices: bool = true
 
-    def position(self) -> int:
+    pub def position(self) -> int:
         return self.offset
 
-    def parameters(mut self) -> Result[None, CodecFault]:
+    pub def parameters(mut self) -> Result[None, CodecFault]:
         self.offset = parameters_end(self.values, self.offset, 0)?
         return Ok(None)
 
@@ -547,7 +555,7 @@ class InputFields:
             indices.append(self.number()?)
         return Ok(indices)
 
-    def value_type(mut self) -> Result[None, CodecFault]:
+    pub def value_type(mut self) -> Result[None, CodecFault]:
         self.offset = type_end(self.values, self.offset, 0)?
         return Ok(None)
 
@@ -558,13 +566,13 @@ class InputFields:
         self.offset += 1
         return Ok(value)
 
-    def tag(mut self, allowed: list[str]) -> Result[str, CodecFault]:
+    pub def tag(mut self, allowed: list[str]) -> Result[str, CodecFault]:
         value = self.token()?
         if value not in allowed:
             return Err(CodecFault.Malformed)
         return Ok(value)
 
-    def handle(mut self) -> Result[None, CodecFault]:
+    pub def handle(mut self) -> Result[None, CodecFault]:
         if self.token()? == "":
             return Err(CodecFault.Malformed)
         return Ok(None)
@@ -572,7 +580,7 @@ class InputFields:
     def number(mut self) -> Result[int, CodecFault]:
         return decimal(self.token()?)
 
-    def count(mut self) -> Result[int, CodecFault]:
+    pub def count(mut self) -> Result[int, CodecFault]:
         value = self.number()?
         if value > len(self.values) - self.offset:
             return Err(CodecFault.Malformed)
@@ -604,7 +612,7 @@ class InputFields:
             self.handle()?
         return Ok(None)
 
-    def ordered(self, previous: str, start: int) -> Result[str, CodecFault]:
+    pub def ordered(self, previous: str, start: int) -> Result[str, CodecFault]:
         """A map key uses framed UTF-8 tokens, never native identity order or ambiguous separators."""
         mut parts: list[str] = []
         for value in self.values[start:self.offset]:
@@ -633,8 +641,44 @@ class InputFields:
                 closure_nodes.append(self.number()?)
         return Ok(closure_nodes)
 
-    def graph(mut self, strict_indices: bool) -> Result[None, CodecFault]:
-        """Retain every permission, dependency, invocation and edge; indices address this graph's own inventories."""
+    def invocations(mut self, loans: int, receiver_dependencies: bool) -> Result[list[int], CodecFault]:
+        """Retain invocation inputs and collect the graph nodes that their evaluations reference."""
+        mut invocation_nodes: list[int] = []
+        invocations = self.count()?
+        mut previous = ""
+        for _ in range(invocations):
+            start = self.offset
+            self.handle()?
+            previous = self.ordered(previous, start)?
+            self.handle()?
+            self.optional_index(loans)?
+            self.tag(["true", "false"])?
+            if self.tag(["none", "some"])? == "some":
+                self.place()?
+            if receiver_dependencies:
+                dependencies = self.count()?
+                for _ in range(dependencies):
+                    self.index(loans)?
+            arguments = self.count()?
+            for _ in range(arguments):
+                self.handle()?
+                self.number()?
+                self.number()?
+                self.tag(["inferred", "shared", "exclusive", "owned"])?
+                self.optional_index(loans)?
+                if self.tag(["none", "some"])? == "some":
+                    self.place()?
+                invocation_nodes += self.input_evaluation()?
+            if self.tag(["none", "some"])? == "some":
+                invocation_nodes += self.input_evaluation()?
+            invocation_nodes.append(self.number()?)
+            final_accesses = self.count()?
+            for _ in range(final_accesses):
+                invocation_nodes.append(self.number()?)
+        return Ok(invocation_nodes)
+
+    pub def graph(mut self, strict_indices: bool, receiver_dependencies: bool) -> Result[None, CodecFault]:
+        """Retain every permission, dependency, invocation and edge under the selected input-flow schema."""
         self.strict_indices = strict_indices
         self.handle()?
         entry = self.number()?
@@ -663,6 +707,20 @@ class InputFields:
             self.handle()?
             previous = self.ordered(previous, start)?
             self.index(loans)?
+        # Dependent locals: each local in canonical order, followed by every retained source loan.
+        dependent_locals = self.count()?
+        previous = ""
+        for _ in range(dependent_locals):
+            start = self.offset
+            self.handle()?
+            previous = self.ordered(previous, start)?
+            dependencies = self.count()?
+            for _ in range(dependencies):
+                self.index(loans)?
+        # Aggregate expressions whose physical storage retains those dependencies.
+        dependent_values = self.count()?
+        for _ in range(dependent_values):
+            self.handle()?
         # Owned locals: each one's initializer, the place it was transferred from and the node that reads it; with
         # strict indices a local has both or neither.
         owned = self.count()?
@@ -696,33 +754,9 @@ class InputFields:
                 self.place()?
                 self.index(loans)?
                 operation_nodes.append(self.number()?)
-        mut invocation_nodes: list[int] = []
         # Invocations: each one's callee, receiver loan and arguments (span, slot, written position, access, loan and
         # source place).
-        invocations = self.count()?
-        previous = ""
-        for _ in range(invocations):
-            start = self.offset
-            self.handle()?
-            previous = self.ordered(previous, start)?
-            self.handle()?
-            self.optional_index(loans)?
-            arguments = self.count()?
-            for _ in range(arguments):
-                self.handle()?
-                self.number()?
-                self.number()?
-                self.tag(["inferred", "shared", "exclusive", "owned"])?
-                self.optional_index(loans)?
-                if self.tag(["none", "some"])? == "some":
-                    self.place()?
-                invocation_nodes += self.input_evaluation()?
-            if self.tag(["none", "some"])? == "some":
-                invocation_nodes += self.input_evaluation()?
-            invocation_nodes.append(self.number()?)
-            final_accesses = self.count()?
-            for _ in range(final_accesses):
-                invocation_nodes.append(self.number()?)
+        invocation_nodes = self.invocations(loans, receiver_dependencies)?
         # Closures bound to locals; the nodes that read their captures are checked with the others below.
         closure_nodes = self.closures(loans)?
         # Nodes: each one's event, successors and span. Every node index recorded above must name one of them.
@@ -762,7 +796,10 @@ def input_field_end(field: CanonicalField) -> Result[int, CodecFault]:
         return Err(CodecFault.Malformed)
     mut reader = InputFields(values=field.values)
     # Every explicit ownership field starts with its grammar version.
-    reader.tag(["1"])?
+    version = reader.tag(["1", "2"])?
+    input_flow = field.family == "input-flow" and field.selector == "graph"
+    if version == "2" and not input_flow:
+        return Err(CodecFault.Malformed)
     # Copy decisions: the owner, then each value type in canonical order with whether it is Copy.
     if field.family == "input-copy" and field.selector == "types":
         reader.handle()?
@@ -791,14 +828,14 @@ def input_field_end(field: CanonicalField) -> Result[int, CodecFault]:
         reader.handle()?
         reader.value_type()?
     # A body's control-flow graph: checked, invalid (the graph and its fault) or unavailable (the owner, where and why).
-    elif field.family == "input-flow" and field.selector == "graph":
+    elif input_flow:
         state = reader.tag(["checked", "invalid", "unavailable"])?
         if state == "unavailable":
             reader.handle()?
             reader.handle()?
             reader.handle()?
         else:
-            reader.graph(state == "checked")?
+            reader.graph(state == "checked", version == "2")?
             if state == "invalid":
                 reader.handle()?
     else:

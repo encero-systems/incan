@@ -72,7 +72,7 @@ fn body(name: &str, ordinal: usize) -> Body {
         runtime_requirements: Vec::new(),
         panic_facts: Vec::new(),
         is_async: false,
-        extern_delegation: None,
+        retired_rust_facade_wire: None,
         native_attributes: Vec::new(),
     }
 }

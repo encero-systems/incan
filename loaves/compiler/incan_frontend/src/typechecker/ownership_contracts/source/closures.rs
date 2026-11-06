@@ -41,6 +41,14 @@ impl Builder<'_> {
             if self.carriers.contains_key(&identity) || self.taken_carriers.contains(&identity) {
                 return Err(refuse("a closure capturing a carried result"));
             }
+            if let Some(dependencies) = self.graph.dependent_locals.get(&identity).cloned() {
+                for dependency in dependencies {
+                    let (next, path, loan) = self.carry_dependency(dependency, closure.span, incoming)?;
+                    incoming = next;
+                    borrowed.push(path);
+                    loans.push((identity.clone(), loan));
+                }
+            }
             let path = match self.aliases.get(&identity) {
                 // A borrowed local or returned view is captured as a reborrow of its own loan.
                 Some(path) => path.clone(),

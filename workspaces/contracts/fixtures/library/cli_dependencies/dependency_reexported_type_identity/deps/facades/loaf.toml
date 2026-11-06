@@ -4,3 +4,6 @@ version = "0.1.0"
 
 [project.scripts]
 main = "src/main.incn"
+
+[dependencies]
+linked_nodes = { path = "deps/linked_nodes" }

@@ -172,11 +172,6 @@ pub struct ExpressionArtifacts {
     /// - `Type.method(...)` where `Type` is a type name (emits `Type::method(...)` in Rust), and
     /// - imported placeholders (e.g. `from rust::... import Foo`) which are not value bindings.
     pub ident_kinds: HashMap<crate::ast::Span, IdentKind>,
-    /// Identifier spans that resolved to the compiler-provided ambient `std.logging` logger binding.
-    ///
-    /// The binding is typechecked like an ordinary immutable `Logger` value, but lowering must materialize it as a
-    /// module-local `std.logging.get_logger(...)` call so source metadata can become the logger name.
-    pub ambient_logger_bindings: HashSet<crate::ast::Span>,
     /// The type of the place a value is written to, keyed by the value span, when the value needs adapting to it: a
     /// field or index assignment, a model or class constructor field, a `return`, a `yield`, or a `match` arm or
     /// `break` value of the construct's type (#1858, RFC 009).

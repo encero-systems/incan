@@ -312,7 +312,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     ///
     /// Records the runtime dependencies the existing Rust-emission backend's own `yield` lowering actually needs
     /// (`__incan_yield.yield_value(..)` on a `GeneratorYield` handle backed by `std::thread::spawn` and
-    /// `std::sync::mpsc::sync_channel` -- see `loaves/stdlib/core/rust/src/iter.rs`'s `Generator`/`SpawnedGenerator`):
+    /// `std::sync::mpsc::sync_channel` -- see `loaves/stdlib/primitives/rust/src/iter.rs`'s
+    /// `Generator`/`SpawnedGenerator`):
     /// a named runtime helper (mirroring how [`Self::lower_fstring`] records `"fstring"` without a new
     /// [`bir::HelperOp`] variant, since `Yield` is its own statement kind, not a [`bir::Callee::Helper`] call),
     /// [`AbiV0RuntimeRequirement::HostedStd`] (the spawned-thread/channel machinery is not freestanding-compatible),

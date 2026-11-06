@@ -1,6 +1,6 @@
 //! Declaration formatting: models and `pub` field visibility, traits with supertraits and abstract methods, decorators
 //! and decorator factories, long function, method and class headers, generic methods, method trait targets, constrained
-//! primitive newtypes, `mut` parameters, `rust.module()` and enum methods, class, model, enum and trait body
+//! primitive newtypes, `mut` parameters, testing markers and enum methods, class, model, enum and trait body
 //! docstrings, value enums, module docstrings before `const` / `static`, rich newtypes, `rusttype` associated types,
 //! computed properties and partial declarations.
 
@@ -139,15 +139,15 @@ fn test_format_source_trait_with_supertraits() -> Result<(), FormatError> {
 }
 
 #[test]
-fn test_format_source_rust_allow_decorator() -> Result<(), FormatError> {
-    let source = r#"@rust.allow("dead_code","clippy::too_many_arguments")
-def MixedName() -> int:
-  return 1
+fn test_format_source_testing_marker_decorator() -> Result<(), FormatError> {
+    let source = r#"@marker(kind="skip",runner_only=true)
+def skipped() -> None:
+  pass
 "#;
     let formatted = format_source(source)?;
-    let expected = r#"@rust.allow("dead_code", "clippy::too_many_arguments")
-def MixedName() -> int:
-    return 1
+    let expected = r#"@marker(kind="skip", runner_only=true)
+def skipped() -> None:
+    pass
 "#;
     assert_eq!(formatted, expected);
     Ok(())
@@ -323,10 +323,8 @@ fn test_format_source_preserves_pub_class_field_visibility() -> Result<(), Forma
 }
 
 #[test]
-fn test_format_source_preserves_rust_module_and_enum_methods() -> Result<(), FormatError> {
+fn test_format_source_preserves_enum_methods() -> Result<(), FormatError> {
     let source = r#""""Runtime module docstring."""
-
-rust.module("incan_std_testing")
 
 from std.traits.error import Error
 

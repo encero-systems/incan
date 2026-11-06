@@ -78,6 +78,7 @@ impl TypeChecker {
                 crate::typechecker::RustCheckedCall {
                     storage: None,
                     source_type_parameters: self.native_call_type_parameters(),
+                    signature_loans: Vec::new(),
                     receiver_adjustments: Vec::new(),
                     path: "std::future::IntoFuture::into_future".into(),
                     type_arguments: vec![ty.clone()],
@@ -113,12 +114,20 @@ impl TypeChecker {
     /// Return whether a call callee resolves to an async function.
     fn call_expr_is_async(&mut self, callee: &Spanned<Expr>) -> bool {
         match &callee.node {
-            Expr::Ident(name) => self.lookup_symbol(name).is_some_and(|sym| match &sym.kind {
-                SymbolKind::Function(info) => info.is_async,
-                SymbolKind::RustItem(info) => {
-                    matches!(&info.metadata, Some(metadata) if matches!(&metadata.kind, RustItemKind::Function(sig) if sig.is_async))
+            Expr::Ident(name) => self.lookup_symbol(name).is_some_and(|sym| {
+                match &sym.kind {
+                    SymbolKind::Function(info) => info.is_async,
+                    SymbolKind::RustItem(info) => {
+                        matches!(&info.metadata, Some(metadata) if matches!(&metadata.kind, RustItemKind::Function(sig) if sig.is_async))
+                    }
+                    SymbolKind::Variable(_) => self
+                        .type_info
+                        .declarations
+                        .decorated_function_bindings_by_span
+                        .get(&sym.span)
+                        .is_some_and(|binding| binding.is_async),
+                    _ => false,
                 }
-                _ => false,
             }),
             Expr::Field(base, member) => self.module_function_member_is_async(base, member),
             _ => false,
@@ -215,6 +224,9 @@ impl TypeChecker {
         if let Some(future) = self.rust_associated_type(ty, "std::future::IntoFuture", "IntoFuture") {
             return self.rust_associated_type(&future, "std::future::Future", "Output");
         }
+        if let Some(output) = self.runtime_join_handle_output(ty) {
+            return Some(output);
+        }
         if let Some(name) = self.generic_placeholder_name(ty) {
             return self.await_output_type_from_active_bound(name);
         }
@@ -235,6 +247,33 @@ impl TypeChecker {
             ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.await_output_type_from_type(inner),
             _ => None,
         }
+    }
+
+    /// Resolve the registry-owned task handle's await output when selected Loaf metadata omits its native associated
+    /// type. Runtime provenance is required so an equal-spelled source type cannot acquire task semantics.
+    fn runtime_join_handle_output(&self, ty: &ResolvedType) -> Option<ResolvedType> {
+        let projected;
+        let native = if let Some(target) = self.rusttype_native_target(ty) {
+            projected = target;
+            &projected
+        } else {
+            ty
+        };
+        let ResolvedType::Generic(base, arguments) = native else {
+            return None;
+        };
+        if surface_types::from_runtime_rust_path(base) != Some(SurfaceTypeId::JoinHandle)
+            || !self.type_info.runtime_owner_admitted(SurfaceTypeId::JoinHandle)
+        {
+            return None;
+        }
+        let [payload] = arguments.as_slice() else {
+            return None;
+        };
+        Some(result_ty(
+            payload.clone(),
+            ResolvedType::Named(surface_types::TASK_JOIN_ERROR_TYPE_NAME.to_string()),
+        ))
     }
 
     /// Resolve `Awaitable[T]` output from active generic bounds for one placeholder.

@@ -1,13 +1,14 @@
 //! The publication audit that projects identities, types, places, rvalues and statements into published form.
 
 use super::*;
+use crate::{SemanticSourceTargetKind, SymbolNamespace};
 
 impl<'a> PublicationAudit<'a> {
     /// Preserve a checked fragment-local reflection binder without admitting it as a callable package dependency.
     /// Both identities are projected together only after the owning generic frame has authenticated their relation.
     pub(super) fn generic_metadata_target(&mut self, target: &mut MethodTarget) -> Result<bool, CoverageReason> {
         if !matches!(
-            target.reflection,
+            target.operation,
             Some(crate::body_ir::ReflectionOperation::GenericMetadata(_))
         ) {
             return Ok(false);
@@ -19,7 +20,7 @@ impl<'a> PublicationAudit<'a> {
         if !generic_metadata_belongs_to(target, callable, &self.type_parameters, self.nominal_declarations) {
             return Err(CoverageReason::UnresolvedReference);
         }
-        let Some(crate::body_ir::ReflectionOperation::GenericMetadata(binder)) = &mut target.reflection else {
+        let Some(crate::body_ir::ReflectionOperation::GenericMetadata(binder)) = &mut target.operation else {
             return Err(CoverageReason::UnresolvedReference);
         };
         if let SymbolOrigin::Module(module_path) = &binder.origin {
@@ -146,6 +147,14 @@ impl<'a> PublicationAudit<'a> {
             IncanType::Primitive(_) | IncanType::Never | IncanType::Decimal { .. } | IncanType::NativeBuiltin(_) => {
                 Ok(())
             }
+            IncanType::Trait(identity)
+                if identity.kind == SemanticSourceTargetKind::Trait
+                    && identity.namespace == SymbolNamespace::OrdinaryLexical
+                    && identity.scope_discriminant.is_none()
+                    && matches!(&identity.origin, SymbolOrigin::Module(_) | SymbolOrigin::Package { .. }) =>
+            {
+                Ok(())
+            }
             IncanType::RustInteropPath(path) if path == "str" => Ok(()),
             IncanType::Generic { base, args }
                 if matches!(base.as_str(), "[]" | "Awaitable" | "$FrozenList" | "$FrozenSet") =>
@@ -200,6 +209,7 @@ impl<'a> PublicationAudit<'a> {
             | IncanType::SelfType
             | IncanType::RustInteropPath(_)
             | IncanType::NativeTraitObject { .. }
+            | IncanType::Trait(_)
             | IncanType::Infer
             | IncanType::Unknown
             | IncanType::Unsupported(_) => Err(CoverageReason::UnresolvedReference),
@@ -676,6 +686,9 @@ impl<'a> PublicationAudit<'a> {
             }
             Callee::Function(CallableTarget::Local(target)) => self.place(&mut target.operand.place)?,
             Callee::Method(target) => {
+                if !target.has_valid_builtin_selection() {
+                    return Err(CoverageReason::UnsupportedConstruct);
+                }
                 if self.generic_metadata_target(target)? {
                     return Ok(());
                 }

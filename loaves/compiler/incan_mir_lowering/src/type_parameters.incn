@@ -51,7 +51,7 @@ pub model InstanceQueue:
     pub pending: VecDeque[Instance]
     pub seen: BTreeMap[InstanceKey, list[list[LocalDecl]]]
 
-    def add(mut self, request: Instance) -> None:
+    pub def add(mut self, request: Instance) -> None:
         """Preserve the first request with the same canonical arguments, local declarations, storage and role."""
         key = (request.body.canonical, request.arguments, request.owned_callable_slots, request.original_callable)
         match self.seen.get(key):
@@ -280,7 +280,7 @@ pub def instantiate(body: &Body, arguments: list[RustType], owned_callable_slots
 
 
 pub def instantiate_parameter(
-    parameter: &RustParameter,
+    parameter: RustParameter,
     names: list[str],
     arguments: list[RustType],
 ) -> Result[RustParameter, str]:
@@ -508,7 +508,7 @@ def pointer_instantiation(ty: &RustType, names: list[str], arguments: list[RustT
     return false
 
 
-def without_locals(locals: &list[RustLocalId], excluded: &list[RustLocalId]) -> list[RustLocalId]:
+def without_locals(locals: &list[RustLocalId], excluded: list[RustLocalId]) -> list[RustLocalId]:
     """Keep the original order and identities of slots not selected for pointer storage."""
     return [local for local in locals if not has_local(excluded, local)]
 

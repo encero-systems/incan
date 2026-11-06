@@ -2,7 +2,6 @@
 
 use std::collections::BTreeSet;
 
-use incan_lang::lang::stdlib::facets;
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeCategory, SurfaceTypeKind};
 use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId, HirSourceSpan, SemanticSourceTargetKind, SymbolOrigin};
@@ -49,14 +48,23 @@ pub(super) fn members(facts: &TypeCheckInfo) -> Vec<bir::LoafCallable> {
     collect(facts)
         .iter()
         .flat_map(|declaration| {
+            let id = surface_types::from_str(&declaration.name);
+            let native_owner = id.and_then(|id| {
+                let mut path = surface_types::info_for(id).ownership.runtime_rust_module_path?.to_vec();
+                path.push(surface_types::as_str(id));
+                Some(path.join("::"))
+            });
+            let Some(native_owner) = native_owner else {
+                return Vec::new();
+            };
             let (receiver, names): (IncanType, &[&str]) = match surface_types::from_str(&declaration.name) {
                 Some(surface_types::SurfaceTypeId::TaskJoinError) => (
-                    IncanType::Named(declaration.name.clone()),
+                    IncanType::Named(native_owner),
                     &["message", "source", "is_cancelled", "is_panic"],
                 ),
                 Some(surface_types::SurfaceTypeId::JoinHandle) => (
                     IncanType::Generic {
-                        base: declaration.name.clone(),
+                        base: native_owner,
                         args: vec![IncanType::TypeVar("T".into())],
                     },
                     &["abort"],
@@ -92,17 +100,27 @@ pub(super) fn retains_task_storage(facts: &TypeCheckInfo, ty: &IncanType) -> boo
 /// Bind only a registry-owned SDK task receiver to its published native method signature.
 /// These contracts mirror task.rs; they grant no source field access or equal-spelled source/foreign method behavior.
 pub(super) fn member(facts: &TypeCheckInfo, receiver: &IncanType, name: &str) -> Option<bir::LoafCallable> {
-    let (owner, template, parameters) = match receiver {
+    let (id, owner, template, parameters) = match receiver {
         IncanType::Named(owner)
-            if surface_types::from_str(owner) == Some(surface_types::SurfaceTypeId::TaskJoinError) =>
-        {
-            (owner, receiver.clone(), Vec::new())
-        }
-        IncanType::Generic { base, args }
-            if surface_types::from_str(base) == Some(surface_types::SurfaceTypeId::JoinHandle) && args.len() == 1 =>
+            if surface_types::from_str(owner) == Some(surface_types::SurfaceTypeId::TaskJoinError)
+                || surface_types::from_runtime_rust_path(owner)
+                    == Some(surface_types::SurfaceTypeId::TaskJoinError) =>
         {
             (
-                base,
+                surface_types::SurfaceTypeId::TaskJoinError,
+                surface_types::as_str(surface_types::SurfaceTypeId::TaskJoinError),
+                receiver.clone(),
+                Vec::new(),
+            )
+        }
+        IncanType::Generic { base, args }
+            if (surface_types::from_str(base) == Some(surface_types::SurfaceTypeId::JoinHandle)
+                || surface_types::from_runtime_rust_path(base) == Some(surface_types::SurfaceTypeId::JoinHandle))
+                && args.len() == 1 =>
+        {
+            (
+                surface_types::SurfaceTypeId::JoinHandle,
+                surface_types::as_str(surface_types::SurfaceTypeId::JoinHandle),
                 IncanType::Generic {
                     base: base.clone(),
                     args: vec![IncanType::TypeVar("T".into())],
@@ -112,19 +130,16 @@ pub(super) fn member(facts: &TypeCheckInfo, receiver: &IncanType, name: &str) ->
         }
         _ => return None,
     };
-    let declared = nominal(facts, owner)?;
-    let mut canonical = declared.canonical.clone();
-    canonical.namespace = SymbolNamespace::Member;
-    canonical.declaration_name = name.into();
-    canonical.kind = SemanticSourceTargetKind::Method;
-    let SymbolOrigin::Package { library, module_path } = declared.canonical.origin else {
+    if !facts.runtime_owner_admitted(id) {
         return None;
-    };
-    let mut path = std::iter::once(library)
-        .chain(module_path)
-        .chain(std::iter::once(owner.clone()))
+    }
+    let mut path = surface_types::info_for(id)
+        .ownership
+        .runtime_rust_module_path?
+        .iter()
+        .map(|segment| (*segment).to_owned())
         .collect::<Vec<_>>();
-    let id = surface_types::from_runtime_rust_path(&path.join("::"))?;
+    path.push(owner.to_owned());
     let result = match (id, name) {
         (surface_types::SurfaceTypeId::TaskJoinError, "message") => IncanType::Primitive(IncanPrimitiveType::Str),
         (surface_types::SurfaceTypeId::TaskJoinError, "source") => IncanType::builtin_collection(
@@ -138,13 +153,15 @@ pub(super) fn member(facts: &TypeCheckInfo, receiver: &IncanType, name: &str) ->
         _ => return None,
     };
     path.push(name.into());
+    let item = path.join("::");
+    let canonical = bir::rust_item_identity(&item)?;
     Some(bir::LoafCallable {
         canonical,
-        item: path.join("::"),
+        item,
         parameters: vec![IncanType::Ref(Box::new(template))],
         return_type: result,
+        native_type_arguments: parameters.iter().cloned().map(IncanType::TypeVar).collect(),
         type_parameters: parameters,
-        native_type_arguments: Vec::new(),
         native_callable_parameters: Vec::new(),
         parameter_defaults: Vec::new(),
         declaration_frame: None,
@@ -162,8 +179,7 @@ fn nominal(type_info: &TypeCheckInfo, name: &str) -> Option<bir::NominalDeclarat
         .split('.')
         .map(str::to_owned)
         .collect::<Vec<_>>();
-    let namespace = path.get(1)?;
-    let library = facets::for_namespace(namespace).to_owned();
+    let library = surface_types::runtime_facet(id)?.to_owned();
     // Runtime vocabulary has no Incan declaration span. Its registry position is a stable synthetic declaration
     // address, never a consumer source location.
     let offset = surface_types::SURFACE_TYPES
@@ -223,6 +239,32 @@ pub(super) fn project_type(ty: IncanType, facts: &TypeCheckInfo) -> IncanType {
         && let Some(storage) = super::checked_bridge::private_storage(name, facts)
     {
         return storage;
+    }
+    // Compatibility crates re-export the primitive runtime declaration; their retained Rust paths are not distinct
+    // nominal owners. Normalize before checked storage can preserve the compatibility path as an opaque nominal.
+    match &ty {
+        IncanType::Named(name) => {
+            if let Some(canonical) = surface_types::canonical_runtime_rust_path(name) {
+                return IncanType::Named(canonical);
+            }
+        }
+        IncanType::RustInteropPath(path)
+            if surface_types::from_runtime_rust_path(path)
+                .is_some_and(|id| surface_types::info_for(id).kind == SurfaceTypeKind::Named) =>
+        {
+            if let Some(canonical) = surface_types::canonical_runtime_rust_path(path) {
+                return IncanType::Named(canonical);
+            }
+        }
+        IncanType::Generic { base, args } => {
+            if let Some(canonical) = surface_types::canonical_runtime_rust_path(base) {
+                return IncanType::Generic {
+                    base: canonical,
+                    args: args.iter().cloned().map(|arg| project_type(arg, facts)).collect(),
+                };
+            }
+        }
+        _ => {}
     }
     // Function cache entries describe storage before callable passing facts are retained. Project their components
     // from the original native parameter provenance so an inline collection cannot erase its owned ABI.
@@ -312,5 +354,57 @@ fn named_leaves(ty: &IncanType, names: &mut BTreeSet<String>) {
             named_leaves(inner, names)
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Runtime compatibility paths must retain the primitive declaration as their sole nominal owner.
+    #[test]
+    fn runtime_reexports_project_to_canonical_owner() {
+        let facts = TypeCheckInfo::default();
+        let error = IncanType::RustInteropPath("incan_std_async::task::TaskJoinError".into());
+        let handle = IncanType::Generic {
+            base: "incan_std_async::task::JoinHandle".into(),
+            args: vec![IncanType::Primitive(IncanPrimitiveType::Int)],
+        };
+
+        assert_eq!(
+            project_type(error, &facts),
+            IncanType::Named("incan_std_primitives::task::TaskJoinError".into())
+        );
+        assert_eq!(
+            project_type(handle, &facts),
+            IncanType::Generic {
+                base: "incan_std_primitives::task::JoinHandle".into(),
+                args: vec![IncanType::Primitive(IncanPrimitiveType::Int)],
+            }
+        );
+    }
+
+    /// Published task members bind their generic owner through the canonical Rust receiver path.
+    #[test]
+    fn task_member_inventory_retains_canonical_receiver() {
+        let mut facts = TypeCheckInfo::default();
+        facts.expressions.expr_types.insert(
+            crate::ast::Span::new(0, 1),
+            crate::symbols::ResolvedType::Generic("JoinHandle".into(), vec![crate::symbols::ResolvedType::Int]),
+        );
+        let callables = members(&facts);
+        let callable = callables.iter().find(|callable| callable.item.ends_with("::abort"));
+
+        assert!(matches!(
+            callable.and_then(|callable| callable.parameters.first()),
+            Some(IncanType::Ref(owner))
+                if matches!(owner.as_ref(), IncanType::Generic { base, args }
+                    if base == "incan_std_primitives::task::JoinHandle"
+                        && args == &[IncanType::TypeVar("T".into())])
+        ));
+        assert_eq!(
+            callable.map(|callable| callable.native_type_arguments.as_slice()),
+            Some(&[IncanType::TypeVar("T".into())][..])
+        );
     }
 }

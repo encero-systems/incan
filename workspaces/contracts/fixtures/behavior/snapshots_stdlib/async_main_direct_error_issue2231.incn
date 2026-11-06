@@ -5,7 +5,6 @@
 #   async main failure
 # expect-exit: 1
 
-import std.async
 
 
 async def main() -> Result[None, str]:

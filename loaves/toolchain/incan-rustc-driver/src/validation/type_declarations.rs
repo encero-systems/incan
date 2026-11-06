@@ -89,15 +89,20 @@ pub(super) fn checked_list_leaf_type(leaf: &ListLeaf) -> Result<PlanType, PlanEr
         ListLeaf::Reference(elements) => matches!(
             elements.as_slice(),
             [PlanType::EnumRef(..)
+                | PlanType::EnumMutRef(..)
                 | PlanType::ModelRef(..)
+                | PlanType::ModelMutRef(..)
                 | PlanType::StringRef
+                | PlanType::StringMutRef
                 | PlanType::StrRef
                 | PlanType::ScalarRef(_)
+                | PlanType::ScalarMutRef(_)
                 | PlanType::SliceRef(_)]
         ),
         ListLeaf::List(elements, _) => elements.len() == 1,
         ListLeaf::Set(elements) => elements.len() == 1,
         ListLeaf::Dict(elements) => elements.len() == 2,
+        ListLeaf::TypeToken(elements) => elements.len() == 1,
         _ => true,
     };
     if !valid {
@@ -145,14 +150,26 @@ pub(super) fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), Plan
         });
     }
     if let PlanType::TypeToken(elements) = ty
-        && !matches!(
-            elements.as_slice(),
-            [PlanType::Int | PlanType::Float | PlanType::Bool | PlanType::String]
-        )
+        && elements.len() != 1
     {
         return Err(PlanError::Invalid {
             function: "TypeToken".into(),
-            reason: "unsupported TypeToken represented type or arity".into(),
+            reason: "a TypeToken must retain exactly one represented type".into(),
+        });
+    }
+    if let PlanType::Trait(identity) = ty
+        && (identity.kind != incan_semantics_core::SemanticSourceTargetKind::Trait
+            || identity.namespace != incan_semantics_core::SymbolNamespace::OrdinaryLexical
+            || identity.scope_discriminant.is_some()
+            || identity.declaration_name.is_empty()
+            || !matches!(
+                &identity.origin,
+                incan_semantics_core::SymbolOrigin::Module(_) | incan_semantics_core::SymbolOrigin::Package { .. }
+            ))
+    {
+        return Err(PlanError::Invalid {
+            function: "trait token".into(),
+            reason: "invalid canonical source trait identity".into(),
         });
     }
 
@@ -197,6 +214,11 @@ pub(super) fn validate_nested_carrier_components(plan: &Plan, ty: &PlanType) -> 
             }
             for element in elements {
                 validate_model_type(plan, element)?;
+            }
+        }
+        PlanType::TypeToken(elements) => {
+            for represented in elements {
+                validate_model_type(plan, represented)?;
             }
         }
         PlanType::FrozenCollection(name, elements) | PlanType::FrozenCollectionRef(name, elements) => {

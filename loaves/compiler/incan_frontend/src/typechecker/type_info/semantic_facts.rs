@@ -332,10 +332,9 @@ impl TypeCheckInfo {
         ) {
             return false;
         }
-        let Some(path) = surface_types::stdlib_module_path(id) else {
+        if surface_types::stdlib_module_path(id).is_none() {
             return false;
-        };
-        let path = path.split('.').map(str::to_owned).collect::<Vec<_>>();
+        }
         let name = surface_types::as_str(id);
         let Some(identity) = self
             .declarations
@@ -346,9 +345,9 @@ impl TypeCheckInfo {
             return true;
         };
         match &identity.origin {
-            SymbolOrigin::Module(owner) => owner == &path,
+            SymbolOrigin::Module(owner) => surface_types::is_exported_from_module(id, &owner.join(".")),
             SymbolOrigin::Package { library, module_path } => {
-                library == "incan_stdlib_async" && module_path == &path[1..]
+                surface_types::is_exported_from_package(id, library, module_path)
             }
             SymbolOrigin::RustCrate(owner) => surface_types::from_runtime_rust_path(&owner.join("::")) == Some(id),
             _ => false,
@@ -498,6 +497,7 @@ pub fn semantic_type_from_resolved(ty: &ResolvedType) -> IncanType {
         },
         ResolvedType::Unit => IncanType::Primitive(IncanPrimitiveType::Unit),
         ResolvedType::Named(name) => IncanType::Named(name.clone()),
+        ResolvedType::Trait(identity) => IncanType::Trait(identity.clone()),
         ResolvedType::Generic(base, args) if collection_types::from_str(base) == Some(CollectionTypeId::Tuple) => {
             IncanType::Tuple(args.iter().map(semantic_type_from_resolved).collect())
         }

@@ -9,9 +9,9 @@ from rust::std::collections import HashMap as RuntimeDict, HashSet as RuntimeSet
 from rust::std::collections::hash_set import Iter as RuntimeSetIter
 from rust::std::collections::hash_map import Keys as RuntimeKeys, Values as RuntimeValues
 from rust::std::iter import Iterator
-from rust::incan_std_core::iter import nonnegative_count
-from rust::incan_std_core::errors import raise_index_error
-from rust::incan_std_core::collections import (
+from rust::incan_std_primitives::iter import nonnegative_count
+from rust::incan_std_primitives::errors import raise_index_error
+from rust::incan_std_primitives::collections import (
     set_contains, dict_contains_key, dict_get, dict_get_mut, normalize_list_index,
 )
 from native_equality import equal_native

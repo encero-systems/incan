@@ -30,7 +30,6 @@ pub(super) fn expression_artifacts(value: &ExpressionArtifacts) -> Result<(), No
         assignment_binding_types: _,
         computed_property_accesses,
         ident_kinds: _,
-        ambient_logger_bindings,
         value_destination_types: _,
         numeric_conversion_destinations,
         read_only_dict_lookups,
@@ -39,7 +38,7 @@ pub(super) fn expression_artifacts(value: &ExpressionArtifacts) -> Result<(), No
         source_targets: _,
         local_partial_method_targets,
     } = value;
-    require_empty!("ExpressionArtifacts"; body_ir_open_calls, body_ir_open_values, body_ir_open_bindings, body_ir_empty_list_requirements, body_ir_callable_name_reads, body_ir_nominal_pattern_owners, expression_type_identities, computed_property_accesses, ambient_logger_bindings, numeric_conversion_destinations, read_only_dict_lookups, chained_values_written_per_target, validated_newtype_coercions, local_partial_method_targets);
+    require_empty!("ExpressionArtifacts"; body_ir_open_calls, body_ir_open_values, body_ir_open_bindings, body_ir_empty_list_requirements, body_ir_callable_name_reads, body_ir_nominal_pattern_owners, expression_type_identities, computed_property_accesses, numeric_conversion_destinations, read_only_dict_lookups, chained_values_written_per_target, validated_newtype_coercions, local_partial_method_targets);
     Ok(())
 }
 
@@ -76,6 +75,7 @@ pub(super) fn call_artifacts(value: &CallArtifacts) -> Result<(), NodeBindingErr
         inferred_call_result_types,
         mutable_receiver_method_calls,
         resolved_builtin_calls: _,
+        resolved_builtin_method_calls: _,
         fixed_unpack_plans,
         call_site_monomorph_type_args: _,
         isinstance_targets,
@@ -130,6 +130,7 @@ pub(super) fn rust_interop_artifacts(value: &RustInteropArtifacts) -> Result<(),
         checked_calls,
         argument_adjustments,
         declared_conversions,
+        validated_rusttype_edges,
         element_adjustments,
         field_adjustments,
         field_projection_paths,
@@ -155,7 +156,7 @@ pub(super) fn rust_interop_artifacts(value: &RustInteropArtifacts) -> Result<(),
         await_conversions,
         type_aliases,
     } = value;
-    require_empty!("RustInteropArtifacts"; storage_types, owner_parameters, copy_receivers, checked_layouts, checked_enums, checked_constants, checked_calls, argument_adjustments, declared_conversions, element_adjustments, field_adjustments, field_projection_paths, field_values, checked_function_values, iteration_hooks, value_item_paths, value_native_types, body_ir_diverging_import_calls, receiver_contracts, rusttype_canonical_paths, item_public_paths, arg_coercions, trait_imports, rusttype_forwarded_trait_adoptions, return_coercions, native_return_consumers, closure_param_type_displays, closure_storage, native_callable_parameters, function_param_type_displays, async_call_realizations, await_conversions, type_aliases);
+    require_empty!("RustInteropArtifacts"; storage_types, owner_parameters, copy_receivers, checked_layouts, checked_enums, checked_constants, checked_calls, argument_adjustments, declared_conversions, validated_rusttype_edges, element_adjustments, field_adjustments, field_projection_paths, field_values, checked_function_values, iteration_hooks, value_item_paths, value_native_types, body_ir_diverging_import_calls, receiver_contracts, rusttype_canonical_paths, item_public_paths, arg_coercions, trait_imports, rusttype_forwarded_trait_adoptions, return_coercions, native_return_consumers, closure_param_type_displays, closure_storage, native_callable_parameters, function_param_type_displays, async_call_realizations, await_conversions, type_aliases);
     Ok(())
 }
 

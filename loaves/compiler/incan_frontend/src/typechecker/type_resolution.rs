@@ -177,7 +177,7 @@ impl TypeChecker {
     /// that namespace's marker type. Those spellings are accepted here exactly as they were before qualified module
     /// types resolved, so a safe facade over a binding keeps checking.
     pub(super) fn validate_source_dotted_type_annotation(&mut self, segments: &[String], span: Span) {
-        let Some((root, remainder)) = segments.split_first() else {
+        let Some(root) = segments.first() else {
             return;
         };
         if self.symbols.lookup(root).is_none() {
@@ -198,29 +198,13 @@ impl TypeChecker {
         if !self.unknown_source_type_names_emitted.insert(key) {
             return;
         }
-        let module_path = self.lookup_symbol(root).and_then(|symbol| match &symbol.kind {
-            SymbolKind::Module(info) if !info.is_python => Some(info.path.clone()),
-            _ => None,
-        });
-        let error = match (module_path, remainder.split_last()) {
-            (Some(mut module_path), Some((member, nested))) => {
-                module_path.extend(nested.iter().cloned());
-                let module = Self::module_import_spelling(&module_path);
-                // A compiler surface type the module provides (`std.web`'s `Html`) is bound by a direct import but
-                // has no declaration a qualified reference could name (#1824); say so rather than that the module
-                // declares nothing by that name.
-                let module_provides_surface_type = surface_types::from_str(member)
-                    .and_then(surface_types::stdlib_module_path)
-                    .is_some_and(|provider| provider == module_path.join("."));
-                if module_provides_surface_type {
-                    errors::qualified_type_names_surface_type(&spelling, &module, member, span)
-                } else {
-                    errors::qualified_type_not_declared(&spelling, &module, member, span)
-                }
-            }
-            _ => errors::qualified_type_root_not_a_module(&spelling, root, span),
-        };
-        self.errors.push(error);
+        match self.resolve_qualified_name(segments) {
+            Err(failure) => self.report_namespace_resolution_failure(failure, span),
+            Ok(_) => self.errors.push(CompileError::type_error(
+                format!("`{spelling}` does not name a type or trait"),
+                span,
+            )),
+        }
     }
 
     /// Render a checked module path the way an import statement spells it, for a diagnostic.

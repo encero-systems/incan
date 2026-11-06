@@ -168,7 +168,7 @@ def validate_payload_pattern(pattern: &RustPattern) -> Result[None, str]:
     return Ok(None)
 
 
-pub def validate_binding(binding: &ArgumentBinding, count: int) -> Result[None, str]:
+pub def validate_binding(binding: ArgumentBinding, count: int) -> Result[None, str]:
     """Require complete positional payload binding; spreads and omitted payload slots remain refused."""
     match binding:
         ArgumentBinding.Resolved(arguments=arguments, defaulted_slots=defaults) =>

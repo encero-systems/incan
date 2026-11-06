@@ -94,6 +94,8 @@ pub struct BodyIrContext<'a> {
     /// The package a library unit's own declarations belong to; `None` for a program. A library's modules are its
     /// package's modules (`pub::<package>::<module>`), the identity its consumers read them under.
     pub library_package: Option<&'a str>,
+    /// Whether this compilation is a test unit and therefore owns executable bodies from `module tests:`.
+    pub include_inline_tests: bool,
 }
 
 /// Return every checked registry helper required by generated registrations and explicit subject materialization.
@@ -103,8 +105,8 @@ pub fn registry_helper_identities(info: &TypeCheckInfo) -> Vec<CanonicalSymbolId
     registry_effects::helper_identities(info)
 }
 
-/// Build Body IR v0 for every top-level function declaration, inline-test function and non-abstract
-/// class/model/trait method in a typechecked module.
+/// Build Body IR v0 for every top-level function declaration, test-unit inline-test function and non-abstract
+/// class/model/trait method in a typechecked module. Ordinary program and library compilations omit inline tests.
 ///
 /// `ast::Declaration::Function` items each produce one [`bir::Body`], matching the [`CompilerNodeId`]
 /// [`crate::hir::build_hir_v0`] assigns the corresponding declaration (see that function's docs).
@@ -150,9 +152,28 @@ pub fn build_body_ir_module(
     type_info: &TypeCheckInfo,
     context: &BodyIrContext<'_>,
 ) -> bir::BodyIrModule {
+    let mut module = build_body_ir_module_unsettled(program, module_path, type_info, context);
+    shared_reads::retain_modules(std::slice::from_mut(&mut module), context.modules);
+    module
+}
+
+/// Build one module through every representation pass except unit-wide shared-read settlement. Compilation drivers
+/// use this boundary while collecting an authored unit so import-cycle peers can reach one fixed point together.
+pub fn build_body_ir_module_unsettled(
+    program: &ast::Program,
+    module_path: &[String],
+    type_info: &TypeCheckInfo,
+    context: &BodyIrContext<'_>,
+) -> bir::BodyIrModule {
     let mut module = build_module_seed(program, module_path, type_info, context);
     retain_module_representations(&mut module, program, type_info, context.modules);
     module
+}
+
+/// Settle inferred shared parameters and their call operands across every authored module simultaneously. Dependency
+/// modules are immutable context whose already-published signatures may participate but cannot be refined here.
+pub fn settle_shared_reads(modules: &mut [bir::BodyIrModule], context: &[bir::BodyIrModule]) {
+    shared_reads::retain_modules(modules, context);
 }
 
 /// The declarations-only Body IR one member of an import cycle contributes to the other members' context before its
@@ -251,8 +272,6 @@ struct BodyIrLoweringFacts<'type_info, 'source> {
     registry_package: Option<&'source str>,
     /// Provider operations this compilation admits, keyed by canonical identity rather than by any spelling.
     provider_operations: &'source ProviderOperationCatalog,
-    /// The file's checked `rust.module(...)` path, which an `@rust.extern` declaration delegates into (#2023).
-    rust_module: Option<&'source str>,
 }
 
 /// Source facts a synthesized local partial needs for one target parameter.
@@ -361,6 +380,8 @@ struct BodyBuilder<'type_info, 'source> {
     input_local_bindings: Vec<bir::ExplicitInputBinding>,
     /// The declared view this body returns, once its parameter locals exist.
     returned_view: Option<returned_views::ReturnedViewSource>,
+    /// The parameter loan retained by an owned native result, kept distinct from returned-place aliasing.
+    retained_result_source: Option<usize>,
     /// Each lowered call carrying a view in its `Result` or `Option`, by call span: its substituted place, access and
     /// the payload carrying the view.
     carried_view_places: HashMap<ast::Span, (bir::Place, incan_semantics_core::IncanInputAccess, usize)>,

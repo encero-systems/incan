@@ -1,6 +1,6 @@
 """Inspect panic-hosted error categories inside a deferred function's unwind boundary."""
 
-from rust::incan_std_core::strings import str_starts_with
+from rust::incan_std_primitives::strings import str_starts_with
 from rust::incan_std_testing import fail_t, panic_text
 
 

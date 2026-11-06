@@ -13,19 +13,19 @@ class Counter:
     pub value: int
     pub open: bool
 
-    def bump(mut self) -> Result[Reference[Self], str] from self:
+    pub def bump(mut self) -> Result[Reference[Self], str] from self:
         if not self.open:
             return Err("closed")
         self.value += 1
         return Ok(self)
 
-    def add(mut self, amount: int) -> Result[Reference[Self], str] from self:
+    pub def add(mut self, amount: int) -> Result[Reference[Self], str] from self:
         if not self.open:
             return Err("closed")
         self.value += amount
         return Ok(self)
 
-    def bump_again(mut self) -> Result[Reference[Self], str] from self:
+    pub def bump_again(mut self) -> Result[Reference[Self], str] from self:
         result = self.bump()
         view = result?
         return Ok(view)

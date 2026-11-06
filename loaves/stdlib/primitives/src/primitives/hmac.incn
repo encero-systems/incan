@@ -17,7 +17,7 @@ guessing the whole thing at once. Prefer `verify` over comparing `digest()` outp
 """
 
 from rust::hmac import Hmac, Mac
-from rust::incan_std_core::errors import raise_value_error
+from rust::incan_std_primitives::errors import raise_value_error
 from rust::sha2 import Sha256
 
 type _HmacSha256 = rusttype Hmac[Sha256]
@@ -51,27 +51,26 @@ pub class HmacSha256Signer:
 
     handle: _HmacSha256
 
-    def update(mut self, chunk: bytes) -> None:
+    pub def update(mut self, chunk: bytes) -> None:
         """
         Add `chunk` to the authenticated byte stream.
         """
         self.handle.update(chunk.as_slice())
 
-    def finalize_bytes(mut self) -> bytes:
+    pub def finalize_bytes(mut self) -> bytes:
         """
         Return the tag for the bytes supplied so far, resetting the handle for the next stream.
         """
         return self.handle.finalize_reset().into_bytes().to_vec()
 
 
-@rust.allow("non_camel_case_types")
 pub class hmac_sha256:
     """
     HMAC-SHA256 namespace with one-shot and incremental authentication.
     """
 
     @staticmethod
-    def digest(key: bytes, data: bytes) -> bytes:
+    pub def digest(key: bytes, data: bytes) -> bytes:
         """
         Return the HMAC-SHA256 tag for `data` under `key`.
         """
@@ -80,14 +79,14 @@ pub class hmac_sha256:
         return signer.finalize_bytes()
 
     @staticmethod
-    def new(key: bytes) -> HmacSha256Signer:
+    pub def new(key: bytes) -> HmacSha256Signer:
         """
         Create an incremental signer keyed with `key`.
         """
         return HmacSha256Signer(handle=_must_keyed(key))
 
     @staticmethod
-    def verify(key: bytes, data: bytes, tag: bytes) -> bool:
+    pub def verify(key: bytes, data: bytes, tag: bytes) -> bool:
         """
         Return whether `tag` authenticates `data` under `key`, comparing in constant time.
 

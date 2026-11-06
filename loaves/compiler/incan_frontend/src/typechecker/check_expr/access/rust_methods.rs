@@ -118,6 +118,7 @@ impl TypeChecker {
             crate::typechecker::type_info::RustCheckedCall {
                 storage: None,
                 source_type_parameters: self.native_call_type_parameters(),
+                signature_loans: Self::native_signature_loan_identities(&method.signature),
                 receiver_adjustments: Vec::new(),
                 path: format!("{callee_owner}::{}", method.name),
                 type_arguments,
@@ -227,8 +228,10 @@ impl TypeChecker {
     }
 
     /// Infer impl and open method binders, then preserve validated written method selections over source projections.
-    /// The selecting caller owns binder roles; `_` and unknown arguments leave inference unchanged. Rechecking an
-    /// original signature must not replace explicit unsized Rust text with the owned source string passed by borrow.
+    /// The selecting caller owns binder roles; `_` and unknown arguments leave inference unchanged. An instantiated
+    /// impl Self is authoritative for its own binders: a source-facing provisional result such as `Option[&T]` must
+    /// not conflict with `Option<&T>::copied` and hide the receiver's exact `T`. Rechecking an original signature must
+    /// not replace explicit unsized Rust text with the owned source string passed by borrow.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn rust_method_bindings(
         &self,
@@ -260,11 +263,23 @@ impl TypeChecker {
                 other => other,
             };
             let template = self.native_rust_signature_type(template, path);
+            let mut receiver_bindings = HashMap::new();
             self.infer_type_param_bindings(
                 &self.rust_inference_type(&template, native_parameters),
                 &self.rust_inference_type(&self.rust_closed_owner(receiver, owner, path), &[]),
-                &mut bindings,
+                &mut receiver_bindings,
             );
+            for parameter in &method.impl_type_params {
+                if let Some(argument) = receiver_bindings
+                    .remove(parameter)
+                    .filter(|argument| !matches!(argument, ResolvedType::Unknown | ResolvedType::CallSiteInfer))
+                    .filter(|argument| {
+                        !Self::mentions_foreign_type_variable(argument, &self.native_call_type_parameters())
+                    })
+                {
+                    bindings.insert(parameter.clone(), argument);
+                }
+            }
         }
         if let Some(written) = self.type_info.calls.call_site_monomorph_type_args.get(&span)
             && !written_method_parameters.is_empty()

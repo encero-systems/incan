@@ -47,7 +47,8 @@ from operators import operand_type
 from closure_lifting import synthesize
 from method_calls import instantiated_method_body, method_ordinary_operands, source_method_symbol
 from callable_calls import emit_selected_body_call, lower_callable_result
-from call_arguments import ordered_slot_operands
+from call_arguments import call_parameter_type, has_defaulted_slots, ordered_slot_operands
+from defaults import library_default_arguments
 from static_storage import computed_static_type
 from list_methods import call_destination
 
@@ -71,13 +72,16 @@ pub def lower_static_sdk_method(
                     return Err("unsupported Body IR explicit input through a computed static SDK method")
         None => pass
 
-    if len(read.place.projection) != 0 or len(arguments) != len(delegation.parameters):
+    if len(read.place.projection) != 0 or len(arguments) == 0:
         return Err("standard library static method argument count or projected receiver is unsupported")
     if target.loaf_trait != None or len(target.type_args) != 0 or len(delegation.native_type_arguments) != 0:
         return Err("standard library static methods cannot supply explicit trait or method type parameters")
     match target.binding:
         RustArgumentBinding.Resolved(arguments=bound, defaulted_slots=defaults) =>
-            if len(bound) + 1 != len(arguments) or len(defaults) != 0:
+            if (
+                len(bound) + 1 != len(arguments)
+                or len(bound) + len(defaults) + 1 != len(delegation.parameters)
+            ):
                 return Err("standard library static method argument binding is unsupported")
         _ => return Err("standard library static method arguments have no checked binding")
     slot = static_slot(builder.program.statics.as_ref(), global)?
@@ -139,21 +143,21 @@ pub def lower_static_sdk_method(
                 builder.intrinsics,
             )?,
         )
-    mut parameters = [receiver]
-    mut ordinary_types: list[PlanType] = []
-    for position in range(1, len(delegation.parameters)):
-        declared = substitute(delegation.parameters[position], names, closed)?
-        parameter = native_source_type(
-            builder.constructors,
-            builder.nominals,
-            builder.enums,
-            builder.unions,
-            declared,
-            builder.intrinsics,
+    parameters, ordinary_types = static_sdk_parameter_types(builder, delegation, receiver, names, closed)?
+    mut operands: list[Operand] = []
+    if has_defaulted_slots(target.binding):
+        operands = library_default_arguments(
+            module,
+            builder,
+            delegation,
+            target.binding,
+            arguments[1:],
+            ordinary_types,
+            span,
+            1,
         )?
-        parameters.append(parameter)
-        ordinary_types.append(parameter)
-    operands = ordered_slot_operands(builder, target.binding, arguments, ordinary_types, span, 1)?
+    else:
+        operands = ordered_slot_operands(builder, target.binding, arguments, ordinary_types, span, 1)?
     name = f"{builder.name}__incan_static_sdk_{slot}_{len(builder.synthesized)}"
     builder.synthesized.append(static_sdk_forwarder(name, path, type_arguments, parameters, result, span))
     builder.externals.append(
@@ -162,6 +166,34 @@ pub def lower_static_sdk_method(
     initialize_module_statics(builder, static_owner(builder.program.statics.as_ref()[slot]), span)
     output = call_destination(builder, destination, result, span)?
     return lower_callable_result(builder, CalleeKind.StaticMethod(slot, name), operands, output, result, span)
+
+
+def static_sdk_parameter_types(
+    mut builder: Builder,
+    delegation: &RustLoafCallable,
+    receiver: PlanType,
+    names: list[str],
+    closed: list[RustType],
+) -> Result[tuple[list[PlanType], list[PlanType]], str]:
+    """Close ordinary static-method parameters and retain the declaration frame's passing representation."""
+    mut parameters = [receiver]
+    mut ordinary_types: list[PlanType] = []
+    for position in range(1, len(delegation.parameters)):
+        declared = substitute(delegation.parameters[position], names, closed)?
+        mut parameter = native_source_type(
+            builder.constructors,
+            builder.nominals,
+            builder.enums,
+            builder.unions,
+            declared,
+            builder.intrinsics,
+        )?
+        match delegation.declaration_frame():
+            Some(frame) => parameter = call_parameter_type(builder, frame, frame.params[position])?
+            None => pass
+        parameters.append(parameter)
+        ordinary_types.append(parameter)
+    return Ok((parameters, ordinary_types))
 
 
 def static_sdk_receiver(

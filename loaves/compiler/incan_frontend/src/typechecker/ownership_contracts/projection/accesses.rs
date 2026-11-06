@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use incan_lang::lang::surface::iterator_methods::{self, IteratorMethodId};
 use incan_lang::lang::types::ownership::OwnershipMode;
 use incan_semantics_core::{HirSourceSpan, IncanInputAccess};
 
@@ -180,6 +181,135 @@ impl SourceAccesses<'_, '_> {
             .checked_input_copy_value(self.proof.canonical_owner(), ty)
     }
 
+    /// Return whether the producer retained an unclaimed source access at this expression.
+    fn has_access(&self, span: HirSourceSpan) -> bool {
+        self.by_span
+            .get(&span)
+            .is_some_and(|indices| indices.iter().any(|index| !self.claimed.contains(index)))
+    }
+
+    /// Replay a source whose lazy result may borrow a place, carry existing dependencies or own a temporary.
+    fn retained_source(&mut self, expression: &Spanned<Expr>, escaping: bool) -> Result<(), &'static str> {
+        if let Some((place, through)) = self.place(expression)? {
+            let moved = self.by_span.get(&expression.span).is_some_and(|indices| {
+                indices.iter().any(|index| {
+                    matches!(&self.proof.graph.nodes[*index].event,
+                        flow::Event::Access {
+                            place: actual,
+                            access: flow::Access::Move,
+                            through: actual_through,
+                        } if actual == &place && *actual_through == through)
+                })
+            });
+            if moved {
+                self.place_evaluation(expression)?;
+                return self.access(expression.span, &place, through, flow::Access::Move);
+            }
+            if self.has_access(expression.span) {
+                return self.expression(expression, false);
+            }
+            return self.place_evaluation(expression);
+        }
+        self.expression(expression, escaping)
+    }
+
+    /// Claim every lazy-result dependency read retained at one canonically selected terminal call.
+    fn terminal_dependencies(&mut self, span: HirSourceSpan) -> Result<(), &'static str> {
+        let dependencies = self
+            .by_span
+            .get(&span)
+            .into_iter()
+            .flatten()
+            .filter_map(|index| match &self.proof.graph.nodes[*index].event {
+                flow::Event::Access {
+                    place,
+                    access: flow::Access::Read,
+                    through: Some(loan),
+                } => Some((place.clone(), *loan)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        for (place, loan) in dependencies {
+            self.access(span, &place, Some(loan), flow::Access::Read)?;
+        }
+        Ok(())
+    }
+
+    /// Replay the producer policy for one canonical lazy-builtin call without inventing an explicit invocation.
+    fn retained_iterator_call(
+        &mut self,
+        receiver: &Spanned<Expr>,
+        arguments: &[CallArg],
+        method: IteratorMethodId,
+        span: HirSourceSpan,
+        escaping: bool,
+    ) -> Result<(), &'static str> {
+        self.retained_source(receiver, escaping)?;
+        for (index, argument) in arguments.iter().enumerate() {
+            let value = match argument {
+                CallArg::Positional(value) | CallArg::Named(_, value) => value,
+                _ => return Err("source access needs fixed iterator arguments"),
+            };
+            let carries_iterable = index == 0 && matches!(method, IteratorMethodId::Zip | IteratorMethodId::Chain);
+            if carries_iterable {
+                self.retained_source(value, false)?;
+            } else if !matches!(
+                self.proof.facts.expr_type(value.span),
+                Some(crate::symbols::ResolvedType::Function(..))
+            ) {
+                self.expression(value, false)?;
+            }
+        }
+        if iterator_methods::is_terminal(method) {
+            self.terminal_dependencies(span)?;
+        }
+        Ok(())
+    }
+
+    /// Evaluate the index operands of one stored place without reading the place itself. Field and grouping
+    /// projections add no runtime value evaluation, while every index expression runs once from left to right.
+    fn place_evaluation(&mut self, expression: &Spanned<Expr>) -> Result<(), &'static str> {
+        match &expression.node {
+            Expr::Ident(_) | Expr::SelfExpr => Ok(()),
+            Expr::Paren(base) | Expr::Field(base, _) => self.place_evaluation(base),
+            Expr::Index(base, index) => {
+                self.place_evaluation(base)?;
+                self.expression(index, false)
+            }
+            Expr::MethodCall(..) if super::super::builtins::byte_slice_view(self.proof.facts, expression).is_some() => {
+                self.place_evaluation(
+                    super::super::builtins::byte_slice_view(self.proof.facts, expression)
+                        .ok_or("byte slice view has no checked receiver")?,
+                )
+            }
+            Expr::Call(..) | Expr::MethodCall(..) if self.place(expression)?.is_some() => {
+                self.expression(expression, false)
+            }
+            _ => Err("source access place has an unsupported evaluation"),
+        }
+    }
+
+    /// Match one stored-place read or move, including dependencies held by an owned aggregate local.
+    fn stored_place_access(&mut self, expression: &Spanned<Expr>, consume: bool) -> Result<(), &'static str> {
+        self.place_evaluation(expression)?;
+        let (place, through) = self.place(expression)?.ok_or("source access has no stored place")?;
+        if let flow::Root::Binding(root) = &place.root
+            && let Some(loans) = self.proof.graph.dependent_locals.get(root)
+        {
+            let loans = loans.clone();
+            self.closure_capture_accesses(expression.span, &loans)?;
+        }
+        let access = if consume
+            && (through.is_some() || self.constrained.contains(&place.root))
+            && !self.copy_value(expression)?
+        {
+            flow::Access::Move
+        } else {
+            flow::Access::Read
+        };
+        self.access(expression.span, &place, through, access)
+    }
+
     /// Visit a checked invocation's arguments in its retained order. A borrowed stored place evaluates its address;
     /// an owned argument constrains its root and is consumed.
     fn invocation_arguments(
@@ -207,8 +337,11 @@ impl SourceAccesses<'_, '_> {
                     }
                     self.expression(value, true)?;
                 }
-                IncanInputAccess::Shared | IncanInputAccess::Exclusive if source.is_some() => {}
-                IncanInputAccess::Shared | IncanInputAccess::Exclusive => self.expression(value, true)?,
+                IncanInputAccess::Shared | IncanInputAccess::InferredShared | IncanInputAccess::Exclusive
+                    if source.is_some() => {}
+                IncanInputAccess::Shared | IncanInputAccess::InferredShared | IncanInputAccess::Exclusive => {
+                    self.expression(value, true)?
+                }
                 IncanInputAccess::Inferred => self.expression(value, false)?,
             }
         }
@@ -219,17 +352,8 @@ impl SourceAccesses<'_, '_> {
     /// evaluates its address, not its value; fresh borrowed arguments still evaluate their nested value normally.
     fn expression(&mut self, expression: &Spanned<Expr>, consume: bool) -> Result<(), &'static str> {
         match &expression.node {
-            Expr::Ident(_) | Expr::SelfExpr | Expr::Field(_, _) => {
-                let (place, through) = self.place(expression)?.ok_or("source access has no stored place")?;
-                let access = if consume
-                    && (through.is_some() || self.constrained.contains(&place.root))
-                    && !self.copy_value(expression)?
-                {
-                    flow::Access::Move
-                } else {
-                    flow::Access::Read
-                };
-                self.access(expression.span, &place, through, access)?;
+            Expr::Ident(_) | Expr::SelfExpr | Expr::Field(_, _) | Expr::Index(_, _) => {
+                self.stored_place_access(expression, consume)?
             }
             Expr::Literal(_) => {}
             Expr::Paren(inner) | Expr::Unary(_, inner) => self.expression(inner, consume)?,
@@ -255,93 +379,15 @@ impl SourceAccesses<'_, '_> {
                     self.expression(value, false)?;
                 }
             }
-            // A builtin list method evaluates its arguments, then reads or writes its receiver place in place.
-            Expr::MethodCall(receiver, method, _, arguments)
-                if super::super::builtins::list_method_writes(self.proof.facts, receiver, method, expression.span)
-                    .is_some() =>
-            {
-                let writes =
-                    super::super::builtins::list_method_writes(self.proof.facts, receiver, method, expression.span)
-                        == Some(true);
-                let (place, through) = self
-                    .place(receiver)?
-                    .ok_or("source list method has no stored receiver")?;
-                for argument in arguments {
-                    let CallArg::Positional(value) = argument else {
-                        return Err("source access needs positional list method arguments");
-                    };
-                    self.expression(value, false)?;
-                }
-                let access = if writes {
-                    flow::Access::Write
-                } else {
-                    flow::Access::Read
-                };
-                self.access(expression.span, &place, through, access)?;
+            Expr::ListComp(comprehension) => self.comprehension(&comprehension.clauses, &[&comprehension.expr])?,
+            Expr::DictComp(comprehension) => {
+                self.comprehension(&comprehension.clauses, &[&comprehension.key, &comprehension.value])?
             }
-            // A native associated function written on its type has no receiver; its arguments are evaluated as written.
-            Expr::MethodCall(_, _, _, arguments) if self.proof.facts.native_associated_call(expression.span) => {
-                let invocation = self
-                    .proof
-                    .graph
-                    .invocations
-                    .get(&expression.span)
-                    .ok_or("source access native call has no checked invocation")?;
-                self.invocation_arguments(invocation, arguments)?;
-            }
+            Expr::Generator(generator) => self.generator_access(generator, consume)?,
             Expr::MethodCall(receiver, _, _, arguments) => {
-                // A checked receiver is borrowed in place: evaluating it reads its address, not its value.
-                let invocation = self
-                    .proof
-                    .graph
-                    .invocations
-                    .get(&expression.span)
-                    .ok_or("source access method call has no checked invocation")?;
-                if invocation.receiver.is_none() {
-                    return Err("source access method receiver has no stored place");
-                }
-                // A chained receiver is an inner checked view call, whose own arguments are evaluated first, or `?` on
-                // a local still holding one.
-                if self.place(receiver)?.is_none() {
-                    let inner = super::super::builtins::view_call(receiver);
-                    if !self.proof.graph.invocations.contains_key(&inner.span)
-                        && self.proof.carrier_loan(inner).is_none()
-                    {
-                        return Err("source access method receiver has no stored place");
-                    }
-                    self.expression(receiver, false)?;
-                }
-                self.invocation_arguments(invocation, arguments)?;
+                self.method_access(expression, receiver, arguments, consume)?
             }
-            // A closure local's call evaluates its arguments, then uses the borrow the closure holds.
-            Expr::Call(callee, _, arguments) if self.closure_callee(callee).is_some() => {
-                for argument in arguments {
-                    let CallArg::Positional(value) = argument else {
-                        return Err("source access closure call needs positional arguments");
-                    };
-                    self.expression(value, false)?;
-                }
-                let loans: Vec<_> = self
-                    .closure_callee(callee)
-                    .into_iter()
-                    .flat_map(|closure| closure.loans.iter().map(|(_, id)| *id))
-                    .collect();
-                self.closure_capture_accesses(expression.span, &loans)?;
-            }
-            Expr::Call(_, _, arguments) => {
-                if let Some(invocation) = self.proof.graph.invocations.get(&expression.span) {
-                    self.invocation_arguments(invocation, arguments)?;
-                } else {
-                    // The preceding operation/call coverage accepts only checked builtin observers and complete
-                    // constructors on this route; neither evaluates its callee identifier as a stored value.
-                    for argument in arguments {
-                        let (CallArg::Positional(value) | CallArg::Named(_, value)) = argument else {
-                            return Err("source access needs fixed call arguments");
-                        };
-                        self.expression(value, false)?;
-                    }
-                }
-            }
+            Expr::Call(callee, _, arguments) => self.call_access(expression, callee, arguments)?,
             // `await` suspends on its call, which is evaluated as written.
             Expr::Surface(surface) if super::super::builtins::awaited(surface).is_some() => {
                 if let Some(awaited) = super::super::builtins::awaited(surface) {
@@ -349,6 +395,121 @@ impl SourceAccesses<'_, '_> {
                 }
             }
             _ => return Err("source access coverage requires the supported expression profile"),
+        }
+        Ok(())
+    }
+
+    /// Validate a generator's eager source; its later clauses execute only when a terminal reader advances it.
+    fn generator_access(&mut self, generator: &crate::ast::GeneratorExpr, consume: bool) -> Result<(), &'static str> {
+        let Some(crate::ast::ComprehensionClause::For { iter, .. }) = generator.clauses.first() else {
+            return Err("source access requires a generator source");
+        };
+        self.retained_source(iter, consume)
+    }
+
+    /// Validate one method call according to its selected lazy, builtin-list, native or ordinary invocation policy.
+    fn method_access(
+        &mut self,
+        expression: &Spanned<Expr>,
+        receiver: &Spanned<Expr>,
+        arguments: &[CallArg],
+        consume: bool,
+    ) -> Result<(), &'static str> {
+        if let Some(iterator) = super::super::builtins::retained_iterator_method(self.proof.facts, expression.span) {
+            return self.retained_iterator_call(receiver, arguments, iterator, expression.span, consume);
+        }
+        if let Some(writes) = super::super::builtins::list_method_writes(self.proof.facts, expression.span) {
+            let (place, through) = self
+                .place(receiver)?
+                .ok_or("source list method has no stored receiver")?;
+            for argument in arguments {
+                let CallArg::Positional(value) = argument else {
+                    return Err("source access needs positional list method arguments");
+                };
+                self.expression(value, false)?;
+            }
+            let access = if writes {
+                flow::Access::Write
+            } else {
+                flow::Access::Read
+            };
+            return self.access(expression.span, &place, through, access);
+        }
+        let invocation = self
+            .proof
+            .graph
+            .invocations
+            .get(&expression.span)
+            .ok_or("source access method call has no checked invocation")?;
+        if self.proof.facts.native_associated_call(expression.span) {
+            return self.invocation_arguments(invocation, arguments);
+        }
+        if invocation.receiver_owned {
+            self.expression(receiver, true)?;
+            return self.invocation_arguments(invocation, arguments);
+        }
+        if invocation.receiver.is_none() {
+            return Err("source access method receiver has no stored place");
+        }
+        self.fresh_method_receiver(receiver, invocation)?;
+        self.invocation_arguments(invocation, arguments)
+    }
+
+    /// Evaluate a non-place method receiver through the temporary or chained binding loan selected by checking.
+    fn fresh_method_receiver(
+        &mut self,
+        receiver: &Spanned<Expr>,
+        invocation: &flow::Invocation,
+    ) -> Result<(), &'static str> {
+        if self.place(receiver)?.is_some() {
+            return Ok(());
+        }
+        let loan = invocation
+            .receiver
+            .and_then(|loan| self.proof.graph.loans.get(loan.0))
+            .ok_or("source access method receiver has no checked loan")?;
+        match &loan.source.root {
+            flow::Root::Temporary { .. } => self.expression(receiver, true),
+            flow::Root::Binding(_) => {
+                let inner = super::super::builtins::view_call(receiver);
+                if !self.proof.graph.invocations.contains_key(&inner.span) && self.proof.carrier_loan(inner).is_none() {
+                    return Err("source access method receiver has no stored place");
+                }
+                self.expression(receiver, false)
+            }
+        }
+    }
+
+    /// Validate closure calls from their capture record and every other call from its selected invocation or builtin
+    /// operands.
+    fn call_access(
+        &mut self,
+        expression: &Spanned<Expr>,
+        callee: &Spanned<Expr>,
+        arguments: &[CallArg],
+    ) -> Result<(), &'static str> {
+        if self.closure_callee(callee).is_some() {
+            let loans: Vec<_> = self
+                .closure_callee(callee)
+                .into_iter()
+                .flat_map(|closure| closure.loans.iter().map(|(_, id)| *id))
+                .collect();
+            for argument in arguments {
+                let CallArg::Positional(value) = argument else {
+                    return Err("source access closure call needs positional arguments");
+                };
+                self.expression(value, false)?;
+            }
+            return self.closure_capture_accesses(expression.span, &loans);
+        }
+        if let Some(invocation) = self.proof.graph.invocations.get(&expression.span) {
+            return self.invocation_arguments(invocation, arguments);
+        }
+        for argument in arguments {
+            let (CallArg::Positional(value) | CallArg::Named(_, value)) = argument else {
+                return Err("source access needs fixed call arguments");
+            };
+            self.expression(value, false)?;
         }
         Ok(())
     }
@@ -419,6 +580,31 @@ impl SourceAccesses<'_, '_> {
         }
         // A new unannotated local whose loan is its initializer call's result aliases a returned view: the call is
         // evaluated, and the binding takes a borrow rather than a value. `?` takes a carried view out of its call.
+        if mode.is_none()
+            && root.declaration_span == assignment.name_span
+            && let Some(loans) = self.proof.graph.dependent_locals.get(&root)
+        {
+            let sources = match &assignment.value.node {
+                Expr::List(entries) => entries
+                    .iter()
+                    .filter_map(|entry| match entry {
+                        ListEntry::Element(value) => Some(self.proof.view_call_span(value)),
+                        ListEntry::Spread(_) => None,
+                    })
+                    .collect::<Vec<_>>(),
+                _ => vec![self.proof.view_call_span(&assignment.value)],
+            };
+            if loans.iter().any(|id| {
+                self.proof
+                    .graph
+                    .loans
+                    .get(id.0)
+                    .is_none_or(|loan| !sources.contains(&loan.span))
+            }) {
+                return Err("dependent local differs from its initializer call");
+            }
+            return self.expression(&assignment.value, false);
+        }
         if mode.is_none()
             && root.declaration_span == assignment.name_span
             && let Some(id) = self.proof.graph.local_loans.get(&root)
@@ -680,9 +866,34 @@ impl SourceAccesses<'_, '_> {
     /// A loop evaluates its iterable once; a loop that takes the list's items consumes it. Each poll of a stored
     /// iterable reads it through the loop's own shared loan, created over that exact place at the iterable.
     fn for_loop(&mut self, loop_: &ForStmt) -> Result<(), &'static str> {
-        let takes_items = self.proof.facts.for_loop_takes_items(loop_.iter.span);
-        let iterable = if takes_items { None } else { self.place(&loop_.iter)? };
-        self.expression(&loop_.iter, takes_items)?;
+        self.for_iterable(&loop_.iter)?;
+        self.block(&loop_.body)?;
+        Ok(())
+    }
+
+    /// Validate an eager comprehension's nested source loops, filters and produced values in evaluation order.
+    fn comprehension(
+        &mut self,
+        clauses: &[crate::ast::ComprehensionClause],
+        output: &[&Spanned<Expr>],
+    ) -> Result<(), &'static str> {
+        for clause in clauses {
+            match clause {
+                crate::ast::ComprehensionClause::For { iter, .. } => self.for_iterable(iter)?,
+                crate::ast::ComprehensionClause::If(condition) => self.expression(condition, false)?,
+            }
+        }
+        for value in output {
+            self.expression(value, false)?;
+        }
+        Ok(())
+    }
+
+    /// Validate one eager-loop iterable evaluation and its retained poll without inferring either access.
+    fn for_iterable(&mut self, iter: &Spanned<Expr>) -> Result<(), &'static str> {
+        let takes_items = self.proof.facts.for_loop_takes_items(iter.span);
+        let iterable = if takes_items { None } else { self.place(iter)? };
+        self.expression(iter, takes_items)?;
         if let Some((place, through)) = iterable {
             let loan = self
                 .proof
@@ -690,15 +901,14 @@ impl SourceAccesses<'_, '_> {
                 .loans
                 .iter()
                 .position(|loan| {
-                    loan.span == loop_.iter.span
+                    loan.span == iter.span
                         && loan.source == place
                         && loan.parent == through
                         && loan.kind == flow::LoanKind::Shared
                 })
                 .ok_or("loop poll has no iteration loan")?;
-            self.access(loop_.iter.span, &place, Some(flow::LoanId(loan)), flow::Access::Read)?;
+            self.access(iter.span, &place, Some(flow::LoanId(loan)), flow::Access::Read)?;
         }
-        self.block(&loop_.body)?;
         Ok(())
     }
 }

@@ -183,7 +183,7 @@ pub(super) fn model_refusal_feature(model: &incan_frontend::ast::ModelDecl) -> S
     }
 
     // ---- Method facts ----
-    if has_refused_method_decorator(&model.methods, false) {
+    if has_refused_method_decorator(&model.methods) {
         return "decorated methods".to_owned();
     }
 
@@ -214,7 +214,7 @@ pub(super) fn class_refusal_feature(class: &incan_frontend::ast::ClassDecl) -> S
     }
 
     // ---- Method facts ----
-    if has_refused_method_decorator(&class.methods, false) {
+    if has_refused_method_decorator(&class.methods) {
         return "decorated methods".to_owned();
     }
 
@@ -222,25 +222,16 @@ pub(super) fn class_refusal_feature(class: &incan_frontend::ast::ClassDecl) -> S
     refused_decorator_feature(&class.decorators).unwrap_or_else(|| "unsupported declaration shape".to_owned())
 }
 
-/// Report executable method decorators outside the admitted builtin markers. A trait may also retain a plain
-/// `@rust.extern` abstract slot: it has no body or initialization effect, and using it still requires a checked
-/// implementation or native intrinsic. Models and classes receive no such exemption.
+/// Report executable method decorators outside the admitted builtin markers.
 pub(super) fn has_refused_method_decorator(
     methods: &[incan_frontend::ast::Spanned<incan_frontend::ast::MethodDecl>],
-    allow_abstract_extern: bool,
 ) -> bool {
     methods.iter().any(|method| {
-        method.node.decorators.iter().any(|decorator| {
-            if incan_frontend::body_ir::is_direct_replacement_method_decorator(&decorator.node) {
-                return false;
-            }
-            !(allow_abstract_extern
-                && method.node.body.is_none()
-                && decorator.node.args.is_empty()
-                && decorator.node.type_args.is_empty()
-                && incan_lang::lang::decorators::from_segments(&decorator.node.path.segments)
-                    == Some(incan_lang::lang::decorators::DecoratorId::RustExtern))
-        })
+        method
+            .node
+            .decorators
+            .iter()
+            .any(|decorator| !incan_frontend::body_ir::is_direct_replacement_method_decorator(&decorator.node))
     })
 }
 
@@ -248,10 +239,9 @@ pub(super) fn has_refused_method_decorator(
 pub(super) fn refused_decorator_feature(
     decorators: &[incan_frontend::ast::Spanned<incan_frontend::ast::Decorator>],
 ) -> Option<String> {
-    let decorator = decorators.iter().find(|decorator| {
-        !incan_frontend::body_ir::is_direct_replacement_model_derive(&decorator.node)
-            && !incan_frontend::body_ir::is_lint_suppression_decorator(&decorator.node)
-    })?;
+    let decorator = decorators
+        .iter()
+        .find(|decorator| !incan_frontend::body_ir::is_direct_replacement_model_derive(&decorator.node))?;
     let arguments = decorator
         .node
         .args
@@ -316,7 +306,7 @@ pub(super) fn trait_refusal_feature(item: &incan_frontend::ast::TraitDecl) -> Op
         return Some("property defaults");
     }
     // Ordinary markers follow nominal rules; a trait's abstract extern slot carries no executable decorator effect.
-    if has_refused_method_decorator(&item.methods, true) {
+    if has_refused_method_decorator(&item.methods) {
         return Some("decorated methods");
     }
     None

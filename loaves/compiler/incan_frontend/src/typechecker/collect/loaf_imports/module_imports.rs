@@ -33,6 +33,10 @@ impl TypeChecker {
     }
 
     /// The manifest of the Loaf indexed as `library`, or `None` after refusing the unknown key.
+    ///
+    /// Explicit ownership payloads are published with the provider's source spellings. They are remapped through
+    /// each callable's checked declaration scope before entering checked facts, exactly as its signature is. A fixed
+    /// nominal payload therefore remains exact without depending on a facade alias or accepting compatibility.
     pub(in crate::typechecker::collect) fn loaf_manifest_or_refuse(
         &mut self,
         library: &str,
@@ -44,7 +48,20 @@ impl TypeChecker {
             if manifest.manifest_format == crate::library_manifest::OWNERSHIP_MANIFEST_FORMAT {
                 match crate::library_manifest::ownership::exported_contracts(&manifest) {
                     Ok(contracts) => {
-                        for (identity, contract) in contracts {
+                        let root_remapping = self.public_library_canonical_type_remapping(library, &manifest);
+                        self.register_pub_library_declarations(library, &manifest, &root_remapping);
+                        for (identity, mut contract) in contracts {
+                            let mut type_remapping = root_remapping.clone();
+                            if let SymbolOrigin::Package { module_path, .. } = &identity.origin {
+                                type_remapping.extend(self.pub_library_declaration_scope(
+                                    library,
+                                    &manifest,
+                                    module_path,
+                                ));
+                            }
+                            for mode in &mut contract.modes {
+                                Self::remap_resolved_type_with_import_aliases(&mut mode.underlying, &type_remapping);
+                            }
                             self.type_info
                                 .declarations
                                 .ownership_contracts
@@ -305,8 +322,7 @@ impl TypeChecker {
             .collect::<Vec<_>>()
             .join(".");
         if let Some(surface_type) = surface_types::from_str(&item.name)
-            && surface_types::stdlib_module_path(surface_type)
-                .is_some_and(|owner| owner == dotted || (dotted == "std.async" && owner.starts_with("std.async.")))
+            && surface_types::is_exported_from_module(surface_type, &dotted)
         {
             self.surface_type_import_bindings
                 .insert(local_name.to_string(), (surface_type, symbol_id));

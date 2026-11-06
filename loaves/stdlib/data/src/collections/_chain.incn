@@ -1,7 +1,7 @@
 """Layered chain maps over insertion-ordered dictionaries for `std.collections`."""
 
-from rust::incan_std_core::errors import raise_key_error
-from rust::incan_std_core::collections import list_get
+from rust::incan_std_primitives::errors import raise_key_error
+from rust::incan_std_primitives::collections import list_get
 from crate.collections._values import _clone_referent
 from crate.collections._maps import _MapEntry, OrderedDict
 
@@ -28,7 +28,7 @@ pub model ChainMap[K with (Clone, Eq), V with Clone]:
         return ChainMap(layers=[OrderedDict(entries=[])])
 
     @staticmethod
-    def from_layers(layers: list[OrderedDict[K, V]]) -> Self:
+    pub def from_layers(layers: list[OrderedDict[K, V]]) -> Self:
         """
         Create a chain map from mapping layers.
 
@@ -43,7 +43,7 @@ pub model ChainMap[K with (Clone, Eq), V with Clone]:
         return ChainMap(layers=layers)
 
     @staticmethod
-    def from_field_layers(layers: list[list[Tuple[K, V]]]) -> Self:
+    pub def from_field_layers(layers: list[list[Tuple[K, V]]]) -> Self:
         """
         Create a chain map from read-only field overlay layers.
 
@@ -111,7 +111,7 @@ pub model ChainMap[K with (Clone, Eq), V with Clone]:
         """
         self.set(key, value)
 
-    def set(mut self, key: K, value: V) -> None:
+    pub def set(mut self, key: K, value: V) -> None:
         """
         Write a key to the highest-precedence mapping layer.
 
@@ -126,7 +126,7 @@ pub model ChainMap[K with (Clone, Eq), V with Clone]:
         layer.set(key, value)
         self.layers[0] = layer
 
-    def push_layer(mut self, layer: OrderedDict[K, V]) -> None:
+    pub def push_layer(mut self, layer: OrderedDict[K, V]) -> None:
         """
         Add a highest-precedence layer.
 
@@ -139,7 +139,7 @@ pub model ChainMap[K with (Clone, Eq), V with Clone]:
             self.layers.swap(index, index - 1)
             index -= 1
 
-    def push_field_layer(mut self, layer: list[Tuple[K, V]]) -> None:
+    pub def push_field_layer(mut self, layer: list[Tuple[K, V]]) -> None:
         """
         Add a highest-precedence field overlay layer.
 
@@ -148,7 +148,7 @@ pub model ChainMap[K with (Clone, Eq), V with Clone]:
         """
         self.push_layer(OrderedDict.from_items(layer))
 
-    def pop_layer(mut self) -> OrderedDict[K, V]:
+    pub def pop_layer(mut self) -> OrderedDict[K, V]:
         """
         Remove and return the highest-precedence layer.
 
@@ -161,7 +161,7 @@ pub model ChainMap[K with (Clone, Eq), V with Clone]:
         self.layers.remove(0)
         return layer
 
-    def contains(self, key: K) -> bool:
+    pub def contains(self, key: K) -> bool:
         """
         Check whether a key appears in any layer.
 
@@ -176,7 +176,7 @@ pub model ChainMap[K with (Clone, Eq), V with Clone]:
                 return true
         return false
 
-    def keys(self) -> list[K]:
+    pub def keys(self) -> list[K]:
         """
         Return visible keys.
 
@@ -185,7 +185,7 @@ pub model ChainMap[K with (Clone, Eq), V with Clone]:
         """
         return _chain_keys(self.layers)
 
-    def items(self) -> list[Tuple[K, V]]:
+    pub def items(self) -> list[Tuple[K, V]]:
         """
         Return visible items.
 

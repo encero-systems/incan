@@ -35,9 +35,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return value;
         };
         let ty = self.resolve_ty(expression.span);
+        let selected_view_call = self
+            .input_body
+            .as_ref()
+            .ok()
+            .and_then(|proof| proof.as_ref())
+            .map(|proof| proof.view_call_span(expression))
+            .and_then(|span| self.type_info.selected_call_view(span))
+            .is_some();
         if read.fact == bir::OwnershipFact::Borrow
             && !ty.abi_v0_facts().ownership.is_trivially_copy()
-            && matches!(self.checked_borrow_source(expression), Some(Ok(_)))
+            && (matches!(self.checked_borrow_source(expression), Some(Ok(_))) || selected_view_call)
         {
             // The checked loan includes the operation's consumption point, so later operands cannot invalidate
             // this storage. Materializing an owned text temporary here would silently repair the explicit borrow.
@@ -351,7 +359,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             native_trait_delegation: None,
             name: method.to_string(),
             intrinsic_carrier: None,
-            reflection: None,
+            operation: None,
             loaf_trait: None,
             trait_arguments: self
                 .checked_trait_arguments(self.type_info.resolved_method_call(span).map(|call| &call.dispatch)),
@@ -492,12 +500,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return true;
         }
         // A builtin collection with no collection helper is *not* refused here. `==` on two lists is the case that
-        // settles it: the Rust-emission backend routes list `+` to `incan_std_core::collections::list_concat`, which
-        // is why representing it as `BinOp::Add` contradicted that backend -- but it emits comparisons as an infix
-        // operator, landing on Rust's `PartialEq` for `Vec`, which is also what Python's element-wise `==` means.
-        // A primitive is therefore the faithful representation there, and refusing it would invent a divergence
-        // between the two backends rather than close one. An operator that genuinely needs a runtime call earns a
-        // helper in `collection_helper_for_binop`, and the check above admits it.
+        // settles it: the Rust-emission backend routes list `+` to `incan_std_primitives::collections::list_concat`,
+        // which is why representing it as `BinOp::Add` contradicted that backend -- but it emits comparisons as
+        // an infix operator, landing on Rust's `PartialEq` for `Vec`, which is also what Python's element-wise
+        // `==` means. A primitive is therefore the faithful representation there, and refusing it would invent
+        // a divergence between the two backends rather than close one. An operator that genuinely needs a
+        // runtime call earns a helper in `collection_helper_for_binop`, and the check above admits it.
         lower_binary_op(op).is_some()
     }
 

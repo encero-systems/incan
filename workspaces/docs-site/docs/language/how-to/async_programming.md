@@ -5,8 +5,8 @@ Incan's language and API contracts include async/await through a Tokio-backed ru
 !!! info "Runtime requirements"
     Complete programs require the compiled async standard package for the selected dev.8 profile. Sections labeled with a compiler limitation illustrate the API rather than a runnable program.
 
-!!! important "Async is import-activated"
-    `async` and `await` are **soft keywords**: they become reserved keywords only after importing `std.async` (for example `import std.async` or `from std.async.time import sleep`).
+!!! important "Async syntax is always available"
+    `async def`, `await`, and `race for <name>:` need no import. Import `std.async` only for library APIs such as `sleep`, `spawn`, channels, and locks.
 
 !!! note "Coming from Python?"
     Incan keeps the familiar `async def` and `await` authoring shape, but it is not an `asyncio` compatibility layer. Task spawning, timeouts, cancellation, and runtime behavior follow Incan's `std.async` contracts and the current Tokio-backed runtime path.

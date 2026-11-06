@@ -3,7 +3,7 @@
 //! The user-facing map is authored in the component's own `collections.incn`; generated `std.collections` modules
 //! splice in [`__incan_ordinal_map_string_fast_impls!`](crate::__incan_ordinal_map_string_fast_impls) for borrowed
 //! string-key lookup and call the key-encoding helpers below. Both hash with xxh3, which is why they live in this
-//! facet rather than in `incan_std_core`: a program that never imports `std.collections` links no hasher.
+//! facet rather than in `incan_std_primitives`: a program that never imports `std.collections` links no hasher.
 
 pub(crate) mod ordinal_map;
 
@@ -36,7 +36,7 @@ pub mod __private {
     /// Encode a decimal `OrdinalKey` into its canonical coefficient/scale payload.
     #[inline]
     #[must_use]
-    pub fn ordinal_key_decimal_bytes(value: &incan_std_core::num::Decimal128) -> [u8; 17] {
+    pub fn ordinal_key_decimal_bytes(value: &incan_std_primitives::num::Decimal128) -> [u8; 17] {
         let mut out = [0u8; 17];
         out[0..16].copy_from_slice(&value.coefficient().to_le_bytes());
         out[16] = value.scale();

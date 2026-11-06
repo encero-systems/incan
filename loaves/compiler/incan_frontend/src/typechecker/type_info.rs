@@ -14,7 +14,7 @@ use crate::symbols::{
     NewtypePrimitiveConstraint, ResolvedType, TypeBoundInfo,
 };
 use incan_lang::interop::{CoercionPolicy, RustFunctionSig};
-use incan_lang::lang::builtins::BuiltinFnId;
+use incan_lang::lang::builtins::{BuiltinFnId, BuiltinMethodId};
 use incan_lang::lang::c_abi::{LinkCapabilityId, ScalarTypeId, link_capability_as_str, scalar_type_as_str};
 use incan_lang::lang::surface::string_methods::StringMethodId;
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeCategory};

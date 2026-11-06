@@ -204,7 +204,7 @@ def receiver_layout(
     return Ok(-1)
 
 
-def validate_getter(declaration: &ValueEnumDeclaration, target: &MethodTarget) -> Result[None, str]:
+def validate_getter(declaration: ValueEnumDeclaration, target: MethodTarget) -> Result[None, str]:
     """Check the synthetic member's complete owner identity rather than trusting the call-site spelling."""
     match target.canonical:
         Some(identity) =>

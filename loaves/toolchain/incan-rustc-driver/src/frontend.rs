@@ -452,6 +452,7 @@ fn lower_compilation_plan(
     published_unions: &mut Vec<NativeUnionDeclaration>,
 ) -> Result<crate::plan::Plan, Box<dyn std::error::Error>> {
     tracing::debug!(target: "incan::invocation", modules = ?program.modules, "checked direct-route Body IR");
+    let kind_name = kind.as_str().to_owned();
     loop {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::lower_program", modules = program.modules.len()).entered();
         let inputs = SourceInputs {
@@ -465,7 +466,7 @@ fn lower_compilation_plan(
             &program.modules,
             inputs,
             program.entry.try_into()?,
-            kind.as_str().to_owned(),
+            &kind_name,
             &mut attempt_unions,
         )
         .inspect_err(|_| receipt.deterministic())?
@@ -516,6 +517,7 @@ fn census_complete(
         return Ok(false);
     }
     let selection = std::env::var("INCAN_DIRECT_CENSUS_BODY").unwrap_or_default();
+    let kind_name = kind.as_str().to_owned();
     let selected = !selection.is_empty();
     let refusals = loop {
         let outcome = program_refusals(
@@ -528,8 +530,8 @@ fn census_complete(
             },
             program.entry.try_into()?,
             false,
-            selection.clone(),
-            kind.as_str().to_owned(),
+            &selection,
+            &kind_name,
         );
         match outcome {
             RefusalPlanning::NeedsRuntime(requirements) => satisfy_runtime_requirements(program, requirements)?,
@@ -548,8 +550,8 @@ fn census_complete(
             },
             program.entry.try_into()?,
             true,
-            selection,
-            kind.as_str().to_owned(),
+            &selection,
+            &kind_name,
         ) {
             RefusalPlanning::Complete(reported) if reported == refusals => {}
             _ => return Err("settled census changed during progress reporting".into()),
@@ -562,24 +564,30 @@ fn census_complete(
     Ok(selected)
 }
 
-/// The crates a consumer must name directly when this library exports attribute macros, else none.
+/// The crates a consumer must name directly when this library publicly reexports an attribute macro, else none.
 ///
-/// rustc expands an attribute macro in the crate that applies it, and the macro's output names the exporting library's
-/// own Rust crates. Those are the library's links except its Loaf links, which a consumer binds as Loaves; the
-/// toolchain's crates are already bound for every unit and are left out by the consumer's Oven.
+/// The checked identity graph names the exact `rust::` target and the ABI payload proves it is an attribute macro.
+/// rustc expands that macro in the consuming crate, so the producer's non-Loaf links must remain available there.
 fn macro_externs(
     manifest: &LibraryManifest,
     externs: &[(String, PathBuf)],
     loaf_links: &BTreeSet<String>,
 ) -> Vec<(String, PathBuf)> {
-    let exports_attribute_macro = manifest.contract_metadata.api.as_ref().is_some_and(|api| {
-        api.modules
-            .iter()
-            .flat_map(|module| &module.declarations)
-            .any(|declaration| {
-                matches!(declaration, incan_frontend::api_metadata::ApiDeclaration::Function(function)
-                    if function.native_attribute.is_some())
-            })
+    let exports_attribute_macro = manifest.contract_metadata.identity_graph.exports.iter().any(|export| {
+        let Some([namespace, _crate_name, rest @ ..]) = export.target_path() else {
+            return false;
+        };
+        if namespace != "rust" || rest.is_empty() {
+            return false;
+        }
+        let path = export.target_path().map(|segments| segments[1..].join("::"));
+        let Some(metadata) = path
+            .as_deref()
+            .and_then(|path| manifest.rust_abi.as_ref().and_then(|abi| abi.get(path)))
+        else {
+            return false;
+        };
+        matches!(&metadata.kind, incan_lang::interop::RustItemKind::Macro(info) if info.is_attribute())
     });
     if !exports_attribute_macro {
         return Vec::new();

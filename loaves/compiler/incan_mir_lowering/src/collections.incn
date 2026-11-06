@@ -22,6 +22,7 @@ from rust::incan_semantics_core::body_ir import (
     OwnershipFact,
 )
 from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive, NumericTypeId
+from rust::incan_lang::lang::surface::dict_methods import DictMethodId as RustDictMethodId
 from tuples import tuple_type, generic_tuple_type
 from models import runtime_storage_marker
 from table_views import borrowed_at
@@ -273,24 +274,24 @@ pub def transfer_collection(
 
 pub def dictionary_method_signature(
     ty: PlanType,
-    member: str,
+    method: RustDictMethodId,
     arity: int,
 ) -> Result[tuple[str, list[PlanType], PlanType], str]:
-    """Select canonical dictionary methods without extending the source method registry."""
+    """Project one typed dictionary operation onto its native runtime signature."""
     match collection_owned(ty):
         PlanType.Dict(key, value) =>
-            if member == "Dict.get":
+            if method == RustDictMethodId.Get:
                 if arity != 3:
-                    return Err(f"unsupported Body IR dictionary method arity {member}")
+                    return Err(f"unsupported Body IR dictionary method arity {method:?}")
                 return Ok(("default", collection_arguments(ty), leaf_type(value)))
             if arity != 1:
-                return Err(f"unsupported Body IR dictionary method arity {member}")
-            if member == "Dict.keys":
+                return Err(f"unsupported Body IR dictionary method arity {method:?}")
+            if method == RustDictMethodId.Keys:
                 return Ok(("keys", [], PlanType.List(key, 1)))
-            if member == "Dict.values":
+            if method == RustDictMethodId.Values:
                 return Ok(("values", [], PlanType.List(value, 1)))
-            return Err(f"unsupported Body IR dictionary Method {member}")
-        _ => return Err(f"unsupported Body IR set Method {member}")
+            return Err(f"unsupported Body IR dictionary Method {method:?}")
+        _ => return Err(f"unsupported Body IR dictionary Method {method:?} on non-dictionary")
 
 
 pub def require_mutable_receiver(arguments: &list[RustArgumentElement]) -> Result[None, str]:

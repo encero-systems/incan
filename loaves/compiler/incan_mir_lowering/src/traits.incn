@@ -260,7 +260,7 @@ def deferred_shadowed_default(body: &Body, concrete: &RustType, arguments: list[
     return false
 
 
-def first_instantiation(retained: list[TraitImplementation], candidate: &TraitImplementation) -> Result[bool, str]:
+def first_instantiation(retained: list[TraitImplementation], candidate: TraitImplementation) -> Result[bool, str]:
     """Report whether this adopter has no instantiation of the default yet; a conflicting second one refuses."""
     for implementation in retained:
         if implementation.owner != candidate.owner:
@@ -382,7 +382,7 @@ def tuple_type_of(elements: list[RustType]) -> RustType:
 
 
 def concrete_self_type(
-    owner: &CanonicalSymbolId,
+    owner: CanonicalSymbolId,
     mut owners: list[NominalDeclaration],
     mut enums: list[RustEnumDeclaration],
 ) -> Result[RustType, str]:
@@ -546,10 +546,56 @@ def owner_method_identity(
                 None => selected = Some(implementation.clone())
     match selected:
         Some(implementation) => canonical = Some(implementation.implementation.clone())
-        None => pass
+        None =>
+            mut needs_declared_fallback = true
+            match canonical:
+                Some(method) => needs_declared_fallback = not method_belongs_to_owner(method, identity)
+                None => pass
+            if needs_declared_fallback:
+                match declared_owner_method(module, identity, str(target.name))?:
+                    Some(implementation) => canonical = Some(implementation)
+                    None => pass
     match canonical:
         Some(identity) => return Ok(identity.clone())
         None => return Err("unsupported Body IR unproven Method")
+
+
+def declared_owner_method(
+    module: &BodyIrModule,
+    owner: &CanonicalSymbolId,
+    name: str,
+) -> Result[Option[CanonicalSymbolId], str]:
+    """Select one retained method body declared directly by the concrete receiver when no trait record names it."""
+    mut selected: Option[CanonicalSymbolId] = None
+    for body_position in range(len(module.bodies)):
+        body = borrowed_at(module.bodies, body_position)
+        match body.canonical:
+            Some(identity) =>
+                if (
+                    identity.origin != owner.origin
+                    or identity.kind != SemanticSourceTargetKind.Method
+                    or identity.declaration_name != name
+                    or identity.declaration_span.start < owner.declaration_span.start
+                    or identity.declaration_span.end > owner.declaration_span.end
+                ):
+                    continue
+                match selected:
+                    Some(previous) =>
+                        if previous != identity:
+                            return Err("unsupported Body IR several declared methods for one receiver slot")
+                    None => selected = Some(identity.clone())
+            None => pass
+    return Ok(selected)
+
+
+def method_belongs_to_owner(method: CanonicalSymbolId, owner: CanonicalSymbolId) -> bool:
+    """Preserve an exact checked overload when its canonical declaration is already inside the receiver owner."""
+    return (
+        method.origin == owner.origin
+        and method.kind == SemanticSourceTargetKind.Method
+        and method.declaration_span.start >= owner.declaration_span.start
+        and method.declaration_span.end <= owner.declaration_span.end
+    )
 
 
 def selected_slot_arguments(
@@ -720,7 +766,7 @@ def receiver_owner(
         Some(_value) => return Ok(None)
 
 
-def receiver_place_type(mut builder: Builder, place: &RustPlace, span: SourceSpan) -> Result[PlanType, str]:
+def receiver_place_type(mut builder: Builder, place: RustPlace, span: SourceSpan) -> Result[PlanType, str]:
     """The carrier a receiver place reads: a static's selected path, a collection element, or a frame model path."""
     match place.global():
         Some(global) => return computed_static_type(builder, place, global)

@@ -1,0 +1,136 @@
+"""Encode a segment's frames and the index entries that locate them."""
+
+from std.primitives import hexlify
+from crate.store.bytes import append_bytes, append_u64
+from crate.store.hash import sha256
+from crate.store.index import Entry, Location
+from crate.store.files import StoreError, failure
+
+const LOCATOR_BYTES: int = 32
+const DIGEST_BYTES: int = 32
+const ENTRY_BYTES: int = 88
+const HEADER_BYTES: int = 16
+pub const KIND_VALUE: int = 0
+pub const KIND_TOMBSTONE: int = 1
+
+
+pub model Write:
+    """One staged write: a value or a tombstone under a full key, with its precondition."""
+
+    pub key: str
+    pub kind: int
+    pub value: bytes
+    pub expect: int
+
+
+pub def fingerprint(data: bytes) -> str:
+    """The 128-bit locator of `data`, as 32 lowercase hexadecimal digits; never an identity on its own."""
+    return hexlify(sha256.digest(data))[:LOCATOR_BYTES]
+
+
+pub def encode_segment(writes: list[Write]) -> Result[bytes, StoreError]:
+    """
+    The canonical bytes of a segment holding `writes`, one frame per distinct key and value.
+
+    Entries are sorted by locator, full key and frame digest; frames follow the directory in that order. No time,
+    location or process state enters the encoding, so equal writes always give equal bytes.
+    """
+    return Ok(encoded_frames(writes)?.data)
+
+
+pub model Encoded:
+    """A segment's bytes and, per write in sorted order, its key and frame location within the segment."""
+
+    pub data: bytes
+    pub keys: list[str]
+    pub offsets: list[int]
+    pub lengths: list[int]
+    pub digests: list[bytes]
+    pub tombstones: list[bool]
+
+
+pub def encoded_frames(writes: list[Write]) -> Result[Encoded, StoreError]:
+    """Encode `writes` canonically and say where each frame lies."""
+    mut frames: Dict[str, bytes] = {}
+    mut kinds: Dict[str, int] = {}
+    mut owners: Dict[str, str] = {}
+    for write in writes:
+        frame = encode_frame(write)?
+        order = fingerprint(write.key.encode("utf-8")) + "\t" + write.key + "\t" + hexlify(sha256.digest(frame))
+        frames[order] = frame
+        kinds[order] = write.kind
+        owners[order] = write.key
+    ordered = sorted([order for order in frames.keys()])
+    mut buffer: list[u8] = []
+    append(buffer, segment_magic())
+    write_u64(buffer, len(ordered))?
+    mut offset = HEADER_BYTES + len(ordered) * ENTRY_BYTES
+    mut result = Encoded(data=b"", keys=[], offsets=[], lengths=[], digests=[], tombstones=[])
+    for order in ordered:
+        frame = frames[order]
+        append(buffer, order[:LOCATOR_BYTES].encode("utf-8"))
+        write_u64(buffer, offset)?
+        write_u64(buffer, len(frame))?
+        append(buffer, sha256.digest(frame))
+        append(buffer, entry_tail(kinds[order]))
+        result.keys.append(owners[order])
+        result.offsets.append(offset)
+        result.lengths.append(len(frame))
+        result.digests.append(sha256.digest(frame))
+        result.tombstones.append(kinds[order] == KIND_TOMBSTONE)
+        offset += len(frame)
+    for order in ordered:
+        append(buffer, frames[order])
+    result.data = buffer
+    return Ok(result)
+
+
+def encode_frame(write: Write) -> Result[bytes, StoreError]:
+    """A frame: the full key's length and bytes, then the value; a tombstone has no value."""
+    key = write.key.encode("utf-8")
+    mut buffer: list[u8] = []
+    write_u64(buffer, len(key))?
+    append(buffer, key)
+    if write.kind == KIND_VALUE:
+        append(buffer, write.value)
+    return Ok(buffer)
+
+
+def entry_tail(kind: int) -> bytes:
+    """The kind byte and the padding that end a directory entry."""
+    if kind == KIND_TOMBSTONE:
+        return b"\x01\x00\x00\x00\x00\x00\x00\x00"
+    return b"\x00\x00\x00\x00\x00\x00\x00\x00"
+
+
+def append(mut buffer: list[u8], data: bytes) -> None:
+    """Append bytes to an encoding buffer."""
+    append_bytes(buffer, data)
+
+
+def write_u64(mut buffer: list[u8], value: int) -> Result[None, StoreError]:
+    """Append one little-endian u64."""
+    return append_u64(buffer, value, "segment").map_err((detail) => failure("format", "segment", detail))
+
+
+pub def leaf_entries(encoded: Encoded, segment: str) -> list[Entry]:
+    """Index entries locating each frame of an encoded segment."""
+    mut result: list[Entry] = []
+    for position in range(len(encoded.keys)):
+        location = Location(
+            segment=segment,
+            offset=encoded.offsets[position],
+            length=encoded.lengths[position],
+            digest=encoded.digests[position],
+            tombstone=encoded.tombstones[position],
+        )
+        result.append(Entry(key=encoded.keys[position], location=Some(location), child=""))
+    return result
+
+
+# ---- Transactions ----
+
+
+def segment_magic() -> bytes:
+    """The header every segment starts with."""
+    return b"INCSEG\x00\x03"

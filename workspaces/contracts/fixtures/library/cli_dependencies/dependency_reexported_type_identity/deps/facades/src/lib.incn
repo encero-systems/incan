@@ -24,6 +24,7 @@ pub from std.io import IoError as BinaryError
 pub from standard import relayed_root, RelayedError
 pub from std.environ import EnvironError, get_as as read_value, EnvironErrorKind as EnvironmentKind
 pub from std.primitives.environ import read as observe_environment
+pub from linked_nodes import LinkedNode, LinkedState
 
 
 pub def format_scalar(value: int) -> int:
@@ -54,3 +55,34 @@ pub def echo[T](value: T) -> T:
 
 pub def echo(value: str, count: int) -> str:
     return value
+
+
+pub model IntegerTarget:
+    pub value: int
+
+
+pub model FloatTarget:
+    pub value: float
+
+
+pub model TraitTarget:
+    pub value: str
+
+
+pub trait TargetKind:
+    def target_name(self) -> str: ...
+
+
+pub def typed_target(value: int, target: Type[int]) -> IntegerTarget:
+    return IntegerTarget(value=value)
+
+
+pub def typed_target(value: int, target: Type[float]) -> FloatTarget:
+    return FloatTarget(value=float(value))
+
+
+pub def typed_target(value: int, target: Type[TargetKind]) -> TraitTarget:
+    return TraitTarget(value=f"trait {value}")
+
+
+pub safe_typed_target = alias typed_target

@@ -34,10 +34,10 @@ def relay[U](items: list[U]) -> int:
 class Index[K, V]:
     entries: dict[K, V]
 
-    def put(mut self, key: K, value: V) -> None:
+    pub def put(mut self, key: K, value: V) -> None:
         self.entries[key] = value
 
-    def size(self) -> int:
+    pub def size(self) -> int:
         return len(self.entries)
 
 

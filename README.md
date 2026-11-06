@@ -177,7 +177,7 @@ The docs site is published at [incan.io](https://incan.io); its source lives in 
 Build/serve locally:
 
 ```bash
-make docs-build
+make docs
 make docs-serve
 ```
 

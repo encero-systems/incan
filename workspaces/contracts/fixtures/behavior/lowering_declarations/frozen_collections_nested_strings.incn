@@ -9,7 +9,7 @@
 #   2
 #   2
 
-from rust::incan_std_core::frozen import FrozenList as NativeFrozenList, FrozenDict as NativeFrozenDict
+from rust::incan_std_primitives::frozen import FrozenList as NativeFrozenList, FrozenDict as NativeFrozenDict
 from std.rust import Static
 
 const TABLE: FrozenDict[str, FrozenList[str]] = {"names": ["alpha", "beta"], "empty": []}

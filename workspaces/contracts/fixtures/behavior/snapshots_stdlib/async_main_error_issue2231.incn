@@ -3,7 +3,6 @@
 # expect-stderr-contains:
 #   this message must reach stderr
 
-import std.async
 from std.async.time import sleep
 
 

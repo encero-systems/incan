@@ -235,7 +235,7 @@ fn frozen_text(text: &str, span: Span) -> Box<ast::Expr> {
         span,
     );
     call(
-        &["incan_std_core", "frozen", "FrozenStr", "new"],
+        &["incan_std_primitives", "frozen", "FrozenStr", "new"],
         thin_vec![literal],
         span,
     )

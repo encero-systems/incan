@@ -1,0 +1,109 @@
+"""Convert Oven paths at the platform store boundary."""
+
+from std.fs import Path
+from std.primitives.fs.locking import FileLock
+from pub::incan_platform.store import HOME_VIEW, PreparedPayload, Snapshot
+from pub::incan_platform.store import claim as platform_claim, compact as platform_compact
+from pub::incan_platform.store import snapshot as platform_snapshot
+from pub::incan_platform.store.collection import Reclaimed
+from pub::incan_platform.store.collection import (
+    collect_layouts as platform_collect_layouts,
+    collect_records as platform_collect_records,
+)
+from pub::incan_platform.store.files import StoreError
+from pub::incan_platform.store.path import StorePath
+from pub::incan_platform.store.payloads import (
+    payload_intact as platform_payload_intact,
+    payload_path as platform_payload_path,
+    pin_payload as platform_pin_payload,
+    prepare_payloads as platform_prepare_payloads,
+    put_payload as platform_put_payload,
+)
+from pub::incan_platform.store.repair import (
+    quarantine_payload as platform_quarantine_payload,
+    readmit_payload as platform_readmit_payload,
+)
+
+
+pub def store_path(path: Union[Path, StorePath]) -> StorePath:
+    """Project an Oven path into the platform store's private path contract."""
+    if isinstance(path, StorePath):
+        return path
+    elif isinstance(path, Path):
+        return StorePath(path.0)
+
+
+pub def oven_path(path: StorePath) -> Path:
+    """Project a platform store path back into Oven's application-facing path contract."""
+    return Path(path.0)
+
+
+pub def snapshot(root: Path, view: str = HOME_VIEW) -> Result[Snapshot, StoreError]:
+    """Open a platform snapshot from an Oven path."""
+    return platform_snapshot(store_path(root), view)
+
+
+pub def claim(root: Path, key: str) -> Result[FileLock, StoreError]:
+    """Acquire a platform computation claim from an Oven path."""
+    return platform_claim(store_path(root), key)
+
+
+pub def compact(root: Path) -> Result[Snapshot, StoreError]:
+    """Compact a platform store selected by an Oven path."""
+    return platform_compact(store_path(root))
+
+
+pub def payload_path(root: Union[Path, StorePath], digest: str) -> Path:
+    """Return a canonical payload path as an Oven path."""
+    return oven_path(platform_payload_path(store_path(root), digest))
+
+
+pub def pin_payload(root: Union[Path, StorePath], digest: str) -> Result[PreparedPayload, StoreError]:
+    """Pin a payload selected by either side of the path boundary."""
+    return platform_pin_payload(store_path(root), digest)
+
+
+pub def put_payload(root: Union[Path, StorePath], source: Path) -> Result[PreparedPayload, StoreError]:
+    """Install one Oven path as a canonical platform payload."""
+    return platform_put_payload(store_path(root), store_path(source))
+
+
+pub def prepare_payloads(
+    root: Union[Path, StorePath],
+    sources: list[Path],
+) -> Result[list[PreparedPayload], StoreError]:
+    """Prepare Oven paths for a platform transaction."""
+    return platform_prepare_payloads(store_path(root), [store_path(source) for source in sources])
+
+
+pub def payload_intact(root: Union[Path, StorePath], digest: str) -> bool:
+    """Return whether a canonical platform payload remains intact."""
+    return platform_payload_intact(store_path(root), digest)
+
+
+pub def quarantine_payload(root: Union[Path, StorePath], digest: str) -> Result[None, StoreError]:
+    """Quarantine a payload selected by either side of the path boundary."""
+    return platform_quarantine_payload(store_path(root), digest)
+
+
+pub def readmit_payload(
+    root: Union[Path, StorePath],
+    source: Path,
+    expected: str,
+) -> Result[PreparedPayload, StoreError]:
+    """Re-admit verified Oven bytes into the platform payload owner."""
+    return platform_readmit_payload(store_path(root), store_path(source), expected)
+
+
+pub def collect_layouts(root: Path) -> Result[Reclaimed, StoreError]:
+    """Collect obsolete layouts in the platform store selected by Oven."""
+    return platform_collect_layouts(store_path(root))
+
+
+pub def collect_records(
+    root: Path,
+    references: (str, bytes) -> Result[list[str], StoreError],
+    payloads: bool = true,
+) -> Result[Reclaimed, StoreError]:
+    """Collect unreachable records while Oven supplies the owning payload codec."""
+    return platform_collect_records(store_path(root), references, payloads)

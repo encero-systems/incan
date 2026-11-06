@@ -48,7 +48,7 @@ from frame import (
     dereferenced_place,
 )
 from collections import is_collection, collection_arguments, is_owned_collection, insert_collection
-from lists import require_list_shape, list_element, is_list, is_owned_list
+from lists import is_exclusive_borrow, require_list_shape, list_element, is_list, is_owned_list
 from async_ import is_future
 from closures import source_function_item, function_item_callee, callable_copy_type
 from lowering import BodyIrModule
@@ -80,6 +80,7 @@ from result_carriers import (
     lower_result_construction,
     retained_reference_value,
 )
+from explicit_arguments import reference_contract
 
 
 pub def lower_assignment(
@@ -132,7 +133,7 @@ pub def lower_assignment(
     return Ok(None)
 
 
-pub def assignment_place(mut builder: Builder, destination: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+pub def assignment_place(mut builder: Builder, destination: RustPlace, span: SourceSpan) -> Result[Place, str]:
     """Replace a checked reference value's own slot; source receiver and projected writes still address their referents."""
     if len(destination.projection) == 0:
         match destination.local_id():
@@ -153,6 +154,8 @@ def element_assignment(
 ) -> Result[None, str]:
     """Evaluate a replacement before reborrowing checked element storage, then write its last index or structural field."""
     ty = element_place_type(builder, destination)?
+    if is_exclusive_borrow(ty):
+        return exclusive_view_element_assignment(module, builder, destination, value, ty, span)
     replacement = temporary(builder, ty, span)
     lower_local_assignment(module, builder, replacement, value, span)?
     argument = element_plan_operand(builder, read_place(replacement, replacement.local in builder.owned, span), ty, span)?
@@ -188,6 +191,37 @@ def element_assignment(
     target = mutable_element_place(builder, destination, span)?
     operation = RvalueKind.Use(argument)
     if ty == PlanType.String or is_owned_list(ty) or is_owned_collection(ty) or is_nominal_type(ty):
+        replace_owned_destination(builder, target, operation, span)
+    else:
+        builder.emit(plan_assign(target, operation, span))
+    return Ok(None)
+
+
+def exclusive_view_element_assignment(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    destination: &RustPlace,
+    value: &RustRvalue,
+    reference_type: PlanType,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Replace the referent reached through a stored exclusive view without replacing or moving the list's reference slot."""
+    referent, writable = reference_contract(reference_type)?
+    if not writable:
+        return Err("unsupported Body IR write through a shared stored view")
+    replacement = temporary(builder, referent, span)
+    lower_local_assignment(module, builder, replacement, value, span)?
+    argument = element_plan_operand(
+        builder,
+        read_place(replacement, replacement.local in builder.owned, span),
+        referent,
+        span,
+    )?
+    slot_reference = mutable_element_place(builder, destination, span)?
+    stored_reference = dereferenced_place(slot_reference, reference_type, span)?
+    target = dereferenced_place(stored_reference, referent, span)?
+    operation = RvalueKind.Use(argument)
+    if referent == PlanType.String or is_owned_list(referent) or is_owned_collection(referent) or is_nominal_type(referent):
         replace_owned_destination(builder, target, operation, span)
     else:
         builder.emit(plan_assign(target, operation, span))

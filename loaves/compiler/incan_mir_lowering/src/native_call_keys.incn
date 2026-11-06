@@ -8,7 +8,7 @@ from tuples import type_name
 
 pub def native_result_mismatch(
     mut builder: Builder,
-    declaration: &LoafCallable,
+    declaration: LoafCallable,
     destination: &Option[RustPlace],
 ) -> Result[Option[str], str]:
     """

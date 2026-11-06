@@ -93,7 +93,14 @@ impl TypeChecker {
         expected: Option<&ResolvedType>,
     ) -> ResolvedType {
         let subject_ty = self.check_expr(subject);
-        let subject_ty = self.settle_open_constructor_sides_in_place(subject, subject_ty);
+        let mut subject_ty = self.settle_open_constructor_sides_in_place(subject, subject_ty);
+        if matches!(subject_ty, ResolvedType::TypeToken(_)) {
+            self.errors.push(errors::type_token_operation_not_supported(
+                "pattern matching",
+                subject.span,
+            ));
+            subject_ty = ResolvedType::Unknown;
+        }
         self.note_loan_free_scrutinee(&subject_ty, subject.span);
         let subject_binding = if let Expr::Ident(name) = &subject.node {
             self.lookup_variable_info(name)

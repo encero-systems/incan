@@ -67,7 +67,7 @@ impl BodyBuilder<'_, '_> {
             if self.resolve_ty(assignment.value.span) != ty {
                 return Err("explicit local loan cannot coerce or copy its source".into());
             }
-            let CheckedInputSource::Place { root, fields } = loan.source else {
+            let CheckedInputSource::Place { root, fields, elements } = loan.source else {
                 return Err("explicit local loan requires existing owner storage".into());
             };
             let destination = loan.destination.clone();
@@ -76,7 +76,7 @@ impl BodyBuilder<'_, '_> {
                 return Err("shared local loan cannot acquire write permission".into());
             }
             let place = self.lower_expr_to_place(&assignment.value, scope, out);
-            self.authenticate_input_place(&place, &root, &fields)?;
+            self.authenticate_input_place(&place, &root, &fields, &elements)?;
             self.consume_input_source_read(&assignment.value, &place);
             if self.identity_bindings.contains_key(&destination) || self.input_aliases.contains_key(&destination) {
                 return Err("explicit local alias already has an owner or another source place".into());

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::{Access, Event, Graph, Loan, LoanId, LoanKind, Node, Permission, Place, Projection, Root, analyze};
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind};
@@ -43,6 +43,8 @@ fn graph(events: Vec<Event>, edges: Vec<Vec<usize>>, loans: Vec<Loan>) -> Graph 
         .into(),
         loans,
         local_loans: BTreeMap::new(),
+        dependent_locals: BTreeMap::new(),
+        dependent_values: BTreeSet::new(),
         operations: BTreeMap::new(),
         owned_locals: BTreeMap::new(),
         invocations: BTreeMap::new(),

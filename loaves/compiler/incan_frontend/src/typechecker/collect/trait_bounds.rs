@@ -375,22 +375,11 @@ impl TypeChecker {
     /// name whose first segment is not an imported module is the path it spells.
     pub fn module_path_for_imported_name(&self, name: &str) -> Option<Vec<String>> {
         if let Some((head, rest)) = name.split_once('.') {
-            let mut path = self
-                .lookup_symbol(head)
-                .and_then(|symbol| match &symbol.kind {
-                    SymbolKind::Module(info) => Some(info.path.clone()),
-                    _ => None,
-                })
-                .unwrap_or_else(|| vec![head.to_string()]);
+            let mut path = self.module_namespace_path(head)?;
             path.extend(rest.split('.').map(str::to_string));
             return Some(path);
         }
-        if let Some(symbol) = self.lookup_symbol(name)
-            && let SymbolKind::Module(info) = &symbol.kind
-        {
-            return Some(info.path.clone());
-        }
-        self.import_binding_path(name).map(<[String]>::to_vec)
+        self.module_namespace_path(name)
     }
 
     /// Define a compiler-internal trait symbol used for qualified imported trait references.

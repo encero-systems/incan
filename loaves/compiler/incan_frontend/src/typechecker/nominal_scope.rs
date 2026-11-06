@@ -194,7 +194,39 @@ impl TypeChecker {
                 identities.insert(name.clone(), identity.clone());
             }
         }
+        if let Some(identity) = self.runtime_surface_native_identity(SurfaceTypeId::TaskJoinError) {
+            identities.insert(surface_types::TASK_JOIN_ERROR_TYPE_NAME.to_owned(), identity);
+        }
         identities
+    }
+
+    /// Return one runtime-owned surface type's native identity after authenticating its exact package declaration.
+    /// Inferred carriers use the backing Rust item because a transparent `rusttype` authors no executable Loaf body.
+    fn runtime_surface_native_identity(&self, surface: SurfaceTypeId) -> Option<CanonicalSymbolId> {
+        let surface_module = surface_types::stdlib_module_path(surface)?;
+        let namespace = surface_module.split('.').nth(1)?;
+        let package = incan_lang::lang::stdlib::find_namespace(namespace)?.package?;
+        let manifest = self.loaves.manifest(package)?;
+        let public_path = std::iter::once(package.to_owned())
+            .chain(surface_module.split('.').skip(1).map(str::to_owned))
+            .chain(std::iter::once(surface_types::as_str(surface).to_owned()))
+            .collect::<Vec<_>>();
+        let canonical = manifest
+            .contract_metadata
+            .identity_graph
+            .canonical_for_public_path(&public_path)?;
+        let SymbolOrigin::Package { library, module_path } = &canonical.origin else {
+            return None;
+        };
+        if !surface_types::is_exported_from_package(surface, library, module_path) {
+            return None;
+        }
+        let mut native_path = surface_types::info_for(surface)
+            .ownership
+            .runtime_rust_module_path?
+            .to_vec();
+        native_path.push(surface_types::as_str(surface));
+        incan_semantics_core::body_ir::rust_item_identity(&native_path.join("::"))
     }
 
     /// Preserve accepted root builtin bindings solely for direct-route storage; existing nominal and legacy facts stay

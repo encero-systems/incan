@@ -18,4 +18,4 @@ Do not add another semantic decision in the adapter or restore generated-Rust em
 
 ## Verify
 
-Run the focused contract, then the affected families. Run `make pre-commit-fast` and update public language documentation. A compiler rebuild alone does not prove the runtime contract.
+Run the focused contract, then the affected families. Run `make pre-commit` and update public language documentation. A compiler rebuild alone does not prove the runtime contract.

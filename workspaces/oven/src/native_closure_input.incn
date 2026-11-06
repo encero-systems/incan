@@ -27,7 +27,7 @@ pub model NativeClosureInput:
 
     pub state: Rc[RefCell[Readings]] = Rc.new(RefCell.new(Readings()))
 
-    def read(self, path: Path) -> Result[JsonValue, str]:
+    pub def read(self, path: Path) -> Result[JsonValue, str]:
         """
         Read each unchanged closure once and retain only fields consumed during linking.
 

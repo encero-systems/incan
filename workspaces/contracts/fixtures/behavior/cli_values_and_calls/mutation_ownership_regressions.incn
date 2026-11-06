@@ -13,6 +13,7 @@
 #   2
 #   2
 #   7
+#   one,two
 
 def copies(mut table: dict[str, int], mut tags: set[str], mut items: list[int]) -> int:
     b = dict(table)
@@ -45,7 +46,7 @@ def fetch(key: str) -> Result[str, str]:
 class Cell:
     pub value: int
 
-    def tag(mut self) -> None:
+    pub def tag(mut self) -> None:
         self.value += 1
 
 
@@ -63,6 +64,14 @@ def inferred_empty_list_result() -> list[EmptyListField]:
     mut fields = []
     fields.append(EmptyListField(value=7))
     return fields
+
+
+def joined_inferred_empty_string_list() -> str:
+    """Join a mutable empty initializer after append closes its element as str."""
+    mut parts = []
+    parts.append("one")
+    parts.append("two")
+    return ",".join(parts)
 
 
 def grow(mut pairs: list[tuple[list[int], int]]) -> int:
@@ -131,3 +140,4 @@ def main() -> None:
     println(total([[1], [2]]))
     println(total([["a"], ["b"]]))
     println(inferred_empty_list_result()[0].value)
+    println(joined_inferred_empty_string_list())

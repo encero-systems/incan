@@ -25,7 +25,11 @@ impl TypeChecker {
         let mut binding_ty = original_ty.clone();
         for decorator in func.decorators.iter().rev() {
             if self.is_user_defined_decorator_candidate(&decorator.node) {
+                let decorator_input_ty = binding_ty.clone();
                 binding_ty = self.apply_user_defined_decorator(decorator, binding_ty, &func.name);
+                if original_function_info.is_async {
+                    self.retain_async_decorator_runtime_bindings(decorator.span, &decorator_input_ty);
+                }
             }
         }
 
@@ -67,6 +71,41 @@ impl TypeChecker {
                         .insert(func.name.clone(), overloads.clone());
                 }
                 _ => {}
+            }
+        }
+    }
+
+    /// Rewrite retained generic decorator instantiation facts from an async declaration's logical callable type to
+    /// the synchronous runtime constructor type that actually crosses the Body IR decorator boundary.
+    ///
+    /// Source checking intentionally models `async def f() -> T` as `() -> T` plus an async declaration fact. The
+    /// decorator initializer instead passes the concrete callable value, whose invocation constructs
+    /// `Awaitable[T]`. Only retained lowering metadata is rewritten here; the visible source binding keeps its
+    /// logical signature and async call behavior.
+    fn retain_async_decorator_runtime_bindings(&mut self, span: Span, logical_callable: &ResolvedType) {
+        let ResolvedType::Function(params, result) = logical_callable else {
+            return;
+        };
+        let runtime_callable = ResolvedType::Function(
+            params.clone(),
+            Box::new(ResolvedType::Generic("Awaitable".to_string(), vec![(**result).clone()])),
+        );
+        let Some(application) = self
+            .type_info
+            .declarations
+            .body_ir_decorator_applications
+            .get_mut(&span)
+        else {
+            return;
+        };
+        for binding in application.type_bindings.values_mut() {
+            if binding == logical_callable {
+                *binding = runtime_callable.clone();
+            }
+        }
+        for argument in &mut application.factory_type_args {
+            if argument == logical_callable {
+                *argument = runtime_callable.clone();
             }
         }
     }
@@ -195,10 +234,24 @@ impl TypeChecker {
         decorator: &Spanned<Decorator>,
         display: &str,
     ) -> ResolvedType {
+        self.decorator_callable_type_params.clear();
+        self.type_info
+            .declarations
+            .body_ir_decorator_static_receivers
+            .remove(&decorator.span);
+        if let Some(receiver) = self.body_ir_decorator_receiver(decorator) {
+            self.type_info
+                .declarations
+                .body_ir_decorator_static_receivers
+                .insert(decorator.span, receiver);
+        }
         if decorator.node.is_call {
             self.check_decorator_factory_expr(decorator, display)
         } else {
-            self.check_expr(&Self::decorator_path_expr(&decorator.node, decorator.span))
+            let previous = self.decorator_callable_span.replace(decorator.span);
+            let result = self.check_expr(&Self::decorator_path_expr(&decorator.node, decorator.span));
+            self.decorator_callable_span = previous;
+            result
         }
     }
 
@@ -209,11 +262,12 @@ impl TypeChecker {
         display: &str,
     ) -> ResolvedType {
         let key = decorator.span;
-        self.type_info
+        let selected_receiver = self
+            .type_info
             .declarations
             .body_ir_decorator_static_receivers
-            .remove(&key);
-        let static_receiver = self.body_ir_static_decorator_receiver(decorator);
+            .get(&key)
+            .cloned();
         self.type_info
             .declarations
             .body_ir_decorator_applications
@@ -244,31 +298,45 @@ impl TypeChecker {
         let previous = self.body_ir_decorator_factory_span.replace(decorator.span);
         let result = self.check_expr(&factory_expr);
         self.body_ir_decorator_factory_span = previous;
-        if matches!(result, ResolvedType::Function(_, _))
-            && self
-                .type_info
-                .resolved_identity(decorator.span)
-                .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Method)
-            && let Some(receiver) = static_receiver
-        {
+        let receiver_is_module = selected_receiver
+            .as_ref()
+            .is_some_and(|receiver| receiver.identity.kind == SemanticSourceTargetKind::Module);
+        let receiver_is_selected_static = self
+            .type_info
+            .resolved_identity(decorator.span)
+            .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Method);
+        if !matches!(result, ResolvedType::Function(_, _)) || (!receiver_is_module && !receiver_is_selected_static) {
             self.type_info
                 .declarations
                 .body_ir_decorator_static_receivers
-                .insert(key, receiver);
+                .remove(&key);
         }
         self.retain_body_ir_decorator_factory(decorator, &result);
         result
     }
 
-    /// Snapshot only a checked static symbol used as a two-segment factory receiver. Namespace paths and local callable
-    /// values do not acquire a storage identity through source spelling.
-    pub(super) fn body_ir_static_decorator_receiver(
+    /// Snapshot a checked module namespace or static receiver used by a qualified decorator expression.
+    ///
+    /// Decorator paths are represented by one source span, so the selected member identity occupies the ordinary
+    /// reference table at that span. This separate fact preserves the receiver category without reconstructing it
+    /// from source spelling. Local callable values do not acquire a receiver identity here.
+    pub(super) fn body_ir_decorator_receiver(
         &self,
         decorator: &Spanned<Decorator>,
     ) -> Option<BodyIrDecoratorStaticReceiver> {
-        let [name, _] = decorator.node.path.segments.as_slice() else {
+        let [name, ..] = decorator.node.path.segments.as_slice() else {
             return None;
         };
+        if decorator.node.path.segments.len() < 2 {
+            return None;
+        }
+        if let Some(path) = self.module_namespace_path(name) {
+            return Some(BodyIrDecoratorStaticReceiver {
+                binding_name: name.clone(),
+                identity: SymbolTable::module_path_identity(&path)?,
+                ty: ResolvedType::Unknown,
+            });
+        }
         let symbol = self.symbols.lookup(name)?;
         let Symbol {
             kind: SymbolKind::Static(storage),
@@ -285,7 +353,10 @@ impl TypeChecker {
     }
 
     /// Retain ordered arguments from the factory declaration actually resolved by checking, without changing its
-    /// legacy call-site facts. Unbound declaration parameters remain placeholders until decorator validation.
+    /// legacy call-site facts. A checked canonical identity admits local factories; an exact source target admits a
+    /// qualified module factory whose declaration is outside the caller's lexical symbols. Static receivers retain
+    /// their separately authenticated storage fact. Source spelling never manufactures an executable target, and
+    /// unbound declaration parameters remain placeholders until decorator validation.
     pub(super) fn retain_body_ir_decorator_factory(&mut self, decorator: &Spanned<Decorator>, result: &ResolvedType) {
         let key = decorator.span;
         let partial_arguments = self
@@ -310,28 +381,17 @@ impl TypeChecker {
             );
             return;
         }
-        let [name] = decorator.node.path.segments.as_slice() else {
-            return;
-        };
-        let Some(symbol_id) = self.symbols.lookup(name) else {
-            return;
-        };
-        let Some(identity) = self.symbols.identity_of(symbol_id) else {
-            return;
-        };
-        if Some(identity) != self.type_info.resolved_identity(decorator.span) {
+        let selected_callable = self.type_info.resolved_identity(key).is_some()
+            || self
+                .type_info
+                .source_target(key)
+                .is_some_and(|target| target.kind == "function");
+        if !matches!(result, ResolvedType::Function(_, _)) || !selected_callable {
             return;
         }
-        let Some(Symbol {
-            kind: SymbolKind::Function(info),
-            ..
-        }) = self.symbols.get(symbol_id)
-        else {
-            return;
-        };
         let arguments = partial_arguments
             .or_else(|| self.type_info.calls.call_site_monomorph_type_args.get(&key).cloned())
-            .unwrap_or_else(|| info.type_params.iter().cloned().map(ResolvedType::TypeVar).collect());
+            .unwrap_or_default();
         self.type_info.declarations.body_ir_decorator_applications.insert(
             key,
             BodyIrDecoratorApplication {
@@ -352,7 +412,7 @@ impl TypeChecker {
         span: Span,
     ) -> ResolvedType {
         let key = span;
-        let factory_type_args = self
+        let mut factory_type_args = self
             .type_info
             .declarations
             .body_ir_decorator_applications
@@ -383,6 +443,17 @@ impl TypeChecker {
         if self.errors.len() != error_count {
             return ResolvedType::Unknown;
         }
+        if factory_type_args.is_empty() && !self.decorator_callable_type_params.is_empty() {
+            let ordered = self
+                .decorator_callable_type_params
+                .iter()
+                .map(|parameter| type_bindings.get(parameter).cloned())
+                .collect::<Option<Vec<_>>>();
+            if let Some(ordered) = ordered {
+                factory_type_args = ordered;
+            }
+        }
+        self.decorator_callable_type_params.clear();
         if let [param] = params.as_slice()
             && matches!(param.ty, ResolvedType::TypeVar(_))
             && param.ty == *ret

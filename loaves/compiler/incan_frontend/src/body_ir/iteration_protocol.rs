@@ -161,7 +161,7 @@ impl BodyBuilder<'_, '_> {
             name: canonical.declaration_name.clone(),
             canonical: Some(canonical.clone()),
             intrinsic_carrier: None,
-            reflection: None,
+            operation: None,
             loaf_trait: None,
             trait_arguments: self.checked_trait_arguments(hook.dispatch.as_ref()),
             type_args: hook.type_args.iter().map(|ty| self.checked_type(ty)).collect(),

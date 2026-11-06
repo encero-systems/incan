@@ -1,10 +1,12 @@
-# behavior: a native method with a `&mut self` receiver borrows its receiver exclusively, so calling it while a shared borrow of the same value is still used is refused (#2500).
+# behavior: editing a native owner while a signature-proven view from HashMap.get is still live is refused (#2500).
 # expect-diagnostic: INCAN-T0126
 
 from rust::std::collections import HashMap
 
 
-def overlap(mut counts: BorrowedMut[HashMap[str, int]], key: str) -> bool:
-    view: Borrowed[HashMap[str, int]] = counts
+def overlap(mut counts: BorrowedMut[HashMap[str, int]], key: str) -> int:
+    view = counts.get(key)
     counts.insert(key, 1)
-    return view.contains_key("b")
+    match view:
+        Some(value) => return value
+        None => return 0

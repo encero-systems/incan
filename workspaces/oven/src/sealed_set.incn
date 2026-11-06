@@ -6,8 +6,8 @@ from std.fs import MappedView, Path
 from std.hash import file_digest, sha256
 from std.json import JsonValue
 from std.tempfile import TemporaryDirectory
-from store_index import view_digest
-from segment_store import (
+from pub::incan_platform.store.index import view_digest
+from pub::incan_platform.store import (
     EXPECT_ABSENT,
     EXPECT_REPAIR,
     Lookup,
@@ -21,12 +21,11 @@ from segment_store import (
     lookup,
     owned,
     put,
-    snapshot,
 )
-from segment_files import StoreError
-from segment_codec import Write, encode_segment
-from segment_payloads import payload_path, pin_payload, put_payload
-from segment_repair import quarantine_record, readmit_payload
+from pub::incan_platform.store.files import StoreError
+from pub::incan_platform.store.codec import Write, encode_segment
+from pub::incan_platform.store.repair import quarantine_record
+from store_path_conversion import payload_path, pin_payload, put_payload, readmit_payload, snapshot
 
 const FORMAT: str = "incan.sealed-set/2"
 const SET_PREFIX: str = "sealed/set/"

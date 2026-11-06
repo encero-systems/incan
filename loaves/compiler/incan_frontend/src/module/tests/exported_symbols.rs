@@ -71,7 +71,6 @@ fn test_exported_type_like_docs_skips_private_even_with_docstring() -> Result<()
 fn test_exported_symbols_empty_program() {
     let program = Program {
         declarations: vec![],
-        rust_module_path: None,
         source_path: None,
         warnings: vec![],
     };
@@ -96,7 +95,6 @@ fn test_exported_symbols_model() {
     };
     let program = Program {
         declarations: vec![make_spanned(Declaration::Model(model))],
-        rust_module_path: None,
         source_path: None,
         warnings: vec![],
     };
@@ -127,7 +125,6 @@ fn test_exported_symbols_class() {
     };
     let program = Program {
         declarations: vec![make_spanned(Declaration::Class(class))],
-        rust_module_path: None,
         source_path: None,
         warnings: vec![],
     };
@@ -171,7 +168,6 @@ fn test_exported_symbols_enum_with_variants() {
     };
     let program = Program {
         declarations: vec![make_spanned(Declaration::Enum(enum_decl))],
-        rust_module_path: None,
         source_path: None,
         warnings: vec![],
     };
@@ -218,7 +214,6 @@ fn test_exported_symbols_newtype() {
     };
     let program = Program {
         declarations: vec![make_spanned(Declaration::Newtype(newtype))],
-        rust_module_path: None,
         source_path: None,
         warnings: vec![],
     };
@@ -246,7 +241,6 @@ fn test_exported_symbols_trait() {
     };
     let program = Program {
         declarations: vec![make_spanned(Declaration::Trait(trait_decl))],
-        rust_module_path: None,
         source_path: None,
         warnings: vec![],
     };
@@ -273,7 +267,6 @@ fn test_exported_symbols_function() {
     };
     let program = Program {
         declarations: vec![make_spanned(Declaration::Function(func))],
-        rust_module_path: None,
         source_path: None,
         warnings: vec![],
     };
@@ -357,7 +350,6 @@ fn test_exported_symbols_ignores_module_imports() {
     };
     let program = Program {
         declarations: vec![make_spanned(Declaration::Import(import))],
-        rust_module_path: None,
         source_path: None,
         warnings: vec![],
     };
@@ -390,7 +382,6 @@ fn test_exported_symbols_reexports_from_import_items() {
     };
     let program = Program {
         declarations: vec![make_spanned(Declaration::Import(import))],
-        rust_module_path: None,
         source_path: None,
         warnings: vec![],
     };
@@ -410,7 +401,6 @@ fn test_exported_symbols_reexports_from_import_items() {
 fn test_exported_symbols_ignores_docstrings() {
     let program = Program {
         declarations: vec![make_spanned(Declaration::Docstring("Module documentation".to_string()))],
-        rust_module_path: None,
         source_path: None,
         warnings: vec![],
     };
@@ -428,7 +418,6 @@ fn test_exported_symbols_const() {
     };
     let program = Program {
         declarations: vec![make_spanned(Declaration::Const(konst))],
-        rust_module_path: None,
         source_path: None,
         warnings: vec![],
     };
@@ -450,7 +439,6 @@ fn test_exported_symbols_static() {
     };
     let program = Program {
         declarations: vec![make_spanned(Declaration::Static(static_decl))],
-        rust_module_path: None,
         source_path: None,
         warnings: vec![],
     };
@@ -506,7 +494,6 @@ fn test_exported_symbols_multiple_declarations() {
             make_spanned(Declaration::Function(func)),
             make_spanned(Declaration::Trait(trait_decl)),
         ],
-        rust_module_path: None,
         source_path: None,
         warnings: vec![],
     };

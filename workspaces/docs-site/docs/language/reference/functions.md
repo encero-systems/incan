@@ -489,7 +489,7 @@ Methods support the same rest syntax. The receiver is not part of the rest captu
 
 ```incan
 class Collector:
-    def collect(self, *items: int, **labels: str) -> int:
+    pub def collect(self, *items: int, **labels: str) -> int:
         return len(items) + len(labels)
 
 def main() -> int:
@@ -498,6 +498,42 @@ def main() -> int:
     labels = {"kind": "demo"}
     return collector.collect(0, *xs, **labels)
 ```
+
+### Method visibility
+
+Methods and fields follow one member rule. An unmarked member of a class, or of a model, enum or newtype marked `pub`, is private to its type. An unmarked member of a model, enum or newtype without `pub` is visible wherever the type is, which is the module that declares it.
+
+- A `pub def` method is callable wherever its type is visible, including from other modules and from consumers of a compiled library.
+- A method private to its type is callable only from the methods and computed properties of the type that declares it, in the module that declares it. A subclass's methods do not see the private methods it inherits.
+- A method declared in a trait takes the trait's visibility. A method that implements a method of an adopted trait, by its name or through a `for Trait` target, takes the visibility of the trait that declares that method; this includes the traits a class's ancestors adopt. A method of a `pub` trait is callable wherever its type is visible. A method of a trait without `pub` is callable anywhere in the trait's module.
+- A language hook is callable wherever its type is visible: a method spelled `__name__`, such as `__eq__`, `__str__`, `__add__` or `__iter__`; the constructor hook `__incan_new`; `from_underlying` on a newtype; and `validate` on a type that derives `Validate`.
+- A method alias or method partial has the visibility of the method it targets.
+- Compiled library metadata records each method's visibility. A library whose metadata records none exposes every method.
+
+```incan
+pub class Ledger:
+    pub total: int
+
+    pub def report(self) -> str:
+        return f"checksum {self.checksum()}"
+
+    def checksum(self) -> int:
+        return self.total * 31
+
+
+def main() -> None:
+    ledger = Ledger(total=4)
+    println(ledger.report())
+    println(ledger.checksum())  # refused: checksum is private to Ledger
+```
+
+Refused (`INCAN-T0001`):
+
+- a call to a method private to its type from outside the methods of that type;
+- a call, from another module, to a method that takes the visibility of a trait without `pub`;
+- `pub` on a method that implements a trait method, and `pub` on a language hook.
+
+Refused (`INCAN-P0001`): `pub` on a method declared in a trait.
 
 ## Function Values
 

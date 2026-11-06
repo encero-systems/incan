@@ -113,9 +113,8 @@ impl App {
 
 /// Start the web server.
 ///
-/// This is the free-function delegate called by the `App::run` static method generated from `app.incn`. It creates a
-/// temporary `App` instance and delegates to the instance method so that the `@staticmethod @rust.extern` wiring works
-/// without an instance in scope.
+/// This is the directly imported host function called by the `App::run` wrapper in `app.incn`. It creates a temporary
+/// `App` instance and delegates to the instance method without requiring an instance in Incan source.
 ///
 /// # Panics
 ///

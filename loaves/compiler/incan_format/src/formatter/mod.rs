@@ -239,16 +239,6 @@ impl Formatter {
             idx = 1;
         }
 
-        if let Some(rust_module_path) = &program.rust_module_path {
-            if !first {
-                self.writer.blank_lines(1);
-            }
-            self.writer.write("rust.module(\"");
-            self.writer.write(&rust_module_path.node);
-            self.writer.writeln("\")");
-            first = false;
-        }
-
         while idx < program.declarations.len() {
             let required_features = program.declarations[idx].required_features.clone();
             if !required_features.is_empty() {
@@ -262,7 +252,7 @@ impl Formatter {
                     let extra_newlines = prev_decl
                         .as_ref()
                         .map(|prev| self.top_level_spacing(prev, &first_decl))
-                        .unwrap_or_else(|| usize::from(program.rust_module_path.is_some()));
+                        .unwrap_or(0);
                     self.writer.blank_lines(extra_newlines);
                 }
                 self.format_feature_condition_header(&required_features);
@@ -290,7 +280,7 @@ impl Formatter {
                 let extra_newlines = prev_decl
                     .as_ref()
                     .map(|prev| self.top_level_spacing(prev, &decl))
-                    .unwrap_or_else(|| usize::from(program.rust_module_path.is_some()));
+                    .unwrap_or(0);
                 self.writer.blank_lines(extra_newlines);
             }
 

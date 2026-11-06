@@ -38,9 +38,9 @@ impl TypeChecker {
         }
     }
 
-    /// Retain a method only after dispatch selected it, using the completed parameter inventory. Diagnostic
-    /// fallback validation can inspect a candidate but must not publish it as the source call's ownership target.
-    /// A call site whose parameters needed no snapshot uses the selected declaration's own inventory.
+    /// Retain a method only after dispatch selected it, using the completed parameter inventory. Diagnostic fallback
+    /// validation can inspect a candidate but must not publish it as the source call's ownership target. Explicit and
+    /// ordinary methods use the same selected identity; the latter retain their fixed inferred receiver contract.
     pub(in crate::typechecker) fn record_selected_method_input_call(
         &mut self,
         identity: Option<&CanonicalSymbolId>,
@@ -84,8 +84,9 @@ impl TypeChecker {
         );
     }
 
-    /// Capture successful selection once. Plain free calls stay provisional until the isolated body writer has
-    /// independently established an explicit obligation; ordinary methods and noncanonical headers stay staged.
+    /// Capture successful selection once. Plain calls stay provisional until the isolated body writer has
+    /// independently established an explicit obligation. Canonical ordinary functions and methods retain their
+    /// selected fixed header; noncanonical and incomplete headers stay staged.
     fn explicit_input_call_fact(
         &self,
         identity: Option<&CanonicalSymbolId>,
@@ -99,11 +100,13 @@ impl TypeChecker {
             .ownership_contracts
             .get(callee)
             .is_some_and(|contract| {
-                contract.result_source.is_some() || contract.modes.iter().any(|mode| mode.component.parameter.is_some())
+                contract.result_source.is_some()
+                    || crate::ownership_metadata::owned_result(Some(contract)).is_ok_and(|result| result.is_some())
+                    || contract.modes.iter().any(|mode| mode.component.parameter.is_some())
             }) {
             super::InputCallKind::Explicit
         } else {
-            if self.current_body_identity().is_none() || receiver.is_some() {
+            if self.current_body_identity().is_none() {
                 return None;
             }
             super::InputCallKind::Ordinary
@@ -436,6 +439,48 @@ impl TypeChecker {
         signature: &Signature<'_>,
     ) -> Result<(), CompileError> {
         let Some(source) = signature.source else { return Ok(()) };
+        if let Some((_, dependency)) =
+            crate::ownership_metadata::owned_result_source(Some(contract)).map_err(|reason| {
+                CompileError::type_error(
+                    format!("Returned dependency cannot be proved: {reason}"),
+                    signature.result.span,
+                )
+                .with_stable_code("INCAN-T0123")
+            })?
+        {
+            let source_type = match dependency.slot {
+                SourceSlot::Receiver => signature
+                    .receiver
+                    .map(|(_, receiver)| receiver.clone())
+                    .ok_or_else(|| {
+                        Self::ownership_source_error("Result source receiver is absent", source.node.binding.span)
+                    })?,
+                SourceSlot::Parameter(slot) => {
+                    let input = contract
+                        .modes
+                        .iter()
+                        .find(|mode| mode.component.parameter == Some(slot) && mode.component.children.is_empty());
+                    match input.map(|mode| mode.mode) {
+                        Some(ownership::OwnershipMode::Borrowed | ownership::OwnershipMode::BorrowedMut) => {
+                            input.map(|mode| mode.underlying.clone()).ok_or_else(|| {
+                                Self::ownership_source_error(
+                                    "An owned result's source must be a borrowed input",
+                                    source.node.binding.span,
+                                )
+                            })?
+                        }
+                        _ => {
+                            return Err(Self::ownership_source_error(
+                                "An owned result's source must be a Borrowed[T] or BorrowedMut[T] input",
+                                source.node.binding.span,
+                            ));
+                        }
+                    }
+                }
+            };
+            self.resolve_ownership_source_fields(&source_type, source)?;
+            return Ok(());
+        }
         let view = crate::ownership_metadata::returned_view(Some(contract))
             .map_err(|reason| {
                 CompileError::type_error(
@@ -549,6 +594,9 @@ impl TypeChecker {
         if crate::ownership_metadata::returned_view(Some(contract))
             .map_err(refusal)?
             .is_none()
+            && crate::ownership_metadata::owned_result(Some(contract))
+                .map_err(refusal)?
+                .is_none()
         {
             return Ok(None);
         }

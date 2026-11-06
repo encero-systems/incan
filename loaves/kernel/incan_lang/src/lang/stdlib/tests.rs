@@ -1,4 +1,5 @@
 use super::*;
+use crate::lang::keywords::KeywordId;
 
 fn segs(parts: &[&str]) -> Vec<String> {
     parts.iter().map(|s| s.to_string()).collect()
@@ -8,6 +9,9 @@ fn segs(parts: &[&str]) -> Vec<String> {
 /// Ordinary package admission and publication ownership share the module catalog.
 fn known_stdlib_modules_cover_existing_surface_paths() {
     assert!(is_known_stdlib_module(&segs(&["std", "primitives"])));
+    assert!(is_known_stdlib_module(&segs(&["std", "primitives", "async"])));
+    assert!(is_known_stdlib_module(&segs(&["std", "primitives", "async", "task"])));
+    assert!(is_known_stdlib_module(&segs(&["std", "primitives", "vocab"])));
     let policy = crate::lang::standard_packages::standard_package_namespace_policy("incan_stdlib_primitives");
     assert_eq!(
         policy.map(|policy| policy.namespace_roots.as_slice()),
@@ -69,6 +73,21 @@ fn known_stdlib_modules_cover_existing_surface_paths() {
     assert!(is_known_stdlib_module(&segs(&["std", "collections"])));
     assert!(is_known_stdlib_module(&segs(&["std", "rust"])));
     assert!(is_known_stdlib_module(&segs(&["std", "builtins"])));
+}
+
+/// Async library imports do not activate language-owned keywords.
+#[test]
+fn async_imports_do_not_activate_language_keywords() {
+    let std_async = soft_keywords_for_import(&segs(&["std", "async", "time"]));
+    let primitive_async = soft_keywords_for_import(&segs(&["std", "primitives", "async", "time"]));
+    let unrelated_primitive = soft_keywords_for_import(&segs(&["std", "primitives", "vocab"]));
+
+    assert!(!std_async.contains(&KeywordId::Async));
+    assert!(!std_async.contains(&KeywordId::Await));
+    assert!(!primitive_async.contains(&KeywordId::Async));
+    assert!(!primitive_async.contains(&KeywordId::Await));
+    assert!(!unrelated_primitive.contains(&KeywordId::Async));
+    assert!(!unrelated_primitive.contains(&KeywordId::Await));
 }
 
 #[test]
@@ -357,34 +376,14 @@ fn stdlib_json_trait_lookup_covers_source_and_qualified_names_only() {
 }
 
 #[test]
-fn extra_crate_dependency_lookup_is_registry_driven() {
-    let axum = find_extra_crate_dep("axum");
-    assert_eq!(axum.map(|dep| dep.crate_name), Some("axum"));
-    assert_eq!(axum.map(|dep| dep.source), Some(StdlibExtraCrateSource::Declared));
-
-    let macros = find_extra_crate_dep("incan_web_macros");
-    assert_eq!(
-        macros.map(|dep| dep.source),
-        Some(StdlibExtraCrateSource::Path("loaves/stdlib/derive/incan_web_macros"))
-    );
-    assert!(is_path_extra_crate_dep("incan_web_macros"));
-    assert!(!is_path_extra_crate_dep("axum"));
-
-    assert!(find_extra_crate_dep("not_a_stdlib_dependency").is_none());
-}
-
-#[test]
 fn stdlib_registry_keeps_phase_023_metadata() {
     let async_ns = find_namespace("async");
     let reflection_ns = find_namespace("reflection");
     let fs_ns = find_namespace("fs");
     let tempfile_ns = find_namespace("tempfile");
     let traits_ns = find_namespace("traits");
-    let math_ns = find_namespace("math");
     let graph_ns = find_namespace("graph");
     let uuid_ns = find_namespace("uuid");
-    let serde_ns = find_namespace("serde");
-    let json_ns = find_namespace(STDLIB_JSON);
     let hash_ns = find_namespace("hash");
     let checksum_ns = find_namespace("checksum");
     let datetime_ns = find_namespace("datetime");
@@ -400,78 +399,28 @@ fn stdlib_registry_keeps_phase_023_metadata() {
     assert!(!facets::namespace_is_facet_root("collections"));
     assert_eq!(facets::for_component("stdlib-web"), Some(facets::WEB));
     assert_eq!(facets::for_component("stdlib-system"), None);
-    assert!(facets::path_names_a_facet("incan_std_core::strings::str_len"));
+    assert!(facets::path_names_a_facet("incan_std_primitives::strings::str_len"));
     assert!(!facets::path_names_a_facet("incan_stdlib_core::anything"));
     assert_eq!(reflection_ns.map(|ns| ns.submodules.is_empty()), Some(true));
     assert_eq!(fs_ns.map(|ns| ns.submodules.contains(&"path")), Some(true));
     assert_eq!(fs_ns.and_then(|ns| ns.facet), None);
-    assert_eq!(
-        fs_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
-        Some(vec!["encoding_rs", "rustix"])
-    );
     assert_eq!(tempfile_ns.map(|ns| ns.submodules.is_empty()), Some(true));
     assert_eq!(tempfile_ns.and_then(|ns| ns.facet), None);
-    assert_eq!(
-        tempfile_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
-        Some(vec!["tempfile"])
-    );
     assert_eq!(traits_ns.map(|ns| ns.submodules.contains(&"prelude")), Some(true));
-    assert_eq!(
-        math_ns
-            .and_then(|ns| ns.extra_crate_deps.first())
-            .map(|dep| dep.crate_name),
-        Some("libm")
-    );
     assert_eq!(graph_ns.map(|ns| ns.facet), Some(None));
     assert_eq!(graph_ns.map(|ns| ns.submodules.is_empty()), Some(true));
     assert_eq!(uuid_ns.map(|ns| ns.facet), Some(None));
-    assert_eq!(
-        uuid_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
-        Some(vec!["rand"])
-    );
     assert_eq!(uuid_ns.map(|ns| ns.submodules.is_empty()), Some(true));
     assert_eq!(uuid_ns.map(|ns| ns.typechecker_only), Some(false));
-    assert_eq!(
-        serde_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
-        Some(vec!["serde"])
-    );
-    assert_eq!(
-        json_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
-        Some(vec!["serde"])
-    );
     assert_eq!(collections_ns.and_then(|ns| ns.facet), Some(facets::DATA));
-    assert_eq!(collections_ns.map(|ns| ns.extra_crate_deps.is_empty()), Some(true));
     assert_eq!(collections_ns.map(|ns| ns.submodules.is_empty()), Some(true));
     assert_eq!(collections_ns.map(|ns| ns.typechecker_only), Some(false));
-    assert_eq!(
-        find_namespace("io")
-            .and_then(|ns| ns.extra_crate_deps.first())
-            .map(|dep| dep.crate_name),
-        Some("byteorder")
-    );
     assert_eq!(hash_ns.map(|ns| ns.facet), Some(None));
-    assert_eq!(
-        hash_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
-        Some(vec![
-            "blake2",
-            "blake3",
-            "hmac",
-            "md5",
-            "sha1",
-            "sha2",
-            "sha3",
-            "xxhash_rust",
-        ])
-    );
     assert_eq!(hash_ns.map(|ns| ns.submodules.contains(&"prelude")), Some(true));
     assert_eq!(hash_ns.map(|ns| ns.submodules.contains(&"_core")), Some(true));
     assert_eq!(hash_ns.map(|ns| ns.submodules.contains(&"_streaming")), Some(true));
     assert_eq!(hash_ns.map(|ns| ns.typechecker_only), Some(false));
     assert_eq!(checksum_ns.map(|ns| ns.facet), Some(None));
-    assert_eq!(
-        checksum_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
-        Some(vec!["crc32fast"])
-    );
     assert_eq!(checksum_ns.map(|ns| ns.submodules.is_empty()), Some(true));
     assert_eq!(checksum_ns.map(|ns| ns.typechecker_only), Some(false));
     assert_eq!(compression_ns.map(|ns| ns.facet), Some(None));
@@ -482,13 +431,6 @@ fn stdlib_registry_keeps_phase_023_metadata() {
         compression_ns.map(|ns| ns.submodules.contains(&"snappy.raw")),
         Some(true)
     );
-    assert_eq!(
-        compression_ns
-            .and_then(|ns| ns.extra_crate_deps.first())
-            .map(|dep| dep.crate_name),
-        Some("flate2")
-    );
     assert_eq!(datetime_ns.map(|ns| ns.facet), Some(None));
-    assert_eq!(datetime_ns.map(|ns| ns.extra_crate_deps.is_empty()), Some(true));
     assert_eq!(datetime_ns.map(|ns| ns.submodules.contains(&"civil.naive")), Some(true));
 }

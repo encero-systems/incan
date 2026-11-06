@@ -6,7 +6,7 @@
 from rust::std::rc import Rc
 from rust::std::vec import Vec, IntoIter
 from rust::std::iter import IntoIterator
-from rust::incan_std_core::frozen import FrozenList as NativeFrozenList, FrozenDict as NativeFrozenDict
+from rust::incan_std_primitives::frozen import FrozenList as NativeFrozenList, FrozenDict as NativeFrozenDict
 from std.rust import Static
 
 const ENTRIES: FrozenDict[int, int] = {1: 7}

@@ -1,0 +1,42 @@
+# behavior: primitive capabilities, async mechanisms, text, authentication, collections and output select no higher-level standard package (#2501)
+# expect-dependencies:
+# expect-std-packages:
+#   incan_stdlib_core
+#   incan_stdlib_primitives
+# expect-active-features:
+
+"""Use native-backed foundations without a higher-level standard-package dependency."""
+
+from std.primitives.async import Mutex, Send, Static, channel, sleep_ms, spawn
+from std.primitives.collections import append_list, empty_list, length_list
+from std.primitives.hmac import hmac_sha256
+from std.primitives.output import write_stdout_line
+from std.primitives.text import encode_utf8
+
+
+def retain[T with (Send, Static)](value: T) -> T:
+    """Retain a value through the foundational native capability bounds."""
+    return value
+
+
+async def ready() -> int:
+    """Yield through the primitive timer before producing a task result."""
+    await sleep_ms(0)
+    return 1
+
+
+async def main() -> Result[None, str]:
+    """Reach each moved primitive mechanism without a convenience standard package."""
+    mut values = empty_list[int]()
+    lock = Mutex.new(0)
+    guard = await lock.lock()
+    guard.set(retain(await spawn(ready())?))
+    sender, receiver = channel[int](1)
+    match await sender.send(guard.get()):
+        Ok(_) => pass
+        Err(error) => return Err(error.message())
+    match await receiver.recv():
+        Some(value) => append_list(values, value)
+        None => return Err("primitive channel closed before delivery")
+    tag = hmac_sha256.digest(b"key", encode_utf8("payload"))
+    return write_stdout_line(str(length_list(values) + len(tag)))

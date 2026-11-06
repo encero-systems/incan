@@ -22,14 +22,14 @@ model Op:
 class Acc:
     pub base: int
 
-    def run(self, f: (int) -> int) -> int:
+    pub def run(self, f: (int) -> int) -> int:
         return f(self.base)
 
-    def adder(self) -> (int) -> int:
+    pub def adder(self) -> (int) -> int:
         base = self.base
         return (x) => x + base
 
-    def scaled(self) -> int:
+    pub def scaled(self) -> int:
         g: (int) -> int = (x) => x * self.base
         return g(2)
 

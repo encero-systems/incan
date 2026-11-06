@@ -73,10 +73,8 @@ pub def model_type(
             return Err(f"unsupported Body IR nominal type {source_name}")
         RustType.Primitive(primitive) => return primitive_type(primitive)
         RustType.TypeToken(represented) =>
-            match model_type(constructors, declarations, represented)?:
-                (PlanType.Int | PlanType.Float | PlanType.Bool | PlanType.String) =>
-                    return Ok(PlanType.TypeToken([model_type(constructors, declarations, represented)?]))
-                _ => return Err("unsupported Body IR nonprimitive TypeToken carrier")
+            return Ok(PlanType.TypeToken([model_type(constructors, declarations, represented)?]))
+        RustType.Trait(identity) => return Ok(PlanType.Trait(identity.clone()))
         RustType.Function(params=parameters, return_type=result) => return function_pointer_type(parameters, result)
         RustType.Tuple(_elements) => return retained_model_type(constructors, declarations, ty)
         RustType.Decimal(precision=_precision, scale=_scale) => return Ok(PlanType.Decimal)
@@ -191,7 +189,7 @@ pub def hashed_element(declarations: &list[NominalDeclaration], ty: &RustType) -
     return primitive_leaf(ty, true)
 
 
-def model_equality(declaration: &NominalDeclaration) -> bool:
+def model_equality(declaration: NominalDeclaration) -> bool:
     """Require a checked derive or the explicit canonical source equality witness before hashed carrier admission."""
     if "Eq" in declaration.derives:
         return true
@@ -491,8 +489,8 @@ pub def field_slot(value: &RustPlaceElem, declaration: &NominalDeclaration) -> R
 
 
 def checked_field_identity(
-    declaration: &NominalDeclaration,
-    identity: &CanonicalSymbolId,
+    declaration: NominalDeclaration,
+    identity: CanonicalSymbolId,
 ) -> Result[CanonicalSymbolId, str]:
     """Apply an exact required-field witness once, refusing conflicting bindings instead of selecting by field name."""
     mut selected = identity.clone()
@@ -537,7 +535,7 @@ pub def constructor_index(
         None => return Err("unsupported Body IR nonlocal model constructor")
 
 
-def validate_constructor_binding(binding: &ArgumentBinding, count: int, fields: int) -> Result[None, str]:
+def validate_constructor_binding(binding: ArgumentBinding, count: int, fields: int) -> Result[None, str]:
     """Require every field slot exactly once; Body IR supplies elements in canonical field order."""
     match binding:
         ArgumentBinding.Resolved(arguments=bindings, defaulted_slots=defaults) =>

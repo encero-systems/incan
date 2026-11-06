@@ -518,16 +518,27 @@ impl TypeChecker {
     /// Resolve a callable return annotation and apply its nominal, nested-trait and Rust lifetime restrictions in
     /// order. Signature owners retain responsibility for route-specific checks and recording their final binding.
     /// A result with a `from` source defers its outer ownership mode, or the mode of a carrier's first payload, to the
-    /// declaration's returned-view check.
+    /// declaration's returned-view check. A top-level `Owned` result has no source dependency to resolve, but its
+    /// independence still belongs to that boundary check rather than the general annotation resolver.
     pub(super) fn resolve_callable_return_annotation(
         &mut self,
         annotation: &Spanned<Type>,
         has_source: bool,
     ) -> ResolvedType {
-        let ty = self.resolve_type_checked_deferring(annotation, |_| has_source, has_source);
+        let ty = self.resolve_type_checked_deferring(
+            annotation,
+            |mode| has_source || mode == incan_lang::lang::types::ownership::OwnershipMode::Owned,
+            has_source,
+        );
         self.refuse_unbounded_nominal_type_arguments(&ty, annotation.span);
         self.refuse_trait_type_nested_in_annotation(&ty, annotation.span);
-        self.refuse_lifetime_bearing_rust_type(&ty, annotation.span);
+        let retained_native_result = has_source
+            && self
+                .explicit_root_contract(&annotation.node, &ty)
+                .is_some_and(|mode| mode.mode == incan_lang::lang::types::ownership::OwnershipMode::Owned);
+        if !retained_native_result {
+            self.refuse_lifetime_bearing_rust_type(&ty, annotation.span);
+        }
         ty
     }
 
@@ -645,9 +656,9 @@ impl TypeChecker {
             }
             ResolvedType::FrozenList(inner)
             | ResolvedType::FrozenSet(inner)
-            | ResolvedType::TypeToken(inner)
             | ResolvedType::Ref(inner)
             | ResolvedType::RefMut(inner) => self.stored_trait_annotation(inner),
+            ResolvedType::TypeToken(_) => None,
             ResolvedType::FrozenDict(key, value) => self
                 .stored_trait_annotation(key)
                 .or_else(|| self.stored_trait_annotation(value)),
@@ -667,6 +678,7 @@ impl TypeChecker {
             | ResolvedType::FrozenBytes
             | ResolvedType::Unit
             | ResolvedType::Named(_)
+            | ResolvedType::Trait(_)
             | ResolvedType::TypeVar(_)
             | ResolvedType::SelfType
             | ResolvedType::RustPath(_)

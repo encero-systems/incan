@@ -31,10 +31,6 @@ pub struct DeclarationArtifacts {
     /// Body IR-only native derive paths after checked RFC 024 module and trait expansion. Descriptor is omitted
     /// because its checked structural opt-in has no native macro; legacy keeps consuming `model_derives` unchanged.
     pub body_ir_model_derives: HashMap<String, Vec<String>>,
-    /// Declaration spans of `@rust.extern` functions whose Rust item is an exported attribute macro, with its
-    /// canonical path. Such a declaration names a macro that rustc applies to an item; it has no callable body to
-    /// delegate to.
-    pub native_attribute_externs: HashMap<crate::ast::Span, String>,
     /// Declaration spans of functions that apply exported attribute macros through their decorators, with each
     /// application in written order. The providing Loaf's facts select the macro; the written arguments are kept.
     pub native_attribute_applications: HashMap<crate::ast::Span, Vec<incan_semantics_core::body_ir::NativeAttribute>>,
@@ -178,8 +174,8 @@ pub struct DeclarationArtifacts {
     /// Legacy keeps its original expression and call-site tables; this snapshot closes the factory only after its
     /// returned decorator has been checked against the decorated declaration.
     pub body_ir_decorator_applications: HashMap<crate::ast::Span, BodyIrDecoratorApplication>,
-    /// Static receivers of checked two-segment decorator factories, retained separately from the selected method at
-    /// the same synthetic span. Legacy reference and expression-type tables remain unchanged.
+    /// Module namespace or static receivers of checked qualified decorators, retained separately from the selected
+    /// member at the same synthetic span. Legacy reference and expression-type tables remain unchanged.
     pub body_ir_decorator_static_receivers: HashMap<crate::ast::Span, BodyIrDecoratorStaticReceiver>,
     /// RFC 036: Method names whose declaration was rebound through a user-defined decorator chain.
     pub decorated_method_bindings: HashMap<(String, String), DecoratedMethodBindingInfo>,
@@ -212,7 +208,7 @@ pub struct BodyIrDecoratorApplication {
     pub factory_type_args: Vec<ResolvedType>,
 }
 
-/// The checked static value a decorator factory method borrows, without conflating it with the selected method.
+/// The checked namespace or static value a qualified decorator uses, without conflating it with the selected member.
 #[derive(Debug, Clone)]
 pub struct BodyIrDecoratorStaticReceiver {
     /// Source binding used for this receiver; aliases keep their canonical storage identity below.

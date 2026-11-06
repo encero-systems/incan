@@ -192,7 +192,7 @@ impl BodyBuilder<'_, '_> {
                 native_trait_delegation: None,
                 name: identity.declaration_name.clone(),
                 intrinsic_carrier: None,
-                reflection: None,
+                operation: None,
                 loaf_trait: None,
                 trait_arguments: None,
                 canonical: Some(identity),

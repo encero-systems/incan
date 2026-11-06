@@ -172,6 +172,15 @@ impl Builder<'_> {
                 place.place.projection.push(Projection::Element(index.span));
                 Ok(place)
             }
+            Expr::MethodCall(..) => {
+                match super::super::builtins::byte_slice_view(&self.checker.type_info, expression) {
+                    Some(receiver) => self.place(receiver),
+                    None => Err(Unavailable {
+                        span: expression.span,
+                        reason: "expression is not a stored place".into(),
+                    }),
+                }
+            }
             _ => Err(Unavailable {
                 span: expression.span,
                 reason: "expression is not a stored place".into(),
@@ -192,10 +201,74 @@ impl Builder<'_> {
                 let incoming = self.evaluate_place(base, incoming)?;
                 self.expression(index, incoming, false)
             }
+            Expr::MethodCall(..) => {
+                match super::super::builtins::byte_slice_view(&self.checker.type_info, expression) {
+                    Some(receiver) => self.evaluate_place(receiver, incoming),
+                    None => Err(Unavailable {
+                        span: expression.span,
+                        reason: "unsupported place evaluation".into(),
+                    }),
+                }
+            }
             _ => Err(Unavailable {
                 span: expression.span,
                 reason: "unsupported place evaluation".into(),
             }),
+        }
+    }
+
+    /// Evaluate a stored projection whose root is a checked returned-view call. The call creates the retained loan;
+    /// field and element projections then narrow the access without pretending the call expression is stored.
+    pub(super) fn projected_view_place(
+        &mut self,
+        expression: &Spanned<Expr>,
+        incoming: Vec<usize>,
+    ) -> Result<Option<(Vec<usize>, Path)>, Unavailable> {
+        match &expression.node {
+            Expr::Paren(inner) => self.projected_view_place(inner, incoming),
+            Expr::Field(base, _) => {
+                let Some((incoming, mut path)) = self.projected_view_place(base, incoming)? else {
+                    return Ok(None);
+                };
+                if self
+                    .checker
+                    .type_info
+                    .computed_property_access(expression.span)
+                    .is_some()
+                {
+                    return Err(Unavailable {
+                        span: expression.span,
+                        reason: "computed property access".into(),
+                    });
+                }
+                let identity = self
+                    .checker
+                    .type_info
+                    .resolved_identity(expression.span)
+                    .filter(|identity| identity.kind == SemanticSourceTargetKind::Field)
+                    .ok_or(Unavailable {
+                        span: expression.span,
+                        reason: "field lacks a checked stored identity".into(),
+                    })?
+                    .clone();
+                path.place.projection.push(Projection::Field(identity));
+                Ok(Some((incoming, path)))
+            }
+            Expr::Index(base, index) => {
+                let Some((incoming, mut path)) = self.projected_view_place(base, incoming)? else {
+                    return Ok(None);
+                };
+                let incoming = self.expression(index, incoming, false)?;
+                path.place.projection.push(Projection::Element(index.span));
+                Ok(Some((incoming, path)))
+            }
+            _ => {
+                let Some(view) = self.view_source(expression)? else {
+                    return Ok(None);
+                };
+                self.evaluate_view_source(expression, view, incoming)
+                    .map(|result| Some(result))
+            }
         }
     }
 
@@ -312,11 +385,54 @@ impl Builder<'_> {
         }
     }
 
+    /// Prove a top-level owned return against its declared source dependency. Native lifetime-bearing values and
+    /// another source-dependent owned call must retain that exact source. An otherwise independent computation may
+    /// still publish the conservative declared dependency after its ordinary value evaluation completes.
+    pub(in crate::typechecker::ownership_contracts) fn owned_return(
+        &mut self,
+        value: &Spanned<Expr>,
+        source: &Place,
+        incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        if let Some(relation) = self.native_result_relation(value)?
+            && !relation.sources.is_empty()
+        {
+            let (incoming, loans) = self.evaluate_native_result(value, &relation, incoming)?;
+            if loans.is_empty()
+                || loans
+                    .iter()
+                    .any(|loan| self.graph.loans.get(loan.0).is_none_or(|loan| loan.source != *source))
+            {
+                return Err(Unavailable {
+                    span: value.span,
+                    reason: "owned result does not retain exactly its declared source".into(),
+                });
+            }
+            return Ok(incoming);
+        }
+        if let Some(relation) = self.owned_relation(value)? {
+            let (incoming, path) = self.evaluate_view_call(value, relation, incoming)?;
+            if path.place != *source {
+                return Err(Unavailable {
+                    span: value.span,
+                    reason: "owned result call retains a different source".into(),
+                });
+            }
+            return Ok(incoming);
+        }
+        self.expression(value, incoming, true)
+    }
+
     /// Distinguish stored sources from fresh computed values without swallowing missing checked projection facts.
     pub(super) fn optional_place(&mut self, expression: &Spanned<Expr>) -> Result<Option<Path>, Unavailable> {
         match &expression.node {
             Expr::Ident(_) | Expr::SelfExpr | Expr::Field(_, _) | Expr::Index(_, _) => self.place(expression).map(Some),
             Expr::Paren(inner) => self.optional_place(inner),
+            Expr::MethodCall(..)
+                if super::super::builtins::byte_slice_view(&self.checker.type_info, expression).is_some() =>
+            {
+                self.place(expression).map(Some)
+            }
             _ => Ok(None),
         }
     }

@@ -3,6 +3,7 @@
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::surface::constructors::{self, ConstructorId};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
+use incan_semantics_core::CanonicalSymbolId;
 use std::collections::BTreeSet;
 
 use crate::error::PlanError;
@@ -117,6 +118,8 @@ enum Scalar {
     FrozenCollection(String, Vec<Scalar>),
     FrozenCollectionRef(String, Vec<Scalar>),
     TypeToken(Vec<Scalar>),
+    /// Canonical source trait identity carried only inside a type token.
+    Trait(CanonicalSymbolId),
     StaticText,
     StaticBytes,
     ValidationError,
@@ -184,6 +187,8 @@ enum Leaf {
     Decimal,
     FrozenStr,
     FrozenBytes,
+    /// One zero-sized token with its represented checked carrier.
+    TypeToken(Vec<Scalar>),
     /// An owned nested list preserves every supplied leaf until canonical arity validation.
     List(Vec<Leaf>, i64),
     /// An owned nested dictionary preserves key/value arity instead of indexing an unchecked vector.
@@ -217,6 +222,7 @@ impl Leaf {
             ListLeaf::FrozenStr => Leaf::FrozenStr,
             ListLeaf::FrozenBytes => Leaf::FrozenBytes,
             ListLeaf::FunctionPointer(signature) => Leaf::FunctionPointer(signature.iter().map(scalar).collect()),
+            ListLeaf::TypeToken(represented) => Leaf::TypeToken(represented.iter().map(scalar).collect()),
             ListLeaf::List(elements, depth) => Leaf::List(elements.iter().map(Leaf::of).collect(), *depth),
             ListLeaf::Dict(elements) => Leaf::Dict(elements.iter().map(Leaf::of).collect()),
             ListLeaf::Set(elements) => Leaf::Set(elements.iter().map(Leaf::of).collect()),
@@ -313,6 +319,7 @@ fn scalar(ty: &PlanType) -> Scalar {
             Scalar::FrozenCollectionRef(name.clone(), elements.iter().map(scalar).collect())
         }
         PlanType::TypeToken(elements) => Scalar::TypeToken(elements.iter().map(scalar).collect()),
+        PlanType::Trait(identity) => Scalar::Trait(identity.clone()),
         PlanType::StaticBytes => Scalar::StaticBytes,
         PlanType::StaticText => Scalar::StaticText,
         PlanType::StringRef => Scalar::StringRef,

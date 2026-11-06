@@ -1,26 +1,35 @@
 pub const PRODUCER: str = "producer"
 
-pub from helpers import IntLiteralExpr, StringLiteralExpr, LiteralValue, ColumnExpr, AggregateMeasure, DEFAULT_LABEL, lit, count, aggregate_as, aggregate_default, describe
-pub from search import (
-    ExactResult,
-    Nomination,
-    exact_query,
-    weigh,
+pub from helpers import (
+    IntLiteralExpr,
+    StringLiteralExpr,
+    LiteralValue,
+    ColumnExpr,
+    AggregateMeasure,
+    DefaultCodec,
+    DEFAULT_LABEL,
+    lit,
+    count,
+    aggregate_as,
+    aggregate_default,
+    default_codec_count,
+    describe,
 )
+pub from search import ExactResult, Nomination, exact_query, weigh
 
 
 pub model Box:
     pub value: int
 
-    def answer(self) -> int | str:
+    pub def answer(self) -> Union[int, str]:
         if self.value > 0:
             return self.value
         return "empty"
 
-    def answers(self) -> list[int | str]:
+    pub def answers(self) -> list[Union[int, str]]:
         return [self.answer()]
 
-    def maybe(self) -> Option[int | str]:
+    pub def maybe(self) -> Option[Union[int, str]]:
         if self.value > 0:
             return Some(self.answer())
         return None
@@ -28,11 +37,13 @@ pub model Box:
 
 pub model NumberExpr:
     """A numeric expression's name."""
+
     pub name: str
 
 
 pub model BoolExpr:
     """A Boolean expression's name."""
+
     pub name: str
 
 

@@ -7,7 +7,7 @@ use super::*;
 #[test]
 fn method_input_payload_retains_checked_self_substitution() -> Result<(), Box<dyn std::error::Error>> {
     let checker = checked(
-        "class Reader:\n    def view(self, other: Borrowed[Self]) -> None:\n        pass\ndef run() -> None:\n    reader = Reader()\n    reader.view(reader)\n",
+        "class Reader:\n    pub def view(self, other: Borrowed[Self]) -> None:\n        pass\ndef run() -> None:\n    reader = Reader()\n    reader.view(reader)\n",
     )?;
     assert!(checker.errors.is_empty(), "{:?}", checker.errors);
     assert_eq!(checker.type_info.protocols.explicit_input_calls.len(), 1);
@@ -28,7 +28,7 @@ fn method_flow_preserves_receiver_permissions() -> Result<(), Box<dyn std::error
             true,
         ),
         (
-            "model Counter:\n    value: int\n    def read(self) -> int:\n        let view: Borrowed[int] = self.value\n        return view\n",
+            "model Counter:\n    value: int\n    pub def read(self) -> int:\n        let view: Borrowed[int] = self.value\n        return view\n",
             false,
         ),
     ] {
@@ -52,19 +52,17 @@ fn method_flow_preserves_receiver_permissions() -> Result<(), Box<dyn std::error
                 .any(|error| error.stable_code() == Some("INCAN-T0126")),
             conflict
         );
-        // A method frame without conflicts is admitted; a conflicting one has no executable proof.
-        assert_eq!(
-            checker
+        assert!(
+            !checker
                 .errors
                 .iter()
                 .any(|error| error.stable_code() == Some("INCAN-T0123")),
-            conflict,
-            "{source}: {:?}",
+            "a precise source conflict must not cascade into an executable-proof diagnostic: {source}: {:?}",
             checker.errors
         );
     }
     let checker = checked(
-        "model First:\n    value: int\n    def read(self) -> int:\n        let view: Borrowed[int] = self.value\n        return view\nmodel Second:\n    value: int\n    def read(self) -> int:\n        let view: Borrowed[int] = self.value\n        return view\n",
+        "model First:\n    value: int\n    pub def read(self) -> int:\n        let view: Borrowed[int] = self.value\n        return view\nmodel Second:\n    value: int\n    pub def read(self) -> int:\n        let view: Borrowed[int] = self.value\n        return view\n",
     )?;
     assert_eq!(checker.type_info.protocols.explicit_input_flow.len(), 2);
     let mut receivers = std::collections::BTreeSet::new();
@@ -107,7 +105,7 @@ fn explicit_conflicts_report_origin_and_dependent_use() -> Result<(), Box<dyn st
     assert!(related[0].span.start < conflict.span.start);
     assert!(related[1].span.start > conflict.span.start);
     assert!(
-        checker
+        !checker
             .errors
             .iter()
             .any(|error| error.stable_code() == Some("INCAN-T0123"))
@@ -147,6 +145,62 @@ fn explicit_conflicts_report_origin_and_dependent_use() -> Result<(), Box<dyn st
     assert_eq!(
         witness.start,
         source.find("return view").ok_or("missing branch use")? + 7
+    );
+
+    let source = "def main() -> None:\n    mut xs = [1, 2, 3]\n    it = xs.iter().map((value) => value * 2)\n    xs.append(4)\n    println(it.collect())\n";
+    let checker = checked(source)?;
+    assert_eq!(checker.errors.len(), 1, "{:?}", checker.errors);
+    let conflict = checker.errors.first().ok_or("missing iterator conflict")?;
+    assert_eq!(conflict.stable_code(), Some("INCAN-T0001"));
+    assert_eq!(conflict.message, "cannot change `xs` while `it` is still reading it");
+    assert_eq!(source.get(conflict.span.start..conflict.span.end), Some("xs.append(4)"));
+    let related = conflict.related_spans();
+    assert_eq!(related.len(), 3, "{conflict:?}");
+    assert_eq!(
+        source.get(related[0].span.start..related[0].span.end),
+        Some("xs.iter().map((value) => value * 2)")
+    );
+    assert_eq!(related[0].label, "`it` reads `xs` from here");
+    assert_eq!(
+        source.get(related[1].span.start..related[1].span.end),
+        Some("xs.append(4)")
+    );
+    assert_eq!(related[1].label, "`xs` is changed here");
+    assert_eq!(source.get(related[2].span.start..related[2].span.end), Some("it"));
+    assert_eq!(related[2].label, "`it` is used again here");
+    assert_eq!(
+        conflict.hints(),
+        ["finish using `it` before changing `xs`, or write `xs.clone().iter()` to iterate over a copy"]
+    );
+
+    let source = "def main() -> None:\n    mut xs = [1, 2, 3]\n    it = xs.iter()\n    xs = [4, 5, 6]\n    println(it.collect())\n";
+    let checker = checked(source)?;
+    assert_eq!(checker.errors.len(), 1, "{:?}", checker.errors);
+    let conflict = checker.errors.first().ok_or("missing iterator replacement conflict")?;
+    assert_eq!(conflict.message, "cannot replace `xs` while `it` is still reading it");
+
+    let source = "def consume(xs: Owned[list[int]]) -> None:\n    println(xs)\ndef main() -> None:\n    mut xs = [1, 2, 3]\n    it = xs.iter()\n    consume(xs)\n    println(it.collect())\n";
+    let checker = checked(source)?;
+    assert_eq!(checker.errors.len(), 1, "{:?}", checker.errors);
+    let conflict = checker.errors.first().ok_or("missing iterator move conflict")?;
+    assert_eq!(conflict.message, "cannot move `xs` while `it` is still reading it");
+    assert_eq!(source.get(conflict.span.start..conflict.span.end), Some("xs"));
+    assert_eq!(conflict.related_spans().len(), 3, "{conflict:?}");
+
+    let source = "model Values:\n    items: list[int]\ndef from_field(values: Values) -> Generator[int]:\n    return (item for item in values.items)\n";
+    let checker = checked(source)?;
+    assert_eq!(checker.errors.len(), 1, "{:?}", checker.errors);
+    let conflict = checker.errors.first().ok_or("missing generator escape conflict")?;
+    assert_eq!(
+        conflict.message,
+        "cannot let the generator expression escape while it is still reading `values.items`"
+    );
+    assert_eq!(conflict.related_spans().len(), 1, "{conflict:?}");
+    assert_eq!(
+        conflict.hints(),
+        [
+            "move an owned list into the escaping generator, or iterate over `values.items.clone()` to give it an independent copy"
+        ]
     );
     Ok(())
 }
@@ -612,23 +666,23 @@ fn explicit_calls_follow_call_site_save_and_restore() -> Result<(), Box<dyn std:
 fn explicit_method_calls_retain_receiver_access() -> Result<(), Box<dyn std::error::Error>> {
     for (source, conflict) in [
         (
-            "def use(reader: Reader, value: str) -> None:\n    reader.read(value)\nclass Reader:\n    def read(self, value: Borrowed[str]) -> None:\n        pass\n",
+            "def use(reader: Reader, value: str) -> None:\n    reader.read(value)\nclass Reader:\n    pub def read(self, value: Borrowed[str]) -> None:\n        pass\n",
             false,
         ),
         (
-            "def use(mut reader: Reader, value: str) -> None:\n    reader.read(value)\nclass Reader:\n    def read(mut self, value: Borrowed[str]) -> None:\n        pass\n",
+            "def use(mut reader: Reader, value: str) -> None:\n    reader.read(value)\nclass Reader:\n    pub def read(mut self, value: Borrowed[str]) -> None:\n        pass\n",
             false,
         ),
         (
-            "def use(reader: Reader, value: str) -> None:\n    reader.read(value)\nclass Reader:\n    def read(mut self, value: Borrowed[str]) -> None:\n        pass\n",
+            "def use(reader: Reader, value: str) -> None:\n    reader.read(value)\nclass Reader:\n    pub def read(mut self, value: Borrowed[str]) -> None:\n        pass\n",
             true,
         ),
         (
-            "def use(mut reader: Reader) -> None:\n    reader.read(reader.value)\nclass Reader:\n    pub value: str\n    def read(mut self, value: Borrowed[str]) -> None:\n        pass\n",
+            "def use(mut reader: Reader) -> None:\n    reader.read(reader.value)\nclass Reader:\n    pub value: str\n    pub def read(mut self, value: Borrowed[str]) -> None:\n        pass\n",
             true,
         ),
         (
-            "def use(reader: Reader, value: str) -> str:\n    reader.read(1, value)\n    return value\nclass Reader:\n    def read(self, value: Borrowed[int]) -> None:\n        pass\n    def read(self, prefix: int, value: Owned[str]) -> None:\n        pass\n",
+            "def use(reader: Reader, value: str) -> str:\n    reader.read(1, value)\n    return value\nclass Reader:\n    pub def read(self, value: Borrowed[int]) -> None:\n        pass\n    pub def read(self, prefix: int, value: Owned[str]) -> None:\n        pass\n",
             true,
         ),
     ] {
@@ -643,7 +697,7 @@ fn explicit_method_calls_retain_receiver_access() -> Result<(), Box<dyn std::err
 #[test]
 fn rejected_method_does_not_retain_input_access() -> Result<(), Box<dyn std::error::Error>> {
     let checker = checked(
-        "def use(reader: Reader, value: str) -> None:\n    reader.read(value)\nclass Reader:\n    def read(self, value: Borrowed[int]) -> None:\n        pass\n",
+        "def use(reader: Reader, value: str) -> None:\n    reader.read(value)\nclass Reader:\n    pub def read(self, value: Borrowed[int]) -> None:\n        pass\n",
     )?;
     assert!(
         checker

@@ -182,10 +182,8 @@ impl TypeCheckInfo {
         proof.validate_local_storage()?;
         if !input_statements_supported(callable.body(), conditionals)
             || any_expr_in_body(callable.body(), |expression| {
-                matches!(
-                    expression,
-                    Expr::Index(..) | Expr::Binary(_, BinaryOp::And | BinaryOp::Or, _)
-                ) || (!conditionals && matches!(expression, Expr::Try(_) | Expr::Match(..)))
+                matches!(expression, Expr::Binary(_, BinaryOp::And | BinaryOp::Or, _))
+                    || (!conditionals && matches!(expression, Expr::Try(_) | Expr::Match(..)))
             })
         {
             return Err("explicit inputs require direct straight-line source access in this implementation stage");
@@ -265,8 +263,21 @@ impl CheckedInputBody<'_> {
                     .loans
                     .get(receiver.0)
                     .ok_or("explicit method receiver has no checked loan")?;
-                if !matches!(loan.source.root, super::flow::Root::Binding(_)) {
-                    return Err("explicit method receiver requires existing owner storage");
+                let valid = match &loan.source.root {
+                    super::flow::Root::Binding(_) => true,
+                    super::flow::Root::Temporary {
+                        owner,
+                        expression,
+                        invocation,
+                    } => {
+                        owner == self.canonical_owner()
+                            && *expression == loan.span
+                            && invocation == span
+                            && loan.source.projection.is_empty()
+                    }
+                };
+                if !valid {
+                    return Err("explicit method receiver has no bounded owner storage");
                 }
             }
             let call = self

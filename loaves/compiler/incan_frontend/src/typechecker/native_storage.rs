@@ -380,9 +380,9 @@ impl TypeChecker {
         // text and bytes, so reusing those public constructor names would change FrozenList<String> into a list of
         // static text. The lowering reads this storage decision rather than resolving a native owner again.
         let frozen = match (base.as_str(), arguments.len()) {
-            ("incan_std_core::frozen::FrozenList", 1) => Some("$FrozenList"),
-            ("incan_std_core::frozen::FrozenSet", 1) => Some("$FrozenSet"),
-            ("incan_std_core::frozen::FrozenDict", 2) => Some("$FrozenDict"),
+            ("incan_std_primitives::frozen::FrozenList", 1) => Some("$FrozenList"),
+            ("incan_std_primitives::frozen::FrozenSet", 1) => Some("$FrozenSet"),
+            ("incan_std_primitives::frozen::FrozenDict", 2) => Some("$FrozenDict"),
             _ => None,
         };
         if let Some(constructor) = frozen {

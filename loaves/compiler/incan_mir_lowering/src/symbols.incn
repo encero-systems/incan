@@ -34,6 +34,7 @@ pub def type_component(ty: &RustType) -> str:
         RustType.Never => return symbol_component("!")
         RustType.Primitive(primitive) => return primitive_component(primitive)
         RustType.Named(name) => return "_named" + symbol_component(str(name))
+        RustType.Trait(identity) => return "_trait" + symbol_component(identity.render_compact())
         RustType.Generic(base=base, args=arguments) =>
             return type_sequence(symbol_component(str(base)) + f"_args_{len(arguments)}", arguments)
         RustType.Decimal(precision=precision, scale=scale) => return f"_decimal_{precision}_{scale}"
@@ -83,7 +84,7 @@ def primitive_component(primitive: &Primitive) -> str:
         Primitive.Unit => return symbol_component("Unit")
 
 
-def builtin_component(builtin: &RuntimeBuiltinType) -> str:
+def builtin_component(builtin: RuntimeBuiltinType) -> str:
     """Encode the closed builtin runtime identity independently of its diagnostic renderer."""
     match builtin:
         RuntimeBuiltinType.ValidationError => return symbol_component("runtime::ValidationError")
@@ -110,16 +111,17 @@ def parameter_component(parameter: &IncanCallableParam) -> str:
     )
 
 
-def input_access_component(access: &IncanInputAccess) -> str:
-    """Keep explicit access contracts distinct even when their underlying value and binding mutability agree."""
+def input_access_component(access: IncanInputAccess) -> str:
+    """Keep checked access contracts distinct even when their underlying value and binding mutability agree."""
     match access:
         IncanInputAccess.Inferred => return "_access_inferred"
+        IncanInputAccess.InferredShared => return "_access_inferred_shared"
         IncanInputAccess.Shared => return "_access_shared"
         IncanInputAccess.Exclusive => return "_access_exclusive"
         IncanInputAccess.Owned => return "_access_owned"
 
 
-def parameter_kind_component(kind: &IncanCallableParamKind) -> str:
+def parameter_kind_component(kind: IncanCallableParamKind) -> str:
     """Keep normal, positional-rest and keyword-rest inputs distinct even when their element types agree."""
     match kind:
         IncanCallableParamKind.Normal => return "_normal"

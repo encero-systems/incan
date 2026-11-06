@@ -48,7 +48,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 }
             }
         }
-        let ty = self.retained_list_type(&self.resolve_ty(span), &elements);
+        let retain_references = self
+            .input_body
+            .as_ref()
+            .ok()
+            .and_then(|proof| proof.as_ref())
+            .is_some_and(|proof| proof.dependent_value(span));
+        let ty = if retain_references {
+            self.retained_reference_list_type(entries)
+                .unwrap_or_else(|| self.retained_list_type(&self.resolve_ty(span), &elements, true))
+        } else {
+            self.retained_list_type(&self.resolve_ty(span), &elements, false)
+        };
         self.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
         self.push_assign_temp(
             bir::Rvalue::Aggregate(bir::AggregateKind::List, elements),
@@ -186,6 +197,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         callee: bir::Callee::Method(bir::MethodTarget {
                             native_trait_delegation: None,
                             canonical: Some(crate::symbols::canonical_builtin_member_identity("List", "append")),
+                            operation: Some(bir::ReflectionOperation::Builtin(
+                                incan_lang::lang::builtins::BuiltinMethodId::List(
+                                    incan_lang::lang::surface::list_methods::ListMethodId::Append,
+                                ),
+                            )),
                             ..bir::MethodTarget::synthesized("push")
                         }),
                         args: fixed_elements(vec![

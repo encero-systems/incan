@@ -63,7 +63,6 @@ from closures import (
     return_representation,
 )
 from attributes import native_attributes
-from externs import delegated_function
 from lowering import BodyIrModule
 from checked_values import builder_location, indexed_location, line_starts, location
 from statements import is_nominal_type, is_owned_callable, lower_block
@@ -98,26 +97,6 @@ pub def lower_function(
     span = location(body.span, source, file)
     selected_name = frame_name(evaluator_name(module, body), role)
     cached_decorator, initializing_decorator = frame_decorator_role(module, body, role)?
-    match body.extern_delegation:
-        Some(delegation) =>
-            if body.is_async or body.is_generator():
-                return Err("unsupported Body IR async or generator ExternDelegation")
-            if is_program_entry(module, body):
-                return Err("unsupported Body IR ExternDelegation entrypoint")
-            mut native_arguments: list[PlanType] = []
-            for argument in type_arguments:
-                argument_type = native_source_type(constructors, nominals, enums, unions, argument, intrinsics)?
-                native_arguments.append(argument_type)
-            function, externals = delegated_function(
-                selected_name,
-                delegation.rust_path(),
-                native_arguments,
-                frame_parameters(constructors, module, body, source, file, intrinsics)?,
-                native_source_type(constructors, nominals, enums, unions, body.return_type, intrinsics)?,
-                span,
-            )?
-            return Ok((function, externals, [], []))
-        None => pass
     validate_callable_representation(body)?
     mut declared_carrier = PlanType.Unit
     match native_source_type(constructors, nominals, enums, unions, body.return_type, intrinsics):
@@ -154,14 +133,17 @@ pub def lower_function(
         initializing_decorator,
         span,
     )?
-    if body.returned_view.is_some() and body.is_generator():
-        return Err("unsupported Body IR returned view in a generator frame")
+    match direct_view_access(body):
+        Some(_access) =>
+            if body.is_generator():
+                return Err("unsupported Body IR returned view in a generator frame")
+        None => pass
     # A carried view's carrier is an ordinary owned result whose carrying payload already holds the borrow.
     match direct_view_access(body):
         Some(access) => builder.returned_view = access
         None => pass
     match body.returned_view:
-        Some(view) => builder.carries_view = view.carried.is_some()
+        Some(view) => builder.carries_view = view.access != IncanInputAccess.Owned and view.carried.is_some()
         None => pass
     initialize_body_frame(module, body, builder, parameters, declared_type, span)?
     lower_block(module, builder, body.block)?
@@ -181,10 +163,13 @@ pub def lower_function(
         span=span,
         is_async=body.is_async,
         attributes=native_attributes(body),
+        retained_result_source=retained_result_source(body),
     )
     # A returned view's result shares its source parameter's loan; instances recompute the same relation.
     match body.returned_view:
-        Some(_view) => function.signature_lifetimes = signature_lifetimes(body, type_arguments)?
+        Some(view) =>
+            if view.access != IncanInputAccess.Owned:
+                function.signature_lifetimes = signature_lifetimes(body, type_arguments)?
         None => pass
     if body.is_generator():
         match generator_shape(declared_type):
@@ -195,6 +180,16 @@ pub def lower_function(
     if is_program_entry(module, body) and return_type == PlanType.Int:
         builder.synthesized.append(integer_entry(function, function_name(module, body)))
     return Ok((function, builder.externals, builder.instances, builder.synthesized))
+
+
+def retained_result_source(body: &RustBody) -> int:
+    """Retain the checked parameter slot for an owned result without turning that result into a returned view."""
+    match body.returned_view:
+        Some(source) =>
+            if source.access == IncanInputAccess.Owned:
+                return int(source.slot)
+        None => return -1
+    return -1
 
 
 def frame_decorator_role(

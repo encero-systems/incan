@@ -5,14 +5,14 @@ Each case connects its callers and sends their frames before the host reads them
 """
 
 from rust::std::env import temp_dir
-from rust::std::fs import File, metadata, remove_file
+from rust::std::fs import File, create_dir_all, metadata, remove_dir_all, remove_file
 from rust::std::os::unix::fs import MetadataExt
 from rust::std::process import id
 from rust::std::string import String as RustString
 from rust::std::thread import sleep
 from rust::std::time import Duration, Instant
 from std.json import JsonValue, parse
-from pub::incan_platform.ipc import Connection, dial
+from pub::incan_platform.ipc import Connection, dial, listen
 from host import HostSettings, WorkerHost, complete, host_for, next_request
 from lifecycle import ActivationOutcome, Bounds, FOOTPRINT_CEILING, FOOTPRINT_MARGIN, Retirement, lifecycle
 from protocol import (
@@ -60,6 +60,7 @@ def settings(socket: str, idle_millis: int, margin: int, owner: Option[u32]) -> 
         socket=socket,
         generation=GENERATION,
         ready="",
+        home=temp_dir().to_string_lossy().into_owned(),
         baseline=1000,
         bounds=Bounds(idle_millis=idle_millis, margin=margin, ceiling=FOOTPRINT_CEILING),
         owner=owner,
@@ -302,16 +303,53 @@ pub def test_an_idle_worker_retires_and_withdraws_its_socket() -> Result[None, s
     return Ok(None)
 
 
+pub def test_a_worker_retires_once_its_socket_or_home_is_gone() -> Result[None, str]:
+    """
+    A worker whose socket path is removed, replaced or whose home is deleted retires within about a second, long
+    before its idle period, and withdraws only a socket file that is still its own.
+    """
+    # The socket path goes: nothing can reach the worker any more.
+    socket = socket_path("socketless")
+    mut socketless = host_for(settings(socket, 60000, 16777216, None))?
+    discard(socket)
+    assert ended_within(socketless, 5000)
+    # Another listener takes the path: the worker retires and leaves the replacement's socket alone.
+    replaced = socket_path("replaced")
+    mut displaced = host_for(settings(replaced, 60000, 16777216, None))?
+    discard(replaced)
+    mut replacement = listen(replaced, true)?
+    assert ended_within(displaced, 5000)
+    assert not withdrawn(replaced)
+    discard(replaced)
+    # The home goes: the worker serves nobody any more, and removes its own socket.
+    home = temp_dir().join(f"iwh-{id()}-home").to_string_lossy().into_owned()
+    create_dir_all(home).map_err((error) => f"cannot create {home}: {error}")?
+    homeless_socket = socket_path("homeless")
+    mut homeless_settings = settings(homeless_socket, 60000, 16777216, None)
+    homeless_settings.home = home
+    mut homeless = host_for(homeless_settings)?
+    remove_dir_all(home).map_err((error) => f"cannot remove {home}: {error}")?
+    assert ended_within(homeless, 5000)
+    assert withdrawn(homeless_socket)
+    return Ok(None)
+
+
+def ended_within(mut host: WorkerHost, millis: int) -> bool:
+    """Whether the host retired, instead of serving another request, within `millis` milliseconds."""
+    started = Instant.now()
+    return ended(host) and int(started.elapsed().as_millis()) < millis
+
+
 pub def test_a_worker_still_retires_when_idle_after_an_activation_longer_than_its_queue() -> Result[None, str]:
     """
-    An activation that lasts longer than the socket's queue of wake-ups could hold neither loses the idle watchdog nor
+    An activation that lasts longer than the socket's queue of callers could hold neither loses idle retirement nor
     delays the next request: the worker answers it and still retires once idle.
     """
     socket = socket_path("long")
     mut host = host_for(settings(socket, 40, 16777216, None))?
     mut first = caller(socket, request_text(GENERATION, "--fmt"))?
     assert is_format(served(host)?)
-    # The watchdog wakes every 10 ms; 2 s is longer than the 128 connections a listening socket queues.
+    # 2 s is longer than any idle period of this case, and the worker checks its own clock again once it waits.
     sleep(Duration.from_millis(2000))
     complete(host, ActivationOutcome.Exited(0), -1)
     assert exit_of(reply(first)?) == 0

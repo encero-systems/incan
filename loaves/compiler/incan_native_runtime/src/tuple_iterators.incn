@@ -5,9 +5,9 @@ from std.rust import Static
 from rust::std::vec import Vec
 from rust::std::mem import take
 from rust::std::iter import IntoIterator, Iterator as NativeIterator
-from rust::incan_std_core::iter import Generator as NativeGenerator, nonnegative_count
-from rust::incan_std_core::collections import list_get
-from rust::incan_std_core::strings import str_split as split_native, str_len as length_native
+from rust::incan_std_primitives::iter import Generator as NativeGenerator, nonnegative_count
+from rust::incan_std_primitives::collections import list_get
+from rust::incan_std_primitives::strings import str_split as split_native, str_len as length_native
 from native_copying import clone_native
 
 

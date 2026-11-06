@@ -98,12 +98,37 @@ impl TypeChecker {
             self.retain_body_ir_defaulted_module_class(type_info, span);
         }
         let result = explicit_ty.unwrap_or(constructor_ty);
+        self.retain_module_constructor_owner(span, &result);
         self.record_expr_type(callee_span, result.clone());
         self.type_info
             .expressions
             .ident_kinds
             .insert(callee_span, IdentKind::TypeName);
         result
+    }
+
+    /// Preserve the selected module constructor's exact nominal owner for Body IR type projection.
+    ///
+    /// Two source modules may publish the same type name. The ordinary checked result keeps that source-facing name,
+    /// while the private constructor carrier keys the executable type by the canonical identity already selected at
+    /// the call. This prevents a qualified constructor from borrowing another same-named declaration's layout.
+    fn retain_module_constructor_owner(&mut self, span: Span, result: &ResolvedType) {
+        let Some(identity) = self.type_info.resolved_identity(span).cloned() else {
+            return;
+        };
+        let Some(carrier) = incan_semantics_core::body_ir::nominal_carrier_key(&identity) else {
+            return;
+        };
+        let retained = match result {
+            ResolvedType::Named(_) => ResolvedType::Named(carrier.clone()),
+            ResolvedType::Generic(_, arguments) => ResolvedType::Generic(carrier.clone(), arguments.clone()),
+            _ => return,
+        };
+        self.type_info
+            .declarations
+            .named_type_identities
+            .insert(carrier, identity);
+        self.type_info.calls.body_ir_constructor_types.insert(span, retained);
     }
 
     /// Return whether inspected type metadata proves omitted named fields can be filled through `Default`.
@@ -339,13 +364,21 @@ impl TypeChecker {
         &mut self,
         path: &str,
         signature: &RustFunctionSig,
+        explicit_type_args: &[Spanned<Type>],
         args: &[CallArg],
         span: Span,
         callee_span: Span,
         expected_return_ty: Option<&ResolvedType>,
     ) -> ResolvedType {
         let error_count_before = self.errors.len();
-        let result = self.validate_rust_function_call_with_expected(path, signature, args, span, expected_return_ty);
+        let result = self.validate_rust_function_call_with_type_arguments(
+            path,
+            signature,
+            explicit_type_args,
+            args,
+            span,
+            expected_return_ty,
+        );
         if self.errors.len() == error_count_before {
             if result == ResolvedType::Never && !signature.is_async && !signature.is_unsafe {
                 self.type_info

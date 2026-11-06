@@ -1,6 +1,6 @@
 """Value helpers shared by the list-backed `std.collections` containers."""
 
-from rust::incan_std_core::collections import list_get
+from rust::incan_std_primitives::collections import list_get
 
 
 pub def _value_index[T with (Clone, Eq)](items: list[T], value: T) -> int:

@@ -6,6 +6,7 @@
 
 | Module | Holds |
 | --- | --- |
+| `store` | Versioned segment and manifest codecs, immutable payloads, snapshot/transaction publication, claims, leases, collection and repair. Store paths and I/O stay private to the substrate; owners supply policy and observation adapters. |
 | `trace` | Versioned engine spans, monotonic clocks, aggregate counters and bounded file channels. |
 | `ipc` | Bounded, length-framed transport over Unix sockets, with every frame length checked before its buffer is allocated; per-direction data credits; OS peer identity; listeners, liveness probes, fresh session identities, and a connection's descriptor lent to native code that only observes it. |
 | `capacity` | Filesystem capacity through `available_bytes(path: str) -> Result[int, str]`: the bytes an unprivileged writer can still allocate on the filesystem holding a path, in its fundamental block size. |
@@ -28,6 +29,12 @@ incan_platform = { path = "../../loaves/platform" }
 ```incan
 from pub::incan_platform.ipc import Connection, dial, listen
 ```
+
+## Store substrate
+
+`incan_platform.store` owns the storage mechanism: canonical segment and manifest bytes, mapped reads, immutable payload files, snapshot and transaction state, claim and lease publication, collection primitives and repair. Its on-disk identifiers remain `incan.segment-store/3` and `incan.segment-manifest/3`; moving the owner does not migrate or reinterpret an existing store.
+
+The platform does not decide which records to build, retain or collect. Oven keeps build orchestration, typed bakery families, sealed-set JSON policy, scheduling and observation destination selection. Oven's single `store_path_conversion.incn` adapter converts application-facing `std.fs.Path` values to the store-private path type and otherwise delegates to this Loaf. The store reports publication work only through `WorkObserver`, so the platform never imports or calls Oven.
 
 ## Observations
 

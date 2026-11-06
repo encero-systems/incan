@@ -79,7 +79,12 @@ def observed_library_key(
     return Ok(key)
 
 
-def source_paths(project: Path, dependencies: Path, arguments: list[str], paths: list[str]) -> Result[list[str], str]:
+pub def source_paths(
+    project: Path,
+    dependencies: Path,
+    arguments: list[str],
+    paths: list[str],
+) -> Result[list[str], str]:
     """
     Locate a producer's retained dependency inventory in the selected checkout without identifying by provenance.
 
@@ -160,7 +165,7 @@ pub def reconciled_rust_key(
     )
 
 
-def recorded_sources(paths: list[str], project: Path, mut ledger: Ledger) -> Result[list[str], str]:
+pub def recorded_sources(paths: list[str], project: Path, mut ledger: Ledger) -> Result[list[str], str]:
     """
     The contents of the files a dependency scan lists. When one of them no longer exists, the scan is stale rather
     than the unit broken: it names no identity, and the unit is scanned again.

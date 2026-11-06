@@ -76,8 +76,10 @@ impl TypeCheckInfo {
                 .ok_or("native invocation has no contract from its signature"),
             InputCallKind::Explicit => {
                 let contract = contract.ok_or("invocation has no canonical ownership contract")?;
-                // A returned view is an explicit obligation even when every input slot is ordinary.
+                // A returned view or independent owned result is an explicit obligation even when every input slot
+                // is ordinary.
                 if contract.result_source.is_none()
+                    && !crate::ownership_metadata::owned_result(Some(contract))?.is_some()
                     && !contract.modes.iter().any(|mode| {
                         mode.component
                             .parameter
@@ -89,31 +91,40 @@ impl TypeCheckInfo {
                 Ok(Some(contract))
             }
             InputCallKind::Ordinary => {
-                if call.callee.kind != SemanticSourceTargetKind::Function
-                    || !matches!(
-                        call.callee.origin,
-                        SymbolOrigin::Module(_) | SymbolOrigin::Package { .. }
-                    )
-                {
-                    return Err("ordinary invocation requires a canonical source function");
+                if !matches!(
+                    call.callee.origin,
+                    SymbolOrigin::Module(_) | SymbolOrigin::Package { .. }
+                ) {
+                    return Err("ordinary invocation requires a canonical source declaration");
                 }
-                if contract.is_some() || call.receiver.is_some() || call.owner.is_none() {
-                    return Err("ordinary invocation cannot replace an explicit or receiver contract");
+                if contract.is_some() || call.owner.is_none() {
+                    return Err("ordinary invocation cannot replace an explicit contract");
                 }
-                let mut binding = None;
-                for candidate in self
-                    .declarations
-                    .function_bindings_by_span
-                    .values()
-                    .chain(self.declarations.function_bindings.values())
-                    .filter(|candidate| candidate.identity.as_ref() == Some(&call.callee))
-                {
-                    if binding.is_some_and(|previous| previous != candidate) {
-                        return Err("ordinary invocation has conflicting canonical headers");
+                let binding = match call.callee.kind {
+                    SemanticSourceTargetKind::Function if call.receiver.is_none() => {
+                        let mut binding = None;
+                        for candidate in self
+                            .declarations
+                            .function_bindings_by_span
+                            .values()
+                            .chain(self.declarations.function_bindings.values())
+                            .filter(|candidate| candidate.identity.as_ref() == Some(&call.callee))
+                        {
+                            if binding.is_some_and(|previous| previous != candidate) {
+                                return Err("ordinary invocation has conflicting canonical headers");
+                            }
+                            binding = Some(candidate);
+                        }
+                        binding.ok_or("ordinary invocation has no canonical source header")?
                     }
-                    binding = Some(candidate);
-                }
-                let binding = binding.ok_or("ordinary invocation has no canonical source header")?;
+                    SemanticSourceTargetKind::Method if call.receiver.is_some() => self
+                        .declarations
+                        .method_bindings_by_span
+                        .get(&call.callee.declaration_span)
+                        .filter(|binding| binding.identity.as_ref() == Some(&call.callee))
+                        .ok_or("ordinary method invocation has no canonical source header")?,
+                    _ => return Err("ordinary invocation syntax differs from its canonical declaration"),
+                };
                 if binding.is_async || binding.params != call.parameters {
                     return Err("ordinary invocation differs from its synchronous concrete header");
                 }
@@ -306,7 +317,7 @@ impl TypeCheckInfo {
                 .ok_or("invocation has no selected call facts")?;
             if call.owner.as_ref() != Some(owner)
                 || call.callee != invocation.callee
-                || call.receiver.is_some() != invocation.receiver.is_some()
+                || call.receiver.is_some() != invocation.receiver_evaluation.is_some()
             {
                 return Err("invocation differs from its checked caller or signature");
             }
@@ -394,6 +405,12 @@ impl TypeCheckInfo {
                 if loan.kind != expected || loan.writable != mutable {
                     return Err("invocation receiver access differs from the selected method");
                 }
+            } else if invocation.receiver_owned {
+                if !self.native_value_receiver(*span) {
+                    return Err("owned receiver is not selected by a native value signature");
+                }
+            } else if call.receiver.is_some() {
+                return Err("invocation receiver has no access proof");
             }
         }
         Ok(())

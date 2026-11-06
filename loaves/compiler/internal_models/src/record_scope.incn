@@ -167,7 +167,7 @@ pub class RecordReads:
     operations: int = 0
     response_bytes: int = 0
 
-    def read[S with RecordSource](mut self, source: S, request: RecordRequest) -> RecordRead:
+    pub def read[S with RecordSource](mut self, source: S, request: RecordRequest) -> RecordRead:
         """1. Validate the activation. 2. Read once. 3. Bind evidence and count the selected bytes."""
         # 1. Validate the activation before touching the source.
         if self.closed:
@@ -207,11 +207,11 @@ pub class RecordReads:
                 return RecordRead.Failed(fault)
         return result
 
-    def counters(self) -> ReadCounters:
+    pub def counters(self) -> ReadCounters:
         """Read this activation's work without exposing mutable counter state or decoded values."""
         return ReadCounters(operations=self.operations, response_bytes=self.response_bytes)
 
-    def finish(mut self) -> Result[ReadReceipt, ReadFault]:
+    pub def finish(mut self) -> Result[ReadReceipt, ReadFault]:
         """Close once and transfer the complete evidence; a failed scope can never publish partial success."""
         if self.closed:
             return Err(ReadFault.ClosedScope)

@@ -168,19 +168,19 @@ pub model Builder:
         """Borrow authenticated callable bindings from their immutable module owner."""
         return self.program.decorated_bindings.as_ref()
 
-    def new_block(mut self, span: SourceSpan) -> int:
+    pub def new_block(mut self, span: SourceSpan) -> int:
         """Allocate a block before connecting edges, preserving index stability."""
         index = len(self.blocks)
         self.blocks.append(plan_block([], TerminatorKind.Unreachable, span))
         self.closed.append(false)
         return index
 
-    def finish(mut self, exit: TerminatorKind, span: SourceSpan) -> None:
+    pub def finish(mut self, exit: TerminatorKind, span: SourceSpan) -> None:
         """Close the active block; callers must select a new block before emitting."""
         self.blocks[self.current].terminator = Terminator(kind=exit, span=span)
         self.closed[self.current] = true
 
-    def emit(mut self, statement: Statement) -> None:
+    pub def emit(mut self, statement: Statement) -> None:
         """Append one operation to the selected native block."""
         self.blocks[self.current].statements.append(statement)
 
@@ -368,6 +368,7 @@ pub def value_type(mut builder: Builder, operand: Operand) -> Result[PlanType, s
                 Constant.Float(_value) => return Ok(PlanType.Float)
                 Constant.Bool(_value) => return Ok(PlanType.Bool)
                 Constant.Unit => return Ok(PlanType.Unit)
+                Constant.TypeToken(represented) => return Ok(PlanType.TypeToken(represented))
                 Constant.Text(_value) => return Ok(PlanType.StrRef)
 
 

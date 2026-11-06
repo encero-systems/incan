@@ -94,6 +94,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> Option<bir::Operand> {
         let (type_args, args, span, scope) = (call.type_args, call.args, call.span, call.scope);
+        if let Some(owner) = self.type_info.body_ir_native_constructor_identity(span)
+            && incan_semantics_core::body_ir::native_nominal_item(owner)
+                .is_some_and(|path| self.type_info.rust.checked_layouts.contains_key(&path))
+        {
+            let owner_name = owner.declaration_name.clone();
+            return Some(self.lower_nominal_construction(&owner_name, args, span, span, scope, out));
+        }
         if let Some(value) = self.lower_checked_foreign_call(args, span, scope, out) {
             return Some(value);
         }
@@ -247,7 +254,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
         let target = bir::MethodTarget {
             native_trait_delegation: None,
-            reflection: self.checked_reflection_operation(span),
+            operation: self
+                .type_info
+                .resolved_builtin_method_call(span)
+                .map(bir::ReflectionOperation::Builtin)
+                .or_else(|| self.checked_reflection_operation(span)),
             name: name.to_string(),
             intrinsic_carrier,
             loaf_trait: None,
@@ -446,7 +457,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let key = call_span;
         let mutable = self
             .type_info
-            .resolved_identity(call_span)
+            .resolved_builtin_method_call(call_span)
             .is_some_and(collection_method_changes_receiver)
             || self.type_info.calls.mutable_receiver_method_calls.contains(&key);
         let fact = if mutable {
@@ -638,22 +649,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> Vec<bir::ArgumentElement> {
-        let Some(identity) = self.type_info.resolved_identity(span) else {
-            return elements;
-        };
-        if identity.origin != SymbolOrigin::Builtin {
-            return elements;
-        }
-        let Some(member) = identity.declaration_name.strip_prefix("List.") else {
-            return elements;
-        };
         if !matches!(
-            list_methods::from_str(member),
-            Some(
-                list_methods::ListMethodId::Count
-                    | list_methods::ListMethodId::Contains
-                    | list_methods::ListMethodId::Index
-            )
+            self.type_info.resolved_builtin_method_call(span),
+            Some(BuiltinMethodId::List(
+                ListMethodId::Count | ListMethodId::Contains | ListMethodId::Index
+            ))
         ) {
             return elements;
         }

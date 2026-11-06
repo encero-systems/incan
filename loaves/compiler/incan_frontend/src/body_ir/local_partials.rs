@@ -71,7 +71,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         native_trait_delegation: None,
                         name: name.clone(),
                         intrinsic_carrier: None,
-                        reflection: None,
+                        operation: None,
                         loaf_trait: None,
                         trait_arguments: None,
                         canonical: Some(canonical.clone()),
@@ -99,16 +99,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         partial: &ast::PartialExpr,
         span: ast::Span,
     ) -> Result<Vec<IncanType>, String> {
-        let arguments = self.type_info.calls.call_site_monomorph_type_args.get(&span);
-        if !partial.type_args.is_empty() && arguments.is_none_or(|arguments| arguments.len() != partial.type_args.len())
-        {
-            return Err("partial function without checked instance arguments".to_owned());
-        }
-        Ok(arguments
-            .into_iter()
-            .flatten()
-            .map(|argument| self.checked_type(argument))
-            .collect())
+        self.call_site_type_arguments(span, &partial.type_args)
+            .map_err(|_| "partial function without checked instance arguments".to_owned())
     }
 
     /// Retain the checked function instance, original defaults and exact declaration identity without reopening
@@ -133,8 +125,20 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if binding.identity.as_ref() != Some(selected) {
             return Err("partial function differs from its checked declaration".to_owned());
         }
-        let (params, result) = match self.type_info.expr_type(partial.target.span) {
-            Some(ResolvedType::Function(params, result)) => (params.as_slice(), result.as_ref()),
+        let callable = self
+            .type_info
+            .declarations
+            .body_ir_decorator_applications
+            .get(&partial.target.span)
+            .map(|application| {
+                crate::resolved_type_subst::substitute_resolved_type(
+                    &application.callable_type,
+                    &application.type_bindings,
+                )
+            })
+            .or_else(|| self.type_info.expr_type(partial.target.span).cloned());
+        let (params, result) = match callable {
+            Some(ResolvedType::Function(params, result)) => (params, *result),
             None if partial.type_args.is_empty()
                 && partial.args.is_empty()
                 && self.local_nongeneric_functions.contains(selected)
@@ -144,7 +148,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     .any(|parameter| self.leaves_type_open(&self.checked_type(&parameter.ty)))
                 && !self.leaves_type_open(&self.checked_type(&binding.return_type)) =>
             {
-                (binding.params.as_slice(), &binding.return_type)
+                (binding.params.clone(), binding.return_type.clone())
             }
             _ => return Err("partial function without a checked target signature".to_owned()),
         };
@@ -158,8 +162,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 });
         Ok(PartialTarget {
             name: name.to_string(),
-            params: params.to_vec(),
-            result: self.checked_type(result),
+            result: self.checked_type(&result),
             callee: bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
                 receiver_type: None,
                 name: name.to_string(),
@@ -169,6 +172,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 type_args,
                 binding: bir::ArgumentBinding::resolved_positional(params.len()),
             })),
+            params,
             receiver: None,
             defaults: self.function_default_sources.get(name).cloned(),
         })

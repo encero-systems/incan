@@ -393,7 +393,7 @@ pub(super) fn lower_source_partial(
         runtime_requirements: builder.runtime_requirements,
         panic_facts: builder.panic_facts,
         is_async: false,
-        extern_delegation: None,
+        retired_rust_facade_wire: None,
         native_attributes: Vec::new(),
         // No checked callable facts are recorded for a synthesized partial; callable signatures refuse by name.
         checked_input_profile: None,

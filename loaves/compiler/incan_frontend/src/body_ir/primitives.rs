@@ -35,11 +35,15 @@ pub(super) fn result_variant_kind(name: &str) -> Option<bir::ResultVariantKind> 
     }
 }
 /// Whether a type routes binary operators through the compiler-owned string helpers.
+///
+/// Imported Rust text constants retain their native `&str` carrier, so this recognizes that checked shared reference
+/// beside the two source text primitives. Other native references remain foreign values and cannot enter text helpers.
 pub(super) fn is_string_like(ty: &IncanType) -> bool {
-    matches!(
-        ty,
-        IncanType::Primitive(IncanPrimitiveType::Str | IncanPrimitiveType::FrozenStr)
-    )
+    match ty {
+        IncanType::Primitive(IncanPrimitiveType::Str | IncanPrimitiveType::FrozenStr) => true,
+        IncanType::Ref(inner) => matches!(inner.as_ref(), IncanType::RustInteropPath(path) if path == "str"),
+        _ => false,
+    }
 }
 /// Map a string-typed binary operator to its compiler-owned helper operation, or `None` for operators that have no
 /// string-specific helper (arithmetic-only operators never reach here because `lower_binary` only checks this for
@@ -119,15 +123,15 @@ fn frozen_collection_counterpart(ty: &IncanType) -> Option<CollectionTypeId> {
 /// two strings asks for substring containment while `in` over a collection asks for element lookup, so neither can
 /// be a [`bir::BinOp`] without silently applying one meaning to the other.
 ///
-/// All seven helpers named here have a runtime function in `incan_std_core::collections`, and the executor runs the
-/// three list forms. Set and dict membership still refuse — not for want of a helper, but because the replacement
+/// All seven helpers named here have a runtime function in `incan_std_primitives::collections`, and the executor runs
+/// the three list forms. Set and dict membership still refuse — not for want of a helper, but because the replacement
 /// executor has no set or dict value at all, so their aggregates refuse before membership is reached. #1247 owns
 /// that value gap and inherits the membership arms with it.
 ///
 /// `+` earns a helper on a narrower ground, and the distinction matters because it is what keeps this table from
 /// swallowing comparisons too. The test is not that a heap container cannot sit under a primitive -- `==` on two
 /// lists does exactly that, faithfully -- but that `determine_binop_plan` routes list `+` to
-/// `incan_std_core::collections::list_concat` while emitting comparisons as an infix operator. A helper here is
+/// `incan_std_primitives::collections::list_concat` while emitting comparisons as an infix operator. A helper here is
 /// therefore agreement with the Rust-emission backend, not a judgment about the operand's representation.
 pub(super) fn collection_helper_for_binop(
     op: ast::BinaryOp,

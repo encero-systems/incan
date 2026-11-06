@@ -182,7 +182,6 @@ pub(super) fn project_compiled_frame(
         }
     }
     frame.runtime_requirements.clear();
-    frame.extern_delegation = None;
     frame.named_type_identities = std::sync::Arc::new(audit.used_nominal_types);
     require_module_initialization(module, &mut audit.requirements);
     let native_callables = module.loaf_callables.iter().collect::<Vec<_>>();
@@ -524,7 +523,7 @@ fn generic_metadata_belongs_to(
     if !target.has_valid_generic_metadata() {
         return false;
     }
-    let Some(crate::body_ir::ReflectionOperation::GenericMetadata(binder)) = &target.reflection else {
+    let Some(crate::body_ir::ReflectionOperation::GenericMetadata(binder)) = &target.operation else {
         return false;
     };
     if !parameters.contains(&binder.declaration_name) {

@@ -6,6 +6,7 @@ mod body_projection;
 mod contracts_and_modes;
 mod explicit_calls;
 mod invocations_and_accesses;
+mod lazy_reader_control_flow;
 mod source_flow;
 
 /// Project actual checked source so CFG tests cannot bypass canonical root/type lookup with hand-built facts.

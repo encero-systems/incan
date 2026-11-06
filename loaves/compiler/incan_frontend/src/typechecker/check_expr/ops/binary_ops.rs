@@ -495,6 +495,11 @@ impl TypeChecker {
         let (right, right_ty) = right;
         let left_ty = self.adopt_partner_type_for_empty_list_operand(left, left_ty, &right_ty);
         let right_ty = self.adopt_partner_type_for_empty_list_operand(right, right_ty, &left_ty);
+        if matches!(left_ty, ResolvedType::TypeToken(_)) || matches!(right_ty, ResolvedType::TypeToken(_)) {
+            self.errors
+                .push(errors::type_token_operation_not_supported("comparison", span));
+            return ResolvedType::Unknown;
+        }
         // If both are numeric, allow mixed comparisons
         let lhs_num = numeric_ty_from_resolved(&left_ty);
         let rhs_num = numeric_ty_from_resolved(&right_ty);

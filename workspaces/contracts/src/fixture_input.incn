@@ -38,16 +38,16 @@ pub model FixtureInput:
 
     pub state: Rc[RefCell[Readings]] = Rc.new(RefCell.new(Readings()))
 
-    def bytes(self, path: Path) -> Result[bytes, str]:
+    pub def bytes(self, path: Path) -> Result[bytes, str]:
         """Read authored bytes once per unchanged generation; never use this for scratch outputs."""
         mut held = self.state.as_ref().borrow_mut()
         return Ok(reading(path, held.deref_mut())?.content)
 
-    def text(self, path: Path) -> Result[str, str]:
+    pub def text(self, path: Path) -> Result[str, str]:
         """Decode authored bytes with Path.read_text's strict UTF-8 and newline semantics."""
         return _decode_text(path, self.bytes(path)?, "utf-8", "strict").map_err((error) => error.message())
 
-    def program(self, path: Path) -> Result[ProgramInput, str]:
+    pub def program(self, path: Path) -> Result[ProgramInput, str]:
         """
         Read the same bytes as materialization and parse their header once.
 

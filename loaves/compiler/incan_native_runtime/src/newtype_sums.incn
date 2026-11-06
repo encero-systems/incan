@@ -1,6 +1,6 @@
 """Wrapping arithmetic and final hook-result extraction for numeric-newtype iterator sums."""
 
-from rust::incan_std_core::errors import raise
+from rust::incan_std_primitives::errors import raise
 from std.derives.string import Display
 
 

@@ -40,10 +40,10 @@ pub(super) fn source_parameter_type(ty: &Scalar) -> bool {
         )
 }
 
-/// Preserve explicit shared element returns and checked exclusive model reborrows under the signature's existing
+/// Preserve explicit element returns and checked exclusive reborrows under the signature's existing
 /// lifetime-contract guard.
 pub(super) fn source_return_type(ty: &Scalar) -> bool {
-    if let Scalar::ScalarRef(elements) = ty {
+    if let Scalar::ScalarRef(elements) | Scalar::ScalarMutRef(elements) = ty {
         return matches!(elements.as_slice(), [inner] if scalar_referent(inner));
     }
     source_signature_type(ty) || matches!(ty, Scalar::ModelRef(_) | Scalar::ModelMutRef(_) | Scalar::EnumRef(_))
@@ -60,10 +60,8 @@ pub(super) fn source_signature_type(ty: &Scalar) -> bool {
         return *length >= 0 && matches!(elements.as_slice(), [element] if source_signature_type(element));
     }
     if let Scalar::TypeToken(elements) = ty {
-        return matches!(
-            elements.as_slice(),
-            [Scalar::Int | Scalar::Float | Scalar::Bool | Scalar::String]
-        );
+        return matches!(elements.as_slice(), [Scalar::Trait(_)])
+            || matches!(elements.as_slice(), [element] if source_signature_type(element));
     }
     if let Scalar::SliceRef(elements) | Scalar::SliceMutRef(elements) = ty {
         return matches!(elements.as_slice(), [element] if source_signature_type(element));
@@ -210,13 +208,23 @@ pub(super) fn external_signature_type(ty: &Scalar) -> bool {
 }
 
 /// The scalar reference carrier borrows primitive storage, a checked tuple, a function pointer, a Rust trait object or
-/// a sized shared reference. Borrowing a reference preserves its referent and does not make that referent writable;
-/// exclusive reference values do not acquire copying authority.
+/// a sized reference value. Borrowing an exclusive reference's slot does not copy its access or independently borrow
+/// its referent; the outer reference's mutability still decides whether the stored reference can be reborrowed.
 pub(super) fn scalar_referent(ty: &Scalar) -> bool {
-    if shared_reference(ty) || matches!(ty, Scalar::NativeTraitObject(..)) {
+    if shared_reference(ty)
+        || matches!(
+            ty,
+            Scalar::StringMutRef
+                | Scalar::ModelMutRef(_)
+                | Scalar::EnumMutRef(_)
+                | Scalar::TupleMutRef(_)
+                | Scalar::ScalarMutRef(_)
+                | Scalar::NativeTraitObject(..)
+        )
+    {
         return true;
     }
-    if matches!(ty, Scalar::FunctionPointer(_) | Scalar::Tuple(_)) {
+    if matches!(ty, Scalar::FunctionPointer(_) | Scalar::Tuple(_) | Scalar::TypeToken(_)) {
         return source_signature_type(ty);
     }
     sized_numeric(ty).is_some()

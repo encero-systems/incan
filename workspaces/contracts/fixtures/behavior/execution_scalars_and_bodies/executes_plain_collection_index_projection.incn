@@ -1,4 +1,4 @@
-# behavior: projections, fresh slices and direct joins preserve owners and Unicode scalar indexing (#2256)
+# behavior: projections, fresh slices and direct joins preserve owners and Unicode scalar indexing; a fresh slice may pass to a mutable list parameter (#2256, #2433)
 # expect-stdout:
 #   1
 #   1
@@ -11,6 +11,7 @@
 #   猫
 #   aé猫
 #   two|three
+#   2
 
 
 """Executes plain collection index projection."""
@@ -61,6 +62,11 @@ def field_slice() -> list[int]:
     return bucket.values[0:1]
 
 
+def first(mut values: list[int]) -> int:
+    """Read a fresh sliced owner through a mutable list parameter."""
+    return values[0]
+
+
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(program_result())
@@ -75,3 +81,4 @@ def main() -> None:
     println([text][0][2])
     println(text)
     println("|".join("one|two|three".split("|")[1:]))
+    println(first([1, 2, 3][1:]))

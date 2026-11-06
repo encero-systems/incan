@@ -2,7 +2,7 @@ pub model Extent:
     pub width: int
     pub height: int
 
-    def area(self) -> int:
+    pub def area(self) -> int:
         return self.width * self.height
 
 

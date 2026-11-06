@@ -1,6 +1,6 @@
 """Language formatting and collection helpers used by the direct native route."""
 
-from rust::incan_std_core::strings import float_to_string
+from rust::incan_std_primitives::strings import float_to_string
 from rust::std::primitive import i64 as RuntimeInt
 from rust::std::string import String as RustString
 from rust::std::io import stdout, Stdout, Write
@@ -21,12 +21,11 @@ pub from fallible_defaults import (
 pub from decimals import decimal_from_parts, format_decimal, equal_decimal, unequal_decimal
 pub from generic_decorators import initialize_binding, register_callable_name, callable_name
 pub from decimals import less_decimal, less_equal_decimal, greater_decimal, greater_equal_decimal
-pub from rust::incan_std_core::num import Decimal128 as DecimalCarrier
+pub from rust::incan_std_primitives::num import Decimal128 as DecimalCarrier
 pub from frozen_text import format_frozen
 pub from frozen_text import length_frozen_bytes, copy_frozen_bytes
-pub from text_codecs import encode_text, encode_frozen_text, decode_bytes, decode_frozen_bytes
-pub from checked_c_strings import checked_c_string, checked_c_utf8
 pub from text_codecs import text_codec_encoding_valid, text_codec_errors_valid
+pub from text_codecs import validate_encoder_label, decode_replacement_policy, invalid_decoder_options, invalid_utf8_error
 pub from diverging_errors import raise_value_error
 pub from frozen_collections import freeze_list, frozen_list_length, frozen_list_items, frozen_list_text_items
 pub from frozen_collections import frozen_list_length_ref, frozen_set_length_ref, frozen_dict_length_ref
@@ -41,7 +40,7 @@ pub from frozen_collections import (
 )
 pub from frozen_collections import frozen_dict_keys, frozen_dict_text_keys
 pub from raises_assertions import assert_raises_deferred
-pub from rust::incan_std_core::frozen import FrozenStr as FrozenCarrier, FrozenBytes as FrozenBytesCarrier
+pub from rust::incan_std_primitives::frozen import FrozenStr as FrozenCarrier, FrozenBytes as FrozenBytesCarrier
 pub from newtype_constraints import validate_newtype_constraint
 pub from newtype_hooks import checked_newtype_result
 pub from checked_json import checked_json_result
@@ -161,7 +160,7 @@ pub from builtins import sum_int, sum_bool, truth_text, truth_list
 pub from builtins import minimum_int, maximum_int, minimum_float, maximum_float
 pub from builtins import minimum_bool, maximum_bool, minimum_text, maximum_text, read_file_text, write_file_text
 pub from builtins import absolute_int, truth_int, truth_float, truth_bool, boolean_and, boolean_or
-from rust::incan_std_core::iter import range as runtime_range
+from rust::incan_std_primitives::iter import range as runtime_range
 pub from statics import (
     read_static_text,
     write_static_text,

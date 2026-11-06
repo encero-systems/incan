@@ -216,7 +216,7 @@ pub(super) fn append_registrations(
                     name: identity.declaration_name.clone(),
                     canonical: Some(identity.clone()),
                     intrinsic_carrier: None,
-                    reflection: None,
+                    operation: None,
                     loaf_trait: None,
                     trait_arguments: None,
                     native_trait_delegation: None,

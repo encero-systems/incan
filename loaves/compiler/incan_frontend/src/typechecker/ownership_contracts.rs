@@ -4,7 +4,7 @@
 //! deferred boundaries and unsupported storage shapes remain refused rather than acquiring repair copies.
 
 use incan_lang::lang::types::ownership::{self, OwnershipMode};
-use incan_semantics_core::SymbolOrigin;
+use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
 
 mod admission;
 mod builtins;
@@ -20,8 +20,8 @@ pub(super) use admission::{direct_function_boundary, direct_method_boundary};
 pub(crate) use builtins::carried_view_binding;
 pub(super) use source::{CallableSource, Unavailable};
 
-use super::TypeChecker;
-use crate::ast::{AssignmentStmt, BindingKind, Expr, Span, Spanned, Type};
+use super::{TypeCheckInfo, TypeChecker};
+use crate::ast::{AssignmentStmt, BindingKind, Expr, Span, Spanned, Statement, Type};
 use crate::diagnostics::CompileError;
 use crate::symbols::{ResolvedType, TypeInfo};
 
@@ -88,33 +88,37 @@ impl TypeChecker {
         }
     }
 
+    /// Mark the active callable as containing a checked lazy result. This keeps the ordinary-body activation path
+    /// proportional to bodies that can retain a lazy source instead of rescanning every checked callable.
+    pub(in crate::typechecker) fn note_lazy_result_body(&mut self) {
+        if let Some(identity) = self.current_body_identity().cloned() {
+            self.lazy_result_bodies.insert(identity);
+        }
+    }
+
+    /// Mark the active callable when a selected builtin member returns or transforms a lazy iterator.
+    pub(in crate::typechecker) fn note_lazy_result_member(
+        &mut self,
+        identity: &CanonicalSymbolId,
+        operation: Option<incan_lang::lang::builtins::BuiltinMethodId>,
+    ) {
+        let method = match operation {
+            Some(incan_lang::lang::builtins::BuiltinMethodId::ListIter) => {
+                Some(incan_lang::lang::surface::iterator_methods::IteratorMethodId::Iter)
+            }
+            _ => builtins::retained_iterator_member(identity),
+        };
+        if method.is_some_and(|method| !incan_lang::lang::surface::iterator_methods::is_terminal(method)) {
+            self.note_lazy_result_body();
+        }
+    }
+
     /// Capture explicit input flow while the checked lexical frame and body-owned expression facts are active.
     /// Statement output owns the result; it is never rediscovered by lowering or published as a valid empty graph.
     pub(super) fn record_explicit_input_flow(&mut self, callable: CallableSource<'_>, span: Span) {
         let Some(identity) = self.current_body_identity().cloned() else {
             return;
         };
-        if !self.type_info.declarations.ownership_contracts.contains_key(&identity)
-            && !self
-                .type_info
-                .protocols
-                .explicit_local_modes
-                .values()
-                .any(|mode| mode.owner == identity)
-            && !self
-                .type_info
-                .protocols
-                .explicit_input_calls
-                .values()
-                .any(|call| call.owner.as_ref() == Some(&identity) && call.kind == InputCallKind::Explicit)
-        {
-            self.type_info
-                .protocols
-                .explicit_input_calls
-                .retain(|_, call| call.owner.as_ref() != Some(&identity) || call.kind == InputCallKind::Explicit);
-            return;
-        }
-        self.retain_input_copy_values(&identity, span);
         // The declaration span covers only its header; the body is the extent of its statements.
         let body = match (callable.body().first(), callable.body().last()) {
             (Some(first), Some(last)) => Some(Span {
@@ -124,6 +128,32 @@ impl TypeChecker {
             }),
             _ => None,
         };
+        let requires_explicit_flow = self.type_info.declarations.ownership_contracts.contains_key(&identity)
+            || self
+                .type_info
+                .protocols
+                .explicit_local_modes
+                .values()
+                .any(|mode| mode.owner == identity)
+            || self
+                .type_info
+                .protocols
+                .explicit_input_calls
+                .values()
+                .any(|call| call.owner.as_ref() == Some(&identity) && call.kind == InputCallKind::Explicit);
+        let may_retain_lazy_result = self.lazy_result_bodies.remove(&identity);
+        // Existing explicit bodies already need complete flow. Ordinary bodies are scanned only when expression
+        // checking observed a generator or authenticated lazy iterator member in that body.
+        if !requires_explicit_flow
+            && (!may_retain_lazy_result || !body_retains_lazy_result(callable.body(), &self.type_info))
+        {
+            self.type_info
+                .protocols
+                .explicit_input_calls
+                .retain(|_, call| call.owner.as_ref() != Some(&identity) || call.kind == InputCallKind::Explicit);
+            return;
+        }
+        self.retain_input_copy_values(&identity, span);
         if body.is_some() {
             native::retain_native_input_calls(&mut self.type_info.protocols, &self.type_info.rust, &identity, body);
         }
@@ -138,17 +168,26 @@ impl TypeChecker {
             }),
             Ok(graph) => match flow::analyze(&graph) {
                 Ok(analysis) => {
-                    self.errors.extend(report::conflicts(&graph, &analysis));
+                    self.errors
+                        .extend(report::conflicts(&graph, &analysis, &self.type_info));
                     InputFlow::Checked { graph, analysis }
                 }
                 Err(fault) => InputFlow::Invalid { graph, fault },
             },
             Err(reason) => InputFlow::Unavailable(reason),
         };
+        let has_source_conflicts =
+            matches!(&output, InputFlow::Checked { analysis, .. } if !analysis.conflicts.is_empty());
         self.type_info
             .protocols
             .explicit_input_flow
             .insert(identity.clone(), output);
+        // A validated conflict already produced its operation-owned diagnostic. The executable-body gate must still
+        // reject that graph if lowering asks for it, but repeating the rejection here exposes an internal proof
+        // consequence as a second source error.
+        if has_source_conflicts {
+            return;
+        }
         let admission = match callable {
             CallableSource::Function(function) => self.type_info.executable_function_input(&identity, function),
             CallableSource::Method(method) => self.type_info.executable_method_input(&identity, method),
@@ -308,6 +347,299 @@ impl TypeChecker {
             }
             _ => {}
         }
+    }
+}
+
+/// Return whether a body stores, returns or loops over a compiler-authenticated lazy result. Terminal iterator
+/// expressions produce no retained dependency and must not widen ordinary bodies into the explicit ownership profile.
+fn body_retains_lazy_result(body: &[Spanned<Statement>], facts: &TypeCheckInfo) -> bool {
+    for (index, statement) in body.iter().enumerate() {
+        let tail = &body[index + 1..];
+        let retains = match &statement.node {
+            Statement::Assignment(assignment) => {
+                value_retains_lazy_result(&assignment.value, facts, false)
+                    && lazy_value_conflicts_later(&assignment.value, tail, facts)
+            }
+            Statement::Return(Some(value)) => value_retains_lazy_result(value, facts, true),
+            Statement::For(loop_) => {
+                direct_loop_retains_lazy_source(&loop_.iter, &loop_.body, facts)
+                    || body_retains_lazy_result(&loop_.body, facts)
+            }
+            Statement::If(branch) => {
+                body_retains_lazy_result(&branch.then_body, facts)
+                    || branch
+                        .elif_branches
+                        .iter()
+                        .any(|(_, body)| body_retains_lazy_result(body, facts))
+                    || branch
+                        .else_body
+                        .as_deref()
+                        .is_some_and(|body| body_retains_lazy_result(body, facts))
+            }
+            Statement::While(loop_) => body_retains_lazy_result(&loop_.body, facts),
+            Statement::Loop(loop_) => body_retains_lazy_result(&loop_.body, facts),
+            Statement::Unsafe(block) => body_retains_lazy_result(&block.body, facts),
+            Statement::VocabBlock(block) => body_retains_lazy_result(&block.body, facts),
+            Statement::Expr(expression) => expression_block_retains_lazy_result(expression, facts),
+            _ => false,
+        };
+        if retains {
+            return true;
+        }
+    }
+    false
+}
+
+/// Inspect expression-owned statement blocks without treating a terminal expression value as stored by itself.
+fn expression_block_retains_lazy_result(expression: &Spanned<Expr>, facts: &TypeCheckInfo) -> bool {
+    match &expression.node {
+        Expr::Match(_, arms) => arms.iter().any(|arm| match &arm.node.body {
+            crate::ast::MatchBody::Block(body) => body_retains_lazy_result(body, facts),
+            crate::ast::MatchBody::Expr(_) => false,
+        }),
+        Expr::If(branch) => {
+            body_retains_lazy_result(&branch.then_body, facts)
+                || branch
+                    .else_body
+                    .as_deref()
+                    .is_some_and(|body| body_retains_lazy_result(body, facts))
+        }
+        Expr::Loop(loop_) => body_retains_lazy_result(&loop_.body, facts),
+        _ => false,
+    }
+}
+
+/// Return whether a stored lazy value has a source that a later statement may mutate, replace, transfer or escape.
+fn lazy_value_conflicts_later(value: &Spanned<Expr>, tail: &[Spanned<Statement>], facts: &TypeCheckInfo) -> bool {
+    let mut sources = Vec::new();
+    lazy_result_source_bindings(value, facts, &mut sources);
+    sources
+        .iter()
+        .any(|source| body_conflicts_with_binding(tail, source, facts))
+}
+
+/// Activate direct-loop flow only when the body reaches the same stored source. A loop that merely consumes its
+/// iterator and writes unrelated output retains no dependency beyond the loop statement and needs no body profile.
+fn direct_loop_retains_lazy_source(iter: &Spanned<Expr>, body: &[Spanned<Statement>], facts: &TypeCheckInfo) -> bool {
+    if !value_retains_lazy_result(iter, facts, false) {
+        return false;
+    }
+    let mut sources = Vec::new();
+    lazy_result_source_bindings(iter, facts, &mut sources);
+    sources
+        .iter()
+        .any(|source| body_conflicts_with_binding(body, source, facts))
+}
+
+/// Collect checked storage bindings retained by a lazy expression, following authenticated adapters and carriers.
+fn lazy_result_source_bindings(value: &Spanned<Expr>, facts: &TypeCheckInfo, bindings: &mut Vec<CanonicalSymbolId>) {
+    match &value.node {
+        Expr::Paren(inner) => lazy_result_source_bindings(inner, facts, bindings),
+        Expr::Generator(generator) => generator.clauses.iter().for_each(|clause| {
+            if let crate::ast::ComprehensionClause::For { iter, .. } = clause {
+                lazy_result_source_bindings(iter, facts, bindings);
+                push_place_binding(iter, facts, bindings);
+            }
+        }),
+        Expr::MethodCall(receiver, _, _, _) => {
+            if builtins::retained_iterator_method(facts, value.span).is_some() {
+                lazy_result_source_bindings(receiver, facts, bindings);
+                push_place_binding(receiver, facts, bindings);
+            }
+        }
+        Expr::List(entries) => entries.iter().for_each(|entry| {
+            if let crate::ast::ListEntry::Element(value) = entry {
+                lazy_result_source_bindings(value, facts, bindings);
+            }
+        }),
+        Expr::Call(..) => {
+            if let Some((_variant, arguments)) = builtins::carrier_construction(facts, value) {
+                arguments.iter().for_each(|argument| match argument {
+                    crate::ast::CallArg::Positional(value) | crate::ast::CallArg::Named(_, value) => {
+                        lazy_result_source_bindings(value, facts, bindings);
+                    }
+                    _ => {}
+                });
+            }
+        }
+        _ => push_place_binding(value, facts, bindings),
+    }
+}
+
+/// Add one canonical place root once, preserving multiple independent sources carried by an adapter or aggregate.
+fn push_place_binding(value: &Spanned<Expr>, facts: &TypeCheckInfo, bindings: &mut Vec<CanonicalSymbolId>) {
+    if let Some(binding) = place_binding(value, facts)
+        && !bindings.contains(&binding)
+    {
+        bindings.push(binding);
+    }
+}
+
+/// Return the canonical root binding of a checked place without reconstructing it from source spelling.
+fn place_binding(value: &Spanned<Expr>, facts: &TypeCheckInfo) -> Option<CanonicalSymbolId> {
+    match &value.node {
+        Expr::Ident(_) => facts.resolved_identity(value.span).cloned(),
+        Expr::Paren(inner) => place_binding(inner, facts),
+        Expr::Field(base, _) | Expr::Index(base, _) => place_binding(base, facts),
+        _ => None,
+    }
+}
+
+/// Recognize actions that can invalidate or outlive a retained source; ordinary reads do not activate full flow.
+fn body_conflicts_with_binding(body: &[Spanned<Statement>], source: &CanonicalSymbolId, facts: &TypeCheckInfo) -> bool {
+    if body_writes_binding(body, source, facts) {
+        return true;
+    }
+    body.iter().any(|statement| match &statement.node {
+        Statement::Assignment(assignment) => whole_binding(&assignment.value, facts).as_ref() == Some(source),
+        Statement::Return(Some(value)) => whole_binding(value, facts).as_ref() == Some(source),
+        Statement::FieldAssignment(assignment) => place_binding(&assignment.object, facts).as_ref() == Some(source),
+        Statement::IndexAssignment(assignment) => place_binding(&assignment.object, facts).as_ref() == Some(source),
+        Statement::Expr(expression) => expression_mutates_binding(expression, source, facts),
+        Statement::If(branch) => {
+            body_conflicts_with_binding(&branch.then_body, source, facts)
+                || branch
+                    .elif_branches
+                    .iter()
+                    .any(|(_, body)| body_conflicts_with_binding(body, source, facts))
+                || branch
+                    .else_body
+                    .as_deref()
+                    .is_some_and(|body| body_conflicts_with_binding(body, source, facts))
+        }
+        Statement::For(loop_) => body_conflicts_with_binding(&loop_.body, source, facts),
+        Statement::While(loop_) => body_conflicts_with_binding(&loop_.body, source, facts),
+        Statement::Loop(loop_) => body_conflicts_with_binding(&loop_.body, source, facts),
+        Statement::Unsafe(block) => body_conflicts_with_binding(&block.body, source, facts),
+        Statement::VocabBlock(block) => body_conflicts_with_binding(&block.body, source, facts),
+        _ => false,
+    })
+}
+
+/// Return the canonical identity of an unprojected binding value that may transfer its complete storage.
+fn whole_binding(value: &Spanned<Expr>, facts: &TypeCheckInfo) -> Option<CanonicalSymbolId> {
+    match &value.node {
+        Expr::Ident(_) => facts.resolved_identity(value.span).cloned(),
+        Expr::Paren(inner) => whole_binding(inner, facts),
+        _ => None,
+    }
+}
+
+/// Recognize a compiler-selected mutating list method on the retained source place.
+fn expression_mutates_binding(value: &Spanned<Expr>, source: &CanonicalSymbolId, facts: &TypeCheckInfo) -> bool {
+    let Expr::MethodCall(receiver, _, _, _) = &value.node else {
+        return false;
+    };
+    place_binding(receiver, facts).as_ref() == Some(source)
+        && builtins::list_method_writes(facts, value.span) == Some(true)
+}
+
+/// Find replacement of the retained root in statement-owned write positions that expression traversal does not see.
+fn body_writes_binding(body: &[Spanned<Statement>], source: &CanonicalSymbolId, facts: &TypeCheckInfo) -> bool {
+    body.iter().any(|statement| match &statement.node {
+        Statement::Assignment(assignment) => {
+            facts.resolved_write_identity(assignment.name_span, &assignment.name) == Some(source)
+        }
+        Statement::CompoundAssignment(assignment) => {
+            facts.resolved_write_identity(assignment.name_span, &assignment.name) == Some(source)
+        }
+        Statement::ChainedAssignment(assignment) => assignment
+            .targets
+            .iter()
+            .zip(&assignment.target_spans)
+            .any(|(name, span)| facts.resolved_write_identity(*span, name) == Some(source)),
+        Statement::TupleUnpack(assignment) => assignment
+            .names
+            .iter()
+            .zip(&assignment.name_spans)
+            .any(|(name, span)| facts.resolved_write_identity(*span, name) == Some(source)),
+        Statement::If(branch) => {
+            body_writes_binding(&branch.then_body, source, facts)
+                || branch
+                    .elif_branches
+                    .iter()
+                    .any(|(_, body)| body_writes_binding(body, source, facts))
+                || branch
+                    .else_body
+                    .as_deref()
+                    .is_some_and(|body| body_writes_binding(body, source, facts))
+        }
+        Statement::For(loop_) => body_writes_binding(&loop_.body, source, facts),
+        Statement::While(loop_) => body_writes_binding(&loop_.body, source, facts),
+        Statement::Loop(loop_) => body_writes_binding(&loop_.body, source, facts),
+        Statement::Unsafe(block) => body_writes_binding(&block.body, source, facts),
+        Statement::VocabBlock(block) => body_writes_binding(&block.body, source, facts),
+        _ => false,
+    })
+}
+
+/// Return whether one value physically retains a lazy dependency, including nested list aggregates. An escaping
+/// iterator over a transferable local or parameter owns that list through the lowering route, while a projected
+/// place must retain a borrow because moving the enclosing owner would change the program's value semantics.
+fn value_retains_lazy_result(value: &Spanned<Expr>, facts: &TypeCheckInfo, escaping: bool) -> bool {
+    match &value.node {
+        Expr::Paren(inner) => value_retains_lazy_result(inner, facts, escaping),
+        Expr::Generator(generator) => generator.clauses.iter().any(|clause| {
+            let crate::ast::ComprehensionClause::For { iter, .. } = clause else {
+                return false;
+            };
+            (lazy_source_is_place(iter)
+                && (!escaping || escaping_lazy_source_is_borrowed(iter))
+                && matches!(facts.expr_type(iter.span),
+                Some(ResolvedType::Generic(name, _))
+                    if incan_lang::lang::types::collections::from_str(name)
+                        == Some(incan_lang::lang::types::collections::CollectionTypeId::List)))
+                || value_retains_lazy_result(iter, facts, escaping)
+        }),
+        Expr::MethodCall(receiver, _, _, _) => {
+            let Some(method) = builtins::retained_iterator_method(facts, value.span) else {
+                return false;
+            };
+            let lazy_result = matches!(facts.expr_type(value.span),
+                Some(ResolvedType::Generic(name, _))
+                    if incan_lang::lang::traits::from_qualified_str(name)
+                        == Some(incan_lang::lang::traits::TraitId::Iterator)
+                        || incan_lang::lang::types::collections::from_str(name)
+                            == Some(incan_lang::lang::types::collections::CollectionTypeId::Generator));
+            lazy_result
+                && ((method == incan_lang::lang::surface::iterator_methods::IteratorMethodId::Iter
+                    && lazy_source_is_place(receiver)
+                    && (!escaping || escaping_lazy_source_is_borrowed(receiver)))
+                    || value_retains_lazy_result(receiver, facts, escaping))
+        }
+        Expr::List(entries) => entries.iter().any(|entry| match entry {
+            crate::ast::ListEntry::Element(value) => value_retains_lazy_result(value, facts, escaping),
+            crate::ast::ListEntry::Spread(_) => false,
+        }),
+        Expr::Call(..) => builtins::carrier_construction(facts, value).is_some_and(|(_, arguments)| {
+            arguments.iter().any(|argument| match argument {
+                crate::ast::CallArg::Positional(value) | crate::ast::CallArg::Named(_, value) => {
+                    value_retains_lazy_result(value, facts, escaping)
+                }
+                _ => false,
+            })
+        }),
+        _ => false,
+    }
+}
+
+/// Return whether an escaping lazy source is a projection whose enclosing owner must stay in place. Plain local and
+/// parameter bindings can transfer their complete list storage into the lazy result at last use.
+fn escaping_lazy_source_is_borrowed(value: &Spanned<Expr>) -> bool {
+    match &value.node {
+        Expr::Paren(inner) => escaping_lazy_source_is_borrowed(inner),
+        Expr::Field(..) | Expr::Index(..) => true,
+        _ => false,
+    }
+}
+
+/// Return whether a lazy source is existing storage rather than a fresh call or aggregate result.
+fn lazy_source_is_place(value: &Spanned<Expr>) -> bool {
+    match &value.node {
+        Expr::Ident(_) => true,
+        Expr::Paren(inner) => lazy_source_is_place(inner),
+        Expr::Field(base, _) | Expr::Index(base, _) => lazy_source_is_place(base),
+        _ => false,
     }
 }
 

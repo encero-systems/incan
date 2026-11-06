@@ -360,7 +360,7 @@ impl FunctionDecl {
         self.surface_modifiers.iter().any(|m| m.key == *key)
     }
 
-    /// Returns `true` if this function was declared with the `async` soft keyword.
+    /// Returns `true` if this function was declared with the `async` modifier.
     pub fn is_async(&self) -> bool {
         self.has_surface_modifier(&SurfaceFeatureKey::SoftKeyword(KeywordId::Async))
     }
@@ -394,7 +394,7 @@ impl MethodDecl {
         self.surface_modifiers.iter().any(|m| m.key == *key)
     }
 
-    /// Returns `true` if this method was declared with the `async` soft keyword.
+    /// Returns `true` if this method was declared with the `async` modifier.
     pub fn is_async(&self) -> bool {
         self.has_surface_modifier(&SurfaceFeatureKey::SoftKeyword(KeywordId::Async))
     }

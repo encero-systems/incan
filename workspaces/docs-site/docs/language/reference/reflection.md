@@ -92,7 +92,45 @@ Primitive type arguments do not support `T.__fields__()`.
 
 ## Type Tokens
 
-A type name in value position is accepted only when the expected type is a `Type[T]` token. `Type[T]` is a zero-sized marker, not a general runtime type object. An overload may accept a specific token such as `Type[int]` and declare its own result type. Aliases preserve the overload set. A single generic function has one declared return type; its explicit type arguments do not select different result declarations.
+`Type[T]` is a zero-sized token carrying checked type evidence for `T`. A visible type name is accepted in value position only when ordinary expected typing requires a compatible token. The expected type may come from a parameter, an overload candidate, a variable annotation, a return annotation, or a collection element type.
+
+```incan
+def return_schema() -> Type[Schema]:
+    return Schema
+
+target: Type[int] = int
+schemas: list[Type[Schema]] = [Schema, return_schema()]
+```
+
+Token targets include `int`, `float`, `str`, `bool`, visible models, enums and traits, constrained scalar types, transparent type aliases, and newtypes. Trait tokens retain the checked trait declaration through aliases, source facades, and compiled packages. A transparent alias normalizes through its complete target chain for compatibility and overload selection. Distinct aliases of the same target therefore cannot declare separate overloads. A newtype remains a distinct token target.
+
+An overload may select a precise return type from a value-position token:
+
+```incan
+def cast(expr: ColumnExpr, target: Type[int]) -> IntColumnExpr:
+    return IntColumnExpr(source=expr.name)
+
+def cast(expr: ColumnExpr, target: Type[float]) -> FloatColumnExpr:
+    return FloatColumnExpr(source=expr.name)
+
+integer_column = cast(column, int)
+float_column = cast(column, float)
+```
+
+Constrained generic overloads provide the explicit-type-argument spelling of type-directed return mapping. Each overload declares its own checked result; the selected type argument chooses that declaration rather than broadening all results into a union.
+
+```incan
+def cast[T with Int](expr: ColumnExpr) -> IntColumnExpr:
+    return IntColumnExpr(source=expr.name)
+
+def cast[T with Float](expr: ColumnExpr) -> FloatColumnExpr:
+    return FloatColumnExpr(source=expr.name)
+
+integer_column = cast[int](column)
+float_column = cast[float](column)
+```
+
+Callable aliases and public reexports preserve the complete overload set and its selected return types. A token is not a runtime type object: equality, ordering, hashing, serialization, pattern matching, fields, methods, and arbitrary introspection are not available on token values. Without an expected `Type[...]` context, a type name in value position is an error.
 
 ## `FieldInfo` structure
 

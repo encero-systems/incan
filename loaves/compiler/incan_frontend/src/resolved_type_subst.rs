@@ -65,6 +65,7 @@ pub fn map_resolved_type_leaves(
                 .map(|p| CallableParam {
                     name: p.name.clone(),
                     ty: walk(&p.ty),
+                    surface_type_name: p.surface_type_name.clone(),
                     kind: p.kind,
                     has_default: p.has_default,
                     is_partial_preset: p.is_partial_preset,
@@ -99,7 +100,8 @@ pub fn substitute_property_info(info: &PropertyInfo, map: &HashMap<String, Resol
 pub fn substitute_method_info(info: &MethodInfo, map: &HashMap<String, ResolvedType>) -> MethodInfo {
     MethodInfo {
         identity: info.identity.clone(),
-        visibility: info.visibility,
+        scope: info.scope,
+        owner: info.owner.clone(),
         type_params: info.type_params.clone(),
         type_param_bounds: info.type_param_bounds.clone(),
         type_param_bound_details: info
@@ -137,6 +139,7 @@ pub fn substitute_method_info(info: &MethodInfo, map: &HashMap<String, ResolvedT
             .map(|p| CallableParam {
                 name: p.name.clone(),
                 ty: substitute_resolved_type(&p.ty, map),
+                surface_type_name: p.surface_type_name.clone(),
                 kind: p.kind,
                 has_default: p.has_default,
                 is_partial_preset: p.is_partial_preset,
@@ -204,7 +207,8 @@ mod tests {
         );
         let method = MethodInfo {
             identity: None,
-            visibility: crate::ast::Visibility::Public,
+            scope: crate::symbols::MethodScope::Public,
+            owner: None,
             type_params: vec!["F".to_string(), "Mapper".to_string()],
             type_param_bounds: HashMap::new(),
             type_param_bound_details,

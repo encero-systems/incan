@@ -124,9 +124,8 @@ impl TypeChecker {
             ResolvedType::FrozenDict(key, value) => self
                 .find_trait_type(key, true)
                 .or_else(|| self.find_trait_type(value, true)),
-            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) | ResolvedType::TypeToken(inner) => {
-                self.find_trait_type(inner, nested)
-            }
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.find_trait_type(inner, nested),
+            ResolvedType::TypeToken(inner) => self.find_trait_type(inner, false),
             _ => None,
         }
     }
@@ -145,7 +144,9 @@ impl TypeChecker {
     /// Validate a statement and its subexpressions.
     ///
     /// Handles assignments (including mutability checks), control flow (`if`, `while`, `for`), returns, and expression
-    /// statements. Delegates expression validation to [`check_expr`](Self::check_expr).
+    /// statements. A statement-position `match` has a discarded unit destination, which lets an arm's `None` denote
+    /// unit while the match checker still requires every arm to share one type. Other expressions delegate directly
+    /// to [`check_expr`](Self::check_expr).
     pub fn check_statement(&mut self, stmt: &Spanned<Statement>) {
         match &stmt.node {
             Statement::Assignment(assign) => self.check_assignment(assign, stmt.span),
@@ -175,7 +176,11 @@ impl TypeChecker {
             Statement::Assert(assert_stmt) => self.check_assert_stmt(assert_stmt),
             Statement::Surface(surface_stmt) => self.check_surface_stmt(surface_stmt, stmt.span),
             Statement::Expr(expr) => {
-                self.check_expr(expr);
+                if matches!(expr.node, Expr::Match(..)) {
+                    self.check_expr_with_expected(expr, Some(&ResolvedType::Unit));
+                } else {
+                    self.check_expr(expr);
+                }
                 self.reject_discarded_open_rust_generic_call(expr.span);
             }
             Statement::VocabExpressionItem(_item) => {

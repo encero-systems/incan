@@ -238,33 +238,67 @@ pub(super) fn checked_param_default(expr: &Spanned<Expr>, context: DefaultPathCo
             if path.is_empty() {
                 return CheckedParamDefault::Unsupported;
             }
-            let args = args
-                .iter()
-                .map(|arg| match arg {
-                    crate::ast::CallArg::Positional(value) => CheckedParamDefaultArg {
-                        name: None,
-                        value: checked_param_default(value, context),
-                    },
-                    crate::ast::CallArg::Named(name, value) => CheckedParamDefaultArg {
-                        name: Some(name.node.clone()),
-                        value: checked_param_default(value, context),
-                    },
-                    crate::ast::CallArg::PositionalUnpack(_) | crate::ast::CallArg::KeywordUnpack(_) => {
-                        CheckedParamDefaultArg {
-                            name: None,
-                            value: CheckedParamDefault::Unsupported,
-                        }
-                    }
-                })
-                .collect();
             CheckedParamDefault::Call {
                 path,
-                args,
+                args: checked_param_default_args(args, context),
                 signature: checked_param_default_call_signature(callee, context.checker),
             }
         }
+        Expr::MethodCall(receiver, method, _type_args, args) => {
+            checked_param_default_method_call(receiver, method, args, context)
+        }
         _ => CheckedParamDefault::Unsupported,
     }
+}
+
+/// Retain a static type method call that a package consumer can replay at an omitted argument site.
+fn checked_param_default_method_call(
+    receiver: &Spanned<Expr>,
+    method: &str,
+    args: &[crate::ast::CallArg],
+    context: DefaultPathContext<'_>,
+) -> CheckedParamDefault {
+    let Expr::Ident(receiver_name) = &receiver.node else {
+        return CheckedParamDefault::Unsupported;
+    };
+    if !context
+        .checker
+        .lookup_symbol(receiver_name)
+        .is_some_and(|symbol| matches!(symbol.kind, SymbolKind::Type(_)))
+    {
+        return CheckedParamDefault::Unsupported;
+    }
+    let receiver_path = context.canonical_value_path(vec![receiver_name.clone()]);
+    CheckedParamDefault::MethodCall {
+        receiver_path,
+        method: method.to_owned(),
+        args: checked_param_default_args(args, context),
+    }
+}
+
+/// Convert call arguments recursively into the metadata-safe default-expression vocabulary.
+fn checked_param_default_args(
+    args: &[crate::ast::CallArg],
+    context: DefaultPathContext<'_>,
+) -> Vec<CheckedParamDefaultArg> {
+    args.iter()
+        .map(|arg| match arg {
+            crate::ast::CallArg::Positional(value) => CheckedParamDefaultArg {
+                name: None,
+                value: checked_param_default(value, context),
+            },
+            crate::ast::CallArg::Named(name, value) => CheckedParamDefaultArg {
+                name: Some(name.node.clone()),
+                value: checked_param_default(value, context),
+            },
+            crate::ast::CallArg::PositionalUnpack(_) | crate::ast::CallArg::KeywordUnpack(_) => {
+                CheckedParamDefaultArg {
+                    name: None,
+                    value: CheckedParamDefault::Unsupported,
+                }
+            }
+        })
+        .collect()
 }
 
 /// Capture the checked callable surface for a default-expression helper call.

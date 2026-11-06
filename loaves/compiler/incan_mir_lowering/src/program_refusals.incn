@@ -24,7 +24,7 @@ from function_frames import frame_parameters, lower_function
 
 
 pub def program_refusals(
-    modules: &list[BodyIrModule],
+    modules: list[BodyIrModule],
     sources: list[str],
     files: list[str],
     entry: int,

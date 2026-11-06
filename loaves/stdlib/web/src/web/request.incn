@@ -22,8 +22,6 @@ Example:
         return Json(RouteStatus(valid=True))
     ```
 """
-rust.module("incan_std_web")
-
 pub from rust::axum::extract import Query
 """
 `Query[T]` — extract URL query parameters (`?key=value&...`) into a typed struct.

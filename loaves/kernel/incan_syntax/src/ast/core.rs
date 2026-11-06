@@ -65,7 +65,7 @@ pub enum Visibility {
     Public,
 }
 
-/// A program is a sequence of declarations, optionally with a `rust.module()` directive (RFC 023).
+/// A program is a sequence of declarations.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Program {
     pub declarations: Vec<Spanned<Declaration>>,
@@ -74,11 +74,6 @@ pub struct Program {
     /// This is contextual metadata used by later compiler phases for source-aware stdlib behavior. It is not authored
     /// syntax and may be absent for inline `-c` programs or tests that parse bare snippets.
     pub source_path: Option<String>,
-    /// The `rust.module("path::to::module")` directive, if present.
-    ///
-    /// Declares that `@rust.extern` items in this module are backed by Rust functions at the given Rust module path.
-    /// See RFC 023 for the full semantic design.
-    pub rust_module_path: Option<Spanned<String>>,
     /// Non-fatal warnings emitted during parsing.
     ///
     /// These do not prevent the program from being type-checked or compiled. They are surfaced in CLI output and

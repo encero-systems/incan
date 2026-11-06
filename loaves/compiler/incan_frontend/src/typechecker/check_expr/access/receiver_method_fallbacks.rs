@@ -105,6 +105,7 @@ impl TypeChecker {
             call.expected_return_ty,
         ) {
             if newtype.is_rusttype {
+                self.retain_declared_rusttype_receiver_call(base_ty, &newtype.underlying, method, call.span);
                 self.maybe_record_rusttype_return_coercion(newtype, method, &result, call.span);
             }
             return Some(result);
@@ -127,6 +128,33 @@ impl TypeChecker {
             });
         }
         None
+    }
+
+    /// Apply an exact receiver adapter already admitted for this transparent rusttype method to an ordinary call.
+    ///
+    /// Direct-route rusttypes require every body-less method to back an authored interop edge. Reusing that edge's
+    /// inspected call keeps normal method syntax on the native backing type instead of emitting the source stub.
+    pub(super) fn retain_declared_rusttype_receiver_call(
+        &mut self,
+        receiver: &ResolvedType,
+        underlying: &ResolvedType,
+        method: &str,
+        span: Span,
+    ) {
+        let selected = self
+            .type_info
+            .rust
+            .declared_conversions
+            .iter()
+            .find(|conversion| {
+                (conversion.source == *receiver || conversion.source == *underlying)
+                    && conversion.call.has_receiver
+                    && conversion.call.path.rsplit("::").next() == Some(method)
+            })
+            .map(|conversion| conversion.call.clone());
+        if let Some(call) = selected {
+            self.type_info.rust.checked_calls.insert(span, call);
+        }
     }
 
     /// Apply the remaining bound, backend-magic, external and missing-method rules in their established order.
@@ -176,6 +204,9 @@ impl TypeChecker {
         };
         if !self.is_generic_placeholder_type(receiver) {
             return None;
+        }
+        if let Some(result) = self.resolve_bound_rust_trait_method(call, receiver, arg_types) {
+            return Some(result);
         }
         let name = self.generic_placeholder_name(receiver).map(str::to_string)?;
         self.resolve_generic_placeholder_method(
@@ -345,8 +376,12 @@ impl TypeChecker {
         self.refuse_mutating_call_through_read_only_binding(call.base, base_ty, call.method, call.span);
         self.note_mut_param_method_call(call.base, base_ty, call.method);
         self.record_mutable_receiver_method_call(base_ty, call.method, call.span);
-        if let Some(identity) = Self::compiler_builtin_method_identity(base_ty, call.method) {
-            self.type_info.record_resolved_identity(call.span, identity);
+        if let Some(selection) = Self::compiler_builtin_method_selection(base_ty, call.method) {
+            self.note_lazy_result_member(&selection.identity, selection.operation);
+            self.type_info.record_resolved_identity(call.span, selection.identity);
+            if let Some(operation) = selection.operation {
+                self.type_info.record_resolved_builtin_method_call(call.span, operation);
+            }
         }
     }
 

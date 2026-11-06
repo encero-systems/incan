@@ -268,10 +268,7 @@ impl TypeChecker {
             return Some(identity);
         }
         let (root, nested) = module.split_first()?;
-        let Some(mut module_path) = self.lookup_symbol(root).and_then(|symbol| match &symbol.kind {
-            SymbolKind::Module(info) if !info.is_python => Some(info.path.clone()),
-            _ => None,
-        }) else {
+        let Some(mut module_path) = self.module_namespace_path(root) else {
             self.errors.push(CompileError::type_error(
                 format!("@provider_operation capability `{rendered}` is unresolved"),
                 span,

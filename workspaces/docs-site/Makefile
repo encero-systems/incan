@@ -35,7 +35,7 @@ docs-check-learning:
 .PHONY: docs-check-v06-roadmap  ## docs - Validate the v0.6 roadmap renderer contract
 docs-check-v06-roadmap:
 	@echo "\033[1mChecking v0.6 roadmap renderer contract...\033[0m"
-	@sh scripts/v0_6_roadmap/check_roadmap.sh
+	@$(INCAN) test scripts/v0_6_roadmap/test_roadmap.incn
 	@echo "\033[32m✓ v0.6 roadmap renderer contract passed\033[0m"
 
 .PHONY: docs-check  ## docs - Run every lightweight docs contract
@@ -47,8 +47,8 @@ docs-refresh: docs-refresh-v06-roadmap
 .PHONY: docs-refresh-v06-roadmap  ## docs - Refresh the checked-in v0.6 issue map from GitHub
 docs-refresh-v06-roadmap:
 	@echo "\033[1mRefreshing the v0.6 roadmap snapshot from GitHub...\033[0m"
-	@sh scripts/v0_6_roadmap/refresh_github.sh
-	@sh scripts/v0_6_roadmap/render_roadmap.sh
+	@$(INCAN) run scripts/v0_6_roadmap/refresh_github.incn
+	@$(INCAN) run scripts/v0_6_roadmap/render_roadmap.incn
 	@echo "\033[32m✓ v0.6 roadmap snapshot refreshed\033[0m"
 
 .PHONY: docs-build  ## docs - Build docs site (MkDocs strict)

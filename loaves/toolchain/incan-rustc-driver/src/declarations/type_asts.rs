@@ -320,7 +320,7 @@ pub(super) fn boxed_object_ast(object: Box<ast::Ty>, span: Span) -> ast::TyKind 
 
 /// Declare the actual frozen wrapper with explicit static slice/text lifetimes, including nested collections.
 pub(super) fn frozen_collection_ty(name: &str, elements: &[PlanType], span: Span) -> Box<ast::Ty> {
-    let mut path = ast::Path::from_ident(ident("incan_std_core", span));
+    let mut path = ast::Path::from_ident(ident("incan_std_primitives", span));
     path.segments.push(ast::PathSegment::from_ident(ident("frozen", span)));
     let mut segment = ast::PathSegment::from_ident(ident(name, span));
     let arguments = elements
@@ -489,7 +489,7 @@ pub(super) fn generator_ty(name: &str, leaf: &ListLeaf, depth: i64, span: Span) 
     } else {
         PlanType::List(leaf.clone(), depth)
     };
-    let mut path = ast::Path::from_ident(ident("incan_std_core", span));
+    let mut path = ast::Path::from_ident(ident("incan_std_primitives", span));
     path.segments.push(ast::PathSegment::from_ident(ident("iter", span)));
     let mut segment = ast::PathSegment::from_ident(ident(name, span));
     segment.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {

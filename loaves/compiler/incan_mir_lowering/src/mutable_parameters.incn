@@ -69,7 +69,7 @@ def argument_source(mut builder: Builder, value: &RustOperand, ty: PlanType, spa
         _ => return Err("unsupported Body IR mutable argument")
 
 
-def checked_source(mut builder: Builder, place: Place, fact: &OwnershipFact, span: SourceSpan) -> Result[Place, str]:
+def checked_source(mut builder: Builder, place: Place, fact: OwnershipFact, span: SourceSpan) -> Result[Place, str]:
     """Borrow a value the checker hands over exclusively in place, and copy one it only reads."""
     match borrowed_at(builder.locals, place.local).ty:
         PlanType.ModelRef(_owner, _name) =>

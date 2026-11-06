@@ -18,7 +18,7 @@ pub def frozen_observation_type(ty: PlanType) -> bool:
         _ => return false
 
 
-pub def frozen_collection_literal(mut builder: Builder, value: &RustConstant, span: SourceSpan) -> Result[Operand, str]:
+pub def frozen_collection_literal(mut builder: Builder, value: RustConstant, span: SourceSpan) -> Result[Operand, str]:
     """Materialize a fresh checked static wrapper by value, without imposing Copy on its element type."""
     match value:
         RustConstant.FrozenAggregate(ty, elements) =>
@@ -51,7 +51,7 @@ def frozen_elements(mut builder: Builder, elements: &list[RustConstant]) -> Resu
     return Ok(values)
 
 
-pub def frozen_literal(mut builder: Builder, value: &RustConstant, span: SourceSpan) -> Result[Operand, str]:
+pub def frozen_literal(mut builder: Builder, value: RustConstant, span: SourceSpan) -> Result[Operand, str]:
     """Wrap checked static text only; dynamically allocated text cannot enter a FrozenStr carrier."""
     match literal_text(value):
         Some(text) =>
@@ -69,7 +69,7 @@ pub def literal_text(value: &RustConstant) -> Option[str]:
         _ => return None
 
 
-pub def frozen_bytes_literal(mut builder: Builder, value: &RustConstant, span: SourceSpan) -> Result[Operand, str]:
+pub def frozen_bytes_literal(mut builder: Builder, value: RustConstant, span: SourceSpan) -> Result[Operand, str]:
     """Retain exact static byte data for the SDK's copyable frozen wrapper, without allocating an owned byte vector."""
     values = frozen_byte_data(value)?
     output = temporary(builder, PlanType.FrozenBytes, span)

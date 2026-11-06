@@ -45,6 +45,16 @@ impl<'a> Parser<'a> {
             return self.race_for_expr(start);
         }
 
+        // `async` is reserved syntax except when it is a potential module head; the shared resolver verifies the
+        // binding and descends through its namespace.
+        if self.check_keyword(KeywordId::Async) && self.peek_next().kind == TokenKind::Punctuation(PunctuationId::Dot) {
+            self.advance();
+            return Ok(Spanned::new(
+                Expr::Ident("async".to_string()),
+                Span::new(start, self.tokens[self.pos - 1].span.end),
+            ));
+        }
+
         if let Some(expr) = self.try_vocab_block_expression(start)? {
             return Ok(expr);
         }

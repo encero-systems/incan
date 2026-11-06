@@ -59,5 +59,5 @@ When a visual detail does not scale cleanly to MkDocs Material, prefer the simpl
 - Keep reusable visual decisions in the root Incapunk tokens.
 - Do not override MkDocs Material's column layout with custom page grids.
 - Keep rail and flair effects scoped to structural frames.
-- Run `make docs-build` after theme changes.
+- Run `make docs` from the repository root after theme changes.
 - Restart `make docs` before visual review because CSS edits are not reliably live-reloaded.

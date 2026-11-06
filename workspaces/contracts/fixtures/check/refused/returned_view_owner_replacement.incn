@@ -1,10 +1,12 @@
-# behavior: replacing the owner of storage that a returned exclusive view still needs is refused (#2500).
+# behavior: replacing the owner of storage that a returned exclusive view or owned read cursor still needs is refused (#2500, #2524).
 # expect-diagnostic: INCAN-T0126
+
+from std.primitives.io import advance_cursor, read_cursor
 
 class Address:
     pub city: str
 
-    def set_city(mut self, city: str) -> Reference[Self] from self:
+    pub def set_city(mut self, city: str) -> Reference[Self] from self:
         self.city = city
         return self
 
@@ -13,7 +15,7 @@ class Customer:
     pub name: str
     pub address: Address
 
-    def edit_address(mut self) -> Reference[Address] from self.address:
+    pub def edit_address(mut self) -> Reference[Address] from self.address:
         return self.address
 
 
@@ -22,3 +24,7 @@ def main() -> None:
     mut address = customer.edit_address()
     customer = Customer(name="Alex", address=Address(city="Amsterdam"))
     address.set_city("Rotterdam")
+    mut data = b"before"
+    mut cursor = read_cursor(data)
+    data = b"after"
+    advance_cursor(cursor)

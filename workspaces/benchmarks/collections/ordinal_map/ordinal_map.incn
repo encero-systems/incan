@@ -10,9 +10,18 @@ from std.datetime import Instant
 from std.environ import args
 
 
+def zero_padded(value: int, width: int) -> str:
+    """Render a non-negative integer left-padded with zeros to the requested width."""
+    mut text = str(value)
+    while len(text) < width:
+        text = "0" + text
+    return text
+
+
 def make_keys(count: int) -> list[str]:
     """Build deterministic column-name keys for the benchmark."""
-    return [f"field_{idx:08d}" for idx in range(count)]
+    # F-strings accept no width spec, so the eight-digit suffix the Python workloads use is padded by hand.
+    return [f"field_{zero_padded(idx, 8)}" for idx in range(count)]
 
 
 def make_probe_indexes(key_count: int, probe_count: int) -> list[int]:

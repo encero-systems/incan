@@ -1,7 +1,6 @@
 # behavior: a model adopting Awaitable over its JoinHandle field is refused at the adoption, since a declared type is never an awaitable wrapper and a model always derives Clone, which a JoinHandle cannot be (#1711)
 # expect-diagnostic: INCAN-T0001
 
-import std.async
 from std.async.task import spawn, JoinHandle, TaskJoinError
 
 

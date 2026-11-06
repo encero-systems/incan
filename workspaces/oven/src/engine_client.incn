@@ -19,7 +19,8 @@ from files import json_text
 from incan_units import run_program
 from json_fields import required_text
 from observation import observe, file_metadata, trace
-from segment_store import Snapshot, begin, claim, commit, put, snapshot, view_snapshot
+from pub::incan_platform.store import Snapshot, begin, commit, put, view_snapshot
+from store_path_conversion import claim, snapshot
 from toolchain import load_toolchain, toolchain_file
 from unit_freshness import compiler_fingerprint, fingerprint
 from rust_target import inherited_deployment_configuration

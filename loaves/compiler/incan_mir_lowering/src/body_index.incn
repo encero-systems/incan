@@ -12,7 +12,7 @@ pub model BodyIndex:
 
     pub entries: Arc[BTreeMap[CanonicalSymbolId, list[int]]]
 
-    def candidates(self, identity: &CanonicalSymbolId) -> list[int]:
+    pub def candidates(self, identity: CanonicalSymbolId) -> list[int]:
         """Return only the selected identity's positions, leaving ambiguity and receiver admission to each caller."""
         mut positions: list[int] = []
         match self.entries.get(identity):
@@ -22,7 +22,7 @@ pub model BodyIndex:
             None => pass
         return positions
 
-    def unique(self, identity: &CanonicalSymbolId) -> Option[int]:
+    pub def unique(self, identity: CanonicalSymbolId) -> Option[int]:
         """Select a position only when exactly one body carries the complete checker identity."""
         match self.entries.get(identity):
             Some(indices) =>

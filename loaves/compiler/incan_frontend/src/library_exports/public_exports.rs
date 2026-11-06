@@ -199,13 +199,18 @@ pub(super) fn checked_alias_exports(alias: &AliasDecl, checker: &TypeChecker) ->
         return checked_overload_function_exports(alias.name.clone(), overloads, identity);
     }
     let projected_function = checked_projected_function_export(&alias.name, &symbol.kind);
+    let projected_type = match &symbol.kind {
+        SymbolKind::Type(_) => Some(ResolvedType::Named(alias.name.clone())),
+        SymbolKind::Trait(_) => identity.canonical.clone().map(ResolvedType::Trait),
+        _ => None,
+    };
     vec![CheckedNamedExport {
         name: alias.name.clone(),
         identity,
         kind: CheckedExportKind::Alias(CheckedAliasExport {
             name: alias.name.clone(),
             target_path,
-            projected_type: matches!(symbol.kind, SymbolKind::Type(_)).then(|| ResolvedType::Named(alias.name.clone())),
+            projected_type,
             projected_function,
         }),
     }]
@@ -300,10 +305,13 @@ pub(super) fn checked_import_export_from_symbol_kind(
         return checked_overload_function_exports(exported_name, overloads, identity);
     }
     let projected_function = symbol_kind.and_then(|kind| checked_projected_function_export(&exported_name, kind));
-    let projected_type = checker
-        .checked_nominal_type_origins()
-        .contains_key(&exported_name)
-        .then(|| ResolvedType::Named(exported_name.clone()));
+    let projected_type = match symbol_kind {
+        Some(SymbolKind::Trait(_)) => identity.canonical.clone().map(ResolvedType::Trait),
+        _ => checker
+            .checked_nominal_type_origins()
+            .contains_key(&exported_name)
+            .then(|| ResolvedType::Named(exported_name.clone())),
+    };
     vec![CheckedNamedExport {
         name: exported_name.clone(),
         identity,

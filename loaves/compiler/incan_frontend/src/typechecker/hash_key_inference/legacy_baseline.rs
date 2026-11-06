@@ -281,8 +281,6 @@ impl TypeChecker {
         self.record_body_ir_class_inheritance(program);
         self.record_method_decorator_receiver_slots(program);
 
-        // ---- RFC 023: validate rust.module() and @rust.extern rules ----
-        self.validate_rust_module_and_extern(program);
         self.validate_source_type_names = false;
         // The module is checked; its inferred hashed type parameters now join its exported signatures (#1758).
         self.export_inferred_hash_key_bounds();

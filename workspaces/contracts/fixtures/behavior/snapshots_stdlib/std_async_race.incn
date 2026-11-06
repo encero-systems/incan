@@ -3,7 +3,6 @@
 #   answered by cache
 #   1
 
-import std.async
 from std.async.race import arm, race
 from std.async.time import sleep
 

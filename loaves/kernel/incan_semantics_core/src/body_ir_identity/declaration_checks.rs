@@ -43,8 +43,10 @@ impl BodyIrModule {
     }
 
     /// Prove an RFC 036 original and wrapper belong to the same source declaration and obey the checked replacement
-    /// lifetime. Only module replacements acquire initialized storage; originals never replace ordinary lookup.
-    /// An authenticated compiled wrapper contributes its declaration frame; its implementation remains in its Loaf.
+    /// lifetime. Only module replacements acquire initialized storage; originals never replace ordinary lookup. An
+    /// async original remains the coroutine producer while its authenticated wrapper is the synchronous future
+    /// constructor held by the replacement. A compiled wrapper contributes its declaration frame; its implementation
+    /// remains in its Loaf.
     pub fn is_well_formed_decorated_binding(&self, binding: &crate::body_ir::DecoratedBinding) -> bool {
         self.is_well_formed_decorated_binding_in_project(binding, std::slice::from_ref(self))
     }
@@ -83,7 +85,6 @@ impl BodyIrModule {
         original.canonical.as_ref() == Some(&replacement.canonical)
             && matches!(replacement.canonical.kind, SemanticSourceTargetKind::Function | SemanticSourceTargetKind::Method)
             && original.type_parameters.is_empty()
-            && !original.is_async
             && self.body_has_canonical_direct_call_id(original)
             && initializer.canonical == original.canonical
             && initializer.decl_id == original.decl_id

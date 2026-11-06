@@ -25,7 +25,7 @@ from rust::incan_semantics_core::body_ir import (
 )
 from element_places import is_element_place, element_place_type
 from option_tests import is_union_carrier
-from validation_errors import display_validation_error
+from validation_errors import display_validation_error, validation_error_reference
 from model_values import debug_model_operand, display_model_operand
 from enum_display import display_enum_operand, native_enum_text, native_enum_owner, borrowed_enum_debug
 from value_enums import validate_layout
@@ -114,6 +114,10 @@ def debug_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -
                         match place_type(builder.locals, place):
                             PlanType.Model(_owner, _name) => return debug_model_operand(builder, value, span)
                             PlanType.Enum(owner, _name) => return debug_enum_operand(builder, place, owner, span)
+                            PlanType.ValidationError =>
+                                return debug_plan_operand(builder, validation_error_reference(builder, place, span)?, span)
+                            PlanType.ValidationErrorRef =>
+                                return debug_plan_operand(builder, validation_error_reference(builder, place, span)?, span)
                             PlanType.StringRef =>
                                 return debug_plan_operand(builder, read_place(place, false, span), span)
                             PlanType.StrRef => return debug_plan_operand(builder, read_place(place, false, span), span)
@@ -145,7 +149,7 @@ def debug_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -
     return Err("unsupported Body IR nonmodel FormatStyle.Debug")
 
 
-def display_tuple_place(mut builder: Builder, value: &RustPlace, span: SourceSpan) -> Result[Option[Place], str]:
+def display_tuple_place(mut builder: Builder, value: RustPlace, span: SourceSpan) -> Result[Option[Place], str]:
     """Display a whole local tuple while leaving global statics and other carriers on their existing paths."""
     match value.local_id():
         None => return Ok(None)
@@ -407,7 +411,7 @@ def display_string_operand(mut builder: Builder, operand: Operand, span: SourceS
 
 def clone_display_place(
     mut builder: Builder,
-    value: &RustPlace,
+    value: RustPlace,
     span: SourceSpan,
     type_parameter: bool,
 ) -> Result[Place, str]:

@@ -502,15 +502,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let ty = self.resolve_ty(expr.span);
         if !self.bindings.contains_key(name)
             && let IncanType::TypeToken(represented) = &ty
-            && matches!(
-                **represented,
-                IncanType::Primitive(
-                    IncanPrimitiveType::Int
-                        | IncanPrimitiveType::Float
-                        | IncanPrimitiveType::Bool
-                        | IncanPrimitiveType::Str
-                )
-            )
         {
             return bir::Operand::Constant(bir::Constant::TypeToken(*represented.clone()));
         }
@@ -567,10 +558,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 out,
             );
         }
-        if self
-            .type_info
-            .resolved_identity(base.span)
-            .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Module)
+        if self.is_module_namespace_span(base.span)
             && self
                 .type_info
                 .resolved_identity(expr.span)

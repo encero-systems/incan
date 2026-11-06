@@ -193,13 +193,20 @@ impl TypeChecker {
     }
 
     /// Hydrate a forwarded type or source trait from its admitted declaring artifact and checked public membership.
-    /// Trait aliases retain their generic contract without requiring a nominal layout or a native trait item.
+    ///
+    /// Nominal projections prefer the reconstructed artifact layout because its recursive member types have already
+    /// been remapped through their declaring module. Falling back to the raw checked API declaration is valid only
+    /// before that cache exists. Trait aliases retain their generic contract without requiring a nominal layout or a
+    /// native trait item.
     pub(in crate::typechecker::collect) fn symbol_kind_from_type_projection(
         &self,
         projected: Option<&crate::library_manifest::TypeRef>,
     ) -> Option<SymbolKind> {
         if projected.is_some_and(|ty| ty.has_native_union()) {
             return Some(SymbolKind::Type(TypeInfo::TypeAlias));
+        }
+        if let crate::library_manifest::TypeRef::Trait { identity } = projected? {
+            return self.trait_symbol_kind_from_identity(identity, None);
         }
         let crate::library_manifest::TypeRef::Named {
             origin: Some(origin), ..
@@ -209,36 +216,18 @@ impl TypeChecker {
         };
         let canonical = origin.canonical.hydrate()?;
         if canonical.kind == SemanticSourceTargetKind::Trait {
-            let entry = self.loaves.declaring_loaf(&canonical)?;
-            if entry.artifact.identity != origin.provider {
-                return None;
-            }
-            let manifest = &entry.artifact.manifest;
-            let identity = manifest
-                .contract_metadata
-                .identity_graph
-                .exports
-                .iter()
-                .find(|identity| {
-                    identity.kind == crate::library_manifest::ExportIdentityKind::Trait
-                        && identity.canonical.as_ref().and_then(|value| value.hydrate()).as_ref() == Some(&canonical)
-                })?;
-            let kind = if identity.public_path.len() == 2 {
-                manifest
-                    .exports
-                    .traits
-                    .iter()
-                    .find(|item| item.name == identity.public_name)
-                    .map(|item| SymbolKind::Trait(self.trait_info_from_manifest(item)))
-            } else {
-                Self::api_declaration_for_target_path(manifest, &identity.source_path).and_then(|declaration| {
-                    self.symbol_kind_from_api_declaration(manifest.contract_metadata.api.as_ref(), declaration)
-                })
-            };
-            return kind.filter(|kind| matches!(kind, SymbolKind::Trait(_)));
+            return self.trait_symbol_kind_from_identity(&canonical, Some(&origin.provider));
         }
         let (entry, identity) = self.loaves.public_nominal(&canonical)?;
         let artifact = &entry.artifact;
+        let qualified = canonical_public_library_type_name(&entry.key, &export_public_name(identity));
+        if let Some(info) = self
+            .transitive_pub_types
+            .get(&qualified)
+            .and_then(|infos| infos.first())
+        {
+            return Some(SymbolKind::Type(info.clone()));
+        }
         if identity.public_path.len() == 2 {
             self.manifest_nominal_type_info(&artifact.manifest, &identity.public_name)
                 .map(SymbolKind::Type)
@@ -247,6 +236,73 @@ impl TypeChecker {
                 self.symbol_kind_from_api_declaration(artifact.manifest.contract_metadata.api.as_ref(), declaration)
             })
         }
+    }
+
+    /// Reconstruct a declaration from the compiled artifact that owns its canonical identity.
+    ///
+    /// A cross-package facade alias may not carry a callable or nominal projection because the target is a const,
+    /// static or enum variant. The identity graph still names the exact declaring artifact and source declaration, so
+    /// consumers hydrate that ordinary declaration instead of treating the facade member as ambiguous. Hydration
+    /// admits the declaring Loaf through the normal import boundary so its ownership contracts accompany the symbol.
+    pub(in crate::typechecker::collect) fn symbol_kind_from_canonical_identity(
+        &mut self,
+        canonical: &CanonicalSymbolId,
+    ) -> Option<SymbolKind> {
+        let library = self.loaves.declaring_loaf(canonical)?.key.clone();
+        let manifest = self.loaf_manifest_or_refuse(&library, Span::default())?;
+        let identity = manifest
+            .contract_metadata
+            .identity_graph
+            .exports
+            .iter()
+            .find(|identity| {
+                identity.canonical.as_ref().and_then(|value| value.hydrate()).as_ref() == Some(canonical)
+            })?;
+        let declaration = Self::api_declaration_for_target_path(&manifest, &identity.source_path)?;
+        let mut kind = self.symbol_kind_from_api_declaration(manifest.contract_metadata.api.as_ref(), declaration)?;
+        let root_remapping = self.public_library_canonical_type_remapping(&library, &manifest);
+        self.remap_symbol_kind_through_declaring_module(&library, &manifest, Some(canonical), &mut kind);
+        self.remap_symbol_kind_with_import_aliases(&mut kind, &root_remapping);
+        Some(kind)
+    }
+
+    /// Reconstruct one trait from the exact canonical identity admitted by its declaring manifest.
+    ///
+    /// `expected_provider` retains the older named-projection check that the alias metadata and selected artifact name
+    /// the same provider. Native trait projections already carry the canonical identity directly and need no route
+    /// provenance check.
+    fn trait_symbol_kind_from_identity(
+        &self,
+        canonical: &CanonicalSymbolId,
+        expected_provider: Option<&crate::loaf_index::LoafIdentity>,
+    ) -> Option<SymbolKind> {
+        let entry = self.loaves.declaring_loaf(canonical)?;
+        if expected_provider.is_some_and(|provider| &entry.artifact.identity != provider) {
+            return None;
+        }
+        let manifest = &entry.artifact.manifest;
+        let identity = manifest
+            .contract_metadata
+            .identity_graph
+            .exports
+            .iter()
+            .find(|identity| {
+                identity.kind == crate::library_manifest::ExportIdentityKind::Trait
+                    && identity.canonical.as_ref().and_then(|value| value.hydrate()).as_ref() == Some(canonical)
+            })?;
+        let kind = if identity.public_path.len() == 2 {
+            manifest
+                .exports
+                .traits
+                .iter()
+                .find(|item| item.name == identity.public_name)
+                .map(|item| SymbolKind::Trait(self.trait_info_from_manifest(item)))
+        } else {
+            Self::api_declaration_for_target_path(manifest, &identity.source_path).and_then(|declaration| {
+                self.symbol_kind_from_api_declaration(manifest.contract_metadata.api.as_ref(), declaration)
+            })
+        };
+        kind.filter(|kind| matches!(kind, SymbolKind::Trait(_)))
     }
 
     /// Reconstruct a checked `rust::` reexport from the ABI metadata shipped beside the public manifest.

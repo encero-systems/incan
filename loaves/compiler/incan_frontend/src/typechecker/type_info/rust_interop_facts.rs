@@ -29,6 +29,9 @@ pub struct RustInteropArtifacts {
     /// Exact infallible rusttype edges selected from authored adapters and inspected native signatures.
     /// Ordinary source boundaries select only a matching source/destination pair, never any edge on the owner.
     pub(crate) declared_conversions: Vec<RustDeclaredConversion>,
+    /// Authored rusttype edges whose complete adapter signatures passed declaration checking. Fallible edges remain
+    /// declaration authority even though automatic native conversion currently consumes only infallible edges.
+    pub(crate) validated_rusttype_edges: HashSet<crate::ast::Span>,
     /// Exact owned native From calls applied to each source list element at an argument boundary. The list is
     /// evaluated once; the selected conversion is executed once per element in source order.
     pub element_adjustments: HashMap<crate::ast::Span, RustCheckedCall>,
@@ -174,6 +177,9 @@ pub struct RustCheckedCall {
     pub storage: Option<RustCheckedSignature>,
     /// Source declaration binders active when this native call was admitted, independently of nominal spellings.
     pub source_type_parameters: Vec<String>,
+    /// Signature-local loan identities retained from rustc, one entry per native parameter and one for the result.
+    /// Empty facts, including synthetic calls and older manifests, authorize no retained result dependency.
+    pub signature_loans: Vec<Vec<String>>,
     /// Flat, checked Deref/DerefMut callees evaluated on the receiver before written ordinary arguments.
     pub receiver_adjustments: Vec<RustCheckedCall>,
     /// Public item path of the selected free function or associated function.

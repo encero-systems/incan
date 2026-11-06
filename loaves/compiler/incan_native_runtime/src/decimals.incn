@@ -1,6 +1,6 @@
 """Exact Decimal128 construction and value comparisons shared with legacy execution."""
 
-from rust::incan_std_core::num import Decimal128 as RuntimeDecimal
+from rust::incan_std_primitives::num import Decimal128 as RuntimeDecimal
 from rust::std::cmp import PartialEq, PartialOrd
 from rust::std::string import ToString
 

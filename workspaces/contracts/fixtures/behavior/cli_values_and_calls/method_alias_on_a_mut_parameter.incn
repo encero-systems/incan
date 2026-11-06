@@ -16,7 +16,7 @@ class Counter:
     pub n: int
     grow = add
 
-    def add(mut self) -> None:
+    pub def add(mut self) -> None:
         self.n += 1
 
 
