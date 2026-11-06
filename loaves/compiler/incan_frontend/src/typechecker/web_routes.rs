@@ -6,8 +6,8 @@
 //! either by a `{name}` segment of the route path or by a typed extractor. A program that broke either rule checked
 //! and then failed in the build, at the registration. This module makes both rules checker diagnostics.
 //!
-//! What crosses this boundary: the checker recognizes the route decorator the same way lowering does (a stdlib
-//! `@rust.extern` function bound to the web macros crate, [`stdlib::STDLIB_WEB_MACROS_CRATE`]), reads the path
+//! What crosses this boundary: the checker recognizes the route decorator the same way lowering does (an inspected
+//! Rust attribute macro imported from [`stdlib::STDLIB_WEB_MACROS_CRATE`]), reads the path
 //! literal the same way the macro does ([`route_capture_names`]), and classifies the declared types by what it can
 //! prove. A type it cannot classify, such as a Rust-origin type, is left to the build: the diagnostics here refuse only
 //! shapes that are certainly wrong, never shapes that are merely unknown.
@@ -24,7 +24,6 @@ use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
 use incan_lang::lang::types::collections::CollectionTypeId;
 
 use super::TypeChecker;
-use super::collect::decorators::resolve_decorator_path;
 use super::helpers::collection_type_id;
 use super::json_member_requirements::builtin_type_without_json_form;
 
@@ -149,19 +148,10 @@ fn combine_part_shapes(parts: impl Iterator<Item = RouteTypeShape>, all_fit_mean
 impl TypeChecker {
     /// Return the function's `@route` decorator when it carries one.
     ///
-    /// The decorator is recognized by what it resolves to, not by how it was imported: a stdlib function named
-    /// [`stdlib::STDLIB_WEB_ROUTE_DECORATOR`] that the standard package owning its module declares `@rust.extern`.
+    /// The decorator is recognized by its inspected canonical Rust macro path, not by its local import spelling.
     fn route_decorator<'a>(&mut self, decorators: &'a [Spanned<Decorator>]) -> Option<&'a Spanned<Decorator>> {
         decorators.iter().find(|decorator| {
-            let resolved = resolve_decorator_path(&decorator.node, &self.symbols);
-            let Some((name, module)) = resolved.split_last() else {
-                return false;
-            };
-            if name != stdlib::STDLIB_WEB_ROUTE_DECORATOR || module.is_empty() {
-                return false;
-            }
-            module.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT)
-                && self.provider_declares_decorator_function(&resolved)
+            self.imported_attribute_macro_path(&decorator.node).as_deref() == Some("incan_web_macros::route")
         })
     }
 

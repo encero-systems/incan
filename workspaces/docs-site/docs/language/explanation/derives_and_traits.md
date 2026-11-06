@@ -168,21 +168,13 @@ Incan intentionally separates two kinds of “stringification”:
 
 This mirrors the common “logs vs user output” split: Debug is stable and structural; Display is designed for human-friendly formatting.
 
-## `@rust.extern` (Rust-backed functions)
+## Rust-backed functions
 
-You may see `@rust.extern` used in stdlib sources and Rust-backed libraries. It marks functions whose body are provided by a Rust module (declared via `rust.module()`).
+A Rust-backed API keeps its Incan-shaped signature and behavior in an ordinary Incan wrapper. The wrapper imports the narrow host function through `rust::` and calls it explicitly. This makes the boundary visible to checking, lowering and codegraph tools; there is no separate module-to-Rust delegation path.
 
-The intended meaning is:
+Direct imports also carry inspected derive and attribute macro facts. A derive macro imported from Rust can be named by `@derive(...)`, and an imported Rust attribute macro can decorate an Incan function without a function-shaped facade declaration.
 
-- the function's signature is defined in Incan (`.incn` source)
-- the function's implementation lives in a Rust crate, mapped via `rust.module()`
-- the compiler emits a call to the Rust implementation instead of compiling the `...` body
-
-This lets the stdlib (and third-party libraries) wrap Rust crates with Incan-shaped APIs while keeping most logic in pure Incan.
-
-See also:
-
-- [How derives work](how_derives_work.md)
+See [Call Rust APIs from Incan](../how-to/rust_interop.md) for the authoring forms.
 
 ## Copy and Clone
 

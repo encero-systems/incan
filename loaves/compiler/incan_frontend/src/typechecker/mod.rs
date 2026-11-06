@@ -110,9 +110,7 @@ pub use declaration_views::{CheckEnvironmentView, CheckedBindingView, Declaratio
 mod trait_bound_relations;
 mod type_info;
 pub(crate) use type_info::{AmbientLoggerBindingInfo, ClassLayoutInfo, RustCheckedCall};
-pub(crate) use validate_rust_module::is_trivial_body;
 mod union_member_identity;
-mod validate_rust_module;
 mod web_routes;
 
 pub use const_eval::ConstValue;
@@ -849,10 +847,9 @@ pub struct TypeChecker {
     pub current_module_path: Option<Vec<String>>,
     /// Source import aliases with declaration origins known from the dependency import graph.
     pub source_import_targets: HashMap<String, SourceTargetInfo>,
-    /// Declared Rust crate names from `loaf.toml [rust-dependencies]` (RFC 023 / RFC 013).
+    /// Declared Rust crate names from `loaf.toml [rust-dependencies]` (RFC 013).
     ///
-    /// Used to validate that `rust.module()` paths reference known crates. When `None`, crate validation is skipped
-    /// (e.g. single-file mode without a manifest).
+    /// Direct Rust imports and derives use this set to reject undeclared crates. Single-file mode may omit it.
     pub declared_crate_names: Option<HashSet<String>>,
     /// Local names bound to `std.testing` marker decorators via imports.
     ///
@@ -1029,6 +1026,25 @@ pub fn numeric_type_id_for_compat(ty: &ResolvedType) -> Option<NumericTypeId> {
         ResolvedType::Numeric(id) => Some(*id),
         _ => None,
     }
+}
+
+/// Return whether a function body contains only an optional docstring followed by `pass` placeholders.
+///
+/// Rusttype declaration validation uses this source-level predicate independently of RFC 171's retired extern
+/// surface, so it remains part of the typechecker's shared declaration vocabulary.
+pub(crate) fn is_trivial_body(body: &[Spanned<Statement>]) -> bool {
+    let first_non_docstring = body
+        .iter()
+        .position(|statement| {
+            !matches!(
+                &statement.node,
+                Statement::Expr(expression) if matches!(&expression.node, Expr::Literal(Literal::String(_)))
+            )
+        })
+        .unwrap_or(body.len());
+    body[first_non_docstring..]
+        .iter()
+        .all(|statement| matches!(statement.node, Statement::Pass))
 }
 
 /// Convenience function to type-check an AST

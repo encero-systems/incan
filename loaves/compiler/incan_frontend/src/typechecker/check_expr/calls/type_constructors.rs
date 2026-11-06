@@ -364,13 +364,21 @@ impl TypeChecker {
         &mut self,
         path: &str,
         signature: &RustFunctionSig,
+        explicit_type_args: &[Spanned<Type>],
         args: &[CallArg],
         span: Span,
         callee_span: Span,
         expected_return_ty: Option<&ResolvedType>,
     ) -> ResolvedType {
         let error_count_before = self.errors.len();
-        let result = self.validate_rust_function_call_with_expected(path, signature, args, span, expected_return_ty);
+        let result = self.validate_rust_function_call_with_type_arguments(
+            path,
+            signature,
+            explicit_type_args,
+            args,
+            span,
+            expected_return_ty,
+        );
         if self.errors.len() == error_count_before {
             if result == ResolvedType::Never && !signature.is_async && !signature.is_unsafe {
                 self.type_info

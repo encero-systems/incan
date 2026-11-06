@@ -1,29 +1,10 @@
-# behavior: a program that binds a rust.module runs, and an extern in that module may return an owned native value that the program iterates
-# expect-stdout:
-#   42
-#   6
+# behavior: rust.module is refused with the retired-interop diagnostic required by RFC 171
+# expect-diagnostic: INCAN-P0001
 
-"""A program that binds a rust.module runs."""
-rust.module("incan_std_core::iter")
-
-from rust::incan_std_core::iter import PyRange
-
-
-@rust.extern
-def range(start: int, end: int, step: int) -> PyRange:
-    """Delegate to the native range constructor, whose result is a native value rather than a scalar."""
-    ...
+"""The retired module facade cannot bind Rust implementations or macros."""
+rust.module("incan_std_core")
 
 
 def program_result() -> int:
-    """Return `42` for this fixture."""
+    """Provide a declaration after the refused directive so parsing continues deterministically."""
     return 42
-
-
-def main() -> None:
-    """Print the fixture values in the expected order."""
-    println(program_result())
-    mut total = 0
-    for value in range(1, 4, 1):
-        total += value
-    println(total)

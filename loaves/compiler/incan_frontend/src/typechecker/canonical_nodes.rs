@@ -95,7 +95,6 @@ impl SemanticNodeBindings {
             || function.visibility != crate::ast::Visibility::Private
             || declaration.span.expansion.is_some()
             || !declaration.required_features.is_empty()
-            || program.rust_module_path.is_some()
         {
             return Err(NodeBindingError::Unsupported(
                 "modified, generic, public, or generated owner",

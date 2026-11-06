@@ -469,7 +469,6 @@ pub class _Xxh3_128Hasher with Hash128DigestHasher:
         return self.handle.digest128()
 
 
-@rust.allow("non_camel_case_types")
 pub class sha224:
     """
     SHA-224 namespace with one-shot and incremental hashing.
@@ -484,7 +483,6 @@ pub class sha224:
         return _Sha224Hasher(handle=Sha224.default())
 
 
-@rust.allow("non_camel_case_types")
 pub class sha256:
     """
     SHA-256 namespace with one-shot and incremental hashing.
@@ -499,7 +497,6 @@ pub class sha256:
         return Sha256Hasher(handle=Sha256.default())
 
 
-@rust.allow("non_camel_case_types")
 pub class sha384:
     """
     SHA-384 namespace with one-shot and incremental hashing.
@@ -514,7 +511,6 @@ pub class sha384:
         return _Sha384Hasher(handle=Sha384.default())
 
 
-@rust.allow("non_camel_case_types")
 pub class sha512:
     """
     SHA-512 namespace with one-shot and incremental hashing.
@@ -529,7 +525,6 @@ pub class sha512:
         return _Sha512Hasher(handle=Sha512.default())
 
 
-@rust.allow("non_camel_case_types")
 pub class sha3_224:
     """
     SHA3-224 namespace with one-shot and incremental hashing.
@@ -544,7 +539,6 @@ pub class sha3_224:
         return _Sha3_224Hasher(handle=Sha3_224.default())
 
 
-@rust.allow("non_camel_case_types")
 pub class sha3_256:
     """
     SHA3-256 namespace with one-shot and incremental hashing.
@@ -559,7 +553,6 @@ pub class sha3_256:
         return _Sha3_256Hasher(handle=Sha3_256.default())
 
 
-@rust.allow("non_camel_case_types")
 pub class sha3_384:
     """
     SHA3-384 namespace with one-shot and incremental hashing.
@@ -574,7 +567,6 @@ pub class sha3_384:
         return _Sha3_384Hasher(handle=Sha3_384.default())
 
 
-@rust.allow("non_camel_case_types")
 pub class sha3_512:
     """
     SHA3-512 namespace with one-shot and incremental hashing.
@@ -589,7 +581,6 @@ pub class sha3_512:
         return _Sha3_512Hasher(handle=Sha3_512.default())
 
 
-@rust.allow("non_camel_case_types")
 pub class shake128:
     """
     SHAKE128 namespace requiring explicit output lengths.
@@ -604,7 +595,6 @@ pub class shake128:
         return _Shake128Hasher(handle=Shake128.default())
 
 
-@rust.allow("non_camel_case_types")
 pub class shake256:
     """
     SHAKE256 namespace requiring explicit output lengths.
@@ -619,7 +609,6 @@ pub class shake256:
         return _Shake256Hasher(handle=Shake256.default())
 
 
-@rust.allow("non_camel_case_types")
 pub class blake2b:
     """
     BLAKE2b namespace with the standard 64-byte output.
@@ -634,7 +623,6 @@ pub class blake2b:
         return _Blake2bHasher(handle=Blake2b512.default())
 
 
-@rust.allow("non_camel_case_types")
 pub class blake2s:
     """
     BLAKE2s namespace with the standard 32-byte output.
@@ -649,7 +637,6 @@ pub class blake2s:
         return _Blake2sHasher(handle=Blake2s256.default())
 
 
-@rust.allow("non_camel_case_types")
 pub class blake3:
     """
     BLAKE3 namespace with one-shot and incremental hashing.
@@ -664,7 +651,6 @@ pub class blake3:
         return _Blake3Hasher(handle=Blake3Hasher.new())
 
 
-@rust.allow("non_camel_case_types")
 pub class md5:
     """
     MD5 namespace for interoperability and checksum workflows.
@@ -679,7 +665,6 @@ pub class md5:
         return _Md5Hasher(handle=Md5.default())
 
 
-@rust.allow("non_camel_case_types")
 pub class sha1:
     """
     SHA-1 namespace for interoperability and checksum workflows.
@@ -694,7 +679,6 @@ pub class sha1:
         return _Sha1Hasher(handle=Sha1.default())
 
 
-@rust.allow("non_camel_case_types")
 pub class xxh3_64:
     """
     XXH3 64-bit namespace with byte and integer outputs.
@@ -713,7 +697,6 @@ pub class xxh3_64:
         return _Xxh3_64Hasher(handle=Xxh3Default.new())
 
 
-@rust.allow("non_camel_case_types")
 pub class xxh3_128:
     """
     XXH3 128-bit namespace with byte and integer outputs.
@@ -732,7 +715,6 @@ pub class xxh3_128:
         return _Xxh3_128Hasher(handle=Xxh3Default.new())
 
 
-@rust.allow("non_camel_case_types")
 pub class xxh64:
     """
     xxHash64 namespace with byte and 64-bit integer outputs.
@@ -751,7 +733,6 @@ pub class xxh64:
         return _Xxh64Hasher(handle=Xxh64.default())
 
 
-@rust.allow("non_camel_case_types")
 pub class xxh32:
     """
     xxHash32 namespace with byte and 32-bit integer outputs.

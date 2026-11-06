@@ -47,13 +47,6 @@ pub fn verify_module(
         let ast::Declaration::Function(function) = &declaration.node else {
             continue;
         };
-        if info
-            .declarations
-            .native_attribute_externs
-            .contains_key(&declaration.span)
-        {
-            continue;
-        }
         let select = |body: &&bir::Body| body.span == super::hir_span(declaration.span) && body.name == function.name;
         let before = expected
             .bodies

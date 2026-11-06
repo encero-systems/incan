@@ -1,7 +1,7 @@
 //! Test-marker and assertion runtime: the Rust facet of the `testing` standard library component.
 //!
 //! `loaves/stdlib/testing/src/testing.incn` is the source-of-truth surface API for `std.testing`. This crate implements
-//! only the host-boundary functions referenced by `@rust.extern` declarations in `std.testing`.
+//! only the host-boundary functions imported directly by `std.testing`.
 
 #![deny(clippy::unwrap_used)]
 

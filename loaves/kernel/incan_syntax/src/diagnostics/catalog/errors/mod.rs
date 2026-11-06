@@ -11,7 +11,7 @@
 //! | `syntax`      | Parser and lexer diagnostics                             |
 //! | `modules`     | Module/import resolution errors                          |
 //! | `const_eval`  | Const-expression evaluation & builtin calls              |
-//! | `rust_module` | `rust.module()` / `@rust.extern` diagnostics (RFC 023)   |
+//! | `rust_module` | Retired Rust interop surface diagnostics (RFC 171)      |
 //! | `assignments` | Assignment compatibility and borrowed collection replacement |
 //! | `c_abi`       | Checked C ABI diagnostics (RFC 116)                      |
 //! | `capability_requirements` | Types lacking a derive or task capability a program needs of them |

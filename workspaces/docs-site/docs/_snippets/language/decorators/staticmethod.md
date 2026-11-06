@@ -22,13 +22,13 @@ Rules:
 - A `@staticmethod` method **must not** have a `self` or `mut self` parameter. The compiler rejects this.
 - Call static methods via the type name: `TypeName.method_name(...)`.
 - Generic static factory methods can return `Self`; call them with explicit type arguments when inference needs the owner type, such as `Box[int].make(...)`.
-- `@staticmethod` can be combined with `@rust.extern` for Rust-backed static methods on types.
+- A Rust-backed static method uses an ordinary Incan body that calls a directly imported Rust function.
 
 Use cases:
 
 - **Factory methods**: alternative constructors (`from_fahrenheit`, `from_json`, `parse`).
 - **Utility functions**: logic scoped to a type that doesn't need instance state.
-- **Rust interop**: `@rust.extern` on type methods requires `@staticmethod` (instance delegation is not supported).
+- **Rust interop**: a static wrapper can keep an Incan-facing signature while calling a private `rust::` import.
 
 Generic static factories can use the declaring type constructor directly:
 

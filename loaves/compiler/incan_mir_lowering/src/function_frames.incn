@@ -63,7 +63,6 @@ from closures import (
     return_representation,
 )
 from attributes import native_attributes
-from externs import delegated_function
 from lowering import BodyIrModule
 from checked_values import builder_location, indexed_location, line_starts, location
 from statements import is_nominal_type, is_owned_callable, lower_block
@@ -98,26 +97,6 @@ pub def lower_function(
     span = location(body.span, source, file)
     selected_name = frame_name(evaluator_name(module, body), role)
     cached_decorator, initializing_decorator = frame_decorator_role(module, body, role)?
-    match body.extern_delegation:
-        Some(delegation) =>
-            if body.is_async or body.is_generator():
-                return Err("unsupported Body IR async or generator ExternDelegation")
-            if is_program_entry(module, body):
-                return Err("unsupported Body IR ExternDelegation entrypoint")
-            mut native_arguments: list[PlanType] = []
-            for argument in type_arguments:
-                argument_type = native_source_type(constructors, nominals, enums, unions, argument, intrinsics)?
-                native_arguments.append(argument_type)
-            function, externals = delegated_function(
-                selected_name,
-                delegation.rust_path(),
-                native_arguments,
-                frame_parameters(constructors, module, body, source, file, intrinsics)?,
-                native_source_type(constructors, nominals, enums, unions, body.return_type, intrinsics)?,
-                span,
-            )?
-            return Ok((function, externals, [], []))
-        None => pass
     validate_callable_representation(body)?
     mut declared_carrier = PlanType.Unit
     match native_source_type(constructors, nominals, enums, unions, body.return_type, intrinsics):

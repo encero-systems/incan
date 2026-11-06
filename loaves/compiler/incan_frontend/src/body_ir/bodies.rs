@@ -96,64 +96,34 @@ pub(super) fn lower_owner_property_bodies(
         .collect()
 }
 
-/// The delegation an `@rust.extern` declaration named `name` records, or `None` for an ordinary declaration (#2023).
-///
-/// The item is the declaration's own name in the file's `rust.module(...)` module, for functions and static methods
-/// alike, as the emitted route's delegation wrapper calls it. The checker refuses an extern in a file with no
-/// `rust.module(...)`, so that case never reaches lowering; it still lowers fail-closed, to a body whose only statement
-/// refuses, rather than to the placeholder.
-fn extern_delegation(
-    decorators: &[ast::Spanned<ast::Decorator>],
-    name: &str,
-    lowering_facts: &BodyIrLoweringFacts<'_, '_>,
-) -> Option<Result<bir::ExternDelegation, String>> {
-    let is_extern = decorators
-        .iter()
-        .any(|decorator| decorators::from_segments(&decorator.node.path.segments) == Some(DecoratorId::RustExtern));
-    if !is_extern {
-        return None;
-    }
-    Some(match lowering_facts.rust_module {
-        Some(module) => Ok(bir::ExternDelegation {
-            rust_module: module.to_string(),
-            rust_item: name.to_string(),
-        }),
-        None => Err(format!(
-            "`@rust.extern` declaration `{name}` in a file with no `rust.module(...)` binding"
-        )),
-    })
-}
-
 /// A refusal for a declaration whose binding a user-defined decorator chain replaced (RFC 036), or `None`.
 ///
 /// The checker rebinds the decorated name to the callable the chain returns, initialized once before `main`. Body IR
 /// has no representation for that binding: a call through the name still targets this declaration's own body. Lowering
 /// the body would run the undecorated function and skip the decorator's effects, so the declaration refuses by name
 /// until the rebinding is represented.
-fn decorator_rebinding(rebound: bool, name: &str) -> Option<Result<bir::ExternDelegation, String>> {
-    rebound.then(|| Err(format!("declaration `{name}` rebound by a user-defined decorator")))
+fn decorator_rebinding(rebound: bool, name: &str) -> Option<String> {
+    rebound.then(|| format!("declaration `{name}` rebound by a user-defined decorator"))
 }
 
-/// Lower a declaration's statements, unless it is an `@rust.extern` whose `...` placeholder must not become code.
+/// Lower an ordinary declaration's statements or retain a checked refusal for a rebound declaration.
 ///
-/// An ordinary body returns its trailing expression when it has a value-returning type (#2025). Returns the body's
-/// statements and its delegation. An extern's statements are empty (or a single refusal when its delegation could not
-/// be resolved), and its parameters are not dropped by the body: the delegated Rust item owns them.
+/// A body returns its trailing expression when it has a value-returning type (#2025). A rebound declaration cannot
+/// execute its undecorated body, so lowering records the refusal instead.
 fn lower_declaration_statements(
     builder: &mut BodyBuilder<'_, '_>,
-    delegation: Option<Result<bir::ExternDelegation, String>>,
+    refusal: Option<String>,
     source: &[ast::Spanned<ast::Statement>],
     root_scope: bir::ScopeId,
     span: HirSourceSpan,
-) -> (Vec<bir::Statement>, Option<bir::ExternDelegation>) {
+) -> Vec<bir::Statement> {
     let mut stmts = Vec::new();
     if let Err(reason) = builder.input_body {
         builder.push_unsupported_stmt(reason.to_owned(), span, &mut stmts);
-        return (stmts, None);
+        return stmts;
     }
-    match delegation {
-        Some(Ok(delegation)) => return (stmts, Some(delegation)),
-        Some(Err(description)) => builder.push_unsupported_stmt(description, span, &mut stmts),
+    match refusal {
+        Some(description) => builder.push_unsupported_stmt(description, span, &mut stmts),
         None => {
             builder.lower_block_into(source, root_scope, &mut stmts);
             let owner_return_type = builder.owner_return_type.clone();
@@ -161,7 +131,7 @@ fn lower_declaration_statements(
             builder.insert_scope_drops(&mut stmts, root_scope);
         }
     }
-    (stmts, None)
+    stmts
 }
 
 /// Lower a computed static's initializer into a body with no parameters that returns the storage carrier
@@ -197,7 +167,7 @@ pub(super) fn lower_static_initializer_body(
         ast::Statement::Return(Some(storage.value.clone())),
         storage.value.span,
     )];
-    let (mut stmts, _) = lower_declaration_statements(&mut builder, None, &source, root_scope, hir_span(decl_span));
+    let mut stmts = lower_declaration_statements(&mut builder, None, &source, root_scope, hir_span(decl_span));
     let terminal = stmts
         .iter()
         .rposition(|statement| !matches!(statement.kind, bir::StatementKind::Drop { .. }));
@@ -231,7 +201,7 @@ pub(super) fn lower_constant_initializer_body(
         ast::Statement::Return(Some(item.value.clone())),
         item.value.span,
     )];
-    let (stmts, _) = lower_declaration_statements(&mut builder, None, &source, root_scope, hir_span(decl_span));
+    let stmts = lower_declaration_statements(&mut builder, None, &source, root_scope, hir_span(decl_span));
     finish_static_initializer_body(builder, canonical, ty, root_scope, hir_span(decl_span), stmts)
 }
 
@@ -286,7 +256,7 @@ pub(super) fn finish_static_initializer_body(
         runtime_requirements: builder.runtime_requirements,
         panic_facts: builder.panic_facts,
         is_async: false,
-        extern_delegation: None,
+        retired_rust_facade_wire: None,
         native_attributes: Vec::new(),
     }
 }
@@ -343,10 +313,9 @@ pub(super) fn lower_function_body(
         .decorated_function_bindings_by_span
         .contains_key(&decl_span)
         && !decorated_bindings::supports_function(function, decl_span, lowering_facts);
-    let (mut stmts, extern_delegation) = lower_declaration_statements(
+    let mut stmts = lower_declaration_statements(
         &mut builder,
-        decorator_rebinding(rebound, &function.name)
-            .or_else(|| extern_delegation(&function.decorators, &function.name, lowering_facts)),
+        decorator_rebinding(rebound, &function.name),
         &function.body,
         root_scope,
         hir_span(decl_span),
@@ -411,7 +380,7 @@ pub(super) fn lower_function_body(
         runtime_requirements: builder.runtime_requirements,
         panic_facts: builder.panic_facts,
         is_async: function.is_async(),
-        extern_delegation,
+        retired_rust_facade_wire: None,
         native_attributes: lowering_facts
             .type_info
             .declarations
@@ -505,10 +474,9 @@ pub(super) fn lower_method_body(
         .decorated_method_bindings
         .contains_key(&(owner_name.to_string(), method.name.clone()))
         && !decorated_bindings::supports_method(method, owner_name, lowering_facts.type_info);
-    let (mut stmts, extern_delegation) = lower_declaration_statements(
+    let mut stmts = lower_declaration_statements(
         &mut builder,
-        decorator_rebinding(rebound, &method.name)
-            .or_else(|| extern_delegation(&method.decorators, &method.name, lowering_facts)),
+        decorator_rebinding(rebound, &method.name),
         body_stmts,
         root_scope,
         hir_span(decl_span),
@@ -581,7 +549,7 @@ pub(super) fn lower_method_body(
         runtime_requirements: builder.runtime_requirements,
         panic_facts: builder.panic_facts,
         is_async: method.is_async(),
-        extern_delegation,
+        retired_rust_facade_wire: None,
         native_attributes: Vec::new(),
     })
 }

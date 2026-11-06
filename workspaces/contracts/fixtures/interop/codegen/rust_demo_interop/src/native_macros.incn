@@ -1,7 +1,2 @@
-"""Source vocabulary backed by exported Rust derive macro facts."""
-rust.module("demo_derive")
-
-
-pub trait Component:
-    """Select the dependency's derive without predicting its generated implementation."""
-    pass
+"""Source vocabulary backed by an exported Rust derive macro import."""
+pub from rust::demo_derive import Component

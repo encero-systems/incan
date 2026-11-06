@@ -47,7 +47,6 @@ This inventory describes the source-authored public features in the compiler's c
 | `Result[T, E]` combinators | Stdlib | 0.3 | Use `Result[T, E]` values. | `result.map(transform)`<br>`result.and_then(validate)`<br>`result.inspect(log_success)` | `Result` values support branch-local transforms, fallible chaining, recovery, and inspection taps. | Nested matches that only rewrap `Ok` / `Err` around one transformed branch. | [std.result](stdlib/result.md), [Fallible and infallible paths](../tutorials/fallible_and_infallible_paths.md), [Release 0.3](../../release_notes/0_3.md) |
 | Protocol hooks for core syntax | TypeSystem | 0.3 | Define compatible dunder hooks and adopt/document the corresponding trait vocabulary where useful. | `def __len__(self) -> int:`<br>`def __iter__(self) -> Iterator[T]:`<br>`def __call__(self, value: T) -> U:` | User-defined types can participate in truthiness, length, membership, iteration, indexing, assignment, and calls. | Special-casing custom types in caller code instead of giving the type the expected protocol. | [Traits as language hooks](../explanation/traits_as_language_hooks.md), [Collection protocols](stdlib_traits/collection_protocols.md), [Operators](stdlib_traits/operators.md) |
 | Rust trait adoption from Incan | Interop | 0.3 | Import the Rust trait metadata and adopt with `with TraitName`. | `type UserId = rusttype i64 with Display:`<br>`def fmt(self, f: Formatter) for Display -> Result[None, FmtError]:`<br>`type Output for Add[int] = UserId` | Newtype and rusttype declarations can author Rust trait impls with Incan adoption syntax. | Writing Rust-shaped `impl Trait for Type` concepts in comments or custom backend code. | [Rust interop](../how-to/rust_interop.md), [Derives and traits](derives_and_traits.md), [Release 0.3](../../release_notes/0_3.md) |
-| Checked Rust lint annotations | Interop | 0.3 | Use `@rust.allow(...)` on supported declarations. | `@rust.allow("dead_code")`<br>`def helper() -> None:` | The checker validates declaration-local `@rust.allow` names and attachments. Native compilation does not generate Rust source attributes or run Clippy. | Broad lint groups or annotations used to hide a source type error. | [Rust interop](../how-to/rust_interop.md#targeted-generated-rust-lint-suppression), [Release 0.3](../../release_notes/0_3.md) |
 | Scoped DSL surfaces | Syntax | 0.3 | Import a vocab package that publishes scoped surface descriptors. | `query:`<br>`.field`<br>`\|>`<br>`sum(value)` | Library vocab crates can activate declaration, clause, glyph, leading-dot, and scoped symbol syntax inside their own DSL blocks. | Global parser changes for syntax that only belongs to one imported DSL. | [Authoring vocab crates](../../contributing/how-to/authoring_vocab_crates.md), [Release 0.3](../../release_notes/0_3.md) |
 | `std.web` hosted web framework | Stdlib | 0.2 | Import from `std.web` or submodules such as `std.web.routing`. | `from std.web.routing import route`<br>`from std.web.response import Json`<br>`@route("/health")` | `std.web` provides hosted web app, routing, request, response and macro surfaces through compiled standard packages and their checked native dependencies. | Compiler-special-cased web wrappers or direct Axum wiring for ordinary hosted Incan web apps. | [Imports and modules](imports_and_modules.md), [Web framework tutorial](../tutorials/web_framework.md), [Release 0.2](../../release_notes/0_2.md) |
 | `std.math` numeric helpers | Stdlib | 0.2 | Import `std.math`. | `import std.math`<br>`math.sqrt(9.0)`<br>`math.gcd(12, 18)`<br>`math.is_float_like("1.25e3")` | `std.math` provides mathematical constants, integer gcd/lcm helpers, floating-point functions, and numeric-string shape checks. | Direct Rust math imports or project-local numeric string probes for ordinary numeric helper calls. | [std.math](stdlib/math.md), [Release 0.2](../../release_notes/0_2.md) |
@@ -670,24 +669,6 @@ Canonical forms:
 - `type UserId = rusttype i64 with Display:`
 - `def fmt(self, f: Formatter) for Display -> Result[None, FmtError]:`
 - `type Output for Add[int] = UserId`
-
-### Checked Rust lint annotations
-
-- **Id:** `RustAllow`
-- **Category:** `Interop`
-- **Since:** `0.3`
-- **RFC:** `RFC 057`
-- **Stability:** `Stable`
-- **Activation:** Use `@rust.allow(...)` on supported declarations.
-- **Use instead of:** Broad lint groups or annotations used to hide a source type error.
-- **References:** [Rust interop](../how-to/rust_interop.md#targeted-generated-rust-lint-suppression), [Release 0.3](../../release_notes/0_3.md)
-
-The checker validates declaration-local `@rust.allow` names and attachments. Native compilation does not generate Rust source attributes or run Clippy.
-
-Canonical forms:
-
-- `@rust.allow("dead_code")`
-- `def helper() -> None:`
 
 ### Scoped DSL surfaces
 

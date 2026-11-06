@@ -33,8 +33,8 @@ pub const STDLIB_WEB_ROUTE_DECORATOR: &str = "route";
 
 /// The proc-macro crate that backs `std.web.routing.route`.
 ///
-/// A `@rust.extern` stdlib function bound to this crate is emitted as a passthrough Rust attribute; the checker uses
-/// the same binding to know which decorated functions are route handlers and to check their signatures.
+/// The directly imported `route` attribute macro is retained as a passthrough Rust attribute; the checker uses its
+/// inspected canonical path to identify route handlers and check their signatures.
 pub const STDLIB_WEB_MACROS_CRATE: &str = "incan_web_macros";
 
 /// `std.web.macros.IntoResponse`, the derive that makes a wrapper type usable as a route handler's return type.

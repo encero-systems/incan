@@ -491,7 +491,6 @@ pub class _BytesIO with (
         return _write_f64_value(self, value, endian, "write")
 
 
-@rust.allow("non_snake_case")
 pub def BytesIO(initial: bytes = b"") -> _BytesIO:
     """
     Construct a writable, seekable in-memory byte stream.

@@ -51,6 +51,38 @@ impl TypeChecker {
                 member_projections.insert(exported_name, projection);
             }
         }
+        for declaration in &module_ast.declarations {
+            let Declaration::Import(import) = &declaration.node else {
+                continue;
+            };
+            if public_only && import.visibility != Visibility::Public {
+                continue;
+            }
+            let ImportKind::RustFrom {
+                crate_name,
+                path,
+                items,
+                ..
+            } = &import.kind
+            else {
+                continue;
+            };
+            for item in items {
+                let mut rust_path = vec![crate_name.clone()];
+                rust_path.extend(path.iter().cloned());
+                rust_path.push(item.name.clone());
+                let canonical_path = rust_path.join("::");
+                member_symbols.insert(
+                    item.alias.as_ref().unwrap_or(&item.name).clone(),
+                    SymbolKind::RustItem(RustItemInfo {
+                        crate_name: crate_name.clone(),
+                        path: canonical_path.clone(),
+                        binding: RustImportBindingKind::FromImport,
+                        metadata: self.rust_item_metadata_for_path(&canonical_path),
+                    }),
+                );
+            }
+        }
         self.dependency_member_reexports
             .insert(module_name.to_string(), reexports);
         self.dependency_member_symbols

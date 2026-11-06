@@ -64,7 +64,6 @@ pub class HmacSha256Signer:
         return self.handle.finalize_reset().into_bytes().to_vec()
 
 
-@rust.allow("non_camel_case_types")
 pub class hmac_sha256:
     """
     HMAC-SHA256 namespace with one-shot and incremental authentication.

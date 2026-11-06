@@ -1,4 +1,4 @@
-# behavior: exported Rust derives selected through a direct import or a rust.module facade compile on models and newtypes, including a nested value whose parent requires the generated implementation
+# behavior: exported Rust derives selected through a direct rust import compile on models and newtypes, including a nested value whose parent requires the generated implementation (RFC 171)
 # expect-stdout:
 #   1
 #   2 3
@@ -10,7 +10,7 @@ from native_macros import Serialize as JsonForm
 
 @derive(JsonForm)
 pub model FacadeKey:
-    """Select the dependency's exported derive through an aliased source facade."""
+    """Select the dependency's directly imported derive through an alias."""
     pub value: int
 
 

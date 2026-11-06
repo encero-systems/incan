@@ -181,10 +181,7 @@ impl TypeChecker {
             return true;
         }
 
-        if self
-            .lookup_symbol(name)
-            .is_some_and(|symbol| matches!(symbol.kind, SymbolKind::RustItem(_)))
-        {
+        if self.rust_import_path_for_local_name(name).is_some() {
             return true;
         }
 

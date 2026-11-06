@@ -123,7 +123,6 @@ impl TypeChecker {
 
         self.validate_decorators_rejecting_user_defined(&tr.decorators, "trait");
         self.reject_registry_description_decorators(&tr.decorators, "trait");
-        self.reject_rust_allow_on_unsupported_declaration(&tr.decorators, "trait");
         let requires_map: HashMap<String, ResolvedType> = self
             .symbols
             .lookup(&tr.name)

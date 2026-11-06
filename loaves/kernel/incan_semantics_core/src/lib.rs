@@ -77,8 +77,6 @@ pub enum SurfaceFeatureKey {
 /// Canonical decorator-feature identities used by semantics packs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DecoratorFeature {
-    RustExtern,
-    RustAllow,
     RustDerive,
     /// Checked C ABI binding descriptor.
     CBinding,
@@ -384,9 +382,8 @@ impl<'a> SurfaceSemanticsRegistry<'a> {
 /// Map a core decorator id to canonical decorator feature.
 pub fn decorator_feature_from_id(id: DecoratorId) -> DecoratorFeature {
     match id {
-        DecoratorId::RustExtern => DecoratorFeature::RustExtern,
-        DecoratorId::RustAllow => DecoratorFeature::RustAllow,
         DecoratorId::RustDerive => DecoratorFeature::RustDerive,
+        DecoratorId::Marker => DecoratorFeature::TestingMarker,
         DecoratorId::CBinding => DecoratorFeature::CBinding,
         DecoratorId::Derive => DecoratorFeature::Derive,
         DecoratorId::StaticMethod => DecoratorFeature::StaticMethod,

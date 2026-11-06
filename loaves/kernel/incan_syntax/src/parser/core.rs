@@ -233,7 +233,6 @@ impl<'a> Parser<'a> {
     /// to report multiple issues in one pass.
     pub fn parse(mut self) -> Result<Program, Vec<CompileError>> {
         let mut declarations = Vec::new();
-        let mut rust_module_path: Option<Spanned<String>> = None;
         let mut seen_non_doc_decl = false;
         let mut seen_test_module = false;
 
@@ -247,21 +246,12 @@ impl<'a> Parser<'a> {
         self.skip_dedents();
 
         while !self.is_at_end() {
-            // ---- Context: `rust.module("...")` directive (RFC 023) ----
+            // ---- Context: retired `rust.module("...")` directive (RFC 171) ----
             if self.check_keyword(KeywordId::Rust)
                 && self.peek_next().kind == TokenKind::Punctuation(PunctuationId::Dot)
             {
                 match self.rust_module_directive() {
-                    Ok(directive) => {
-                        if seen_non_doc_decl {
-                            self.errors.push(errors::rust_module_not_at_top(directive.span));
-                        }
-                        if rust_module_path.is_some() {
-                            self.errors.push(errors::duplicate_rust_module(directive.span));
-                        } else {
-                            rust_module_path = Some(directive);
-                        }
-                    }
+                    Ok(directive) => self.errors.push(errors::retired_rust_module(directive.span)),
                     Err(e) => {
                         self.errors.push(e);
                         self.synchronize();
@@ -321,7 +311,6 @@ impl<'a> Parser<'a> {
             Ok(Program {
                 declarations,
                 source_path: self.module_path.clone(),
-                rust_module_path,
                 warnings: self.warnings,
             })
         } else {
@@ -363,7 +352,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Parse a `rust.module("path::to::module")` directive.
+    /// Parse the retired `rust.module("path::to::module")` shape so RFC 171 can report its migration.
     ///
     /// Expects the current token to be `Keyword(Rust)`. Consumes `rust . module ( "..." )`.
     fn rust_module_directive(&mut self) -> Result<Spanned<String>, CompileError> {

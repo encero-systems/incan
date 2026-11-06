@@ -363,7 +363,42 @@ impl TypeChecker {
         span: Span,
         expected_return_ty: Option<&ResolvedType>,
     ) -> ResolvedType {
+        self.validate_rust_function_call_with_type_arguments(path, sig, &[], args, span, expected_return_ty)
+    }
+
+    /// Validate a directly imported Rust function with explicit Incan type arguments.
+    ///
+    /// Inspected Rust binders are authoritative for arity. Written arguments seed those binders before the ordinary
+    /// boundary matcher specializes parameters and the return type, including binders that occur only in the result.
+    pub(in crate::typechecker::check_expr) fn validate_rust_function_call_with_type_arguments(
+        &mut self,
+        path: &str,
+        sig: &RustFunctionSig,
+        explicit_type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        span: Span,
+        expected_return_ty: Option<&ResolvedType>,
+    ) -> ResolvedType {
         let errors_before = self.errors.len();
+        let mut explicit_bindings = HashMap::new();
+        if !explicit_type_args.is_empty() {
+            if explicit_type_args.len() != sig.type_params.len() {
+                self.errors.push(errors::explicit_type_arg_arity(
+                    path,
+                    &sig.type_params,
+                    &Self::written_type_args(explicit_type_args),
+                    span,
+                ));
+            } else {
+                explicit_bindings.extend(
+                    sig.type_params.iter().cloned().zip(
+                        explicit_type_args
+                            .iter()
+                            .map(|argument| self.resolve_type_checked(argument)),
+                    ),
+                );
+            }
+        }
         if sig.is_unsafe {
             self.check_call_args(args);
             self.errors.push(errors::rust_unsafe_call_not_supported(path, span));
@@ -386,8 +421,9 @@ impl TypeChecker {
             return self.resolved_rust_call_type_from_sig(sig, path, span);
         }
 
-        let callable_returns =
+        let mut callable_returns =
             self.infer_rust_signature_bindings(sig, path, &sig.type_params, args, &arg_types, expected_return_ty);
+        callable_returns.extend(explicit_bindings);
         self.validate_rust_scalar_predicates(sig, &callable_returns, span);
         self.record_inferred_rust_arguments(path, &sig.type_params, &callable_returns, span);
         let effective_sig = self.specialize_inferred_rust_signature(sig, path, &callable_returns);

@@ -100,7 +100,6 @@ pub(super) fn build_module_seed_observed(
         module_identity: &module_identity,
         registry_package,
         provider_operations,
-        rust_module: program.rust_module_path.as_ref().map(|path| path.node.as_str()),
     };
     defaults::attach_nominal_field_defaults(program, &mut nominal_declarations, &lowering_facts);
     defaults::attach_method_partial_defaults(program, &mut nominal_declarations, &lowering_facts);
@@ -295,15 +294,6 @@ pub(super) fn lower_source_bodies(
             match &decl.node {
                 ast::Declaration::Partial(partial) => {
                     vec![partials::lower_source_partial(partial, decl.span, facts)]
-                }
-                ast::Declaration::Function(_)
-                    if facts
-                        .type_info
-                        .declarations
-                        .native_attribute_externs
-                        .contains_key(&decl.span) =>
-                {
-                    Vec::new()
                 }
                 ast::Declaration::Function(function) => {
                     let body = lower_function_body(function, decl.span, facts);

@@ -144,7 +144,7 @@ pub(super) fn attach_nominal_field_defaults(
             runtime_requirements: builder.runtime_requirements,
             panic_facts: builder.panic_facts,
             is_async: false,
-            extern_delegation: None,
+            retired_rust_facade_wire: None,
             native_attributes: Vec::new(),
         }));
     }

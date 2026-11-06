@@ -32,7 +32,7 @@ Rust interop compiles on the direct route from checked facts alone. The facts co
 4. **Futures and iteration.** A Rust value that implements `Future`, or `IntoFuture`, can be awaited; `await` yields its `Output`. A Rust value that implements `IntoIterator` can be iterated in loops and comprehensions; the element type is its `Item`.
 5. **Borrowed text and slices.** `str` and `[T]` behind a reference stay distinct from owned strings and lists, and become owned only where an owned value is required.
 
-Source models and newtypes may derive builtin traits or a dependency's inspected exported derive macro through `@rust.derive` or its `rust.module` facade. Rustc expands the selected macro on the actual declaration against the exact dependency artifacts; macro names grant no predicted layout, methods, or trait implementations.
+Source models and newtypes may derive builtin traits or a dependency's inspected exported derive macro through `@rust.derive` or a direct `rust::` import. Rustc expands the selected macro on the actual declaration against the exact dependency artifacts; macro names grant no predicted layout, methods, or trait implementations.
 
 Native trait objects retain their principal identity, arguments, and declaration-ordered associated equalities. Rustc verifies object safety; auto traits require their own retained facts.
 

@@ -151,10 +151,7 @@ impl TypeChecker {
         }
     }
 
-    /// Set the declared Rust crate names from `loaf.toml [rust-dependencies]`.
-    ///
-    /// When set, `rust.module()` path validation will check that the first segment of the path is either a facet
-    /// or a crate declared here.
+    /// Set the declared Rust crate names from `loaf.toml [rust-dependencies]` for checked direct imports and derives.
     pub fn set_declared_crate_names(&mut self, names: HashSet<String>) {
         self.declared_crate_names = Some(names);
     }

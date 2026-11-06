@@ -173,16 +173,11 @@ impl TypeChecker {
             call.span,
             call.expected_return_ty,
         );
-        if !type_args.is_empty() {
-            self.errors
-                .push(errors::explicit_call_site_type_args_not_supported(span));
-            self.check_call_args(args);
-            return Some(ResolvedType::Unknown);
-        }
         if let Some(sig) = compiler_owned_function_signature(info.path.as_str()) {
             return Some(self.validate_and_record_rust_import_function_call(
                 info.path.as_str(),
                 &sig,
+                type_args,
                 args,
                 span,
                 callee.span,
@@ -200,6 +195,7 @@ impl TypeChecker {
             return Some(self.validate_and_record_rust_import_function_call(
                 info.path.as_str(),
                 &sig,
+                type_args,
                 args,
                 span,
                 callee.span,
@@ -225,6 +221,7 @@ impl TypeChecker {
                 return self.validate_and_record_rust_import_function_call(
                     rust_path,
                     sig,
+                    call.type_args,
                     args,
                     span,
                     callee.span,

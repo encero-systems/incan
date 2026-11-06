@@ -374,8 +374,7 @@ Class, model, trait, enum, newtype, field, alias and module declarations accept 
 |---|---|---|---|---|---|---|
 | Derive | `@derive` |  | Derive common trait implementations. | RFC 000 | 0.1 | Stable |
 | RustDerive | `@rust.derive` |  | Declare a Rust derive path required by a derivable Incan trait. | RFC 024 | 0.3 | Stable |
-| RustExtern | `@rust.extern` |  | Mark functions whose body is provided by a Rust module. | RFC 022 | 0.2 | Stable |
-| RustAllow | `@rust.allow` |  | Emit targeted Rust #[allow(...)] lint suppressions on a generated item. | RFC 057 | 0.3 | Stable |
+| Marker | `@marker` |  | Declare checked runner semantics for a std.testing marker. | RFC 171 | 0.6 | Stable |
 | CBinding | `@c.binding` | `@std.interop.c.binding` | Declare a checked C ABI binding class. | RFC 116 | 0.5 | Stable |
 | NoImplicitCoercion | `@no_implicit_coercion` |  | Disable RFC 017 implicit newtype coercion for this type. | RFC 017 | 0.3 | Stable |
 | StaticMethod | `@staticmethod` |  | Mark a method as static (no self receiver). | RFC 000 | 0.1 | Stable |

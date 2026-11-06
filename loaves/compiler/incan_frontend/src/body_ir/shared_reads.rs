@@ -289,7 +289,6 @@ fn candidate_parameters(modules: &[bir::BodyIrModule]) -> HashSet<Candidate> {
             let eligible = body.type_parameters.is_empty()
                 && !body.is_async
                 && !body.is_generator()
-                && body.extern_delegation.is_none()
                 && body.native_attributes.is_empty()
                 && body
                     .canonical

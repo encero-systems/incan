@@ -229,6 +229,9 @@ pub const RFC_114: RfcId = "RFC 114";
 /// RFC 116 — typed C ABI interop.
 pub const RFC_116: RfcId = "RFC 116";
 
+/// RFC 171 — retire legacy Rust interop facades and declare testing markers through checked metadata.
+pub const RFC_171: RfcId = "RFC 171";
+
 /// Namespace-style access to RFC ids.
 ///
 /// This exists purely for ergonomics at call sites so individual registries don’t need to import dozens of `RFC_###`
@@ -375,6 +378,8 @@ impl RFC {
     pub const _114: RfcId = RFC_114;
     /// RFC 116 — typed C ABI interop.
     pub const _116: RfcId = RFC_116;
+    /// RFC 171 — retire legacy Rust interop facades and declare testing markers through checked metadata.
+    pub const _171: RfcId = RFC_171;
 }
 
 /// Identify the language/compiler version a vocabulary item is available since.

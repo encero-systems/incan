@@ -12,10 +12,8 @@ use crate::decorator_resolution;
 use crate::library_manifest::LibraryManifest;
 use incan_lang::lang::stdlib;
 
-const RUST_EXTERN_NAMESPACE: &str = "rust";
-const RUST_EXTERN_DECORATOR: &str = "extern";
-const RUST_EXTERN_METADATA_ARG: &str = "metadata";
-const TESTING_MARKER_KIND_KEY: &str = "marker_kind";
+const TESTING_MARKER_DECORATOR: &str = "marker";
+const TESTING_MARKER_KIND_KEY: &str = "kind";
 const TESTING_MARKER_RUNNER_ONLY_KEY: &str = "runner_only";
 const TESTING_FIXTURE_SCOPE_ARG_KEY: &str = "scope_arg";
 const TESTING_FIXTURE_AUTOUSE_ARG_KEY: &str = "autouse_arg";
@@ -174,16 +172,10 @@ pub fn testing_marker_semantics_from_manifest(
                 continue;
             };
             for decorator in &function.decorators {
-                if decorator.path.as_slice() != [RUST_EXTERN_NAMESPACE, RUST_EXTERN_DECORATOR] {
+                if decorator.path.as_slice() != [TESTING_MARKER_DECORATOR] {
                     continue;
                 }
-                let Some(metadata) = decorator.args.iter().find_map(|argument| match argument {
-                    DecoratorArgMetadata::Named { name, value } if name == RUST_EXTERN_METADATA_ARG => Some(value),
-                    _ => None,
-                }) else {
-                    continue;
-                };
-                let Some(annotation) = testing_annotation_from_checked_metadata(metadata)? else {
+                let Some(annotation) = testing_annotation_from_checked_metadata(&decorator.args)? else {
                     continue;
                 };
                 saw_markers = true;
@@ -336,42 +328,37 @@ struct TestingMarkerAnnotation {
     fixture_scopes: Option<[String; 3]>,
 }
 
-/// Decode one checked `@rust.extern` metadata value into its typed testing-marker annotation.
+/// Decode one checked `@marker(...)` argument list into its typed testing-marker annotation.
 fn testing_annotation_from_checked_metadata(
-    metadata: &DecoratorValue,
+    arguments: &[DecoratorArgMetadata],
 ) -> Result<Option<TestingMarkerAnnotation>, TestingMarkerLoadError> {
-    let DecoratorValue::Dict { entries } = metadata else {
-        return Err(TestingMarkerLoadError::new(
-            "malformed checked @rust.extern metadata for std.testing marker: expected dict",
-        ));
-    };
     let mut kind = None;
     let mut runner_only = false;
     let mut fixture_scope_arg = None;
     let mut fixture_autouse_arg = None;
     let mut fixture_scopes = None;
-    for entry in entries {
-        let Some(key) = checked_metadata_string(&entry.key) else {
+    for argument in arguments {
+        let DecoratorArgMetadata::Named { name: key, value } = argument else {
             return Err(TestingMarkerLoadError::new(
-                "malformed checked std.testing marker metadata: non-string key",
+                "malformed checked @marker metadata: expected named arguments",
             ));
         };
-        match key {
+        match key.as_str() {
             TESTING_MARKER_KIND_KEY => {
-                let Some(kind_name) = checked_metadata_string(&entry.value) else {
+                let Some(kind_name) = checked_metadata_string(value) else {
                     return Err(TestingMarkerLoadError::new(
-                        "malformed checked marker_kind metadata value (expected string)",
+                        "malformed checked marker kind metadata value (expected string)",
                     ));
                 };
                 kind = TestingMarkerKind::from_str(kind_name);
                 if kind.is_none() {
                     return Err(TestingMarkerLoadError::new(format!(
-                        "unknown checked marker_kind metadata value `{kind_name}`"
+                        "unknown checked marker kind metadata value `{kind_name}`"
                     )));
                 }
             }
             TESTING_MARKER_RUNNER_ONLY_KEY => {
-                let Some(value) = checked_metadata_bool(&entry.value) else {
+                let Some(value) = checked_metadata_bool(value) else {
                     return Err(TestingMarkerLoadError::new(
                         "malformed checked runner_only metadata value (expected bool)",
                     ));
@@ -379,13 +366,13 @@ fn testing_annotation_from_checked_metadata(
                 runner_only = value;
             }
             TESTING_FIXTURE_SCOPE_ARG_KEY => {
-                fixture_scope_arg = checked_metadata_string(&entry.value).map(str::to_string);
+                fixture_scope_arg = checked_metadata_string(value).map(str::to_string);
             }
             TESTING_FIXTURE_AUTOUSE_ARG_KEY => {
-                fixture_autouse_arg = checked_metadata_string(&entry.value).map(str::to_string);
+                fixture_autouse_arg = checked_metadata_string(value).map(str::to_string);
             }
             TESTING_FIXTURE_SCOPES_KEY => {
-                fixture_scopes = checked_metadata_string_triplet(&entry.value);
+                fixture_scopes = checked_metadata_string_triplet(value);
             }
             _ => {}
         }

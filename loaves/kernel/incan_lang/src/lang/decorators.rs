@@ -6,7 +6,7 @@
 //!
 //! Decorators are organized into namespaces separated by `.`:
 //!
-//! - `rust.*` — Rust interop decorators (`@rust.extern`, `@rust.allow`, future `@rust.function`, etc.)
+//! - `rust.*` — Rust interop decorators (`@rust.derive` and future compiler-owned forms)
 //! - `std.*` — Standard library decorators
 //! - `c.*` — C ABI binding decorators
 //! - Top-level — `@derive`, `@requires`
@@ -20,8 +20,7 @@ use crate::lang::registry::{LangItemInfo, RFC, RfcId, Since, Stability};
 pub enum DecoratorId {
     Derive,
     RustDerive,
-    RustExtern,
-    RustAllow,
+    Marker,
     CBinding,
     NoImplicitCoercion,
     StaticMethod,
@@ -35,7 +34,7 @@ pub enum DecoratorId {
 
 /// The `rust` decorator namespace — covers all `@rust.*` decorators.
 ///
-/// Current members: `@rust.extern`, `@rust.allow`. Future: `@rust.function`, etc.
+/// Current member: `@rust.derive`. Future compiler-owned Rust decorators also live here.
 pub const RUST_NAMESPACE: &str = "rust";
 
 /// The `std` decorator namespace — covers all `@std.*` decorators.
@@ -59,7 +58,7 @@ pub fn is_known_decorator_namespace(prefix: &str) -> bool {
 
 /// Return all known decorators under a given namespace prefix.
 ///
-/// For example, `decorators_in_namespace("rust")` returns `["rust.extern"]`.
+/// For example, `decorators_in_namespace("rust")` returns `["rust.derive"]`.
 pub fn decorators_in_namespace(prefix: &str) -> Vec<&'static str> {
     let prefix_dot = format!("{}.", prefix);
     DECORATORS
@@ -91,20 +90,12 @@ pub const DECORATORS: &[DecoratorInfo] = &[
         Since(0, 3),
     ),
     info(
-        DecoratorId::RustExtern,
-        "rust.extern",
+        DecoratorId::Marker,
+        "marker",
         &[],
-        "Mark functions whose body is provided by a Rust module.",
-        RFC::_022,
-        Since(0, 2),
-    ),
-    info(
-        DecoratorId::RustAllow,
-        "rust.allow",
-        &[],
-        "Emit targeted Rust #[allow(...)] lint suppressions on a generated item.",
-        RFC::_057,
-        Since(0, 3),
+        "Declare checked runner semantics for a std.testing marker.",
+        RFC::_171,
+        Since(0, 6),
     ),
     info(
         DecoratorId::CBinding,

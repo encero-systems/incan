@@ -117,8 +117,27 @@ pub class Buffer:
 
 #[test]
 fn checked_api_metadata_extracts_function_decorator_and_docstring() -> Result<(), String> {
+    for (retired, expected) in [
+        (
+            "@rust.extern\ndef native() -> None:\n    pass\n",
+            "`@rust.extern` has been removed; import the Rust function through `rust::` instead",
+        ),
+        (
+            "@rust.allow(\"dead_code\")\ndef helper() -> None:\n    pass\n",
+            "`@rust.allow(...)` has been removed because native compilation generates no Rust source to carry it",
+        ),
+    ] {
+        let errors = metadata_for(retired)
+            .err()
+            .ok_or("expected retired decorator refusal")?;
+        assert!(
+            errors.iter().any(|error| error.message == expected),
+            "expected exact retired decorator diagnostic `{expected}`, got {errors:?}"
+        );
+    }
+
     let source = r#"
-@rust.allow("dead_code")
+@marker(kind="test", runner_only=true)
 pub def avg(mut values: List[float]) -> float:
     """
     Return the arithmetic mean.
@@ -130,7 +149,7 @@ pub def avg(mut values: List[float]) -> float:
         float: Mean value.
 
     Decorators:
-        rust.allow: Allows generated Rust lint suppression.
+        marker: Declares test-runner metadata.
     """
     return 0.0
 "#;
@@ -150,7 +169,7 @@ pub def avg(mut values: List[float]) -> float:
     assert_eq!(
         function.docstring.as_deref().map(str::trim),
         Some(
-            "Return the arithmetic mean.\n\n    Args:\n        values: Input values.\n\n    Returns:\n        float: Mean value.\n\n    Decorators:\n        rust.allow: Allows generated Rust lint suppression."
+            "Return the arithmetic mean.\n\n    Args:\n        values: Input values.\n\n    Returns:\n        float: Mean value.\n\n    Decorators:\n        marker: Declares test-runner metadata."
         )
     );
     let docstring = function
@@ -175,23 +194,29 @@ pub def avg(mut values: List[float]) -> float:
     assert_eq!(
         docstring.decorators,
         vec![ApiDocstringEntry {
-            name: "rust.allow".to_string(),
-            description: "Allows generated Rust lint suppression.".to_string(),
+            name: "marker".to_string(),
+            description: "Declares test-runner metadata.".to_string(),
         }]
     );
     assert_eq!(function.params.len(), 1);
     assert_eq!(function.decorators.len(), 1);
-    assert_eq!(
-        function.decorators[0].path,
-        vec!["rust".to_string(), "allow".to_string()]
-    );
+    assert_eq!(function.decorators[0].path, vec!["marker".to_string()]);
     assert_eq!(
         function.decorators[0].args,
-        vec![DecoratorArgMetadata::Positional {
-            value: DecoratorValue::Literal {
-                value: SafeMetadataValue::String("dead_code".to_string()),
+        vec![
+            DecoratorArgMetadata::Named {
+                name: "kind".to_string(),
+                value: DecoratorValue::Literal {
+                    value: SafeMetadataValue::String("test".to_string()),
+                },
             },
-        }]
+            DecoratorArgMetadata::Named {
+                name: "runner_only".to_string(),
+                value: DecoratorValue::Literal {
+                    value: SafeMetadataValue::Bool(true),
+                },
+            },
+        ]
     );
     Ok(())
 }
@@ -210,7 +235,7 @@ pub def avg(values: List[float]) -> float:
         str: Wrong return type.
 
     Decorators:
-        rust.allow: Stale decorator.
+        marker: Stale decorator.
     """
     return 0.0
 "#;
@@ -242,7 +267,7 @@ pub def avg(values: List[float]) -> float:
     assert!(
         messages
             .iter()
-            .any(|message| message.contains("documented decorator `rust.allow` does not exist")),
+            .any(|message| message.contains("documented decorator `marker` does not exist")),
         "expected decorator drift diagnostic, got {messages:?}"
     );
     Ok(())

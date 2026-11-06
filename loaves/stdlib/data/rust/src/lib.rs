@@ -11,10 +11,7 @@
 pub mod collections;
 pub mod json;
 
-/// RFC 023: Incan `std.serde` namespace facade.
-///
-/// The `std.serde.json` module's `rust.module()` directive points here. Re-exports the JSON traits so that
-/// `incan_std_data::serde::ToJson` and `incan_std_data::serde::FromJson` are available.
+/// Compatibility reexports for native consumers of the JSON traits.
 pub mod serde {
     pub use crate::json::{FromJson, ToJson};
 }

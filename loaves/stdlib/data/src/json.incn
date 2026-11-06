@@ -479,19 +479,16 @@ pub type JsonValue = newtype RustJsonValue with Index[str, Option[JsonValue]], I
         return self.0.equals(other.0)
 
 
-@rust.allow("dead_code")
 pub def parse(source: str) -> Result[JsonValue, JsonError]:
     """Parse JSON text."""
     return JsonValue.parse(source)
 
 
-@rust.allow("dead_code")
 pub def loads(source: str) -> Result[JsonValue, JsonError]:
     """Parse JSON text using the Python-compatible `loads` spelling."""
     return JsonValue.loads(source)
 
 
-@rust.allow("dead_code")
 pub def parse_jsonl(source: str) -> Result[list[JsonValue], JsonError]:
     """Parse newline-delimited JSON, skipping blank lines and reporting the source line on failure."""
     mut values: list[JsonValue] = []
@@ -508,13 +505,11 @@ pub def parse_jsonl(source: str) -> Result[list[JsonValue], JsonError]:
     return Ok(values)
 
 
-@rust.allow("dead_code")
 pub def dumps(value: JsonValue) -> Result[str, JsonError]:
     """Serialize a dynamic JSON value to compact JSON."""
     return value.to_json()
 
 
-@rust.allow("dead_code")
 pub def dumps_pretty(value: JsonValue) -> Result[str, JsonError]:
     """Serialize a dynamic JSON value to pretty-printed JSON."""
     return value.to_pretty_json()

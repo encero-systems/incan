@@ -491,42 +491,11 @@ impl CompilationSession {
     }
 }
 
-/// The Rust items a `rust.module` facade names: potential derive exports named by its traits, and the items its
-/// `@rust.extern` functions delegate to. Missing exports supply no derive permission; checking still requires an
-/// inspected derive macro item. An extern function's item is inspected to learn whether it is a callable function or
-/// an attribute macro that the declaration only names.
-fn facade_rust_paths(
-    rust_module: &str,
-    declarations: &[incan_frontend::ast::Spanned<incan_frontend::ast::Declaration>],
-    paths: &mut BTreeSet<String>,
-) {
-    use incan_frontend::ast::Declaration;
-    for declaration in declarations {
-        match &declaration.node {
-            Declaration::Trait(trait_) => {
-                paths.insert(format!("{rust_module}::{}", trait_.name));
-            }
-            Declaration::Function(function)
-                if function
-                    .decorators
-                    .iter()
-                    .any(|decorator| decorator.node.path.segments == ["rust", "extern"]) =>
-            {
-                paths.insert(format!("{rust_module}::{}", function.name));
-            }
-            _ => {}
-        }
-    }
-}
-
-/// The Rust paths a unit imports, including those its `rust.module` facades name.
+/// The Rust paths a unit imports directly or names through `@rust.derive`.
 fn imported_rust_paths(modules: &[ParsedModule]) -> BTreeSet<String> {
     use incan_frontend::ast::{Declaration, DecoratorArg, Expr, ImportKind, Literal};
     let mut paths = BTreeSet::new();
     for module in modules {
-        if let Some(rust_module) = &module.ast.rust_module_path {
-            facade_rust_paths(&rust_module.node, &module.ast.declarations, &mut paths);
-        }
         for declaration in &module.ast.declarations {
             let decorators = match &declaration.node {
                 Declaration::Model(value) => value.decorators.as_slice(),

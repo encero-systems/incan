@@ -334,11 +334,6 @@ pub const rust_trait_adoption_references: FrozenList[CapabilityReference] = [
     CapabilityReference(label="Derives and traits", path="derives_and_traits.md"),
     CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
 ]
-pub const rust_allow_forms: FrozenList[str] = ["@rust.allow(\"dead_code\")", "def helper() -> None:"]
-pub const rust_allow_references: FrozenList[CapabilityReference] = [
-    CapabilityReference(label="Rust interop", path="../how-to/rust_interop.md#targeted-generated-rust-lint-suppression"),
-    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
-]
 pub const scoped_dsl_surfaces_forms: FrozenList[str] = ["query:", ".field", "|>", "sum(value)"]
 pub const scoped_dsl_surfaces_references: FrozenList[CapabilityReference] = [
     CapabilityReference(label="Authoring vocab crates", path="../../contributing/how-to/authoring_vocab_crates.md"),

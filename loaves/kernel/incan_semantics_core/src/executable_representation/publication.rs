@@ -182,7 +182,6 @@ pub(super) fn project_compiled_frame(
         }
     }
     frame.runtime_requirements.clear();
-    frame.extern_delegation = None;
     frame.named_type_identities = std::sync::Arc::new(audit.used_nominal_types);
     require_module_initialization(module, &mut audit.requirements);
     let native_callables = module.loaf_callables.iter().collect::<Vec<_>>();

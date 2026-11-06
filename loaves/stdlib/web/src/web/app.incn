@@ -19,7 +19,7 @@ Example:
     def main():
         App.run(host="127.0.0.1", port=8080)
 """
-rust.module("incan_std_web")
+from rust::incan_std_web import run as native_run
 
 pub class App:
     """
@@ -43,7 +43,6 @@ pub class App:
     """
 
     @staticmethod
-    @rust.extern
     pub def run(host: str = "127.0.0.1", port: int = 8080) -> None:
         """
         Start the web server.
@@ -55,4 +54,4 @@ pub class App:
             host: Bind address (default: "127.0.0.1")
             port: Port number (default: 8080)
         """
-        ...
+        native_run(host, port)

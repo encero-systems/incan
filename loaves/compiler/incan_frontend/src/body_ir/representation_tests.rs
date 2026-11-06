@@ -608,7 +608,6 @@ fn assert_settled_function_seeds() -> Result<(), Box<dyn std::error::Error>> {
             module_identity: &identity,
             registry_package: None,
             provider_operations: &providers,
-            rust_module: None,
         };
         let mut body = super::lower_function_body(function, declaration.span, &facts);
         super::representation_facts::retain(&mut body);

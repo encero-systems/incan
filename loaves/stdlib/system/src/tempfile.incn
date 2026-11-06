@@ -509,7 +509,6 @@ pub class _SpooledTemporaryFile:
             None => return Err(_io_error(Path("."), "spooled temporary file is no longer live"))
 
 
-@rust.allow("non_snake_case")
 pub def SpooledTemporaryFile(max_size: int = 0) -> _SpooledTemporaryFile:
     """
     Construct an infallible spooled temporary binary stream.

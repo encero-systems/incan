@@ -24,7 +24,6 @@ pub class Sha256Hasher:
         return self.handle.finalize_reset().to_vec()
 
 
-@rust.allow("non_camel_case_types")
 pub class sha256:
     """Store SHA-256 constructors and one-shot hashing."""
 

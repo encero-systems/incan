@@ -94,12 +94,6 @@ pub(super) fn api_function(
         params: callable.params,
         return_type: callable.return_type,
         is_async: callable.is_async,
-        native_attribute: checker
-            .type_info()
-            .declarations
-            .native_attribute_externs
-            .get(&span)
-            .cloned(),
     }
 }
 

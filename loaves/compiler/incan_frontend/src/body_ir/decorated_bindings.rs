@@ -27,13 +27,10 @@ pub(super) fn supports_method(method: &ast::MethodDecl, owner: &str, type_info: 
             .iter()
             .zip(replacement)
             .all(|(left, right)| left.ty == right.ty && left.is_mut == right.is_mut && left.kind == right.kind)
-        && method.decorators.iter().all(
-            |decorator| match decorators::from_segments(&decorator.node.path.segments) {
-                Some(decorators::DecoratorId::RustExtern) => false,
-                Some(_) => true,
-                None => decorator.node.path.segments.len() == 1,
-            },
-        )
+        && method.decorators.iter().all(|decorator| {
+            decorators::from_segments(&decorator.node.path.segments).is_some()
+                || decorator.node.path.segments.len() == 1
+        })
 }
 
 /// Rewrite only shared receiver positions that the existing checker planned for a complete method chain.
@@ -141,17 +138,14 @@ pub(super) fn supports_function(
     profile
         && original.len() == replacement.len()
         && (preserves_inputs || changes_closed_inputs)
-        && function.decorators.iter().all(
-            |decorator| match decorators::from_segments(&decorator.node.path.segments) {
-                Some(decorators::DecoratorId::RustExtern) => false,
-                Some(_) => true,
-                None => facts
+        && function.decorators.iter().all(|decorator| {
+            decorators::from_segments(&decorator.node.path.segments).is_some()
+                || facts
                     .type_info
                     .declarations
                     .body_ir_decorator_applications
-                    .contains_key(&decorator.span),
-            },
-        )
+                    .contains_key(&decorator.span)
+        })
 }
 
 /// Convert an async declaration's logical callable type to the runtime constructor type decorators receive.

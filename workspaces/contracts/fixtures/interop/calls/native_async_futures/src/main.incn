@@ -1,4 +1,4 @@
-# behavior: native futures and permits are awaited and moved: a semaphore permit moves out of its native Option without requiring Clone, awaiting a Rust ready future yields its associated output, a Rust async function yields its logical output when awaited, an extern declaration naming the dependency's exported attribute macro is a name for rustc, not a delegated call, and a Rust timeout projects its IntoFuture argument and yields the future output inside Result
+# behavior: native futures and permits are awaited and moved: a semaphore permit moves out of its native Option without requiring Clone, awaiting a Rust ready future yields its associated output, a Rust async function yields its logical output when awaited, a Rust attribute macro imports directly, and a Rust timeout projects its IntoFuture argument and yields the future output inside Result
 # expect-stdout:
 #   acquired
 #   7
@@ -6,20 +6,19 @@
 #   resumed
 #   7
 
-rust.module("tokio")
-
 from rust::incan_std_async::sync import RawSemaphore, RawSemaphorePermit, semaphore_new, semaphore_try_acquire
 from rust::std::future import ready
 from rust::std::mem import drop
 from rust::std::time import Duration
 from rust::tokio::task import yield_now
 from rust::tokio::time import timeout
+from rust::tokio import test as tokio_test
 
 
-@rust.extern
-def test() -> None:
-    """Name tokio's `test` attribute macro; the declaration has no function to delegate to."""
-    ...
+@tokio_test
+async def native_attribute_probe() -> None:
+    """Prove a directly imported Rust attribute macro can apply to an Incan function."""
+    pass
 
 
 def acquire_permit() -> None:

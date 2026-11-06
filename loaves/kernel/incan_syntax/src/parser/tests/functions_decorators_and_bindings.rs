@@ -183,7 +183,7 @@ def col(name: str) -> ColumnExpr:
 
 #[test]
 fn test_parse_decorator_with_rust_namespace() -> Result<(), Vec<CompileError>> {
-    // RFC 023: @rust.extern decorator must parse correctly (rust is a keyword)
+    // RFC 171: retired syntax remains parseable so checking can emit its targeted replacement diagnostic.
     let source = r#"
 @rust.extern
 def foo() -> None:

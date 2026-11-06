@@ -41,7 +41,6 @@ from crate.features._descriptors import fallible_iteration_forms, fallible_itera
 from crate.features._descriptors import result_combinators_forms, result_combinators_references
 from crate.features._descriptors import protocol_hooks_forms, protocol_hooks_references
 from crate.features._descriptors import rust_trait_adoption_forms, rust_trait_adoption_references
-from crate.features._descriptors import rust_allow_forms, rust_allow_references
 from crate.features._descriptors import scoped_dsl_surfaces_forms, scoped_dsl_surfaces_references
 from crate.features._descriptors import std_web_forms, std_web_references
 from crate.features._descriptors import std_math_forms, std_math_references
@@ -614,23 +613,6 @@ static rust_trait_adoption: RegistryEntry[FeatureId, FeatureDescriptor] = featur
         canonical_forms=rust_trait_adoption_forms,
         prefer_over="Writing Rust-shaped `impl Trait for Type` concepts in comments or custom backend code.",
         references=rust_trait_adoption_references,
-    ),
-)
-static rust_allow: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
-    key=FeatureId("RustAllow"),
-    subject=RegistrySubject.current_unit(),
-    descriptor=FeatureDescriptor(
-        id=FeatureId("RustAllow"),
-        name="Checked Rust lint annotations",
-        category=FeatureCategory.Interop,
-        since="0.3",
-        rfc="RFC 057",
-        stability=FeatureStability.Stable,
-        activation="Use `@rust.allow(...)` on supported declarations.",
-        summary="The checker validates declaration-local `@rust.allow` names and attachments. Native compilation does not generate Rust source attributes or run Clippy.",
-        canonical_forms=rust_allow_forms,
-        prefer_over="Broad lint groups or annotations used to hide a source type error.",
-        references=rust_allow_references,
     ),
 )
 static scoped_dsl_surfaces: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(

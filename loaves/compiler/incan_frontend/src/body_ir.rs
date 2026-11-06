@@ -272,8 +272,6 @@ struct BodyIrLoweringFacts<'type_info, 'source> {
     registry_package: Option<&'source str>,
     /// Provider operations this compilation admits, keyed by canonical identity rather than by any spelling.
     provider_operations: &'source ProviderOperationCatalog,
-    /// The file's checked `rust.module(...)` path, which an `@rust.extern` declaration delegates into (#2023).
-    rust_module: Option<&'source str>,
 }
 
 /// Source facts a synthesized local partial needs for one target parameter.

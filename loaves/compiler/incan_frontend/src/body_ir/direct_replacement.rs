@@ -40,10 +40,9 @@ pub(super) fn has_checked_native_derives(
     };
     decorators.iter().all(|decorator| {
         let derive = &decorator.node;
-        is_lint_suppression_decorator(derive)
-            || (derive.name == "derive"
-                && derive.type_args.is_empty()
-                && (derive.path.segments == ["derive"] || (rust_derives && derive.path.segments == ["rust", "derive"])))
+        derive.name == "derive"
+            && derive.type_args.is_empty()
+            && (derive.path.segments == ["derive"] || (rust_derives && derive.path.segments == ["rust", "derive"]))
     }) && names.iter().all(|name| {
         type_info.derivations.native_macro_paths.contains(name)
             || matches!(
@@ -71,33 +70,21 @@ pub(super) fn has_checked_native_derives(
     })
 }
 
-/// Admit builtin static/class method markers, checked `@rust.extern` delegation, and lint suppressions.
+/// Admit builtin static and class method markers.
 ///
 /// Checking already reflects both markers in the method's facts: a static method has no receiver, and a
-/// classmethod's `cls` is a checked type token whose constructions resolve to the owner. Extern validation excludes
-/// instance receivers and real bodies; Body IR retains its exact module/item delegation rather than executing the
-/// placeholder. Every other method decorator rebinds or wraps the method and stays refused.
+/// classmethod's `cls` is a checked type token whose constructions resolve to the owner. Every other method decorator
+/// rebinds or wraps the method and stays refused.
 pub fn is_direct_replacement_method_decorator(decorator: &ast::Decorator) -> bool {
-    is_lint_suppression_decorator(decorator)
-        || (decorator.args.is_empty()
-            && decorator.type_args.is_empty()
-            && matches!(
-                incan_lang::lang::decorators::from_segments(&decorator.path.segments),
-                Some(
-                    incan_lang::lang::decorators::DecoratorId::StaticMethod
-                        | incan_lang::lang::decorators::DecoratorId::ClassMethod
-                        | incan_lang::lang::decorators::DecoratorId::RustExtern
-                )
-            ))
-}
-
-/// Determine whether a decorator is an `@rust.allow` lint suppression.
-///
-/// A suppression only silences Rust lints on the item legacy emits. It changes no runtime behavior, and the direct
-/// route emits no Rust source item for it to apply to, so it never blocks a declaration's admission.
-pub fn is_lint_suppression_decorator(decorator: &ast::Decorator) -> bool {
-    incan_lang::lang::decorators::from_segments(&decorator.path.segments)
-        == Some(incan_lang::lang::decorators::DecoratorId::RustAllow)
+    decorator.args.is_empty()
+        && decorator.type_args.is_empty()
+        && matches!(
+            incan_lang::lang::decorators::from_segments(&decorator.path.segments),
+            Some(
+                incan_lang::lang::decorators::DecoratorId::StaticMethod
+                    | incan_lang::lang::decorators::DecoratorId::ClassMethod
+            )
+        )
 }
 
 /// Determine whether a nominal declaration uses at most one of type parameters, a generic trait adoption and method
@@ -252,10 +239,7 @@ pub fn is_direct_native_rusttype_alias(newtype: &ast::NewtypeDecl, type_info: &T
         }
     };
     newtype.is_rusttype
-        && newtype
-            .decorators
-            .iter()
-            .all(|decorator| is_lint_suppression_decorator(&decorator.node))
+        && newtype.decorators.is_empty()
         && newtype.traits.iter().all(|adoption| {
             type_info
                 .rust
@@ -414,10 +398,7 @@ pub fn is_direct_native_enum(value: &ast::EnumDecl) -> bool {
         || ((value.type_params.is_empty() || (value.methods.is_empty() && value.traits.is_empty()))
             && value.value_type.is_none()
             && value.methods.iter().all(|method| method.node.decorators.is_empty())
-            && value
-                .decorators
-                .iter()
-                .all(|decorator| is_bare_derive(&decorator.node) || is_lint_suppression_decorator(&decorator.node)))
+            && value.decorators.iter().all(|decorator| is_bare_derive(&decorator.node)))
 }
 
 /// Whether checking selected only derives the native route realizes for a source enum: Rust's builtin derives and

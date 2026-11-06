@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use super::TypeChecker;
-use crate::ast::{CallArg, Expr, ParamKind, Span, Spanned};
+use crate::ast::{CallArg, Expr, ParamKind, Span, Spanned, Type};
 use crate::diagnostics::errors;
 use crate::resolved_type_subst::{map_resolved_type_leaves, substitute_resolved_type};
 use crate::symbols::{CallableParam, ResolvedType, TypeInfo};

@@ -40,7 +40,6 @@ pub class Crc32:
         return _u32_to_be_bytes(self.finalize_u32())
 
 
-@rust.allow("non_camel_case_types")
 pub class crc32:
     """
     IEEE CRC-32 namespace with one-shot and incremental helpers.
