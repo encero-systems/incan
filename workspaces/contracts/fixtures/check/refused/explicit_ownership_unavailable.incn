@@ -1,5 +1,14 @@
-# behavior: A result whose tuple holds more than one borrowed element is refused for execution; the one `from` clause names the source of a single view (#2500).
+# behavior: A result whose tuple holds more than one borrowed element is refused for execution; the one `from` clause names the source of a single view. A source decorator that replaces a callable is also refused because the explicit input contract does not define whether it belongs to the declaration or its replacement (#2500).
 # expect-diagnostic: INCAN-T0123
 
 def inspect(value: Borrowed[str]) -> tuple[Borrowed[str], Borrowed[str]] from value:
     return (value, value)
+
+
+def preserve[F]() -> (F) -> F:
+    return (function) => function
+
+
+@preserve()
+def decorated(value: Borrowed[int]) -> int:
+    return value

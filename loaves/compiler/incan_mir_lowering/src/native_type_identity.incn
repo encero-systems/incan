@@ -10,6 +10,8 @@ from rust::incan_semantics_core import (
 )
 from rust::incan_semantics_core::body_ir import NominalDeclaration
 from rust::incan_lang::lang::types::collections import from_str as collection_type, CollectionTypeId
+from rust::std::collections import BTreeMap
+from rust::std::sync import Arc
 from table_views import borrowed_at
 
 # A representation wrapper retained through generic substitution; it is not a source type constructor.
@@ -17,23 +19,56 @@ pub const OWNED_CALLABLE_STORAGE: str = "<owned-callable>"
 
 
 pub model ConstructorIndex:
-    """First matching declaration positions for one immutable nominal inventory, without copied declaration facts."""
+    """
+    Declaration positions for one nominal inventory, without copied declaration facts.
+
+    `owners` and `generic_owners` keep the first match by carrier key. `named` keeps every position by declaration
+    name in table order, since a carrier key can differ from the name. `count` is the inventory length indexed so far.
+    """
 
     pub owners: dict[str, int]
     pub generic_owners: dict[str, int]
+    pub named: BTreeMap[str, list[int]]
+    pub count: int
 
 
 pub def constructor_index(declarations: &list[NominalDeclaration]) -> ConstructorIndex:
     """Index each retained constructor once, preserving independent all-row and generic-row first-match order."""
-    mut constructors = ConstructorIndex(owners={}, generic_owners={})
-    for position in range(len(declarations)):
+    named: BTreeMap[str, list[int]] = BTreeMap.new()
+    # The new index is built through the same mutable borrow that extends a shared one, so one path indexes rows.
+    mut constructors = Arc.new(ConstructorIndex(owners={}, generic_owners={}, named=named, count=0))
+    extend_constructor_index(Arc.make_mut(constructors), declarations)
+    return Arc.unwrap_or_clone(constructors)
+
+
+pub def extend_constructor_index(
+    mut constructors: &mut ConstructorIndex,
+    declarations: &list[NominalDeclaration],
+) -> None:
+    """
+    Index the positions appended since the last generation. The indexed rows must be an unchanged prefix of
+    `declarations`; earlier first matches keep their positions, so the result equals a rebuild.
+    """
+    for position in range(constructors.count, len(declarations)):
         declaration = borrowed_at(declarations, position)
         base = declaration.template_carrier_name()
         if constructors.owners.get(base) == None:
             constructors.owners[base] = position
         if declaration.type_parameter_count != 0 and constructors.generic_owners.get(base) == None:
             constructors.generic_owners[base] = position
-    return constructors
+        constructors.named.entry(str(declaration.name)).or_insert([]).push(position)
+    constructors.count = len(declarations)
+
+
+pub def named_positions(constructors: &ConstructorIndex, name: str) -> list[int]:
+    """Every indexed position whose declaration has this name, in table order."""
+    mut positions: list[int] = []
+    match constructors.named.get(name):
+        Some(indexed) =>
+            for position in indexed:
+                positions.append(int(position.clone()))
+        None => pass
+    return positions
 
 
 pub def native_owner(declaration: &NominalDeclaration) -> bool:

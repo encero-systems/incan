@@ -5,7 +5,8 @@ from std.fs import Path
 from std.hash import file_digest, sha256
 from std.io import BytesIO, Endian, IoError
 from scratch import scratch_directory
-from segment_store import EXPECT_ABSENT, Snapshot, begin, commit, get, payload_path, put, put_payload, snapshot, read_counts
+from segment_store import EXPECT_ABSENT, Snapshot, begin, commit, get, put, snapshot, read_counts
+from segment_payloads import payload_path, put_payload
 from sealed_set import ExternalReference, Profile, Record, SetSpec, admit, export_set, mapped_value, record_key, readmit, verify
 
 

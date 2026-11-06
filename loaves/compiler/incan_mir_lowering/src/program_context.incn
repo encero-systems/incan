@@ -15,7 +15,7 @@ from rust::incan_semantics_core::body_ir import (
 from rust::incan_semantics_core import IncanType as RustType
 from rust::std::collections import BTreeSet
 from table_views import borrowed_at, borrowed_table
-from native_type_identity import ConstructorIndex, constructor_index
+from native_type_identity import ConstructorIndex, extend_constructor_index
 
 
 pub model DisplayFunction:
@@ -78,10 +78,20 @@ pub def nominal_at(declarations: &list[NominalDeclaration], index: int) -> &Nomi
     return borrowed_at(declarations, index)
 
 
-pub def retain_nominal_tables(mut program: ProgramContext, module: &BodyIrModule) -> None:
-    """Publish each appended nominal-table generation once before its closed frames borrow the new layouts."""
-    retained: &list[NominalDeclaration] = program.nominals.as_ref()
-    if len(retained) != len(module.nominal_declarations):
-        constructors = constructor_index(module.nominal_declarations)
-        program.nominals = Arc.new(list(module.nominal_declarations))
-        program.constructors = Arc.new(constructors)
+pub def retain_nominal_tables(mut program: ProgramContext, module: &BodyIrModule) -> Result[None, str]:
+    """
+    Publish each appended nominal-table generation before its closed frames borrow the new layouts.
+
+    Instance retention only appends to the module's table, so the shared table and its constructor index grow in
+    place by the new rows. A table that an earlier context still shares is copied once, on its first write.
+    """
+    retained = len(program.nominals.as_ref())
+    current = len(module.nominal_declarations)
+    if retained == current:
+        return Ok(None)
+    if retained > current or program.constructors.as_ref().count != retained:
+        return Err("invalid Body IR nominal table generation")
+    for position in range(retained, current):
+        Arc.make_mut(program.nominals).push(borrowed_at(module.nominal_declarations, position).clone())
+    extend_constructor_index(Arc.make_mut(program.constructors), module.nominal_declarations)
+    return Ok(None)

@@ -45,6 +45,7 @@ pub(super) fn project(positions: &Positions, local: &BodyLocal, fields: &mut Fie
             match call.kind {
                 InputCallKind::Explicit => "explicit",
                 InputCallKind::Ordinary => "ordinary",
+                InputCallKind::Indirect => "indirect",
                 // A native call is rebuilt from its checked native call on restore; its callee is no declaration.
                 InputCallKind::Native => continue,
             }
@@ -160,6 +161,7 @@ pub(super) fn restore(positions: &Positions, local: &mut BodyLocal, row: &[Strin
             let kind = match reader.token()? {
                 "explicit" => InputCallKind::Explicit,
                 "ordinary" => InputCallKind::Ordinary,
+                "indirect" => InputCallKind::Indirect,
                 _ => return Err(NodeBindingError::MissingNode),
             };
             let owner = match reader.token()? {

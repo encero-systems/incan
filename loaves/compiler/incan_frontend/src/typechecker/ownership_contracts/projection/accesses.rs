@@ -44,7 +44,7 @@ impl CheckedInputBody<'_> {
                 self.graph
                     .closures
                     .values()
-                    .flat_map(|closure| closure.reads.iter().copied()),
+                    .flat_map(|closure| closure.reads.iter().map(|(_, index)| *index)),
             )
         {
             if !coverage.claimed.insert(index) {
@@ -141,9 +141,8 @@ impl SourceAccesses<'_, '_> {
         Ok(place)
     }
 
-    /// The loan a closure local holds, when the callee names a closure local: `Some(None)` for one that borrows
-    /// nothing.
-    fn closure_callee(&self, callee: &Spanned<Expr>) -> Option<Option<flow::LoanId>> {
+    /// The retained capture record when the expression names a closure local.
+    fn closure_callee(&self, callee: &Spanned<Expr>) -> Option<&flow::ClosureCaptures> {
         if !matches!(callee.node, Expr::Ident(_)) {
             return None;
         }
@@ -153,7 +152,20 @@ impl SourceAccesses<'_, '_> {
             .closures
             .values()
             .find(|closure| &closure.local == identity)
-            .map(|closure| closure.loan)
+    }
+
+    /// Read every source a closure retains, proving that a direct call or call-bounded loan uses all captures.
+    fn closure_capture_accesses(&mut self, span: crate::ast::Span, loans: &[flow::LoanId]) -> Result<(), &'static str> {
+        for id in loans {
+            let loan = self
+                .proof
+                .graph
+                .loans
+                .get(id.0)
+                .ok_or("closure local has no captured loan")?;
+            self.access(span, &loan.source, Some(*id), flow::Access::Read)?;
+        }
+        Ok(())
     }
 
     /// Copy semantics use the same checked value projection as explicit argument and initializer validation.
@@ -182,16 +194,10 @@ impl SourceAccesses<'_, '_> {
             };
             // A closure local passed on first uses the borrow it holds, then is read itself.
             if argument.access == IncanInputAccess::Inferred
-                && let Some(Some(id)) = self.closure_callee(value)
+                && let Some(closure) = self.closure_callee(value)
             {
-                let loan = self
-                    .proof
-                    .graph
-                    .loans
-                    .get(id.0)
-                    .ok_or("closure local has no captured loan")?;
-                let source = loan.source.clone();
-                self.access(value.span, &source, Some(id), flow::Access::Read)?;
+                let loans: Vec<_> = closure.loans.iter().map(|(_, id)| *id).collect();
+                self.closure_capture_accesses(value.span, &loans)?;
             }
             let source = self.place(value)?;
             match argument.access {
@@ -315,16 +321,12 @@ impl SourceAccesses<'_, '_> {
                     };
                     self.expression(value, false)?;
                 }
-                if let Some(Some(id)) = self.closure_callee(callee) {
-                    let loan = self
-                        .proof
-                        .graph
-                        .loans
-                        .get(id.0)
-                        .ok_or("closure local has no captured loan")?;
-                    let source = loan.source.clone();
-                    self.access(expression.span, &source, Some(id), flow::Access::Read)?;
-                }
+                let loans: Vec<_> = self
+                    .closure_callee(callee)
+                    .into_iter()
+                    .flat_map(|closure| closure.loans.iter().map(|(_, id)| *id))
+                    .collect();
+                self.closure_capture_accesses(expression.span, &loans)?;
             }
             Expr::Call(_, _, arguments) => {
                 if let Some(invocation) = self.proof.graph.invocations.get(&expression.span) {
@@ -491,14 +493,19 @@ impl SourceAccesses<'_, '_> {
         for statement in statements {
             match &statement.node {
                 Statement::Pass => {}
-                // Arm bindings own fresh payloads and record no access; each arm starts after the scrutinee.
+                // Arm bindings own fresh payloads and record no access; guards read them before their arm's body.
                 Statement::Expr(Spanned {
                     node: Expr::Match(scrutinee, arms),
                     ..
                 }) => {
-                    self.expression(scrutinee, false)?;
+                    let consumes_stored_value =
+                        !fresh_match_scrutinee(scrutinee) && self.proof.carrier_loan(scrutinee).is_none();
+                    self.expression(scrutinee, consumes_stored_value)?;
                     let mut reaches = false;
                     for arm in arms {
+                        if let Some(guard) = &arm.node.guard {
+                            self.expression(guard, false)?;
+                        }
                         reaches |= match &arm.node.body {
                             MatchBody::Expr(value) => {
                                 self.expression(value, false)?;
@@ -693,5 +700,14 @@ impl SourceAccesses<'_, '_> {
         }
         self.block(&loop_.body)?;
         Ok(())
+    }
+}
+
+/// Calls, methods and literals produce fresh match inputs; only a stored place consumes its checked value route.
+fn fresh_match_scrutinee(scrutinee: &Spanned<Expr>) -> bool {
+    match &scrutinee.node {
+        Expr::Call(..) | Expr::MethodCall(..) | Expr::Literal(_) => true,
+        Expr::Paren(inner) => fresh_match_scrutinee(inner),
+        _ => false,
     }
 }

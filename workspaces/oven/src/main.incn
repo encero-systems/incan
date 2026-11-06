@@ -11,14 +11,19 @@ from engine_client import execute as execute_records
 from engine_proofs import report as proof_report
 from engine_service import serve as serve_engine, refusal_code
 from bakery import bakery, bakery_command, parse_bakery, repair_payload_command
+from storage_admission import take_decision
+from store_status import parse_status, status_command
 from features import FeatureRequest
-from home import TOOLCHAIN, dependency_artifact_dir
+from home import dependency_artifact_dir
 from intake import read_project, source_root_of, ManifestReader
 from unit import describe, project_root_of
 from unit_rust import compile_incan_library, describe_native, toolchain_for
 from incan_units import check_unit, compile_unit, make_unit, program_binary, report_dependencies, run_program
 from unit_compiler import crate_name, run_compiler
-from rust_units import RustBuild, build_rust, read_registry_units, rust_facet
+from rust_units import build_rust
+from rust_build import RustBuild
+from rust_registry import read_registry_units
+from rust_manifest import rust_facet
 from rust_testing import build_rust_tests
 from toolchain import load_toolchain, rust_compiler
 from formatting import format_paths, parse_arguments as format_options
@@ -32,10 +37,11 @@ from owner_service import serve_owner
 from graph_inspection import inspect_codegraph, options as graph_options
 from graph_mcp import serve_graph, parse_path
 from toolchain_archive import toolchain_command, parse_arguments as archive_options
-from cli_help import HELP_HINT, unknown_option
-from command_help import UNIT_VALUE_OPTIONS, command_help, usage
+from cli_help import help_hint, unknown_option
+from command_help import UNIT_VALUE_OPTIONS, command_help, usage, version_text
+from surfaces import OVEN, invoked, misplaced
 from pub::incan_platform.trace import WorkObserver
-from segment_store import observe_work
+from segment_files import observe_work
 from trace_adapter import finish as finish_trace
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
@@ -68,25 +74,30 @@ def command_line() -> None:
     Dispatch the public CLI with syntax errors reported as exit status two.
 
     1. Read the process arguments and require a command.
-    2. Answer help before accessing projects, installations or transports.
+    2. Refuse a command only the other surface runs, then answer help before accessing projects, installations or
+       transports.
     3. Execute the selected command.
     """
     starting = begin_work()
     trace_boundary("command_entered")
     # 1. A missing command is a syntax error.
+    surface = invoked()
     mut arguments: list[str] = []
     for argument in args():
         arguments.append(argument)
     if len(arguments) < 2:
-        fail("incan: a command is required", 2)
+        fail(f"{surface}: a command is required", 2)
     command = arguments[1]
     rest = arguments[2:]
-    # 2. Help never prepares a unit or starts a server.
+    # 2. A command of the other surface runs nowhere; help never prepares a unit or starts a server.
+    match misplaced(surface, command, rest):
+        Some(reason) => fail(reason, 2)
+        None => pass
     if command in ["--help", "-h", "help"]:
         require_no_arguments(command, rest)
-        println(usage())
+        println(usage(surface))
         return
-    match command_help(command, rest):
+    match command_help(surface, command, rest):
         Some(text) =>
             println(text)
             return
@@ -100,7 +111,7 @@ def dispatch(command: str, rest: list[str]) -> None:
     """Execute one command, preserving syntax status two separately from runtime failures."""
     if command == "--version" or command == "version":
         require_no_arguments(command, rest)
-        println(f"incan {TOOLCHAIN}")
+        println(version_text(invoked()))
         return
     if command in ["run", "check", "test", "build", "describe-unit", "fmt", "inspect"]:
         begin_installation_command()
@@ -113,7 +124,7 @@ def dispatch(command: str, rest: list[str]) -> None:
         explain(rest)
         return
     match select_engine(get_or("INCAN_ENGINE", "legacy")):
-        Err(reason) => fail(f"incan {command}: engine refusal {refusal_code(reason.kind)}: {reason.detail}", 2)
+        Err(reason) => fail(f"{invoked()} {command}: engine refusal {refusal_code(reason.kind)}: {reason.detail}", 2)
         Ok(Engine.Records) =>
             records_command(command, rest)
             return
@@ -149,6 +160,10 @@ def dispatch(command: str, rest: list[str]) -> None:
             Err(reason) => syntax_error("inspect", reason)
             Ok(options) => finish("inspect", inspected_dependencies(validated("inspect", options)))
         return
+    if command == "inspect" and invoked() == OVEN:
+        if len(rest) > 0 and rest[0] != "run":
+            syntax_error("inspect", f"unknown command `{rest[0]}`")
+        syntax_error("inspect", "inspects `dependencies PATH`, or `run ID --proofs` with INCAN_ENGINE=records")
     if command == "inspect":
         match graph_options(rest):
             Err(reason) => argument_error("inspect", reason)
@@ -165,6 +180,11 @@ def dispatch(command: str, rest: list[str]) -> None:
             Ok(options) => finish("toolchain", toolchain_command(options))
         return
     if command == "bakery":
+        if len(rest) > 0 and rest[0] == "status":
+            match parse_status(rest[1:]):
+                Err(reason) => argument_error("bakery", reason)
+                Ok(format) => finish("bakery", status_command(format), format)
+            return
         if len(rest) > 0 and rest[0] == "repair-payload":
             finish("bakery", repair_payload_command(rest))
             return
@@ -173,8 +193,8 @@ def dispatch(command: str, rest: list[str]) -> None:
             Ok(keep_days) => finish("bakery", bakery_command(keep_days))
         return
     if command.startswith("-"):
-        fail(f"incan: unknown option `{command}`", 2)
-    fail(f"incan: unknown command `{command}`", 2)
+        fail(f"{invoked()}: unknown option `{command}`", 2)
+    fail(f"{invoked()}: unknown command `{command}`", 2)
 
 
 def require_no_arguments(command: str, arguments: list[str]) -> None:
@@ -200,14 +220,14 @@ def explain(arguments: list[str]) -> None:
 
 def syntax_error(command: str, reason: str) -> None:
     """Report a command parser's refusal using the CLI syntax status and common help pointer."""
-    fail(f"incan {command}: {reason}", 2)
+    fail(f"{invoked()} {command}: {reason}", 2)
 
 
 def argument_error(command: str, reason: str) -> None:
     """Give unknown commands/options status two while preserving existing operand-value refusal statuses."""
     if reason.startswith("unknown command `") or reason.startswith("unknown option `"):
         syntax_error(command, reason)
-    fail(f"incan {command}: {reason}", 1)
+    fail(f"{invoked()} {command}: {reason}", 1)
 
 
 def fail(message: str, code: i32) -> None:
@@ -216,7 +236,7 @@ def fail(message: str, code: i32) -> None:
     # A closed standard error cannot be told about, so a failed write is ignored.
     mut text = f"{message}\n"
     if code == 2:
-        text += f"{HELP_HINT}\n"
+        text += f"{help_hint(invoked())}\n"
     _ = err.write_all(RustString.from(text).into_bytes())
     finish_trace()
     exit(code)
@@ -261,16 +281,19 @@ def records_command(command: str, arguments: list[str]) -> None:
     if command == "inspect" and len(arguments) == 3 and arguments[0] == "run" and arguments[2] == "--proofs":
         match bakery().and_then((store) => proof_report(store, arguments[1])):
             Ok(text) => println(text)
-            Err(reason) => fail(f"incan inspect: {reason}", 1)
+            Err(reason) => fail(f"oven inspect: {reason}", 1)
         return
     if command not in ["run", "build"]:
-        fail(f"incan {command}: records engine does not implement `{command}`", 1)
+        fail(f"{invoked()} {command}: records engine does not implement `{command}`", 1)
     own, passed = program_arguments(arguments)
     match parse_options(own):
         Err(reason) => syntax_error(command, reason)
         Ok(options) =>
             if options.feature_options or len(options.substitutes) > 0 or len(options.program_entries) > 0:
-                fail(f"incan {command}: unit records do not implement feature, substitution or program-entry options", 1)
+                fail(
+                    f"{invoked()} {command}: unit records do not implement feature, substitution or program-entry options",
+                    1,
+                )
             if command == "build" and (len(passed) > 0 or options.argv0 is not None):
                 syntax_error(command, "program arguments and --argv0 require run")
             finish(
@@ -435,10 +458,10 @@ def check(arguments: list[str]) -> None:
         own.append(arguments[index])
         index += 1
     if format != "text" and format != "json":
-        fail(f"incan check: `--format` is text or json, got `{format}`", 2)
+        fail(f"{invoked()} check: `--format` is text or json, got `{format}`", 2)
     match parse_options(own):
         Err(reason) => syntax_error("check", reason)
-        Ok(options) => finish("check", checked(validated("check", options), format))
+        Ok(options) => finish("check", checked(validated("check", options), format), format)
 
 
 def checked(options: Options, format: str) -> Result[i32, str]:
@@ -459,19 +482,43 @@ def inspected_dependencies(options: Options) -> Result[i32, str]:
     return report_dependencies(unit, toolchain_for(unit)?)
 
 
-def finish(command: str, result: Result[i32, str]) -> None:
-    """Exit with a command's exit code, or report why it could not run."""
+def finish(command: str, result: Result[i32, str], format: str = "text") -> None:
+    """Exit with a command's exit code, its decision-required storage outcome, or report why it could not run."""
     match result:
-        Err(reason) => fail(f"incan {command}: {reason}", 1)
+        Err(reason) =>
+            decide(command, reason, format)
+            fail(f"{invoked()} {command}: {reason}", 1)
         Ok(code) =>
             finish_trace()
             exit(code)
 
 
+def decide(command: str, reason: str, format: str) -> None:
+    """
+    Exit with status three when a command stopped because storage admission refused a write.
+
+    The outcome is never a prompt: `--format json` prints its versioned document on stdout, and text prints its
+    explanation on stderr. A failure that is not that refusal returns to ordinary reporting.
+    """
+    match take_decision():
+        None => return
+        Some(decided) =>
+            if decided.summary not in reason:
+                return
+            if format == "json":
+                println(decided.document)
+            else:
+                mut err = stderr()
+                # A closed standard error cannot be told about, so a failed write is ignored.
+                _ = err.write_all(RustString.from(f"{invoked()} {command}: {decided.text}\n").into_bytes())
+            finish_trace()
+            exit(3)
+
+
 def validated(command: str, options: Options) -> Options:
     """Report unsupported option combinations with the command syntax exit status before preparation."""
     match require_command_options(command, options):
-        Err(reason) => fail(f"incan {command}: {reason}", 2)
+        Err(reason) => fail(f"{invoked()} {command}: {reason}", 2)
         Ok(_) => pass
     return options
 
@@ -523,11 +570,11 @@ def print_description(options: Options) -> None:
     # 1. Options that only a run or build understands are refused with the usage exit status.
     # 2. A unit that cannot be described against the toolchain ends the command with status 1.
     match describe_native(Path(options.path), options.profile, options.request):
-        Err(reason) => fail(f"incan describe-unit: {reason}", 1)
+        Err(reason) => fail(f"oven describe-unit: {reason}", 1)
         Ok(unit) =>
             # 3. The description is printed as JSON, or ends the command with status 1 when it cannot be encoded.
             match unit.to_json().to_pretty_json():
-                Err(error) => fail(f"incan describe-unit: {error.message()}", 1)
+                Err(error) => fail(f"oven describe-unit: {error.message()}", 1)
                 Ok(text) => println(text)
 
 
@@ -541,13 +588,13 @@ def build(arguments: list[str]) -> None:
 def build_selected(options: Options) -> None:
     """Build an Incan source if the path names one, else the Rust project it names, printing its binaries."""
     match build_source(Path(options.path), options.manifests):
-        Err(reason) => fail(f"incan build: {reason}", 1)
+        Err(reason) => fail(f"{invoked()} build: {reason}", 1)
         Ok(Some(source)) =>
             finish("build", built(options, source))
             return
         Ok(None) => pass
     match build_project(options):
-        Err(reason) => fail(f"incan build: {reason}", 1)
+        Err(reason) => fail(f"{invoked()} build: {reason}", 1)
         Ok(binaries) =>
             for binary in binaries:
                 println(f"binary: {binary}")
@@ -624,7 +671,7 @@ def built(options: Options, source: Path) -> Result[i32, str]:
 
 
 def owner(arguments: list[str]) -> None:
-    """`incan owner stop`: stop the resident owners of this home."""
+    """`oven owner stop`: stop the resident owners of this home."""
     match unknown_option(arguments):
         Some(reason) => syntax_error("owner", reason)
         None => pass
@@ -633,5 +680,5 @@ def owner(arguments: list[str]) -> None:
     if arguments != ["stop"]:
         syntax_error("owner", "expected `stop`")
     match stop_owners():
-        Err(reason) => fail(f"incan owner: {reason}", 1)
+        Err(reason) => fail(f"oven owner: {reason}", 1)
         Ok(stopped) => println(f"stopped {stopped} owners")

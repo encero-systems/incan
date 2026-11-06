@@ -1,0 +1,430 @@
+"""Bakery retention roots and collection: project registrations, what they reach, and what `collect` reclaims."""
+
+from rust::std::fs import remove_dir_all
+from rust::std::string import String as RustString
+from std.fs import Path
+from bakery_records import Fact, claim_file, decode_fact, record_key, staging_root, store_failure
+from files import make_directory, read
+from observation import trace
+from publication import publish
+from sealed_set import payload_references as sealed_payload_references
+from segment_store import Snapshot, begin, commit, delete, get, keys, snapshot
+from segment_files import StoreError
+from segment_collection import collect_records
+from storage_admission import Collectable, read_reservations, release, tree_bytes
+from unit_freshness import fingerprint
+
+
+pub model Collected:
+    """Unit, root and staging counts, plus obsolete layout files and their logical bytes removed."""
+
+    pub kept: int
+    pub removed: int
+    pub roots_dropped: int
+    pub staging_cleared: int
+    pub layouts_removed: int = 0
+    pub bytes_reclaimed: int = 0
+    pub payloads_removed: int = 0
+    pub payload_bytes_reclaimed: int = 0
+
+
+pub def register_root(store: Path, project: str, registration: str, identities: list[str]) -> Result[None, str]:
+    """
+    Record the units the latest successful result of `registration` in `project` uses, replacing its earlier result.
+
+    1. Locate the project's registrations; the `project` file names its directory, whose removal orphans them.
+    2. Log the identities the replaced result used and this one does not, so collection can retire them.
+    3. Replace the registration: its first line names it, each further line is one identity it uses.
+    """
+    # 1. A project's registrations live together, so an orphaned project retires all of them at once.
+    directory = store.joinpath("roots").joinpath(fingerprint([project])?[:32])
+    make_directory(directory)?
+    owner = directory.joinpath("project")
+    if not owner.is_file():
+        publish(owner, project)?
+    # 2. A replaced identity is only a candidate; another live registration may still use it.
+    marker = directory.joinpath(fingerprint([registration])?[:32])
+    replaced = [identity for identity in registered(marker)? if identity not in identities]
+    if len(replaced) > 0:
+        log = store.joinpath("roots").joinpath("superseded")
+        publish(log, "".join([line + "\n" for line in registered_lines(log)? + replaced]))?
+    # 3. The registration is published whole, so a reader sees the earlier or the new result, never a mixture.
+    publish(marker, "".join([line + "\n" for line in [registration] + identities]))?
+    return Ok(None)
+
+
+def registered(marker: Path) -> Result[list[str], str]:
+    """The identities one registration names, after the line that names the registration."""
+    lines = registered_lines(marker)?
+    if len(lines) == 0:
+        return Ok([])
+    return Ok([line for line in lines[1:] if unit_identity_line(line)])
+
+
+def unit_identity_line(line: str) -> bool:
+    """Whether a registration line names a unit identity: a full SHA-256 name, with or without its `sha256:` prefix."""
+    if line.startswith("sha256:"):
+        return canonical_digest(line[7:])
+    return canonical_digest(line)
+
+
+def registered_lines(path: Path) -> Result[list[str], str]:
+    """The nonempty lines of a registration or the superseded log; a missing file has none."""
+    if not path.is_file():
+        return Ok([])
+    text = read(path)?
+    return Ok([line for line in text.split("\n") if line != ""])
+
+
+pub def collect(store: Path, keep_days: int) -> Result[Collected, str]:
+    """
+    Reclaim unreachable immutable storage and abandoned unit staging without invalidating readers or producers.
+
+    1. Expire the unit records that only superseded or orphaned registrations used.
+    2. Reclaim the layouts and payloads that no current record or live lease names.
+    3. Clear abandoned staging, and count the unit records that remain.
+
+    Current views and live snapshots retain their unit and sealed-set payloads. Preparation descriptors protect
+    unpublished content. Unit staging is removed only under its free claim. Nothing expires by age: `keep_days`
+    remains accepted for CLI compatibility and does not expire a registration.
+    """
+    # 1. Expiry only removes records from the current snapshot; step 2 then finds their payloads unreachable.
+    expired = expire_unregistered(store)?
+    trace(
+        f"bakery {store.0}: registration collection (keep-days {keep_days} unused), expired {expired.records}/{expired.roots}",
+    )
+    # 2. Live views, snapshots and preparations still protect what they name.
+    collected = collect_records(store, payload_references).map_err(store_failure)?
+    # 3. Staging is cleared only under its producer's free claim.
+    current = snapshot(store).map_err(store_failure)?
+    kept = len([key for key in keys(current).map_err(store_failure)? if key.startswith("incan.bakery.unit\t")])
+    return Ok(
+        Collected(
+            kept=kept,
+            removed=expired.records,
+            roots_dropped=expired.roots,
+            staging_cleared=collect_staging(store)?,
+            layouts_removed=collected.files - collected.payloads,
+            bytes_reclaimed=collected.bytes,
+            payloads_removed=collected.payloads,
+            payload_bytes_reclaimed=collected.payload_bytes,
+        ),
+    )
+
+
+pub model Expired:
+    """What one expiry removed: unit records, and the projects whose orphaned registrations retired."""
+
+    pub records: int = 0
+    pub roots: int = 0
+
+
+model Registrations:
+    """The identities live registrations use, the candidates superseded or orphaned ones used, and orphaned projects."""
+
+    live: list[str]
+    candidates: list[str]
+    orphaned: list[Path]
+
+
+def expire_unregistered(store: Path) -> Result[Expired, str]:
+    """
+    Expire the unit records that only superseded or orphaned registrations used.
+
+    1. Read every project's registrations; a project whose directory is gone is orphaned, and its registrations retire.
+    2. A candidate that a live registration reaches, directly or through the records it reaches, stays. A record no
+       registration ever named, such as one the installed toolchain supplied, is never a candidate.
+    3. Remove the expired records, and the name entries that select them, in one transaction; then the orphaned
+       projects' registrations and the superseded log.
+    """
+    # 1. Registrations are read before the snapshot, so a result registered meanwhile can only keep more.
+    registrations = read_registrations(store)?
+    # 2. Reachability is read from one snapshot, so a record and what it reaches are judged together.
+    current = snapshot(store).map_err(store_failure)?
+    expired = expiring(registrations, unit_reaches(current)?)
+    # 3. Records and their name bindings leave together; a later build of the same name bakes again.
+    if len(expired) > 0:
+        mut transaction = begin(current)
+        for identity in expired.keys():
+            transaction = delete(transaction, record_key(identity))
+        for key in keys(current).map_err(store_failure)?:
+            if not key.startswith("incan.bakery.name\t"):
+                continue
+            match get(current, key).map_err(store_failure)?:
+                None => pass
+                Some(value) =>
+                    match RustString.from_utf8(value):
+                        Ok(text) =>
+                            if str(text) in expired:
+                                transaction = delete(transaction, key)
+                        Err(_) => pass
+        _ = commit(transaction).map_err(store_failure)?
+    for project in registrations.orphaned:
+        remove_dir_all(project.0).map_err((error) => str(error))?
+    log = store.joinpath("roots").joinpath("superseded")
+    if log.is_file():
+        log.unlink().map_err((error) => error.message())?
+    return Ok(Expired(records=len(expired), roots=len(registrations.orphaned)))
+
+
+def expiring(registrations: Registrations, reaches: dict[str, list[str]]) -> dict[str, bool]:
+    """The candidate records no live registration reaches, directly or through the records it reaches."""
+    live = reached_from(registrations.live, reaches)
+    mut expired: dict[str, bool] = {}
+    for identity in registrations.candidates:
+        if identity in reaches and identity not in live:
+            expired[identity] = true
+    return expired
+
+
+pub def preview_collection(store: Path) -> Result[Collectable, str]:
+    """
+    What `collect` would reclaim now, read without changing registrations, records or staging.
+
+    1. Decide the expiring records exactly as collection does.
+    2. Count the payload bytes only expiring records name; a payload another record or sealed set names stays.
+    3. Count the staging directories whose producer's claim is free.
+
+    Superseded layout files and payloads no record names are not estimated; collection removes them as well.
+    """
+    # 1. The same registrations and snapshot rule as `expire_unregistered`.
+    registrations = read_registrations(store)?
+    current = snapshot(store).map_err(store_failure)?
+    expired = expiring(registrations, unit_reaches(current)?)
+    # 2. A payload is reclaimed only once every record naming it leaves.
+    mut leaving: dict[str, int] = {}
+    mut remaining: dict[str, bool] = {}
+    for key in keys(current).map_err(store_failure)?:
+        match get(current, key).map_err(store_failure)?:
+            None => pass
+            Some(value) =>
+                if key.startswith("incan.bakery.unit\t") and key[len("incan.bakery.unit\t"):] in expired:
+                    if let Some(fact) = decode_fact(value):
+                        for file in fact.files:
+                            leaving[file.digest] = file.size
+                else:
+                    for digest in payload_references(key, value).map_err(store_failure)?:
+                        remaining[digest] = true
+    mut payload_bytes = 0
+    for digest in leaving.keys():
+        if digest not in remaining:
+            payload_bytes += leaving[digest]
+    # 3. Ended staging is what collection clears; a live producer's staging stays.
+    mut staging = 0
+    mut staging_bytes = 0
+    for entry in ended_staging(store)?:
+        staging += 1
+        staging_bytes += tree_bytes(entry)
+    return Ok(
+        Collectable(
+            units=len(expired),
+            projects=len(registrations.orphaned),
+            payload_bytes=payload_bytes,
+            staging=staging,
+            staging_bytes=staging_bytes,
+        ),
+    )
+
+
+def read_registrations(store: Path) -> Result[Registrations, str]:
+    """Each project's registrations under `roots/`, split by whether the project's directory still exists."""
+    roots = store.joinpath("roots")
+    mut registrations = Registrations(live=[], candidates=registered_lines(roots.joinpath("superseded"))?, orphaned=[])
+    if not roots.is_dir():
+        return Ok(registrations)
+    for project in roots.iterdir().map_err((error) => error.message())?:
+        if not project.is_dir():
+            continue
+        # `project` names the project's directory; every other file is one of its registrations.
+        owner = project.joinpath("project")
+        mut orphaned = false
+        if owner.is_file():
+            orphaned = not Path(read(owner)?).exists()
+        for marker in project.iterdir().map_err((error) => error.message())?:
+            if marker.name() == "project":
+                continue
+            for identity in registered(marker)?:
+                if orphaned:
+                    registrations.candidates.append(identity)
+                else:
+                    registrations.live.append(identity)
+        if orphaned:
+            registrations.orphaned.append(project)
+    return Ok(registrations)
+
+
+pub model ProjectRoots:
+    """One project's registrations, each its name and the identities its latest successful result uses."""
+
+    pub project: str
+    pub orphaned: bool
+    pub registrations: dict[str, list[str]]
+
+
+pub def project_roots(store: Path) -> Result[list[ProjectRoots], str]:
+    """
+    Every project's registrations under `roots/`, read without changing them; see `register_root`. A project whose
+    `project` file is missing is named by its registration directory and, as for collection, is never orphaned.
+    """
+    roots = store.joinpath("roots")
+    mut projects: list[ProjectRoots] = []
+    if not roots.is_dir():
+        return Ok(projects)
+    for directory in roots.iterdir().map_err((error) => error.message())?:
+        owner = directory.joinpath("project")
+        if not directory.is_dir():
+            continue
+        mut project = directory.0
+        mut orphaned = false
+        if owner.is_file():
+            project = read(owner)?
+            orphaned = not Path(project).exists()
+        mut registrations: dict[str, list[str]] = {}
+        for marker in directory.iterdir().map_err((error) => error.message())?:
+            if marker.name() == "project" or marker.name().endswith(".tmp"):
+                continue
+            lines = registered_lines(marker)?
+            if len(lines) > 0:
+                registrations[lines[0]] = registered(marker)?
+        projects.append(ProjectRoots(project=project, orphaned=orphaned, registrations=registrations))
+    return Ok(projects)
+
+
+pub def expiring_records(store: Path) -> Result[list[str], str]:
+    """The identities collection would expire now: records only superseded or orphaned registrations use."""
+    registrations = read_registrations(store)?
+    current = snapshot(store).map_err(store_failure)?
+    return Ok([identity for identity in expiring(registrations, unit_reaches(current)?).keys()])
+
+
+pub def unit_facts(store: Path) -> Result[dict[str, Fact], str]:
+    """Every unit record of the current snapshot, by identity; a damaged record is an error."""
+    current = snapshot(store).map_err(store_failure)?
+    mut facts: dict[str, Fact] = {}
+    for key in keys(current).map_err(store_failure)?:
+        if not key.startswith("incan.bakery.unit\t"):
+            continue
+        match get(current, key).map_err(store_failure)?:
+            None => pass
+            Some(value) =>
+                match decode_fact(value):
+                    None => return Err(StoreError(kind="integrity", object=key, detail="invalid unit record").message())
+                    Some(fact) => facts[fact.identity] = fact
+    return Ok(facts)
+
+
+def unit_reaches(view: Snapshot) -> Result[dict[str, list[str]], str]:
+    """Every unit record in `view`, by identity, with the identities it reaches; a damaged record stops expiry."""
+    mut reaches: dict[str, list[str]] = {}
+    for key in keys(view).map_err(store_failure)?:
+        if not key.startswith("incan.bakery.unit\t"):
+            continue
+        match get(view, key).map_err(store_failure)?:
+            None => pass
+            Some(value) =>
+                match decode_fact(value):
+                    None => return Err(StoreError(kind="integrity", object=key, detail="invalid unit record").message())
+                    Some(fact) => reaches[fact.identity] = fact.reaches
+    return Ok(reaches)
+
+
+pub def reached_from(roots: list[str], reaches: dict[str, list[str]]) -> dict[str, bool]:
+    """The unit records `roots` reach, themselves included, following `reaches` until nothing new is found."""
+    mut found: dict[str, bool] = {}
+    mut pending: list[str] = [root for root in roots if root in reaches]
+    while len(pending) > 0:
+        identity = pending.pop()
+        if identity in found:
+            continue
+        found[identity] = true
+        for next in reaches[identity]:
+            if next in reaches and next not in found:
+                pending.append(next)
+    return found
+
+
+def payload_references(key: str, value: bytes) -> Result[list[str], StoreError]:
+    """Decode payload ownership at its family's boundary; malformed units abort collection before any unlink."""
+    if key.startswith("incan.bakery.unit\t"):
+        match decode_fact(value):
+            None => return Err(StoreError(kind="integrity", object=key, detail="invalid unit payload references"))
+            Some(fact) => return Ok([file.digest for file in fact.files])
+    return sealed_payload_references(key, value)
+
+
+def collect_staging(store: Path) -> Result[int, str]:
+    """Clear ended unit staging, and its reservation, while holding the producer claim the kernel proved free."""
+    mut cleared = 0
+    for entry in staging_owners(store)?:
+        # Holding the claim during removal keeps a new producer of the same staging name out.
+        make_directory(Path(entry.claim).parent())?
+        free = Path(entry.claim).try_lock_exclusive().map_err((error) => error.message())?
+        if free is not None:
+            entry.path.remove_tree().map_err((error) => error.message())?
+            release(store, entry.path.name())
+            cleared += 1
+    return Ok(cleared)
+
+
+pub model StagingOwner:
+    """A staging directory and the claim whose lock its producer holds while the attempt is alive."""
+
+    pub path: Path
+    pub claim: str
+
+
+pub def ended_staging(store: Path) -> Result[list[Path], str]:
+    """The staging directories whose producer's claim is free: the ended attempts collection clears."""
+    mut ended: list[Path] = []
+    for entry in staging_owners(store)?:
+        if claim_free(Path(entry.claim))?:
+            ended.append(entry.path)
+    return Ok(ended)
+
+
+def staging_owners(store: Path) -> Result[list[StagingOwner], str]:
+    """
+    Each staging directory whose owner is known: the claim its reservation names, or, for staging without one, the
+    claim of the canonical identity it is named by. Staging whose owner is not known is never listed.
+    """
+    directory = staging_root(store)
+    mut owners: list[StagingOwner] = []
+    if not directory.is_dir():
+        return Ok(owners)
+    mut recorded: dict[str, str] = {}
+    for reservation in read_reservations(store)?:
+        recorded[reservation.name] = reservation.claim
+    for entry in directory.iterdir().map_err((error) => error.message())?:
+        if not entry.is_dir() or entry.is_symlink():
+            continue
+        if entry.name() in recorded:
+            if recorded[entry.name()] != "":
+                owners.append(StagingOwner(path=entry, claim=recorded[entry.name()]))
+            continue
+        parts = entry.name().split(".")
+        if len(parts) != 2:
+            continue
+        mut digest = parts[0]
+        if digest.startswith("sha256:"):
+            digest = digest[7:]
+        if canonical_digest(digest):
+            owners.append(StagingOwner(path=entry, claim=claim_file(store, parts[0]).0))
+    return Ok(owners)
+
+
+def claim_free(lock: Path) -> Result[bool, str]:
+    """Whether nobody holds the claim `lock` names; a claim whose directory was never made was never held."""
+    if not lock.parent().is_dir():
+        return Ok(true)
+    free = lock.try_lock_exclusive().map_err((error) => error.message())?
+    return Ok(free is not None)
+
+
+def canonical_digest(value: str) -> bool:
+    """Whether a unit staging prefix is a full lowercase SHA-256 name."""
+    if len(value) != 64:
+        return false
+    for character in value:
+        if character not in "0123456789abcdef":
+            return false
+    return true

@@ -3,7 +3,7 @@
 from std.fs import Path
 from compare import compare
 from header import Header
-from run import invoke, trace_file
+from run import invoke, surface, trace_file
 from workers import Invocation, invoke_many
 
 
@@ -21,17 +21,17 @@ pub def compare_cli(incan: str, project: Path, header: Header) -> Result[list[st
     start = trace_text(project)
     for command in header.items("cli-commands"):
         # 1. Each command runs afresh with its own streams and status.
-        arguments = words(command)
+        name, arguments = surface(words(command))
         before = trace_text(project)
-        outcome = invoke(incan, arguments, project, header.items("environment"))?
+        outcome = invoke(incan, arguments, project, header.items("environment"), name)?
         # 2. A successful sibling cannot hide another command's failure.
         for failure in compare("cli", header, outcome):
-            failures.append(f"incan {command}: {failure}")
+            failures.append(f"{shown(command)}: {failure}")
         # 3. Only the lines this command traced can satisfy its trace expectations.
         added = trace_text(project)[len(before):]
         for expected in header.items("expect-trace-contains"):
             if expected not in added:
-                failures.append(f"incan {command}: Oven's trace does not contain `{expected}`")
+                failures.append(f"{shown(command)}: Oven's trace does not contain `{expected}`")
     # 4. Concurrent commands start at once, each in its own process.
     failures = failures + concurrent(incan, project, header)?
     # 5. Work that must happen once across every command, concurrent ones included.
@@ -50,14 +50,16 @@ def concurrent(incan: str, project: Path, header: Header) -> Result[list[str], s
         return Ok([])
     mut requests: list[Invocation] = []
     for index in range(len(commands)):
+        name, arguments = surface(words(commands[index]))
         requests.append(
             Invocation(
                 program=incan,
-                arguments=words(commands[index]),
+                arguments=arguments,
                 project=project,
                 selector=None,
                 environment=header.items("environment"),
                 capture=f"-concurrent-{index}",
+                arg0=name,
             ),
         )
     outcomes = invoke_many(requests, len(requests))
@@ -65,13 +67,20 @@ def concurrent(incan: str, project: Path, header: Header) -> Result[list[str], s
     for index in range(len(commands)):
         outcome = outcomes[index]?
         for failure in compare("cli", header, outcome):
-            failures.append(f"incan {commands[index]} (concurrent): {failure}")
+            failures.append(f"{shown(commands[index])} (concurrent): {failure}")
     return Ok(failures)
 
 
 def words(command: str) -> list[str]:
     """A command line's whitespace-separated arguments."""
     return [item for item in command.split(" ") if item != ""]
+
+
+def shown(command: str) -> str:
+    """A command line as invoked, naming its surface: lines that name none are `incan` commands."""
+    if command.startswith("oven ") or command.startswith("incan "):
+        return command
+    return f"incan {command}"
 
 
 def trace_text(project: Path) -> str:

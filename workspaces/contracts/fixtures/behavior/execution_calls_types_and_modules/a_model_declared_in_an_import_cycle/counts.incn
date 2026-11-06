@@ -1,0 +1,13 @@
+"""Import back into `facts`, closing the cycle."""
+
+from facts import total
+
+
+pub def base() -> int:
+    """The unit count."""
+    return 1
+
+
+pub def again() -> int:
+    """The cycle's total, read back through `facts`."""
+    return total()

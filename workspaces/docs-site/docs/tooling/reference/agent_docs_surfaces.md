@@ -4,7 +4,7 @@
 | --- | --- |
 | `llms.txt` | Site entrypoint list. |
 | `incan check PATH --format json` | Diagnostic report, schema version `2`. |
-| `incan describe-unit PATH` | Unit description, schema `incan.unit/1`. |
+| `oven describe-unit PATH` | Unit description, schema `incan.unit/1`. |
 | `incan inspect codegraph PATH --format jsonl` | Graph records, schema version `9`, with identities, provenance and degraded state. |
 | `incan inspect codegraph PATH --task TASK` | Bounded context selection with snapshot and context identities. |
 | `incan inspect codegraph PATH --stale SNAPSHOT` | Snapshot freshness response. |

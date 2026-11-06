@@ -1,0 +1,249 @@
+"""Insertion-ordered and sorted sets for `std.collections`."""
+
+from crate.collections._values import _value_index, _value_range
+
+
+@derive(Clone)
+pub model OrderedSet[T with (Clone, Eq)]:
+    """
+    Insertion-ordered set.
+
+    Reinserting an existing value does not duplicate or move it. Iteration follows the order in which values were first
+    added.
+    """
+
+    pub items: list[T] = []
+
+    @staticmethod
+    def __incan_new() -> Self:
+        """
+        Create an empty ordered set.
+
+        Returns:
+            An ordered set with no values.
+        """
+        return OrderedSet(items=[])
+
+    @staticmethod
+    def from_iter(items: list[T]) -> Self:
+        """
+        Create an ordered set from a list.
+
+        Args:
+            items: Values to insert in order.
+
+        Returns:
+            An ordered set containing the first occurrence of each value.
+        """
+        mut out = OrderedSet(items=[])
+        for item in items:
+            out.add(item)
+        return out
+
+    def __len__(self) -> int:
+        """
+        Return the number of values.
+
+        Returns:
+            The number of stored values.
+        """
+        return len(self.items)
+
+    def __iter__(self) -> list[T]:
+        """
+        Iterate over stored values.
+
+        Returns:
+            Values in insertion order.
+        """
+        return self.items
+
+    def __contains__(self, value: T) -> bool:
+        """
+        Check whether a value is present.
+
+        Args:
+            value: Value to search for.
+
+        Returns:
+            `true` when the value is stored.
+        """
+        return self.contains(value)
+
+    def add(mut self, value: T) -> None:
+        """
+        Insert a value if it is absent.
+
+        Args:
+            value: Value to add.
+        """
+        if not self.contains(value):
+            self.items.append(value)
+
+    def remove(mut self, value: T) -> None:
+        """
+        Remove a value when present.
+
+        Args:
+            value: Value to remove.
+        """
+        index = self.index_of(value)
+        if index >= 0:
+            self.items.remove(index)
+
+    def contains(self, value: T) -> bool:
+        """
+        Check whether a value is present.
+
+        Args:
+            value: Value to search for.
+
+        Returns:
+            `true` when the value is stored.
+        """
+        return self.index_of(value) >= 0
+
+    def to_list(self) -> list[T]:
+        """
+        Return the set as a list.
+
+        Returns:
+            Values in insertion order.
+        """
+        return self.items
+
+    def index_of(self, value: T) -> int:
+        return _value_index(self.items, value)
+
+
+@derive(Clone)
+pub model SortedSet[T with (Clone, Ord)]:
+    """
+    Value-sorted set.
+
+    Values must implement `Ord`. Iteration and `to_list()` return values in sorted order.
+    """
+
+    pub items: list[T] = []
+
+    @staticmethod
+    def __incan_new() -> Self:
+        """
+        Create an empty sorted set.
+
+        Returns:
+            A sorted set with no values.
+        """
+        return SortedSet(items=[])
+
+    @staticmethod
+    def from_iter(items: list[T]) -> Self:
+        """
+        Create a sorted set from a list.
+
+        Args:
+            items: Values to insert.
+
+        Returns:
+            A sorted set containing unique values in sorted order.
+        """
+        mut out = SortedSet(items=[])
+        for item in items:
+            out.add(item)
+        return out
+
+    def __len__(self) -> int:
+        """
+        Return the number of values.
+
+        Returns:
+            The number of stored values.
+        """
+        return len(self.items)
+
+    def __iter__(self) -> list[T]:
+        """
+        Iterate over stored values.
+
+        Returns:
+            Values in sorted order.
+        """
+        return self.items
+
+    def __contains__(self, value: T) -> bool:
+        """
+        Check whether a value is present.
+
+        Args:
+            value: Value to search for.
+
+        Returns:
+            `true` when the value is stored.
+        """
+        return self.contains(value)
+
+    def add(mut self, value: T) -> None:
+        """
+        Insert a value if it is absent.
+
+        Args:
+            value: Value to add while preserving sorted order.
+        """
+        if self.contains(value):
+            return
+        self.items.append(value)
+        self.bubble_value_left(len(self.items) - 1)
+
+    def remove(mut self, value: T) -> None:
+        """
+        Remove a value when present.
+
+        Args:
+            value: Value to remove.
+        """
+        index = self.index_of(value)
+        if index >= 0:
+            self.items.remove(index)
+
+    def contains(self, value: T) -> bool:
+        """
+        Check whether a value is present.
+
+        Args:
+            value: Value to search for.
+
+        Returns:
+            `true` when the value is stored.
+        """
+        return self.index_of(value) >= 0
+
+    def range(self, start: T, end: T) -> list[T]:
+        """
+        Return values in a half-open range.
+
+        Args:
+            start: Inclusive lower bound.
+            end: Exclusive upper bound.
+
+        Returns:
+            Values where `start <= value < end`, in sorted order.
+        """
+        return _value_range(self.items, start, end)
+
+    def to_list(self) -> list[T]:
+        """
+        Return the set as a list.
+
+        Returns:
+            Values in sorted order.
+        """
+        return self.items
+
+    def index_of(self, value: T) -> int:
+        return _value_index(self.items, value)
+
+    def bubble_value_left(mut self, start: int) -> None:
+        mut index = start
+        while index > 0 and self.items[index] < self.items[index - 1]:
+            self.items.swap(index, index - 1)
+            index -= 1

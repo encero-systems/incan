@@ -1,0 +1,10 @@
+# behavior: a closure that borrows an explicit body's input cannot be returned because its callable annotation carries no source relationship (#2500).
+# expect-diagnostic: INCAN-T0123
+
+class Counter:
+    pub value: int
+
+
+def escaped(counter: Borrowed[Counter]) -> () -> int:
+    read: () -> int = () => counter.value
+    return read

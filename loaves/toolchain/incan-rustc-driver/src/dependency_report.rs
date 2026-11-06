@@ -1,4 +1,4 @@
-//! The settled dependency closure of one unit, as `incan inspect dependencies` prints it.
+//! The settled dependency closure of one unit, as `oven inspect dependencies` prints it.
 //!
 //! The closure is the one compilation links: checking and planning settle it exactly as they do for a build. Each
 //! reached package lists the declarations that entered it from another package or from a requested root, the chain

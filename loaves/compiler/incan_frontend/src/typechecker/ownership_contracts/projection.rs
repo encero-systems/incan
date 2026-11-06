@@ -119,6 +119,16 @@ impl TypeCheckInfo {
                 }
                 Ok(None)
             }
+            InputCallKind::Indirect => {
+                if call.callee.kind != SemanticSourceTargetKind::Parameter
+                    || contract.is_some()
+                    || call.receiver.is_some()
+                    || call.owner.is_none()
+                {
+                    return Err("indirect invocation requires a checked callable binding");
+                }
+                Ok(None)
+            }
         }
     }
 
@@ -201,14 +211,6 @@ impl TypeCheckInfo {
 
         // ---- Loan destinations and their source annotations ----
         for (local, loan) in &graph.local_loans {
-            // A closure's captured borrow; the graph validation already tied it to the closure's captures.
-            if graph
-                .closures
-                .values()
-                .any(|closure| &closure.local == local && closure.loan == Some(*loan))
-            {
-                continue;
-            }
             let Some(mode) = self.protocols.explicit_local_modes.get(local) else {
                 self.validate_view_local(graph, local, *loan)?;
                 continue;
@@ -304,13 +306,26 @@ impl TypeCheckInfo {
                 .ok_or("invocation has no selected call facts")?;
             if call.owner.as_ref() != Some(owner)
                 || call.callee != invocation.callee
-                || call.parameters.len() != invocation.arguments.len()
                 || call.receiver.is_some() != invocation.receiver.is_some()
             {
                 return Err("invocation differs from its checked caller or signature");
             }
+            let mut supplied = std::collections::BTreeSet::new();
+            for argument in &invocation.arguments {
+                if argument.slot >= call.parameters.len() || !supplied.insert(argument.slot) {
+                    return Err("invocation differs from its checked caller or signature");
+                }
+            }
+            if call
+                .parameters
+                .iter()
+                .enumerate()
+                .any(|(slot, parameter)| !supplied.contains(&slot) && !parameter.has_default)
+            {
+                return Err("invocation omits a required selected parameter");
+            }
             let contract = self.selected_input_contract(call)?;
-            if call.kind == InputCallKind::Ordinary {
+            if matches!(call.kind, InputCallKind::Ordinary | InputCallKind::Indirect) {
                 for (slot, parameter) in call.parameters.iter().enumerate() {
                     // A closure local passed to a function-typed parameter: checking admits a capturing closure only
                     // where its callee calls it and keeps it no longer.
@@ -343,7 +358,14 @@ impl TypeCheckInfo {
                     return Err("invocation marker fulfills more than one evaluation role");
                 }
             }
-            call_evaluation::validate_invocation_events(self, graph, *span, invocation, &call.parameters)?;
+            call_evaluation::validate_invocation_events(
+                self,
+                graph,
+                *span,
+                invocation,
+                &call.parameters,
+                call.kind != InputCallKind::Indirect && call.receiver.is_none(),
+            )?;
             for argument in &invocation.arguments {
                 let access = crate::ownership_metadata::direct_input_access(contract, argument.slot)?;
                 if argument.access != access {

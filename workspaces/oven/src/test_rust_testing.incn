@@ -11,7 +11,9 @@ from features import FeatureRequest
 from rust_testing import build_rust_tests
 from loaf_local_graph import LocalFacet
 from rust_activation import DependencyDomain
-from rust_units import build_rust, RustBuild, facet_slot, ordered, read_registry_units, rust_output
+from rust_units import build_rust
+from rust_build import RustBuild, facet_slot, ordered, rust_output
+from rust_registry import read_registry_units
 from scratch import scratch_directory
 from testing import run_rust_harness, test_sources
 from toolchain import Toolchain, load_toolchain, rust_compiler

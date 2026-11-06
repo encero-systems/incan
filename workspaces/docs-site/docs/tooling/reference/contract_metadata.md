@@ -27,7 +27,7 @@ Duplicate logical names, stable IDs, field names or aliases are refused. Empty a
 
 Declared bundles contribute public model declarations before source checking. Constructors, field access, JSON aliases and field reflection use the declared model fields. A model name colliding with another visible declaration or bundle is refused.
 
-`incan describe-unit PATH` reports the declared bundle paths as `contract_models`.
+`oven describe-unit PATH` reports the declared bundle paths as `contract_models`.
 
 ## LSP command
 

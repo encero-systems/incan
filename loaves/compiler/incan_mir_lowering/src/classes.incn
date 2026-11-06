@@ -210,15 +210,19 @@ def module_function_symbol(owner: str, body: &Body) -> str:
 pub def method_receiver(
     constructors: &ConstructorIndex,
     module: &BodyIrModule,
-    locals: list[Local],
+    locals: &list[Local],
     local_offset: int,
     index: int,
     argument: &RustArgumentElement,
     span: SourceSpan,
-    unions: list[RustType],
+    unions: &list[RustType],
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[tuple[PlanType, RvalueKind], str]:
-    """Require a single receiver argument before lowering its checked borrow in the active local frame."""
+    """
+    Require a single receiver argument before lowering its checked borrow in the active local frame.
+
+    The frame's slots start at `local_offset` in the shared locals table, which is borrowed rather than copied.
+    """
     match argument.as_one():
         Some(value) =>
             return receiver_borrow(constructors, module, locals, local_offset, index, value, span, unions, intrinsics)
@@ -228,12 +232,12 @@ pub def method_receiver(
 def receiver_borrow(
     constructors: &ConstructorIndex,
     module: &BodyIrModule,
-    locals: list[Local],
+    locals: &list[Local],
     local_offset: int,
     index: int,
     value: &RustOperand,
     span: SourceSpan,
-    unions: list[RustType],
+    unions: &list[RustType],
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[tuple[PlanType, RvalueKind], str]:
     """Lower the checked receiver to a shared borrow or mutable reborrow without moving its owner."""
@@ -251,17 +255,16 @@ def receiver_borrow(
                 OwnershipFact.Borrow => pass
                 OwnershipFact.MutBorrow => pass
                 _ => return Err("unsupported Body IR Method receiver ownership")
-            mut frame_locals = locals
-            mut union_layouts = unions
             mut receiver = model_place(
                 constructors,
                 module.nominal_declarations,
-                frame_locals,
+                locals,
                 read.place,
                 span,
                 module.enum_declarations,
-                union_layouts,
+                unions,
                 intrinsics,
+                local_offset,
             )?
             receiver.local += local_offset
             match receiver_type:

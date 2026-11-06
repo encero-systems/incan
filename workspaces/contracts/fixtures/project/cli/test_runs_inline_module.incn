@@ -1,0 +1,17 @@
+# behavior: `incan test` runs a selected source file's inline test module (#2450).
+# cli-commands:
+#   test src/main.incn
+# expect-stdout-contains:
+#   main.incn::test_addition PASSED
+
+def add(left: int, right: int) -> int:
+    return left + right
+
+
+def main() -> None:
+    println(add(1, 2))
+
+
+module tests:
+    def test_addition() -> None:
+        assert add(2, 3) == 5

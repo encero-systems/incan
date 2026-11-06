@@ -384,10 +384,13 @@ def completed_plan(
     """Admit the completed unit's test and program entries, then transfer its owned native inventories into the plan."""
     has_main, declares_main = main_selection(context, entry)
     test_entries = collected_test_entries(context, entry, tests, functions, enums)?
+    mut program_entries: list[str] = []
     if kind == "program" and not has_main:
         if declares_main:
             return Err("unsupported Body IR selected main representation")
         return Ok(None)
+    if kind == "program":
+        program_entries = selected_program_entries(context)?
     return Ok(
         Some(
             Plan(
@@ -399,7 +402,7 @@ def completed_plan(
                 statics=statics,
                 exports=exports,
                 tests=test_entries,
-                programs=selected_program_entries(context)?,
+                programs=program_entries,
                 generic_models=templates,
                 generic_enums=enum_templates,
                 zip_carriers=zip_carriers,

@@ -1,4 +1,4 @@
-# behavior: native associated and instance calls retain their declared results, including extension trait associated calls with contextual integer literals (#2256); a body-less rusttype that forwards Clone and Display to its backing Rust type stays a transparent alias (rust-22h)
+# behavior: native associated and instance calls retain their declared results, including extension trait associated calls with contextual integer literals (#2256); a body-less rusttype that forwards Clone and Display to its backing Rust type stays a transparent alias and retains Clone's native receiver (#2443, rust-22h)
 # expect-stdout:
 #   5
 #   8
@@ -7,6 +7,7 @@
 #   7
 #   493
 #   420
+#   ada
 #   ada
 
 from rust::std::clone import Clone as NativeClone
@@ -58,3 +59,5 @@ def main() -> None:
     label = Label.from("ada")
     assert label.len() == 3
     println(label)
+    copied = label.clone()
+    println(copied)

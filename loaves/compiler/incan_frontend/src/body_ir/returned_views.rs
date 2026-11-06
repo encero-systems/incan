@@ -365,24 +365,41 @@ fn substituted_place(
 /// with an exclusive view in the success payload, `Result[T, &E]` with a shared view in the error, `(int, &T)` for
 /// `(int, T)` with a shared view in its second element. Other types are returned unchanged.
 pub(super) fn reference_carrier(carrier: IncanType, access: IncanInputAccess, payload: usize) -> IncanType {
-    let reference = |value: &IncanType| {
-        let value = Box::new(value.clone());
-        if access == IncanInputAccess::Exclusive {
-            IncanType::RefMut(value)
-        } else {
-            IncanType::Ref(value)
-        }
-    };
     match carrier {
         IncanType::Generic { base, mut args } if payload < args.len() => {
-            args[payload] = reference(&args[payload]);
+            args[payload] = reference_value(args[payload].clone(), access);
             IncanType::Generic { base, args }
         }
         IncanType::Tuple(mut elements) if payload < elements.len() => {
-            elements[payload] = reference(&elements[payload]);
+            elements[payload] = reference_value(elements[payload].clone(), access);
             IncanType::Tuple(elements)
         }
         other => other,
+    }
+}
+
+/// Put the physical reference returned by a direct view inside its async carrier. Source-level view types stay value
+/// typed; this representation exists only between future construction and the await that restores the source alias.
+pub(super) fn async_reference_carrier(carrier: IncanType, access: IncanInputAccess) -> Result<IncanType, String> {
+    let IncanType::Generic { base, mut args } = carrier else {
+        return Err("async returned view call has no future carrier".into());
+    };
+    if base != "Awaitable" || args.len() != 1 {
+        return Err("async returned view call has an invalid future carrier".into());
+    }
+    let output = args.pop().ok_or("async returned view call has no output")?;
+    Ok(IncanType::Generic {
+        base,
+        args: vec![reference_value(output, access)],
+    })
+}
+
+/// The physical reference type returned by one direct view while its source-level expression remains value typed.
+pub(super) fn reference_value(value: IncanType, access: IncanInputAccess) -> IncanType {
+    if access == IncanInputAccess::Exclusive {
+        IncanType::RefMut(Box::new(value))
+    } else {
+        IncanType::Ref(Box::new(value))
     }
 }
 

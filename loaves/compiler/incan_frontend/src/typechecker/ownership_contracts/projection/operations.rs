@@ -37,6 +37,19 @@ impl CheckedInputBody<'_> {
         if matches.next().is_some() {
             return Err("operand belongs to multiple operation dependencies");
         }
+        if self
+            .facts
+            .expr_type(operand)
+            .is_some_and(|ty| ty.tuple_elements().is_some())
+            && self
+                .facts
+                .resolved_identity(operand)
+                .and_then(|identity| self.graph.local_loans.get(identity))
+                .and_then(|loan| self.graph.loans.get(loan.0))
+                .is_some_and(|loan| self.facts.selected_carried_view(loan.span).is_some())
+        {
+            return Ok(Some(super::CheckedInputSource::CarriedLocal));
+        }
         super::calls::project_source(&dependency.source).map(Some)
     }
 
@@ -94,8 +107,8 @@ impl CheckedInputBody<'_> {
                     self.visit_operation_expression(scrutinee, parameters, execution, seen)?;
                     let mut reaches = false;
                     for arm in arms {
-                        if arm.node.guard.is_some() {
-                            return Err("operation coverage requires unguarded match arms");
+                        if let Some(guard) = &arm.node.guard {
+                            self.visit_operation_expression(guard, parameters, execution, seen)?;
                         }
                         reaches |= match &arm.node.body {
                             MatchBody::Expr(value) => {

@@ -1,4 +1,4 @@
-# behavior: Native generic calls preserve explicit and opaque loans, binders, callbacks and independent owners, close binders projected from source collections, as for Command.args, Command.envs and Vec.extend, retain exclusive authority through mutable slice dereferences, contextually type range literals, fix a method's open result at a typed use, and take a local's open owner arguments from its first type-dependent use after length and emptiness reads, as for HashMap.new with insert, Vec.new with push, a typed parameter, a typed return and an annotated place (#2256, #2432, #2481)
+# behavior: Native generic calls preserve explicit and opaque loans, binders, callbacks and independent owners, close binders projected from source collections, as for Command.args, Command.envs and Vec.extend, retain exclusive authority through mutable slice dereferences, contextually type range literals, fix a method's open result at a typed use, and take a local's open owner arguments from its first type-dependent use after length and emptiness reads, as for HashMap.new with insert, Vec.new with push, a typed parameter, a typed return and an annotated place, and pass a `str` constant to a generic Rust parameter, as for Command.new, Command.arg, Command.env, Path.join and CString.new, as a `str` value passes (#2256, #2432, #2481, #2590)
 # expect-stdout:
 #   7
 #   leaf
@@ -19,6 +19,11 @@
 #   2
 #   3
 #   2
+#   1
+#   true
+#   true
+#   true
+#   2
 #   2
 #   0
 #   1
@@ -31,6 +36,7 @@
 from rust::incan_std_core::strings import str_slice_byte_range
 from rust::std::convert import identity
 from rust::std::collections import HashMap, VecDeque
+from rust::std::ffi import CString
 from rust::std::hash import DefaultHasher, Hash, Hasher
 from rust::std::iter import Iterator as NativeIterator
 from rust::std::mem import size_of_val, swap
@@ -41,6 +47,10 @@ from rust::std::sync import Arc, Mutex
 from rust::std::sync::mpsc import Sender as NativeSender, Receiver as NativeReceiver, channel as native_channel
 from rust::std::thread import panicking, spawn
 from rust::std::vec import Vec
+
+const PROGRAM: str = "true"
+const FLAG: str = "--version"
+const ENTRY: str = "frozen"
 
 
 model Pair:
@@ -227,6 +237,20 @@ def show_projected_binders() -> None:
     println(values.len())
 
 
+def show_frozen_text_arguments() -> None:
+    """Pass `str` constants to generic Rust parameters as `str` values pass, beside an explicit `str(...)` control."""
+    mut command = Command.new(PROGRAM)
+    command.arg(FLAG)
+    command.arg(str(FLAG))
+    command.env(ENTRY, FLAG)
+    println(command.get_args().len())
+    println(command.get_envs().len())
+    println(command.output().is_ok())
+    joined = Path.new(".").join(ENTRY)
+    println(joined.ends_with(ENTRY))
+    println(CString.new(ENTRY).is_ok())
+
+
 def vector_length(values: Vec[int]) -> usize:
     """Read a native vector whose element type fixes the open owner argument of the caller's local."""
     return values.len()
@@ -292,7 +316,7 @@ def main() -> None:
     1. Exercise generic instantiations and scalar references.
     2. Exercise text references and typed native factories.
     3. Check owned captures, joined Rust callbacks, tuple loans, trait returns, native frames and retained cursors.
-    4. Observe binders projected from source collections and owner arguments fixed by a local's first use.
+    4. Observe projected binders, frozen text arguments and owner arguments fixed by a local's first use.
     5. Observe a native nonreturning call, which ends the program.
     """
     # 1. Exercise generic instantiations and scalar references.
@@ -305,8 +329,9 @@ def main() -> None:
     check_foreign_values()
     show_thread_capture()
     check_native_cursor_forwarding()
-    # 4. Observe binders projected from source collections and owner arguments fixed by a local's first use.
+    # 4. Observe projected binders, frozen text arguments and owner arguments fixed by a local's first use.
     show_projected_binders()
+    show_frozen_text_arguments()
     show_first_use_arguments()
     # 5. Observe a native nonreturning call, which ends the program.
     show_nonreturning_call()

@@ -248,6 +248,15 @@ pub fn method_trait_target_after_return_type(span: Span) -> CompileError {
     .with_hint("Write `def name(self) for Trait -> ReturnType:`")
 }
 
+/// Report `pub` on a method declared in a trait, which takes the trait's visibility (#2570).
+pub fn pub_modifier_not_allowed_on_trait_method(span: Span) -> CompileError {
+    CompileError::syntax(
+        "A method declared in a trait takes the trait's visibility and cannot be marked `pub`".to_string(),
+        span,
+    )
+    .with_hint("Remove `pub`; mark the trait `pub` to make its methods public")
+}
+
 pub fn static_only_allowed_at_module_scope(span: Span) -> CompileError {
     CompileError::syntax(
         "`static` declarations are only allowed at module scope".to_string(),

@@ -9,27 +9,24 @@ use crate::ast_walk::any_expr_in_body;
 use crate::typechecker::{CheckedInputBody, TypeCheckInfo};
 use incan_semantics_core::{CanonicalSymbolId, IncanInputAccess};
 
-/// Direct fixed-arity source functions, synchronous or async, are the first executable frame boundary. Decorated,
-/// generic, deferred and escaping signatures retain their existing stage refusals until their native boundary is
-/// proven.
+/// Source functions with statically bound parameters are executable under explicit ownership. Generic binders and
+/// ordinary defaults retain the same frame and declaration-owned contract; decorators remain outside this boundary
+/// because they can replace the visible signature.
 pub(in crate::typechecker) fn direct_function_boundary(function: &FunctionDecl) -> bool {
-    function.type_params.is_empty() && function.decorators.is_empty() && fixed_parameters(&function.params)
+    function.decorators.is_empty() && statically_bound_parameters(&function.params)
 }
 
-/// Concrete methods share the function frame boundary; the receiver is a borrowed slot of its own, checked with
-/// the method's receiver mode.
+/// Concrete methods share the function frame boundary; generic binders and defaults preserve it, while the receiver
+/// remains a borrowed slot of its own checked with the method's receiver mode.
 pub(in crate::typechecker) fn direct_method_boundary(method: &MethodDecl) -> bool {
-    method.body.is_some()
-        && method.type_params.is_empty()
-        && method.decorators.is_empty()
-        && fixed_parameters(&method.params)
+    method.body.is_some() && method.decorators.is_empty() && statically_bound_parameters(&method.params)
 }
 
-/// Every parameter is a required positional-or-named slot.
-fn fixed_parameters(parameters: &[Spanned<Param>]) -> bool {
+/// Every parameter has one statically known slot; omission through a default does not change that slot identity.
+fn statically_bound_parameters(parameters: &[Spanned<Param>]) -> bool {
     parameters
         .iter()
-        .all(|parameter| parameter.node.kind == ParamKind::Normal && parameter.node.default.is_none())
+        .all(|parameter| parameter.node.kind == ParamKind::Normal)
 }
 
 /// The frame boundary of either callable form.
@@ -194,70 +191,12 @@ impl TypeCheckInfo {
             return Err("explicit inputs require direct straight-line source access in this implementation stage");
         }
         proof.validate_direct_call_storage()?;
-        proof.validate_assertion_transfers(callable.body())?;
         proof.validate_operation_coverage(callable)?;
         Ok(Some(proof))
     }
 }
 
 impl CheckedInputBody<'_> {
-    /// An assertion message executes only on failure. Moving a stored owner there needs conditional cleanup even
-    /// though the surrounding source contains no `if`; fresh failure-local values and Copy inputs need no such join.
-    fn validate_assertion_transfers(&self, body: &[Spanned<Statement>]) -> Result<(), &'static str> {
-        for statement in body {
-            if let Statement::If(branch) = &statement.node {
-                self.validate_assertion_transfers(&branch.then_body)?;
-                for (_, body) in &branch.elif_branches {
-                    self.validate_assertion_transfers(body)?;
-                }
-                if let Some(body) = &branch.else_body {
-                    self.validate_assertion_transfers(body)?;
-                }
-            }
-            let Statement::Assert(assertion) = &statement.node else {
-                continue;
-            };
-            let Some(message) = &assertion.message else {
-                continue;
-            };
-            for (span, invocation) in &self.graph.invocations {
-                if span.expansion != message.span.expansion
-                    || span.start < message.span.start
-                    || span.end > message.span.end
-                {
-                    continue;
-                }
-                let call = self
-                    .facts
-                    .protocols
-                    .explicit_input_calls
-                    .get(span)
-                    .ok_or("assertion call has no checked inputs")?;
-                for argument in &invocation.arguments {
-                    if argument.access != IncanInputAccess::Owned
-                        || !argument
-                            .source
-                            .as_ref()
-                            .is_some_and(|source| matches!(source.root, super::flow::Root::Binding(_)))
-                    {
-                        continue;
-                    }
-                    let parameter = call
-                        .parameters
-                        .get(argument.slot)
-                        .ok_or("assertion input has no checked slot")?;
-                    if !self
-                        .facts
-                        .checked_input_copy_value(self.canonical_owner(), &parameter.ty)?
-                    {
-                        return Err("explicit stored transfer in an assertion message requires conditional cleanup");
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
     /// Local aliases preserve existing storage. Owned locals use their exact initializer relationship; a whole
     /// non-Copy owner may transfer, while projected transfers still require partial-drop obligations.
     fn validate_local_storage(&self) -> Result<(), &'static str> {

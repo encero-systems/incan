@@ -13,14 +13,13 @@ from store_index import Entry, Location, build, entries as index_entries
 from std.fs import Path
 from pub::incan_platform.durability import sync_ordered
 from pub::incan_platform.trace import Clock, Operation, WorkObserver, begin as begin_span
-from segment_store import observe_work
+from segment_files import observe_work
 from scratch import scratch_directory
 from segment_store import (
     EXPECT_ABSENT,
     EXPECT_ABSENT_OR_DAMAGED,
     Lookup,
     Snapshot,
-    StoreError,
     begin,
     commit,
     commit_group,
@@ -31,20 +30,18 @@ from segment_store import (
     keys,
     lookup,
     owned,
-    payload_intact,
-    payload_path,
     put,
-    put_payload,
     snapshot,
     fork,
     read_counts,
     lease,
     view_snapshot,
-    collect_layouts,
     durable_syncs,
-    repair_current,
-    quarantine_record,
 )
+from segment_files import StoreError
+from segment_payloads import payload_intact, payload_path, put_payload
+from segment_collection import collect_layouts
+from segment_repair import quarantine_record, repair_current
 
 static observed_work: dict[str, int] = {}
 

@@ -26,16 +26,10 @@ from loaf_local_graph import LocalFacet
 from observation import trace
 from publication import publish_binary
 from rust_activation import DependencyDomain
-from rust_units import (
-    RustFacet,
-    binary_environment,
-    binary_arguments,
-    decoded,
-    library_arguments,
-    linking,
-    package_environment,
-    rust_facet,
-)
+from rust_binaries import binary_arguments, binary_environment
+from rust_build import library_arguments, linking
+from rust_manifest import RustFacet, package_environment, rust_facet
+from rust_target import decoded
 from toolchain import Toolchain
 from unit_freshness import compiler_fingerprint, fingerprint
 
@@ -208,11 +202,12 @@ def checked_export(
     sources, _ = content_facts(project)?
     selected = inputs + sources + [str(unstable)]
     name = producer_name(selected, project, arguments)?
-    held = claim(bakery()?, fingerprint([name])?)?
+    claimed = fingerprint([name])?
+    held = claim(bakery()?, claimed)?
     if let Some(entry) = prior_export(name, project, arguments, environment, toolchain, compiler)?:
         return Ok(entry)
     # 2. The old list is only a lookup hint: a miss discovers the new list before committing an identity.
-    pending = pending_export(export_file(fingerprint(["graph-discovery", name])?)?, project)?
+    pending = pending_export(export_file(fingerprint(["graph-discovery", name])?)?, project, claimed)?
     if not discover(project, pending.parent(), arguments, environment, unstable, toolchain)?:
         observe(pending, facet, unit_name, arguments, environment, unstable, toolchain)?
         return Ok(pending)

@@ -8,7 +8,9 @@ yet views that unit's evidence first, keys the unit from it, and finds the unit 
 
 from std.fs import Path
 from std.fs.locking import FileLock
-from bakery import Fact, bakery, claim, find, lookup, reached, register_root, seal, staging, view_directory
+from bakery import bakery, claim, find, lookup, prior_size, reached, seal, staging, view_directory
+from bakery_records import Fact
+from bakery_roots import register_root
 from files import make_directory
 from observation import trace
 from unit_freshness import fingerprint
@@ -20,9 +22,14 @@ pub def rust_unit_name(kind: str, crate_name: str, context: str) -> str:
     return f"rust {kind}\t{crate_name}\t{context}"
 
 
+pub def rust_claim(name: str) -> Result[str, str]:
+    """The key the bakes of one Rust unit name are claimed under; a staging directory names it as its owner."""
+    return fingerprint(["rust-unit-name", name])
+
+
 pub def claim_rust(store: Path, name: str) -> Result[FileLock, str]:
     """Claim the bakes of one Rust unit name; its identity is known only after its dependency evidence is."""
-    return claim(store, fingerprint(["rust-unit-name", name])?)
+    return claim(store, rust_claim(name)?)
 
 
 pub def view_prior_evidence(store: Path, name: str, directory: Path, evidence: Path) -> Result[None, str]:
@@ -72,7 +79,7 @@ pub def seal_rust(
     Each output's producer record, naming the native producer identity, goes with it, so consumers name it by that
     identity wherever it is viewed.
     """
-    staged = staging(store, identity)?
+    staged = staging(store, identity, prior_size(store, name), rust_claim(name)?)?
     for output in outputs:
         record_payload(output, producer, provenance)?
         clone_into(output, staged)?

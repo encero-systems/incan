@@ -23,7 +23,8 @@ from toolchain import (
     finish_installation,
     toolchain_directory,
 )
-from rust_units import decoded, read_registry_units
+from rust_registry import read_registry_units
+from rust_target import decoded
 from registry_units import RegistryUnit
 from registry_shipping import packed_checkout, ships, ships_search, shipped_entries
 from observation import file_digest
@@ -31,6 +32,7 @@ from unit_publication import publication, published_identity, record_path, recor
 from cli_help import render, unknown_option
 from jec import begin, record
 from installation_check import verify_installed_runtime
+from surfaces import expose_entry_points
 
 # The file extensions of the native libraries an archive keeps in a Loaf's profile directory.
 const NATIVE_LIBRARY_SUFFIXES: FrozenList[str] = [".rlib", ".dylib", ".so", ".a", ".lib"]
@@ -595,6 +597,7 @@ pub def install_toolchain(archive: Path) -> Result[None, str]:
 
     1. Unpack the archive into a staging directory beside the installation.
     2. Verify the staged toolchain and publish it, then remove the staging directory whatever happened.
+    3. Expose this program as both `oven` and `incan` beside it (RFC 118).
     """
     target = toolchain_directory()?
     make_directory(target.parent())?
@@ -605,7 +608,11 @@ pub def install_toolchain(archive: Path) -> Result[None, str]:
     result = install_staged(archive, stage, target)
     if stage.is_dir():
         remove_dir_all(stage.0).map_err((error) => str(error))?
-    return result
+    result?
+    # 3. One installed program answers to both command surfaces.
+    directory = expose_entry_points()?
+    println(f"entry points: oven and incan in {directory.0}")
+    return Ok(None)
 
 
 def install_staged(archive: Path, stage: Path, target: Path) -> Result[None, str]:

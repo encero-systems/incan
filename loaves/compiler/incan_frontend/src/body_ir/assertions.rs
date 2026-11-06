@@ -71,9 +71,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) {
         let failure_scope = self.new_scope(Some(scope), span);
+        let subjects = self.input_subject_locals();
+        let continuing_moves = self.input_move_state(&subjects);
         let mut failure = Vec::new();
         self.conditional_scopes.push(failure_scope);
+        self.input_if_scopes.push(failure_scope);
         let message = self.lower_expr_to_operand(message, failure_scope, &mut failure);
+        self.input_if_scopes.pop();
         self.conditional_scopes.pop();
         failure.push(bir::Statement {
             kind: bir::StatementKind::Assert {
@@ -86,6 +90,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             span,
         });
         self.insert_scope_drops(&mut failure, failure_scope);
+        self.restore_input_move_state(&subjects, &continuing_moves);
         self.panic_facts.push(bir::PanicFact {
             span,
             reason: bir::PanicReason::AssertFailure,

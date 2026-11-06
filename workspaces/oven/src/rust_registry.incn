@@ -1,0 +1,242 @@
+"""Read the registry closure a toolchain ships, and select the compiled registry units a build links."""
+
+from std.fs import Path
+from std.json import JsonValue
+from bakery import bakery, claim
+from files import read_json
+from json_fields import field, required_items, required_text, strings
+from intake import ManifestReader
+from loaf_local_graph import LocalFacet
+from observation import Observation, observe
+from pub::incan_platform.trace import Operation
+from jec import begin, record as record_work
+from registry_units import RegistryUnit, RegistrySelection, RegistryDemand, RegistryUnits
+from registry_metadata import complete_legacy, completion_selection
+from registry_pages import artifact_stamps, directory_stamps, question, recall_catalog, retain_catalog
+from registry_pages import current as catalog_current
+from toml_fields import optional_string, read_manifest
+from toolchain import load_toolchain, located, rust_compiler
+from unit_freshness import record
+from unit_publication import import_payload
+from registry_units import sole_library as registry_artifact
+
+# The schema of the registry closure a toolchain ships.
+const CLOSURE_SCHEMA: str = "incan.oven.closure/1"
+
+
+pub def read_registry_units(
+    path: Path,
+    project: str = "",
+    reader: ManifestReader = ManifestReader(),
+) -> Result[RegistryUnits, str]:
+    """
+    Registry units from a closure result (`incan.oven.closure/1`): every compiled unit and its store directory.
+
+    1. Read the typed page selected for this closure and compiler generation.
+    2. Reconcile its exact directory and artifact observations.
+    3. On a miss, claim and complete the closure once; project locks bind only after that shared reading.
+    """
+    # 1. A settled generation can be read directly from its admitted, mapped typed page.
+    clock = begin()
+    observed = observe(path)?
+    selection = completion_selection(rust_compiler(load_toolchain()?))?
+    key = question(path, observed, selection)?
+    if let Some(catalog) = recall_catalog(key)?:
+        record_work(Operation.RegistryIndex, path.0, clock)
+        # 2. Directory membership and artifact rewrites invalidate independently of the closure file.
+        completion_clock = begin()
+        if catalog_current(catalog):
+            record_work(Operation.RegistryCompletion, path.0, completion_clock)
+            return project_registry(catalog_registry(catalog.units, path)?, project, reader)
+    # 3. Only one caller completes a missing generation; waiters recheck after taking its claim.
+    held = claim(bakery()?, f"registry/catalog/{key}")?
+    if let Some(catalog) = recall_catalog(key)?:
+        if catalog_current(catalog):
+            return project_registry(catalog_registry(catalog.units, path)?, project, reader)
+    return project_registry(read_registry_catalog(path, key, observed)?, project, reader)
+
+
+def read_registry_catalog(path: Path, key: str, observed: Observation) -> Result[RegistryUnits, str]:
+    """Complete a missing generation under its claim, bracketing producer observations before sealing its typed page."""
+    clock = begin()
+    document = read_json(path)?
+    schema = required_text(document, "schema")?
+    if schema != CLOSURE_SCHEMA:
+        return Err(f"{path.0}: expected {CLOSURE_SCHEMA}, found {schema}")
+    # 2. The store keeps all its entries side by side, so one extern's artifact path locates them all.
+    entries = entries_directory(document, path)?
+    # 3. Each unit knows its own artifact directory, and every such directory is searched for dependencies.
+    mut units: list[RegistryUnit] = []
+    closure_directory = path.parent()
+    for item in required_items(document, "units")?:
+        unit = registry_unit(item, entries, closure_directory)?
+        units.append(unit)
+    record_work(Operation.RegistryIndex, path.0, clock)
+    completion_clock = begin()
+    listings = directory_stamps(units)
+    artifacts = artifact_stamps(units)
+    completed = complete_legacy(units)?
+    record_work(Operation.RegistryCompletion, path.0, completion_clock)
+    retain_catalog(key, path, observed, completed, listings, artifacts)?
+    return catalog_registry(completed, path)
+
+
+def catalog_registry(units: list[RegistryUnit], path: Path) -> Result[RegistryUnits, str]:
+    """Bind installation preferences separately from the page so project-specific locks never leak into shared facts."""
+    mut search: list[str] = []
+    for unit in units:
+        if unit.directory not in search:
+            search.append(unit.directory)
+    return Ok(
+        RegistryUnits(
+            units=units,
+            search=search,
+            anchors=[],
+            installation_bindings=recorded_registry_bindings(units, path)?,
+        ),
+    )
+
+
+pub def project_registry(registry: RegistryUnits, project: str, reader: ManifestReader) -> Result[RegistryUnits, str]:
+    """A project's explicit build.registry-lock supersedes the installation's standard-producer root selection."""
+    path = registry_record_path(project, reader)?
+    if path == "":
+        return Ok(registry)
+    mut selected = registry
+    selected.recorded_bindings = registry_record(registry.units, Path(path))?
+    selected.installation_bindings = []
+    return Ok(selected)
+
+
+pub def registry_record_path(project: str, reader: ManifestReader) -> Result[str, str]:
+    """Locate a project's explicit producer record for ordinary preparation and resident input observation."""
+    if project == "" or not Path(project).joinpath("loaf.toml").is_file():
+        return Ok("")
+    manifest = read_manifest(Path(project), reader)?
+    match optional_string(manifest, "build.registry-lock")?:
+        None => return Ok("")
+        Some(path) =>
+            if path == "":
+                return Err(f"{project}: build.registry-lock must name a producer closure")
+            return Ok(located(Path(project), path))
+
+
+def recorded_registry_bindings(units: list[RegistryUnit], source: Path) -> Result[list[Tuple[str, str]], str]:
+    """Read the installation's default producer choices, validating identities without creating a project lock."""
+    toolchain = load_toolchain()?
+    if toolchain.registry_lock == "":
+        return Ok([])
+    actual = source.resolve().map_err((error) => error.message())?.0
+    selected = Path(toolchain.registry_units).resolve().map_err((error) => error.message())?.0
+    if actual != selected:
+        return Ok([])
+    return registry_record(units, Path(toolchain.registry_lock))
+
+
+def registry_record(units: list[RegistryUnit], path: Path) -> Result[list[Tuple[str, str]], str]:
+    """Validate a closure's exact entries and logical compilation domains before they can decide any root."""
+    document = read_json(path)?
+    if required_text(document, "schema")? != CLOSURE_SCHEMA:
+        return Err(f"{path.0}: expected {CLOSURE_SCHEMA}")
+    available = [unit.entry for unit in units]
+    mut bindings: list[Tuple[str, str]] = []
+    for item in required_items(document, "units")?:
+        entry = required_text(item, "entry")?
+        domain = required_text(item, "domain")?
+        if entry not in available:
+            return Err(f"recorded registry closure names absent entry {entry}")
+        if domain != "target" and domain != "host":
+            return Err(f"recorded registry closure names invalid domain {domain}")
+        bindings.append((domain, entry))
+    return Ok(bindings)
+
+
+def entries_directory(document: JsonValue, path: Path) -> Result[str, str]:
+    """The directory of the store's entries, three levels above the artifact of the first extern of a closure."""
+    externs = document.require("externs").map_err((error) => error.message())?
+    for name in externs.keys():
+        extern = externs.require(name).map_err((error) => error.message())?
+        artifact = required_text(extern, "path")?
+        # An extern's path is absolute, or relative to the closure document (a packed toolchain's registry).
+        return Ok(Path(located(path.parent(), artifact)).parent().parent().parent().0)
+    return Err(f"{path.0} names no compiled unit")
+
+
+def registry_unit(item: JsonValue, entries: str, closure_directory: Path) -> Result[RegistryUnit, str]:
+    """One compiled unit of a closure, with the artifact directory its store entry holds."""
+    entry = required_text(item, "entry")?
+    directory = Path(entries).joinpath(entry.replace(":", "-")).joinpath("artifacts").0
+    return Ok(
+        RegistryUnit(
+            loaf=required_text(item, "loaf")?,
+            version=required_text(item, "version")?,
+            domain=required_text(item, "domain")?,
+            directory=directory,
+            features=registry_features(item)?,
+            entry=entry,
+            dependencies=registry_dependencies(item)?,
+            profile=registry_text(item, "profile")?,
+            recorded=item.get("dependencies") != None,
+            name=registry_text(item, "name")?,
+            kind=registry_text(item, "kind")?,
+            crate_hash=registry_text(item, "crate_hash")?,
+            artifact=registry_artifact_path(item, closure_directory)?,
+            refusal=registry_text(item, "refusal")?,
+        ),
+    )
+
+
+def registry_artifact_path(item: JsonValue, closure_directory: Path) -> Result[str, str]:
+    """Locate optional baked native metadata relative to its closure, preserving legacy null artifacts."""
+    match item.get("artifact"):
+        None => return Ok("")
+        Some(value) =>
+            if value.is_null():
+                return Ok("")
+            return Ok(located(closure_directory, value.expect_str().map_err((error) => error.message())?))
+
+
+def registry_text(item: JsonValue, key: str) -> Result[str, str]:
+    """Allow a missing legacy field, while refusing a present field of the wrong type."""
+    match item.get(key):
+        None => return Ok("")
+        Some(value) => return value.expect_str().map_err((error) => error.message())
+
+
+def registry_dependencies(item: JsonValue) -> Result[list[str], str]:
+    """Read exact producer dependency entries; absent legacy metadata is completed separately."""
+    match item.get("dependencies"):
+        None => return Ok([])
+        Some(value) =>
+            records = value.expect_array().map_err((error) => error.message())?
+            return Ok([required_text(record, "entry")? for record in records])
+
+
+pub def selected_registry(
+    registry: RegistryUnits,
+    facets: list[LocalFacet],
+    profile: str,
+) -> Result[RegistryUnits, str]:
+    """Select every local facet's registry roots together before any producer compiles or any alias is bound."""
+    mut demands: list[RegistryDemand] = []
+    for facet in facets:
+        for record in facet.registry:
+            demands.append(RegistryDemand(selection=registry_selection(record)?, domain=facet.domain.value()))
+    selected = registry.select(demands, profile)?
+    for unit in selected.units:
+        if unit.entry != "":
+            import_payload(Path(registry_artifact(unit)?), unit.entry)?
+    return Ok(selected)
+
+
+pub def registry_features(value: JsonValue) -> Result[list[str], str]:
+    """The explicit features of a registry request or prepared unit, refusing malformed closure input."""
+    selected = field(value, "features", []).map_err((_) => "registry unit or request names no features")?
+    return strings(selected, ["features"]).map_err((_) => "registry features must be a list of strings")
+
+
+pub def registry_selection(selected: JsonValue) -> Result[RegistrySelection, str]:
+    """What one registry request of a facet asks for: its Loaf, its version requirement and its features."""
+    loaf = required_text(selected, "loaf")?
+    requirement = required_text(selected, "req")?
+    return Ok(RegistrySelection(loaf=loaf, requirement=requirement, features=registry_features(selected)?))

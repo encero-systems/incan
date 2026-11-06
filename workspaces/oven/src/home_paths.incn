@@ -1,9 +1,24 @@
-"""Canonical home and bakery locations, independent of installation admission and compiler policy."""
+"""
+Canonical home and bakery locations, independent of installation admission and compiler policy.
+
+The bakery is resolved here and only here: `INCAN_BAKERY`, then `[storage] root` in the home's `config.toml`, then
+`bakery` in the home. Every command reaches the bakery through `bakery()` or `bakery_location()`.
+"""
 
 from std.environ import get_or
 from std.fs import Path
+from storage_policy import StoragePolicy, policy_file, read_policy
 
 pub const TOOLCHAIN: str = "0.6.0-dev.8"
+# The environment override of `[storage] root`, and the source a location it selects reports.
+pub const BAKERY_OVERRIDE: str = "INCAN_BAKERY"
+
+
+pub model BakeryLocation:
+    """The bakery a command uses and what selected it: `INCAN_BAKERY`, the configuration file, or `default`."""
+
+    pub path: Path
+    pub source: str
 
 
 pub def home() -> Result[Path, str]:
@@ -27,12 +42,36 @@ def resolved_home(path: Path) -> Result[Path, str]:
     return Ok(parent.joinpath(absolute.name()))
 
 
+pub def storage_policy() -> Result[StoragePolicy, str]:
+    """The policy the home's `config.toml` selects; a process without a home directory has the defaults."""
+    match home():
+        Err(_) => return Ok(StoragePolicy())
+        Ok(directory) => return read_policy(policy_file(directory))
+
+
 pub def bakery() -> Result[Path, str]:
-    """The work bakery selected by the home or its explicit storage override."""
-    configured = get_or("INCAN_BAKERY", "")
-    if configured != "":
-        return Path(configured).absolute().map_err((error) => error.message())
-    return installation_catalog()
+    """The work bakery this process uses."""
+    return Ok(bakery_location()?.path)
+
+
+pub def bakery_location() -> Result[BakeryLocation, str]:
+    """The work bakery this process uses, with the source that selected it."""
+    return select_bakery(get_or(BAKERY_OVERRIDE, ""), home())
+
+
+pub def select_bakery(requested: str, directory: Result[Path, str]) -> Result[BakeryLocation, str]:
+    """
+    Resolve the bakery for an `INCAN_BAKERY` value and the Incan home at `directory`.
+
+    A nonempty `requested` path selects its absolute form for this invocation and leaves the configuration file
+    unread and unchanged. Otherwise the home's `[storage] root` selects the location, or `bakery` in the home by
+    default; an invalid configuration is refused, never replaced by the default.
+    """
+    if requested != "":
+        path = Path(requested).absolute().map_err((error) => error.message())?
+        return Ok(BakeryLocation(path=path, source=BAKERY_OVERRIDE))
+    policy = read_policy(policy_file(directory?))?
+    return Ok(BakeryLocation(path=Path(policy.root), source=policy.root_source))
 
 
 pub def installation_catalog() -> Result[Path, str]:

@@ -6,22 +6,28 @@ Oven is the build system and the `incan` command line, written in Incan (DD-0008
 
 | Module | Owns |
 | --- | --- |
-| `main.incn` | The `incan` command line: `run`, `check`, `test`, `describe-unit`, `build`, `fmt`, `inspect codegraph`. |
+| `main.incn` | The `oven` and `incan` command lines: dispatch, option parsing and failures for every command. |
+| `surfaces.incn` | Which commands `oven` and which `incan` runs (RFC 118), the refusal for a command given to the other name, and the entry points installation exposes. |
 | `graph_inspection.incn`, `graph_dependencies.incn`, `graph_incan.incn`, `graph_rust.incn`, `graph_loaves.incn`, `graph_cache.incn`, `graph_queries.incn` | Selecting inspection units, reading published Loaf graphs, caching legacy exports by input digest, and querying compiler-owned records. Incan facts come from the shared compiler exporter; Rust facts come from analysis in the installed rustc driver. |
-| `unit.incn` | The unit description (`incan.unit/1`) of a program, library or test unit: what the compiler reads instead of a manifest (`incan describe-unit PATH`). |
+| `unit.incn` | The unit description (`incan.unit/1`) of a program, library or test unit: what the compiler reads instead of a manifest (`oven describe-unit PATH`). |
 | `toolchain.incn` | The installed toolchain (`<home>/toolchains/<toolchain>/toolchain.json`, `incan.toolchain/1`): the compiler, the pinned sysroot it was built against, the ABI cache of its standard Rust crates (DD-0009), and the native closure every compiled unit links. |
 | `toolchain_archive.incn` | Packing the installed toolchain's named artifacts and rewriting toolchain, registry and standard Loaf paths for relocation. |
 | `incan_units.incn` | Preparing path libraries in dependency order, checking and compiling a described unit with the toolchain's compiler, and running the program it compiled (`incan check`, `incan run`, `incan build`). |
 | `unit_freshness.incn` | Content fingerprints for prepared path libraries: selected unit inputs, source files, compiler inputs and reached Loaf artifacts. |
 | `testing.incn` | Running a compiled test unit and reporting the collected tests' observed outcomes (`incan test PATH [UNIT OPTIONS]`). |
-| `rust_units.incn` | Rust units: a local Loaf's Rust facet and the local facets it reaches, one `rustc` per unit against compiled registry units (`incan build`). A binary that links the toolchain's own `rustc_driver` gets a runpath to it and the identity it was built against. |
-| `intake.incn`, `manifest_errors.incn` | Reading `loaf.toml`: the package, its scripts and features, its path, Rust-facet and registry dependencies (standard packages are ambient, never declared), its source root, contract model bundles and C headers. Every refusal names the manifest, the field path and its TOML location. |
+| `rust_units.incn` | Rust units: a local Loaf's Rust facet and the local facets it reaches, libraries in dependency order, one `rustc` per unit against compiled registry units (`incan build`). |
+| `rust_build.incn` | The shared Rust build request: unit ordering, the externs and search directories each unit links, the pinned toolchain's libraries and `rustc` invocation. |
+| `rust_binaries.incn` | A facet's binaries. A binary that links the toolchain's own `rustc_driver` gets a runpath to it and the identity it was built against. |
+| `rust_manifest.incn` | A Loaf's Rust facet declaration: its library crate, binaries and toolchain requests. |
+| `rust_registry.incn` | The registry closure a toolchain ships, and the registry units a build selects from it. |
+| `intake.incn`, `manifest_intent.incn`, `manifest_errors.incn` | Reading `loaf.toml`: the package, its scripts and features, its path, Rust-facet and registry dependencies (standard packages are ambient, never declared), its source root, contract model bundles and C headers. Every refusal names the manifest, the field path and its TOML location. |
+| `segment_store.incn` | The store substrate: snapshots, views, reads, transactions, leases and compaction over immutable segments and index pages (DD-0012). `segment_files.incn` holds its failures, work observation and synced file operations, `segment_codec.incn` its frame encoding, `segment_payloads.incn` its content-named payloads, `segment_repair.incn` its explicit repair and quarantine, and `segment_collection.incn` its explicit collection. |
 | `features.incn` | Project feature requests and the Incan view of the shared local facet graph (RFC 114). |
 | `home.incn` | The home (`INCAN_HOME`) and the artifact layout of standard packages and path dependencies; the toolchain's standard packages. |
 | `json_fields.incn`, `semver_req.incn` | Typed JSON fields and version requirement checks for prepared registry units. |
 | `rust_source.incn`, `rust_activation.incn`, `cfg_predicate.incn`, `loaf_local_graph.incn` | The shared local graph: dependency declarations, `cfg` and target predicates, per-unit activation and feature propagation, keeping host and target separate. |
 
-`test_*.incn` hold each module's tests. The dev.8 command accepts one test file at a time; directory discovery is not implemented.
+`test_*.incn` hold each module's tests; `freshness_fixtures.incn` holds the scratch project and toolchain the unit freshness tests share. The dev.8 command accepts one test file at a time; directory discovery is not implemented.
 
 ## Test units
 

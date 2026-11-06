@@ -17,7 +17,8 @@ use incan_semantics_core::IncanInputAccess;
 impl Builder<'_> {
     /// Apply a selected free-function contract without inspecting its body. Borrowed arguments remain live until
     /// invocation, and owned arguments transfer at their source evaluation position even for a read-only callee.
-    /// Missing default/rest/capture/returned-dependency facts never become a successful partial call graph.
+    /// Omitted declaration-owned defaults evaluate in the callee frame and therefore add no caller-side source
+    /// event. Missing rest/capture/returned-dependency facts never become a successful partial call graph.
     pub(super) fn call(
         &mut self,
         callee: &Spanned<Expr>,
@@ -147,10 +148,7 @@ impl Builder<'_> {
         self.finish_operation(span, operands, incoming)
     }
 
-    /// Apply one canonical call, evaluating its receiver before written arguments. The receiver's declared access
-    /// remains live through invocation; no method-body analysis is needed to strengthen or weaken that contract.
-    /// A call to an async callable makes a future that holds the call's loans until it completes; only an `await` on
-    /// the call itself ends them where the call is made.
+    /// Require an async call to be awaited at its source position so its retained loans have a bounded lifetime.
     fn require_awaited(&self, span: Span) -> Result<(), Unavailable> {
         if self
             .checker
@@ -168,6 +166,10 @@ impl Builder<'_> {
         Ok(())
     }
 
+    /// Apply one canonical call, evaluating its receiver before written arguments. The receiver's declared access
+    /// remains live through invocation; no method-body analysis is needed to strengthen or weaken that contract.
+    /// A call to an async callable makes a future that holds the call's loans until it completes; only an `await` on
+    /// the call itself ends them where the call is made.
     pub(super) fn apply_call(
         &mut self,
         receiver: Option<&Spanned<Expr>>,
@@ -228,11 +230,10 @@ impl Builder<'_> {
             .parameters
             .iter()
             .any(|parameter| parameter.kind != ParamKind::Normal || parameter.is_partial_preset)
-            || arguments.len() != call.parameters.len()
         {
             return Err(Unavailable {
                 span,
-                reason: "call needs returned, default or packed-argument dependency facts".into(),
+                reason: "call needs returned or packed-argument dependency facts".into(),
             });
         }
         let result = self.checker.type_info.expr_type(span).ok_or(Unavailable {
@@ -267,7 +268,7 @@ impl Builder<'_> {
         // ---- Existing call evaluation policy, separate from written provenance ----
         // `call` admits only unqualified fixed calls; the language reference defines declaration-order evaluation
         // for that surface. A method retains written order. Do not change this when adding ownership requests.
-        if receiver.is_none() {
+        if receiver.is_none() && call.kind != super::super::InputCallKind::Indirect {
             paired.sort_by_key(|(_, (_, slot))| *slot);
         }
         let mut loans = Vec::new();
@@ -333,7 +334,10 @@ impl Builder<'_> {
             let source = self.optional_place(expression)?.map(|path| path.place);
             let start_node = self.graph.nodes.len();
             incoming = self.event(incoming, Event::Nothing, expression.span);
-            let explicit = call.kind != super::super::InputCallKind::Ordinary;
+            let explicit = matches!(
+                call.kind,
+                super::super::InputCallKind::Explicit | super::super::InputCallKind::Native
+            );
             let (outgoing, loan) =
                 self.call_argument(expression, &call.parameters[slot], mode, explicit, span, incoming)?;
             incoming = outgoing;
@@ -592,10 +596,10 @@ impl Builder<'_> {
     }
 
     /// The returned view relation of a selected call itself, direct or carried, read from its callee's contract
-    /// without its body.
+    /// without its body. Await and grouping preserve the selected call's relationship.
     pub(super) fn call_relation(&self, expression: &Spanned<Expr>) -> Result<Option<ViewRelation>, Unavailable> {
+        let expression = super::super::builtins::view_call(expression);
         match &expression.node {
-            Expr::Paren(inner) => return self.call_relation(inner),
             Expr::Call(..) | Expr::MethodCall(..) => {}
             _ => return Ok(None),
         }
@@ -631,6 +635,15 @@ impl Builder<'_> {
         let incoming = match &expression.node {
             // `?` continues on the carried view's place; its error path leaves the body carrying no loan.
             Expr::Paren(inner) | Expr::Try(inner) => return self.evaluate_view_call(inner, relation, incoming),
+            Expr::Surface(surface) if super::super::builtins::awaited(surface).is_some() => {
+                let awaited = super::super::builtins::awaited(surface).ok_or(Unavailable {
+                    span,
+                    reason: "await has no returned-view expression".into(),
+                })?;
+                let call = super::super::builtins::view_call(awaited);
+                self.awaited.insert(call.span);
+                return self.evaluate_view_call(awaited, relation, incoming);
+            }
             Expr::MethodCall(receiver, _, _, arguments) => {
                 self.apply_call(Some(receiver), arguments, span, incoming)?
             }
@@ -692,8 +705,8 @@ impl Builder<'_> {
     }
 }
 
-/// A selected callee's returned view: its access, the source slot, the declared stored-field path, and the `Result` or
-/// `Option` payload carrying the view, if any.
+/// A selected callee's returned view: its access, the source slot, the declared stored-field path, and the carrier
+/// payload or tuple element holding the view, if any.
 pub(super) struct ViewRelation {
     exclusive: bool,
     slot: SourceSlot,

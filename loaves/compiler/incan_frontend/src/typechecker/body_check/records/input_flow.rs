@@ -109,7 +109,7 @@ pub(super) fn ordered_key(previous: &mut String, before: &[String], remaining: u
     Ok(())
 }
 
-/// Each closure bound to a local, keyed by its expression: the local, its captures, its loan and its capture reads.
+/// Each closure bound to a local, keyed by its expression: the local, its captures, retained loans and capture reads.
 fn closures(positions: &Positions, graph: &Graph, fields: &mut Vec<String>) -> Result<(), NodeBindingError> {
     let mut closures = Vec::new();
     for (span, closure) in &graph.closures {
@@ -120,9 +120,14 @@ fn closures(positions: &Positions, graph: &Graph, fields: &mut Vec<String>) -> R
         for capture in &closure.captures {
             row.push(positions.identity(capture)?);
         }
-        loan_option(closure.loan, &mut row);
+        row.push(closure.loans.len().to_string());
+        for (capture, loan) in &closure.loans {
+            row.extend([positions.identity(capture)?, loan.0.to_string()]);
+        }
         row.push(closure.reads.len().to_string());
-        row.extend(closure.reads.iter().map(usize::to_string));
+        for (capture, read) in &closure.reads {
+            row.extend([positions.identity(capture)?, read.to_string()]);
+        }
         closures.push((key, row));
     }
     ordered_fields(closures, fields)
@@ -505,14 +510,22 @@ impl Reader<'_> {
             evaluation: self.input_evaluation()?,
         })
     }
-    /// A closure bound to a local: the local, its captures, its loan and the nodes that read its captures.
+    /// A closure bound to a local: the local, its captures, retained loans and the nodes that read Copy captures.
     fn closure(&mut self) -> Result<ClosureCaptures, NodeBindingError> {
         Ok(ClosureCaptures {
             local: self.identity()?,
             captures: self.list(Self::identity)?,
-            loan: self.loan_option()?,
-            reads: self.list(Self::number)?,
+            loans: self.list(Self::closure_loan)?,
+            reads: self.list(Self::closure_read)?,
         })
+    }
+    /// A borrowed closure capture's canonical declaration and retained loan.
+    fn closure_loan(&mut self) -> Result<(CanonicalSymbolId, LoanId), NodeBindingError> {
+        Ok((self.identity()?, LoanId(self.number()?)))
+    }
+    /// A Copy closure capture's canonical declaration and source access node.
+    fn closure_read(&mut self) -> Result<(CanonicalSymbolId, usize), NodeBindingError> {
+        Ok((self.identity()?, self.number()?))
     }
     /// An argument's access mode as the callee declares it.
     fn input_access(&mut self) -> Result<IncanInputAccess, NodeBindingError> {

@@ -441,7 +441,8 @@ def check_published_graph(incan: str, project: Path) -> Result[None, str]:
     refused = invoke(incan, arguments, project)?
     if refused.code == Some(0) or "store integrity error" not in refused.stderr:
         return Err(f"stored damage was not reported: {refused.stderr}")
-    repaired = invoke(incan, ["bakery", "repair-payload", stored.name(), replacement.0], project)?
+    # Repair belongs to the project surface: the same `incan`, started as `oven`.
+    repaired = invoke(incan, ["bakery", "repair-payload", stored.name(), replacement.0], project, [], Some("oven"))?
     if repaired.code != Some(0):
         return Err(f"verified graph re-admission failed: {repaired.stderr}")
     restored_fact = invoke(incan, arguments, project)?

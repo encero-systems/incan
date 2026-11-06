@@ -26,17 +26,18 @@ from bakery import (
     view_directory,
     lookup,
     reached,
-    register_root,
     seal,
     prepare_seal,
+    prior_size,
     staging,
     unit_identity,
     unit_name,
     view,
-    Fact,
     fact_file,
     has_files_under,
 )
+from bakery_records import Fact
+from bakery_roots import register_root
 from compiler_refusals import check_or_replay
 from observation import trace, trace_launch
 from toolchain import Toolchain
@@ -187,7 +188,7 @@ pub def obtain_executable(
         None => store = bakery()?
     identity = unit_identity(selected)
     label = f"unit {crate_name(unit)} {unit.kind}"
-    register_root(store, unit.project_root, f"unit\t{crate_name(unit)}\t{unit.kind}", [identity])?
+    register_root(store, unit.project_root, root_registration(unit), [identity])?
     # 1. A sealed executable of the identity starts no compiler.
     if let Some(fact) = current_executable(store, identity, output.name(), shared)?:
         made = viewed(store, fact, output, unit.kind, shared)?
@@ -201,7 +202,7 @@ pub def obtain_executable(
         trace(f"{label}: reused (built meanwhile by another command)")
         return Ok(made)
     # 4. A failed bake publishes nothing; its staging directory goes with it.
-    staged = staging(store, identity)?
+    staged = staging(store, identity, prior_size(store, unit_name(unit)))?
     code = compile_staged(unit, toolchain, staged.joinpath(output.name()), key, bake_reason(store, unit), shared)?
     if code != 0:
         _ = staged.remove_tree()
@@ -365,6 +366,22 @@ pub def program_binary(unit: UnitDescription) -> Path:
 pub def stored_executable(unit: UnitDescription, directory: str) -> Path:
     """Where an executable of a unit is stored: `target/incan/<profile>/<directory>/<crate>` in its project."""
     return executable_view(Path(unit.project_root), unit.profile, directory, crate_name(unit))
+
+
+pub def test_source_name(unit: UnitDescription) -> str:
+    """
+    The test source a test unit compiles, by the file name its test ids carry. Each test source of a project has its
+    own executable and its own latest result, so testing two sources at once never replaces the other's.
+    """
+    return Path(unit.source).stem()
+
+
+def root_registration(unit: UnitDescription) -> str:
+    """What a unit's latest result is registered as: its crate and kind, and for a test unit also its test source."""
+    registration = f"unit\t{crate_name(unit)}\t{unit.kind}"
+    if unit.kind == "test":
+        return f"{registration}\t{test_source_name(unit)}"
+    return registration
 
 
 pub def executable_view(project: Path, profile: str, directory: str, name: str) -> Path:

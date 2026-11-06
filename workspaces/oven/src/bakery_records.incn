@@ -1,0 +1,127 @@
+"""Bakery unit records: their codec and store keys, and the claim and staging paths every bakery module names."""
+
+from rust::std::string import String as RustString
+from std.encoding.hex import hexlify
+from std.hash import sha256
+from std.fs import Path
+from std.json import JsonValue
+from files import json_text
+from json_fields import required_items, required_text, string_value
+from segment_files import StoreError
+
+const UNIT_SCHEMA: str = "incan.bakery.unit/1"
+
+
+pub model FactFile:
+    """One payload file of a unit: where it sits inside the unit, the digest it is stored under, its size and mode."""
+
+    pub path: str
+    pub digest: str
+    pub size: int
+    pub program: bool
+
+
+pub model Fact:
+    """One baked unit: its identity, kind and name, the identities it reaches, and its payload files."""
+
+    pub identity: str
+    pub kind: str
+    pub name: str
+    pub reaches: list[str]
+    pub files: list[FactFile]
+
+
+pub def record_key(identity: str) -> str:
+    """The full store key of a unit record: its complete unit identity."""
+    return f"incan.bakery.unit\t{identity}"
+
+
+pub def store_failure(error: StoreError) -> str:
+    """A store error as an Oven message."""
+    return error.message()
+
+
+pub def encode_fact(fact: Fact, provenance: str) -> Result[str, str]:
+    """The canonical text of a unit record."""
+    mut files: list[JsonValue] = []
+    for file in fact.files:
+        files.append(
+            JsonValue.object(
+                {"path": JsonValue.string(file.path), "sha256": JsonValue.string(file.digest), "size": JsonValue.int(
+                    file.size,
+                ), "program": JsonValue.bool(file.program)},
+            ),
+        )
+    document = JsonValue.object(
+        {"schema": JsonValue.string(UNIT_SCHEMA), "identity": JsonValue.string(fact.identity), "kind": JsonValue.string(
+            fact.kind,
+        ), "name": JsonValue.string(fact.name), "reaches": JsonValue.array(
+            [JsonValue.string(item) for item in fact.reaches],
+        ), "payload": JsonValue.array(files), "provenance": JsonValue.string(provenance)},
+    )
+    return json_text(document)
+
+
+pub def decode_fact(value: bytes) -> Option[Fact]:
+    """A unit record, when `value` is one."""
+    match RustString.from_utf8(value):
+        Err(_) => return None
+        Ok(text) =>
+            match JsonValue.parse(str(text)):
+                Err(_) => return None
+                Ok(document) =>
+                    match fact_document(document):
+                        Ok(fact) => return Some(fact)
+                        Err(_) => return None
+
+
+def fact_document(document: JsonValue) -> Result[Fact, str]:
+    """Read a decoded unit record; any missing field refuses it."""
+    if required_text(document, "schema")? != UNIT_SCHEMA:
+        return Err("another record schema")
+    mut files: list[FactFile] = []
+    for entry in required_items(document, "payload")?:
+        files.append(fact_file_entry(entry)?)
+    mut reaches: list[str] = []
+    for item in required_items(document, "reaches")?:
+        reaches.append(string_value(item)?)
+    return Ok(
+        Fact(
+            identity=required_text(document, "identity")?,
+            kind=required_text(document, "kind")?,
+            name=required_text(document, "name")?,
+            reaches=reaches,
+            files=files,
+        ),
+    )
+
+
+def fact_file_entry(entry: JsonValue) -> Result[FactFile, str]:
+    """One payload entry of a unit record."""
+    mut size = -1
+    match entry.get("size"):
+        Some(value) =>
+            match value.as_int():
+                Some(found) => size = found
+                None => return Err("size")
+        None => return Err("size")
+    mut program = false
+    match entry.get("program"):
+        Some(value) =>
+            match value.as_bool():
+                Some(found) => program = found
+                None => return Err("program")
+        None => return Err("program")
+    return Ok(
+        FactFile(path=required_text(entry, "path")?, digest=required_text(entry, "sha256")?, size=size, program=program),
+    )
+
+
+pub def claim_file(store: Path, identity: str) -> Path:
+    """The lock file whose exclusive lock is the claim of `identity`."""
+    return store.joinpath("claims").joinpath(hexlify(sha256.digest(record_key(identity).encode("utf-8"))))
+
+
+pub def staging_root(store: Path) -> Path:
+    """Where bakes in progress stage their files."""
+    return store.joinpath("staging")

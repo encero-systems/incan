@@ -2,7 +2,7 @@
 # environment:
 #   INCAN_BAKERY=target/case-bakery
 # cli-commands:
-#   bakery verify
+#   oven bakery verify
 # cli-concurrent:
 #   build src/main.incn
 #   build src/main.incn

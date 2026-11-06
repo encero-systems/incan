@@ -1,0 +1,81 @@
+"""UUID version, variant and error values for `std.uuid`."""
+
+from std.traits.error import Error
+
+
+pub enum UuidVersion:
+    """
+    RFC 9562 UUID version marker.
+
+    `Nil` and `Max` represent the two special UUID values. `Unknown(version)` preserves non-standard version
+    nibbles for UUIDs introduced through `from_bytes(...)` or `from_int(...)` instead of rejecting the value.
+    """
+
+    Nil
+    V1
+    V2
+    V3
+    V4
+    V5
+    V6
+    V7
+    V8
+    Max
+    Unknown(int)
+
+    def from_nibble(value: int) -> Self:
+        """
+        Convert a UUID version nibble into the corresponding marker.
+
+        Args:
+            value: The high nibble from UUID byte 6.
+
+        Returns:
+            The known version marker, or `Unknown(value)` for non-standard UUIDs.
+        """
+        match value:
+            1 => return UuidVersion.V1
+            2 => return UuidVersion.V2
+            3 => return UuidVersion.V3
+            4 => return UuidVersion.V4
+            5 => return UuidVersion.V5
+            6 => return UuidVersion.V6
+            7 => return UuidVersion.V7
+            8 => return UuidVersion.V8
+            _ => return UuidVersion.Unknown(value)
+
+
+pub enum UuidVariant:
+    """
+    UUID variant encoded in octet 8.
+
+    Values introduced through binary or numeric conversion may report non-RFC variants. Version 8 construction
+    always forces the RFC 9562 variant bits.
+    """
+
+    Ncs
+    Rfc9562
+    Microsoft
+    Future
+    Unknown
+
+
+pub model UuidError with Error:
+    """
+    Error returned by UUID parsing and byte conversion.
+
+    `kind` is stable enough for callers to branch on validation categories such as `invalid_length`,
+    `invalid_character`, and `invalid_bytes`. `detail` keeps the human-readable context.
+    """
+
+    pub kind: str
+    pub detail: str
+
+    def message(self) -> str:
+        """
+        Return the human-readable error detail.
+
+        Returns:
+            The detail text attached to the UUID failure.
+        """
+        return self.detail

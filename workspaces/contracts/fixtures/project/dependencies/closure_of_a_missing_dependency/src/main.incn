@@ -1,6 +1,6 @@
 # behavior: a closure that needs a dependency whose directory does not exist is refused, naming the dependency
 # cli-commands:
-#   inspect dependencies src/main.incn
+#   oven inspect dependencies src/main.incn
 # expect-stderr-contains:
 #   ghost
 # expect-exit: 1

@@ -1,4 +1,4 @@
-# behavior: nested frozen text and byte collections retain reads; inferred native FrozenList retains tuple arguments
+# behavior: nested frozen text and byte collections retain reads; inferred native FrozenList retains tuple arguments; a native FrozenList leaked from text in a function with a type parameter keeps its owned elements through a local (#2447)
 # expect-stdout:
 #   2
 #   beta
@@ -6,6 +6,7 @@
 #   beta
 #   2
 #   1
+#   2
 #   2
 
 from rust::incan_std_core::frozen import FrozenList as NativeFrozenList, FrozenDict as NativeFrozenDict
@@ -23,11 +24,18 @@ def retain_inferred_owner[K with Static, V with Static](value: NativeFrozenDict[
     _ = inferred.get(0)
 
 
+def native_frozen_length[T with Static](values: list[T]) -> int:
+    """Leak the list into native frozen storage held by a local, then read its length through that local."""
+    frozen = NativeFrozenList.leak(values)
+    return int(frozen.len())
+
+
 def main() -> None:
     """Observe nested frozen collections and an inferred native owner.
 
     1. Read nested text and bytes through frozen collections.
     2. Instantiate a method on an inferred frozen owner inside a function with type parameters.
+    3. Leak text into native frozen storage inside a function with a type parameter.
     """
     # 1. Read nested text and bytes through frozen collections.
     println(len(TABLE))
@@ -39,3 +47,5 @@ def main() -> None:
     println(len(CHUNKS[0]))
     # 2. Instantiate the inferred frozen owner inside a function with type parameters.
     retain_inferred_owner[int, int](ENTRIES)
+    # 3. Leak text into native frozen storage inside a function with a type parameter.
+    println(native_frozen_length[str](["native", "storage"]))

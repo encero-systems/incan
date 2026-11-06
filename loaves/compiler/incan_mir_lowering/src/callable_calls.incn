@@ -58,6 +58,7 @@ from closures import (
     return_representation,
     closure_arguments,
     closure_constructor,
+    borrowed_callable_forwarder,
     pointer_forwarder,
 )
 from partial_callables import partial_flags, partial_call_operands
@@ -377,7 +378,12 @@ pub def call_callable_place(
             return call_closure_once(builder, callable, signature, operands, output, span)
         PlanType.Closure(_held) => return call_closure(builder, callable, signature, operands, output, span)
         PlanType.ClosureRef(_held) => return call_closure(builder, callable, signature, operands, output, span)
-        PlanType.BorrowingClosure(_held) => return call_closure(builder, callable, signature, operands, output, span)
+        PlanType.BorrowingClosure(_held) =>
+            call_closure(builder, callable, signature, operands, output, span)?
+            if held.last_use and callable.local > builder.parameter_count:
+                drop_owned(builder, callable.local, span)
+            return Ok(None)
+        PlanType.BorrowingClosureRef(_held) => return call_closure(builder, callable, signature, operands, output, span)
         _ => pass
     value = place_read(builder, held.place, held.fact, span)?
     return lower_callable_result(builder, CalleeKind.Value(value), operands, output, result, span)
@@ -423,7 +429,8 @@ pub def call_closure(
     receiver = callable_object(builder, callable, signature, span)?
     mut callee = CalleeKind.CallClosure(signature)
     match place_type(builder.locals, callable):
-        PlanType.BorrowingClosure(_held) => callee = CalleeKind.CallBorrowingClosure(signature)
+        (PlanType.BorrowingClosure(_held) | PlanType.BorrowingClosureRef(_held)) =>
+            callee = CalleeKind.CallBorrowingClosure(signature)
         _ => pass
     return lower_callable_result(
         builder,
@@ -444,6 +451,7 @@ pub def callable_object(
     """Borrow an owned closure, or copy a received view, as the shared callable object a call takes."""
     match place_type(builder.locals, callable):
         PlanType.ClosureRef(_held) => return Ok(read_place(callable, false, span))
+        PlanType.BorrowingClosureRef(_held) => return Ok(read_place(callable, false, span))
         PlanType.Closure(_held) =>
             view = temporary(builder, PlanType.ClosureRef(signature), span)
             builder.emit(plan_assign(view, RvalueKind.ClosureObject(callable), span))
@@ -460,8 +468,9 @@ pub def callable_argument(
     value: &RustOperand,
     signature: list[PlanType],
     span: SourceSpan,
+    borrowing: bool = false,
 ) -> Result[Operand, str]:
-    """Give a closure-holding parameter a shared callable object; a function item is boxed behind a forwarding environment."""
+    """Adapt a callable to the parameter's shared view or call-owned lending envelope."""
     match value:
         RustOperand.Place(read) =>
             place = scalar_place(builder, read.place, span)?
@@ -475,21 +484,58 @@ pub def callable_argument(
                 PlanType.FunctionItem(_name, _held) =>
                     pointer = temporary(builder, PlanType.FunctionPointer(signature), span)
                     builder.emit(plan_assign(pointer, RvalueKind.ReifyFunction(read_place(place, false, span)), span))
-                    return pointer_callable_argument(builder, pointer, signature, span)
-                PlanType.FunctionPointer(_held) => return pointer_callable_argument(builder, place, signature, span)
-                _ => return callable_object(builder, place, signature, span)
+                    owner = pointer_callable_owner(builder, pointer, signature, span)?
+                    if borrowing:
+                        return borrowed_callable_argument(builder, owner, signature, span)
+                    return callable_object(builder, owner, signature, span)
+                PlanType.FunctionPointer(_held) =>
+                    owner = pointer_callable_owner(builder, place, signature, span)?
+                    if borrowing:
+                        return borrowed_callable_argument(builder, owner, signature, span)
+                    return callable_object(builder, owner, signature, span)
+                _ =>
+                    if borrowing:
+                        return borrowed_callable_argument(builder, place, signature, span)
+                    return callable_object(builder, place, signature, span)
         _ => return Err("unsupported Body IR constant passed to a closure-holding parameter")
 
 
-def pointer_callable_argument(
+def borrowed_callable_argument(
     mut builder: Builder,
-    pointer: Place,
+    callable: Place,
     signature: list[PlanType],
     span: SourceSpan,
 ) -> Result[Operand, str]:
-    """Box a function pointer behind the same local forwarding environment for source and compiled function items."""
-    boxed = pointer_callable_owner(builder, pointer, signature, span)?
-    return callable_object(builder, boxed, signature, span)
+    """Move a call-owned envelope that lends the source callable for the callee's calls."""
+    mut borrowing_source = false
+    match place_type(builder.locals, callable):
+        (PlanType.BorrowingClosure(_held) | PlanType.BorrowingClosureRef(_held)) =>
+            borrowing_source = true
+        (PlanType.Closure(_held) | PlanType.ClosureRef(_held)) => pass
+        _ => return Err("unsupported Body IR borrowing callable argument")
+    source = callable_object(builder, callable, signature, span)?
+    mut capture = PlanType.ClosureRef(signature)
+    if borrowing_source:
+        capture = PlanType.BorrowingClosureRef(signature)
+    name = f"__incan_borrowed_callable_{builder.name}_{len(builder.synthesized)}"
+    synthesize(builder, borrowed_callable_forwarder(name, signature, borrowing_source, span)?)
+    constructor = f"{name}_new"
+    synthesize(
+        builder,
+        closure_constructor(
+            constructor,
+            name,
+            [capture],
+            signature,
+            false,
+            span,
+            borrowing=true,
+        ),
+    )
+    boxed = temporary(builder, PlanType.BorrowingClosure(signature), span)
+    terminate_call(builder, CalleeKind.Planned(constructor), [source], boxed, span)
+    builder.owned.append(boxed.local)
+    return Ok(read_place(boxed, true, span))
 
 
 def pointer_callable_owner(

@@ -15,6 +15,8 @@
 #   ["a", "z"]
 #   captured chain created
 #   2
+#   ab
+#   ab
 
 """Keep generic inherent, trait and extension receiver calls of registry crates in one area case."""
 
@@ -53,6 +55,7 @@ from std.traits.callable import Callable1
 from std.rust import Static
 import collection_lookup
 import collection_lookup_with_enum
+import capture_iteration
 
 
 model DecodedValue[T with Clone]:
@@ -375,4 +378,5 @@ def main() -> None:
     println("captured chain created")
     println(native_snapshot_length[str](words))
     check_borrowed_captures()
+    capture_iteration.show_capture_slices()
     assert list(native_batches((value for value in [1, 2, 3]), 2)) == [[1, 2], [3]]

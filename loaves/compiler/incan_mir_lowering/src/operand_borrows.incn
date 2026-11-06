@@ -57,7 +57,9 @@ pub def lower_discarded_operand(mut builder: Builder, value: &RustOperand, span:
     match value:
         RustOperand.Constant(constant) =>
             match constant:
-                RustConstant.Str(_text) => is_text = true
+                # A discarded string constant, such as a docstring, has no effect: materializing it would allocate
+                # and free its text on every call.
+                RustConstant.Str(_text) => return Ok(None)
                 _ => pass
         RustOperand.Place(read) =>
             place = scalar_place(builder, read.place, span)?

@@ -132,14 +132,12 @@ pub fn fn_once_call(tcx: TyCtxt<'_>) -> Result<DefId, PlanError> {
         .ok_or_else(|| PlanError::UnknownCallee("FnOnce::call_once".into()))
 }
 
-/// Resolve only a source-local function item admitted by the plan's canonical frontend identity.
+/// Resolve only a source-local function item admitted by the plan's canonical frontend identity, through the active
+/// plan's name index rather than a scan of every crate item. Planned callees exist only while a plan compiles.
 pub fn planned(tcx: TyCtxt<'_>, name: &str) -> Result<DefId, PlanError> {
-    tcx.hir_crate_items(())
-        .free_items()
-        .map(|item| item.owner_id.to_def_id())
-        .find(|def| {
-            tcx.def_kind(*def) == DefKind::Fn && tcx.opt_item_name(*def).is_some_and(|symbol| symbol.as_str() == name)
-        })
+    crate::adapter::active_plan()
+        .ok()
+        .and_then(|plan| plan.item(tcx, name))
         .ok_or_else(|| PlanError::UnknownCallee(name.into()))
 }
 

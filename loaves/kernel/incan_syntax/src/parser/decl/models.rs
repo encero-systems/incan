@@ -140,6 +140,11 @@ impl<'a> Parser<'a> {
                 } else if self.starts_property_decl() {
                     properties.push(self.property_decl(method_decorators, true)?);
                 } else {
+                    if self.check_keyword(KeywordId::Pub) && self.starts_method_decl() {
+                        // A trait method takes the trait's visibility (#2570); the rest of the method still parses.
+                        self.errors
+                            .push(errors::pub_modifier_not_allowed_on_trait_method(self.current_span()));
+                    }
                     methods.push(self.method_decl(method_decorators, true)?);
                 }
                 self.skip_newlines();
@@ -185,7 +190,7 @@ impl<'a> Parser<'a> {
             }
 
             // Check if it's a method (`def` or surface-modifier-prefixed `def`).
-            if self.starts_surface_function_decl() {
+            if self.starts_method_decl() {
                 methods.push(self.method_decl(decorators, false)?);
             } else if self.starts_surface_property_decl() {
                 properties.push(self.property_decl(decorators, false)?);

@@ -466,36 +466,38 @@ fn match_arm_transfers_join_like_branches() -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
-/// Recursive source projection must not turn a failure-only assertion transfer into an ordinary branch transfer.
+/// A failure-only assertion transfer moves the owner only on the diverging path and retains successful cleanup.
 #[test]
-fn conditional_projection_keeps_nested_unsupported_cleanup_refused() -> Result<(), Box<dyn std::error::Error>> {
-    for source in [
-        "def consume(value: Owned[str]) -> str:\n    return \"message\"\ndef main(flag: bool) -> None:\n    value = \"owner\"\n    if flag:\n        assert flag, consume(value)\n",
-    ] {
-        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
-        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
-        let mut checker = crate::typechecker::TypeChecker::new();
-        let errors = checker.check_program(&program).err().ok_or("expected staged refusal")?;
-        assert!(errors.iter().any(|error| error.stable_code() == Some("INCAN-T0123")));
-        let facts = checker.into_type_info();
-        let function = program
-            .declarations
-            .iter()
-            .find_map(|declaration| match &declaration.node {
-                crate::ast::Declaration::Function(function) if function.name == "main" => {
-                    Some((function, declaration.span))
-                }
-                _ => None,
-            })
-            .ok_or("missing source function")?;
-        let owner = facts
-            .declarations
-            .function_bindings_by_span
-            .get(&function.1)
-            .and_then(|binding| binding.identity.as_ref())
-            .ok_or("missing owner")?;
-        assert!(facts.conditional_input_projection(owner, function.0).is_err());
-    }
+fn assertion_message_transfer_retains_the_successful_owner() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def consume(value: Owned[str]) -> str:\n    return value\ndef main(flag: bool) -> None:\n    value = \"owner\"\n    assert flag, consume(value)\n    print(value)\n";
+    let module = staged(source, false)?;
+    let body = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "main")
+        .ok_or("missing assertion body")?;
+    let owner = body
+        .locals
+        .iter()
+        .find(|local| local.name.as_deref() == Some("value"))
+        .ok_or("missing assertion owner")?
+        .id;
+    let assertion = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::If { else_block, .. } => else_block.as_ref(),
+            _ => None,
+        })
+        .ok_or("missing assertion failure block")?;
+    assert_eq!(transfers(assertion, owner), 1);
+    assert_eq!(transfers(&body.block, owner), 1);
+    assert!(
+        body.checked_input_profile
+            .as_ref()
+            .is_some_and(|profile| profile.version == 1)
+    );
     Ok(())
 }
 

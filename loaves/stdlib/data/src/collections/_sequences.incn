@@ -1,0 +1,342 @@
+"""Double-ended and priority queues for `std.collections`."""
+
+from crate.collections._values import _contains_value
+
+
+pub enum PriorityOrder:
+    """
+    Ordering policy for `PriorityQueue` construction.
+
+    `MinFirst` pops the smallest value first. `MaxFirst` pops the largest value first.
+    """
+
+    MinFirst
+    MaxFirst
+
+
+@derive(Clone)
+pub model Deque[T with (Clone, Eq)]:
+    """
+    Double-ended queue value.
+
+    Values are stored in front-to-back order. The deque exposes both `append()` / `appendleft()` and
+    `push_back()` / `push_front()` spellings so callers can use the convention that fits their codebase.
+
+    Example:
+
+    ```incan
+    mut queue = Deque[int]()
+    queue.append(1)
+    queue.appendleft(0)
+    println(queue.pop())      # 1
+    println(queue.popleft())  # 0
+    ```
+    """
+
+    pub items: list[T] = []
+
+    @staticmethod
+    def __incan_new() -> Self:
+        """
+        Create an empty deque.
+
+        Returns:
+            A deque with no values.
+        """
+        return Deque(items=[])
+
+    @staticmethod
+    def from_iter(items: list[T]) -> Self:
+        """
+        Create a deque from a list.
+
+        Args:
+            items: Values to copy into the deque from front to back.
+
+        Returns:
+            A deque containing the values in their original order.
+        """
+        mut out = Deque(items=[])
+        for item in items:
+            out.push_back(item)
+        return out
+
+    def __len__(self) -> int:
+        """
+        Return the number of values in the deque.
+
+        Returns:
+            The current length.
+        """
+        return len(self.items)
+
+    def __iter__(self) -> list[T]:
+        """
+        Iterate from front to back.
+
+        Returns:
+            A list snapshot in deque order.
+        """
+        return self.items
+
+    def __getitem__(self, index: int) -> T:
+        """
+        Return the value at an index.
+
+        Args:
+            index: Zero-based position from the front of the deque.
+
+        Returns:
+            The value at `index`.
+        """
+        return self.items[index]
+
+    def __contains__(self, value: T) -> bool:
+        """
+        Check whether a value appears in the deque.
+
+        Args:
+            value: Value to search for.
+
+        Returns:
+            `true` when an equal value is present.
+        """
+        return _contains_value(self.items, value)
+
+    def push_back(mut self, value: T) -> None:
+        """
+        Append a value at the back of the deque.
+
+        Args:
+            value: Value to add after the current back element.
+        """
+        self.items.append(value)
+
+    def append(mut self, value: T) -> None:
+        """
+        Append a value at the back of the deque.
+
+        Args:
+            value: Value to add after the current back element.
+        """
+        self.push_back(value)
+
+    def push_front(mut self, value: T) -> None:
+        """
+        Append a value at the front of the deque.
+
+        Args:
+            value: Value to add before the current front element.
+        """
+        self.items.append(value)
+        mut index = len(self.items) - 1
+        while index > 0:
+            self.items.swap(index, index - 1)
+            index -= 1
+
+    def appendleft(mut self, value: T) -> None:
+        """
+        Append a value at the front of the deque.
+
+        Args:
+            value: Value to add before the current front element.
+        """
+        self.push_front(value)
+
+    def pop_back(mut self) -> T:
+        """
+        Remove and return the back value.
+
+        Returns:
+            The value that was at the back of the deque.
+        """
+        return self.items.pop()
+
+    def pop(mut self) -> T:
+        """
+        Remove and return the back value.
+
+        Returns:
+            The value that was at the back of the deque.
+        """
+        return self.pop_back()
+
+    def pop_front(mut self) -> T:
+        """
+        Remove and return the front value.
+
+        Returns:
+            The value that was at the front of the deque.
+        """
+        value = self.items[0]
+        self.items.remove(0)
+        return value
+
+    def popleft(mut self) -> T:
+        """
+        Remove and return the front value.
+
+        Returns:
+            The value that was at the front of the deque.
+        """
+        return self.pop_front()
+
+    def clear(mut self) -> None:
+        """
+        Remove every value from the deque.
+
+        The deque remains usable after clearing.
+        """
+        while len(self.items) > 0:
+            self.items.pop()
+
+    def to_list(self) -> list[T]:
+        """
+        Return the deque as a list.
+
+        Returns:
+            A list snapshot in front-to-back order.
+        """
+        return self.items
+
+
+@derive(Clone)
+pub model PriorityQueue[T with (Clone, Ord)]:
+    """
+    Priority queue with a construction-time ordering policy.
+
+    `PriorityQueue()` uses `PriorityOrder.MinFirst`. Use `max_first()` or `with_order(PriorityOrder.MaxFirst)` when the
+    largest value should be popped first.
+    """
+
+    pub items: list[T] = []
+    pub order: PriorityOrder = PriorityOrder.MinFirst
+
+    @staticmethod
+    def __incan_new() -> Self:
+        """
+        Create an empty min-first priority queue.
+
+        Returns:
+            A priority queue that pops the smallest value first.
+        """
+        return PriorityQueue(items=[], order=PriorityOrder.MinFirst)
+
+    @staticmethod
+    def with_order(order: PriorityOrder) -> Self:
+        """
+        Create an empty priority queue with an explicit ordering policy.
+
+        Args:
+            order: Ordering policy used for future `push()` and `pop()` operations.
+
+        Returns:
+            An empty priority queue.
+        """
+        return PriorityQueue(items=[], order=order)
+
+    @staticmethod
+    def max_first() -> Self:
+        """
+        Create an empty max-first priority queue.
+
+        Returns:
+            A priority queue that pops the largest value first.
+        """
+        return PriorityQueue(items=[], order=PriorityOrder.MaxFirst)
+
+    @staticmethod
+    def from_iter(items: list[T], order: PriorityOrder = PriorityOrder.MinFirst) -> Self:
+        """
+        Create a priority queue from a list.
+
+        Args:
+            items: Values to enqueue.
+            order: Ordering policy used to arrange values.
+
+        Returns:
+            A priority queue containing `items` in pop order.
+        """
+        mut out = PriorityQueue(items=[], order=order)
+        for item in items:
+            out.push(item)
+        return out
+
+    def __len__(self) -> int:
+        """
+        Return the number of queued values.
+
+        Returns:
+            The current queue length.
+        """
+        return len(self.items)
+
+    def __iter__(self) -> list[T]:
+        """
+        Iterate over queued values without consuming the queue.
+
+        Returns:
+            Values in pop order.
+        """
+        return self.items
+
+    def push(mut self, value: T) -> None:
+        """
+        Insert a value according to the queue ordering policy.
+
+        Args:
+            value: Value to enqueue.
+        """
+        self.items.append(value)
+        self.bubble_value_left(len(self.items) - 1)
+
+    def pop(mut self) -> T:
+        """
+        Remove and return the next priority value.
+
+        Returns:
+            The smallest or largest queued value, depending on the queue order.
+        """
+        value = self.items[0]
+        self.items.remove(0)
+        return value
+
+    def peek(self) -> Option[T]:
+        """
+        Inspect the next priority value without removing it.
+
+        Returns:
+            `Some(value)` for the next value, or `None` when the queue is empty.
+        """
+        if len(self.items) == 0:
+            return None
+        return Some(self.items[0])
+
+    def is_empty(self) -> bool:
+        """
+        Check whether the queue is empty.
+
+        Returns:
+            `true` when no values are queued.
+        """
+        return len(self.items) == 0
+
+    def to_list(self) -> list[T]:
+        """
+        Return queued values as a list.
+
+        Returns:
+            Values in pop order.
+        """
+        return self.items
+
+    def bubble_value_left(mut self, start: int) -> None:
+        mut index = start
+        while index > 0 and self.higher_priority(self.items[index], self.items[index - 1]):
+            self.items.swap(index, index - 1)
+            index -= 1
+
+    def higher_priority(self, left: T, right: T) -> bool:
+        match self.order:
+            PriorityOrder.MinFirst => return left < right
+            PriorityOrder.MaxFirst => return right < left

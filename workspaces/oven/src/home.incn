@@ -13,7 +13,8 @@ standard packages come from.
 
 from std.environ import get_or
 from std.fs import Path
-from intake import load_project, ManifestReader, ProjectIntent
+from intake import load_project, ManifestReader
+from manifest_intent import ProjectIntent
 from toolchain import installation
 # The toolchain this Oven belongs to; it names the home's toolchain directory.
 pub from home_paths import TOOLCHAIN, home
