@@ -1,7 +1,7 @@
 """Foundational byte hashing without file or application policy."""
 
 from rust::sha2 import Digest, Sha256
-from crate.primitives.fs.mapping import MappedView
+from crate.primitives.views import MappedView
 
 
 pub trait ByteDigestHasher:

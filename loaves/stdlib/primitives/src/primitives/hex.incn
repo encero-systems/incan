@@ -1,0 +1,18 @@
+"""Foundational lowercase hexadecimal encoding without I/O or application policy."""
+
+const _HEX_LOWER: str = "0123456789abcdef"
+
+
+pub def hexlify(data: bytes) -> str:
+    """Encode bytes as lowercase hexadecimal text, with two characters per byte."""
+    return "".join([_hex_byte(int(value)) for value in data])
+
+
+def _hex_byte(value: int) -> str:
+    """Return the two lowercase hexadecimal digits of a byte value."""
+    return _hex_digit(value // 16) + _hex_digit(value % 16)
+
+
+def _hex_digit(value: int) -> str:
+    """Return one lowercase hexadecimal digit for a value in `0..15`."""
+    return _HEX_LOWER[value:value + 1]

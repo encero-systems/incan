@@ -8,6 +8,7 @@ pub mod errors;
 pub mod file;
 pub mod frozen;
 pub mod iter;
+pub mod locking;
 pub mod mapping;
 pub mod num;
 pub mod reflection;

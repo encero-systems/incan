@@ -5,16 +5,17 @@ from rust::std::io import ErrorKind
 from rust::std::os::fd import AsFd
 from rust::std::path import Path as RustPath
 from rust::rustix::fs import FlockOperation, flock
+from rust::incan_std_primitives::locking import LockGuard as NativeLockGuard
+from crate.primitives.locking import LockGuard
 from crate.primitives.fs.path import PrimitivePath
 
 
-pub type FileLock = newtype RustFile:
-    """
-    An owned shared or exclusive advisory lock guard.
+pub type FileLock = newtype LockGuard:
+    """A filesystem lock guard retaining the descriptor that owns the operating-system lock."""
 
-    The guard retains the descriptor for a stable sibling lock entry and releases the lock when it leaves scope.
-    Locks coordinate only cooperative processes and do not prevent unrelated writers from changing the protected path.
-    """
+    pub def placement_guard(self) -> LockGuard:
+        """Move this filesystem guard into the placement-neutral platform contract."""
+        return self.0
 
 
 pub def shared(path: PrimitivePath) -> Result[FileLock, str]:
@@ -41,7 +42,7 @@ def _shared(path: str) -> Result[FileLock, str]:
     """Acquire a shared lock through an independently owned path string."""
     file = _open_lock(path)?
     match flock(file.as_fd(), FlockOperation.LockShared):
-        Ok(_) => return Ok(FileLock(file))
+        Ok(_) => return Ok(FileLock(LockGuard(NativeLockGuard.file(file))))
         Err(error) => return Err(f"{error}")
 
 
@@ -49,7 +50,7 @@ def _exclusive(path: str) -> Result[FileLock, str]:
     """Acquire an exclusive lock through an independently owned path string."""
     file = _open_lock(path)?
     match flock(file.as_fd(), FlockOperation.LockExclusive):
-        Ok(_) => return Ok(FileLock(file))
+        Ok(_) => return Ok(FileLock(LockGuard(NativeLockGuard.file(file))))
         Err(error) => return Err(f"{error}")
 
 
@@ -57,7 +58,7 @@ def _try_shared(path: str) -> Result[Option[FileLock], str]:
     """Attempt a shared lock and classify expected contention."""
     file = _open_lock(path)?
     match flock(file.as_fd(), FlockOperation.NonBlockingLockShared):
-        Ok(_) => return Ok(Some(FileLock(file)))
+        Ok(_) => return Ok(Some(FileLock(LockGuard(NativeLockGuard.file(file)))))
         Err(error) =>
             if error.kind() == ErrorKind.WouldBlock:
                 return Ok(None)
@@ -68,7 +69,7 @@ def _try_exclusive(path: str) -> Result[Option[FileLock], str]:
     """Attempt an exclusive lock and classify expected contention."""
     file = _open_lock(path)?
     match flock(file.as_fd(), FlockOperation.NonBlockingLockExclusive):
-        Ok(_) => return Ok(Some(FileLock(file)))
+        Ok(_) => return Ok(Some(FileLock(LockGuard(NativeLockGuard.file(file)))))
         Err(error) =>
             if error.kind() == ErrorKind.WouldBlock:
                 return Ok(None)

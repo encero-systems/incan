@@ -12,10 +12,27 @@ use std::sync::Arc;
 
 use memmap2::Mmap;
 
+/// Immutable bytes retained by a mapped file or an owned in-memory object.
+#[derive(Debug)]
+enum ViewBacking {
+    Mapped(Mmap),
+    Owned(Vec<u8>),
+}
+
+impl ViewBacking {
+    /// Borrow the complete immutable byte sequence independently of its placement.
+    fn as_bytes(&self) -> &[u8] {
+        match self {
+            Self::Mapped(mapping) => mapping,
+            Self::Owned(bytes) => bytes,
+        }
+    }
+}
+
 /// A read-only mapping shared with its bounded views.
 #[derive(Clone, Debug)]
 pub struct MappedFile {
-    mapping: Arc<Mmap>,
+    backing: Arc<ViewBacking>,
 }
 
 impl MappedFile {
@@ -34,25 +51,40 @@ impl MappedFile {
             return Err("mapping length exceeds the supported signed offset range".into());
         }
         Ok(Self {
-            mapping: Arc::new(mapping),
+            backing: Arc::new(ViewBacking::Mapped(mapping)),
         })
+    }
+
+    /// Anchor owned immutable bytes behind the same bounded-view contract as a file mapping.
+    pub fn owned(bytes: Vec<u8>) -> Result<Self, String> {
+        if bytes.len() > i64::MAX as usize {
+            return Err("owned view length exceeds the supported signed offset range".into());
+        }
+        Ok(Self {
+            backing: Arc::new(ViewBacking::Owned(bytes)),
+        })
+    }
+
+    /// Borrow the complete immutable byte sequence.
+    fn as_bytes(&self) -> &[u8] {
+        self.backing.as_bytes()
     }
 
     /// The mapped byte length, representable by Incan's signed `int`.
     pub fn len(&self) -> i64 {
-        self.mapping.len() as i64
+        self.as_bytes().len() as i64
     }
 
     /// Whether the mapping has no bytes.
     pub fn is_empty(&self) -> bool {
-        self.mapping.is_empty()
+        self.as_bytes().is_empty()
     }
 
     /// Retain a bounded range without copying its contents or exposing an unanchored pointer.
     pub fn view(&self, offset: i64, length: i64) -> Option<MappedView> {
-        let range = checked_range(self.mapping.len(), offset, length)?;
+        let range = checked_range(self.as_bytes().len(), offset, length)?;
         Some(MappedView {
-            mapping: Arc::clone(&self.mapping),
+            backing: Arc::clone(&self.backing),
             range,
         })
     }
@@ -61,7 +93,7 @@ impl MappedFile {
 /// A zero-copy range with its own shared lifetime anchor, not an independently allocated byte buffer.
 #[derive(Clone, Debug)]
 pub struct MappedView {
-    mapping: Arc<Mmap>,
+    backing: Arc<ViewBacking>,
     range: Range<usize>,
 }
 
@@ -78,7 +110,7 @@ impl MappedView {
 
     /// Borrow the view's bytes for no longer than the owner anchor is borrowed.
     pub fn as_bytes(&self) -> &[u8] {
-        &self.mapping[self.range.clone()]
+        &self.backing.as_bytes()[self.range.clone()]
     }
 
     /// Slice relative to this view, retaining the same backing mapping and enforcing this view's bounds.
@@ -87,7 +119,7 @@ impl MappedView {
         let start = self.range.start.checked_add(relative.start)?;
         let end = self.range.start.checked_add(relative.end)?;
         Some(Self {
-            mapping: Arc::clone(&self.mapping),
+            backing: Arc::clone(&self.backing),
             range: start..end,
         })
     }
@@ -175,18 +207,33 @@ mod tests {
     #[test]
     fn shared_backing_survives_handle_and_parent() -> Result<(), Box<dyn std::error::Error>> {
         let (_file, mapping) = mapped(b"0123456789")?;
-        let weak = Arc::downgrade(&mapping.mapping);
+        let weak = Arc::downgrade(&mapping.backing);
         let parent = mapping.view(2, 6).ok_or("missing parent")?;
         let child = parent.slice(1, 3).ok_or("missing child")?;
-        assert!(Arc::ptr_eq(&mapping.mapping, &child.mapping));
-        assert_eq!(child.as_bytes().as_ptr(), mapping.mapping[3..].as_ptr());
+        assert!(Arc::ptr_eq(&mapping.backing, &child.backing));
+        assert_eq!(child.as_bytes().as_ptr(), mapping.as_bytes()[3..].as_ptr());
         let lent: &[u8] = child.as_ref();
-        assert_eq!(lent.as_ptr(), mapping.mapping[3..].as_ptr());
+        assert_eq!(lent.as_ptr(), mapping.as_bytes()[3..].as_ptr());
         drop(mapping);
         drop(parent);
         assert_eq!(child.as_bytes(), b"345");
         assert!(weak.upgrade().is_some());
         drop(child);
+        assert!(weak.upgrade().is_none());
+        Ok(())
+    }
+
+    /// Owned objects share their anchor with bounded views and expose the same scalar operations as mappings.
+    #[test]
+    fn owned_backing_uses_the_mapped_view_contract() -> Result<(), Box<dyn std::error::Error>> {
+        let mapping = MappedFile::owned(vec![0, 1, 2, 3, 4, 5, 6, 7, 8])?;
+        let weak = Arc::downgrade(&mapping.backing);
+        let view = mapping.view(1, 8).ok_or("missing owned view")?;
+        assert_eq!(view.read_u64_le(0), Some(0x0807_0605_0403_0201));
+        assert_eq!(view.slice(2, 3).ok_or("missing owned slice")?.to_bytes(), [3, 4, 5]);
+        drop(mapping);
+        assert!(weak.upgrade().is_some());
+        drop(view);
         assert!(weak.upgrade().is_none());
         Ok(())
     }
