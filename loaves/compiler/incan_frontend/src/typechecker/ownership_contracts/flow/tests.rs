@@ -53,6 +53,7 @@ fn graph(events: Vec<Event>, edges: Vec<Vec<usize>>, loans: Vec<Loan>) -> Graph 
         owned_locals: BTreeMap::new(),
         invocations: BTreeMap::new(),
         closures: BTreeMap::new(),
+        mutation: super::MutationBody::default(),
         nodes: events
             .into_iter()
             .zip(edges)

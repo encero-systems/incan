@@ -356,7 +356,7 @@ impl TypeChecker {
         &mut self,
         previous_annotation_owner: Option<super::AnnotationOwner>,
         previous_mutable_bindings: HashSet<String>,
-        previous_mut_param_body: super::mut_arguments::MutParamBodyState,
+        previous_mut_param_body: super::mutation::MutParamBodyState,
         yield_context: YieldContext,
         has_statement_body: bool,
     ) -> PreparedCallableCheck {

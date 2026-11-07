@@ -193,6 +193,7 @@ pub(super) fn append_protocols(target: &mut ProtocolArtifacts, local: ProtocolAr
         native_input_contracts,
         explicit_local_modes,
         explicit_input_flow,
+        mutation_flows,
         explicit_input_copy,
         body_ir_truthiness_receivers,
         body_ir_iterations,
@@ -206,6 +207,7 @@ pub(super) fn append_protocols(target: &mut ProtocolArtifacts, local: ProtocolAr
     target.native_input_contracts.extend(native_input_contracts);
     target.explicit_local_modes.extend(explicit_local_modes);
     target.explicit_input_flow.extend(explicit_input_flow);
+    target.mutation_flows.extend(mutation_flows);
     target.explicit_input_copy.extend(explicit_input_copy);
     target.body_ir_truthiness_receivers.extend(body_ir_truthiness_receivers);
     target.body_ir_iterations.extend(body_ir_iterations);

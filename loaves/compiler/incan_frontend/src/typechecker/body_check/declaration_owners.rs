@@ -106,12 +106,14 @@ impl TypeChecker {
             self.retain_callable_input_bindings(ownership_source);
             self.check_callable_body_in_frame(body, is_async, context);
             self.record_explicit_input_flow(ownership_source, span);
+            self.record_mutation_flow(span);
             return;
         }
         let scope = BodyCheckScope::enter(self);
         self.retain_callable_input_bindings(ownership_source);
         self.check_callable_body_in_frame(body, is_async, context);
         self.record_explicit_input_flow(ownership_source, span);
+        self.record_mutation_flow(span);
         let mut local = scope.finish(self);
         local.owner = span;
         self.body_checks.push(BodyCheckInput::Local(local));
@@ -157,16 +159,29 @@ impl TypeChecker {
         let mut positions = DiagnosticPositions::new(program, self.symbols.declaration_origin());
         // ---- Final callee effects ----
         let locals = std::mem::take(&mut self.body_checks);
-        let mut inputs = self.mut_params.clone();
-        for local in &locals {
-            inputs.append_body_local(local.local().mutation.clone());
-        }
-        let effects = inputs.close_effects();
+        let graphs = locals.iter().flat_map(|input| {
+            let local = input.local();
+            local
+                .protocols
+                .explicit_input_flow
+                .values()
+                .filter_map(|flow| match flow {
+                    super::super::ownership_contracts::InputFlow::Checked { graph, .. }
+                    | super::super::ownership_contracts::InputFlow::Invalid { graph, .. } => Some(graph),
+                    super::super::ownership_contracts::InputFlow::Unavailable(_) => None,
+                })
+                .chain(local.protocols.mutation_flows.values())
+        });
+        let effects = super::super::ownership_contracts::flow::analyze_mutation(graphs);
         #[cfg(test)]
         {
-            let original = std::mem::replace(&mut self.mut_params, inputs);
+            let mut inputs = self.mutation.clone();
+            for local in &locals {
+                inputs.append_body_local(local.local().mutation.clone());
+            }
+            let original = std::mem::replace(&mut self.mutation, inputs);
             assert_eq!(effects.changed, self.legacy_mut_param_change_closure());
-            self.mut_params = original;
+            self.mutation = original;
         }
         self.check_work.mutation_settlements += 1;
         self.check_work.dictionary_settlements += 1;
@@ -175,10 +190,10 @@ impl TypeChecker {
         let mut mutation = Vec::new();
 
         // ---- Declaration-expression owners ----
-        let mut module = self.mut_params.take_body_local();
+        let mut module = self.mutation.take_body_local();
         module.finalize_arguments(&effects, &mut mutation);
         module.clear_pending_arguments();
-        self.mut_params.install_body_local(module);
+        self.mutation.install_body_local(module);
         let mut dictionary = std::mem::take(&mut self.pending_uncopyable_dict_lookups)
             .into_iter()
             .filter_map(|(order, span, value)| {

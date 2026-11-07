@@ -1,8 +1,8 @@
 //! Completed mutation records retain exact known bodies, empty owner sets and reassigned source identities.
 
 use super::{
-    ArgumentPlace, BTreeMap, BTreeSet, CanonicalSymbolId, HashMap, HashSet, MutBodyLocal, MutParamBody,
-    MutParamForward, PendingMutArgument, RecordMutation, SemanticSourceTargetKind, Span,
+    ArgumentPlace, BTreeMap, BTreeSet, CanonicalSymbolId, HashMap, HashSet, MutParamBody, MutParamForward,
+    MutationLocal, MutationSource, PendingMutArgument, RecordedMutation, SemanticSourceTargetKind, Span,
 };
 use incan_semantics_core::{SymbolNamespace, SymbolOrigin};
 
@@ -25,16 +25,19 @@ fn completed_facts_roundtrip_without_erasing_empty_owners() -> Result<(), Box<dy
     let changing = owner("z_changing");
     let authored = Span::new(30, 40);
     let generated = authored.with_expansion(Some([1; 32]));
-    let local = MutBodyLocal {
-        bodies_checked: HashSet::from([changing.clone(), empty.clone()]),
-        changed: HashMap::from([
-            (changing.clone(), HashSet::from(["z".into(), "a".into()])),
-            (empty.clone(), HashSet::new()),
-        ]),
-        reassigned_locals: HashSet::from([generated, authored]),
-        ..MutBodyLocal::default()
+    let local = MutationLocal {
+        source: MutationSource {
+            bodies_checked: HashSet::from([changing.clone(), empty.clone()]),
+            changed: HashMap::from([
+                (changing.clone(), HashSet::from(["z".into(), "a".into()])),
+                (empty.clone(), HashSet::new()),
+            ]),
+            reassigned_locals: HashSet::from([generated, authored]),
+            ..MutationSource::default()
+        },
+        ..MutationLocal::default()
     };
-    let expected = RecordMutation {
+    let expected = RecordedMutation {
         bodies: BTreeSet::from([empty.clone(), changing.clone()]),
         changed: BTreeMap::from([
             (empty.clone(), BTreeSet::new()),
@@ -47,15 +50,15 @@ fn completed_facts_roundtrip_without_erasing_empty_owners() -> Result<(), Box<dy
         .ok_or("completed mutation projection refused")?;
     assert_eq!(record, expected);
     assert_eq!(record.changed.keys().collect::<Vec<_>>(), vec![&empty, &changing]);
-    let restored = MutBodyLocal::from_record_projection(record);
-    assert_eq!(restored.bodies_checked, local.bodies_checked);
-    assert_eq!(restored.changed, local.changed);
-    assert_eq!(restored.reassigned_locals, local.reassigned_locals);
+    let restored = MutationLocal::from_record_projection(record);
+    assert_eq!(restored.source.bodies_checked, local.source.bodies_checked);
+    assert_eq!(restored.source.changed, local.source.changed);
+    assert_eq!(restored.source.reassigned_locals, local.source.reassigned_locals);
     assert_eq!(restored.record_projection(), Some(expected));
     assert!(local.plain_bodies().is_none());
     assert!(restored.plain_bodies().is_none());
-    let empty_record = RecordMutation::default();
-    let empty_local = MutBodyLocal::from_record_projection(empty_record.clone());
+    let empty_record = RecordedMutation::default();
+    let empty_local = MutationLocal::from_record_projection(empty_record.clone());
     assert_eq!(empty_local.record_projection(), Some(empty_record));
     assert!(empty_local.plain_bodies().is_some());
     Ok(())
@@ -69,34 +72,37 @@ fn unfinished_or_unrepresented_facts_are_never_discarded() {
     let cases = [
         (
             "forwards",
-            MutBodyLocal {
-                forwards: vec![MutParamForward {
-                    owner: identity.clone(),
-                    param: "value".into(),
-                    callee: identity.clone(),
-                    callee_param: "other".into(),
-                    through_local: None,
-                }],
-                ..MutBodyLocal::default()
+            MutationLocal {
+                source: MutationSource {
+                    forwards: vec![MutParamForward {
+                        owner: identity.clone(),
+                        param: "value".into(),
+                        callee: identity.clone(),
+                        callee_param: "other".into(),
+                        through_local: None,
+                    }],
+                    ..MutationSource::default()
+                },
+                ..MutationLocal::default()
             },
         ),
         (
             "function_values",
-            MutBodyLocal {
+            MutationLocal {
                 function_values: HashMap::from([(span, identity.clone())]),
-                ..MutBodyLocal::default()
+                ..MutationLocal::default()
             },
         ),
         (
             "loop_variables",
-            MutBodyLocal {
+            MutationLocal {
                 loop_variables: vec![(span, false)],
-                ..MutBodyLocal::default()
+                ..MutationLocal::default()
             },
         ),
         (
             "pending",
-            MutBodyLocal {
+            MutationLocal {
                 pending: vec![PendingMutArgument {
                     order: 0,
                     callee: None,
@@ -109,19 +115,19 @@ fn unfinished_or_unrepresented_facts_are_never_discarded() {
                     span,
                     through_local: None,
                 }],
-                ..MutBodyLocal::default()
+                ..MutationLocal::default()
             },
         ),
         (
             "current",
-            MutBodyLocal {
+            MutationLocal {
                 current: Some(MutParamBody {
                     identity,
                     params: HashMap::new(),
                     closure_depth: 0,
                     views: Vec::new(),
                 }),
-                ..MutBodyLocal::default()
+                ..MutationLocal::default()
             },
         ),
     ];

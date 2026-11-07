@@ -47,7 +47,6 @@ use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 use super::TypeChecker;
 
 mod argument_recording;
-mod effects;
 mod held_params;
 #[cfg(test)]
 mod legacy;
@@ -55,12 +54,12 @@ mod param_bodies_and_views;
 #[cfg(test)]
 mod record_projection;
 
-use super::helpers::collection_type_id;
-use super::receiver_change::ReceiverChange;
-pub(super) use effects::MutEffects;
+pub(in crate::typechecker) use super::flow::{MutationEffects, MutationForward as MutParamForward};
+use crate::typechecker::helpers::collection_type_id;
+use crate::typechecker::receiver_change::ReceiverChange;
 
 /// Exact callee/parameter projections selected by one caller's recorded pending arguments.
-pub(super) type MutEffectReads = HashMap<(CanonicalSymbolId, String), Option<bool>>;
+pub(in crate::typechecker) type MutationEffectReads = HashMap<(CanonicalSymbolId, String), Option<bool>>;
 
 /// One declared parameter of a callable that has at least one caller-visible `mut` parameter.
 #[derive(Debug, Clone)]
@@ -119,19 +118,6 @@ struct PendingMutArgument {
     shared_native_field: bool,
     span: Span,
     /// The declaration span of the local the call went through (`f(items)` after `f = extend`), when it did.
-    through_local: Option<Span>,
-}
-
-/// A caller-visible parameter passed on to another callee's caller-visible parameter.
-#[derive(Debug, Clone)]
-struct MutParamForward {
-    /// The callable whose parameter is passed on, and that parameter.
-    owner: CanonicalSymbolId,
-    param: String,
-    /// The callee it is passed to, and the callee's parameter.
-    callee: CanonicalSymbolId,
-    callee_param: String,
-    /// The declaration span of the local the call went through, when it did.
     through_local: Option<Span>,
 }
 
@@ -229,24 +215,17 @@ struct MutParamBody {
 
 /// Checker state for caller-visible `mut` parameters across one module's check.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct MutParamFacts {
+pub(crate) struct MutationFacts {
     /// Declared parameters of every source callable with a caller-visible `mut` parameter, by declaration identity.
     declared: HashMap<CanonicalSymbolId, Vec<DeclaredParamSlot>>,
-    /// Callables whose bodies this check has read, so their changes are known exactly.
-    bodies_checked: HashSet<CanonicalSymbolId>,
-    /// Caller-visible parameters each callable's body changes directly.
-    changed: HashMap<CanonicalSymbolId, HashSet<String>>,
-    /// Caller-visible parameters passed on to another callee's caller-visible parameter.
-    forwards: Vec<MutParamForward>,
+    /// Source-builder facts waiting to enter the active callable's canonical ownership graph.
+    pub(in crate::typechecker) source: MutationSource,
     /// Local bindings that hold a declared callable by reference, `f = extend`, keyed by the binding's declaration
     /// span, so a call through them is checked too.
     function_values: HashMap<Span, CanonicalSymbolId>,
     /// Binding spans of the variables of every `for` loop being checked, which are not mutable bindings, each with
     /// whether its loop's pattern destructures the element.
     loop_variables: Vec<(Span, bool)>,
-    /// Local bindings reassigned anywhere in the module, keyed by declaration span. A call through such a local may
-    /// run any callable it was assigned, so it counts as changing every marked parameter.
-    reassigned_locals: HashSet<Span>,
     /// Arguments waiting for the module's change facts.
     pending: Vec<PendingMutArgument>,
     /// The body being checked, when it declares caller-visible parameters.
@@ -256,39 +235,44 @@ pub(crate) struct MutParamFacts {
 /// One body's mutation effects, forwarding edges, local reassignment evidence and pending argument decisions.
 /// Declared parameter contracts stay with the collected environment and never become another body's output.
 #[derive(Debug, Clone, Default)]
-pub(super) struct MutBodyLocal {
-    /// Callables whose bodies this check has read, so their changes are known exactly.
-    bodies_checked: HashSet<CanonicalSymbolId>,
-    /// Caller-visible parameters each callable's body changes directly.
-    changed: HashMap<CanonicalSymbolId, HashSet<String>>,
-    /// Caller-visible parameters passed on to another callee's caller-visible parameter.
-    forwards: Vec<MutParamForward>,
+pub(in crate::typechecker) struct MutationLocal {
+    /// Source-builder facts recorded by this lexical owner.
+    pub(in crate::typechecker) source: MutationSource,
     /// Local bindings that hold a declared callable by reference, `f = extend`, keyed by the binding's declaration
     /// span, so a call through them is checked too.
     function_values: HashMap<Span, CanonicalSymbolId>,
     /// Binding spans of the variables of every `for` loop being checked, which are not mutable bindings, each with
     /// whether its loop's pattern destructures the element.
     loop_variables: Vec<(Span, bool)>,
-    /// Local bindings reassigned anywhere in the module, keyed by declaration span. A call through such a local may
-    /// run any callable it was assigned, so it counts as changing every marked parameter.
-    reassigned_locals: HashSet<Span>,
     /// Arguments waiting for the module's change facts.
     pending: Vec<PendingMutArgument>,
     /// The body being checked, when it declares caller-visible parameters.
     current: Option<MutParamBody>,
 }
 
+/// Transient facts recorded while the checker still owns lexical scopes and resolved source expressions.
+///
+/// These values are projected into [`super::flow::Graph`] before flow analysis. The retained copy exists only for
+/// checker-record transport and body-check reuse; it does not close edges or decide diagnostics.
+#[derive(Debug, Clone, Default)]
+pub(in crate::typechecker) struct MutationSource {
+    pub(in crate::typechecker) bodies_checked: HashSet<CanonicalSymbolId>,
+    pub(in crate::typechecker) changed: HashMap<CanonicalSymbolId, HashSet<String>>,
+    pub(in crate::typechecker) forwards: Vec<MutParamForward>,
+    pub(in crate::typechecker) reassigned_locals: HashSet<Span>,
+}
+
 /// Deterministically ordered, completed mutation facts accepted by the checker record adapter.
 /// Empty changed-parameter sets remain explicit owner entries. Canonical owners and source spans still belong to
 /// this check; the record adapter must bind them to stable identities and anchors before persistence.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(super) struct RecordMutation {
+pub(in crate::typechecker) struct RecordedMutation {
     /// Source bodies whose mutation effects are known, including bodies that change no parameter.
-    pub(super) bodies: BTreeSet<CanonicalSymbolId>,
+    pub(in crate::typechecker) bodies: BTreeSet<CanonicalSymbolId>,
     /// Exact direct changed-parameter sets; an owner with an empty set is not omitted.
-    pub(super) changed: BTreeMap<CanonicalSymbolId, BTreeSet<String>>,
+    pub(in crate::typechecker) changed: BTreeMap<CanonicalSymbolId, BTreeSet<String>>,
     /// Exact reassigned binding spans, retaining any generated-source expansion identity.
-    pub(super) reassigned: BTreeSet<Span>,
+    pub(in crate::typechecker) reassigned: BTreeSet<Span>,
 }
 
 /// Return the parameters of a function type.
@@ -467,67 +451,123 @@ fn place_root_name(expr: &Spanned<Expr>) -> Option<&str> {
     }
 }
 
-impl MutParamFacts {
+impl TypeChecker {
+    /// Attach caller-visible mutation facts to the active callable's canonical ownership graph.
+    ///
+    /// A callable already analyzed for explicit input flow receives the facts on that graph. Otherwise, a minimal
+    /// graph carries the authenticated owner and facts without forcing unrelated bodies through explicit-flow
+    /// admission. There is never a second graph for the same callable.
+    pub(in crate::typechecker) fn record_mutation_flow(&mut self, span: Span) {
+        let Some(owner) = self.current_body_identity().cloned() else {
+            return;
+        };
+        if !self.mutation.activates_graph(&owner) {
+            return;
+        }
+        let mutation = self.mutation.graph_body(&owner);
+        let existing = self.type_info.protocols.explicit_input_flow.get_mut(&owner);
+        match existing {
+            Some(super::InputFlow::Checked { graph, .. } | super::InputFlow::Invalid { graph, .. }) => {
+                graph.mutation = mutation;
+            }
+            Some(super::InputFlow::Unavailable(_)) | None => {
+                self.type_info
+                    .protocols
+                    .mutation_flows
+                    .insert(owner.clone(), super::flow::Graph::mutation_only(owner, span, mutation));
+            }
+        }
+    }
+}
+
+impl MutationFacts {
+    /// Return whether the active callable contributes caller-visible mutation facts or argument obligations.
+    /// Ordinary bodies with none of these facts do not activate ownership-graph construction.
+    pub(in crate::typechecker) fn activates_graph(&self, owner: &CanonicalSymbolId) -> bool {
+        self.declared.contains_key(owner)
+            || self.source.changed.contains_key(owner)
+            || self.source.forwards.iter().any(|forward| &forward.owner == owner)
+            || !self.source.reassigned_locals.is_empty()
+    }
+
+    /// Project the active callable's checked mutation facts into its canonical ownership graph.
+    ///
+    /// The source writer retains a copy only because checker-record reuse is a separate artifact lifecycle. All
+    /// same-run effect closure and call diagnostics consume this graph projection.
+    pub(in crate::typechecker) fn project_graph(&self, owner: &CanonicalSymbolId, graph: &mut super::flow::Graph) {
+        graph.mutation = self.graph_body(owner);
+    }
+
+    /// Materialize one active callable's mutation projection for its canonical graph builder.
+    fn graph_body(&self, owner: &CanonicalSymbolId) -> super::flow::MutationBody {
+        super::flow::MutationBody {
+            known: self.declared.contains_key(owner) && self.source.bodies_checked.contains(owner),
+            changed: self.source.changed.get(owner).cloned().unwrap_or_default(),
+            forwards: self
+                .source
+                .forwards
+                .iter()
+                .filter(|forward| &forward.owner == owner)
+                .cloned()
+                .collect(),
+            reassigned_locals: self.source.reassigned_locals.clone(),
+        }
+    }
+
     /// Move body-owned mutation state out while leaving all declared parameter inputs readable.
-    pub(super) fn take_body_local(&mut self) -> MutBodyLocal {
-        MutBodyLocal {
-            bodies_checked: std::mem::take(&mut self.bodies_checked),
-            changed: std::mem::take(&mut self.changed),
-            forwards: std::mem::take(&mut self.forwards),
+    pub(in crate::typechecker) fn take_body_local(&mut self) -> MutationLocal {
+        MutationLocal {
+            source: std::mem::take(&mut self.source),
             function_values: std::mem::take(&mut self.function_values),
             loop_variables: std::mem::take(&mut self.loop_variables),
-            reassigned_locals: std::mem::take(&mut self.reassigned_locals),
             pending: std::mem::take(&mut self.pending),
             current: std::mem::take(&mut self.current),
         }
     }
 
     /// Restore the enclosing callable's exact mutation writer, including its current parameter frame.
-    pub(super) fn install_body_local(&mut self, local: MutBodyLocal) {
-        self.bodies_checked = local.bodies_checked;
-        self.changed = local.changed;
-        self.forwards = local.forwards;
+    pub(in crate::typechecker) fn install_body_local(&mut self, local: MutationLocal) {
+        self.source = local.source;
         self.function_values = local.function_values;
         self.loop_variables = local.loop_variables;
-        self.reassigned_locals = local.reassigned_locals;
         self.pending = local.pending;
         self.current = local.current;
     }
 
     /// Append completed local effects and pending arguments in declaration traversal order.
-    pub(super) fn append_body_local(&mut self, local: MutBodyLocal) {
-        self.bodies_checked.extend(local.bodies_checked);
-        self.changed.extend(local.changed);
-        self.forwards.extend(local.forwards);
+    pub(in crate::typechecker) fn append_body_local(&mut self, local: MutationLocal) {
+        self.source.bodies_checked.extend(local.source.bodies_checked);
+        self.source.changed.extend(local.source.changed);
+        self.source.forwards.extend(local.source.forwards);
+        self.source.reassigned_locals.extend(local.source.reassigned_locals);
         self.function_values.extend(local.function_values);
         self.loop_variables.extend(local.loop_variables);
-        self.reassigned_locals.extend(local.reassigned_locals);
         self.pending.extend(local.pending);
         debug_assert!(local.current.is_none());
     }
 }
 
-impl MutBodyLocal {
+impl MutationLocal {
     /// Move the prepared callable frame into its statement writer without giving the declaration producer its
     /// body effects. The frame returns when that writer closes; the known-body contribution stays with the body.
-    pub(super) fn enter_statement_frame(&mut self, writer: &mut MutParamFacts) {
+    pub(in crate::typechecker) fn enter_statement_frame(&mut self, writer: &mut MutationFacts) {
         writer.current = self.current.take();
         if let Some(frame) = &writer.current
-            && self.bodies_checked.remove(&frame.identity)
+            && self.source.bodies_checked.remove(&frame.identity)
         {
-            writer.bodies_checked.insert(frame.identity.clone());
+            writer.source.bodies_checked.insert(frame.identity.clone());
         }
     }
 
     /// Return only the active frame to the declaration operation that will restore its enclosing callable.
-    pub(super) fn return_statement_frame(&mut self, enclosing: &mut Self) {
+    pub(in crate::typechecker) fn return_statement_frame(&mut self, enclosing: &mut Self) {
         enclosing.current = self.current.take();
     }
 
     /// Render this caller's pending argument decisions from final callee effects. No syntax or local inference is read.
-    pub(super) fn finalize_arguments(
+    pub(in crate::typechecker) fn finalize_arguments(
         &self,
-        effects: &MutEffects,
+        effects: &MutationEffects,
         diagnostics: &mut Vec<(usize, crate::diagnostics::CompileError)>,
     ) {
         for argument in &self.pending {
@@ -535,7 +575,7 @@ impl MutBodyLocal {
                 effects.bodies_checked.contains(*callee)
                     && !argument
                         .through_local
-                        .is_some_and(|local| self.reassigned_locals.contains(&local))
+                        .is_some_and(|local| effects.reassigned_locals.contains(&local))
             });
             let change = match known_callee {
                 Some(_) => MutParameterChange::Changes,
@@ -592,24 +632,65 @@ impl MutBodyLocal {
     }
 }
 
-impl MutBodyLocal {
+impl MutationLocal {
+    /// Rebuild transient callable graph projections from the authenticated mutation record.
+    ///
+    /// Forwarding edges and pending arguments make a body unrecordable, so every restorable projection is complete:
+    /// known bodies, direct changes and callable-local invalidations. Existing explicit-flow graphs remain the one
+    /// graph for their callable; other owners receive a minimal canonical graph.
+    pub(in crate::typechecker) fn restore_flow_graphs(
+        &self,
+        protocols: &mut crate::typechecker::type_info::ProtocolArtifacts,
+    ) {
+        let mut owners = self
+            .source
+            .bodies_checked
+            .iter()
+            .chain(self.source.changed.keys())
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        if !self.source.reassigned_locals.is_empty() {
+            owners.extend(protocols.explicit_input_flow.keys().cloned());
+        }
+        for owner in owners {
+            let mutation = super::flow::MutationBody {
+                known: self.source.bodies_checked.contains(&owner),
+                changed: self.source.changed.get(&owner).cloned().unwrap_or_default(),
+                forwards: Vec::new(),
+                reassigned_locals: self.source.reassigned_locals.clone(),
+            };
+            let existing = protocols.explicit_input_flow.get_mut(&owner);
+            match existing {
+                Some(super::InputFlow::Checked { graph, .. } | super::InputFlow::Invalid { graph, .. }) => {
+                    graph.mutation = mutation;
+                }
+                Some(super::InputFlow::Unavailable(_)) | None => {
+                    protocols.mutation_flows.insert(
+                        owner.clone(),
+                        super::flow::Graph::mutation_only(owner.clone(), owner.declaration_span, mutation),
+                    );
+                }
+            }
+        }
+    }
+
     /// Remove finalized argument obligations while retaining all local effect, forwarding and reassignment evidence.
-    pub(super) fn clear_pending_arguments(&mut self) {
+    pub(in crate::typechecker) fn clear_pending_arguments(&mut self) {
         self.pending.clear();
     }
 }
 
-impl MutBodyLocal {
+impl MutationLocal {
     /// Retain only effect projections that can change this caller's refusal. Reassigned and unknown callees remain
     /// conservative and do not subscribe to a known body's more permissive effect projection.
-    pub(super) fn effect_reads(&self, effects: &MutEffects) -> MutEffectReads {
+    pub(in crate::typechecker) fn effect_reads(&self, effects: &MutationEffects) -> MutationEffectReads {
         self.pending
             .iter()
             .filter_map(|argument| {
                 if matches!(argument.place, ArgumentPlace::Temporary | ArgumentPlace::Mutable { .. })
                     || argument
                         .through_local
-                        .is_some_and(|local| self.reassigned_locals.contains(&local))
+                        .is_some_and(|local| effects.reassigned_locals.contains(&local))
                 {
                     return None;
                 }
@@ -625,62 +706,59 @@ impl MutBodyLocal {
     }
 }
 
-impl MutBodyLocal {
+impl MutationLocal {
     /// Return recorded argument count for a new invocation's traversal binding, without re-evaluating any argument.
-    pub(super) fn argument_count(&self) -> usize {
+    pub(in crate::typechecker) fn argument_count(&self) -> usize {
         self.pending.len()
     }
 }
 
-impl MutBodyLocal {
+impl MutationLocal {
     /// Expose the known-body contribution only when every other mutation capability is empty. This temporary native
     /// profile never turns an unrepresented obligation into an empty effect or a successful source result.
-    pub(super) fn plain_bodies(&self) -> Option<&HashSet<CanonicalSymbolId>> {
+    pub(in crate::typechecker) fn plain_bodies(&self) -> Option<&HashSet<CanonicalSymbolId>> {
         let Self {
-            bodies_checked,
-            changed,
-            forwards,
+            source,
             function_values,
             loop_variables,
-            reassigned_locals,
             pending,
             current,
         } = self;
-        (changed.is_empty()
-            && forwards.is_empty()
+        (source.changed.is_empty()
+            && source.forwards.is_empty()
             && function_values.is_empty()
             && loop_variables.is_empty()
-            && reassigned_locals.is_empty()
+            && source.reassigned_locals.is_empty()
             && pending.is_empty()
             && current.is_none())
-        .then_some(bodies_checked)
+        .then_some(&source.bodies_checked)
     }
 
     /// Restore an explicitly witnessed empty-effect body contribution without running mutation settlement.
-    pub(super) fn from_plain_bodies(bodies: Vec<CanonicalSymbolId>) -> Self {
+    pub(in crate::typechecker) fn from_plain_bodies(bodies: Vec<CanonicalSymbolId>) -> Self {
         Self {
-            bodies_checked: bodies.into_iter().collect(),
+            source: MutationSource {
+                bodies_checked: bodies.into_iter().collect(),
+                ..MutationSource::default()
+            },
             ..Self::default()
         }
     }
 }
 
-impl MutBodyLocal {
+impl MutationLocal {
     /// Project completed facts only when every capability absent from the record shape is empty. Forwarding edges,
     /// callable bindings, loop views, pending decisions and an active frame are refused rather than silently lost.
     /// Ordered collections remove hash iteration order without flattening empty changed-owner entries.
-    pub(super) fn record_projection(&self) -> Option<RecordMutation> {
+    pub(in crate::typechecker) fn record_projection(&self) -> Option<RecordedMutation> {
         let Self {
-            bodies_checked,
-            changed,
-            forwards,
+            source,
             function_values,
             loop_variables,
-            reassigned_locals,
             pending,
             current,
         } = self;
-        if !forwards.is_empty()
+        if !source.forwards.is_empty()
             || !function_values.is_empty()
             || !loop_variables.is_empty()
             || !pending.is_empty()
@@ -688,27 +766,31 @@ impl MutBodyLocal {
         {
             return None;
         }
-        Some(RecordMutation {
-            bodies: bodies_checked.iter().cloned().collect(),
-            changed: changed
+        Some(RecordedMutation {
+            bodies: source.bodies_checked.iter().cloned().collect(),
+            changed: source
+                .changed
                 .iter()
                 .map(|(owner, parameters)| (owner.clone(), parameters.iter().cloned().collect()))
                 .collect(),
-            reassigned: reassigned_locals.iter().copied().collect(),
+            reassigned: source.reassigned_locals.iter().copied().collect(),
         })
     }
 
     /// Restore all completed facts after the record adapter has rebound their identities and source anchors.
     /// Unsupported capabilities are empty because the projection admits none, not because restoration drops them.
-    pub(super) fn from_record_projection(record: RecordMutation) -> Self {
+    pub(in crate::typechecker) fn from_record_projection(record: RecordedMutation) -> Self {
         Self {
-            bodies_checked: record.bodies.into_iter().collect(),
-            changed: record
-                .changed
-                .into_iter()
-                .map(|(owner, parameters)| (owner, parameters.into_iter().collect()))
-                .collect(),
-            reassigned_locals: record.reassigned.into_iter().collect(),
+            source: MutationSource {
+                bodies_checked: record.bodies.into_iter().collect(),
+                changed: record
+                    .changed
+                    .into_iter()
+                    .map(|(owner, parameters)| (owner, parameters.into_iter().collect()))
+                    .collect(),
+                reassigned_locals: record.reassigned.into_iter().collect(),
+                ..MutationSource::default()
+            },
             ..Self::default()
         }
     }

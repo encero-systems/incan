@@ -268,6 +268,7 @@ fn build_graph(
             invocations: BTreeMap::new(),
             operations: BTreeMap::new(),
             closures: BTreeMap::new(),
+            mutation: super::flow::MutationBody::default(),
             nodes: vec![Node {
                 event: Event::Nothing,
                 successors: Vec::new(),
