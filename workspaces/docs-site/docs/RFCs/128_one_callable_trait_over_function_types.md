@@ -1,6 +1,6 @@
 # RFC 128: One `Callable[(A, B) -> R]` trait over function types
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-09-26
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -10,7 +10,9 @@
     - RFC 041 (first-class Rust interop authoring; the `Fn`, `FnMut`, and `FnOnce` markers)
     - RFC 042 (traits are always abstract)
     - RFC 068 (protocol hooks for core language syntax; `__call__` and the fixed-arity callable traits)
+    - RFC 082 (checked API documentation; docstring parsing)
     - RFC 115 (fallible iteration and combinators; stored generic callbacks)
+    - RFC 141 (type matching; `std.reflection` `TypeInfo` and `ParameterListInfo`)
     - #1790 (a `mut` parameter marker in function types)
 - **Issue:** [#1752](https://github.com/encero-systems/incan/issues/1752)
 - **RFC PR:** —
@@ -19,11 +21,11 @@
 
 ## Summary
 
-This RFC replaces `Callable0[R]`, `Callable1[A, R]`, and `Callable2[A, B, R]` with one trait, `Callable[(A, B) -> R]`, with no arity limit. Its function-type argument describes how to call a value; it does not convert that value into a closure or replace its concrete type. Function types gain named, keyword-only, optional, and variadic parameters through the same signature rules used by function and method declarations. Bound receivers are represented separately from caller-supplied parameters, preserving mutable access and ownership requirements. Compiler-derived, read-only `__signature__` metadata exposes this shared model. Stateful `__call__(mut self)` adopters are supported; the `Fn`, `FnMut`, and `FnOnce` markers retain distinct invocation guarantees.
+This RFC replaces `Callable0[R]`, `Callable1[A, R]`, and `Callable2[A, B, R]` with one trait, `Callable[(A, B) -> R]`, with no arity limit. Authored callable-signature value annotations use `Callable[...]`, including parameters, returns, fields, containers, and aliases. Its function-type argument describes how to call a value; it does not convert that value into a closure or replace its concrete type. Function types gain named, keyword-only, optional, and variadic parameters through the same signature rules used by function and method declarations. Bound receivers are represented separately from caller-supplied parameters, preserving mutable access and ownership requirements. Compiler-derived, read-only `__signature__` metadata exposes this shared model. Stateful `__call__(mut self)` adopters are supported; the `Fn`, `FnMut`, and `FnOnce` markers retain distinct invocation guarantees.
 
 ## Core model
 
-1. **One trait.** `Callable[F]` takes one function-type argument. `->` describes a signature; `=>` constructs a closure.
+1. **One trait and annotation spelling.** `Callable[F]` takes one function-type argument. A callable-signature value annotation must use the wrapper rather than a bare arrow. `->` describes a signature; `=>` constructs a closure.
 2. **One signature model.** Functions, methods, closures, and callable objects share parameter and return-type rules. `Callable` does not define a parallel parameter system.
 3. **Caller-facing parameters.** A bound `self` or `cls` is absent from the argument list. Receiver binding, access, and consumption remain part of the callable contract.
 4. **Objects retain their identity.** Satisfying a bound preserves the concrete type, fields, other traits, and state. Calling an object invokes its `__call__`.
@@ -37,7 +39,7 @@ The callable vocabulary stops at two parameters. `Callable2[A, B, R]` is the lar
 
 The marker spelling has a second gap. `Fn[int]` names the parameters and leaves the return type to the call that passes the value. A function has such a call; a model does not. `model Holder[F with Fn[int]]` therefore has no return type anywhere, and the checker refuses it. The workaround is `Callable1[int, R]` with an extra type parameter for `R`, which stops at two parameters and makes the author count arguments to pick a trait name.
 
-Both gaps close when the bound spells a function type. `(A, B, C) -> R` already exists as the type of a function value: it has no arity limit, it names the return type, and it gains every future feature of function types without further work, for example the `mut` parameter marker proposed in #1790. `Callable[(A, B, C) -> R]` puts that function type inside a capability, so it works as a bound, as an adoption, and on a nominal owner.
+Both gaps close when the bound spells a function signature. The existing arrow form `(A, B, C) -> R` supplies the signature component: it has no arity limit, it names the return type, and it gains every feature of function types without further work, for example the `mut` parameter marker proposed in #1790. `Callable[(A, B, C) -> R]` puts that function type inside a capability, so it works as a bound, as an adoption, and on a nominal owner.
 
 ## Goals
 
@@ -65,7 +67,7 @@ Both gaps close when the bound spells a function type. `(A, B, C) -> R` already 
 
 ### Bounding a callback
 
-`Callable` names what can be called, with which arguments, and what comes back. The type argument is the function type you would write for a function value:
+`Callable` names what can be called, with which arguments, and what comes back. The type argument describes the call signature; `Callable[...]` makes it a callable-value contract:
 
 ```incan
 from std.traits.callable import Callable
@@ -100,6 +102,43 @@ def map_all[U, Mapper with Callable[(int) -> U]](items: list[int], mut mapper: M
         out.append(mapper(item))
     return out
 ```
+
+### Annotating a callable value
+
+Use `Callable[...]` whenever an annotation spells a callable signature. This applies to parameters, return values, fields, container elements, and type aliases. A named alias keeps a returned closure's API readable:
+
+```incan
+from std.traits.callable import Callable
+
+type Multiplier = Callable[(int) -> int]
+
+def make_multiplier(factor: int) -> Multiplier:
+    return (value) => value * factor
+
+def double(value: int) -> int:
+    return value * 2
+
+model Scale with Callable[(int) -> int]:
+    factor: int
+
+    def __call__(self, value: int) -> int:
+        return value * self.factor
+
+def apply(value: int, operation: Multiplier) -> int:
+    return operation(value)
+
+def example() -> int:
+    first = apply(3, double)                 # Named function: 6.
+    second = apply(3, make_multiplier(4))   # Returned closure: 12.
+    third = apply(3, Scale(factor=5))       # Callable model: 15.
+    return first + second + third           # 33.
+```
+
+`->` describes the signature inside `Callable`; `=>` constructs a closure. A compatible callable class is accepted under the same adoption and receiver rules. The annotation does not turn a model or class into a closure, discard its state, or grant mutation or repeatability.
+
+`def make_multiplier(factor: int) -> Callable[(int) -> int]` is the expanded return annotation. A bare `-> (int) -> int` return annotation must instead receive a diagnostic with that wrapped spelling. For a callable that itself returns a callable, the returned value also uses the wrapper: `Callable[(int) -> Callable[(int) -> int]]`.
+
+An ordinary concrete annotation such as `scale: Scale`, or a generic parameter annotation such as `operation: C`, still names its original type. The rule governs annotations that spell callable signatures; it does not require authors to erase nominal types or replace generic bounds with abstract slots.
 
 ### Adopting `Callable`
 
@@ -204,7 +243,51 @@ For a method declared as `def format(self, text: str, *, limit: int = 80) -> str
 
 A bound method declared with `mut self` retains its mutable receiver requirement and borrow lifetime. Removing a bound receiver from the parameter list does not remove those constraints. Receiver roles come from declaration and binding semantics, not simply from a parameter being named `self` or `cls`.
 
-`formatter.format.__signature__` exposes compiler-derived, read-only signature metadata. Conceptually it describes `text` and `limit`, their types and parameter kinds, whether each is required, the return type, and the separately recorded bound receiver contract. A callable object's `__signature__` describes calling that object, rather than its constructor. Metadata cannot be assigned to in order to change a signature or bypass receiver checks. The concrete metadata types and runtime availability policy remain to be specified below.
+`formatter.format.__signature__()` returns compiler-derived, read-only signature metadata, in the same way `__fields__()` describes a model's fields. It describes `text` and `limit`, their types and parameter kinds, whether each is required, the return type, and the separately recorded bound receiver contract. A callable object's `__signature__()` describes calling that object, rather than its constructor. Metadata cannot be assigned to in order to change a signature or bypass receiver checks.
+
+```incan
+from std.reflection import SignatureInfo
+
+class Formatter:
+    def format(self, text: str, *, limit: int = 80) -> str:
+        return text[:limit]
+
+def show(handler: Callable[(text: str) -> str]) -> None:
+    println(len(handler.__signature__().parameters))    # 1: the contract this parameter promises
+
+def main() -> None:
+    signature: SignatureInfo = Formatter().format.__signature__()
+    for parameter in signature.parameters:
+        println(f"{parameter.name}: {parameter.type_name} required={parameter.required}")
+    # text: str required=true
+    # limit: int required=false
+    show(Formatter().format)
+```
+
+The description is the contract of the value's checked type where it is asked for. `Formatter().format` names the method, so it reports both parameters. Inside `show`, the same method is seen through `Callable[(text: str) -> str]`, which promises only `text`, so that is what it reports. A parameter that a narrower callable type hides cannot be called through it either. A library that needs a function's complete declaration, such as a decorator, sees it where the function is declared.
+
+A named function or method also reports its name and docstring, so a library can describe it without a second copy of that text:
+
+```incan
+signature = Formatter().format.__signature__()
+println(signature.name)    # Some("format")
+println(signature.doc)     # the parsed docstring, when the method has one
+```
+
+### Decorating a method
+
+A decorator generic over the whole callable may return a wrapper on a `self` method. It applies to the bound method each time the method is read from a value, so it sees the caller-facing signature and never names the receiver:
+
+```incan
+class Invoices:
+    @timed
+    def send(self, customer: str, amount: int) -> Receipt:
+        ...
+
+invoices.send("acme", 1200)
+```
+
+Here `invoices.send` is `timed` applied to the bound method, so `F` has `customer` and `amount` and no `self`. Because the decorator runs on each read, a wrapper that keeps state across reads keeps it on the receiver or in its module.
 
 ### Holding a callable in a model
 
@@ -276,7 +359,7 @@ The old names no longer resolve. Code that still uses one is refused with a diag
 - The required method is `__call__`, with caller-facing parameters and result compatible with the function-type argument. Both `self` and `mut self` receivers must be supported; the receiver is recorded separately from explicit parameters.
 - Parameter names, kinds, defaults, variadic element types, and return types must use the same signature rules as function and method declarations. Named parameters promise keyword availability; unnamed entries promise positional access only. `/`, `*`, `*args`, and `**kwargs` must retain their declaration meanings. Optional parameters are written `name: T = ...`; a type contract must not evaluate or replace the implementation's default.
 - A parameter marker such as the `mut` marker proposed in #1790 must carry over unchanged. `Callable[(mut Box, int) -> int]` describes mutation permission for an explicit argument, independently of whether `__call__` has `self` or `mut self`.
-- The argument may mention any type in scope, including the type parameters of the declaration that owns the bound, and may itself contain function types.
+- The argument may mention any type in scope, including the type parameters of the declaration that owns the bound. Callable-valued parameters and results nested inside a signature must themselves use `Callable[...]`.
 
 ### Where `Callable` may appear
 
@@ -285,11 +368,17 @@ The old names no longer resolve. Code that still uses one is refused with a diag
 - As a supertrait in a trait declaration's adoption list (RFC 042).
 - In annotation position, where RFC 042 gives every trait instantiation its abstract meaning: some value that satisfies the bound, whether a matching function, a matching closure, or an adopter.
 
+### Callable-signature annotations
+
+An authored callable-signature value annotation must use `Callable[S]` or a transparent alias for that contract. Bare `(A) -> R` and, under RFC 153, `async (A) -> R` are signature components, not standalone callable-value annotations. This rule applies recursively to parameters, returns, fields, containers, and aliases. Function declarations retain their ordinary `def name(...) -> R` syntax, and closure expressions retain `=>`.
+
+Signature components may still be named or projected for compile-time manipulation under RFC 141, including `SignatureOf[F]`; using such a component as a callable-value annotation requires `Callable[SignatureOf[F]]` or its named equivalent. Concrete nominal types and bounded generic type parameters remain usable as ordinary annotations.
+
 ### Satisfying a bound
 
 A type `T` satisfies `Callable[(P1, ..., Pn) -> R]` when one of these holds:
 
-1. `T` is a function type, as for a named function or a closure, whose accepted calls cover the required signature, and a value of `T` is assignable to a variable annotated `(P1, ..., Pn) -> R`.
+1. `T` is the checked type of a named function or closure whose accepted calls cover the required signature and whose receiver and invocation requirements permit the use. A value of `T` is accepted by the corresponding `Callable[(P1, ..., Pn) -> R]` annotation.
 2. `T` is a declaration that adopts `Callable[G]` with `G` compatible with the bound's argument under the same rule.
 3. `T` is a type parameter whose own bounds include a compatible `Callable`.
 
@@ -297,7 +386,7 @@ Any other type must be refused at the call, construction, or assignment that sup
 
 ### Calling a bounded value
 
-A value whose type is a `Callable`-bounded type parameter must be callable with call syntax. Argument binding and result typing must use the shared signature rules. Every call allowed by the required signature must be accepted by the supplied callable: keyword names and kinds must be compatible, promised optional parameters must be omittable, and an implementation must not introduce additional required arguments. A callable may provide additional defaults or accept more calls without requiring callers to use them. The same compatibility relation must apply to bare function types and `Callable` arguments.
+A value whose type is a `Callable`-bounded type parameter must be callable with call syntax. Argument binding and result typing must use the shared signature rules. Every call allowed by the required signature must be accepted by the supplied callable: keyword names and kinds must be compatible, promised optional parameters must be omittable, and an implementation must not introduce additional required arguments. A callable may provide additional defaults or accept more calls without requiring callers to use them. The same compatibility relation must apply to the checked signature model and `Callable` arguments; the wrapper does not introduce another argument-binding system.
 
 Receiver access and invocation multiplicity must also be checked. `mut` is required to invoke a mutating receiver. A read-only generic parameter must have a proven read-only call capability; a signature-only bound must not be treated as such proof. If a consuming callable is supplied, ownership analysis must prove each invocation legal; repeated invocation cannot be assumed merely from the parameter and result types. These requirements must survive generic forwarding and library metadata. A function body requiring repeatable or read-only invocation must have that requirement checked against supplied callables before lowering, including across package boundaries.
 
@@ -320,13 +409,18 @@ Receiver access and invocation multiplicity must also be checked. `mut` is requi
 
 ### Retired function-type shorthand
 
-The RFC 035 `Callable[Params, R]` function-type shorthand must be retired without a deprecation period. A legacy function-type annotation such as `Callable[int, str]` must be refused with a diagnostic directing the author to `(int) -> str`, preserving its function-type meaning. It must not be silently migrated to the trait annotation `Callable[(int) -> str]`. The diagnostic must use the annotation context to distinguish legacy shorthand from a malformed new trait bound.
+The RFC 035 `Callable[Params, R]` function-type shorthand must be retired without a deprecation period. A legacy annotation such as `Callable[int, str]` must be refused with a diagnostic directing the author to `Callable[(int) -> str]`. The one-argument contract accepts matching named functions, closures, and explicitly adopting callable objects; it must not silently rewrite source or infer nominal adoption. The diagnostic must explain that change of contract as well as show the replacement.
 
 ### Diagnostics
 
-- A `Callable` with no type argument, with more than one, or with one that is not a function type must be refused under one new stable `INCAN-T` code. The message must use the source context to preserve the intended meaning: in a bound or adoption, malformed `Callable[int, str]` points to `Callable[(int) -> str]`; in a legacy function-type annotation, it points to `(int) -> str` under the retirement rule above. For a single argument that is not a function type, such as `Callable[int]`, either `Callable[(int) -> R]` or `Callable[() -> int]` may be meant, so the message must offer both.
+- A `Callable` with no type argument, with more than one, or with one that is not a function type must be refused under one new stable `INCAN-T` code. Malformed `Callable[int, str]` must point to `Callable[(int) -> str]` in bounds, adoption, and annotation positions. For a single argument that is not a function type, such as `Callable[int]`, either `Callable[(int) -> R]` or `Callable[() -> int]` may be meant, so the message must offer both.
+- A bare callable-signature value annotation must receive a source diagnostic pointing to the exact `Callable[...]` replacement, including `Callable[async (A) -> R]` for an async signature. Signature-component positions and ordinary function declarations must not receive that diagnostic.
 - The removed-name diagnostic may share that code or take its own; either way it must have a catalog entry and an `incan explain` text.
 - `INCAN-T0106` keeps its code and covers only a marker on a nominal declaration. Its parameter-count case must be removed from the catalog entry, the `incan explain` text, and the CLI reference.
+
+### Decorated methods
+
+A decorator of a `self` method that is generic over the whole callable and returns something other than its input must be applied to the bound method each time the method is read from a value: `value.method` must evaluate the decorator on the bound method. `F` is then the bound method's checked type, whose caller-facing signature has no receiver, and the receiver and borrow rules above apply to that bound value as they do anywhere else. The limits of `INCAN-T0116` must not apply to such a decorator, because it never names the receiver and receives an ordinary value, so it may be imported and public. A `(F) -> F` decorator keeps its existing application.
 
 ### Library metadata
 
@@ -336,7 +430,24 @@ A library's checked metadata must preserve the complete signature, receiver requ
 
 Functions, methods, closures, and callable objects must expose a compiler-derived, read-only signature description. This description must use the shared signature model and distinguish caller-facing parameters from receiver binding. It must represent parameter order, available keyword names, kinds, types, required versus optional status, variadic element types, return type, and applicable receiver access and consumption requirements. Generic signatures must retain their type parameters and reflect substitutions when specialized.
 
-The metadata must not be an independently editable source of truth. Reading it must not invoke the callable, evaluate defaults, consume the receiver, or acquire permission to mutate it. Metadata need not expose actual default values: omission support is the contract, and default evaluation remains owned by the declaration. The exact runtime data types and availability policy are unresolved; this RFC does not yet promise a runtime object attached to every compiled function.
+The metadata must not be an independently editable source of truth. Reading it must not invoke the callable, evaluate defaults, consume the receiver, or acquire permission to mutate it. Metadata need not expose actual default values: omission support is the contract, and default evaluation remains owned by the declaration.
+
+The description must be read with `value.__signature__()`, which returns a `std.reflection.SignatureInfo`. `SignatureInfo` must provide:
+
+- `parameters`, a `ParameterListInfo` (RFC 141) whose entries give each caller-facing parameter's name where one is promised, kind, type as a `TypeInfo` with its display name, required or optional status, and `mut` marker;
+- `returns`, the return type as a `TypeInfo`;
+- `receiver`, an `Option[ReceiverInfo]` that records what supplies the bound receiver and whether invocation reads, mutates, or consumes it;
+- the signature's type parameters, with substitutions applied when the signature is specialized;
+- `name`, an `Option[str]` with the declared name of a named function or method, absent for a closure or a value known only through `Callable[S]`;
+- `identity`, an `Option[str]` with the declaration's RFC 120 canonical identity, absent where `name` is, and held by each parameter entry as its `parent` (RFC 121);
+- `contract`, an `Option[ContractInfo]` with the declaration's RFC 111 contract, absent for a value known only through a `Callable` that states none;
+- `doc`, an `Option[DocInfo]` with the declaration's docstring parsed as RFC 082 reads it: its `summary`, the first paragraph; its `description`; and its documented `parameters` and `returns`.
+
+These types must be read-only values, and `std.reflection` must not add them to the automatic prelude.
+
+`__signature__()` must describe the contract of the receiver's checked type at the point of the call. For a named function, method, or callable object that is its declared signature. For a value whose type is `Callable[S]` or a type parameter bounded by it, it is `S`, or the substituted signature once the parameter is specialized. It must be available for every callable form without an opt-in, and it must not require a runtime table attached to each compiled function: a program that never calls it pays nothing for it.
+
+The checker, checked library metadata, diagnostics, the language server's hover and signature help, and `__signature__()` must present one checked signature record. None of them may re-derive parameter names, kinds, types, or omission support from source syntax, so an imported, generic, or adopted callable is described the same way in every surface.
 
 ## Design details
 
@@ -355,11 +466,11 @@ A source trait declares its methods with fixed parameter lists. `Callable`'s one
 ### Interaction with existing features
 
 - **Call syntax (RFC 068).** Unchanged. `__call__` stays the hook; call syntax resolves through a compatible hook with or without adoption; bounds require adoption.
-- **Traits as annotations (RFC 042).** `Callable[(A) -> R]` in annotation position has RFC 042's abstract meaning. A function-typed annotation `(A) -> R` keeps its meaning as the type of function values.
-- **Decorators (RFC 036).** Decorator shapes are function types and are unaffected.
+- **Traits as annotations (RFC 042).** `Callable[(A) -> R]` in annotation position has RFC 042's abstract meaning. Authored callable-signature annotations must use that wrapper, with matching named functions, closures, and nominal adopters accepted under the same checking rules.
+- **Decorators (RFC 036).** Decorator call shapes retain their shared signature semantics; annotations spelling those callable values must use `Callable[...]`.
 - **Fallible iteration (RFC 115).** The combinators keep their behavior; their bounds change spelling, for example `Callable[(T) -> U]` for `map` and `Callable[(U, T) -> U]` for `fold`.
 - **Rust interop (RFC 041).** The markers keep their spelling and meaning, without the parameter limit.
-- **Function-type features.** Anything a function type gains later, `Callable` gains with it, because the argument is a function type and the checker derives `__call__` from it rather than from a list of its own.
+- **Function-type features.** Anything a function type gains, `Callable` gains with it, because the argument is a function type and the checker derives `__call__` from it rather than from a list of its own.
 
 ### Supersession of closed RFC decisions
 
@@ -368,17 +479,17 @@ Closed RFCs remain historical records and are not edited. This RFC replaces the 
 - **RFC 068:** the "Callable object" row of its protocol table, which names "fixed-arity callable traits such as `Callable0[R]`, `Callable1[A, R]`, and `Callable2[A, B, R]`" as the nominal capability, and the Design Decisions bullet that lists "fixed-arity callable traits" among the capabilities generic code can name. The capability is `Callable[(A, B) -> R]`, one trait for every arity. RFC 068's `__call__` hook, its structural resolution of call syntax, its rule that bounds require adoption, and its rule that a hook must type-check against the trait it claims all remain, the last one now against the derived signature.
 - **RFC 041:** its recorded lowering of the markers, under which each marker becomes the fixed-arity callable trait of its arity, a marker names at most two parameters, and all three markers lower to the same bound. The markers now carry a shared signature without an arity limit while preserving their distinct read-only, mutable, and consuming invocation guarantees in source checking. The Incan-facing marker names, their use in `with` clauses, and the refusal of a marker on a nominal declaration's type parameter remain.
 - **RFC 115:** the statement that callback parameters "use the canonical fixed-arity callable traits" with "explicit `Callable1` / `Callable2` adopters", the `Callable1[...]` and `Callable2[...]` spellings in its combinator signatures, the paragraph that relies on RFC 068's fixed-arity traits and on "the backend's callable-value bridge", and the non-normative note that a backend may bridge function and closure values to the canonical fixed-arity traits. The combinator set, their semantics, their `Clone` requirements, and the promise that callbacks accept functions, capturing closures, compatible enum variant constructors, and adopting models, without narrowing them to function pointers, remain.
-- **RFC 035**: the `Callable[Params, R]` type-position shorthand and its desugaring table. First-class function values and the arrow function type, which RFC 035 already calls canonical, remain.
+- **RFC 035**: the `Callable[Params, R]` type-position shorthand and its desugaring table. First-class function values remain. Arrow signatures remain the canonical component inside `Callable[...]`; standalone bare-arrow callable-value annotations are replaced by the wrapper.
 
 ### Compatibility and migration
 
-This is a breaking change on the 0.6 line. The removed names get no aliases and no deprecation period; the diagnostics carry the exact replacement, so the trait-name migration is mechanical. Call sites and generic helpers must also satisfy the receiver permissions and invocation guarantees specified above:
+The fixed-arity trait replacement and the mandatory callable-signature annotation spelling are breaking changes; this RFC does not claim either change has shipped. The removed names get no aliases and no deprecation period; the diagnostics carry the exact replacement, so the trait-name migration is mechanical. Call sites and generic helpers must also satisfy the receiver permissions and invocation guarantees specified above:
 
 - `Callable0[R]` to `Callable[() -> R]`, `Callable1[A, R]` to `Callable[(A) -> R]`, `Callable2[A, B, R]` to `Callable[(A, B) -> R]`, and `from std.traits.callable import Callable1, Callable2` to `from std.traits.callable import Callable`.
 - In the standard library: `std.traits.callable` itself, the standard and trait preludes, the feature inventory in `std.features`, and the `FallibleIterator` combinators and their state models in `std.derives.collection`.
 - Examples, test programs, and documentation that name the old traits, including the callable, traits, and collection-protocol reference pages, the Rust interop how-to, the CLI reference entry for `INCAN-T0106`, and the release notes.
 
-Uses of the retired function-type shorthand in standard-library signatures, examples, tests, documentation, and active RFCs must migrate to arrow function types. Closed RFC 035 remains unchanged as a historical record; its first-class named function behavior remains valid.
+Uses of the retired function-type shorthand in standard-library signatures, examples, tests, documentation, and active RFCs must migrate to `Callable[(...) -> R]` annotations. Bare-arrow callable-value annotations must also migrate to that wrapped spelling. Compiler-internal signature representations are not subject to this source-spelling rule. Closed RFC 035 remains unchanged as a historical record; its first-class named function behavior remains valid.
 
 Published library artifacts whose metadata names the old traits must be rebuilt against a toolchain that implements this RFC.
 
@@ -386,7 +497,7 @@ Published library artifacts whose metadata names the old traits must be rebuilt 
 
 - **Add `Callable3`, `Callable4`, and so on.** Moves the limit rather than removing it, keeps authors counting arguments to pick a name, and does nothing for the return type of a marker on a nominal owner.
 - **Variadic type arguments, `Callable[A, B, R]`.** The last argument silently becomes the return type, `Callable[R]` reads as a one-parameter callable, and the spelling collides with the RFC 035 shorthand, where `Callable[A, R]` already means `(A) -> R`.
-- **Python's `Callable[[A, B], R]`.** Incan has no list-of-types syntax, and `(A, B) -> R` is already the language's function type. The language reference maps Python's spelling to the arrow form for exactly this reason.
+- **Python's `Callable[[A, B], R]`.** Incan uses a shared arrow signature component inside `Callable[(A, B) -> R]`, avoiding a separate list-of-types parameter grammar.
 - **A bare function type as the bound.** Rejected under "Why a trait around a function type".
 - **A return type on the marker, `Fn[int] -> str`.** New syntax for one construct, and it makes the Rust interop vocabulary the way to write an ordinary Incan bound. The markers stay shorthand for functions and methods.
 - **A hidden return-type parameter on nominal owners.** It would let `model Holder[F with Fn[int]]` compile by adding a parameter the author never wrote, which changes the type's arity everywhere it is named.
@@ -401,7 +512,7 @@ Published library artifacts whose metadata names the old traits must be rebuilt 
 
 ## Implementation architecture
 
-This section is non-normative. The shared signature model is the source of truth for declarations, function types, callable checking, diagnostics, and `__signature__`. Binding a method derives its caller-facing view while retaining receiver ownership and access requirements. Separate implementations of keyword binding or signature compatibility for `Callable` would risk divergent language behavior.
+This section is non-normative. The shared signature model is the source of truth for declarations, function types, callable checking, diagnostics, language-server hover and signature help, and `__signature__()`. Reflection fits the route `__fields__()` already takes: a compiler-known reflection operation lowered from checked facts, with no per-function runtime table. Binding a method derives its caller-facing view while retaining receiver ownership and access requirements. Separate implementations of keyword binding or signature compatibility for `Callable` would risk divergent language behavior.
 
 The backend must preserve the original source type of an adopting object. Converting an adopter to a closure and substituting that closure as the source generic type is rejected: it loses fields, additional trait bounds, and explicit types such as `Holder[Counter]`. Implementation-only adapters are permitted when they preserve all source-visible behavior, identity, state, and ownership. Nested values in lists or options do not justify a source-level refusal or type substitution.
 
@@ -420,7 +531,7 @@ Per-package traits cannot stand in for one canonical capability, and a fixed fam
 
 ## Inspectability and tooling surface
 
-- **Artifact or metadata:** checked library metadata preserves signatures, receiver requirements, and original nominal identities; `__signature__` presents the same information under the availability policy still to be specified.
+- **Artifact or metadata:** checked library metadata preserves signatures, receiver requirements, and original nominal identities; `__signature__()` presents the same checked record that hover and signature help show.
 - **Inspection command:** `incan check` reports contract violations before backend compilation; `incan explain` describes callable diagnostics; hover shows the original type and callable signature.
 - **Diagnostics:** malformed signature arguments, incompatible parameter names or kinds, missing defaults, adoption mismatch, missing mutable access, and illegal repeated consuming calls must identify the relevant source operation.
 - **Provenance:** mismatch messages name the required contract and supplied declaration. Binding a receiver must not hide its access requirements or manufacture a closure type in source-facing output.
@@ -438,29 +549,27 @@ This RFC is done when:
 - named and keyword-only calls, omitted defaults, positional-only parameters, and variadics have matching behavior through direct calls, function types, methods, closures, and `Callable` bounds, with negative fixtures for incompatible contracts;
 - bound instance and class methods exclude the bound receiver from caller-facing parameters while preserving receiver restrictions; static and supported unbound methods expose the appropriate parameter list;
 - explicit nominal generic arguments, combined trait bounds, supertraits, and callable objects nested in options or lists retain their types and capabilities across packages;
-- signature metadata reflects parameter kinds, omission support, return types, generic substitutions, and receiver binding without invoking the callable or evaluating defaults, and attempts to overwrite it are refused under the finalized metadata API;
+- `__signature__()` reflects parameter kinds, omission support, return types, generic substitutions, and receiver binding without invoking the callable or evaluating defaults; a value seen through a narrower `Callable` type reports that type's contract; assigning to it is refused; and hover and signature help show the same facts for a local, an imported, and a generic callable;
 - the reference pages for callable objects, traits, and collection protocols, the Rust interop how-to, the CLI reference, and the release notes describe `Callable[(A, B) -> R]` and the removal;
-- a type-position `Callable[A, R]` is refused with its arrow spelling and no use remains.
+- legacy `Callable[A, R]` and bare-arrow callable-value annotations are refused with the exact wrapped replacement; parameters, returns, fields, containers, aliases, nested callable results, and async annotations are covered, while ordinary function declarations and RFC 141 signature-component operations remain valid;
+- the same annotated API accepts a compatible named function, closure, callable model, and callable class without losing concrete identity or bypassing receiver and invocation restrictions.
 
 ## Design Decisions
 
+- **Mandatory callable-signature annotation.** Value annotations use `Callable[...]` or its alias; bare arrows describe signature components. Concrete nominal and generic type annotations remain available.
 - **One trait, one argument.** `Callable` takes exactly one type argument, an ordinary function type written with `->`. `=>` stays closure-only.
 - **No arity limit.** Neither the language nor the generated code imposes one.
 - **The return type is spelled.** Nominal owners can bound a type parameter with `Callable[...]` and hold the value in a field.
 - **Adoption is checked.** `__call__` is derived from the argument and checked at the declaration.
-- **A trait around a function type, not a bare function type.** A function type is a value type; `with` names a capability, and adoption reads right only with a capability.
+- **A trait around a function type, not a bare function type.** The arrow component describes a signature; `Callable[...]` names its callable capability in bounds, adoption, and value annotations.
 - **The old names are removed.** `Callable0`, `Callable1`, and `Callable2` get no aliases; diagnostics carry the replacement, and every use in the standard library and documentation is migrated.
 - **The markers keep their spelling and guarantees.** They share signature types but retain read-only, mutable, and consuming invocation distinctions. There is no parameter limit; nominal owners use `Callable[...]`.
 - **Identity and receivers.** Callable objects remain their original types. `mut self` is supported and requires mutable access; bound receivers remain part of the access contract.
 - **Shared signatures and metadata.** Named, optional, keyword-only, and variadic parameters use declaration rules. `__signature__` is compiler-derived and read-only.
-- **Legacy shorthand is retired.** Function types use arrow syntax; `Callable[...]` consistently names the callable trait. RFC 035 is explicitly superseded only for its shorthand, with migration diagnostics preserving the old function-type meaning.
+- **`__signature__()` is a method over one checked record.** It is spelled like `__fields__()` and returns `std.reflection.SignatureInfo`, built from RFC 141's `TypeInfo` and `ParameterListInfo`. It describes the contract of the value's checked type where it is asked for, is always available, and costs nothing when unused. The checker, library metadata, the language server, and reflection all read the same record.
+- **Legacy shorthand is retired.** Signatures use arrows inside `Callable[...]`, which consistently names the callable trait and callable-signature annotation. RFC 035 is explicitly superseded for its shorthand; diagnostics show the wrapped replacement and explain the accepted callable forms.
 - **Inherited features.** `Callable` expresses whatever function types express, including the `mut` parameter marker of #1790 once it lands, with no rule of its own.
 - **Compiler-known.** `std.traits.callable` declares and documents `Callable`; the checker supplies its requirement.
 - **One identity.** A callable value satisfies the same bound in every package; a backend that breaks this is not acceptable.
-
-## Unresolved questions
-
-- **What concrete API and availability policy does `__signature__` expose?** The shared model, read-only behavior, and receiver treatment are settled. The metadata types, how programs query them, and whether runtime metadata is always available or explicitly retained still need a concrete contract before this RFC advances. This is distinct from compiler and checked-library metadata, which must always retain the information needed for checking.
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- **Name and docstring.** `__signature__()` reports a named function's name and parsed docstring, so libraries can describe a function from one source.
+- **Decorated methods.** A whole-callable decorator that returns a wrapper applies to the bound method on each read. It never names the receiver, so `INCAN-T0116`'s limits do not apply to it, and it may be imported and public.

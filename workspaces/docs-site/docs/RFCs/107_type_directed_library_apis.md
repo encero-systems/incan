@@ -27,7 +27,7 @@ This RFC defines the north-star model for type-directed library APIs in Incan: a
 1. **Types are not generally values:** a bare type name in value position is valid only when expected typing requires `Type[T]`.
 2. **`Type[T]` is a limited zero-sized token value:** a type token carries a checked source type for dispatch, type-directed return mapping, and metadata; it may be passed, returned, stored, or collected only under explicit `Type[...]` typing, and it is not a general runtime type object.
 3. **Type-token overloads are ordinary overloads:** overload resolution may use `Type[int]`, `Type[float]`, `Type[str]`, `Type[bool]`, model tokens, and other supported token types to select precise signatures.
-4. **Type-directed return mapping is in scope:** the final design must support a single generic API whose return type can be derived from `T` without broad unions when the library declares the mapping.
+4. **Type-directed return mapping is in scope:** the design must support a single generic API whose return type can be derived from `T` without broad unions when the library declares the mapping.
 5. **Aliases preserve overload and implementation identity:** `safe_cast = alias cast` exposes the same overload set and canonical decorated implementation identity under another name rather than creating wrapper functions.
 6. **Decorators see canonical source identity:** decorators applied to overloads observe the canonical source callable identity and checked callable surface, not alias call-site spelling and not generated implementation names.
 7. **Package boundaries must not change behavior:** importing through `from module import name`, `pub from module import name`, package manifests, facade modules, or package consumers must preserve the same callable surface and selected return types as same-module use.
@@ -37,7 +37,7 @@ This RFC defines the north-star model for type-directed library APIs in Incan: a
 
 Incan libraries increasingly need APIs where the caller chooses a type as part of the operation. Common examples include typed casts, schema selection, serializers, column builders, readers, adapters, and registries. A stringly API such as `cast(expr, "float64")` is easy to expose but weakens typechecking, documentation, completion, and refactoring. Helper families such as `cast_float(expr)` and `cast_int(expr)` are precise but duplicate the public API and make aliases, docs, and decorators drift. Broad union returns keep a single function name, but the caller then loses the useful fact that `cast(expr, float)` returns a float-shaped value.
 
-The v0.3 `Type[T]` work provides a narrow stepping stone: a type name may be used as a value only when the expected type is a compiler-backed `Type[T]` token, and overload resolution can use that token to choose a precise return type. That shape is intentionally narrower than first-class runtime types. It solves the immediate library-authoring problem without claiming that Incan has a complete type-level programming model.
+The existing `Type[T]` work provides a narrow foundation: a type name may be used as a value only when the expected type is a compiler-backed `Type[T]` token, and overload resolution can use that token to choose a precise return type. That shape is intentionally narrower than first-class runtime types. It solves the immediate library-authoring problem without claiming that Incan has a complete type-level programming model.
 
 The larger design still needs an RFC because this surface touches several language guarantees at once. A callable should not work locally and then change meaning when imported through a facade. An alias should mean the same thing as the symbol it aliases, with another name. A decorator should observe the callable the author wrote, not generated implementation names. Package metadata and generated docs should describe the same checked surface users can call. Divergence across same-module, imported, facade, package, decorator, and documentation boundaries is a compiler bug, not a library-author responsibility. Without a deliberate contract, this area risks continuing to evolve as a sequence of narrow fixes around individual library cases.
 
@@ -68,6 +68,8 @@ The larger design still needs an RFC because this surface touches several langua
 - Replacing associated types from RFC 098.
 - Allowing overload aliases to change signatures, defaults, decorators, or runtime behavior.
 - Defining new syntax for overload declaration beyond the existing overload model.
+
+RFC 141 separately specifies structured type matching and named compile-time type operations. Type[T] tokens retain this RFC’s bounded dispatch role; that separate capability does not make tokens generally matchable or turn reflected descriptions into static generic arguments.
 
 ## Guide-level explanation
 
@@ -172,9 +174,9 @@ safe = safe_cast(col("safe"), float)
 
 `Type[T]` names a compiler-backed token whose payload is the checked type `T`. `Type[T]` is a type in the source type system. Values of this type are not user-constructed objects; they are introduced by expected-type checking when a visible type name appears in a value position that expects `Type[T]`.
 
-An implementation must support `Type[int]`, `Type[float]`, `Type[str]`, and `Type[bool]`. An implementation must support `Type[Model]` for visible model types. An implementation must also admit enum tokens, trait tokens, type-alias tokens, constrained-scalar tokens, and associated-type projection tokens in the same v0.6 pass; see Design Decisions.
+An implementation must support `Type[int]`, `Type[float]`, `Type[str]`, and `Type[bool]`. An implementation must support `Type[Model]` for visible model types. An implementation must also admit enum tokens, trait tokens, type-alias tokens, constrained-scalar tokens, and associated-type projection tokens; see Design Decisions.
 
-`Type[T]` token values may be passed to functions, bound to variables, returned from functions, and stored in collections when the expected type is explicitly `Type[...]`. These operations preserve type evidence only; they must not imply ordinary runtime type-object behavior. `Type[T]` tokens must not support equality, ordering, hashing, serialization, pattern matching, field access, method dispatch, or arbitrary introspection unless this RFC explicitly admits that operation before it becomes Planned.
+`Type[T]` token values may be passed to functions, bound to variables, returned from functions, and stored in collections when the expected type is explicitly `Type[...]`. These operations preserve type evidence only; they must not imply ordinary runtime type-object behavior. `Type[T]` tokens must not support equality, ordering, hashing, serialization, pattern matching, field access, method dispatch, or arbitrary introspection unless this RFC explicitly admits that operation.
 
 ### Type names in value position
 
@@ -263,7 +265,7 @@ def cast(expr: ColumnExpr, target: str) -> ColumnExpr:
     return custom_cast(expr, target)
 ```
 
-`cast[T](expr)` models the type as a compile-time generic selector. RFC 054 already defines explicit call-site generics, and RFC 107 requires the missing return-mapping piece for APIs where `T` maps to a library-specific result type. If `T` is `float`, users want `FloatColumnExpr`, not merely a broad `ColumnExpr | FloatColumnExpr | IntColumnExpr` union. That relationship is not "return T"; it is "map source type token T to a library-specific result type." RFC 107 must settle that mapping model before it can move from Draft to Planned.
+`cast[T](expr)` models the type as a compile-time generic selector. RFC 054 already defines explicit call-site generics, and RFC 107 requires the missing return-mapping piece for APIs where `T` maps to a library-specific result type. If `T` is `float`, users want `FloatColumnExpr`, not merely a broad `ColumnExpr | FloatColumnExpr | IntColumnExpr` union. That relationship is not "return T"; it is "map source type token T to a library-specific result type." RFC 107 defines that mapping model.
 
 ### Primitive tokens and model tokens
 
@@ -314,7 +316,7 @@ Making `int`, `float`, model names, and type aliases ordinary values everywhere 
 
 ### Leaving generic return specialization undefined
 
-This was rejected as a final state for RFC 107. `cast[T](expr)` with precise library-specific return types needs a model for type-level return mapping, but that model belongs in this RFC. Deferring it would leave the language with one good call spelling and one muddy spelling for the same type-directed operation.
+This was rejected. `cast[T](expr)` with precise library-specific return types needs a model for type-level return mapping, but that model belongs in this RFC. Omitting it would leave the language with one good call spelling and one muddy spelling for the same type-directed operation.
 
 ## Drawbacks
 
@@ -343,7 +345,7 @@ Backends should treat type tokens as zero-sized compile-time evidence unless a r
 
 ## Design Decisions
 
-- **Token kinds are admitted together:** enum tokens, trait tokens, type-alias tokens, constrained-scalar tokens, and associated-type projection tokens are admitted in the same v0.6 pass as the required primitive (`int`, `float`, `str`, `bool`) and visible-model tokens, not staged into a later increment.
-- **Return-mapping mechanism is type-parameter-constrained overloads:** `cast[T](expr)`-style return specialization is resolved through ordinary overload resolution keyed on the compile-time type argument `T` itself, reusing the multi-instantiation trait dispatch model from RFC 025 (implemented, v0.3). A library declares one overload body per admitted `T`; the compiler selects among them the same way it already selects trait implementations by type argument. This does not require a parallel value-position `cast(expr, target: Type[T])` overload to exist -- the two spellings may coexist, but neither is required by the other -- and it introduces no new type-level construct. Associated output types (an RFC 098-style `type Output` binding on a generic trait implementation, mirroring Rust's `Add<Rhs>::Output`) remain a plausible future spelling once RFC 098 (native associated types, milestone 0.7) ships generally, but they are not this RFC's mechanism and are not a blocking dependency for v0.6. A dedicated type-function construct was considered and rejected as unnecessary net-new machinery for a problem Rust and Python both already solve without one.
+- **Token kinds are admitted together:** enum tokens, trait tokens, type-alias tokens, constrained-scalar tokens, and associated-type projection tokens are admitted alongside the required primitive (`int`, `float`, `str`, `bool`) and visible-model tokens.
+- **Return-mapping mechanism is type-parameter-constrained overloads:** `cast[T](expr)`-style return specialization is resolved through ordinary overload resolution keyed on the compile-time type argument `T` itself, reusing the multi-instantiation trait dispatch model from RFC 025 (implemented). A library declares one overload body per admitted `T`; the compiler selects among them the same way it already selects trait implementations by type argument. This does not require a parallel value-position `cast(expr, target: Type[T])` overload to exist -- the two spellings may coexist, but neither is required by the other -- and it introduces no new type-level construct. Associated output types (an RFC 098-style `type Output` binding on a generic trait implementation, mirroring Rust's `Add<Rhs>::Output`) are not this RFC's mechanism and are not a dependency of it. A dedicated type-function construct was considered and rejected as unnecessary net-new machinery for a problem Rust and Python both already solve without one.
 - **Type-alias tokens normalize fully; newtype tokens stay distinct:** a plain type alias (`type UserId = str`, structural, not a `newtype`) normalizes to its target type -- through the full alias chain, not one hop -- for both assignability and `Type[T]` overload dispatch. The alias spelling is retained only as display provenance in diagnostics, hovers, and generated docs, mirroring RFC 083's existing alias-identity rule. Two overloads keyed on different aliases of the same underlying type (for example `Type[UserId]` and `Type[ProductId]`, both aliasing `int`) are a duplicate-overload compile error, not independently selectable; `newtype` remains the correct tool when distinct dispatchable identity is wanted. When `T` is a newtype, construction through a `Type[T]` token goes through the newtype's `from_underlying` validated-conversion hook (RFC 017, implemented), consistent with the existing precedent in `std.environ.get_as[T]` (RFC 089, implemented) -- a `Type[T]` token must never bypass newtype validation.
 - **No alias-local metadata overrides:** aliases always preserve canonical decorated implementation identity -- decorator side effects, registry metadata, and `func.__name__` default to the aliased implementation, never to alias-local overrides. Alias spelling is display-only at the call site in diagnostics, hovers, and generated docs. This matches RFC 083's "aliases are not wrappers" rule without introducing a `Type[T]`-specific exception.

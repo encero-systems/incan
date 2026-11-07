@@ -93,7 +93,7 @@ The dry-run should show a receiver-side plan:
 
 ```text
 Capability: cli
-Source: incan.pub package app-cli 0.3.1
+Source: loaves.pub package app-cli 0.3.1
 
 Files:
   create   src/main.incn              ownership=bootstrap
@@ -317,7 +317,7 @@ This is where Incan can outgrow traditional scaffolding. The project lifecycle s
 
 ### 5. Registry discovery, local execution
 
-`incan.pub` should become the public artifact graph for discovery, provenance, compatibility, advisories, and trust metadata. It should not be the authority that mutates local projects.
+`loaves.pub` should become the public artifact graph for discovery, provenance, compatibility, advisories, and trust metadata. It should not be the authority that mutates local projects.
 
 The registry can answer "what exists?", "who published it?", "what does it provide?", "what is it compatible with?", "is it yanked or affected by an advisory?", and "what relationships does it have?" The local lifecycle CLI answers "what would this do to my project?", "does policy allow it?", and "what files would change?"
 
@@ -338,7 +338,7 @@ AI should enter the ecosystem through the same rule as everything else: if it ca
 The ecosystem should be deliberately layered:
 
 ```text
-incan.pub artifact graph
+loaves.pub artifact graph
   discovers packages, templates, capabilities, actions, policies, AI assets
 
 local lifecycle CLI
@@ -396,9 +396,9 @@ Ollama shows that a compact model blueprint can describe base model, parameters,
 
 Source: [Ollama Modelfile reference](https://docs.ollama.com/modelfile).
 
-## The `incan.pub` role
+## The `loaves.pub` role
 
-`incan.pub` should become the ecosystem's context engine.
+`loaves.pub` should become the ecosystem's context engine.
 
 As a package registry, it stores and serves packages. As an artifact graph, it also understands the things around packages:
 
@@ -417,7 +417,7 @@ Private catalogs should share the same descriptor semantics. A private catalog m
 
 This division matters:
 
-- `incan.pub` and catalogs discover, verify, relate, and distribute artifacts.
+- `loaves.pub` and catalogs discover, verify, relate, and distribute artifacts.
 - The local lifecycle CLI resolves project context, renders templates, builds mutation plans, evaluates policy, and writes files.
 - IDEs, CI, and agents consume the same inspection output rather than inventing their own interpretation.
 
@@ -470,7 +470,7 @@ This direction is working when these things become true:
 - A template or capability update shows the rendered project diff, not only the provider-side descriptor diff.
 - A workspace command never silently targets more members than the user selected.
 - An IDE can discover actions, capabilities, file roles, policy warnings, and AI assets from machine-readable lifecycle output.
-- `incan.pub` can answer intent-driven questions, not only package-name queries.
+- `loaves.pub` can answer intent-driven questions, not only package-name queries.
 - AI prompts, models, evals, and agent guidance are visible artifacts with provenance and policy state.
 - Automation can propose updates, but cannot approve its own receiver-side project mutation.
 
@@ -485,7 +485,7 @@ The biggest risk is conceptual bloat. The answer is not to collapse the RFCs bac
 - policy decides whether mutations are allowed
 - workspaces define topology
 - actions run typed workflows
-- `incan.pub` discovers and verifies artifacts
+- `loaves.pub` discovers and verifies artifacts
 - AI assets describe model/prompt/eval/agent metadata
 
 Another risk is under-specifying provenance. If provenance is too weak, update and recovery workflows become theater. The selected source identity, immutable version or content hash, rendered hash, publisher or trust metadata, and ownership policy need to survive beyond the first command.
@@ -530,8 +530,8 @@ The whitepaper stands on its own as the ecosystem direction. The concrete branch
 - [RFC 076: project mutation policy and recovery](../RFCs/076_project_mutation_policy_and_recovery.md) defines receiver-side policy, risk classification, approval, quarantine, advisory handling, and recovery for project mutations.
 - [RFC 077: workspace and multi-package projects](../RFCs/closed/implemented/077_workspace_and_multi_package_projects.md) defines workspace topology, member selection, shared lock and policy state, and workspace-scoped mutations.
 - [RFC 078: tool execution and typed workflow actions](../RFCs/078_tool_execution_and_typed_workflow_actions.md) defines typed actions, tool sources, execution modes, dry-run behavior, and policy-gated workflow execution.
-- [RFC 079: incan.pub artifact graph](../RFCs/079_incan_pub_artifact_graph.md) defines the registry as an artifact graph across packages, templates, capabilities, actions, policies, examples, advisories, and AI assets.
-- [RFC 080: AI assets, models, prompts, evals, and agent metadata](../RFCs/080_ai_assets_models_prompts_evals_and_agent_metadata.md) defines AI-native artifacts, local versus remote execution metadata, prompts, evals, datasets, model provenance, and agent guidance.
+- [RFC 079: loaves.pub artifact graph](../RFCs/079_incan_pub_artifact_graph.md) defines the registry as an artifact graph across packages, templates, capabilities, actions, policies, examples, advisories, and AI assets.
+- [RFC 080: Declared AI assets](../RFCs/080_declared_ai_assets.md) defines AI-native artifacts, local versus remote execution metadata, prompts, evals, datasets, model provenance, and agent guidance.
 
 ## Proposed incremental path
 

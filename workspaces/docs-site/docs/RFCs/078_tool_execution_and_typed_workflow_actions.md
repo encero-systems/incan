@@ -1,35 +1,38 @@
 # RFC 078: tool execution and typed workflow actions
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-04-26
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
     - RFC 015 (hatch-like tooling and project lifecycle CLI)
     - RFC 020 (Cargo offline and locked policy)
-    - RFC 034 (`incan.pub` package registry)
-    - RFC 075 (starter profiles and capability packs)
+    - RFC 036 (user-defined decorators)
+    - RFC 075 (starter profiles and mixes)
     - RFC 076 (project mutation policy and recovery)
     - RFC 077 (workspace and multi-package projects)
-    - RFC 079 (`incan.pub` artifact graph)
-    - RFC 080 (AI assets and agent metadata)
+    - RFC 079 (`loaves.pub` artifact graph)
+    - RFC 080 (declared AI assets)
+    - RFC 090 (typed CLI framework)
+    - RFC 104 (capabilities, limits and receipts)
     - RFC 117 (`loaf.toml` and Oven's language-neutral project model)
     - RFC 118 (Incan and Oven command-line surfaces)
+    - RFC 124 (Oven store unit identity)
+    - RFC 125 (`loaves.pub` registry)
 - **Issue:** https://github.com/encero-systems/incan/issues/406
 - **RFC PR:** —
 - **Written against:** ~~v0.3~~ v0.5
-- **Target scope:** v0.6, slice 7 (Oven CLI delivery, #1142); brought into scope 2026-09-10. Table root is `[actions]` per RFC 117.
 - **Shipped in:** —
 
 ## Summary
 
-This RFC defines a typed workflow-action and tool-execution model for Loaf projects. It gives Oven the inspectable lifecycle center of gravity that npm scripts and uv tool execution provide, while avoiding arbitrary install-time mutation as the default: packages, starters, capabilities, and AI assets may advertise actions, but Oven exposes them as typed, inspectable, policy-gated commands.
+This RFC defines a typed workflow-action and tool-execution model for Loaf projects. It gives Oven the inspectable lifecycle center of gravity that Hatch scripts, npm scripts and uv tool execution provide, while avoiding arbitrary install-time mutation as the default: packages, starters, mixes, and AI assets may advertise actions, but Oven exposes them as typed, inspectable, policy-gated commands. An action written in Incan is a function with `@action`, and `loaf.toml` lists what a project offers, including tools that are not written in Incan.
 
 ## Core model
 
 Read this RFC as seven foundations:
 
 1. **Actions are project workflow contracts:** an action describes a known project operation such as run, test, lint, format, generate, validate, publish, evaluate, or serve.
-2. **Tools are executable providers:** a tool may come from a package, built-in command, local path, registry artifact, or AI asset runtime, but its source and permissions are explicit.
+2. **Tools are executable providers:** a tool may come from a package, built-in command, local path, registry artifact, or a runtime from a higher-level framework, but its source and permissions are explicit.
 3. **Execution mode matters:** actions distinguish project-context execution from isolated one-off tool execution.
 4. **No hidden lifecycle hooks:** installing a package or resolving a dependency must not run arbitrary project mutation hooks.
 5. **Policy gates risk:** actions that mutate files, access the network, use models, or run external tools are classified for RFC 076 policy.
@@ -38,73 +41,84 @@ Read this RFC as seven foundations:
 
 ## Motivation
 
-npm became central to JavaScript partly because `npm run` gave every project a common task surface. uv improved Python workflows by making project commands and ephemeral tools fast and unified. Incan should have a similarly ergonomic workflow layer, but should avoid making arbitrary shell hooks the primary integration mechanism.
+Hatch gives a Python project named scripts inside its environments, and that is where this design started. npm became central to JavaScript partly because `npm run` gave every project a common task surface. uv improved Python workflows by making project commands and ephemeral tools fast and unified. Incan should have a similarly ergonomic workflow layer, but should avoid making arbitrary shell hooks the primary integration mechanism.
 
-RFC 015 already has envs and scripts. RFC 075 lets capabilities advertise tooling actions. This RFC turns those pieces into a coherent model: actions have kinds, inputs, outputs, scope, risk labels, source identity, and execution mode. That gives users a predictable command loop while giving policy, IDEs, and agents enough structure to reason about what a command will do.
+RFC 015 already has envs and scripts. RFC 075 lets mixes advertise tooling actions. This RFC turns those pieces into a coherent model: actions have kinds, inputs, outputs, scope, risk labels, source identity, and execution mode. That gives users a predictable command loop while giving policy, IDEs, and agents enough structure to reason about what a command will do.
 
 ## Goals
 
 - Define typed workflow actions for common project operations.
 - Define tool execution modes for project-context tools and isolated one-off tools.
-- Allow packages, capabilities, starters, workspaces, and AI assets to advertise actions without executing them implicitly.
+- Let an action be written in Incan, with typed parameters and checked capabilities.
+- Allow packages, mixes, starters, workspaces, and AI assets to advertise actions without executing them implicitly.
 - Classify action risk for RFC 076 policy.
 - Define action inputs, outputs, required envs, workspace scope, and mutation behavior.
 - Define action capability requirements, optional capability requests, receipt-schema expectations, and dry-run metadata that can be compared with RFC 104 runtime receipts.
 - Provide machine-readable action discovery for CLI, LSP, IDEs, docs tooling, and agents.
-- Leave room for `incan.pub` to index tools and actions as ecosystem artifacts.
+- Leave room for `loaves.pub` to index tools and actions as ecosystem artifacts.
 
 ## Non-Goals
 
 - Replacing general-purpose shells.
 - Defining a remote build or distributed task execution service.
 - Allowing package install or import to run arbitrary setup hooks.
-- Defining exact syntax for every action kind in v1.
-- Defining AI model execution semantics in full. RFC 080 owns AI assets and model metadata.
-- Defining no-std/freestanding target profiles, kernel support, unsafe/layout controls, panic strategy, or allocator strategy. Action capability and receipt metadata may inform those later RFCs, but this RFC is not the freestanding/kernel RFC.
-- Requiring every project script to be converted to a typed action immediately.
+- Defining exact syntax for every action kind.
+- Defining AI model execution semantics. RFC 080 owns declared AI assets, and a higher-level framework owns runtimes.
+- Defining no-std/freestanding target profiles, kernel support, unsafe/layout controls, panic strategy, or allocator strategy. Action capability and receipt metadata may inform those RFCs, but this RFC is not the freestanding/kernel RFC.
+- Requiring every project script to be converted to a typed action.
 
 ## Guide-level explanation
 
 ### Declaring actions
 
-A project or capability may declare typed actions:
+An action written in Incan is a function:
 
-```toml
-[[actions]]
-id = "test"
-kind = "test"
-command = ["incan", "test"]
-scope = "member"
-mutates = []
+```incan
+# tools/client.incn
+from std.actions import ActionKind, action
+from std.fs import Path
 
-[[actions]]
-id = "generate-client"
-kind = "generate"
-tool = "pub:openapi-client"
-inputs = ["openapi.yaml"]
-outputs = ["src/generated/client.incn"]
-mutates = ["source"]
-requires-review = true
+@action(kind=ActionKind.Generate, caps=[host.fs.write], outputs=["src/generated/client.incn"])
+def generate_client(spec: Path = Path("openapi.yaml")) -> Result[None, GenerateError]:
+    ...
 ```
 
-The exact encoding is not normative in this Draft. The key requirement is that actions are inspectable before they run.
+`loaf.toml` lists what the project offers, including tools that are not written in Incan. A mix or package may advertise the same entries:
+
+```toml
+[actions.generate-client]
+entry = "tools.client.generate_client"
+
+[actions.format-sql]
+kind = "format"
+tool = "pub:sqlfmt"
+mutates = ["source"]
+
+[actions.lint-docs]
+kind = "lint"
+command = ["vale", "docs/"]
+scope = "member"
+```
+
+An action is inspectable before it runs, whichever form it takes.
 
 ### Running project actions
 
 A user can run a project action:
 
 ```text
-oven action run test
+oven action run lint-docs
+oven action run generate-client --spec other.yaml
 oven action run generate-client --dry-run
 ```
 
-The dry run shows the tool source, inputs, outputs, workspace scope, env, mutation risk categories, and policy outcome.
+A function's parameters become flags through RFC 090's `std.cli`, so `--spec` is parsed and type-checked. The dry run shows the tool source, inputs, outputs, workspace scope, env, mutation risk categories, and policy outcome.
 
-For capability-aware actions, the dry run should also show required capabilities, optional capabilities, expected receipt kinds, redaction-sensitive fields, replay expectations, and whether any capability requirement comes from the action itself, a package descriptor, a capability pack, a tool source, or policy expansion.
+For actions with declared capabilities, the dry run should also show required capabilities, optional capabilities, expected receipt kinds, redaction-sensitive fields, replay expectations, and whether any capability requirement comes from the action itself, a package descriptor, a mix, a tool source, or policy expansion.
 
 ### Running one-off tools
 
-Incan may support isolated tool execution:
+Oven supports isolated tool execution:
 
 ```text
 oven tool run formatter@1.2.0 -- src/
@@ -115,9 +129,23 @@ An isolated tool should not become a project dependency merely because it was ex
 
 ## Reference-level explanation
 
+### Actions written in Incan
+
+`std.actions` must provide `action` and `ActionKind`. `action` must be an ordinary RFC 036 decorator factory that returns an action value, with no compiler knowledge of the name beyond what RFC 104 checks.
+
+A function with `@action` must take parameters that `std.cli` can derive flags from, either individually or as one model, and must return `None`, a typed report model, or a `Result` of either. An `Err`, or a report that marks failure, must be a non-zero exit. `kind`, `caps`, `uses`, `inputs`, `outputs`, `mutates` and `scope` must have the same meaning as in `loaf.toml`, where `uses` names RFC 080 assets.
+
+`caps=` must follow RFC 104: a compile error when it omits something the body uses, and a ceiling while the action runs. It is optional, and without it the action has neither.
+
+`--dry-run` on an Incan action must report its declarations without running its body.
+
+### Listing actions
+
+`[actions.<id>]` in `loaf.toml` must name exactly one of `entry`, `tool` or `command`. `entry` must name a function with `@action`, and anything else must be a diagnostic. No decorator may register an action as a side effect, and an `@action` function no `loaf.toml` lists must not be runnable through `oven action run`. A project must be able to list its actions by id even when its code does not currently compile, with details it cannot determine reported as unavailable.
+
 ### Action kinds
 
-V1 should standardize a small action-kind vocabulary:
+A small action-kind vocabulary is standardized:
 
 - `run`: run an application entrypoint
 - `test`: run tests
@@ -153,7 +181,7 @@ Tool sources may include:
 - git sources
 - public catalog tools
 - private catalog tools
-- AI asset runtimes from RFC 080
+- runtimes a higher-level framework provides
 
 The selected tool source, version, content hash, publisher, and trust metadata must be represented in machine-readable output when available.
 
@@ -161,7 +189,7 @@ The selected tool source, version, content hash, publisher, and trust metadata m
 
 Actions should declare inputs and outputs when they can. Actions that mutate files must declare mutation categories compatible with RFC 076 risk categories.
 
-If an action mutates source files, scripts, CI configuration, env definitions, manifests, generated-file ownership, or agent guidance, it must support dry-run or plan output unless the action kind is explicitly marked as non-plannable. Non-plannable mutating actions should require review by default.
+If an action mutates source files, scripts, CI configuration, env definitions, manifests, generated-file ownership, or agent guidance, it must support dry-run or plan output unless the action kind is explicitly marked as non-plannable. Non-plannable mutating actions must default to the `require-approval` outcome under RFC 076.
 
 ### Workspace scope
 
@@ -194,7 +222,7 @@ Actions must be able to declare static capability expectations compatible with R
 
 Action metadata does not grant authority. It describes expected authority so lifecycle tooling, policy, CI, LSP, docs, and agents can review the action before it runs. Runtime authority remains governed by RFC 104.
 
-A dry-run or plan for a capability-aware action must include the declared capability requirements, source of each requirement, policy outcome when evaluated, and whether the action is expected to emit a runtime report. After execution, the action's RFC 104 run report should be comparable with the dry-run plan. Undeclared runtime capability use, denied operations, unused broad grants, and redacted receipt attributes should be visible as machine-readable facts rather than only terminal text.
+A dry-run or plan for an action with declared capabilities must include the declared capability requirements, source of each requirement, policy outcome when evaluated, and whether the action is expected to emit a runtime report. After execution, the action's RFC 104 run report should be comparable with the dry-run plan. Undeclared runtime capability use, denied operations, unused broad grants, and redacted receipt attributes should be visible as machine-readable facts rather than only terminal text.
 
 ### Machine-readable discovery
 
@@ -221,9 +249,9 @@ RFC 015 scripts and envs remain valid. This RFC layers typed actions above scrip
 
 ### Relationship to RFC 075
 
-Starter and capability descriptors may advertise actions. Those actions must remain descriptive until a user or tool explicitly runs them.
+Starter and mix descriptors may advertise actions. Those actions must remain descriptive until a user or tool explicitly runs them.
 
-RFC 075 owns how starter and capability mutation plans add, merge, or record action descriptors in project metadata. This RFC owns what those action descriptors mean once discovered: action kinds, execution modes, source resolution, risk classification, dry-run behavior, policy checks, and invocation.
+RFC 075 owns how starter and mix mutation plans add, merge, or record action descriptors in project metadata. This RFC owns what those action descriptors mean once discovered: action kinds, execution modes, source resolution, risk classification, dry-run behavior, policy checks, and invocation.
 
 ### Relationship to RFC 076
 
@@ -247,6 +275,14 @@ AI-backed actions such as prompt evaluation, model conversion, embedding generat
 
 Rejected because arbitrary scripts are ergonomic but opaque. Typed actions preserve script convenience while giving tools, policy, and agents structured metadata.
 
+### Describe actions in TOML only
+
+Rejected because actions would stay untyped, with strings for inputs, and RFC 104's compile check would have nothing to check.
+
+### Discover actions from source, with no listing
+
+Rejected because Oven would have to compile a project just to say what actions it has, and a broken project could not list them.
+
 ### Make every action a package dependency
 
 Rejected because many tools are one-off or developer-only utilities. Isolated tool execution keeps projects cleaner.
@@ -264,29 +300,27 @@ Rejected because install-time hooks are difficult to review and policy-gate. Pro
 
 ## Implementation architecture
 
-The recommended implementation shape is to build an action registry from built-ins, `loaf.toml` project and workspace data, package metadata, starter/capability descriptors, and AI assets. `oven action list` and IDE tooling consume this registry. `oven action run` resolves source, inherited workspace scope, env, policy, target context, and execution mode before invoking anything. RFC 118 may expose an Incan convenience that delegates downward to this operation, but it must not resolve or execute actions independently.
+The recommended implementation shape is to build an action registry from built-ins, `loaf.toml` project and workspace data, package metadata, starter and mix descriptors, and AI assets. `oven action list` and IDE tooling consume this registry. `oven action run` resolves source, inherited workspace scope, env, policy, target context, and execution mode before invoking anything. RFC 118 has no Incan alias for actions.
 
 ## Layers affected
 
-- **Manifest schema / configuration validation:** projects need typed action metadata, tool source references, execution modes, inputs, outputs, and mutation categories.
+- **Stdlib:** `std.actions`, with `action` and `ActionKind`, using `std.cli` for parameters.
+- **Manifest schema / configuration validation:** `[actions.<id>]` needs `entry`, `tool` or `command`, execution modes, inputs, outputs, and mutation categories.
 - **CLI / tooling:** commands need action listing, dry-run planning, isolated tool execution, source resolution, capability preview, receipt expectation display, and policy gating.
 - **Workspace tooling:** actions must support hierarchical sub-Loaf selection within one inherited root-workspace authority and must show the selected closure in plans and receipts.
 - **LSP / IDE tooling:** editor integrations should surface actions, run/debug affordances, policy outcomes, and mutation previews.
 - **Package and catalog integration:** packages and catalogs may advertise tool binaries and action descriptors.
-- **Runtime / reporting:** actions that execute through capability-aware runtimes should produce RFC 104-compatible report identities so declared authority and actual receipts can be compared.
+- **Runtime / reporting:** actions should produce RFC 104-compatible report identities so declared authority and actual receipts can be compared.
 - **Agentic tooling:** agents may consume action metadata, capability requirements, dry-run plans, and receipt expectations, but action execution remains subject to policy and user approval.
 - **Documentation:** docs must distinguish scripts, actions, tools, project-context execution, and isolated execution.
 
-## Design decisions
+## Design Decisions
 
-Resolved 2026-09-10 when this RFC was brought into the v0.6 scope.
-
-- **Standard action kinds.** The ten kinds in the reference section are standardized for v1. Extension kinds use an `x-` prefix, appear in machine-readable output, and receive conservative policy handling.
+- **Actions are written two ways, with one model.** A function with `@action` from `std.actions` gets typed parameters through `std.cli`, and RFC 104's `caps=` check and ceiling. `tool` and `command` describe what is not written in Incan. `[actions.<id>]` lists both, so nothing registers as a side effect and listing needs no compile.
+- **Standard action kinds.** The ten kinds in the reference section are standardized. Extension kinds use an `x-` prefix, appear in machine-readable output, and receive conservative policy handling.
 - **`oven run` and `oven test` are not actions.** `run`, `test`, `build`, `bake`, and `check` remain first-class Oven command families with their own plan identities (RFC 118). Actions are the extension mechanism for everything else and are invoked through `oven action run <id>`. A project action may declare kind `run` or `test`, but it never redefines or shadows the built-in operation, so there is no npm-scripts-style override of `oven test`.
 - **Minimum dry-run contract for mutating external tools.** The plan must show the tool's source identity, version, and content hash; execution mode; argv, working directory, and environment additions; declared mutation categories and target paths; capability requirements (RFC 104); and the policy outcome. A tool that cannot predict its outputs declares `outputs = "unpredictable"`, is non-plannable, requires approval by default, and runs in a staging directory whose post-run diff is presented as a mutation plan before anything is adopted into the project (RFC 112 for the atomic adoption).
 - **Isolated tool execution uses the Oven store.** Tools are units under RFC 124, cached globally by unit identity and shared across projects; there is no per-project tool cache. `--fresh` requests a temporary environment for one run.
 - **Inputs and outputs for unpredictable tools.** Declared as `outputs = "unpredictable"`; observed outputs are recorded in the receipt and surfaced as the post-run diff above. Tools that can predict outputs declare them and are checked against the receipt.
 - **Secrets and credentials.** Action metadata may declare named credential requirements (kind and purpose), never values. Policy mediates each request; values are resolved from Oven-controlled secure storage (the credential references RFC 117 already keeps outside the project) as RFC 103 secret values; every request is receipted under RFC 104 with redaction.
-- **AI-backed actions.** Metadata carries three fields, execution locality (`local` or `cloud`), a cost class, and a privacy label, referencing RFC 080 assets where they exist; policy may block cloud execution. The field shapes are fixed here so `[actions]` need not change when RFC 080 lands; their detailed semantics remain RFC 080's.
-
-Amendment made at the same time: the table root is `[actions]` (RFC 117), not `[oven.actions]`.
+- **AI-backed actions.** Metadata carries three fields, execution locality (`local` or `remote`), a cost class, and a privacy label, referencing RFC 080 assets where they exist; policy may block remote execution. The field shapes are fixed here; their detailed semantics remain RFC 080's.
