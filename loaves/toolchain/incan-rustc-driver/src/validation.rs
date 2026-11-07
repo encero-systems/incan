@@ -187,6 +187,7 @@ enum Leaf {
     Decimal,
     FrozenStr,
     FrozenBytes,
+    FrozenCollection(String, Vec<Scalar>),
     /// One zero-sized token with its represented checked carrier.
     TypeToken(Vec<Scalar>),
     /// An owned nested list preserves every supplied leaf until canonical arity validation.
@@ -221,6 +222,9 @@ impl Leaf {
             ListLeaf::Decimal => Leaf::Decimal,
             ListLeaf::FrozenStr => Leaf::FrozenStr,
             ListLeaf::FrozenBytes => Leaf::FrozenBytes,
+            ListLeaf::FrozenCollection(name, elements) => {
+                Leaf::FrozenCollection(name.clone(), elements.iter().map(scalar).collect())
+            }
             ListLeaf::FunctionPointer(signature) => Leaf::FunctionPointer(signature.iter().map(scalar).collect()),
             ListLeaf::TypeToken(represented) => Leaf::TypeToken(represented.iter().map(scalar).collect()),
             ListLeaf::List(elements, depth) => Leaf::List(elements.iter().map(Leaf::of).collect(), *depth),

@@ -148,6 +148,12 @@ fn guard_owned_leaf(
         ListLeaf::Model(index, name) => guard_owned_result(plan, &PlanType::Model(*index, name.clone()), visiting, tcx),
         ListLeaf::Enum(index, name) => guard_owned_result(plan, &PlanType::Enum(*index, name.clone()), visiting, tcx),
         ListLeaf::Tuple(elements) => guard_owned_result(plan, &PlanType::Tuple(elements.clone()), visiting, tcx),
+        ListLeaf::FrozenCollection(name, elements) => guard_owned_result(
+            plan,
+            &PlanType::FrozenCollection(name.clone(), elements.clone()),
+            visiting,
+            tcx,
+        ),
         ListLeaf::TypeToken(represented) => {
             represented.len() == 1 && guard_owned_result(plan, &PlanType::TypeToken(represented.clone()), visiting, tcx)
         }
