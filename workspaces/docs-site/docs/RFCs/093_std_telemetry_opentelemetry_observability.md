@@ -1,6 +1,6 @@
 # RFC 093: `std.telemetry` — OpenTelemetry-aligned observability
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-05-11
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -19,7 +19,7 @@
     - RFC 094 (context managers)
     - RFC 095 (`span` vocabulary blocks)
     - OpenTelemetry specification and semantic conventions (external)
-- **Issue:** #559
+- **Issue:** [#559](https://github.com/encero-systems/incan/issues/559)
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** —
@@ -39,7 +39,7 @@ Read this RFC as eight foundations:
 5. **Tracing is decorator-first:** function spans should use `@telemetry.trace` with an ambient default span name derived from the fully qualified Incan symbol. Explicit names and attribute factories are available when needed.
 6. **Baggage and context are values:** context propagation is explicit at API boundaries, and baggage is a distinct key-value carrier rather than a disguised log attribute map.
 7. **Semantic conventions are generated helpers:** OpenTelemetry semantic conventions should be exposed through `std.telemetry.semconv` helpers and constants, not copied as unstructured strings into every stdlib module.
-8. **Metrics are part of the north star:** `std.telemetry.metrics` belongs in the observability surface. Its meter API must address cardinality, aggregation, units, temporality, and views as part of the normative design.
+8. **Metrics are part of the north star:** `std.telemetry.metrics` belongs in the observability surface. Instruments declare their measurement type, unit and permitted labels. Deployment policy selects aggregation and limits the number of distinct label combinations.
 
 ## Motivation
 
@@ -60,14 +60,14 @@ The desired end state is controlled ambient observability. A small script can us
 - Define context and baggage APIs that avoid the reserved `ctx` spelling and keep baggage distinct from attributes.
 - Define `std.telemetry.semconv` as the home for semantic-convention constants and typed helper functions.
 - Define a stdlib instrumentation policy model so modules such as `std.http`, `std.process`, `std.fs`, `std.testing`, and AI/MCP surfaces can emit consistent telemetry when enabled.
-- Include metrics in the telemetry direction while keeping the meter API subject to the same normative design bar as logs and traces.
+- Support typed counters and histograms with explicit units, checked labels and bounded aggregation.
 
 ## Non-Goals
 
 - Making telemetry export implicit merely because a module is imported.
 - Replacing `std.logging` with `std.telemetry`; simple logs should remain simple.
 - Exposing Rust `tracing`, OpenTelemetry SDK crates, subscribers, collectors, or exporter implementation details in ordinary Incan source.
-- Standardizing a final metrics API in this RFC.
+- Selecting an exporter-specific metrics backend or prescribing one bucket layout for all deployments.
 - Adding a `with` statement in this RFC.
 - Treating baggage as ordinary event attributes.
 - Vendoring a frozen copy of all OpenTelemetry semantic conventions into handwritten stdlib source.
@@ -159,10 +159,15 @@ Telemetry APIs should therefore stay partial-friendly: prefer named parameters, 
 RFC 095 defines `span` as a standard telemetry vocabulary block layered over RFC 094 context managers. This gives non-function operation scopes a native spelling without making general resource management telemetry-shaped:
 
 ```incan
-import std.telemetry.vocab
+import std.telemetry as telemetry
 
-span "cache.lookup", attributes={"cache.key": key}:
-    result = cache.get(key)
+@telemetry.attributes("cache")
+model CacheAttributes:
+    key: str
+
+def lookup(cache: dict[str, str], key: str) -> Option[str]:
+    span "lookup", attributes=CacheAttributes(key=key):
+        return cache.get(key)
 ```
 
 Manual span handles remain available as a lower-level escape hatch, but ordinary source should prefer `@telemetry.trace` for whole functions and `span "name":` for meaningful sub-operation blocks.
@@ -431,6 +436,8 @@ def user_attrs() -> telemetry.Attributes:
     return semconv.http.server_request(method="GET", route="/users/{id}", status_code=200)
 ```
 
+RFC 095 span blocks accept typed attribute models. Generate those models, the convenience functions that return attribute maps, and the key constants from the same pinned convention metadata. For example, a block can use `semconv.HttpServer(request=semconv.HttpRequest(method="GET"), route="/users/{id}")`. Map-returning helpers serve call sites that accept `Attributes`.
+
 Constants should remain available:
 
 ```incan
@@ -443,7 +450,7 @@ def user_attrs() -> telemetry.Attributes:
 
 HTTP instrumentation names the server span using the method and matched route template, for example `GET /customers/{id}` for a request to `/customers/42`. If the route template is unavailable, use the method alone. A traced Incan function inside that request still produces its declaration name, such as `checkout.customers.load`. See the [OTel HTTP span conventions](https://opentelemetry.io/docs/specs/semconv/http/http-spans/).
 
-The semantic-convention surface must record the OpenTelemetry semantic-convention version it was generated from. Packages may support multiple convention versions, but one active version per Incan release is acceptable for the standard library.
+Each Incan release pins one OpenTelemetry semantic-convention version for its generated standard helpers. Generated metadata must identify the version and mark experimental helpers. An ordinary dependency refresh retains the same attribute keys. When a release intentionally updates the pin, it must identify changed, renamed and removed helpers and their affected keys so applications can update instrumentation and dashboards together.
 
 ### Exporters
 
@@ -481,9 +488,16 @@ Stdlib modules should use semantic conventions where they correspond to common o
 
 ### Metrics
 
-`std.telemetry.metrics` is the OpenTelemetry-compatible metrics namespace. The meter API must address instrument kind, aggregation, units, temporality, views, cardinality control, async runtime behavior, and exporter cost.
+`std.telemetry.metrics` provides typed counters and histograms. A declaration specifies its measurement type, unit, and permitted label keys and value types. Recording a value or label that does not match the declaration must produce a diagnostic. The application declares what it measures. Deployment policy chooses compatible aggregation and bounds the number of distinct label combinations an instrument tracks.
 
-The RFC deliberately treats metrics as part of the observability contract, not an optional add-on. Any accepted meter API must carry the same design weight as logs and traces.
+For example, declare an HTTP duration histogram in seconds with labels for the matched route and response class. Two successful requests to `/orders/41` and `/orders/42` contribute two measurements to the same series:
+
+```text
+instrument: http.server.request.duration   kind: histogram   unit: s
+route=/orders/{id}   response_class=2xx   observations: 0.012, 0.034
+```
+
+A request ID belongs on the trace. Recording it as a label on this histogram is a diagnostic because the declaration permits only route and response class. Even a declared string label can have many distinct values; the deployment limit must bound series growth during collection.
 
 ## Design details
 
@@ -511,9 +525,9 @@ Baggage propagates across boundaries; attributes describe a particular telemetry
 
 OpenTelemetry semantic conventions are valuable because they standardize attribute names and meanings. They are also large and evolving. Handwritten string constants scattered through stdlib code would drift. Generated helpers and constants give users discoverability, type hints, and version metadata while still producing standard OTel keys.
 
-### Why metrics remain unresolved
+### Why aggregation belongs to deployment policy
 
-Metrics are deceptively easy to sketch and hard to get right. A counter and histogram API is not enough; production metrics require aggregation, temporality, cardinality controls, units, views, async instruments, and exporter behavior. The namespace belongs in the telemetry design, and the meter API must answer those questions as part of the contract.
+The application knows that it measured an HTTP duration in seconds. Operators can change histogram aggregation or the series limit for that deployment without changing the measurement at every request handler.
 
 ## Alternatives considered
 
@@ -540,9 +554,9 @@ Metrics are deceptively easy to sketch and hard to get right. A counter and hist
 - The API surface is larger than a logging-only design.
 - OpenTelemetry alignment introduces terminology that simple users may not care about.
 - Provider/exporter behavior needs careful policy and shutdown semantics.
-- Semantic-convention helpers need a generation and versioning story.
+- Upgrading pinned semantic conventions can require coordinated changes to application code and dashboards.
 - Tracing decorators need robust interaction with async functions and error handling.
-- Metrics require deeper API design than logs and traces because their correctness depends on aggregation, temporality, views, and cardinality control.
+- Wide label sets can exhaust a series budget and reduce the detail visible to operators.
 
 ## Implementation architecture
 
@@ -571,11 +585,5 @@ This section is non-normative. A pragmatic implementation should preserve the sa
 - **Default span names:** Use the fully qualified name of the declaration, independent of how the caller imports it.
 - **Traced results:** Each span reports its own call’s outcome. A caller that recovers can succeed while the failed child remains visible.
 - **Panics and assertions:** Record the origin once. Spans unwound by the same failure refer to that origin.
-
-## Unresolved questions
-
-- How should semantic-convention helpers be generated, versioned, and exposed when OpenTelemetry convention stability changes?
-- What meter API should `std.telemetry.metrics` expose, and how should it control cardinality and aggregation?
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- **Convention versions:** Pin one version per Incan release, mark experimental helpers and identify changes during an intentional upgrade.
+- **Metrics:** Declare typed instruments, explicit units and permitted labels. Deployment policy selects compatible aggregation and bounds label combinations.
