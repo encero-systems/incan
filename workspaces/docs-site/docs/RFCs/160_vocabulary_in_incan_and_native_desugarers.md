@@ -183,7 +183,7 @@ The language server desugars blocks as the consumer edits them. Workers stay run
 - A desugarer's response must be a function of its vocabulary unit's identity and its request.
 - Tooling may reuse a response for the same unit identity and the same request, and may keep worker processes running across requests.
 - A desugarer must not depend on the environment, the clock, the file system or the network. Governed execution must enforce its empty capability grant under RFC 104 rather than merely declare these accesses unsupported. A permitted native dependency must not introduce an unmediated authority-bearing path around that contract. Clearing the environment alone is not evidence of enforcement.
-- The compiler clears the worker's inherited environment and starts it with the operating-system containment generated from its empty grant: no network, no writes, and reads limited to the worker's own artifact, its locked dependencies and the selected toolchain. If the host cannot enforce that containment, the desugarer is refused.
+- The compiler clears the worker's inherited environment and starts it with the operating-system containment generated from its empty grant: no network and no local IPC beyond its channel to the compiler, no other inherited descriptor, no writes, and reads limited to the worker's own artifact, its locked dependencies and the selected toolchain, as RFC 119 defines them. If the host cannot enforce that containment, the desugarer is refused.
 
 ### Trust and evidence
 
