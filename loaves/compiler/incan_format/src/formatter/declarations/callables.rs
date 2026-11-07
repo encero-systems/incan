@@ -329,11 +329,15 @@ impl Formatter {
         let alias = field.metadata.alias.as_deref();
         let description = field.metadata.description.as_deref();
         let use_as_sugar = alias.is_some() && description.is_none();
+        let has_bracket_metadata = !use_as_sugar && alias.is_some()
+            || description.is_some()
+            || field.metadata.renamed_from_key_span.is_some()
+            || field.metadata.canonical.is_some();
 
-        if !use_as_sugar && (alias.is_some() || description.is_some()) {
+        if has_bracket_metadata {
             self.writer.write(" [");
             let mut wrote = false;
-            if let Some(alias) = alias {
+            if !use_as_sugar && let Some(alias) = alias {
                 self.writer.write("alias=\"");
                 self.writer.write(alias);
                 self.writer.write("\"");
@@ -346,6 +350,35 @@ impl Formatter {
                 self.writer.write("description=\"");
                 self.writer.write(description);
                 self.writer.write("\"");
+                wrote = true;
+            }
+            if field.metadata.renamed_from_key_span.is_some() {
+                if wrote {
+                    self.writer.write(", ");
+                }
+                self.writer.write("renamed_from=");
+                if field.metadata.renamed_from_was_list {
+                    self.writer.write("[");
+                }
+                for (index, earlier) in field.metadata.renamed_from.iter().enumerate() {
+                    if index > 0 {
+                        self.writer.write(", ");
+                    }
+                    self.writer.write("\"");
+                    self.writer.write(&earlier.node);
+                    self.writer.write("\"");
+                }
+                if field.metadata.renamed_from_was_list {
+                    self.writer.write("]");
+                }
+                wrote = true;
+            }
+            if let Some(canonical) = &field.metadata.canonical {
+                if wrote {
+                    self.writer.write(", ");
+                }
+                self.writer.write("canonical=");
+                self.writer.write(if canonical.node { "true" } else { "false" });
             }
             self.writer.write("]");
         }

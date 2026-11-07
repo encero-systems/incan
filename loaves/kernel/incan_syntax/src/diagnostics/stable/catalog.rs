@@ -739,6 +739,41 @@ pub(super) const NONGENERIC_CALL_TYPE_ARGUMENTS: DiagnosticCatalogEntry = Diagno
     docs_url: None,
 };
 
+pub(super) const FIELD_RENAME_STILL_DECLARED: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0130",
+    title: "Earlier field name is still declared",
+    severity: "error",
+    phase: "typecheck",
+    summary: "A model field claims an earlier name that is still a field on the same model.",
+    explanation: "`renamed_from` declares continuity from an earlier field name. That earlier name cannot still identify a field on the same model, including the field carrying the metadata, because two current fields would then occupy the same point in the rename history.",
+    examples: &["model Customer:\n    email: str\n    email_address [renamed_from=\"email\"]: str"],
+    common_causes: &[
+        "The old field was retained after its replacement was added.",
+        "A field listed its current name in `renamed_from`.",
+    ],
+    fixes: &["Remove the rename claim, or remove the field that still uses the earlier name."],
+    docs_url: None,
+};
+
+pub(super) const FIELD_RENAME_CLAIMED_TWICE: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0131",
+    title: "Earlier field name is claimed twice",
+    severity: "error",
+    phase: "typecheck",
+    summary: "One earlier field name appears more than once in a model's rename history.",
+    explanation: "An earlier name identifies one continuity chain. Two fields cannot claim it, and one field's ordered history cannot repeat it, because either form makes the earlier declaration ambiguous.",
+    examples: &[
+        "model Customer:\n    primary_email [renamed_from=\"email\"]: str\n    billing_email [renamed_from=\"email\"]: str",
+        "model Customer:\n    email_address [renamed_from=[\"email\", \"email\"]]: str",
+    ],
+    common_causes: &[
+        "Two replacement fields were given the same earlier name.",
+        "An ordered rename list accidentally repeats one entry.",
+    ],
+    fixes: &["Keep each earlier name on exactly one field and only once in its ordered history."],
+    docs_url: None,
+};
+
 pub(super) const CATALOG: &[DiagnosticCatalogEntry] = &[
     OWNERSHIP_BOUNDARY_UNPROVABLE,
     RESULT_SOURCE_INVALID,
@@ -747,6 +782,8 @@ pub(super) const CATALOG: &[DiagnosticCatalogEntry] = &[
     STORE_RESERVED_MODEL_FIELD,
     RECORD_MEMBER_IDENTITY_COLLISION,
     NONGENERIC_CALL_TYPE_ARGUMENTS,
+    FIELD_RENAME_STILL_DECLARED,
+    FIELD_RENAME_CLAIMED_TWICE,
     PARSER_SYNTAX,
     TYPECHECK,
     UNREACHABLE_CODE,

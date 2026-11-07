@@ -175,6 +175,7 @@ nav:
           - Assignments: language/reference/assignments.md
           - Explicit ownership: language/reference/explicit_ownership.md
           - Functions and calls: language/reference/functions.md
+          - Field metadata: language/reference/field_metadata.md
           - Generators: language/reference/generators.md
           - Symbol aliases: language/reference/symbol_aliases.md
           - Callable presets: language/reference/callable_presets.md

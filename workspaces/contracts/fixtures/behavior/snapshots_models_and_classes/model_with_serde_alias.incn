@@ -2,15 +2,16 @@
 # expect-stdout:
 #   {"type":"premium","class":"gold","name":"Ada"}
 #   premium gold Ada
+#   old key refused
 
 from std.serde import json
 
 
 @derive(json)
 model Account:
-    type_ [alias="type"]: str
-    class_ as "class": str
-    name: str
+    type_ [alias="type", renamed_from="account_type"]: str
+    class_ [renamed_from=["tier"], canonical=false] as "class": str
+    name [canonical=true]: str
 
 
 def main() -> None:
@@ -20,3 +21,6 @@ def main() -> None:
     match Account.from_json(encoded):
         Ok(decoded) => println(f"{decoded.type_} {decoded.class_} {decoded.name}")
         Err(error) => println(f"error {error}")
+    match Account.from_json('{"account_type":"premium","class":"gold","name":"Ada"}'):
+        Ok(_) => println("old key accepted")
+        Err(_) => println("old key refused")

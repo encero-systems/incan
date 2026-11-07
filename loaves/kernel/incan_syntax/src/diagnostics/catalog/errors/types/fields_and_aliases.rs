@@ -570,3 +570,72 @@ pub fn description_not_supported_on_class(class_name: &str, field_name: &str, sp
     )
     .with_hint("Field descriptions are only supported on `model` declarations (RFC 021)")
 }
+
+/// Report `renamed_from` on a class field, whose live object fields have no automatic stored identity.
+pub fn renamed_from_not_supported_on_class(class_name: &str, field_name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Field rename history not supported on class '{class_name}' field '{field_name}'"),
+        span,
+    )
+    .with_hint("Declare stored rename history on a `model` field")
+}
+
+/// Report `canonical` on a class field, whose live object fields have no canonical stored hash.
+pub fn canonical_not_supported_on_class(class_name: &str, field_name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Canonical field metadata not supported on class '{class_name}' field '{field_name}'"),
+        span,
+    )
+    .with_hint("Declare canonical stored fields on a `model`")
+}
+
+/// Report an empty earlier-name string or authored empty list.
+pub fn empty_field_rename(type_name: &str, field_name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Field '{field_name}' on '{type_name}' must name at least one earlier field"),
+        span,
+    )
+    .with_hint("Write a non-empty identifier in `renamed_from`")
+}
+
+/// Report an earlier name that cannot be an Incan field identifier.
+pub fn invalid_earlier_field_name(type_name: &str, field_name: &str, earlier_name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Earlier name '{earlier_name}' for field '{field_name}' on '{type_name}' is not a valid identifier"),
+        span,
+    )
+    .with_hint("Use the exact earlier Incan field identifier")
+}
+
+/// Report rename history that points at a field still declared on the same model.
+pub fn field_rename_still_declared(
+    type_name: &str,
+    field_name: &str,
+    earlier_name: &str,
+    rename_span: Span,
+    declared_span: Span,
+) -> CompileError {
+    CompileError::type_error(
+        format!("Earlier name '{earlier_name}' for field '{field_name}' still exists on model '{type_name}'"),
+        rename_span,
+    )
+    .with_stable_code("INCAN-T0130")
+    .with_related_span(declared_span, format!("Field '{earlier_name}' is still declared here"))
+    .with_hint("Remove the rename claim or remove the field that still uses the earlier name")
+}
+
+/// Report one earlier name claimed more than once within a model.
+pub fn field_rename_claimed_twice(
+    type_name: &str,
+    earlier_name: &str,
+    first_span: Span,
+    second_span: Span,
+) -> CompileError {
+    CompileError::type_error(
+        format!("Earlier name '{earlier_name}' is claimed more than once on model '{type_name}'"),
+        second_span,
+    )
+    .with_stable_code("INCAN-T0131")
+    .with_related_span(first_span, format!("First claim of '{earlier_name}' is here"))
+    .with_hint("Keep the earlier name on exactly one field and only once in its history")
+}
