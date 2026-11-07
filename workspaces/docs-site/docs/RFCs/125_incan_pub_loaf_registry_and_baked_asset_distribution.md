@@ -355,9 +355,11 @@ Because every artifact and index file is immutable or event-derived, a mirror is
 
 ## Design details
 
-### Public name and internal namespace
+### One name, and the records written before it
 
-`loaves.pub` is the registry's public identity, and `incan.pub` is its internal namespace. The event schema `incan.pub/event/1`, the event actor, the catalog schemas, the container-registry paths that hold published artifacts, the attestation identities and URLs of the registry's build workflows, and the notice adoption writes into an added file all keep `incan.pub`. They are permanent wire identifiers: the event strings are hashed into event ids, and the notice sits inside archives that published digests name, so rewriting them would change identities that lockfiles rest on. Tools must not treat them as stale.
+`loaves.pub` is the registry's only name. Its repository, its tools, the container-registry paths that hold published artifacts, the event schema `loaves.pub/event/1`, the event actor and the catalog schemas all carry it.
+
+Records written while the registry was named `incan.pub` keep the strings they were written with. That covers events under `incan.pub/event/1` and their actor, the attestation identities of builds that ran under the earlier repository name, and the notice adoption wrote into the archives it published then. The event strings are hashed into event ids, and the notice sits inside archives that published digests name, so rewriting either would change identities that lockfiles rest on. Readers must accept both forms as the same records, and tools must not treat the earlier ones as stale. Artifacts published under the earlier container-registry paths stay published there with the same digests, because released toolchains fetch from them. The same artifacts are also available under the `loaves.pub` paths.
 
 ### Interaction with RFC 117
 
@@ -457,6 +459,7 @@ Non-normative. The registry client belongs in Oven's build-system ring rather th
 ## Design Decisions
 
 - **Every dependency is a Loaf.** Adoption is how other ecosystems arrive, and the `crate` dependency kind does not exist.
+- **`loaves.pub` is the registry's only name,** in its repository, tools, artifact paths and schemas. Records written under `incan.pub` keep their strings, because their identities rest on them, and readers accept both forms.
 - **A miss can be filled locally,** as a separate, sandboxed, visible step that runs the registry's tool, on by default and off by policy. The registry can't cover every package and feature combination, so refusing would leave uncommon packages unusable.
 - **Faulty adoptions are corrected by revisions,** and only adopted scopes have them. Authors never set or see one.
 - **The first part of a name is its owner,** with `incan`, `crates-io`, `c`, `std` and `oven` reserved, plus any scopes a registry's published policy adds.
