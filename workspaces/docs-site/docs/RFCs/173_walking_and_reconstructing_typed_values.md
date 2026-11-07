@@ -9,6 +9,7 @@
     - RFC 085 (field metadata and rename continuity)
     - RFC 103 (secret values)
     - RFC 122 (model construction contracts)
+    - RFC 131 (error declarations and `ValidationError`)
     - RFC 141 (type matching and named type operations)
     - RFC 146 (typed JSON decoding and complete validation)
     - RFC 164 (explicit ownership and borrowing)
@@ -21,7 +22,7 @@
 
 ## Summary
 
-Every model, enum and newtype gets two members that the compiler fills from its checked declaration. `__walk__` visits a value with each field's declared type, and `__reconstruct__` restores stored values from a source and validates the resulting state without replaying constructor input transformations. Neither knows any format. A codec, a hash or a reference finder is ordinary library code that implements `Walker[E]` or `Source[E]`, and a type that wants another stored form writes the members by hand. `__shape__()` gives those libraries the facts of the declaration: field identities, `canonical` settings and canonical type spellings.
+Every model, enum and newtype gets members that the compiler fills from its checked declaration. `__walk__` visits a value with each field's declared type, and `__reconstruct__` restores stored values from a source and validates the resulting state without replaying constructor input transformations. Neither knows any format. A codec, a hash or a reference finder is ordinary library code that implements `Walker[E]` or `Source[E]`, and a type that wants another stored form writes the members by hand. `__shape__()` gives those libraries the facts of the declaration: field identities, `canonical` settings and canonical type spellings.
 
 ## Motivation
 
@@ -53,7 +54,7 @@ The model's checked declaration supplies its compiled traversal and reconstructi
 
 The format owns syntax, framing, encoded type and schema compatibility checks, and format-specific failures. The model owns the meaning and validity of the reconstructed instance. A document identifies data and its declared shape; it does not supply executable reconstruction code. A stored description alone is not a replacement for the selected model's compiled implementation.
 
-The visitor and source implementations satisfy the ordinary checked trait contracts. This RFC does not introduce a separate runtime negotiation mechanism for statically known field types.
+The walker and source implementations satisfy the ordinary checked trait contracts. This RFC does not introduce a separate runtime negotiation mechanism for statically known field types.
 
 ### What a model has
 
@@ -154,7 +155,7 @@ Construction supplies `hours=2`, executes the fieldmethod to establish `minutes=
 | Ordinary construction | Resolve supplied construction inputs through fieldmethods, then apply final validation | Establish stored fields from field-backed inputs and virtual construction inputs. |
 | Walking or crumbling | Visit stored fields; apply the codec's encoding rules | Read the current state. Virtual construction inputs are absent from the stored shape. Encoding can fail its own type, resource or format checks. |
 | Reconstruction | Decode stored fields, restore them through the model-owned hook, then apply final validation | Restore a valid instance without replaying construction fieldmethods. |
-| Later mutation through ordinary permitted APIs | The behavior of the invoked operation | RFC 173 adds neither mutation permission nor a new automatic validation-on-assignment rule. |
+| Later mutation through ordinary permitted APIs | The behavior of the invoked operation | This RFC adds neither mutation permission nor a new automatic validation-on-assignment rule. |
 
 Both construction and reconstruction can execute at runtime. Their difference follows from the inputs they consume: construction inputs versus stored fields. A codec does not store construction behavior and selectively replay it. Field-backed normalization is not replayed either: reconstruction restores the field's stored value, not a fresh input to its fieldmethod.
 
@@ -234,16 +235,16 @@ pub trait Reconstruct with Walk:
 - Each field is requested with its full declared type `V`. `source.field[V](info)` returns `Result[Option[V], E]`: the outer `None` means the field was absent, while `Some(value)` contains the stored value, including any optional layers inside `V`. Absence of an optional field resolves to the field value `None` under the format's compatibility contract. A present optional value must never be flattened or confused with absence.
 - Any other absent field may use its declared default only when the source explicitly permits that default through `source.takes_default(info)`; otherwise it fails with `source.missing(info)`. RFC 165 Crumb permits an absent collection with a declared empty default, but rejects other absent required fields even if their current declarations have non-empty defaults. The protocol does not broaden that compatibility rule or run a default factory during shape inspection.
 - A model validation failure must reach the caller through `source.invalid(error)`, which keeps the original `ValidationError`. A newtype restores its underlying stored value and enforces its constraints. Neither path may expose invalid final state.
-- A supplied stored value must not be overwritten by a changed default. Missing-value handling follows the source and schema compatibility contract below; it must not guess constructor inputs from stored values.
+- A supplied stored value must not be overwritten by a changed default. Missing-value handling follows the bullets above and the format's own compatibility rules, such as RFC 165's *What fits a field*; it must not guess constructor inputs from stored values.
 - Virtual construction inputs are not stored fields and must not appear in the stored shape. A codec must diagnose or handle them under its explicit unknown-field policy, never invoke a same-named fieldmethod. Schema migrations must be explicit; reconstruction must not normalize an incompatible stored value into acceptance.
-- Codec canonicalization under a declared value profile remains separate from model input normalization. Reconstruction does not disable the codec's documented representation rules.
+- A codec's own canonical representation rules, such as RFC 165's codec profiles, remain separate from model input normalization. Reconstruction does not disable the codec's documented representation rules.
 - Error collection follows the source's explicit policy and the active validation policy. `source.collects()` selects whether independently decodable fields continue after a field failure. The source retains each located decode failure once, including a missing-field failure it creates, and `source.collected()` returns the resulting error when failures exist. The generated reconstruction retains availability separately from values: a failed field is not an absent optional field. It runs only validation checks whose required restored values are available, merges their original failures through `source.invalid(error)`, and never returns a partial instance. A structurally unrecoverable source stops with honest coverage. RFC 146's default CollectAll and explicitly selected FailFast must not be reset at this boundary.
 
 ### Visibility
 
-The generated members cover every stored field, including fields without `pub`. A private field remains part of the model's complete data contract. Its presence must not disable walking or reconstruction, and must not require an explicit derive. The protocols are callable wherever the model's exported protocol is accessible; their visibility must not be reduced to that of the least visible field.
+The generated members cover every stored field, including fields without `pub`. A private field remains part of the model's complete data contract. Its presence must not disable walking or reconstruction, and must not require an explicit derive. The members are callable wherever the type itself is visible; their visibility must not be reduced to that of the least visible field.
 
-Ordinary callers still cannot initialize or assign private model fields directly. Model-owned reconstruction can populate them from stored data, subject to final validation. Direct field access retains its existing visibility rules. A visitor can observe private values through the walk: field privacy is not a confidentiality guarantee. RFC 103 secret protections apply independently, including to nested secrets.
+Ordinary callers still cannot initialize or assign private model fields directly. Model-owned reconstruction can populate them from stored data, subject to final validation. Direct field access retains its existing visibility rules. A walker can observe private values through the walk: field privacy is not a confidentiality guarantee. RFC 103 secret protections apply independently, including to nested secrets.
 
 `__shape__()` describes the complete stored shape used by this protocol. Existing public-field reflection helpers retain their own visibility contract. An intentionally redacted inspection view must not be described as a complete round-trip representation.
 
@@ -268,7 +269,7 @@ A walker sees kinds of value, and each kind has its members. A source answers wi
 - A newtype and an alias are invisible here: a walker sees what they hold. A frozen collection arrives as its collection.
 - Every member must have a default in `Walker[E]`: a value member does nothing, and a structural member walks on into what it holds. A walker that overrides only `reference` finds every reference in a value, however nested, with no scan of bytes.
 - `Source[E]` adds `missing(info)`, `takes_default(info)`, `invalid(error)`, `collects()` and `collected()`. `field[V with Reconstruct](info)` returns `Result[Option[V], E]`, `None` meaning the input lacks the field.
-- Numeric decoding must preserve the requested type's value constraints. A narrower integer must refuse an out-of-range value through the source's typed failure channel; a float conversion must follow the selected codec value profile rather than silently choose a lossy conversion.
+- Numeric decoding must preserve the requested type's value constraints. A narrower integer must refuse an out-of-range value through the source's typed failure channel; a float conversion must follow the selected codec profile rather than silently choose a lossy conversion.
 - Source implementations must expose typed failure conversion for malformed values, numeric range failures, and shape mismatches. End operations validate that the selected container or frame is complete under the format's contract. Tuple arity, enum variant selection, union membership and nested declared types are checked rather than guessed.
 - Depth, sizes and allocation are the format's to bound. The generated recursion must carry the source or walker's accounting through nested values; calling a nested model must not reset its limits. The members add no arbitrary universal limit.
 
@@ -279,7 +280,8 @@ A walker sees kinds of value, and each kind has its members. A source answers wi
 | Field | Type | Description |
 | --- | --- | --- |
 | `name` | `FrozenStr` | The type's name, for diagnostics |
-| `identity` | `FrozenBytes` | An opaque identity of the checked model or enum declaration, distinct from its structural model hash; empty for other types |
+| `identity` | `FrozenBytes` | The model's or enum's identity under RFC 165, distinct from its structural model hash; empty for other types |
+| `renamed_from` | `FrozenList[FrozenStr]` | The declaration's earlier names under RFC 085, earliest first, empty when it has none |
 | `spelling` | `FrozenStr` | The type's canonical spelling, with nested models and enums folded in, under *Record hashes* in RFC 165 |
 | `fields` | `FrozenList[FieldInfo]` | Every stored field, in ascending identity order |
 | `variants` | `FrozenList[VariantInfo]` | An enum's variants, in ascending identity order |
@@ -304,7 +306,7 @@ A walker sees kinds of value, and each kind has its members. A source answers wi
 
 - **Derives:** writing `Walk` or `Reconstruct` in `@derive(...)` adds nothing, as for any automatic derive. A type that writes any of `__walk__`, `__reconstruct__` or `__shape__` must write all that its traits ask for, and the compiler fills none of them.
 - **Generics:** a static member called through a bounded type parameter must reach the adopter's member, whether written or filled. `Self` must be valid as a call head wherever it is valid as a type, so `Self.__reconstruct__(source)` works in a type's own methods and in a trait default, where it names the adopter.
-- **Borrowing:** each value reaches a walker as a duckborrowed value under RFC 164. Traversal itself must not require cloning or allocating a dynamic tree. A visitor retaining data beyond that borrow must obtain an owned value or an explicitly permitted longer-lived borrow. Its own output allocation and numeric representation conversions are separate from this traversal guarantee.
+- **Borrowing:** each value reaches a walker as a duckborrowed value under RFC 164. Traversal itself must not require cloning or allocating a dynamic tree. A walker retaining data beyond that borrow must obtain an owned value or an explicitly permitted longer-lived borrow. Its own output allocation and numeric representation conversions are separate from this traversal guarantee.
 - **Field metadata:** `renamed_from` moves no identity and `alias` moves no `name`. `description` and other descriptive keys stay on `FieldInfo` and enter nothing else.
 
 ### Compatibility
@@ -324,7 +326,7 @@ The protocol adds new language hooks. A type that already declares a method name
 
 ## Drawbacks
 
-The kinds in `Walker[E]` become a public contract, and adding one means a walker sees it through a default rather than through a member it wrote. Each pair of a type and a walker it reaches is compiled separately, so a program with many models and many formats builds more code. The list of types that have the members is a list the language has to keep.
+The kinds in `Walker[E]` become a public contract, and adding one means a walker sees it through a default rather than through a member it wrote. Each pair of a type and a walker it reaches is compiled separately, so a program with many models and many formats builds more code. The list of types that have the members is a list the language has to keep. Any package can write a source, so any package can produce a model holding private field values of its choosing; a model's registered checks protect its invariants, not the privacy of its fields.
 
 ## Layers affected
 
@@ -347,7 +349,7 @@ The kinds in `Walker[E]` become a public contract, and adding one means a walker
 | Case | Must show |
 | --- | --- |
 | Library codec | A format written in a package of its own encodes and rebuilds nested models, enums, collections and optional values, with no compiler change. |
-| Order and copies | A walk visits fields in identity order without cloning fields or building a dynamic value tree, counted across a large list field. Visitor-owned output copies are measured separately. |
+| Order and copies | A walk visits fields in identity order without cloning fields or building a dynamic value tree, counted across a large list field. Walker-owned output copies are measured separately. |
 | Reconstruction | Restore already-normalized values without replaying fieldmethods; run final validation and retain the original `ValidationError` through the source. A duration constructed through virtual input `hours=2` stores only `minutes=120`; reconstruction restores that field and validates it, while a stored `minutes=-120` fails. Test both a binary codec and a textual codec. |
 | Collecting | Preserve active CollectAll and FailFast policies, retain each independent located failure once, distinguish unavailable from absent fields, report blocked validation, and never return a partial model. |
 | Optional layers | Round trip `None`, `Some(None)` and `Some(Some(7))` through `Option[Option[int]]`; separately exercise a missing field. No failed decode becomes `None`. |
@@ -365,5 +367,5 @@ The kinds in `Walker[E]` become a public contract, and adding one means a walker
 - **Facts, not hashes:** the compiler gives identities and spellings, and formats hash them under their own profiles.
 - **Models, enums and newtypes have it automatically; classes by hand:** a model is its data, and a class is a live object until its author says what its data is.
 - **Private fields remain data:** automatic walking and model-owned reconstruction include them without an explicit derive. Ordinary field access, initialization and assignment remain governed by their existing visibility rules; secret protection is independent.
-- **Reconstruction restores final state:** `__reconstruct__` replaces `__build__`. It restores stored values, including private fields, and enforces final validation without repeating input normalization or construction fieldmethods. Explicit migrations and codec value profiles retain their own roles.
+- **Reconstruction restores final state:** `__reconstruct__` restores stored values, including private fields, and enforces final validation without repeating input normalization or construction fieldmethods. Explicit migrations and codec profiles retain their own roles.
 - **Refusal at the use, not the declaration:** a model holding a task handle is a fine model until something tries to store it.
