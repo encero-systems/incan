@@ -534,6 +534,9 @@ pub struct TypeChecker {
     /// Callable bodies that replace storage inside a direct borrowed iteration and therefore need graph analysis.
     /// The marker only activates the canonical ownership pass; it does not retain a parallel place or loan model.
     iteration_replacement_bodies: HashSet<CanonicalSymbolId>,
+    /// Callable bodies containing an optional dictionary lookup whose matched payload may borrow its stored entry.
+    /// The marker only activates canonical graph construction and is consumed when that body is finalized.
+    dictionary_lookup_bodies: HashSet<CanonicalSymbolId>,
     /// Nested producer diagnostic intervals used only while capturing independently owned outputs.
     diagnostic_owner_ranges: Vec<(std::ops::Range<usize>, std::ops::Range<usize>)>,
     /// Symbol table populated during the first pass.

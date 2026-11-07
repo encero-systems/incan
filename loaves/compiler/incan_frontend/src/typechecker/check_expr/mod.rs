@@ -36,7 +36,6 @@ mod calls;
 mod collections;
 mod comps;
 mod control_flow;
-mod dict_lookups;
 mod error_display;
 mod expression_dispatch;
 mod field_and_module_members;

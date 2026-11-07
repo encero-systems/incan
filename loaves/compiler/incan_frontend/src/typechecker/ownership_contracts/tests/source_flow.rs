@@ -330,6 +330,16 @@ fn source_flow_tracks_inputs_through_branches_and_loops() -> Result<(), Box<dyn 
             analysis.conflicts
         );
     }
+    let dictionary = source_graph(
+        "def present(streams: Borrowed[dict[str, Generator[int]]], key: str) -> bool:\n    match streams.get(key):\n        Some(_) => return true\n        None => return false\n",
+    )?
+    .map_err(|error| format!("{error:?}"))?;
+    let dictionary_analysis = flow::analyze(&dictionary).map_err(|error| format!("{error:?}"))?;
+    assert_eq!(dictionary.dictionary_lookups.len(), 1);
+    assert_eq!(
+        super::super::dictionary::read_only_lookups(&dictionary, &dictionary_analysis).len(),
+        1
+    );
     Ok(())
 }
 

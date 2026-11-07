@@ -11,6 +11,7 @@ mod admission;
 mod builtins;
 mod checked;
 mod copy;
+mod dictionary;
 pub(super) mod flow;
 mod iteration;
 pub(super) mod native;
@@ -205,11 +206,16 @@ impl TypeChecker {
                 .any(|call| call.owner.as_ref() == Some(&identity) && call.kind == InputCallKind::Explicit);
         let may_retain_lazy_result = self.lazy_result_bodies.remove(&identity);
         let may_replace_borrowed_iteration = self.iteration_replacement_bodies.remove(&identity);
+        let may_classify_dictionary_lookup = self.dictionary_lookup_bodies.remove(&identity);
         let retains_lazy_result = may_retain_lazy_result && body_retains_lazy_result(callable.body(), &self.type_info);
         // Existing explicit bodies already need complete flow. Ordinary bodies are scanned only when expression
         // checking observed a generator or authenticated lazy iterator member in that body, or when statement
         // checking observed a replacement inside a direct borrowed list loop.
-        if !requires_explicit_flow && !may_replace_borrowed_iteration && !retains_lazy_result {
+        if !requires_explicit_flow
+            && !may_replace_borrowed_iteration
+            && !may_classify_dictionary_lookup
+            && !retains_lazy_result
+        {
             self.type_info
                 .protocols
                 .explicit_input_calls
@@ -232,6 +238,9 @@ impl TypeChecker {
             }),
             Ok(graph) => match flow::analyze(&graph) {
                 Ok(analysis) => {
+                    for lookup in dictionary::read_only_lookups(&graph, &analysis) {
+                        self.type_info.record_read_only_dict_lookup(lookup);
+                    }
                     self.errors
                         .extend(report::conflicts(&graph, &analysis, &self.type_info));
                     InputFlow::Checked { graph, analysis }
@@ -250,6 +259,18 @@ impl TypeChecker {
         // an otherwise ordinary body into an explicit-input admission requirement.
         if may_replace_borrowed_iteration && !requires_declared_flow {
             self.type_info.protocols.explicit_input_flow.remove(&identity);
+            return;
+        }
+        if may_classify_dictionary_lookup
+            && !requires_explicit_flow
+            && !may_replace_borrowed_iteration
+            && !retains_lazy_result
+        {
+            self.type_info.protocols.explicit_input_flow.remove(&identity);
+            self.type_info
+                .protocols
+                .explicit_input_calls
+                .retain(|_, call| call.owner.as_ref() != Some(&identity) || call.kind == InputCallKind::Explicit);
             return;
         }
         // A validated conflict already produced its operation-owned diagnostic. The executable-body gate must still
