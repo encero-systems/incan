@@ -260,6 +260,52 @@ pub struct FieldExport {
     pub alias: Option<String>,
     /// Optional human-readable field description.
     pub description: Option<String>,
+    /// Migration facts used by the ordinary private-member refusal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub made_private: Option<MadePrivateExport>,
+}
+
+/// Manifest-safe lifecycle facts for a declaration or member that used to be public.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct MadePrivateExport {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retire_in: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issue: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replacement: Option<String>,
+}
+
+impl From<&crate::symbols::MadePrivateInfo> for MadePrivateExport {
+    fn from(value: &crate::symbols::MadePrivateInfo) -> Self {
+        Self {
+            since: value.since.clone(),
+            retire_in: value.retire_in.clone(),
+            message: value.message.clone(),
+            by: value.by.clone(),
+            issue: value.issue.clone(),
+            replacement: value.replacement.clone(),
+        }
+    }
+}
+
+impl From<&MadePrivateExport> for crate::symbols::MadePrivateInfo {
+    fn from(value: &MadePrivateExport) -> Self {
+        Self {
+            since: value.since.clone(),
+            retire_in: value.retire_in.clone(),
+            message: value.message.clone(),
+            by: value.by.clone(),
+            issue: value.issue.clone(),
+            replacement: value.replacement.clone(),
+        }
+    }
 }
 
 /// Supply the RFC 085 default for manifests written before the canonical field flag existed.

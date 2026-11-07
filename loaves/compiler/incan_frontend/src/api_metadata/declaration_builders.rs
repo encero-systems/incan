@@ -252,6 +252,7 @@ pub(super) fn api_trait(
                 default: None,
                 alias: None,
                 description: None,
+                made_private: None,
             })
             .collect(),
         methods: methods(

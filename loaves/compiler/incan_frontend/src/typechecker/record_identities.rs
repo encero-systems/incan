@@ -94,7 +94,7 @@ impl TypeChecker {
 mod tests {
     use crate::{lexer, parser};
 
-    use super::TypeChecker;
+    use super::{TypeChecker, record_member_identity};
 
     #[test]
     fn renamed_field_collisions_use_the_earliest_name() -> Result<(), String> {

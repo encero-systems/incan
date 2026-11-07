@@ -61,6 +61,7 @@ pub(super) fn methods(
             return_type: callable.return_type,
             is_async: callable.is_async,
             has_body: checked.has_body,
+            made_private: checked.made_private.as_ref().map(Into::into),
         });
     }
     for alias in ast_aliases {
@@ -94,6 +95,7 @@ pub(super) fn methods(
                 return_type,
                 is_async: checked.is_async,
                 has_body: checked.has_body,
+                made_private: checked.made_private.as_ref().map(Into::into),
             });
         }
     }
@@ -247,6 +249,7 @@ pub(super) fn field(field: &crate::library_exports::CheckedField) -> FieldExport
         default,
         alias: field.alias.clone(),
         description: field.description.clone(),
+        made_private: field.made_private.as_ref().map(Into::into),
     }
 }
 

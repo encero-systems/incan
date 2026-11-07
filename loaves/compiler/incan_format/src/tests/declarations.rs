@@ -126,15 +126,21 @@ fn test_format_source_preserves_ordinary_pub_model_field_visibility_issue884() -
 }
 
 #[test]
-fn field_rename_metadata_keeps_registry_order_and_authored_value_forms() -> Result<(), FormatError> {
+fn field_metadata_keeps_registry_order_and_canonical_value_forms() -> Result<(), FormatError> {
     let source = r#"model Customer:
   email_address [canonical=false, renamed_from="email"] as "email": str
   display_name [renamed_from=["name"], canonical=true, description="Visible name"]: str
+  hidden [made_private { replacement=Customer.display_name,message="Use display_name",since="0.6" }]: str
+  archived [made_private="Use display_name"]: str
+  internal [made_private=true]: str
 "#;
     let formatted = format_source(source)?;
     let expected = r#"model Customer:
     email_address [renamed_from="email", canonical=false] as "email": str
     display_name [description="Visible name", renamed_from=["name"], canonical=true]: str
+    hidden [made_private { since="0.6", message="Use display_name", replacement=Customer.display_name }]: str
+    archived [made_private="Use display_name"]: str
+    internal [made_private=true]: str
 "#;
     assert_eq!(formatted, expected);
     assert_eq!(format_source(&formatted)?, formatted);

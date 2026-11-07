@@ -9,6 +9,7 @@ impl TypeChecker {
         self.refuse_unbounded_enum_members(en);
 
         self.validate_decorators_rejecting_user_defined(&en.decorators, "enum");
+        self.validate_made_private_decorators(&en.decorators, en.visibility, &format!("enum '{}'", en.name));
         self.reject_registry_description_decorators(&en.decorators, "enum");
         self.validate_derives(&en.decorators);
         self.validate_descriptor_derive_attachment(&en.decorators, "enum");

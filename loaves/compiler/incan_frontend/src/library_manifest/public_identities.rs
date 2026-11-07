@@ -308,6 +308,7 @@ mod tests {
             default: None,
             alias: None,
             description: None,
+            made_private: None,
         }
     }
 }

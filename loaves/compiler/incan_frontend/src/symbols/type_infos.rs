@@ -227,6 +227,78 @@ pub struct VariantInfo {
     pub fields: Vec<ResolvedType>,
 }
 
+/// Checked migration guidance for a declaration or member that used to be public.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MadePrivateInfo {
+    pub since: Option<String>,
+    pub retire_in: Option<String>,
+    pub message: Option<String>,
+    pub by: Option<String>,
+    pub issue: Option<String>,
+    /// Checked source reference rendered for diagnostics; it is never an automatic rewrite.
+    pub replacement: Option<String>,
+}
+
+impl MadePrivateInfo {
+    /// Drop parser spans while preserving the lifecycle facts checked on a field declaration.
+    pub fn from_field(metadata: &crate::ast::MadePrivateMetadata) -> Self {
+        Self {
+            since: metadata.since.as_ref().map(|value| value.node.clone()),
+            retire_in: metadata.retire_in.as_ref().map(|value| value.node.clone()),
+            message: metadata.message.as_ref().map(|value| value.node.clone()),
+            by: metadata.by.as_ref().map(|value| value.node.clone()),
+            issue: metadata.issue.as_ref().map(|value| value.node.clone()),
+            replacement: metadata.replacement.as_ref().map(|path| path.node.segments.join(".")),
+        }
+    }
+}
+
+/// Read compiler-owned `@made_private(...)` facts from one declaration's decorators.
+pub fn made_private_from_decorators(
+    decorators: &[crate::ast::Spanned<crate::ast::Decorator>],
+) -> Option<MadePrivateInfo> {
+    use crate::ast::{DecoratorArg, DecoratorArgValue, Expr, Literal};
+
+    let decorator = decorators.iter().find(|decorator| {
+        incan_lang::lang::decorators::from_segments(&decorator.node.path.segments)
+            == Some(incan_lang::lang::decorators::DecoratorId::MadePrivate)
+    })?;
+    let mut info = MadePrivateInfo::default();
+    for argument in &decorator.node.args {
+        let DecoratorArg::Named(name, DecoratorArgValue::Expr(value)) = argument else {
+            continue;
+        };
+        let string = match &value.node {
+            Expr::Literal(Literal::String(value)) => Some(value.clone()),
+            _ => None,
+        };
+        match name.as_str() {
+            "since" => info.since = string,
+            "retire_in" => info.retire_in = string,
+            "message" => info.message = string,
+            "by" => info.by = string,
+            "issue" => info.issue = string,
+            "replacement" => info.replacement = made_private_reference(&value.node),
+            _ => {}
+        }
+    }
+    Some(info)
+}
+
+/// Render one checked-reference expression without treating its text as callable dispatch.
+fn made_private_reference(expr: &crate::ast::Expr) -> Option<String> {
+    match expr {
+        crate::ast::Expr::Ident(name) => Some(name.clone()),
+        crate::ast::Expr::Field(base, member) => {
+            let mut path = made_private_reference(&base.node)?;
+            path.push('.');
+            path.push_str(member);
+            Some(path)
+        }
+        _ => None,
+    }
+}
+
 /// Field information
 #[derive(Debug, Clone)]
 pub struct FieldInfo {
@@ -251,6 +323,7 @@ pub struct FieldInfo {
     pub has_default: bool,
     pub alias: Option<String>,
     pub description: Option<String>,
+    pub made_private: Option<MadePrivateInfo>,
 }
 
 /// Derive the stored-record identity from a field's earliest declared name.
@@ -405,6 +478,7 @@ pub struct MethodInfo {
     pub is_async: bool,
     pub has_body: bool, // false for abstract methods (...)
     pub alias_of: Option<String>,
+    pub made_private: Option<MadePrivateInfo>,
 }
 
 /// Where a method may be called from (#2570).

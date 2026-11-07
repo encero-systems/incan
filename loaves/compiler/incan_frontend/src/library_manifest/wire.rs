@@ -7,9 +7,10 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     AliasExport, ClassExport, ConstExport, DslSurface, EnumExport, FunctionExport, LibraryContractMetadata,
-    LibraryExports, LibraryManifest, LibraryManifestError, LibraryRustAbi, ModelExport, NewtypeExport, PartialExport,
-    SoftKeywordActivation, SoftKeywordExports, StaticExport, TraitExport, TypeAliasExport, VocabDesugarerArtifact,
-    VocabExports, VocabKeywordRegistration, VocabProviderManifest, legacy_library_contract_metadata,
+    LibraryExports, LibraryManifest, LibraryManifestError, LibraryRustAbi, MadePrivateTypeExport, ModelExport,
+    NewtypeExport, PartialExport, SoftKeywordActivation, SoftKeywordExports, StaticExport, TraitExport,
+    TypeAliasExport, VocabDesugarerArtifact, VocabExports, VocabKeywordRegistration, VocabProviderManifest,
+    legacy_library_contract_metadata,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -19,6 +20,8 @@ pub struct RawLibraryManifest {
     pub(super) incan_version: String,
     pub(super) manifest_format: u32,
     pub(super) exports: RawLibraryExports,
+    #[serde(default)]
+    pub(super) made_private_types: Vec<MadePrivateTypeExport>,
     #[serde(default)]
     pub(super) vocab: Option<RawVocabExports>,
     pub(super) soft_keywords: RawSoftKeywordExports,
@@ -119,6 +122,7 @@ impl RawLibraryManifest {
                 consts: semantic.exports.consts.clone(),
                 statics: semantic.exports.statics.clone(),
             },
+            made_private_types: semantic.made_private_types.clone(),
             vocab: semantic.vocab.as_ref().map(RawVocabExports::from_semantic),
             soft_keywords: RawSoftKeywordExports {
                 activations: semantic.soft_keywords.activations.clone(),
@@ -148,6 +152,7 @@ impl RawLibraryManifest {
                 consts: self.exports.consts,
                 statics: self.exports.statics,
             },
+            made_private_types: self.made_private_types,
             vocab: self.vocab.map(|vocab| VocabExports {
                 metadata_version: vocab.metadata_version,
                 unit_identity: vocab.unit_identity,

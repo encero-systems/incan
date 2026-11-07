@@ -13,9 +13,14 @@ impl ParsedFieldMetadataValue {
             (self, expected),
             (
                 Self::String(_),
-                FieldMetadataValueKind::String | FieldMetadataValueKind::StringOrStringList
+                FieldMetadataValueKind::String
+                    | FieldMetadataValueKind::StringOrStringList
+                    | FieldMetadataValueKind::BooleanStringOrLifecycle
             ) | (Self::StringList { .. }, FieldMetadataValueKind::StringOrStringList)
-                | (Self::Boolean(_), FieldMetadataValueKind::Boolean)
+                | (
+                    Self::Boolean(_),
+                    FieldMetadataValueKind::Boolean | FieldMetadataValueKind::BooleanStringOrLifecycle
+                )
         )
     }
 
@@ -481,9 +486,79 @@ impl<'a> Parser<'a> {
                 metadata.canonical_key_span = Some(key_span);
                 metadata.canonical = Some(value);
             }
+            FieldMetadataKey::MadePrivate => {
+                if metadata.made_private_key_span.is_some() {
+                    return Err(errors::duplicate_field_metadata_key(key_raw, key_span));
+                }
+                let mut descriptor = MadePrivateMetadata::default();
+                match value {
+                    ParsedFieldMetadataValue::String(value) => descriptor.message = Some(value),
+                    ParsedFieldMetadataValue::Boolean(_) => {}
+                    ParsedFieldMetadataValue::StringList { span, .. } => {
+                        return Err(errors::invalid_field_metadata_value(
+                            key_raw,
+                            field_metadata::value_kind_description(expected),
+                            field,
+                            span,
+                        ));
+                    }
+                }
+                metadata.made_private_key_span = Some(key_span);
+                metadata.made_private = Some(descriptor);
+            }
         }
 
         Ok(())
+    }
+
+    /// Parse the structured `made_private { ... }` lifecycle descriptor without executing user code.
+    fn made_private_metadata(&mut self, field: &str) -> Result<MadePrivateMetadata, CompileError> {
+        let mut metadata = MadePrivateMetadata::default();
+        self.skip_newlines();
+        while !self.check_punct(PunctuationId::RBrace) {
+            let key = self.identifier_spanned()?;
+            self.expect_op(OperatorId::Eq, "Expected '=' after made_private lifecycle key")?;
+            if key.node == "replacement" {
+                if metadata.replacement.is_some() {
+                    return Err(errors::duplicate_field_metadata_key("replacement", key.span));
+                }
+                let start = self.current_span().start;
+                let path = self.import_path()?;
+                let end = self.tokens[self.pos.saturating_sub(1)].span.end;
+                metadata.replacement = Some(Spanned::new(path, Span::new(start, end)));
+            } else {
+                let span = self.current_span();
+                let TokenKind::String(value) = self.peek().kind.clone() else {
+                    return Err(errors::invalid_field_metadata_value(
+                        &key.node,
+                        "a string literal",
+                        field,
+                        span,
+                    ));
+                };
+                self.advance();
+                let value = Spanned::new(value, span);
+                let slot = match key.node.as_str() {
+                    "since" => &mut metadata.since,
+                    "retire_in" => &mut metadata.retire_in,
+                    "message" => &mut metadata.message,
+                    "by" => &mut metadata.by,
+                    "issue" => &mut metadata.issue,
+                    _ => return Err(errors::unknown_field_metadata_key(&key.node, key.span)),
+                };
+                if slot.is_some() {
+                    return Err(errors::duplicate_field_metadata_key(&key.node, key.span));
+                }
+                *slot = Some(value);
+            }
+            self.match_punct(PunctuationId::Comma);
+            self.skip_newlines();
+        }
+        self.expect_punct(
+            PunctuationId::RBrace,
+            "Expected '}' after made_private lifecycle descriptor",
+        )?;
+        Ok(metadata)
     }
 
     /// Parse a comma-separated metadata block using the shared key registry.
@@ -494,13 +569,24 @@ impl<'a> Parser<'a> {
             let key = self.identifier_spanned()?;
             let key_span = key.span;
             let key_raw = key.node;
+            let Some(key) = field_metadata::from_str(&key_raw) else {
+                return Err(errors::unknown_field_metadata_key(&key_raw, key_span));
+            };
+            if key == FieldMetadataKey::MadePrivate && self.match_punct(PunctuationId::LBrace) {
+                if metadata.made_private_key_span.is_some() {
+                    return Err(errors::duplicate_field_metadata_key(&key_raw, key_span));
+                }
+                metadata.made_private = Some(self.made_private_metadata(field)?);
+                metadata.made_private_key_span = Some(key_span);
+                if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
+                    break;
+                }
+                continue;
+            }
             self.expect(
                 &TokenKind::Operator(OperatorId::Eq),
                 "Expected '=' after field metadata key",
             )?;
-            let Some(key) = field_metadata::from_str(&key_raw) else {
-                return Err(errors::unknown_field_metadata_key(&key_raw, key_span));
-            };
             let expected = field_metadata::value_kind(key);
             let value = self.field_metadata_value(&key_raw, expected, field)?;
             if !value.is_accepted_by(expected) {

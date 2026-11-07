@@ -1,11 +1,18 @@
-# behavior: reading a private field of a self-referential class outside its methods is refused with a diagnostic that names the class, never a generated carrier (#2476)
+# behavior: reading a private field outside its owner names the class and retains made-private migration guidance, while the owner's methods keep access (#2476, #2524)
 # expect-stderr-contains:
 #   Field 'next' on 'Node' is private
+#   Use next_value
+#   Use `Node.next_value` instead
 # expect-exit: 1
 
 class Node:
     value: int
-    next: Option[Node]
+    next [made_private { since="0.6", message="Use next_value", replacement=Node.next_value }]: Option[Node]
+
+    pub def next_value(self) -> int:
+        match self.next:
+            Some(node) => return node.value
+            None => return 0
 
 
 def main() -> None:
