@@ -16,6 +16,7 @@
     - RFC 160 (Incan-authored vocabulary)
     - RFC 164 (explicit ownership and borrowing contracts)
     - RFC 165 (typed embedded storage)
+    - RFC 173 (walking and reconstructing typed values)
 - **Issue:** [#2501](https://github.com/encero-systems/incan/issues/2501)
 - **RFC PR:** —
 - **Written against:** v0.6
@@ -131,7 +132,7 @@ Host operations must report actual failures and support limits. Platform selecti
 
 ### Crumb typed encoding
 
-`std.primitives.crumb` owns the Crumb encoding and reconstruction contract described in RFC 165: supported models provide `.crumble()` and `Model.from_crumb(...)`, preserving their declared data and model type. Type/schema compatibility, field identities, hash profiles and the object, canonical and model hashes as RFC 165 defines them, bounded decoding, version and codec profile checks and typed conversion errors belong in this primitive. Checked model declarations supply the structural facts; importing the compiler implementation or a database to obtain them is forbidden.
+`std.primitives.crumb` owns the Crumb encoding and reconstruction contract described in RFC 165: supported models provide `.crumble()` and `Model.from_crumb(...)`, preserving their declared data and model type. Type/schema compatibility, field identities, hash profiles and the object, canonical and model hashes as RFC 165 defines them, bounded decoding, version and codec profile checks and typed conversion errors belong in this primitive. Checked model declarations supply the structural facts through RFC 173's walk, shape and reconstruction protocols. Their implementation belongs to `std.primitives.reflection`, with the same identities re-exported through `std.reflection`; importing the compiler implementation, a database or a higher-level standard package to obtain them is forbidden.
 
 Crumb must be usable independently for encoded values, files, messages or compiler artifacts. `std.db` owns storage, record identities and revisions, field indexes, physical sharing policy, transactions and retention; those responsibilities must not move into Crumb. An in-memory value need not be encoded merely because it can be crumbled. Supported data and encoding boundaries follow RFC 165; live runtime resources and arbitrary executable reconstruction are not ordinary stored model data.
 

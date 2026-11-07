@@ -22,6 +22,7 @@
     - RFC 165 (typed embedded storage, whose field identities derive from the earliest name)
     - RFC 142 (shared failure-policy vocabulary)
     - RFC 143 (cloning with field overrides)
+    - RFC 173 (walking and reconstructing typed values)
 - **Issue:** [#472](https://github.com/encero-systems/incan/issues/472)
 - **RFC PR:** —
 - **Written against:** v0.3
@@ -275,7 +276,7 @@ variant_decl = IDENT field_meta? variant_payload? variant_value? ;
 - A list of earlier names must be in the order the names were used, earliest first.
 - An earlier name that still exists on the same model or enum must be refused, and so must one name claimed twice.
 - `retire_in` must not change behavior. Once the package's version reaches it, a lint must suggest removing the lifecycle facts and must keep the earlier name, because RFC 165 derives the field's identity from it.
-- Checked metadata must preserve every rename fact, so that API diffs, generated documentation, RFC 106's graph and RFC 165's stored records can use them.
+- Checked metadata must preserve every rename fact, so that API diffs, generated documentation, RFC 106's graph and RFC 165's stored records can use them. RFC 173 exposes the same checked field and variant rename facts through its public shape carriers; codecs must not inspect compiler-private records to obtain them.
 - A rename must not change a wire name or make a decoder accept the old one. Wire names follow `alias` and `as`.
 
 ### Safe metadata values

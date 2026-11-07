@@ -21,6 +21,7 @@
     - RFC 166 (indexed graphs and snapshot-bound graph access)
     - RFC 168 (foundational primitives and dependency direction)
     - RFC 169 (typed record sets and record streams)
+    - RFC 173 (walking and reconstructing typed values)
 - **Issue:** [#2519](https://github.com/encero-systems/incan/issues/2519)
 - **RFC PR:** —
 - **Written against:** v0.6
@@ -137,7 +138,7 @@ Family registration is explicit. Constructing a family handle does not write a s
 
 ### Crumble a model and reconstruct its type
 
-Crumb is the typed encoding contract in `std.primitives.crumb`. It is usable without opening a database. A model with supported fields exposes `.crumble()` and `Model.from_crumb(...)`; the checked field definitions drive encoding and reconstruction rather than requiring a handwritten serializer for each field. `Record` composes that capability with database family and retained-reference metadata. Using Crumb itself must not require importing `std.db` or registering a family.
+Crumb is the typed encoding contract in `std.primitives.crumb`. It is usable without opening a database. A model with supported fields exposes `.crumble()` and `Model.from_crumb(...)`; RFC 173's `__walk__`, `__shape__` and `__reconstruct__` carry the checked field definitions to library-owned encoding and reconstruction rather than requiring a handwritten serializer for each field. Supported models acquire these protocols automatically, including their private stored fields. `Record` composes that capability with database family and retained-reference metadata. Using Crumb itself must not require importing `std.db` or registering a family.
 
 The `Page` model above provides a complete small example. `CrumbError` is the proposed primitive error umbrella; both conversion operations are fallible:
 
@@ -380,7 +381,7 @@ A bare identifier is not authority to read another store or inaccessible root. L
 
 A stored value must decode to its declared Incan model. This does not require serialized bytes to have the layout of a native model instance. On-disk encoding must not depend on native struct padding, process addresses, hash-map iteration order or host endianness. A codec profile must define the arrangement of the bytes explicitly and must keep every distinction its hash profile draws, so a value read back has the hash it was written with. Every frame must name its codec profile, and a reader that does not support that profile must return a typed failure rather than guess. A matching model is not evidence of a matching arrangement.
 
-Crumb conversion must preserve declared model data and validate the requested model/schema before exposing a reconstructed value. Incompatible types or versions, missing referenced contents, malformed lengths, damaged bytes and unsupported resources must return typed failures. Decoding must be bounded and consume its declared frame exactly. Stored data must not supply executable reconstruction code. Conversion must honor the established model construction and validation contract; reconstruction is not a private bypass for producing an invalid model. `SecretStr` and `SecretBytes` follow RFC 103: a model that holds either, directly or nested, must be refused during checking when it is crumbled or stored, with a diagnostic naming the field path. A frame and a hash must therefore never hold a secret's contents or anything derived from them. A model that records that a secret existed declares RFC 103's `RedactedSecret`, which is ordinary, forgeable data and cannot restore the secret.
+Crumb conversion must preserve declared model data and validate the requested model/schema before exposing a reconstructed value. Incompatible types or versions, missing referenced contents, malformed lengths, damaged bytes and unsupported resources must return typed failures. Decoding must be bounded and consume its declared frame exactly. Stored data must not supply executable reconstruction code. Conversion must use RFC 173's model-owned reconstruction contract: restore stored fields and enforce final validation without replaying fieldmethods or virtual construction inputs. Private fields remain part of the stored data; their ordinary constructor-input visibility remains unchanged. Reconstruction is not a bypass for producing an invalid model. `SecretStr` and `SecretBytes` follow RFC 103: a model that holds either, directly or nested, must be refused during checking when it is crumbled or stored, with a diagnostic naming the field path. A frame and a hash must therefore never hold a secret's contents or anything derived from them. A model that records that a secret existed declares RFC 103's `RedactedSecret`, which is ordinary, forgeable data and cannot restore the secret.
 
 Field lookup must bind the selected field identity, declared value type and equality profile. A content hash locates candidates; the implementation must verify the actual typed value before treating a candidate as equal. Forced collisions must not alias distinct values or records. Range order must follow the declared value semantics rather than arbitrary digest or encoded-byte order. Field lookup is independent of a particular hash algorithm, and Crumb's format is independent of a mandatory per-field blob layout.
 
@@ -430,7 +431,7 @@ A stored record carries three hashes, and each answers its own question:
 
 A field counts toward the canonical hash unless its declaration opts out with RFC 085's `canonical=false`, and a nested model's fields follow that model's own settings.
 
-The model hash covers each field's identity, declared type and `canonical` setting, with nested models and enums folded in. The compiler computes it from the checked declaration. Documentation, methods, declaration order and the model's path must not enter it, so renaming or reordering fields does not move it. A record whose model hash differs from its family's model needs a migration or a compatible descriptor.
+The model hash covers each field's identity, declared type and `canonical` setting, with nested models and enums folded in. Crumb computes it under its named profile from RFC 173's checked shape and canonical spelling; the compiler supplies structural facts without owning the codec hash profile. Documentation, methods, declaration order and the model's path must not enter it, so renaming or reordering fields does not move it. A record whose model hash differs from its family's model needs a migration or a compatible descriptor.
 
 The object hash and the canonical hash must not cover the model hash, because adding an optional field would then make every record look changed. A comparison across models must therefore check the model hash as well.
 
@@ -667,6 +668,6 @@ A hash profile is a long-lived commitment, because a changed rule needs a new pr
 - **Reserved names:** `___` names belong to the store, and the list is closed.
 - **Secrets are refused rather than dropped:** a model holding `SecretStr` or `SecretBytes` cannot be crumbled or stored, and a hash never covers a secret.
 - **Ownership:** ordinary reads use duckborrowing and owned point results. Primitive contracts expose explicit borrowing; retained batches own backing resources and snapshot leases. Borrowed columns remain bounded by their actual owner.
-- **Descriptor mechanism:** reuse checked model declarations and the public extensible derive/descriptor protocols. Proving those facilities sufficient, or tracking a specific missing language capability, is an implementation prerequisite; compiler-private descriptor shortcuts are forbidden.
+- **Descriptor mechanism:** RFC 173 supplies the public model-owned walk, shape and reconstruction protocols. Crumb implements the format through those protocols; compiler-private descriptor shortcuts are forbidden. Implementation must prove the public protocol sufficient for nested data and final validation.
 - **Durability qualification:** each supported target/filesystem profile must provide reproducible publication/recovery evidence before claiming local durability. Unsupported profiles refuse that claim; the representation experiment is not power-loss qualification.
 - **Primitive lifecycle:** the primitive works through explicit lifecycle operations independently of RFC 094. Detailed API signatures, physical formats and platform qualification belong in implementation design and conformance work under this contract.
