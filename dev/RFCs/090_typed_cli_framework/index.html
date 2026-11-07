@@ -10000,10 +10000,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#why-a-sidecar-spec-owns-command-presentation" class="md-nav__link">
+  <a href="#why-variants-carry-their-own-descriptions" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Why a sidecar spec owns command presentation
+        Why variants carry their own descriptions
       
     </span>
   </a>
@@ -10171,10 +10171,21 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#attach-command-descriptions-via-rfc-032-value-enum-assignment-instead-of-a-sidecar" class="md-nav__link">
+  <a href="#attach-command-descriptions-through-rfc-032-value-enum-assignment" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Attach command descriptions via RFC 032 value-enum assignment instead of a sidecar
+        Attach command descriptions through RFC 032 value-enum assignment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a-typed-sidecar-spec" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A typed sidecar spec
       
     </span>
   </a>
@@ -10297,12 +10308,15 @@
 <li>RFC 063 (<code>std.process</code> process spawning and command execution)</li>
 <li>RFC 073 (environment matrices and toolchain constraints)</li>
 <li>RFC 083 (symbol and method aliases)</li>
+<li>RFC 085 (field and enum variant metadata)</li>
 <li>RFC 089 (<code>std.environ</code> runtime environment access)</li>
+<li>RFC 096 (declaration metadata blocks)</li>
 <li>RFC 117 (<code>loaf.toml</code> and Oven's language-neutral project model)</li>
 <li>RFC 118 (Incan and Oven command-line surfaces)</li>
+<li>RFC 128 (parsed docstrings through <code>DocInfo</code>)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> https://github.com/encero-systems/incan/issues/87</li>
+<li><strong>Issue:</strong> <a href="https://github.com/encero-systems/incan/issues/87">https://github.com/encero-systems/incan/issues/87</a></li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> ~~v0.3~~ v0.5</li>
 <li><strong>Shipped in:</strong> —</li>
@@ -10334,7 +10348,7 @@
 <li>Provide consistent error rendering that names the failing argument, expected shape, and corrective hint where possible.</li>
 <li>Standardize exit code mapping for success, usage errors, and application failures.</li>
 <li>Keep command handlers independent from parsing so CLI logic is easy to unit test.</li>
-<li>Allow command presentation metadata to live in a typed sidecar spec without requiring new enum syntax.</li>
+<li>Keep command presentation on the declarations, with no separate spec.</li>
 <li>Generate shell completion scripts for bash, zsh, fish, and PowerShell from the same spec used for parsing and help.</li>
 </ul>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
@@ -10430,52 +10444,45 @@
 <td>Adds a <code>--reload</code> flag that sets <code>reload</code> to <code>true</code> when present.</td>
 </tr>
 <tr>
-<td><code>output: Path | None = None</code></td>
+<td><code>output: Path \| None = None</code></td>
 <td>Adds optional <code>--output PATH</code>; omitted input produces <code>None</code>.</td>
 </tr>
 </tbody>
 </table>
-<p>Command descriptions do not require new enum syntax. They can live in a typed sidecar spec:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">const</span> <span class="nc">TOOL_CLI</span> <span class="o">=</span> <span class="n">cli</span><span class="o">.</span><span class="n">spec</span><span class="p">[</span><span class="nc">ToolCommand</span><span class="p">](</span>
-    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;tool&quot;</span><span class="p">,</span>
-    <span class="n">commands</span><span class="o">=</span><span class="p">{</span>
-        <span class="nc">ToolCommand</span><span class="o">.</span><span class="nc">Serve</span><span class="p">:</span> <span class="n">cli</span><span class="o">.</span><span class="n">command</span><span class="p">(</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;Run the development server&quot;</span><span class="p">),</span>
-        <span class="nc">ToolCommand</span><span class="o">.</span><span class="nc">Build</span><span class="p">:</span> <span class="n">cli</span><span class="o">.</span><span class="n">command</span><span class="p">(</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;Build project artifacts&quot;</span><span class="p">),</span>
-    <span class="p">},</span>
-<span class="p">)</span>
+<p>A command's description sits on its variant, with the same brackets a field uses:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="nc">CliCommand</span><span class="p">)</span>
+<span class="k">enum</span> <span class="nc">ToolCommand</span><span class="p">:</span>
+    <span class="nc">Serve</span> <span class="p">[</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;Run the development server&quot;</span><span class="p">](</span><span class="nc">ServeArgs</span><span class="p">)</span>
+    <span class="nc">Build</span> <span class="p">[</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;Build project artifacts&quot;</span><span class="p">](</span><span class="nc">BuildArgs</span><span class="p">)</span>
 </code></pre></div>
-<p>The sidecar spec augments the parseable enum/model shape; it does not replace it. If the sidecar omits a command, the command still exists and uses the derived spelling without extra description text. If the sidecar names a command that is not a variant of <code>ToolCommand</code>, the spec is invalid.</p>
+<p>Longer metadata can use a braced block, as on a field:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="nc">CliCommand</span><span class="p">)</span>
+<span class="k">enum</span> <span class="nc">ToolCommand</span><span class="p">:</span>
+    <span class="nc">Serve</span><span class="p">(</span><span class="nc">ServeArgs</span><span class="p">)</span> <span class="p">{</span>
+        <span class="n">description</span> <span class="o">=</span> <span class="s2">&quot;Run the development server, reloading when source files change&quot;</span>
+    <span class="p">}</span>
+    <span class="nc">Build</span> <span class="p">[</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;Build project artifacts&quot;</span><span class="p">](</span><span class="nc">BuildArgs</span><span class="p">)</span>
+</code></pre></div>
+<p>A command with no <code>description</code> uses the docstring of its args model, and a single-command program describes itself the same way. Metadata is optional: a variant with none still exists, under its derived spelling.</p>
 <p>Manual <code>match</code> dispatch is the transparent low-level form. It makes the parse boundary explicit and keeps handlers testable as ordinary functions:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">(</span><span class="n">argv</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
-    <span class="n">command</span> <span class="o">=</span> <span class="nc">TOOL_CLI</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">argv</span><span class="p">)</span><span class="o">?</span>
+    <span class="n">command</span> <span class="o">=</span> <span class="n">parse</span><span class="p">[</span><span class="nc">ToolCommand</span><span class="p">](</span><span class="n">argv</span><span class="p">)</span><span class="o">?</span>
 
     <span class="k">match</span> <span class="n">command</span><span class="p">:</span>
         <span class="nc">Serve</span><span class="p">(</span><span class="n">args</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">run_server_command</span><span class="p">(</span><span class="n">args</span><span class="p">)</span>
         <span class="nc">Build</span><span class="p">(</span><span class="n">args</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">run_build_command</span><span class="p">(</span><span class="n">args</span><span class="p">)</span>
 </code></pre></div>
 <p>An optional binding helper can reduce dispatch boilerplate without becoming a second parser contract:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">app</span> <span class="o">=</span> <span class="n">cli</span><span class="o">.</span><span class="n">app</span><span class="p">(</span><span class="nc">TOOL_CLI</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">handler</span><span class="p">(</span><span class="nc">ToolCommand</span><span class="o">.</span><span class="nc">Serve</span><span class="p">,</span> <span class="n">run_server_command</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">handler</span><span class="p">(</span><span class="nc">ToolCommand</span><span class="o">.</span><span class="nc">Build</span><span class="p">,</span> <span class="n">run_build_command</span><span class="p">)</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">run_build_command</span><span class="p">(</span><span class="n">args</span><span class="p">:</span> <span class="nc">BuildArgs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">run_build_command</span><span class="p">(</span><span class="n">args</span><span class="p">:</span> <span class="nc">BuildArgs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">build_project</span><span class="p">(</span><span class="n">release</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">release</span><span class="p">,</span> <span class="n">output</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">output</span><span class="p">)</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">(</span><span class="n">argv</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="n">app</span> <span class="o">=</span> <span class="n">cli</span><span class="o">.</span><span class="n">app</span><span class="p">[</span><span class="nc">ToolCommand</span><span class="p">]()</span>
+        <span class="o">.</span><span class="n">handler</span><span class="p">(</span><span class="nc">ToolCommand</span><span class="o">.</span><span class="nc">Serve</span><span class="p">,</span> <span class="n">run_server_command</span><span class="p">)</span>
+        <span class="o">.</span><span class="n">handler</span><span class="p">(</span><span class="nc">ToolCommand</span><span class="o">.</span><span class="nc">Build</span><span class="p">,</span> <span class="n">run_build_command</span><span class="p">)</span>
     <span class="k">return</span> <span class="n">app</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">argv</span><span class="p">)</span>
 </code></pre></div>
-<p>This RFC treats that binding form as a dispatch facade, not as a second source of truth. The command enum, argument models, and sidecar spec remain the parseable contract.</p>
-<p>A dedicated CLI DSL is also a viable design direction if the sidecar syntax proves too indirect. The DSL would still need to lower to the same <code>CliSpec</code>:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">cli</span> <span class="nc">ToolCli</span> <span class="k">for</span> <span class="nc">ToolCommand</span><span class="p">:</span>
-    <span class="n">name</span> <span class="o">=</span> <span class="s2">&quot;tool&quot;</span>
-
-    <span class="n">command</span> <span class="nc">Serve</span><span class="p">:</span>
-        <span class="n">description</span> <span class="o">=</span> <span class="s2">&quot;Run the development server&quot;</span>
-
-    <span class="n">command</span> <span class="nc">Build</span><span class="p">:</span>
-        <span class="n">description</span> <span class="o">=</span> <span class="s2">&quot;Build project artifacts&quot;</span>
-</code></pre></div>
-<p>This is more local and readable than a const sidecar, but it is new syntax or vocab surface. This RFC keeps it as an open design option rather than silently choosing syntax in a stdlib RFC.</p>
+<p>This RFC treats that binding form as a dispatch facade, not as a second source of truth. The command enum and argument models remain the parseable contract.</p>
 <p>Reusable field contracts from RFC 087 compose with CLI argument models. A reusable field can carry the ordinary type, default, and description, while a command-specific model can add CLI presentation metadata at the use site:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="n">field</span> <span class="n">port</span> <span class="p">[</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;TCP port to listen on&quot;</span><span class="p">]:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">8000</span>
 
@@ -10537,15 +10544,15 @@
 <span class="k">def</span><span class="w"> </span><span class="nf">run_cli</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="nc">CliCommand</span><span class="p">](</span><span class="n">argv</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">handler</span><span class="p">:</span> <span class="nc">Callable</span><span class="p">[[</span><span class="nc">T</span><span class="p">],</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nc">E</span><span class="p">]</span> <span class="o">|</span> <span class="nb">int</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">int</span>
 </code></pre></div>
 <p><code>Shell</code> is a plain enum (<code>Bash</code>, <code>Zsh</code>, <code>Fish</code>, <code>PowerShell</code>). <code>render_completions[T]</code> draws entirely from the same <code>CliSpec</code> every other renderer already uses — no second spec, no completion-specific derive.</p>
-<p>The exact helper names may change before this RFC moves to Planned, but the committed surface must include typed parse, spec derivation, help rendering, completion rendering, error rendering, and exit-code mapping.</p>
+<p>The committed surface must include typed parse, spec derivation, help rendering, completion rendering, error rendering, and exit-code mapping.</p>
 <h3 id="cli-spec-derivation">CLI spec derivation<a class="headerlink" href="#cli-spec-derivation" title="Permanent link">&para;</a></h3>
 <p><code>spec_for[T]</code> must derive a CLI spec from a supported command type <code>T</code>. <code>T</code> must have derived <code>CliArgs</code> or <code>CliCommand</code>; a type that has not is rejected at the <code>spec_for[T]</code>/<code>parse[T]</code> call site as a compile-time bound-not-satisfied error, not a runtime diagnostic.</p>
 <p>A model type that has derived <code>CliArgs</code> may describe a single-command CLI. Its fields become options, flags, or positional arguments according to the rules in this RFC.</p>
 <p>An enum type that has derived <code>CliCommand</code> may describe a multi-command CLI. Each variant becomes a subcommand. A variant with a payload model uses that model as the subcommand argument shape; that payload model must itself have derived <code>CliArgs</code>. A payload-free variant is a subcommand with no additional arguments. A variant with unsupported payload shape, or a payload model that has not derived <code>CliArgs</code>, must be rejected at spec derivation time.</p>
-<p>Field metadata may customize CLI presentation and input sources, but type information remains authoritative. Metadata must not cause a field typed as <code>int</code> to parse as <code>str</code>, a required field to silently become optional, or a non-collection field to accept repeated values unless a future RFC defines that behavior.</p>
+<p>Field metadata may customize CLI presentation and input sources, but type information remains authoritative. Metadata must not cause a field typed as <code>int</code> to parse as <code>str</code>, a required field to silently become optional, or a non-collection field to accept repeated values.</p>
 <h3 id="relationship-to-field-metadata-and-reusable-fields">Relationship to field metadata and reusable fields<a class="headerlink" href="#relationship-to-field-metadata-and-reusable-fields" title="Permanent link">&para;</a></h3>
 <p><code>std.cli</code> must reuse <code>description</code> from RFC 021 as the default help text for model fields. A separate <code>help</code> key is not part of this RFC's committed surface.</p>
-<p>This RFC must not add bracket metadata to enum variants. Current enum syntax already supports payload-carrying variants such as <code>Serve(ServeArgs)</code>, but this RFC does not extend variant declarations with <code>[description="..."]</code> or similar syntax. Command descriptions may be supplied by a typed sidecar spec, a dedicated CLI DSL if this RFC accepts one, or by a later RFC that defines enum-variant metadata generally.</p>
+<p>Command descriptions must use RFC 085's metadata on enum variants: <code>Serve [description="Run the development server"](ServeArgs)</code>, or RFC 096's braced block. A command with no <code>description</code> must use its payload model's docstring summary, read through <code>__doc__()</code>. A single-command program's description must be its model's docstring summary. A variant with neither has no description, and the command still exists under its derived spelling.</p>
 <p><code>std.cli</code> must not reuse RFC 021 <code>alias</code> as the spelling for command-line option aliases. Field <code>alias</code> is a wire/schema name and participates in model construction, field access, destructuring, and descriptor metadata. Command-line spellings live in the CLI parser namespace and must not change ordinary model member resolution.</p>
 <p>RFC 087 reusable field contracts may appear in CLI argument models. When a model imports a reusable field, the imported field's canonical name, type, default, description, and validation contract are available to the CLI spec. A local model use may add CLI presentation metadata such as <code>short</code>, <code>option</code>, <code>positional</code>, or <code>value_name</code> without changing the reusable field contract itself.</p>
 <p>If a reusable field and a local model use both provide the same CLI-specific metadata key, the local model use must win. This allows one domain field such as <code>port</code> to be reused across several commands while each command chooses its own short option or positional behavior.</p>
@@ -10563,7 +10570,7 @@
 <li><code>secret</code>: suppress value display in diagnostics and rendered defaults, useful for any sensitive field (a config model's password, a stored token) regardless of whether the containing type is ever used as CLI args.</li>
 </ul>
 <p><code>std.cli</code> reuses <code>env</code> and <code>secret</code> for its own environment-fallback and diagnostic-redaction behavior rather than owning them, the same relationship it already has with <code>description</code>. A field using an <code>option</code>, <code>short</code>, <code>positional</code>, or <code>value_name</code> key on a type that has not derived <code>CliArgs</code> or <code>CliCommand</code> must be diagnosed: these four keys are only meaningful on a derived type, and the diagnostic should suggest adding the missing <code>@derive</code>.</p>
-<p>Aliases, deprecations, hidden commands, grouping, shell completion annotations, prompts, and rich terminal formatting are outside this RFC unless Draft discussion proves they are required for the core contract.</p>
+<p>Aliases, deprecations, hidden commands, grouping, shell completion annotations, prompts, and rich terminal formatting are outside this RFC.</p>
 <p>If a type cannot be represented as a CLI spec, <code>spec_for[T]</code> and <code>parse[T]</code> must fail with a diagnostic that names the unsupported type or field and explains the required shape.</p>
 <h3 id="names-and-command-spelling">Names and command spelling<a class="headerlink" href="#names-and-command-spelling" title="Permanent link">&para;</a></h3>
 <p>By default, enum variant names and model field names should be converted to kebab-case for command-line spelling. For example, <code>ServeStatic</code> becomes <code>serve-static</code>, and <code>output_dir</code> becomes <code>--output-dir</code>.</p>
@@ -10586,12 +10593,12 @@
 </ul>
 <p>By default, scalar fields become named options. A <code>bool</code> field with a default of <code>false</code> becomes a flag that is set to <code>true</code> when present. A field marked with <code>positional=true</code> becomes a positional argument. A collection field marked as positional becomes a repeated positional argument.</p>
 <p>The spec must reject a required field that has no command-line source, no default, and no environment fallback.</p>
-<p>The spec must reject positional fields after a repeated positional field unless a future RFC defines disambiguation.</p>
+<p>The spec must reject positional fields after a repeated positional field.</p>
 <h3 id="requiredness-defaults-and-optionality">Requiredness, defaults, and optionality<a class="headerlink" href="#requiredness-defaults-and-optionality" title="Permanent link">&para;</a></h3>
 <p>A field without a default and without <code>Option[...]</code> type is required unless metadata provides an environment fallback or another explicit source.</p>
 <p>A field with a default is optional from the command line. If the user omits it and no higher-priority source provides a value, the default is used.</p>
 <p>A field of type <code>Option[T]</code> may be omitted and produces <code>None</code> unless a value is supplied by the command line or an environment fallback.</p>
-<p>A collection field may use an empty collection as its default when omitted. A required non-empty collection must be explicitly expressible in metadata or rejected until non-empty collection constraints exist.</p>
+<p>A collection field may use an empty collection as its default when omitted. A collection field with no default is required: it must receive at least one value, and omitting it must produce a <code>CliError</code>.</p>
 <p>Defaults must be ordinary typed Incan values. CLI metadata must not store string defaults that bypass type checking.</p>
 <h3 id="string-boundary-parsing-and-validation">String-boundary parsing and validation<a class="headerlink" href="#string-boundary-parsing-and-validation" title="Permanent link">&para;</a></h3>
 <p>Command-line arguments and environment variables are string boundaries. <code>std.cli</code> must parse those strings into target field types at the boundary; it must not introduce general-purpose implicit coercion inside ordinary Incan expressions.</p>
@@ -10611,11 +10618,11 @@
 <p>The same string-boundary parser should be shared by command-line input and <code>std.environ</code> typed reads where the source type is environment text. This keeps <code>"12" -&gt; 12</code> behavior straightforward: it is a boundary parse from external text to <code>int</code>, not a language-wide string-to-int coercion.</p>
 <p>Enum fields must parse from the accepted variant spelling set. Invalid enum values must report the accepted values.</p>
 <p>Validated newtypes must be constructed through their checked construction path. If construction fails, the CLI error must identify the argument and surface the validation message without discarding the argument context.</p>
-<p>If a target type has no CLI parse path, spec derivation should fail before runtime parsing when possible.</p>
+<p>If a target type has no CLI parse path, spec derivation should fail before runtime parsing when possible. Parsed values must reach RFC 122's canonical construction path, preserving RFC 085 default factories, normalization, and RFC 087's complete composed validation obligations. Named registered checks do not require an extra Validate derive. CLI diagnostics must retain the original typed validation failures under CliError with argument and source context; converting them into message text alone or executing a second validation engine is not sufficient. The concrete CliError nesting follows the shared RFC 131 umbrella contract.</p>
 <h3 id="boolean-flags">Boolean flags<a class="headerlink" href="#boolean-flags" title="Permanent link">&para;</a></h3>
 <p>A <code>bool</code> field with default <code>false</code> must accept the positive flag spelling, such as <code>--reload</code>, and set the field to <code>true</code>.</p>
-<p>A <code>bool</code> field with default <code>true</code> must either require explicit metadata for negation or be rejected until the design settles the spelling. This RFC does not want silent or inconsistent <code>--no-*</code> behavior.</p>
-<p>Boolean flags must not require a separate value by default. A future RFC may define explicit <code>--flag=true</code> compatibility if needed.</p>
+<p>A <code>bool</code> field with default <code>true</code> must require explicit <code>negate</code> metadata for negation. This RFC does not want silent or inconsistent <code>--no-*</code> behavior.</p>
+<p>Boolean flags must not require a separate value by default. Explicit <code>--flag=true</code> compatibility is not part of this design.</p>
 <h3 id="repeated-values">Repeated values<a class="headerlink" href="#repeated-values" title="Permanent link">&para;</a></h3>
 <p>A field whose type is a collection may accept repeated occurrences when it is a named option, such as <code>--include a --include b</code>.</p>
 <p>A repeated positional field consumes the remaining positional arguments for its command.</p>
@@ -10630,7 +10637,7 @@
 <p>Help and usage text must be generated from the same spec used by parsing.</p>
 <p>Help output must include command names, option spellings, value names, requiredness where appropriate, defaults where safe to display, environment fallback names where safe to display, field descriptions, and command descriptions when supplied by a binding facade.</p>
 <p>Help output must not display secret default values or secret environment values. Metadata should allow a field to mark its value as secret.</p>
-<p>Hidden fields and hidden commands are deferred until a follow-up extension defines compatibility rules for undocumented accepted input.</p>
+<p>Hidden fields and hidden commands are outside this RFC.</p>
 <p>Help rendering must be deterministic for a given spec.</p>
 <p>The parser must reserve <code>--help</code> for help by default. A command may not define its own conflicting <code>--help</code> option unless an explicit parser configuration disables automatic help.</p>
 <h3 id="shell-completion">Shell completion<a class="headerlink" href="#shell-completion" title="Permanent link">&para;</a></h3>
@@ -10655,6 +10662,7 @@
 <li>invalid CLI spec.</li>
 </ul>
 <p>Errors must include enough structured context for alternate renderers: argument spelling, command path, expected type or accepted values where relevant, source kind, and span-like argv index information where possible.</p>
+<p>The default renderer must preserve RFC 103 sensitivity: argument tokens, environment-derived inputs, defaults, validation payloads, and usage examples must not reveal secrets. Structured diagnostics and alternate renderers must preserve that protection as well.</p>
 <p>The default renderer should produce concise command-line diagnostics suitable for stderr. It should include a usage hint for parse errors and avoid dumping full help unless configured.</p>
 <h3 id="exit-behavior">Exit behavior<a class="headerlink" href="#exit-behavior" title="Permanent link">&para;</a></h3>
 <p>The framework must define standard exit code categories:</p>
@@ -10664,7 +10672,7 @@
 <li>CLI usage errors map to a non-zero usage code;</li>
 <li>application errors map to a non-zero application code unless the handler returns a more specific code.</li>
 </ul>
-<p>This RFC should prefer conventional CLI behavior but must document exact numeric values before moving to Planned.</p>
+<p>This RFC follows conventional CLI behavior: usage errors map to <code>2</code> and application errors map to <code>1</code>.</p>
 <p><code>run_cli</code> should catch parse and help outcomes, render the appropriate output, and return the standard exit code. Programs that need custom rendering may call <code>parse</code> and rendering helpers directly.</p>
 <h3 id="testing-model">Testing model<a class="headerlink" href="#testing-model" title="Permanent link">&para;</a></h3>
 <p>CLI parsing must be testable without spawning a process.</p>
@@ -10676,9 +10684,9 @@
 <p>A parser builder makes every CLI a second schema. Incan already has the ingredients for a stronger declaration: models describe named fields, enums describe alternatives, defaults describe omission behavior, and metadata describes user-facing labels. A model-first CLI framework lets those declarations become executable without duplicating them in a parser DSL.</p>
 <h3 id="why-enums-own-subcommands">Why enums own subcommands<a class="headerlink" href="#why-enums-own-subcommands" title="Permanent link">&para;</a></h3>
 <p>Subcommands are sum types. A program invocation chooses one path from a finite set, and each path has its own argument model. Encoding that as an enum is direct, statically inspectable, and testable with ordinary pattern matching.</p>
-<h3 id="why-a-sidecar-spec-owns-command-presentation">Why a sidecar spec owns command presentation<a class="headerlink" href="#why-a-sidecar-spec-owns-command-presentation" title="Permanent link">&para;</a></h3>
-<p>Command descriptions are useful, but adding enum-variant metadata just for CLI help would be the wrong owner. The command enum should stay a pure command shape, and a typed sidecar spec should own presentation details that are specific to the CLI surface.</p>
-<p>This also keeps constant spec data inspectable. A tool can read the command enum and the <code>TOOL_CLI</code> sidecar without inspecting function decorators or handler bodies.</p>
+<h3 id="why-variants-carry-their-own-descriptions">Why variants carry their own descriptions<a class="headerlink" href="#why-variants-carry-their-own-descriptions" title="Permanent link">&para;</a></h3>
+<p>A command's description belongs beside the command, as an option's description belongs beside its field. Variant metadata under RFC 085 uses the same <code>name [metadata]</code> shape as a field, with RFC 096's braced block when it grows, so a CLI needs no separate structure and no second list of its commands. Metadata is inert for anything but its consumers: it does not change the enum's construction, matching or identity.</p>
+<p>Descriptions stay inspectable: a tool reads them through <code>__variants__()</code> and checked metadata without running handlers.</p>
 <h3 id="why-one-underlying-spec-matters">Why one underlying spec matters<a class="headerlink" href="#why-one-underlying-spec-matters" title="Permanent link">&para;</a></h3>
 <p>Dispatch helpers can be ergonomic for small programs, but they should not create a second parser system. If users bind handlers through a helper, that surface must consume the same <code>CliSpec</code> contract used by model-first declarations. Otherwise help rendering, completion metadata, diagnostics, defaults, and test behavior will drift.</p>
 <h3 id="why-dispatch-binding-is-a-facade">Why dispatch binding is a facade<a class="headerlink" href="#why-dispatch-binding-is-a-facade" title="Permanent link">&para;</a></h3>
@@ -10699,7 +10707,7 @@
 <p>When a CLI argument has <code>env</code>, parsing should use the same missing, malformed, parse, validation, and secrecy principles as <code>std.environ</code>. That gives users one environment story instead of two subtly different ones.</p>
 <h3 id="boundary-with-project-lifecycle-tooling">Boundary with project lifecycle tooling<a class="headerlink" href="#boundary-with-project-lifecycle-tooling" title="Permanent link">&para;</a></h3>
 <p>This RFC is for applications written in Incan. It does not change <code>oven env run</code>, matrix expansion, project scripts, or Oven lifecycle commands. Those remain owned by RFCs 019, 073, 117, and 118.</p>
-<p>The long-term compiler CLI may eventually dogfood <code>std.cli</code>, but this RFC deliberately does not make compiler CLI migration part of the contract. A forced migration would make the RFC larger and tie framework design to current compiler implementation details.</p>
+<p>The compiler CLI may dogfood <code>std.cli</code>, but this RFC deliberately does not make compiler CLI migration part of the contract. A forced migration would make the RFC larger and tie framework design to current compiler implementation details.</p>
 <h3 id="compatibility-and-migration">Compatibility and migration<a class="headerlink" href="#compatibility-and-migration" title="Permanent link">&para;</a></h3>
 <p>This RFC is additive. Existing Incan programs, stdlib modules, project manifests, and compiler CLI behavior continue to work.</p>
 <p>Users with hand-rolled parsing can migrate command by command by introducing typed models, calling <code>parse[T](argv)</code>, and moving parser validation into field types and metadata.</p>
@@ -10712,17 +10720,19 @@
 <h3 id="parser-builder-first-api">Parser-builder-first API<a class="headerlink" href="#parser-builder-first-api" title="Permanent link">&para;</a></h3>
 <p>Rejected as the primary surface because it duplicates information already present in typed Incan declarations. A builder may still be useful as a lower-level escape hatch, but it should not be the user-facing center of gravity.</p>
 <h3 id="cli-eligibility-as-a-plain-decorator-marker">CLI eligibility as a plain decorator marker<a class="headerlink" href="#cli-eligibility-as-a-plain-decorator-marker" title="Permanent link">&para;</a></h3>
-<p>Rejected. An earlier shape used a bare <code>@cli.args</code>/<code>@cli.command</code> decorator purely as a checked marker with no generated behavior — functionally adequate for gating <code>parse[T]</code>, but an inert annotation that carries no substance and forecloses ever attaching real methods to a CLI-shaped type without a later redesign. <code>@derive(CliArgs)</code>/<code>@derive(CliCommand)</code> generating a real trait implementation, using the same derive convention <code>@derive(Debug, Eq, Clone)</code> already establishes, costs nothing extra today and leaves room to attach real trait methods later without revisiting the eligibility mechanism.</p>
+<p>Rejected. An earlier shape used a bare <code>@cli.args</code>/<code>@cli.command</code> decorator purely as a checked marker with no generated behavior — functionally adequate for gating <code>parse[T]</code>, but an inert annotation that carries no substance and forecloses attaching real methods to a CLI-shaped type without redesigning the eligibility mechanism. <code>@derive(CliArgs)</code>/<code>@derive(CliCommand)</code> generating a real trait implementation, using the same derive convention <code>@derive(Debug, Eq, Clone)</code> already establishes, costs nothing extra and leaves room to attach real trait methods without revisiting the eligibility mechanism.</p>
 <h3 id="ambient-eligibility-via-import">Ambient eligibility via import<a class="headerlink" href="#ambient-eligibility-via-import" title="Permanent link">&para;</a></h3>
 <p>Rejected. Making any model automatically CLI-eligible merely by importing <code>std.cli</code> somewhere in the file would be ambient, implicit behavior with no local signal at the declaration site — exactly the kind of inference this RFC's model-first philosophy and the rest of this project's design principles avoid. Eligibility must be visible at the type's own declaration.</p>
 <h3 id="a-dedicated-cliargs-declaration-form">A dedicated <code>cli.args</code> declaration form<a class="headerlink" href="#a-dedicated-cliargs-declaration-form" title="Permanent link">&para;</a></h3>
-<p>Open, deferred past this RFC. A form such as <code>cli.args ServeArgs:</code> (declaring the model with CLI-specific vocabulary directly, rather than an ordinary <code>model</code> plus <code>@derive</code>) would read more locally but is new syntax or vocab surface that must justify itself beyond a nicer example, the same bar this RFC already applies to the dedicated CLI DSL alternative below. <code>@derive(CliArgs)</code> is the answer for this RFC's committed contract; a future RFC may reconsider dedicated declaration syntax once real usage shows the derive form is too indirect.</p>
-<h3 id="attach-command-descriptions-via-rfc-032-value-enum-assignment-instead-of-a-sidecar">Attach command descriptions via RFC 032 value-enum assignment instead of a sidecar<a class="headerlink" href="#attach-command-descriptions-via-rfc-032-value-enum-assignment-instead-of-a-sidecar" title="Permanent link">&para;</a></h3>
-<p>Considered and rejected for this RFC, worth revisiting when a general enum-variant metadata RFC exists. The proposed shape was <code>Serve(ServeArgs) = cli.command(description="...")</code>, reusing RFC 032's <code>enum Name(str|int): Variant = literal</code> value-assignment syntax so a command's description could live directly on its variant instead of in a separate <code>cli.spec[...]</code> sidecar. This does not work today on two independent grounds: RFC 032 makes payload-carrying variants and value-assignment mutually exclusive (an explicit Non-Goal, enforced by the parser), and even without that conflict, RFC 032 only accepts a <code>str</code>/<code>int</code> literal as the assigned value, not a function call — Incan has no <code>const fn</code> concept (a function provably pure/deterministic enough to fold into a compile-time constant), so <code>cli.command(...)</code> cannot be treated as a literal today regardless of the payload restriction. Separately from both syntactic blockers, RFC 032's value slot is conceptually the enum's wire/backing representation (its <code>str</code>/<code>int</code> identity for serialization, comparison, FFI), not a general per-variant metadata slot — even a hypothetical relaxed literal rule would be reusing the wrong feature for this. The right future vehicle is the general enum-variant metadata RFC this RFC's own "Relationship to field metadata and reusable fields" section already points at ("a later RFC that defines enum-variant metadata generally"), not an expansion of RFC 032's narrower, already-shipped scope. RFC 032 is <code>Implemented</code> and is not retroactively amended.</p>
+<p>Rejected. A form such as <code>cli.args ServeArgs:</code> would declare the model with CLI-specific vocabulary rather than an ordinary <code>model</code> plus <code>@derive</code>. It existed to read more locally, and with metadata on fields and variants the declarations are already local. <code>@derive(CliArgs)</code> is the only form.</p>
+<h3 id="attach-command-descriptions-through-rfc-032-value-enum-assignment">Attach command descriptions through RFC 032 value-enum assignment<a class="headerlink" href="#attach-command-descriptions-through-rfc-032-value-enum-assignment" title="Permanent link">&para;</a></h3>
+<p>Rejected. The shape was <code>Serve(ServeArgs) = cli.command(description="...")</code>. RFC 032 makes payload-carrying variants and value assignment mutually exclusive and accepts only a <code>str</code> or <code>int</code> literal, and its value slot is the enum's wire or backing representation, not general metadata. RFC 085's variant metadata puts the description on the variant without touching that slot.</p>
+<h3 id="a-typed-sidecar-spec">A typed sidecar spec<a class="headerlink" href="#a-typed-sidecar-spec" title="Permanent link">&para;</a></h3>
+<p>Rejected. <code>cli.spec[ToolCommand](commands={ToolCommand.Serve: cli.command(description="...")})</code> keeps the enum free of presentation details, but it separates a description from its command, repeats every variant's name, and needs rules for a variant it omits or names wrongly. Variant metadata has none of those problems, and is available to every library rather than only this one.</p>
 <h3 id="dedicated-cli-dsl">Dedicated CLI DSL<a class="headerlink" href="#dedicated-cli-dsl" title="Permanent link">&para;</a></h3>
-<p>Open. A DSL such as <code>cli ToolCli for ToolCommand:</code> would make command descriptions and presentation metadata more local than a const sidecar while still avoiding enum-variant metadata. The cost is a new syntax or vocab surface that must justify itself beyond one nicer example. If accepted, the DSL must lower to the same <code>CliSpec</code> as the typed sidecar and must not create a second parser model.</p>
+<p>Rejected. A DSL such as <code>cli ToolCli for ToolCommand:</code> was another way to bring descriptions close to their commands. Variant metadata does that with no new CLI vocabulary.</p>
 <h3 id="handler-binding-first-api">Handler-binding-first API<a class="headerlink" href="#handler-binding-first-api" title="Permanent link">&para;</a></h3>
-<p>Accepted only as a facade over typed specs. A binding helper may attach a handler to an existing command variant, but it must not create a separate parser contract outside the enum-plus-model spec and sidecar presentation spec.</p>
+<p>Accepted only as a facade over typed specs. A binding helper may attach a handler to an existing command variant, but it must not create a separate parser contract outside the enum and model declarations.</p>
 <h3 id="require-incan-compiler-cli-migration">Require <code>incan</code> compiler CLI migration<a class="headerlink" href="#require-incan-compiler-cli-migration" title="Permanent link">&para;</a></h3>
 <p>Rejected. Dogfooding is valuable, but forcing compiler CLI migration into this RFC would couple the framework contract to current compiler implementation details.</p>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
@@ -10750,14 +10760,14 @@
 <li><strong>CLI eligibility is the <code>CliArgs</code>/<code>CliCommand</code> derived traits, not a bare marker or ambient inference:</strong> <code>parse[T]</code>/<code>spec_for[T]</code>/<code>render_help[T]</code>/<code>run_cli[T]</code> each declare two bound overloads, <code>T with CliArgs</code> and <code>T with CliCommand</code>, dispatched per RFC 025's existing multi-instantiation mechanism (Incan's generic bounds are intersection-only; there is no union-bound syntax, so one declaration cannot accept "either trait"). This also gives the LSP an unambiguous, local signal at the type's own declaration site, without needing to trace <code>parse[T]</code> call sites across module or package boundaries to know a model is CLI-shaped. An ambient-by-import mechanism was considered and rejected (see "Alternatives considered").</li>
 <li><strong><code>@derive(CliArgs)</code>/<code>@derive(CliCommand)</code> are RFC 024 <code>__derives__</code> modules, not new compiler-internal derive logic:</strong> unlike <code>Debug</code>/<code>Eq</code>/<code>Clone</code> (Rust proc macros with no Incan-expressible body), <code>CliArgs</code>/<code>CliCommand</code> are ordinary trait bodies authored in plain Incan, using RFC 021's <code>Model.__fields__() -&gt; List[FieldInfo]</code> reflection — the same pattern RFC 024's own <code>SqlSchema</code> example already demonstrates. <code>std.cli</code> is a library consumer of two already-shipped mechanisms, not a third compiler-magic derive path; this was a real correction caught during this pass, not the original framing. This requires actually populating RFC 021's reserved-but-empty <code>FieldInfo.extra: dict[str, str]</code> slot with a field's bracket-metadata keys during reflection — the first real consumer of an extension point RFC 021 already built, not an amendment to RFC 021 (which stays untouched and <code>Implemented</code>). <code>FieldInfo</code> does not need to expose a field's actual default value: <code>parse[T]</code>'s generated command value omits any field it didn't resolve from CLI/env and lets the model's own ordinary default application handle it, so <code>has_default: bool</code> (already in <code>FieldInfo</code>) is sufficient.</li>
 <li><strong>The metadata key set splits into CLI-specific and general-purpose groups, resolving the original naming question without renaming anything:</strong> <code>option</code>, <code>short</code>, <code>positional</code>, and <code>value_name</code> remain CLI-specific — meaningful, and diagnosed as a probable missing-<code>@derive</code> mistake when absent, only on a field of a <code>CliArgs</code>/<code>CliCommand</code>-derived type. <code>env</code> and <code>secret</code> become general-purpose model field metadata, usable on any model regardless of CLI derivation, exactly as <code>description</code> already is — <code>std.cli</code> reuses them rather than owning them. This split was motivated by genuinely broader utility beyond CLI parsing: an RFC 033 <code>ctx</code> typed configuration model has the same "fall back to this environment variable" and "don't display this value" needs independent of ever being parsed as CLI args. No key names changed; the six original names all stay.</li>
-<li><strong>The const sidecar (<code>cli.spec[ToolCommand](...)</code>) is the only committed command-presentation mechanism:</strong> a dedicated CLI DSL and a dedicated <code>cli.args</code>/reused-value-enum declaration form were all considered (see "Alternatives considered") and stay explicitly open/deferred, not spec'd by this RFC. Each would need new syntax or vocab surface to justify itself beyond a nicer-looking example; the sidecar already does the job without that cost. Command descriptions living directly on enum variants — via RFC 032's value-enum assignment or a future dedicated syntax — remains a real, worth-revisiting direction once a general enum-variant metadata RFC exists to own it properly, rather than reusing or loosening RFC 032's narrower, already-shipped wire-representation feature.</li>
+<li><strong>Command descriptions live on the variants:</strong> <code>Serve [description="..."](ServeArgs)</code>, using RFC 085's variant metadata, with RFC 096's braced block for longer metadata. A command with no <code>description</code> uses its payload model's docstring. There is no sidecar spec, dedicated CLI DSL or <code>cli.args</code> declaration form, and <code>CliSpec</code> is derived from the declarations alone.</li>
 <li><strong>Positional fields stay strictly opt-in:</strong> <code>positional=true</code> is the only way a field becomes positional; a required scalar field with no default never becomes positional by convention. Matches this RFC's existing default (scalar fields become named options) and the explicit-over-inference instinct applied throughout this pass — two structurally identical fields could legitimately need different treatment, which convention-based inference can't express.</li>
 <li><strong>Exit codes: <code>0</code> success, <code>2</code> usage error, <code>1</code> application error</strong>, matching the widely-recognized Unix convention (bash, Python's <code>argparse</code>, GNU tools) this RFC's own Prior Art section already gestures at.</li>
 <li><strong>A <code>negate</code> metadata key, not automatic <code>--no-*</code> generation, for default-<code>true</code> bool fields:</strong> a <code>bool</code> field defaulting to <code>true</code> needs an explicit <code>negate=true</code> to generate its <code>--no-&lt;name&gt;</code> spelling; there is no implicit negation and no rejection of default-<code>true</code> bool fields outright. This is a fifth CLI-specific metadata key (joining <code>option</code>/<code>short</code>/<code>positional</code>/<code>value_name</code>), chosen over forcing users to invert a field's polarity (e.g. renaming <code>color: bool = true</code> to <code>no_color: bool = false</code>) just to satisfy the parser.</li>
 <li><strong>The guaranteed CLI parse-path type list is already fully specified</strong> by the "String-boundary parsing and validation" section: <code>str</code>, <code>int</code> (plus sized integers with overflow/underflow rejection), <code>float</code>, <code>Path</code>, <code>bool</code>, enum values, validated newtypes (covering types like <code>SecretStr</code>), <code>Option[T]</code>, and collection fields, with the rules composing for nested cases rather than needing per-combination entries. This closes the question; no new type support was added.</li>
-<li><strong>No <code>CliSpec</code> builder API, now or later:</strong> manual <code>CliSpec</code> construction without deriving it from a model is not a compiler-provided fluent/chained builder (<code>.builder().option(...).build()</code>) — that shape is borrowed Rust/Java idiom, not native Incan. If manual construction is ever needed, <code>CliSpec</code> is an ordinary constructible value using normal Incan value-construction syntax, the same as any other model. This is not "defer the builder until a need appears" — there is no builder pattern to defer.</li>
-<li><strong>Long aliases beyond <code>short</code> stay deferred</strong>, per this RFC's own existing "outside this RFC unless Draft discussion proves required" language for aliases. No guide-level example has needed a second long spelling for one field; nothing demonstrated the need.</li>
-<li><strong>Shell completion is designed and committed now, not deferred to a follow-up RFC.</strong> Initially framed as out of scope purely for contract-size reasons — corrected mid-pass as a "north star first, don't pre-assign versions" mistake, the same principle already applied to RFC 117/118/119: settle the design now, decide implementation phasing (which shells ship first, which release) separately. <code>render_completions[T](shell: Shell)</code> generates static completions (command/subcommand names, option spellings, enum-typed value choices) entirely from the existing <code>CliSpec</code>, for <code>Bash</code>, <code>Zsh</code>, <code>Fish</code>, and <code>PowerShell</code>. Dynamic/context-aware completion callbacks for open-ended values (filesystem paths, remote lookups) remain explicitly out of scope — a genuinely different, runtime-dependent feature, not a scope cut for size alone.</li>
+<li><strong>No <code>CliSpec</code> builder API:</strong> manual <code>CliSpec</code> construction without deriving it from a model is not a compiler-provided fluent/chained builder (<code>.builder().option(...).build()</code>) — that shape is borrowed Rust/Java idiom, not native Incan. If manual construction is ever needed, <code>CliSpec</code> is an ordinary constructible value using normal Incan value-construction syntax, the same as any other model.</li>
+<li><strong>Long aliases beyond <code>short</code> are outside this RFC</strong>, per this RFC's own existing exclusion of aliases. No guide-level example has needed a second long spelling for one field; nothing demonstrated the need.</li>
+<li><strong>Shell completion is part of this design.</strong> <code>render_completions[T](shell: Shell)</code> generates static completions (command/subcommand names, option spellings, enum-typed value choices) entirely from the existing <code>CliSpec</code>, for <code>Bash</code>, <code>Zsh</code>, <code>Fish</code>, and <code>PowerShell</code>. Dynamic/context-aware completion callbacks for open-ended values (filesystem paths, remote lookups) remain explicitly out of scope — a genuinely different, runtime-dependent feature, not a scope cut for size alone.</li>
 </ul>
 
 

@@ -9779,6 +9779,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#checked-parameter-values" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Checked parameter values
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#preserve-placeholders-for-a-later-tool" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Preserve placeholders for a later tool
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#consumer-side-result" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9950,10 +9972,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#optional-file-groups" class="md-nav__link">
+  <a href="#selected-file-sets" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Optional file groups
+        Selected file sets
       
     </span>
   </a>
@@ -9972,10 +9994,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#multi-pass-placeholders" class="md-nav__link">
+  <a href="#later-phase-placeholders" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Multi-pass placeholders
+        Later-phase placeholders
       
     </span>
   </a>
@@ -10154,10 +10176,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#relationship-to-catalogs-and-incanpub" class="md-nav__link">
+  <a href="#relationship-to-catalogs-and-loavespub" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Relationship to catalogs and incan.pub
+        Relationship to catalogs and loaves.pub
       
     </span>
   </a>
@@ -10237,10 +10259,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#make-tpl-extension-semantics-authoritative" class="md-nav__link">
+  <a href="#let-the-renderer-choose-optional-file-groups" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Make .tpl extension semantics authoritative
+        Let the renderer choose optional file groups
       
     </span>
   </a>
@@ -10248,10 +10270,76 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#adopt-a-full-template-language-in-v1" class="md-nav__link">
+  <a href="#keep-a-renderer-specific-ownership-flag" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Adopt a full template language in v1
+        Keep a renderer-specific ownership flag
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#guess-which-unknown-placeholders-belong-to-a-later-tool" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Guess which unknown placeholders belong to a later tool
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reject-every-unused-parameter" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reject every unused parameter
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#store-provenance-only-in-loaftoml-or-only-in-tool-state" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Store provenance only in loaf.toml, or only in tool state
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#replace-or-refuse-edited-files-on-update" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Replace or refuse edited files on update
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#make-template-extension-semantics-authoritative" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Make .template extension semantics authoritative
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#adopt-a-full-template-language" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adopt a full template language
       
     </span>
   </a>
@@ -10319,10 +10407,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#unresolved-questions" class="md-nav__link">
+  <a href="#design-decisions" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Unresolved questions
+        Design Decisions
       
     </span>
   </a>
@@ -10351,38 +10439,38 @@
 
 <h1 id="rfc-074-template-rendering-and-boilerplate-provenance">RFC 074: template rendering and boilerplate provenance<a class="headerlink" href="#rfc-074-template-rendering-and-boilerplate-provenance" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Status:</strong> Draft</li>
+<li><strong>Status:</strong> Planned</li>
 <li><strong>Created:</strong> 2026-04-25</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong><ul>
 <li>RFC 015 (hatch-like tooling and project lifecycle CLI)</li>
 <li>RFC 020 (Cargo offline and locked policy)</li>
 <li>RFC 033 (<code>ctx</code> typed configuration context)</li>
-<li>RFC 034 (<code>incan.pub</code> package registry)</li>
+<li>RFC 125 (<code>loaves.pub</code> Loaf registry; supersedes RFC 034)</li>
 <li>RFC 075 (starter profiles and capability packs)</li>
 <li>RFC 076 (project mutation policy and recovery)</li>
 <li>RFC 117 (<code>loaf.toml</code> and Oven's language-neutral project model)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> https://github.com/encero-systems/incan/issues/402</li>
+<li><strong>Issue:</strong> <a href="https://github.com/encero-systems/incan/issues/402">https://github.com/encero-systems/incan/issues/402</a></li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> ~~v0.3~~ v0.5</li>
 <li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC defines a deterministic template rendering, generated-file ownership, and provenance model for Oven project tooling. Templates are static input files referenced by lifecycle tooling, starter profiles, capability packs, or package-provided setup data. Rendering is intentionally constrained: v1 templates may substitute declared parameters, but they must not execute arbitrary code, run shell commands, fetch remote data, or infer behavior from filename conventions alone. When rendered files are written into a project, Oven may record provenance so users and tools can later check, diff, status, reset, or update generated boilerplate without treating the original template as hidden build state.</p>
+<p>This RFC defines a deterministic template rendering, generated-file ownership, and provenance model for Oven project tooling. Templates are static input files referenced by lifecycle tooling, starter profiles, capability packs, or package-provided setup data. Rendering is intentionally constrained: templates may substitute declared parameters, but they must not execute arbitrary code, run shell commands, fetch remote data, or infer behavior from filename conventions alone. When rendered files are written into a project, Oven may record provenance so users and tools can later check, diff, status, reset, or update generated boilerplate without treating the original template as hidden build state.</p>
 <h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
 <p>Read this RFC as ten foundations:</p>
 <ol>
-<li><strong>Template files are tooling inputs, not Incan source syntax.</strong> A file such as <code>main.incn.tpl</code> is a conventional provider-side artifact. The rendered <code>main.incn</code> is the Incan source file users edit, compile, and commit.</li>
-<li><strong>Descriptors are authoritative.</strong> A template file's source path, target path, target language, parameter declarations, and provenance behavior are declared by a descriptor consumed by lifecycle tooling. The <code>.tpl</code> suffix is a convention, not the semantic contract.</li>
+<li><strong>Template files are tooling inputs, not Incan source syntax.</strong> A file such as <code>main.incn.template</code> is a conventional provider-side artifact. The rendered <code>main.incn</code> is the Incan source file users edit, compile, and commit.</li>
+<li><strong>Descriptors are authoritative.</strong> A template file's source path, target path, target language, parameter declarations, and provenance behavior are declared by a descriptor consumed by lifecycle tooling. The <code>.template</code> suffix is a convention, not the semantic contract.</li>
 <li><strong>Rendering is deterministic.</strong> Given the same template bytes, declared parameters, parameter values, renderer version, and project metadata, the renderer must produce the same output.</li>
-<li><strong>Rendering is intentionally small.</strong> V1 supports declared placeholder substitution. It does not support loops, conditionals, imports, functions, filters, arbitrary expression evaluation, network access, or shell execution.</li>
+<li><strong>Rendering is intentionally small.</strong> Rendering supports declared placeholder substitution, a small set of pure derived-value transforms, and explicit literal regions. It does not support loops, conditionals, imports, functions, filters, arbitrary expression evaluation, network access, or shell execution.</li>
 <li><strong>Parameters are declared and typed.</strong> A template descriptor declares every accepted parameter and its kind. The renderer must reject undeclared placeholders and invalid values before writing files.</li>
 <li><strong>Rendered Incan must be validated.</strong> If the target language is <code>incan</code>, the toolchain must parse the rendered output and should format it before writing when a formatter is available.</li>
-<li><strong>Provenance is explicit tooling state.</strong> A project may record which template produced a file, which package or descriptor supplied it, which parameter values were used, and which hashes were observed.</li>
+<li><strong>Provenance is explicit tooling state.</strong> A project records which template produced a file, which package or descriptor supplied it, and which parameter values were used as authored intent in <code>loaf.toml</code>, and the hashes Oven observed as tool-owned state in <code>oven.provenance.toml</code>. Neither is resolver state in <code>oven.lock</code>.</li>
 <li><strong>Updates are explicit, receiver-owned, conflict-aware, and security-sensitive.</strong> Template provenance enables <code>check</code>, <code>diff</code>, and <code>update</code> workflows, but it must not cause automatic rewrites during build, test, import, editor startup, or package resolution. Updating generated source is a project code change in the receiving repository and must be reviewed as one.</li>
-<li><strong>Generated files have ownership policy.</strong> A rendered file may be bootstrap-only, managed by template updates, or advisory provenance only. The update policy must be explicit per file rather than inferred from path conventions.</li>
+<li><strong>Generated files have ownership policy.</strong> A rendered file carries RFC 075's per-file ownership policy: bootstrap-only, managed by explicit updates, or advisory. The policy is explicit per file rather than inferred from path conventions, and template commands honor it rather than defining a second one.</li>
 <li><strong>Template inputs are reviewable.</strong> Tooling must be able to show or write the parameter values that would drive a render so teams can review, automate, and reproduce template application.</li>
 </ol>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
@@ -10392,26 +10480,27 @@
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Define a project-tooling template model that can be used by lifecycle commands, starter profiles, capability packs, and package-provided setup data.</li>
-<li>Make descriptor metadata authoritative so behavior does not depend only on <code>.tpl</code> filename conventions.</li>
-<li>Define a constrained v1 placeholder syntax and parameter model.</li>
+<li>Make descriptor metadata authoritative so behavior does not depend only on <code>.template</code> filename conventions.</li>
+<li>Define a constrained placeholder syntax and parameter model.</li>
 <li>Require deterministic rendering and safe path handling.</li>
 <li>Require rendered Incan output to parse before it is written.</li>
 <li>Define provenance records that support check, status, diff, update, and reset workflows.</li>
-<li>Define generated-file ownership policies that distinguish bootstrap-only files from managed files.</li>
-<li>Support real template suites that need prompts, defaults, constrained choices, derived values, optional file groups, and non-rendered binary or fixture assets.</li>
+<li>Record and honor RFC 075's generated-file ownership policies, which distinguish bootstrap-only files from managed files.</li>
+<li>Support real template suites that need prompts, defaults, constrained choices, checked domain parameter kinds, derived values, and non-rendered binary or fixture assets, rendering the file set RFC 075 selects.</li>
+<li>Update edited files through three-way merge proposals whose conflicts are resolved explicitly.</li>
 <li>Support values-file generation for non-interactive and reviewable template application.</li>
 <li>Support version-aware template status checks when package or registry metadata is available.</li>
 <li>Require template render plans to explain why files are included, skipped, blocked, unchanged, or unsafe.</li>
 <li>Define a safe reset escape hatch for corrupted or heavily conflicted generated files.</li>
 <li>Keep generated projects ordinary: rendered files are normal files, and templates do not participate in compilation unless the user explicitly keeps them as project data.</li>
 <li>Allow templates to be resolved from source-agnostic catalogs such as built-in descriptors, local paths, git sources, public package registries, or private catalogs while keeping rendering and mutation local to the lifecycle CLI.</li>
-<li>Leave room for <code>incan.pub</code> packages to distribute public templates without making public registry support mandatory for v1.</li>
+<li>Let <code>loaves.pub</code> packages distribute public templates, rendered locally under the same rules as built-in ones.</li>
 <li>Provide a tooling surface that IDEs, docs tooling, and agents can inspect without reimplementing template semantics.</li>
 </ul>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Defining starter profiles, capability packs, or their command surface. RFC 075 owns that layer.</li>
-<li>Defining package registry transport, ranking, or remote discovery. RFC 034 owns package registry semantics.</li>
+<li>Defining package registry transport, ranking, or remote discovery. RFC 125 owns package registry semantics, superseding RFC 034; RFC 117 owns Loaf project and dependency authority.</li>
 <li>Defining private catalog hosting, identity, authorization, administration, or commercial policy.</li>
 <li>Defining a general-purpose template language comparable to Jinja, Handlebars, Tera, or Liquid.</li>
 <li>Supporting arbitrary generator scripts, shell commands, network calls, plugin execution, or procedural macros during template rendering.</li>
@@ -10425,7 +10514,7 @@
 <h3 id="provider-side-template">Provider-side template<a class="headerlink" href="#provider-side-template" title="Permanent link">&para;</a></h3>
 <p>A package or built-in tool may ship a static template:</p>
 <div class="language-text highlight"><pre><span></span><code>templates/
-  session.incn.tpl
+  session.incn.template
 </code></pre></div>
 <p>The template is not compiled directly. It is provider-side data:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pub</span><span class="p">::</span><span class="n">sample_session</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Session</span><span class="o">,</span><span class="w"> </span><span class="nn">backends</span>
@@ -10439,7 +10528,7 @@
 </code></pre></div>
 <p>The descriptor declares how that file may be rendered:</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[[templates]]</span>
-<span class="n">source</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;templates/session.incn.tpl&quot;</span>
+<span class="n">source</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;templates/session.incn.template&quot;</span>
 <span class="n">target</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;src/data/session.incn&quot;</span>
 <span class="n">language</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;incan&quot;</span>
 <span class="n">provenance</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;tracked&quot;</span>
@@ -10462,6 +10551,27 @@
 <span class="n">choices</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;DataFusion&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;Memory&quot;</span><span class="p">]</span>
 </code></pre></div>
 <p>The renderer validates every value, substitutes the placeholders, parses the rendered Incan source, formats it when possible, and writes the target file only if the calling lifecycle operation allows that file mutation.</p>
+<h3 id="checked-parameter-values">Checked parameter values<a class="headerlink" href="#checked-parameter-values" title="Permanent link">&para;</a></h3>
+<p>A parameter's kind says what shape of text is valid where it lands. Escaping one generic string is not enough, because a type name, a module path and a package name each have their own grammar. With <code>config_type</code> declared as <code>kind = "identifier"</code>:</p>
+<div class="language-text highlight"><pre><span></span><code>config_type = &quot;JobSettings&quot;      -&gt; model JobSettings:
+config_type = &quot;Bad; execute()&quot;   -&gt; rejected before any file is written:
+                                    &quot;Bad; execute()&quot; is not an Incan identifier
+</code></pre></div>
+<p>A quoted string would not be an acceptable stand-in for a type name either. The same holds for the domain kinds: <code>package_name</code> and <code>dependency_requirement</code> are checked by the rules <code>loaf.toml</code> applies to dependencies, <code>env_name</code> and <code>script_id</code> by the rules for environments and scripts. A misspelled dependency is caught before rendering rather than when the project first resolves.</p>
+<h3 id="preserve-placeholders-for-a-later-tool">Preserve placeholders for a later tool<a class="headerlink" href="#preserve-placeholders-for-a-later-tool" title="Permanent link">&para;</a></h3>
+<p>A deployment file may contain placeholders that a later tool fills in. Mark them as a literal region so their bytes pass through unchanged:</p>
+<div class="language-text highlight"><pre><span></span><code>service: {{ service_name }}
+{% literal %}
+token: ${SERVICE_TOKEN}
+next_template: &quot;{{ LATER_TOOL_VALUE }}&quot;
+{% endliteral %}
+</code></pre></div>
+<p>Rendered with <code>service_name = "audit_tool"</code>:</p>
+<div class="language-text highlight"><pre><span></span><code>service: audit_tool
+token: ${SERVICE_TOKEN}
+next_template: &quot;{{ LATER_TOOL_VALUE }}&quot;
+</code></pre></div>
+<p>The renderer does not guess which unknown placeholders belong to another tool. An undeclared <code>{{ typo }}</code> outside a literal region is a diagnostic, so a misspelled parameter is never silently preserved.</p>
 <h3 id="consumer-side-result">Consumer-side result<a class="headerlink" href="#consumer-side-result" title="Permanent link">&para;</a></h3>
 <p>After a starter or capability applies the template, the project contains a normal file:</p>
 <div class="language-text highlight"><pre><span></span><code>src/data/session.incn
@@ -10478,22 +10588,31 @@
 </code></pre></div>
 <p>The project does not need the template to compile. The template was used to create a file; it is not a hidden source dependency.</p>
 <h3 id="provenance">Provenance<a class="headerlink" href="#provenance" title="Permanent link">&para;</a></h3>
-<p>If the descriptor requests tracked provenance, the lifecycle tool records enough metadata to explain the file later:</p>
+<p>Provenance is tracked by default. The lifecycle tool records two things. In <code>loaf.toml</code> it records what the project chose, which is reviewable intent:</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[oven.templates.</span><span class="s2">&quot;src/data/session.incn&quot;</span><span class="k">]</span>
-<span class="n">source</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;sample_session:templates/session.incn.tpl&quot;</span>
+<span class="n">source</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;sample_session:templates/session.incn.template&quot;</span>
 <span class="n">package</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;sample_session&quot;</span>
 <span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.1.0&quot;</span>
 <span class="n">origin</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;capability:sample_session.session&quot;</span>
+
+<span class="k">[oven.templates.</span><span class="s2">&quot;src/data/session.incn&quot;</span><span class="k">.values]</span>
+<span class="n">config_module</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;data.config&quot;</span>
+<span class="n">config_type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;DataConfig&quot;</span>
+<span class="n">backend_type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;DataFusion&quot;</span>
+</code></pre></div>
+<p>In <code>oven.provenance.toml</code>, a file Oven writes and the project commits next to <code>oven.lock</code>, it records the evidence it observed:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[templates.</span><span class="s2">&quot;src/data/session.incn&quot;</span><span class="k">]</span>
+<span class="n">renderer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;incan-template&quot;</span>
 <span class="n">language</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;incan&quot;</span>
-<span class="n">renderer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;incan-template-v1&quot;</span>
+<span class="n">ownership</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;managed&quot;</span>
 <span class="n">template_hash</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;sha256:4b5a...&quot;</span>
 <span class="n">values_hash</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;sha256:42d9...&quot;</span>
 <span class="n">rendered_hash</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;sha256:18c2...&quot;</span>
 </code></pre></div>
-<p>This record is tooling provenance. Removing it must not break compilation. Keeping it allows the toolchain to answer questions about generated files.</p>
+<p>Both are tooling provenance. Removing them must not break compilation. Keeping them lets the toolchain answer questions about generated files. Neither belongs in <code>oven.lock</code>, which stays resolver state rather than a history of edits.</p>
 <h3 id="generating-a-values-file">Generating a values file<a class="headerlink" href="#generating-a-values-file" title="Permanent link">&para;</a></h3>
 <p>A user may ask the toolchain to write the values a template expects before applying it:</p>
-<div class="language-text highlight"><pre><span></span><code>oven template values-file sample_session:templates/session.incn.tpl --output session.values.toml
+<div class="language-text highlight"><pre><span></span><code>oven template values-file sample_session:templates/session.incn.template --output session.values.toml
 </code></pre></div>
 <p>The generated file contains declared parameters, defaults, choices, and prompt text:</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[values]</span>
@@ -10502,7 +10621,7 @@
 <span class="n">backend_type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;DataFusion&quot;</span>
 </code></pre></div>
 <p>This gives teams something concrete to review in automation and allows non-interactive application:</p>
-<div class="language-text highlight"><pre><span></span><code>oven template render sample_session:templates/session.incn.tpl --values session.values.toml --dry-run
+<div class="language-text highlight"><pre><span></span><code>oven template render sample_session:templates/session.incn.template --values session.values.toml --dry-run
 </code></pre></div>
 <p>The exact command spelling may change, but the lifecycle layer must expose the same capability: inspect required values, write a values file, and render from that file without interactive prompts.</p>
 <h3 id="checking-generated-files">Checking generated files<a class="headerlink" href="#checking-generated-files" title="Permanent link">&para;</a></h3>
@@ -10513,12 +10632,12 @@
 <div class="language-text highlight"><pre><span></span><code>tracked templates:
   src/data/session.incn
     status: edited
-    source: sample_session:templates/session.incn.tpl
+    source: sample_session:templates/session.incn.template
     origin: capability:sample_session.session
 
   tests/test_session.incn
     status: current
-    source: sample_session:templates/test_session.incn.tpl
+    source: sample_session:templates/test_session.incn.template
 </code></pre></div>
 <p><code>edited</code> means the current file hash differs from the recorded <code>rendered_hash</code>. It does not mean the file is invalid. Users are expected to edit generated files.</p>
 <h3 id="checking-template-status">Checking template status<a class="headerlink" href="#checking-template-status" title="Permanent link">&para;</a></h3>
@@ -10530,24 +10649,32 @@
 src/data/session.incn    sample_session:templates/session.incn    0.1.0     0.2.0     edited
 tests/test_session.incn  sample_session:templates/test_session    0.1.0     0.1.0     current
 </code></pre></div>
-<p>If the source catalog is unavailable, status may fall back to local provenance and report the version as unknown or cached. Machine-readable status should include the provenance record path, source package, source version, latest compatible version, and file drift state.</p>
+<p>Status works without registry access. Offline, it still compares every tracked file against its recorded hashes, so it can report an edited generated config on a train, and it reports the latest version as <code>unknown (offline)</code> or as a cached value with its age rather than guessing. Machine-readable status includes the provenance record path, source package, source version, latest compatible version or the reason it is unknown, and file drift state.</p>
 <h3 id="diffing-an-update">Diffing an update<a class="headerlink" href="#diffing-an-update" title="Permanent link">&para;</a></h3>
 <p>If a package version provides a newer template, tooling can show the proposed change without writing it:</p>
 <div class="language-text highlight"><pre><span></span><code>oven template diff src/data/session.incn
 </code></pre></div>
-<p>The diff is between the current project file and the output that would be rendered from the current descriptor and parameter values. If the file has user edits, the tool must make that clear before offering an update.</p>
+<p>The diff is between the current project file and the output that would be rendered from the current descriptor and parameter values. If the file has user edits, the tool must make that clear before offering an update. <code>--format json</code> returns the same facts as a versioned structured patch, so an agent can decide which edits to accept without parsing terminal colors.</p>
 <h3 id="updating-explicitly">Updating explicitly<a class="headerlink" href="#updating-explicitly" title="Permanent link">&para;</a></h3>
 <p>Template updates are explicit:</p>
 <div class="language-text highlight"><pre><span></span><code>oven template update src/data/session.incn --dry-run
 oven template update src/data/session.incn
 </code></pre></div>
-<p>If the current file still matches <code>rendered_hash</code>, an explicit receiver-approved update may replace it with the newly rendered output. If the file has user edits, the tool must either stop with a conflict diagnostic or use a documented merge strategy. It must not silently overwrite user edits.</p>
+<p>If the current file still matches <code>rendered_hash</code>, an explicit receiver-approved update may replace it with the newly rendered output. If the file has user edits, the tool proposes a three-way merge: the old rendering is the base, the user's file is one side, and the new rendering is the other. Edits that do not overlap merge cleanly into the proposal. When the template and the user changed the same lines, the plan shows that conflict and leaves the file unchanged until it is resolved:</p>
+<div class="language-text highlight"><pre><span></span><code>src/data/session.incn
+  status: edited
+  merge: 1 conflict
+    line 6, yours:    .with_backend(backends.Memory())
+    line 6, template: .with_backend(backends.DataFusion(threads=4))
+  action: not written; rerun with --write-conflicts to resolve in the file
+</code></pre></div>
+<p>The tool never overwrites user edits on its own.</p>
 <h3 id="resetting-generated-files">Resetting generated files<a class="headerlink" href="#resetting-generated-files" title="Permanent link">&para;</a></h3>
 <p>If an update cannot be applied cleanly, users may need a stronger operation that recreates managed files from the current template source while preserving recorded values:</p>
 <div class="language-text highlight"><pre><span></span><code>oven template reset src/data/session.incn --dry-run
 oven template reset src/data/session.incn
 </code></pre></div>
-<p>Reset is not a normal update. It should be treated as an explicit recovery operation. By default, it must preserve bootstrap-owned files, preserve values from provenance or an explicit values file, show a dry-run plan, require confirmation unless running in an explicit non-interactive mode, and leave the resulting changes for review in source control. Reset is still a receiver-side code mutation and must follow the same rendered-diff review and source-identity checks as update.</p>
+<p>Reset is not a normal update. It is an explicit recovery operation and never happens implicitly during update or repair. By default, it must preserve bootstrap-owned files, preserve values from provenance or an explicit values file, show a dry-run plan that lists the exact user edits it would replace, require confirmation unless running in an explicit non-interactive mode, and leave the resulting changes for review in source control. Reset is still a receiver-side code mutation and must follow the same rendered-diff review and source-identity checks as update.</p>
 <h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
 <h3 id="terminology">Terminology<a class="headerlink" href="#terminology" title="Permanent link">&para;</a></h3>
 <p>A <strong>template file</strong> is a static provider-side file that contains placeholders and is rendered into a project file.</p>
@@ -10560,10 +10687,10 @@ oven template reset src/data/session.incn
 <p>A <strong>template source</strong> is where a template descriptor and its files are resolved from. Source kinds may include built-in templates, local paths, git references, package-provided templates, public catalogs, and private catalogs.</p>
 <h3 id="descriptor-authority">Descriptor authority<a class="headerlink" href="#descriptor-authority" title="Permanent link">&para;</a></h3>
 <p>The descriptor is authoritative for template behavior. Implementations must not infer target language, target path, provenance behavior, or parameter kinds solely from the template filename.</p>
-<p>The <code>.tpl</code> suffix is recommended for provider-side template files because it is familiar and avoids confusing templates with directly compiled source. For Incan templates, <code>.incn.tpl</code> is the recommended provider-side suffix. Implementations may accept other filenames when the descriptor marks the file as a template.</p>
+<p>The <code>.template</code> suffix is recommended for provider-side template files because it avoids confusing templates with directly compiled source. For Incan source templates, <code>.incn.template</code> is the recommended suffix, so editors can recognize them. Implementations must accept other filenames when the descriptor marks the file as a template, and must not compile a file merely because its name contains <code>.incn</code> or infer rendering policy from its suffix.</p>
 <h3 id="template-source-kinds">Template source kinds<a class="headerlink" href="#template-source-kinds" title="Permanent link">&para;</a></h3>
 <p>Template source kind affects discovery, provenance, trust, and upgrade metadata. It must not change rendering semantics. A template loaded from a private catalog, public registry, git reference, local path, package, or built-in source is rendered with the same placeholder validation, path safety, parse validation, overwrite rules, and provenance requirements.</p>
-<p>V1 implementations must support built-in templates. They may also support explicit local descriptor paths. Later implementations may add git sources, package-owned templates, public catalog sources, and private catalog sources without changing the descriptor semantics.</p>
+<p>Implementations must support built-in templates, explicit local descriptor paths, templates owned by Loaf packages from <code>loaves.pub</code>, git sources, and public and private catalog sources, all under the same descriptor semantics.</p>
 <p>Source metadata should answer these questions:</p>
 <ul>
 <li>where the descriptor came from</li>
@@ -10576,32 +10703,39 @@ oven template reset src/data/session.incn
 <p>Private catalog sources are for organization-specific or team-specific templates that should not be discoverable through the public package ecosystem. They are not special renderers. They must still provide descriptor bytes, referenced template files, and provenance metadata to the local lifecycle CLI.</p>
 <p>Diagnostics and machine-readable output must include the selected source kind and source identity when that information is available. If multiple sources provide the same template id, the lifecycle CLI must either reject the ambiguity or apply a documented source precedence rule and show the selected source.</p>
 <h3 id="placeholder-syntax">Placeholder syntax<a class="headerlink" href="#placeholder-syntax" title="Permanent link">&para;</a></h3>
-<p>V1 placeholders use double braces around one parameter name:</p>
+<p>Placeholders use double braces around one parameter name:</p>
 <div class="language-text highlight"><pre><span></span><code>{{ parameter_name }}
 </code></pre></div>
 <p>Whitespace immediately inside the braces is ignored. Parameter names must be ASCII identifiers matching this shape:</p>
 <div class="language-text highlight"><pre><span></span><code>[A-Za-z_][A-Za-z0-9_]*
 </code></pre></div>
+<p>A literal region starts with <code>{% literal %}</code> and ends with the next <code>{% endliteral %}</code>. The renderer must copy the bytes between the delimiters unchanged, including any <code>{{ ... }}</code>, <code>{% ... %}</code> or <code>${...}</code> text, and must not treat them as placeholders. A delimiter that stands alone on its line is removed together with that line break; otherwise only the delimiter is removed. Literal regions do not nest.</p>
 <p>The renderer must reject:</p>
 <ul>
-<li>placeholders that reference undeclared parameters</li>
-<li>parameters that are declared but unused, unless the descriptor explicitly allows unused parameters</li>
+<li>placeholders outside a literal region that reference undeclared parameters</li>
 <li>malformed placeholders</li>
 <li>nested placeholders</li>
 <li>expression syntax inside placeholders</li>
+<li>an unmatched <code>{% literal %}</code> or <code>{% endliteral %}</code>, rather than treating the rest of the file as literal</li>
 <li>escaping or control syntax that is not defined by this RFC</li>
 </ul>
+<p>A declared parameter that no placeholder or derivation uses must produce a warning, and an error under strict provider validation. A parameter declared with <code>allow_unused = true</code> suppresses that diagnostic, so several templates can share one parameter schema deliberately.</p>
 <h3 id="parameter-kinds">Parameter kinds<a class="headerlink" href="#parameter-kinds" title="Permanent link">&para;</a></h3>
-<p>V1 defines these parameter kinds:</p>
+<p>The parameter kinds are:</p>
 <ul>
 <li><code>identifier</code>: an Incan identifier segment</li>
 <li><code>module_path</code>: one or more identifier segments separated by <code>.</code></li>
 <li><code>string</code>: a UTF-8 string value rendered with target-language string escaping when inserted into an Incan template</li>
 <li><code>path</code>: a normalized relative project path that must not escape the project root</li>
+<li><code>package_name</code>: a Loaf package name, valid under the <code>loaf.toml</code> rules for dependency names</li>
+<li><code>dependency_requirement</code>: a dependency version requirement, valid under the <code>loaf.toml</code> rules for requirements</li>
+<li><code>env_name</code>: an environment name, valid under the <code>loaf.toml</code> rules for environments</li>
+<li><code>script_id</code>: a script identifier, valid under the <code>loaf.toml</code> rules for scripts</li>
 <li><code>literal</code>: a raw textual value that is inserted without escaping</li>
 </ul>
+<p>Every kind must be validated before any file is rendered or written. A kind describes the grammar of the position where the value lands, so escaping one generic string must not stand in for it. The domain kinds must reuse the validation that <code>loaf.toml</code> applies to the same field rather than define a parallel rule.</p>
 <p>Descriptors should avoid <code>literal</code> unless the rendered target language validation can catch invalid output. For <code>language = "incan"</code>, use of <code>literal</code> is allowed only when the final rendered source parses successfully. For executable, configuration, CI, or agent-facing targets, <code>literal</code> parameters should be treated as security-sensitive in dry-run output because they bypass escaping.</p>
-<p>Future RFCs may add more kinds. Unknown parameter kinds must be rejected unless the renderer has explicitly opted into an extension namespace.</p>
+<p>Unknown parameter kinds must be rejected unless they belong to an extension namespace the renderer explicitly supports.</p>
 <h3 id="parameter-declarations">Parameter declarations<a class="headerlink" href="#parameter-declarations" title="Permanent link">&para;</a></h3>
 <p>A template descriptor may declare metadata for each parameter:</p>
 <ul>
@@ -10612,24 +10746,22 @@ oven template reset src/data/session.incn
 <li><code>required</code>: whether the caller must provide a value</li>
 <li><code>sensitive</code>: whether the value may contain secret or private material</li>
 <li><code>derived</code>: a deterministic derivation from other parameters or project metadata</li>
+<li><code>allow_unused</code>: whether the parameter may go unused without a diagnostic</li>
 </ul>
 <p>Prompt text is tooling metadata. It must not affect rendering semantics.</p>
 <p>If <code>choices</code> is present, the renderer must reject values outside the declared set before substitution.</p>
 <p>If <code>sensitive = true</code>, the renderer must not store the raw parameter value in provenance, logs, diagnostics, machine-readable plans, or generated comments. If drift detection requires a value fingerprint, the renderer should store a salted or keyed hash, not an unsalted hash of the raw value. Diagnostics should identify the parameter by name rather than printing the value.</p>
-<p>Derived values must be deterministic. V1 descriptors should prefer renderer-known transforms such as casing, identifier normalization, slug normalization, path joining, and package-name normalization. Descriptors must not embed arbitrary expression evaluation to compute derived values in v1.</p>
-<h3 id="optional-file-groups">Optional file groups<a class="headerlink" href="#optional-file-groups" title="Permanent link">&para;</a></h3>
-<p>Real template suites often contain optional slices: docs support, CI support, test fixtures, backend-specific files, or deployment scaffolding. Descriptors should model those slices before rendering:</p>
-<div class="language-toml highlight"><pre><span></span><code><span class="k">[[file_groups]]</span>
-<span class="n">id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;docs&quot;</span>
-<span class="n">enabled_by</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;enable_docs&quot;</span>
-
-<span class="k">[[file_groups.files]]</span>
-<span class="n">source</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;templates/docs/index.md.tpl&quot;</span>
-<span class="n">target</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;docs/index.md&quot;</span>
-<span class="n">language</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;markdown&quot;</span>
-</code></pre></div>
-<p>The renderer must not rely on post-generation deletion hooks to express optionality. Creating a large tree and deleting disabled parts makes dry-run output less honest, weakens provenance, and makes updates harder because the tool cannot tell whether a missing file was intentionally excluded or later removed by the user.</p>
-<p>Optional file-group decisions must be explainable. A render plan should report whether each group was included, skipped, blocked, or unavailable, and it should include the parameter, project metadata, source compatibility, or policy condition that caused that decision. This gives lifecycle tooling enough information to show a condition-style report without reimplementing template logic.</p>
+<p>A derived value must be declared as <code>derived = { from = "&lt;parameter&gt;", transform = "&lt;name&gt;" }</code>, naming one declared parameter or project metadata field and one built-in transform. The built-in pure transforms are:</p>
+<ul>
+<li><code>snake_case</code>, <code>pascal_case</code>, <code>kebab_case</code> and <code>upper_snake_case</code>, which split words at non-alphanumeric characters and lower-to-upper transitions;</li>
+<li><code>identifier</code>, which produces a valid Incan identifier by replacing invalid characters with <code>_</code> and prefixing <code>_</code> when the result would start with a digit;</li>
+<li><code>module_path</code>, which applies <code>identifier</code> to each <code>.</code>-separated segment;</li>
+<li><code>package_name</code>, which normalizes to the <code>loaf.toml</code> package-name form;</li>
+<li><code>path</code>, which normalizes a relative path and rejects one that escapes the project root.</li>
+</ul>
+<p>Transforms must be deterministic and independent of locale, and the derived value must still pass its own parameter kind. For example, <code>project_name = "Billing Service"</code> derives <code>module_name = "billing_service"</code> through <code>snake_case</code>, without running a script. Descriptors must not embed arbitrary expression evaluation, callbacks or commands to compute derived values.</p>
+<h3 id="selected-file-sets">Selected file sets<a class="headerlink" href="#selected-file-sets" title="Permanent link">&para;</a></h3>
+<p>The renderer renders the files it is given. Choosing which optional slices of a suite to include, such as docs, CI, test fixtures, backend-specific files or deployment scaffolding, belongs to RFC 075's starter and mix selection, which hands the renderer an explicit selected file set together with the reason each optional slice was included or skipped. The renderer must not select or drop files itself, and it must not rely on post-generation deletion to express optionality. Its plan must report each file it was given as rendered, unchanged, blocked or unsafe.</p>
 <h3 id="non-rendered-assets">Non-rendered assets<a class="headerlink" href="#non-rendered-assets" title="Permanent link">&para;</a></h3>
 <p>Some template suites include binary fixtures, fonts, icons, archives, datasets, or other files that must be copied without placeholder scanning. The descriptor must mark those files explicitly:</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[[templates]]</span>
@@ -10639,25 +10771,20 @@ oven template reset src/data/session.incn
 <span class="n">provenance</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;tracked&quot;</span>
 </code></pre></div>
 <p>For <code>render = false</code>, the renderer copies bytes exactly after path validation. It must not scan the file for placeholders. Provenance should record the source hash and copied output hash.</p>
-<h3 id="multi-pass-placeholders">Multi-pass placeholders<a class="headerlink" href="#multi-pass-placeholders" title="Permanent link">&para;</a></h3>
-<p>Some generated files intentionally contain placeholder syntax for a later tool, runtime, deployment system, or user edit. The descriptor must make this explicit rather than relying on renderer-specific escaping tricks:</p>
-<div class="language-toml highlight"><pre><span></span><code><span class="k">[[templates.preserve_placeholders]]</span>
-<span class="n">syntax</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;double-brace&quot;</span>
-<span class="n">names</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;runtime_schema&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;deployment_env&quot;</span><span class="p">]</span>
-</code></pre></div>
-<p>Preserved placeholders are copied through as literal text and are not treated as missing Incan template parameters. This is separate from <code>_copy_without_render</code>: a rendered file may still preserve selected placeholder regions for another phase.</p>
+<h3 id="later-phase-placeholders">Later-phase placeholders<a class="headerlink" href="#later-phase-placeholders" title="Permanent link">&para;</a></h3>
+<p>Some generated files intentionally contain placeholder syntax for a later tool, runtime, deployment system, or user edit. The template must mark that text with a literal region, as defined under placeholder syntax, rather than rely on escaping tricks or a list of names to skip. The renderer must not infer from a placeholder's spelling, such as <code>${NAME}</code>, or from any semantic analysis, which renderer owns it. A literal region is separate from <code>render = false</code>: a rendered file may still preserve selected regions for another phase.</p>
 <h3 id="rendering-algorithm">Rendering algorithm<a class="headerlink" href="#rendering-algorithm" title="Permanent link">&para;</a></h3>
 <p>Rendering one template must follow this order:</p>
 <ol>
 <li>Load the template descriptor.</li>
 <li>Normalize and validate the source path relative to the descriptor package or descriptor root.</li>
 <li>Normalize and validate the target path relative to the project root.</li>
-<li>Parse the template body for placeholders.</li>
-<li>Validate that every placeholder references a declared parameter.</li>
+<li>Parse the template body for placeholders and literal regions.</li>
+<li>Validate that every placeholder outside a literal region references a declared parameter, and report unused parameters.</li>
 <li>Resolve parameter values from descriptor defaults, project metadata, caller-supplied values, derived values, or the calling lifecycle operation.</li>
 <li>Validate each value against its declared parameter kind, choices, required state, and sensitivity policy.</li>
-<li>Resolve optional file-group inclusion before rendering or copying.</li>
-<li>Substitute placeholders in memory, preserving explicitly declared later-phase placeholders.</li>
+<li>Confirm that the file belongs to the selected file set the calling operation supplied.</li>
+<li>Substitute placeholders in memory, copying literal regions unchanged.</li>
 <li>Validate the rendered output according to the declared target language.</li>
 <li>Format the rendered output when a formatter is available and formatting is enabled.</li>
 <li>Return a planned rendered file to the calling lifecycle operation.</li>
@@ -10675,27 +10802,24 @@ oven template reset src/data/session.incn
 <p>The renderer must reject absolute target paths, parent-directory escapes, symlink escapes when detectable, control characters, and platform-specific path forms that would escape the project root.</p>
 <p>Templates must not write outside the target project.</p>
 <h3 id="generated-file-ownership">Generated-file ownership<a class="headerlink" href="#generated-file-ownership" title="Permanent link">&para;</a></h3>
-<p>Each rendered file may declare one ownership policy:</p>
-<ul>
-<li><code>bootstrap</code>: create the file during initial application, record provenance if requested, but do not update it through normal template update commands</li>
-<li><code>managed</code>: create the file and consider it eligible for explicit template updates</li>
-<li><code>advisory</code>: record origin metadata for explanation, but never treat the file as owned by update tooling</li>
-</ul>
-<p><code>bootstrap</code> is appropriate for files that users are expected to customize immediately, such as application-specific source files, domain models, local configuration examples, and initial docs content.</p>
-<p><code>managed</code> is appropriate for files that should follow template evolution, such as generated tool configuration, shared helper files, CI boilerplate, or formatter/linter configuration.</p>
-<p><code>advisory</code> is appropriate when a tool wants to explain origin without assuming future ownership.</p>
-<p>The ownership policy must be independent from whether provenance is recorded. A bootstrap file may still record provenance so tooling can explain where it came from, but <code>oven template update</code> must not rewrite it by default.</p>
+<p>Ownership is RFC 075's per-file mutation policy, with the values <code>bootstrap</code> (created once and not rewritten by normal updates), <code>managed</code> (eligible for explicit updates) and <code>advisory</code> (explained but never owned by update tooling). A template descriptor's <code>ownership</code> key is that same field, not a second policy. Template provenance must record the file's ownership, and template commands must honor it: <code>update</code> and <code>reset</code> must not rewrite a bootstrap file by default and must never take ownership of an advisory file.</p>
+<p>The ownership policy must be independent from whether provenance is recorded. A bootstrap file may still record provenance so tooling can explain where it came from. A recorded <code>rendered_hash</code> is a precondition fact for an update, never permission to replace a file that has changed.</p>
 <h3 id="provenance-modes">Provenance modes<a class="headerlink" href="#provenance-modes" title="Permanent link">&para;</a></h3>
 <p>Descriptors may choose one of these provenance modes:</p>
 <ul>
-<li><code>none</code>: do not record template provenance</li>
-<li><code>tracked</code>: record template provenance and rendered hashes</li>
-<li><code>tracked-owned</code>: record provenance and treat unchanged generated output as tool-owned for update purposes</li>
+<li><code>tracked</code>: record template provenance and rendered hashes. This is the default for every file a lifecycle operation writes.</li>
+<li><code>none</code>: do not record template provenance. Choosing it must be explicit, and the plan must state that <code>check</code>, <code>status</code>, <code>diff</code>, <code>update</code> and <code>reset</code> will not cover the file.</li>
 </ul>
-<p><code>tracked-owned</code> is retained as a shorthand for <code>provenance = "tracked"</code> with <code>ownership = "managed"</code> while the exact descriptor encoding is finalized. It does not make files read-only. It means update tooling may replace the file without a content merge only while the current file still matches the recorded <code>rendered_hash</code>, and only as part of an explicit receiver-approved update operation. Once a user edits the file, update tooling must treat it as user-owned and require conflict handling.</p>
-<p>The default provenance mode is <code>tracked</code> for files produced by starter or capability operations and <code>none</code> for one-off explicit rendering commands, unless the command documents a different default.</p>
+<p>Provenance mode does not encode ownership. Even for a managed file, update tooling may replace the file without a merge only while it still matches the recorded <code>rendered_hash</code>, and only as part of an explicit receiver-approved update operation. Once a user edits the file, update tooling must use the merge and conflict rules below.</p>
 <h3 id="provenance-fields">Provenance fields<a class="headerlink" href="#provenance-fields" title="Permanent link">&para;</a></h3>
-<p>When provenance is recorded, the project record must include:</p>
+<p>Provenance has two homes:</p>
+<ul>
+<li><strong>Intent in <code>loaf.toml</code>:</strong> the <code>[oven.templates."&lt;target&gt;"]</code> table records the source, package and version, origin, and non-sensitive parameter values. It is authored project state that users review and may edit, such as changing a value before an update.</li>
+<li><strong>Evidence in <code>oven.provenance.toml</code>:</strong> a file at the project root that only Oven writes and the project commits. Its <code>[templates]</code> table records, per target, the renderer, language, ownership, hashes, and receipts of what was observed; RFC 075 keeps mix evidence in the same file. Its content must remain inspectable through <code>oven template status --format json</code>.</li>
+</ul>
+<p><code>oven.lock</code> must not hold either; it remains resolver state and must not become a history of edits.</p>
+<p>If the evidence file is missing or damaged, tooling must report the affected files as lacking tracking evidence and must treat them as edited, never as current. The merge base can be recovered by rendering the recorded template version with the recorded values, so losing the evidence file costs speed and certainty, not the ability to update. A sensitive value must then be supplied again.</p>
+<p>When provenance is recorded, the two records together must include:</p>
 <ul>
 <li>target path</li>
 <li>source kind and source identity</li>
@@ -10717,7 +10841,7 @@ oven template reset src/data/session.incn
 <li>values hash</li>
 <li>Incan version used by the renderer</li>
 </ul>
-<p>The record must not store secrets. If parameter values may include secrets, the provenance record must store only a values hash and enough non-secret metadata to repeat or explain the render.</p>
+<p>The records must not store secrets. A sensitive parameter's value must not appear in <code>loaf.toml</code> or the evidence file; the evidence file may store only its keyed fingerprint and enough non-secret metadata to repeat or explain the render.</p>
 <h3 id="template-commands">Template commands<a class="headerlink" href="#template-commands" title="Permanent link">&para;</a></h3>
 <p>This RFC adds the following lifecycle tooling concepts:</p>
 <ul>
@@ -10728,23 +10852,33 @@ oven template reset src/data/session.incn
 <li><code>oven template diff [target]</code></li>
 <li><code>oven template update [target]</code></li>
 <li><code>oven template reset [target]</code></li>
+<li><code>oven template validate &lt;descriptor&gt;</code></li>
 </ul>
 <p>The exact command spelling may be adjusted if the lifecycle CLI uses a different namespace, but the toolchain must support these operations before tracked provenance can be considered complete.</p>
-<p><code>check</code> reports whether tracked files are missing, current, edited, stale, or blocked by missing source metadata.</p>
-<p><code>status</code> reports version-aware source status when package or registry metadata is available, including whether tracked templates are on the latest compatible source version.</p>
+<p><code>check</code> reports whether tracked files are missing, current, edited, conflicted, stale, lacking tracking evidence, or blocked by missing source metadata.</p>
+<p><code>status</code> must work without registry access. It must compare current files against locally recorded provenance and report each fact it could not refresh, such as the latest compatible version, as unknown or cached with its age rather than omit it. When package or registry metadata is available, it also reports whether tracked templates are on the latest compatible source version. Registry access must never be required for drift results.</p>
 <p><code>values-file</code> writes a reviewable values file for a template, starter, capability, or provenance origin.</p>
-<p><code>render</code> renders one template from supplied values and returns a dry-run or planned file output. It is primarily useful for debugging descriptors and provider validation. The rendered plan must include reason codes for included, skipped, blocked, unchanged, and unsafe files when those states apply.</p>
+<p><code>render</code> renders one template from supplied values and returns a dry-run or planned file output. It is primarily useful for debugging descriptors and provider validation. The rendered plan must include reason codes for rendered, unchanged, blocked, and unsafe files when those states apply, and must carry the selection reasons the calling operation supplied for included or skipped optional slices.</p>
 <p><code>diff</code> renders the current template source with the recorded values and shows what would change for one file or for all tracked files. When the template is part of an applied RFC 075 capability, this file-level diff is a lower-level diagnostic; the normal user-facing upgrade review should happen through the capability-level diff and update plan.</p>
-<p><code>update</code> applies an explicit receiver-approved update only when conflicts are absent or resolved through documented flags. It must respect generated-file ownership: bootstrap files are not rewritten by normal updates, managed files may be updated when unchanged or cleanly merged, and advisory files are explained but not owned.</p>
-<p><code>reset</code> recreates managed files from the selected template source using preserved or supplied values. It must be explicit, dry-runnable, conflict-aware, and subject to the same receiver-side rendered-diff review as update.</p>
-<p>All template inspection and mutation operations should support a machine-readable output mode. Template update and reset plans must expose machine-readable security-sensitive mutation categories, source identity changes, integrity or trust-state changes, and receiver-side rendered file changes.</p>
+<p><code>update</code> applies an explicit receiver-approved update only when conflicts are absent or resolved. It must respect generated-file ownership: bootstrap files are not rewritten by normal updates, managed files may be updated when unchanged or cleanly merged, and advisory files are explained but not owned.</p>
+<p>For an edited managed file, <code>update</code> must propose a three-way merge. The base is the recorded rendering, recovered by rendering the recorded template version with the recorded values; the two sides are the current file and the new rendering. Non-overlapping changes must merge into the proposal. Overlapping changes are conflicts: the plan must show the base, current and new text of each one, and <code>update</code> must not write that file. With <code>--write-conflicts</code>, it must write the file with conflict markers for the user to resolve, and <code>check</code> must report it as <code>conflicted</code> until the markers are gone. When no base can be recovered, for example because the old template version is unavailable or a sensitive value was not supplied, every difference in an edited file must be treated as a conflict. Update tooling must never overwrite user edits automatically.</p>
+<p><code>reset</code> recreates managed files from the selected template source using preserved or supplied values. It must be explicit and dry-runnable, must list the exact user edits it would replace before writing anything, must follow the confirmation policy, and is subject to the same receiver-side rendered-diff review as update. Update and repair operations must never reset a file implicitly.</p>
+<p><code>validate</code> performs provider validation, described below.</p>
+<p>Every template inspection and mutation operation must support <code>--format json</code>, a versioned machine-readable form that carries the same facts as its human-readable output. For <code>diff</code>, that form is a structured patch an agent or review tool can apply or reject file by file. Template update and reset plans must expose machine-readable security-sensitive mutation categories, source identity changes, integrity or trust-state changes, and receiver-side rendered file changes.</p>
+<p>Semantic tooling, such as Incan's code graph, may enrich a diff or merge proposal by explaining what changed, for example a renamed function. It must not decide whether a placeholder is rendered or preserved, resolve a conflict, or authorize an overwrite.</p>
 <h3 id="provider-validation">Provider validation<a class="headerlink" href="#provider-validation" title="Permanent link">&para;</a></h3>
-<p>Template authors need to know whether a descriptor renders into a realistic project and whether a future update behaves correctly. The lifecycle layer should therefore make template validation possible without publishing the template first.</p>
-<p>V1 should support at least descriptor validation and dry-run rendering against fixture values. A later implementation may add a full target-project harness that initializes a project, applies updates, runs local checks, and records archive diffs between template versions. This RFC does not require that full harness in v1, but descriptor and provenance design must not prevent it.</p>
+<p>Template authors need to know whether a descriptor renders into a realistic project and whether a future update behaves correctly, without publishing it first. <code>oven template validate</code> must check:</p>
+<ul>
+<li>the descriptor schema, parameter kinds and derived values;</li>
+<li>path safety of every source and target, so a descriptor that writes outside its declared destination is rejected;</li>
+<li>deterministic rendering, by rendering each template twice from the same values and comparing the bytes;</li>
+<li>fixture renders: each declared fixture value set must render and pass target-language validation.</li>
+</ul>
+<p>With <code>--strict</code>, unused parameters without <code>allow_unused</code> are errors. The result must be reported in the versioned machine-readable form. Publishing a template package to <code>loaves.pub</code> must require a passing strict result under RFC 125, and promotion to a higher trust tier may require stronger policy evidence. <code>validate</code> may also run a target-project harness that initializes a fixture project, applies the template, applies updates between template versions, runs local checks, and records the rendered diffs.</p>
 <h3 id="security-and-trust">Security and trust<a class="headerlink" href="#security-and-trust" title="Permanent link">&para;</a></h3>
 <p>Template rendering must not execute arbitrary code. It must not run shell commands, load dynamic plugins, fetch remote URLs, evaluate expressions, or inspect unrelated files in the project.</p>
-<p>Templates distributed through packages inherit the package trust story. If package templates are distributed through <code>incan.pub</code>, registry integrity, checksum, yanking, and publisher identity rules belong to RFC 034 or later registry RFCs. Rendering remains local and must still validate paths and output.</p>
-<p>Procedural extension points are especially risky for upgradeable templates. If a template suite needs environment-derived defaults, optional slices, or target cleanup, those concerns should be represented as typed parameters, descriptor conditions, and mutation-plan rules rather than hidden Python, shell, or plugin hooks. A later RFC may define sandboxed hooks, but v1 should assume hooks make provenance and updates less reliable.</p>
+<p>Templates distributed through packages inherit the package trust story. If package templates are distributed through <code>loaves.pub</code>, registry integrity, checksums, signed state changes, and publisher identity rules belong to RFC 125. Rendering remains local and must still validate paths and output.</p>
+<p>Procedural extension points are especially risky for upgradeable templates. If a template suite needs environment-derived defaults, optional slices, or target cleanup, those concerns should be represented as typed parameters, descriptor conditions, and mutation-plan rules rather than hidden Python, shell, or plugin hooks. Hooks, sandboxed or not, are not part of this design, because they make provenance and updates less reliable.</p>
 <p>The update path is part of the supply chain because templates may render executable source files, scripts, CI configuration, env definitions, or agent-facing guidance. A malicious upstream template update can therefore inject behavior into a project even when the renderer itself is deterministic and non-executable.</p>
 <p>The receiver-side codebase is the security boundary. A template provider, package registry, catalog, or automated refresh tool may propose rendered changes, but it must not be treated as having authority to mutate the receiving project. The receiving project owns the decision to accept, edit, reject, or defer the patch.</p>
 <p>Reviewing the template source diff is not sufficient. Update tooling must show the exact rendered diff that would land in the receiving project, including generated source, scripts, CI/config files, env definitions, manifest changes, and agent-facing metadata. Template-source diffs are useful supporting evidence, but the rendered project diff is the artifact that must be reviewed.</p>
@@ -10771,32 +10905,44 @@ oven template reset src/data/session.incn
 <p>The RFC 015 default scaffold may continue to be implemented without this RFC. Once template support exists, the default scaffold may be represented internally as templates, but that is an implementation choice.</p>
 <h3 id="relationship-to-rfc-075">Relationship to RFC 075<a class="headerlink" href="#relationship-to-rfc-075" title="Permanent link">&para;</a></h3>
 <p>RFC 075 depends on this RFC for file templates used by starters and capability packs. Starter and capability descriptors may reference templates, parameter values, and provenance modes, but the rendering semantics come from this RFC.</p>
-<p>This split keeps the layers clear: RFC 074 answers "how does a static template become a validated project file and how do we track it later?" RFC 075 answers "which project-level recipes and capability mutations should use those rendered files?"</p>
+<p>This split keeps the layers clear: RFC 074 answers "how does a static template become a validated project file and how do we track it later?" RFC 075 answers "which project-level recipes and capability mutations should use those rendered files?" RFC 075 therefore owns choosing optional file groups and the per-file ownership policy; this RFC renders the files it is handed and records their ownership in provenance.</p>
 <p>For versioned project concerns such as "move the <code>cli</code> capability from <code>1.3.0</code> to <code>1.6.0</code>", RFC 075 owns the user-facing capability update. This RFC owns the file-level mechanics used inside that plan: preserved values, rendered output, generated-file ownership, drift detection, managed-file replacement, edited-file conflicts, and reset behavior. A template update command is therefore an escape hatch or diagnostic tool, not the primary model for upgrading an applied capability.</p>
 <h3 id="relationship-to-ctx">Relationship to <code>ctx</code><a class="headerlink" href="#relationship-to-ctx" title="Permanent link">&para;</a></h3>
 <p>Templates that need compiler-visible configuration should generate ordinary Incan <code>ctx</code> declarations or source files that use <code>ctx</code> declarations. They should not invent a sidecar configuration system for values that the compiler should understand.</p>
-<h3 id="relationship-to-catalogs-and-incanpub">Relationship to catalogs and <code>incan.pub</code><a class="headerlink" href="#relationship-to-catalogs-and-incanpub" title="Permanent link">&para;</a></h3>
-<p><code>incan.pub</code> is a natural public distribution point for package-owned templates because it already owns package identity and versioning in RFC 034. This RFC does not require registry support. It only requires that templates loaded from packages, registries, git sources, local paths, or private catalogs be rendered locally with the same safety rules as built-in templates.</p>
+<h3 id="relationship-to-catalogs-and-loavespub">Relationship to catalogs and <code>loaves.pub</code><a class="headerlink" href="#relationship-to-catalogs-and-loavespub" title="Permanent link">&para;</a></h3>
+<p><code>loaves.pub</code> is a natural public distribution point for package-owned templates because it already owns Loaf package identity and versioning under RFC 125 and RFC 117. This RFC does not require registry support. It only requires that templates loaded from packages, registries, git sources, local paths, or private catalogs be rendered locally with the same safety rules as built-in templates.</p>
 <p>When registry or catalog metadata is available, it can make template status and upgrade previews much more useful: it can expose latest compatible versions, yanked sources, integrity metadata, and precomputed source diffs between template versions. The catalog layer may help with discovery and trust. The local lifecycle CLI still owns project-specific planning, rendering, validation, conflict handling, and file mutation.</p>
 <h3 id="relationship-to-rfc-076">Relationship to RFC 076<a class="headerlink" href="#relationship-to-rfc-076" title="Permanent link">&para;</a></h3>
 <p>RFC 076 owns project and organization policy for receiver-side mutation approval, source allowlists, risk classification, advisory handling, quarantine, and recovery workflows. This RFC defines the template render plan and provenance data that RFC 076 policy evaluates.</p>
 <h3 id="relationship-to-tooling-and-agents">Relationship to tooling and agents<a class="headerlink" href="#relationship-to-tooling-and-agents" title="Permanent link">&para;</a></h3>
 <p>IDE integrations, docs tooling, and agentic workflows may inspect template provenance to explain generated files, offer update code actions, or select relevant project guidance. They must not infer template semantics from filenames or reimplement rendering independently. The lifecycle tooling remains the source of truth for check, diff, update, rendering validation, and conflict diagnostics.</p>
-<p>Prompt metadata, choices, optional file groups, and preserved placeholders are also tooling data. IDEs may use them to build forms or preview plans, but they should call the lifecycle layer to validate the final parameter set and render plan.</p>
+<p>Prompt metadata, choices, derived values, and literal regions are also tooling data. IDEs may use them to build forms or preview plans, but they should call the lifecycle layer to validate the final parameter set and render plan.</p>
 <h3 id="compatibility-and-migration">Compatibility and migration<a class="headerlink" href="#compatibility-and-migration" title="Permanent link">&para;</a></h3>
 <p>This RFC is additive. Existing projects without template provenance continue to build normally.</p>
 <p>Projects that already contain copied example files may choose to adopt provenance later, but tooling must not assume a file is generated merely because it matches a known template by content. Provenance must be explicit.</p>
-<p>If an early implementation used only <code>.tpl</code> filename conventions, it can migrate by generating descriptors that record the source, target, language, and parameter declarations explicitly.</p>
+<p>If an early implementation used only <code>.template</code> filename conventions, it can migrate by generating descriptors that record the source, target, language, and parameter declarations explicitly.</p>
 <p>When adopting templates into an existing project, tooling should default to preserving existing user-authored files. Initializing an existing directory is not the same operation as creating a new project from an empty directory.</p>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <h3 id="use-arbitrary-generator-scripts">Use arbitrary generator scripts<a class="headerlink" href="#use-arbitrary-generator-scripts" title="Permanent link">&para;</a></h3>
 <p>Rejected because scripts are powerful but hard to audit, sandbox, reproduce, diff, and explain. Static templates with typed parameters cover the common scaffolding case with a smaller trust boundary.</p>
 <h3 id="create-everything-and-delete-disabled-files">Create everything and delete disabled files<a class="headerlink" href="#create-everything-and-delete-disabled-files" title="Permanent link">&para;</a></h3>
-<p>Rejected because post-generation cleanup obscures intent. Optional files should be excluded from the mutation plan before rendering. That gives users an honest dry run and gives provenance enough information to distinguish "not selected" from "selected and later deleted."</p>
-<h3 id="make-tpl-extension-semantics-authoritative">Make <code>.tpl</code> extension semantics authoritative<a class="headerlink" href="#make-tpl-extension-semantics-authoritative" title="Permanent link">&para;</a></h3>
+<p>Rejected because post-generation cleanup obscures intent. Optional files are excluded by RFC 075's selection before rendering. That gives users an honest dry run and gives provenance enough information to distinguish "not selected" from "selected and later deleted."</p>
+<h3 id="let-the-renderer-choose-optional-file-groups">Let the renderer choose optional file groups<a class="headerlink" href="#let-the-renderer-choose-optional-file-groups" title="Permanent link">&para;</a></h3>
+<p>Rejected because it would duplicate the starter and mix selection policy RFC 075 already owns. The renderer receives the selected file set instead.</p>
+<h3 id="keep-a-renderer-specific-ownership-flag">Keep a renderer-specific ownership flag<a class="headerlink" href="#keep-a-renderer-specific-ownership-flag" title="Permanent link">&para;</a></h3>
+<p>Rejected because a file could then be user-owned under a mix's policy and silently replaceable under the template's. One per-file ownership policy, RFC 075's, applies to both.</p>
+<h3 id="guess-which-unknown-placeholders-belong-to-a-later-tool">Guess which unknown placeholders belong to a later tool<a class="headerlink" href="#guess-which-unknown-placeholders-belong-to-a-later-tool" title="Permanent link">&para;</a></h3>
+<p>Rejected because guessing is convenient only until a parameter is misspelled or two tools share a delimiter. Explicit literal regions say which renderer owns which text; neither a placeholder's spelling nor semantic analysis can recover that intent.</p>
+<h3 id="reject-every-unused-parameter">Reject every unused parameter<a class="headerlink" href="#reject-every-unused-parameter" title="Permanent link">&para;</a></h3>
+<p>Rejected as a default because it forbids one parameter schema shared across several templates. A warning catches typos, strict validation rejects them, and <code>allow_unused</code> marks deliberate sharing.</p>
+<h3 id="store-provenance-only-in-loaftoml-or-only-in-tool-state">Store provenance only in <code>loaf.toml</code>, or only in tool state<a class="headerlink" href="#store-provenance-only-in-loaftoml-or-only-in-tool-state" title="Permanent link">&para;</a></h3>
+<p>Rejected because the manifest would mix user intent with per-file hashes, while tool state alone would hide the choices a team needs to review. Intent goes in <code>loaf.toml</code> and evidence in <code>oven.provenance.toml</code>.</p>
+<h3 id="replace-or-refuse-edited-files-on-update">Replace or refuse edited files on update<a class="headerlink" href="#replace-or-refuse-edited-files-on-update" title="Permanent link">&para;</a></h3>
+<p>Rejected because replacing loses user work and refusing every edited file is cumbersome. A three-way merge proposal applies the changes that do not overlap and stops at each real conflict.</p>
+<h3 id="make-template-extension-semantics-authoritative">Make <code>.template</code> extension semantics authoritative<a class="headerlink" href="#make-template-extension-semantics-authoritative" title="Permanent link">&para;</a></h3>
 <p>Rejected because filename conventions are too weak for tooling. A file extension cannot safely declare parameter kinds, target paths, target language validation, provenance behavior, or update policy.</p>
-<h3 id="adopt-a-full-template-language-in-v1">Adopt a full template language in v1<a class="headerlink" href="#adopt-a-full-template-language-in-v1" title="Permanent link">&para;</a></h3>
-<p>Rejected for scope. Loops, conditionals, includes, filters, and expression evaluation may become useful later, but they should be added only after the minimal rendering and provenance model proves insufficient.</p>
+<h3 id="adopt-a-full-template-language">Adopt a full template language<a class="headerlink" href="#adopt-a-full-template-language" title="Permanent link">&para;</a></h3>
+<p>Rejected because loops, conditionals, includes, filters, and expression evaluation turn rendering into programming, which makes templates harder to audit, diff, and update safely. Declared parameters, derived values, literal regions, and RFC 075's file selection cover the scaffolding this design targets.</p>
 <h3 id="do-not-record-provenance">Do not record provenance<a class="headerlink" href="#do-not-record-provenance" title="Permanent link">&para;</a></h3>
 <p>Rejected because initial file creation is only half the problem. Without provenance, tooling cannot explain generated files, check drift, or offer safe updates.</p>
 <h3 id="treat-all-generated-files-as-managed">Treat all generated files as managed<a class="headerlink" href="#treat-all-generated-files-as-managed" title="Permanent link">&para;</a></h3>
@@ -10807,41 +10953,42 @@ oven template reset src/data/session.incn
 <ul>
 <li>A constrained template model may feel too small for complex project generation.</li>
 <li>Provenance introduces another piece of tooling metadata that can drift if users edit files manually.</li>
-<li>Hash-based tracking cannot understand user intent; it can only detect byte changes.</li>
+<li>Hash-based tracking cannot understand user intent; it can only detect byte changes. Semantic tooling can explain changes but cannot decide them.</li>
 <li>Typed parameters require descriptor authors to be more explicit.</li>
-<li>Descriptor-level optional file groups are less flexible than arbitrary post-generation hooks.</li>
-<li>Template check, status, values-file, diff, update, and reset add lifecycle CLI surface area that must be maintained.</li>
+<li>Selecting optional files before rendering is less flexible than arbitrary post-generation hooks.</li>
+<li>Line-based three-way merges can report conflicts that a human would resolve trivially.</li>
+<li>Template check, status, values-file, render, diff, update, reset and validate add lifecycle CLI surface area that must be maintained.</li>
+<li>A committed <code>oven.provenance.toml</code> adds one more tool-owned file next to <code>loaf.toml</code> and <code>oven.lock</code>.</li>
 <li>File ownership policies create another concept users must understand when reviewing generated artifacts.</li>
 </ul>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Parser:</strong> rendered Incan templates must parse before they are written when <code>language = "incan"</code>.</li>
 <li><strong>Formatter:</strong> rendered Incan templates should be formatted before write and before <code>rendered_hash</code> is recorded when a formatter is available.</li>
-<li><strong>Manifest schema / configuration validation:</strong> project tooling must support an explicit provenance location for tracked templates, whether in a typed <code>loaf.toml</code> table or an explicit tool-owned state artifact. <code>oven.lock</code> remains resolver state and must not become a general mutation-history store.</li>
-<li><strong>CLI / tooling:</strong> lifecycle tooling must implement deterministic template rendering, path validation, parameter validation, ownership handling, provenance recording, and check/status/values-file/diff/update/reset operations.</li>
+<li><strong>Manifest schema / configuration validation:</strong> <code>loaf.toml</code> gains the typed <code>[oven.templates]</code> intent table, and Oven writes the tool-owned <code>oven.provenance.toml</code> evidence file. <code>oven.lock</code> remains resolver state and must not become a general mutation-history store. Domain parameter kinds reuse the manifest's own validation rules.</li>
+<li><strong>CLI / tooling:</strong> lifecycle tooling must implement deterministic template rendering, literal regions, derived-value transforms, path validation, parameter validation, ownership handling, provenance recording, three-way merge proposals, and check/status/values-file/render/diff/update/reset/validate operations with versioned machine-readable output.</li>
+<li><strong>Registry:</strong> <code>loaves.pub</code> publication requires a passing strict <code>oven template validate</code> result.</li>
 <li><strong>LSP / IDE tooling:</strong> editor-facing tools should consume machine-readable template provenance and lifecycle diagnostics rather than reimplementing template rendering.</li>
 <li><strong>Package integration:</strong> package-provided templates must be loaded as package data and rendered locally under the same safety rules as built-in templates. Package or registry metadata may feed version-aware status and upgrade previews.</li>
 <li><strong>Documentation:</strong> user docs must explain the difference between provider-side templates, rendered project files, bootstrap files, managed files, and provenance records.</li>
 </ul>
-<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Should template provenance live in a typed <code>loaf.toml</code> table or a separate tool-owned state file, and which facts must remain outside <code>oven.lock</code>?</li>
-<li>Is the v1 parameter kind set sufficient, or should it include specific kinds for package names, dependency requirements, env names, and script ids?</li>
-<li>Which derived-value transforms should be standardized in v1?</li>
-<li>Should optional file groups live in RFC 074 as template renderer metadata, or should RFC 075 own them as starter/capability mutation metadata?</li>
-<li>Should generated-file ownership be encoded as a separate <code>ownership</code> field, as part of provenance mode, or as part of RFC 075 file mutation metadata?</li>
-<li>Should descriptors reject declared-but-unused parameters by default, or should unused parameters be permitted for descriptor reuse?</li>
-<li>Should <code>tracked</code> or <code>none</code> be the default provenance mode for file templates applied by starter and capability workflows?</li>
-<li>What merge strategy, if any, should <code>oven template update</code> support for edited tracked files in v1?</li>
-<li>Should <code>oven template diff</code> produce a stable machine-readable patch format in v1, or is human-readable diff output enough initially?</li>
-<li>What is the minimum useful <code>oven template status</code> behavior without registry access?</li>
-<li>Should <code>oven template reset</code> be part of v1, or should it wait until normal update behavior has shipped?</li>
-<li>What provider validation command, if any, should be required before templates can be published or promoted in <code>incan.pub</code>?</li>
-<li>Should <code>.incn.tpl</code> be the recommended suffix for all Incan source templates, or should package authors prefer neutral names plus descriptor metadata?</li>
-<li>How should preserved later-phase placeholders be represented so they are explicit but not awkward for common deployment/configuration tools?</li>
+<li>Authored intent (source, version, origin and non-sensitive values) lives in <code>loaf.toml</code> under <code>[oven.templates]</code>; hashes and receipts live in the Oven-written, committed <code>oven.provenance.toml</code>. <code>oven.lock</code> holds neither. A missing evidence file makes files count as edited, and the merge base is recovered by re-rendering the recorded version and values.</li>
+<li>Parameter kinds add <code>package_name</code>, <code>dependency_requirement</code>, <code>env_name</code> and <code>script_id</code>, which reuse the <code>loaf.toml</code> validation for those fields. Every value is validated for the grammar of its position before anything is written; escaping a generic string never stands in for a kind.</li>
+<li>Derived values use a small pure transform set: casing, <code>identifier</code>, <code>module_path</code>, <code>package_name</code> and <code>path</code>. No callbacks, commands or expressions.</li>
+<li>RFC 075 selects optional file groups; this RFC renders the selected file set it is handed.</li>
+<li>Ownership is RFC 075's single per-file policy (<code>bootstrap</code>, <code>managed</code>, <code>advisory</code>); the descriptor's <code>ownership</code> key is that field, and provenance records it. The <code>tracked-owned</code> mode is removed.</li>
+<li>Unused parameters warn by default, are errors under <code>validate --strict</code>, and are allowed with <code>allow_unused = true</code>.</li>
+<li>Provenance is <code>tracked</code> by default for every written file; <code>none</code> is explicit and the plan states what it loses.</li>
+<li>Updates propose a three-way merge from the recorded rendering. Overlapping changes are conflicts that are shown and never written, unless <code>--write-conflicts</code> writes conflict markers. Edits are never overwritten automatically.</li>
+<li><code>diff</code> and every other template command have a versioned <code>--format json</code> form carrying the same facts as the human output.</li>
+<li><code>status</code> works offline from local provenance and reports what it could not refresh as unknown or cached.</li>
+<li><code>reset</code> is an explicit, dry-runnable plan listing the exact edits it replaces, under confirmation policy; it never happens implicitly.</li>
+<li><code>oven template validate</code> checks schema, path safety, deterministic rendering and fixture renders. A passing strict result is required to publish to <code>loaves.pub</code>; promotion may require more evidence.</li>
+<li><code>.incn.template</code> is the recommended suffix for Incan source templates. Descriptors stay authoritative and other names are allowed.</li>
+<li>Later-phase placeholders are preserved only inside explicit <code>{% literal %}</code> … <code>{% endliteral %}</code> regions. Unknown placeholders elsewhere are diagnostics, and semantic tooling may explain changes but never decides rendering, resolves conflicts or authorizes overwrites.</li>
 </ul>
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 

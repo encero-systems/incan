@@ -21,7 +21,7 @@
     
     
       
-        <title>RFC 080: AI assets, models, prompts, evals, and agent metadata - Incan Documentation</title>
+        <title>RFC 139: Sequence patterns - Incan Documentation</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-080-ai-assets-models-prompts-evals-and-agent-metadata" class="md-skip">
+        <a href="#rfc-139-sequence-patterns" class="md-skip">
           Skip to content
         </a>
       
@@ -117,7 +117,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 080: AI assets, models, prompts, evals, and agent metadata
+              RFC 139: Sequence patterns
             
           </span>
         </div>
@@ -9712,17 +9712,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#core-model" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Core model
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#motivation" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9768,10 +9757,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#declaring-a-local-model-asset" class="md-nav__link">
+  <a href="#decode-a-row-by-its-shape" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Declaring a local model asset
+        Decode a row by its shape
       
     </span>
   </a>
@@ -9779,10 +9768,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#declaring-a-prompt-template" class="md-nav__link">
+  <a href="#select-an-empty-single-or-larger-result" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Declaring a prompt template
+        Select an empty, single, or larger result
       
     </span>
   </a>
@@ -9790,10 +9779,32 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#declaring-evals" class="md-nav__link">
+  <a href="#combine-element-literals-with-bindings" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Declaring evals
+        Combine element literals with bindings
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nest-patterns-in-either-direction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Nest patterns in either direction
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#keep-frozen-list-permissions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Keep frozen-list permissions
       
     </span>
   </a>
@@ -9818,10 +9829,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#ai-asset-kinds" class="md-nav__link">
+  <a href="#syntax-and-target-types" class="md-nav__link">
     <span class="md-ellipsis">
       
-        AI asset kinds
+        Syntax and target types
       
     </span>
   </a>
@@ -9829,10 +9840,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#model-metadata" class="md-nav__link">
+  <a href="#matching-behavior" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Model metadata
+        Matching behavior
       
     </span>
   </a>
@@ -9840,10 +9851,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#model-execution-profiles" class="md-nav__link">
+  <a href="#pattern-bearing-contexts" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Model execution profiles
+        Pattern-bearing contexts
       
     </span>
   </a>
@@ -9851,10 +9862,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#prompt-and-system-metadata" class="md-nav__link">
+  <a href="#exhaustiveness" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Prompt and system metadata
+        Exhaustiveness
       
     </span>
   </a>
@@ -9862,54 +9873,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#eval-metadata" class="md-nav__link">
+  <a href="#ownership-and-mutation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Eval metadata
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#agent-guidance" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Agent guidance
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#local-and-remote-execution" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Local and remote execution
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#provenance-and-locking" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Provenance and locking
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#policy-integration" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Policy integration
+        Ownership and mutation
       
     </span>
   </a>
@@ -9934,10 +9901,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#relationship-to-rfc-075" class="md-nav__link">
+  <a href="#exact-shape-without-remainder-capture" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Relationship to RFC 075
+        Exact shape without remainder capture
       
     </span>
   </a>
@@ -9945,10 +9912,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#relationship-to-rfc-078" class="md-nav__link">
+  <a href="#lists-and-tuples-remain-different" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Relationship to RFC 078
+        Lists and tuples remain different
       
     </span>
   </a>
@@ -9956,10 +9923,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#relationship-to-rfc-104" class="md-nav__link">
+  <a href="#diagnostics" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Relationship to RFC 104
+        Diagnostics
       
     </span>
   </a>
@@ -9967,21 +9934,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#relationship-to-rfc-079" class="md-nav__link">
+  <a href="#compatibility" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Relationship to RFC 079
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#relationship-to-rfc-033" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Relationship to RFC 033
+        Compatibility
       
     </span>
   </a>
@@ -10002,56 +9958,6 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Alternatives considered">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#leave-ai-metadata-as-documentation-only" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Leave AI metadata as documentation only
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#hardcode-one-ai-provider" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Hardcode one AI provider
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#let-agents-infer-everything-from-files" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Let agents infer everything from files
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#automatically-run-ai-setup-during-capability-application" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Automatically run AI setup during capability application
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
 </li>
       
         <li class="md-nav__item">
@@ -10059,17 +9965,6 @@
     <span class="md-ellipsis">
       
         Drawbacks
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#implementation-architecture" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Implementation architecture
       
     </span>
   </a>
@@ -10088,10 +9983,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#unresolved-questions" class="md-nav__link">
+  <a href="#design-decisions" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Unresolved questions
+        Design Decisions
       
     </span>
   </a>
@@ -10118,249 +10013,166 @@
   
 
 
-<h1 id="rfc-080-ai-assets-models-prompts-evals-and-agent-metadata">RFC 080: AI assets, models, prompts, evals, and agent metadata<a class="headerlink" href="#rfc-080-ai-assets-models-prompts-evals-and-agent-metadata" title="Permanent link">&para;</a></h1>
+<h1 id="rfc-139-sequence-patterns">RFC 139: Sequence patterns<a class="headerlink" href="#rfc-139-sequence-patterns" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Status:</strong> Draft</li>
-<li><strong>Created:</strong> 2026-04-26</li>
+<li><strong>Status:</strong> Planned</li>
+<li><strong>Created:</strong> 2026-10-11</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong><ul>
-<li>RFC 033 (<code>ctx</code> typed configuration context)</li>
-<li>RFC 034 (<code>incan.pub</code> package registry)</li>
-<li>RFC 075 (starter profiles and capability packs)</li>
-<li>RFC 076 (project mutation policy and recovery)</li>
-<li>RFC 078 (tool execution and typed workflow actions)</li>
-<li>RFC 079 (<code>incan.pub</code> artifact graph)</li>
-<li>RFC 104 (ambient runtime capabilities and receipts)</li>
+<li>RFC 029 (union types and narrowing)</li>
+<li>RFC 049 (<code>if let</code> and <code>while let</code> pattern control flow)</li>
+<li>RFC 068 (collection protocol hooks)</li>
+<li>RFC 071 (pattern alternation)</li>
+<li>RFC 129 (binding declarations and mutation permissions)</li>
+<li>RFC 134 (pattern bindings with exiting fallbacks)</li>
+<li>RFC 138 (chained pattern conditions)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> https://github.com/encero-systems/incan/issues/408</li>
+<li><strong>Issue:</strong> <a href="https://github.com/encero-systems/incan/issues/2466">#2466</a></li>
 <li><strong>RFC PR:</strong> —</li>
-<li><strong>Written against:</strong> v0.3</li>
+<li><strong>Written against:</strong> v0.6</li>
 <li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC defines a high-level model for AI-native assets in the Incan ecosystem: model references, prompt templates, adapters, datasets, eval suites, agent guidance, tool permissions, and local/cloud execution constraints. The goal is not to make AI implicit or magical; the goal is to make AI dependencies and workflows explicit, discoverable, reproducible, policy-gated, and connected to packages and capabilities through the same artifact graph used by the rest of the ecosystem.</p>
-<h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
-<p>Read this RFC as seven foundations:</p>
-<ol>
-<li><strong>AI assets are artifacts:</strong> models, prompts, adapters, evals, datasets, and agent guidance have identity, metadata, provenance, compatibility, and policy state.</li>
-<li><strong>Execution is explicit:</strong> adding a model or prompt asset must not cause an agent or model to run automatically.</li>
-<li><strong>Local and cloud are distinct:</strong> an AI asset must describe whether it can run locally, remotely, or through either mode.</li>
-<li><strong>Prompts are reviewable assets:</strong> prompt templates and system messages are project-affecting behavior and must be inspectable.</li>
-<li><strong>Evals are first-class:</strong> AI capabilities should declare how users can test quality, safety, and regression behavior.</li>
-<li><strong>Policy gates AI risk:</strong> model downloads, remote inference, network access, data export, tool use, and project mutation are policy-relevant events.</li>
-<li><strong>Agent metadata is descriptive:</strong> packages and capabilities may advertise relevant agent skills or workflows, but they must not execute agents implicitly.</li>
-</ol>
+<p>Introduce bracketed sequence patterns for exact-length matching of built-in lists and frozen lists. A pattern such as <code>[name, alias, role, digest]</code> checks the length and matches each element with an ordinary nested pattern, making named values available only after the whole match succeeds. Sequence patterns participate in existing pattern-bearing constructs and proposed fallback bindings without changing tuple patterns, consuming arbitrary iterators, or introducing implicit copies. Capturing a variable-length remainder is not part of this design.</p>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>AI changes the shape of package ecosystems. A useful capability may include source code, templates, prompts, a local model, a remote model endpoint, embedding configuration, an eval suite, a data fixture, and agent guidance. Treating those as loose documentation leaves too much implicit: users cannot easily tell what model is required, what data may leave the machine, what evals validate behavior, or which prompts changed between versions.</p>
-<p>Hugging Face demonstrates the value of metadata-rich model and dataset cards. Ollama demonstrates the value of a small local model blueprint with a base model, parameters, template, system message, adapters, and license. Incan should learn from both, but integrate AI assets with project capabilities, policy, typed actions, and <code>incan.pub</code> artifact discovery.</p>
+<p>Structured input often arrives as homogeneous lists with an externally defined row shape. Decoding currently repeats a length check followed by indexed access:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">row</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">4</span><span class="p">:</span>
+    <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="nc">CompilationError</span><span class="p">(</span><span class="n">fields</span><span class="o">=</span><span class="n">path</span><span class="p">))</span>
+<span class="n">name</span> <span class="o">=</span> <span class="n">string</span><span class="p">(</span><span class="n">row</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">path</span> <span class="o">+</span> <span class="p">[</span><span class="s2">&quot;0&quot;</span><span class="p">])</span><span class="o">?</span>
+</code></pre></div>
+<p>Subsequent checks continue using <code>row[1]</code>, <code>row[2]</code>, and <code>row[3]</code>. A reader must reconstruct the positional roles, and the compiler has no pattern-level relationship between the checked width and those accesses.</p>
+<p>An exact-length sequence pattern expresses the shape and names its positions together. It also lets ordinary matching describe cases such as no candidates, exactly one candidate, and several candidates without separate length and indexing operations.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Define AI asset kinds for model references, prompt templates, adapters, datasets, evals, and agent guidance.</li>
-<li>Define metadata needed for discovery, reproducibility, policy, and review.</li>
-<li>Distinguish local execution from remote/cloud execution.</li>
-<li>Require prompt templates, system messages, and agent guidance to be inspectable and provenance-aware.</li>
-<li>Define how AI assets connect to capabilities, actions, policies, and the <code>incan.pub</code> artifact graph.</li>
-<li>Define evaluation metadata so AI-backed capabilities can declare quality and regression checks.</li>
-<li>Distinguish a declared model asset from a captured execution profile and measured execution observation.</li>
-<li>Leave room for multiple model providers and local runtimes without hardcoding one AI platform.</li>
+<li>Match list shape and element patterns in one construct.</li>
+<li>Give positional input meaningful local names.</li>
+<li>Support empty and exact-length list patterns.</li>
+<li>Compose with nested constructors, literals, tuples, and pattern alternation.</li>
+<li>Preserve matching, binding scope, ownership, and frozen-container permissions.</li>
+<li>Require exhaustive handling of remaining lengths when a full match needs it.</li>
 </ul>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Defining a model runtime or inference server.</li>
-<li>Defining a hosted AI product, billing model, or provider-specific control plane.</li>
-<li>Defining one universal prompt template language.</li>
-<li>Guaranteeing model safety, truthfulness, privacy, or quality.</li>
-<li>Automatically running agents, model downloads, remote inference, or project mutations.</li>
-<li>Replacing model cards, dataset cards, or provider-native metadata where those already exist.</li>
+<li>Capturing or discarding a variable-length remainder through starred patterns.</li>
+<li>Destructuring assignment to an unchecked list length.</li>
+<li>Implicit conversion between lists and tuples.</li>
+<li>Matching arbitrary iterators, generators, strings, bytes, or custom indexing protocols.</li>
+<li>Adding collection slicing, rest parameters, or collection literal spreading.</li>
+<li>Introducing deep freezing or changing frozen-list semantics.</li>
 </ul>
 <h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
-<h3 id="declaring-a-local-model-asset">Declaring a local model asset<a class="headerlink" href="#declaring-a-local-model-asset" title="Permanent link">&para;</a></h3>
-<p>A package or capability may declare a local model asset:</p>
-<div class="language-toml highlight"><pre><span></span><code><span class="k">[[ai.models]]</span>
-<span class="n">id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;local-embedder&quot;</span>
-<span class="n">kind</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;embedding&quot;</span>
-<span class="n">runtime</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;local&quot;</span>
-<span class="n">source</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;ollama:nomic-embed-text&quot;</span>
-<span class="n">license</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;Apache-2.0&quot;</span>
+<p>Bracketed patterns below describe proposed behavior. Fallback bindings additionally use proposed RFC 134 syntax. Application error declarations and helpers retain their surrounding program's definitions.</p>
+<h3 id="decode-a-row-by-its-shape">Decode a row by its shape<a class="headerlink" href="#decode-a-row-by-its-shape" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">let</span> <span class="p">[</span><span class="n">name_value</span><span class="p">,</span> <span class="n">alias_value</span><span class="p">,</span> <span class="n">role_value</span><span class="p">,</span> <span class="n">digest_value</span><span class="p">]</span> <span class="o">=</span> <span class="n">row</span>
+<span class="k">else</span><span class="p">:</span>
+    <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="nc">CompilationError</span><span class="p">(</span><span class="n">fields</span><span class="o">=</span><span class="n">path</span><span class="p">))</span>
 
-<span class="k">[ai.models.constraints]</span>
-<span class="n">min-memory</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;8GiB&quot;</span>
+<span class="n">name</span> <span class="o">=</span> <span class="n">string</span><span class="p">(</span><span class="n">name_value</span><span class="p">,</span> <span class="n">path</span> <span class="o">+</span> <span class="p">[</span><span class="s2">&quot;0&quot;</span><span class="p">])</span><span class="o">?</span>
+<span class="n">logical</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">path</span> <span class="o">+</span> <span class="p">[</span><span class="s2">&quot;0&quot;</span><span class="p">])</span><span class="o">?</span>
+<span class="k">if</span> <span class="ow">not</span> <span class="n">alias_value</span><span class="o">.</span><span class="n">is_null</span><span class="p">():</span>
+    <span class="n">nonempty</span><span class="p">(</span><span class="n">string</span><span class="p">(</span><span class="n">alias_value</span><span class="p">,</span> <span class="n">path</span> <span class="o">+</span> <span class="p">[</span><span class="s2">&quot;1&quot;</span><span class="p">])</span><span class="o">?</span><span class="p">,</span> <span class="n">path</span> <span class="o">+</span> <span class="p">[</span><span class="s2">&quot;1&quot;</span><span class="p">])</span><span class="o">?</span>
+<span class="n">nonempty</span><span class="p">(</span><span class="n">string</span><span class="p">(</span><span class="n">role_value</span><span class="p">,</span> <span class="n">path</span> <span class="o">+</span> <span class="p">[</span><span class="s2">&quot;2&quot;</span><span class="p">])</span><span class="o">?</span><span class="p">,</span> <span class="n">path</span> <span class="o">+</span> <span class="p">[</span><span class="s2">&quot;2&quot;</span><span class="p">])</span><span class="o">?</span>
+<span class="n">digest</span><span class="p">(</span><span class="n">string</span><span class="p">(</span><span class="n">digest_value</span><span class="p">,</span> <span class="n">path</span> <span class="o">+</span> <span class="p">[</span><span class="s2">&quot;3&quot;</span><span class="p">])</span><span class="o">?</span><span class="p">,</span> <span class="n">path</span> <span class="o">+</span> <span class="p">[</span><span class="s2">&quot;3&quot;</span><span class="p">])</span><span class="o">?</span>
 </code></pre></div>
-<p>This declaration does not download or run the model by itself. It gives lifecycle tooling, policy, and IDEs enough information to explain what the capability expects.</p>
-<h3 id="declaring-a-prompt-template">Declaring a prompt template<a class="headerlink" href="#declaring-a-prompt-template" title="Permanent link">&para;</a></h3>
-<p>Prompt templates are project behavior and should be reviewable:</p>
-<div class="language-toml highlight"><pre><span></span><code><span class="k">[[ai.prompts]]</span>
-<span class="n">id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;summarize-errors&quot;</span>
-<span class="n">model</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;local-embedder&quot;</span>
-<span class="n">template</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;prompts/summarize-errors.prompt&quot;</span>
-<span class="n">purpose</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;Summarize compiler diagnostics for developer assistance.&quot;</span>
-<span class="n">inputs</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;diagnostics&quot;</span><span class="p">]</span>
-<span class="n">safety</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;no-network&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;no-project-mutation&quot;</span><span class="p">]</span>
+<p>The first statement requires exactly four elements. It does not parse a JSON string or validate a digest; those remain the explicit responsibilities of the subsequent helpers. No indexed access is needed to connect a field's role to its value.</p>
+<h3 id="select-an-empty-single-or-larger-result">Select an empty, single, or larger result<a class="headerlink" href="#select-an-empty-single-or-larger-result" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">select_unique</span><span class="p">(</span><span class="n">candidates</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kt">Option</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+    <span class="k">match</span> <span class="n">candidates</span><span class="p">:</span>
+        <span class="p">[]</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="kc">None</span>
+        <span class="p">[</span><span class="n">candidate</span><span class="p">]</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="nb">Some</span><span class="p">(</span><span class="n">candidate</span><span class="p">)</span>
+        <span class="n">_</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="kc">None</span>
 </code></pre></div>
-<p>If a prompt changes, status and policy tooling should be able to show the diff like any other project-affecting artifact.</p>
-<h3 id="declaring-evals">Declaring evals<a class="headerlink" href="#declaring-evals" title="Permanent link">&para;</a></h3>
-<p>An AI-backed capability should declare evals:</p>
-<div class="language-toml highlight"><pre><span></span><code><span class="k">[[ai.evals]]</span>
-<span class="n">id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;diagnostic-summary-regression&quot;</span>
-<span class="n">kind</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;golden&quot;</span>
-<span class="n">dataset</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;datasets/diagnostic-summaries.jsonl&quot;</span>
-<span class="n">action</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;eval-diagnostic-summary&quot;</span>
+<p><code>[candidate]</code> means exactly one element. It does not silently choose the first item from a longer list. The wildcard covers every remaining length.</p>
+<h3 id="combine-element-literals-with-bindings">Combine element literals with bindings<a class="headerlink" href="#combine-element-literals-with-bindings" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">parse_assignment</span><span class="p">(</span><span class="n">parts</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kt">Option</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]:</span>
+    <span class="k">match</span> <span class="n">parts</span><span class="p">:</span>
+        <span class="p">[</span><span class="n">name</span><span class="p">,</span> <span class="s2">&quot;=&quot;</span><span class="p">,</span> <span class="n">value</span><span class="p">]</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="nb">Some</span><span class="p">((</span><span class="n">name</span><span class="p">,</span> <span class="n">value</span><span class="p">))</span>
+        <span class="n">_</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="kc">None</span>
 </code></pre></div>
-<p>The eval action can be exposed through RFC 078 typed workflow actions.</p>
+<p>This requires three elements and a literal equals sign in the middle. A three-element list with another separator does not match.</p>
+<h3 id="nest-patterns-in-either-direction">Nest patterns in either direction<a class="headerlink" href="#nest-patterns-in-either-direction" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">single_success</span><span class="p">(</span><span class="n">results</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="kt">Result</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">]])</span> <span class="o">-&gt;</span> <span class="kt">Option</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>
+    <span class="k">match</span> <span class="n">results</span><span class="p">:</span>
+        <span class="p">[</span><span class="nb">Ok</span><span class="p">(</span><span class="n">value</span><span class="p">)]</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="nb">Some</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
+        <span class="n">_</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="kc">None</span>
+</code></pre></div>
+<p>A sequence can also appear inside a constructor pattern:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">if</span> <span class="k">let</span> <span class="nb">Some</span><span class="p">([</span><span class="n">first</span><span class="p">,</span> <span class="n">second</span><span class="p">])</span> <span class="o">=</span> <span class="n">optional_pair</span><span class="p">:</span>
+    <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">first</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">second</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Here <code>optional_pair</code> has type <code>Option[list[str]]</code>. The body runs only for a present list containing exactly two elements.</p>
+<h3 id="keep-frozen-list-permissions">Keep frozen-list permissions<a class="headerlink" href="#keep-frozen-list-permissions" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">join_pair</span><span class="p">(</span><span class="n">labels</span><span class="p">:</span> <span class="kt">FrozenList</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kt">Option</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+    <span class="k">match</span> <span class="n">labels</span><span class="p">:</span>
+        <span class="p">[</span><span class="n">first</span><span class="p">,</span> <span class="n">second</span><span class="p">]</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="nb">Some</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">first</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">second</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="n">_</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="kc">None</span>
+</code></pre></div>
+<p>The bracketed pattern checks the same shape as it does for a list. It does not make <code>labels</code> mutable, and it does not add deep immutability to its elements.</p>
 <h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
-<h3 id="ai-asset-kinds">AI asset kinds<a class="headerlink" href="#ai-asset-kinds" title="Permanent link">&para;</a></h3>
-<p>V1 should recognize these AI asset kinds:</p>
-<ul>
-<li><code>model</code></li>
-<li><code>adapter</code></li>
-<li><code>prompt-template</code></li>
-<li><code>system-message</code></li>
-<li><code>dataset</code></li>
-<li><code>eval</code></li>
-<li><code>embedding-index</code></li>
-<li><code>tool-permission</code></li>
-<li><code>agent-guidance</code></li>
-</ul>
-<p>Implementations may add extension kinds, but unknown AI asset kinds must be visible in machine-readable output and should default to conservative policy handling.</p>
-<h3 id="model-metadata">Model metadata<a class="headerlink" href="#model-metadata" title="Permanent link">&para;</a></h3>
-<p>Model assets should include:</p>
-<ul>
-<li>stable id</li>
-<li>task kind such as text generation, embedding, classification, extraction, ranking, or reranking</li>
-<li>source identity and version or digest when available</li>
-<li>runtime kind such as local, remote, or either</li>
-<li>provider or runtime name when available</li>
-<li>license</li>
-<li>base model, adapter, quantization, or derivation metadata when available</li>
-<li>hardware or memory requirements when known</li>
-<li>context length or token limits when known</li>
-<li>privacy and data-retention labels when remote execution is involved</li>
-<li>intended use and limitations</li>
-</ul>
-<h3 id="model-execution-profiles">Model execution profiles<a class="headerlink" href="#model-execution-profiles" title="Permanent link">&para;</a></h3>
-<p>A model asset declaration identifies what a capability may use. It does not establish that a particular runtime, device, or provider can execute that asset, nor does it make a universal quality, latency, privacy, or compatibility claim. Those are separate versioned execution-profile and execution-observation records.</p>
-<p>An execution profile should identify the model asset and immutable source or artifact identity it evaluated, plus the runtime engine and version, local or remote execution class, device and operating-environment facts that materially affect compatibility, configured context and batching limits, quantization or adapter configuration when applicable, and declared data-handling constraints. It must not contain credentials, raw prompts, raw user data, or endpoint secrets.</p>
-<p>An execution observation should additionally identify its workload or eval suite, environment scope, measurement method, warm or cold state where relevant, result status, and any measured latency, throughput, memory, failure, fallback, or quality value. Measurements are scoped observations, not portable properties of the model. Tooling must show a missing, incompatible, stale, or non-comparable profile as such instead of borrowing a nearby model or device record.</p>
-<p>Model selection may use declared compatibility requirements and available execution profiles, but its result must preserve the selected asset and profile identities, rejected alternatives when they materially affected the decision, and any fallback. Non-interactive execution must not silently replace a pinned local asset with a remote provider, a different model revision, a different quantization, or a weaker data-handling profile. This RFC defines descriptive selection provenance only; it does not grant an agent authority to invoke a model, select a tool, or perform another effect.</p>
-<h3 id="prompt-and-system-metadata">Prompt and system metadata<a class="headerlink" href="#prompt-and-system-metadata" title="Permanent link">&para;</a></h3>
-<p>Prompt templates and system messages must be inspectable artifacts. They should include:</p>
-<ul>
-<li>stable id</li>
-<li>target model or model family</li>
-<li>purpose</li>
-<li>input and output shape</li>
-<li>template source path or artifact id</li>
-<li>safety labels</li>
-<li>mutation permissions</li>
-<li>data access requirements</li>
-<li>provenance and content hash when available</li>
-</ul>
-<p>Prompt assets must not be hidden inside opaque agent guidance when they affect project behavior.</p>
-<h3 id="eval-metadata">Eval metadata<a class="headerlink" href="#eval-metadata" title="Permanent link">&para;</a></h3>
-<p>Eval assets should include:</p>
-<ul>
-<li>stable id</li>
-<li>eval kind such as golden, benchmark, safety, regression, human-review, or policy-check</li>
-<li>dataset reference</li>
-<li>target model, prompt, capability, or action</li>
-<li>execution-profile or environment constraint when the result depends on one</li>
-<li>metric names and expected thresholds when applicable</li>
-<li>local or remote execution requirement</li>
-<li>privacy labels for data used during evaluation</li>
-</ul>
-<p>Eval results may become artifact graph metadata in RFC 079, but this RFC does not require registry-hosted eval execution.</p>
-<h3 id="agent-guidance">Agent guidance<a class="headerlink" href="#agent-guidance" title="Permanent link">&para;</a></h3>
-<p>Agent guidance metadata may reference skills, workflows, tools, docs, file roles, capabilities, and safety labels. It must remain descriptive and must not execute an agent automatically.</p>
-<p>If agent guidance can lead to project mutation, network access, model invocation, or tool execution, it must declare those risk categories for RFC 076 policy and RFC 078 action planning.</p>
-<h3 id="local-and-remote-execution">Local and remote execution<a class="headerlink" href="#local-and-remote-execution" title="Permanent link">&para;</a></h3>
-<p>AI assets must distinguish local execution from remote execution. Remote execution is policy-relevant because it may send project data, prompts, diagnostics, source snippets, or user content to an external service.</p>
-<p>Lifecycle tooling must surface local/cloud execution mode before running AI-backed actions. Non-interactive AI execution must not silently switch from local to remote or from one provider to another.</p>
-<h3 id="provenance-and-locking">Provenance and locking<a class="headerlink" href="#provenance-and-locking" title="Permanent link">&para;</a></h3>
-<p>AI assets should record enough provenance to reproduce or explain behavior:</p>
-<ul>
-<li>model source and version or digest</li>
-<li>adapter source and version or digest</li>
-<li>prompt template hash</li>
-<li>dataset hash or version</li>
-<li>eval suite version</li>
-<li>runtime version when available</li>
-<li>selected execution-profile identity and scoped execution-observation identities when an action actually ran</li>
-<li>parameter values such as temperature, context length, seed, or embedding dimensions when relevant</li>
-</ul>
-<p>If an AI action affects project files, generated artifacts, or diagnostics, the action output should reference the AI asset provenance used.</p>
-<h3 id="policy-integration">Policy integration<a class="headerlink" href="#policy-integration" title="Permanent link">&para;</a></h3>
-<p>RFC 076 policy may restrict:</p>
-<ul>
-<li>model sources</li>
-<li>local versus remote execution</li>
-<li>providers</li>
-<li>licenses</li>
-<li>data export</li>
-<li>model downloads</li>
-<li>prompt changes</li>
-<li>agent tool permissions</li>
-<li>project mutation by AI-backed actions</li>
-<li>use of unpinned or unknown model versions</li>
-<li>execution profiles or fallback paths that violate declared locality, data-handling, or compatibility constraints</li>
-</ul>
-<p>Policy outcomes must be visible in machine-readable action and asset inspection.</p>
+<h3 id="syntax-and-target-types">Syntax and target types<a class="headerlink" href="#syntax-and-target-types" title="Permanent link">&para;</a></h3>
+<p>A sequence pattern must use brackets containing zero or more comma-separated patterns. A trailing comma may appear after the final element. Empty brackets must match an empty supported sequence.</p>
+<p>The supported target types are built-in <code>list[T]</code> and <code>FrozenList[T]</code>. For a pattern with <code>N</code> elements, matching must first establish that the target has exactly <code>N</code> elements, then match each element against its corresponding nested pattern. Every nested element pattern must be checked against <code>T</code> using ordinary pattern typing rules.</p>
+<p>Tuple patterns must retain their parenthesized syntax and tuple typing. Bracketed patterns must not coerce tuple values to lists. Iterability, length, or indexing methods on a custom type must not implicitly make it eligible for a sequence pattern.</p>
+<p>A starred member, including <code>*rest</code> and <code>*_</code>, must be rejected under this RFC. Those spellings must not silently acquire collection-literal spreading or rest-parameter semantics.</p>
+<h3 id="matching-behavior">Matching behavior<a class="headerlink" href="#matching-behavior" title="Permanent link">&para;</a></h3>
+<p>The scrutinee must be evaluated according to the enclosing construct's existing once-only evaluation rule. A length mismatch must be an ordinary pattern non-match. It must not panic, index outside the sequence, or partially initialize visible bindings.</p>
+<p>After a length match, element patterns must be considered in source order and stop at the first non-match. Pattern inspection must not call arbitrary user indexing or iteration hooks. Nested literal and constructor comparisons must retain their ordinary matching behavior.</p>
+<p>All bindings must become available only when the complete sequence pattern succeeds. Their scopes must be those of the enclosing match arm, conditional body, or fallback binding. Duplicate bindings and pattern alternation must obey the existing name and type compatibility rules.</p>
+<h3 id="pattern-bearing-contexts">Pattern-bearing contexts<a class="headerlink" href="#pattern-bearing-contexts" title="Permanent link">&para;</a></h3>
+<p>Sequence patterns must be available wherever existing refutable patterns are accepted, including <code>match</code>, <code>if let</code>, and <code>while let</code>. They must also participate in RFC 134 fallback bindings and RFC 138 conditional chains if those proposals are adopted.</p>
+<p>An exact-length list pattern is refutable even when every element subpattern is a binding. It must not become a legal unchecked ordinary assignment or loop binding merely because tuple destructuring is legal there. Contexts requiring irrefutable patterns must reject it unless a separate language rule explicitly provides a checked failure path.</p>
+<h3 id="exhaustiveness">Exhaustiveness<a class="headerlink" href="#exhaustiveness" title="Permanent link">&para;</a></h3>
+<p>Exhaustiveness checking must account for both sequence length and nested element coverage. A finite collection of exact-length patterns cannot cover all possible lengths of a general list or frozen list. A full match on such a sequence must therefore retain an applicable catch-all pattern, unless surrounding type facts already restrict the values sufficiently.</p>
+<p>A pattern such as <code>[Ok(value)]</code> must not be treated as covering every one-element list of Results; an <code>Err</code> element remains unmatched. Alternations of sequence patterns must use the same binding agreement rules as other pattern alternations.</p>
+<h3 id="ownership-and-mutation">Ownership and mutation<a class="headerlink" href="#ownership-and-mutation" title="Permanent link">&para;</a></h3>
+<p>Successful extraction must follow the existing ownership and borrowing rules for the target and its elements. A sequence pattern must not introduce an implicit clone, allocate a replacement list, or remove elements from the matched list merely to bind them.</p>
+<p>Failed matching must not leave partial moves that invalidate the source for later match arms or fallback inspection. The compiler must check the complete match before committing any ownership transfer required by the successful path.</p>
+<p>Borrowed element access must remain tied to its source lifetime. Mutation permissions must follow the matched place and existing binding rules. Matching a frozen list must not grant permission to replace its elements or mutate its structure. The frozen container's existing rules, rather than this pattern syntax, determine which operations on an element value remain permitted.</p>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
-<h3 id="relationship-to-rfc-075">Relationship to RFC 075<a class="headerlink" href="#relationship-to-rfc-075" title="Permanent link">&para;</a></h3>
-<p>Capabilities may declare AI assets when the capability needs a model, prompt, eval, dataset, or agent guidance. Applying the capability records metadata; it does not run inference or agents implicitly.</p>
-<h3 id="relationship-to-rfc-078">Relationship to RFC 078<a class="headerlink" href="#relationship-to-rfc-078" title="Permanent link">&para;</a></h3>
-<p>AI-backed operations should be exposed as typed actions. Evaluation, embedding generation, prompt validation, model conversion, and agent workflows are action kinds or action providers subject to policy.</p>
-<h3 id="relationship-to-rfc-104">Relationship to RFC 104<a class="headerlink" href="#relationship-to-rfc-104" title="Permanent link">&para;</a></h3>
-<p>RFC 104 owns ambient runtime capabilities and their run receipts. This RFC's model execution profiles describe asset compatibility and observed inference conditions; they do not grant a process a runtime capability, authorize model invocation, or replace RFC 104's effect and receipt boundary. An action that runs a model must satisfy both the selected profile's declared constraints and the applicable runtime capability and policy contract.</p>
-<h3 id="relationship-to-rfc-079">Relationship to RFC 079<a class="headerlink" href="#relationship-to-rfc-079" title="Permanent link">&para;</a></h3>
-<p>AI assets are artifact graph nodes. <code>incan.pub</code> and private catalogs may use cards to expose model lineage, datasets, evals, license, intended use, limitations, and compatibility.</p>
-<h3 id="relationship-to-rfc-033">Relationship to RFC 033<a class="headerlink" href="#relationship-to-rfc-033" title="Permanent link">&para;</a></h3>
-<p>AI configuration that should be compiler-visible should use typed <code>ctx</code> declarations or generated source files rather than untyped sidecar data. Operational metadata that the compiler should not understand can remain in descriptors or manifests.</p>
+<h3 id="exact-shape-without-remainder-capture">Exact shape without remainder capture<a class="headerlink" href="#exact-shape-without-remainder-capture" title="Permanent link">&para;</a></h3>
+<p>Exact-length patterns solve a concrete decoding problem without deciding whether a captured remainder is a new owned list, a borrowed view, or a collection-specific value. Remainder capture such as <code>[first, *remaining]</code>, including its type, ownership, and allocation behavior, is not part of this design. This RFC does not reserve an implicit copying policy for it.</p>
+<h3 id="lists-and-tuples-remain-different">Lists and tuples remain different<a class="headerlink" href="#lists-and-tuples-remain-different" title="Permanent link">&para;</a></h3>
+<p><code>[left, right]</code> checks a runtime length on a homogeneous sequence. <code>(left, right)</code> decomposes a tuple whose shape and position-specific types are already part of its type. Sharing nested pattern rules does not merge those collection contracts.</p>
+<h3 id="diagnostics">Diagnostics<a class="headerlink" href="#diagnostics" title="Permanent link">&para;</a></h3>
+<p>A bracketed pattern on an unsupported target should identify the target type and supported sequence families. An unchecked destructuring context should explain that an exact-length list pattern can fail and point toward conditional matching or an exiting fallback.</p>
+<p>Diagnostics for nested mismatches should identify the affected element pattern. A non-exhaustive match should explain whether another length or an uncovered element shape remains possible.</p>
+<h3 id="compatibility">Compatibility<a class="headerlink" href="#compatibility" title="Permanent link">&para;</a></h3>
+<p>This is additive pattern syntax. Existing list expressions, list comprehensions, collection spreads, indexing, and tuple patterns must keep their existing parsing and behavior. No runtime collection representation or public serialized shape changes are required.</p>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
-<h3 id="leave-ai-metadata-as-documentation-only">Leave AI metadata as documentation only<a class="headerlink" href="#leave-ai-metadata-as-documentation-only" title="Permanent link">&para;</a></h3>
-<p>Rejected because prompts, models, evals, and agent guidance affect behavior and safety. They need structured metadata for tooling, policy, and reproducibility.</p>
-<h3 id="hardcode-one-ai-provider">Hardcode one AI provider<a class="headerlink" href="#hardcode-one-ai-provider" title="Permanent link">&para;</a></h3>
-<p>Rejected because the ecosystem should support local runtimes, remote providers, private catalogs, and future model formats.</p>
-<h3 id="let-agents-infer-everything-from-files">Let agents infer everything from files<a class="headerlink" href="#let-agents-infer-everything-from-files" title="Permanent link">&para;</a></h3>
-<p>Rejected because implicit discovery is brittle and unsafe. Capabilities should expose intent explicitly.</p>
-<h3 id="automatically-run-ai-setup-during-capability-application">Automatically run AI setup during capability application<a class="headerlink" href="#automatically-run-ai-setup-during-capability-application" title="Permanent link">&para;</a></h3>
-<p>Rejected because model downloads, remote inference, and agent execution are policy-relevant operations and should be explicit.</p>
+<ul>
+<li><strong>Keep length checks and indexing.</strong> Fully expressive, but separates shape validation from field naming and repeats positional information.</li>
+<li><strong>Use tuple patterns on lists.</strong> Saves punctuation choices but hides the distinction between homogeneous runtime-sized lists and statically shaped tuples.</li>
+<li><strong>Convert lists to tuples before matching.</strong> Requires an additional fallible shape conversion and creates another representation solely for extraction.</li>
+<li><strong>Match every Iterable.</strong> Can consume generators, perform effects, or never finish determining a length. Built-in finite sequences provide a predictable matching contract.</li>
+<li><strong>Include starred captures.</strong> Useful for token streams, but their borrowing and allocation behavior require a separate decision. Exact-length decoding does not need to depend on that decision.</li>
+</ul>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
-<li>AI metadata introduces new concepts before Incan has a mature package ecosystem.</li>
-<li>Providers may over-declare or under-declare model limitations and eval quality.</li>
-<li>Local and remote execution constraints can be hard to model portably.</li>
-<li>Prompt and eval provenance adds more metadata to maintain.</li>
-<li>Policy may block convenient AI workflows until users configure trust settings.</li>
+<li>Adds a pattern form whose apparent simplicity can conceal ownership restrictions on element extraction.</li>
+<li>Exact-length patterns cannot express a nonempty sequence of arbitrary length without another construct.</li>
+<li>Restricting supported sequence families means custom collection authors do not automatically receive the feature.</li>
+<li>Finite exact-length arms still require a catch-all for general list exhaustiveness.</li>
 </ul>
-<h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
-<p>The recommended implementation shape is to start with descriptive AI asset metadata and typed action integration rather than runtime execution. Packages and capabilities declare assets; <code>incan pub</code> indexes them; CLI and IDE tooling inspect them; RFC 078 actions run them only when explicitly invoked and RFC 076 policy allows it.</p>
-<p>This RFC should not block the lifecycle core. AI asset metadata becomes useful after the project can already record provenance, apply capabilities, evaluate policy, and expose typed actions. Early implementations should treat AI assets as descriptive metadata and action references first; model downloads, remote inference, agent workflow execution, and registry-hosted AI graph behavior should come only after RFC 074, RFC 075, RFC 076, and RFC 078 have a working local slice.</p>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Manifest schema / configuration validation:</strong> packages and projects need AI asset metadata for models, prompts, evals, datasets, and agent guidance.</li>
-<li><strong>CLI / tooling:</strong> lifecycle tooling needs AI asset inspection, status, provenance, and policy evaluation.</li>
-<li><strong>Action execution:</strong> RFC 078 actions need AI-backed execution modes and risk categories.</li>
-<li><strong>Execution profiles and observations:</strong> tooling must keep declared model assets, selected execution profiles, and measured observations distinct, versioned, and scope-aware.</li>
-<li><strong>Package and catalog integration:</strong> <code>incan.pub</code> should index AI assets as artifact graph nodes with cards and relationships.</li>
-<li><strong>LSP / IDE tooling:</strong> editor tooling may surface AI capabilities, prompts, evals, and policy warnings.</li>
-<li><strong>Agentic tooling:</strong> agents may consume asset metadata but must respect policy and explicit user approval.</li>
-<li><strong>Documentation:</strong> docs must explain local versus remote AI execution, model provenance, prompt review, and evals.</li>
+<li><strong>Parser / AST:</strong> bracketed patterns distinguished from collection expressions.</li>
+<li><strong>Typechecker / Symbol resolution:</strong> supported target types, element pattern typing, refutability, and binding scopes.</li>
+<li><strong>Exhaustiveness analysis:</strong> length partitions combined with nested element coverage.</li>
+<li><strong>Ownership analysis / IR lowering:</strong> checked-length access, success-only extraction, and failed-pattern preservation.</li>
+<li><strong>Emission:</strong> length tests and element access without hidden allocation or copying.</li>
+<li><strong>Formatter:</strong> bracketed patterns, trailing commas, and nested pattern layout.</li>
+<li><strong>LSP / Tooling:</strong> element types, binding navigation, and refutability diagnostics.</li>
+<li><strong>Documentation:</strong> sequence shape matching distinguished from tuple destructuring and collection spreading.</li>
 </ul>
-<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Which AI asset kinds should be included in v1?</li>
-<li>Should Incan define its own prompt template syntax or only reference prompt files with declared input/output metadata?</li>
-<li>What metadata is required for remote providers without hardcoding provider-specific fields?</li>
-<li>How should model digests and local model cache identities be represented?</li>
-<li>Should eval results be stored in project state, registry cards, both, or neither in v1?</li>
-<li>What privacy labels are required before remote AI actions can be considered safe enough to standardize?</li>
-<li>Should model downloads be handled by <code>incan tool</code>, <code>incan pub</code>, provider-specific CLIs, or a future AI runtime command?</li>
-<li>How should agent guidance reference skills without becoming an agent marketplace spec?</li>
-<li>Which execution-profile fields and measurement methods are required before an observation can support a compatibility, fallback, or performance decision?</li>
+<li>Bracketed patterns target built-in lists and frozen lists; tuples keep tuple patterns.</li>
+<li>Every pattern specifies an exact length, including zero.</li>
+<li>Nested patterns retain their existing typing and matching behavior.</li>
+<li>Refutable sequence shapes require an enclosing construct with a defined non-match path.</li>
+<li>No starred remainder patterns, custom iterable matching, implicit clones, or replacement list allocation are introduced.</li>
 </ul>
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 

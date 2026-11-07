@@ -9961,10 +9961,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#why-schema-metadata-does-not-define-types" class="md-nav__link">
+  <a href="#why-source-types-and-target-mappings-have-separate-authority" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Why schema metadata does not define types
+        Why source types and target mappings have separate authority
       
     </span>
   </a>
@@ -10064,6 +10064,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#unresolved-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unresolved questions
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -10086,7 +10097,7 @@
 
 <h1 id="rfc-086-schema-descriptors-and-adapters">RFC 086: Schema descriptors and adapters<a class="headerlink" href="#rfc-086-schema-descriptors-and-adapters" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Status:</strong> Planned</li>
+<li><strong>Status:</strong> Deferred</li>
 <li><strong>Created:</strong> 2026-04-29</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong><ul>
@@ -10094,6 +10105,10 @@
 <li>RFC 048 (checked contract metadata, Incan emit, and interrogation tooling)</li>
 <li>RFC 082 (checked API documentation generation)</li>
 <li>RFC 085 (field metadata and type-shaped constraints)</li>
+<li>RFC 087 (reusable fields and complete model contract composition)</li>
+<li>RFC 103 (secret values and non-disclosure)</li>
+<li>RFC 137 (named enum payload fields)</li>
+<li>RFC 141 (structured type reflection and matching)</li>
 </ul>
 </li>
 <li><strong>Issue:</strong> #473</li>
@@ -10101,6 +10116,12 @@
 <li><strong>Written against:</strong> v0.3</li>
 <li><strong>Shipped in:</strong> —</li>
 </ul>
+<div class="admonition note">
+<p class="admonition-title">Deferred pending practical experience</p>
+<p>Revisit this proposal after projects have used model construction, validation, declaration metadata, and structured reflection on real integrations. No implementation release is scheduled. The earlier design below is retained for investigation, not as an accepted implementation contract.</p>
+<p>Review explored field-first metadata with ordinary indented schema declarations, checked dotted field selectors, profile-specific validators and factories, and whole-record decoding for ordered source data. These explorations did not establish a stable boundary between schemas, canonical model construction, format adapters, and query or ingestion libraries. No callable-schema mapping engine or decoder-hook protocol was accepted for implementation.</p>
+<p>References from other RFCs remain useful design context, but they do not require implementing this proposal. In particular, RFC 087's explicit metadata-reconciliation references need a focused dependency review before implementation; this status does not silently choose replacement syntax or weaken its accepted conflict diagnostics. Declaration-local field metadata and validation retain their owning RFC contracts.</p>
+</div>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
 <p>This RFC defines the schema adapter layer that sits on top of checked model metadata. It introduces structured schema descriptors for model types, <code>schema:</code> blocks for readable large metadata sections, named schema overlays for expanding the schema metadata of existing models, declarative <code>schema from ...</code> imports for external metadata sources and metadata-only reuse, deterministic merge rules, and an explicit adapter consumption model. The compiler owns schema descriptor shape, metadata normalization, stable anchors, overlays, reproducible imports, and extraction into metadata artifacts. Libraries own interpretation for formats such as Arrow, SQL, JSON Schema, Protobuf, Open Data Contract Standard, and proprietary ecosystems.</p>
 <h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
@@ -10115,7 +10136,7 @@
 <li><strong>External schemas cannot redefine the model:</strong> schema imports, schema blocks, and overlays may attach metadata only to existing fields.</li>
 <li><strong>Projections are not truth:</strong> generated SQL, JSON Schema, Protobuf, documentation, and data contract files are projections of checked descriptors.</li>
 <li><strong>Descriptors feed metadata-layer tools:</strong> normalized schema descriptors and overlays must be extractable as checked metadata so blast-radius, compatibility, catalog, and governance systems can reason from stable anchors rather than source scraping.</li>
-<li><strong>Schema metadata never defines types:</strong> field types come from checked Incan type descriptors. Target-system and adapter type mappings are adapter responsibilities, not schema metadata facts.</li>
+<li><strong>Source types remain authoritative:</strong> field types and constraints come from checked Incan type descriptors. Namespaced metadata may request an explicit target mapping, but the owning adapter must validate compatibility before using it; a request cannot redefine the source field contract.</li>
 </ol>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
 <p>RFC 085 makes individual model fields rich enough to carry row-contract facts. That is not sufficient for large adapter ecosystems. A single field may need SQL, JSON, Protobuf, warehouse, governance, and UI metadata. Inline brackets become unreadable when they carry all of that.</p>
@@ -10134,7 +10155,7 @@
 <li>Track schema import files as build inputs.</li>
 <li>Preserve schema descriptors in checked metadata artifacts where supported.</li>
 <li>Preserve descriptor provenance, overlay identity, and merge decisions so metadata-layer and blast-radius consumers can explain which source changed a downstream projection.</li>
-<li>Define <code>schema</code> as projection context: external names, wire identity, inclusion, layout hints, documentation grouping, catalog terms, governance labels, and adapter-owned non-type options.</li>
+<li>Define <code>schema</code> as projection context: external names, wire identity, inclusion, layout hints, documentation grouping, catalog terms, governance labels, adapter-owned options, and explicitly requested compatible target mappings.</li>
 </ul>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
@@ -10143,7 +10164,7 @@
 <li>Executing user code while importing schema metadata.</li>
 <li>Fetching remote schema sources.</li>
 <li>Allowing schema metadata to add, remove, reorder, or retype model fields.</li>
-<li>Defining target-system, storage, wire, or adapter-specific field types in schema metadata.</li>
+<li>Defining target-system type semantics in the compiler or changing checked Incan source types through schema metadata.</li>
 <li>Reopening models or adding inheritance semantics through schema overlays.</li>
 <li>Defining batch-level quality, lineage, dependency indexing, blast-radius analysis, promotion gates, or evidence storage.</li>
 <li>Defining one universal data contract manifest format.</li>
@@ -10201,7 +10222,8 @@
 </code></pre></div>
 <p>The model remains the authority for fields and types. The overlays are named metadata profiles for that model.</p>
 <p>Adapters consume checked descriptors explicitly:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.reflect</span><span class="w"> </span><span class="kn">import</span> <span class="n">schema_of</span>
+<p>The <code>schema_of</code> import below is the proposed standard reflection API. The <code>sql_adapter</code> package and its <code>ddl_from_schema</code> function represent an application-selected adapter library, not a built-in Incan API.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.reflection</span><span class="w"> </span><span class="kn">import</span> <span class="n">schema_of</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">sql_adapter</span><span class="w"> </span><span class="kn">import</span> <span class="n">ddl_from_schema</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">emit</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
@@ -10211,7 +10233,7 @@
 <h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
 <h3 id="schema-descriptors">Schema descriptors<a class="headerlink" href="#schema-descriptors" title="Permanent link">&para;</a></h3>
 <p>The compiler and standard reflection surface must expose a structured schema descriptor for model types.</p>
-<p>The exact API spelling remains unresolved, but the descriptor must represent at least:</p>
+<p>The canonical request API is <code>schema_of[Model]()</code>. The structured descriptor must represent at least:</p>
 <ul>
 <li>model name;</li>
 <li>model stable anchor where available;</li>
@@ -10222,6 +10244,7 @@
 <li>field types as structured type descriptors;</li>
 <li>nullability and optionality;</li>
 <li>default/default-factory metadata;</li>
+<li>declared field and whole-model validation identities and retained model contract sources;</li>
 <li>compiler-semantic metadata;</li>
 <li>standard descriptive metadata;</li>
 <li>namespaced metadata;</li>
@@ -10229,16 +10252,29 @@
 <li>extraction provenance sufficient for metadata-layer, compatibility, and blast-radius tooling.</li>
 </ul>
 <p>Type descriptors must be structured. A string spelling may be exposed for display, but it must not be the authoritative type representation.</p>
-<p>Schema descriptors may be requested for the base model schema or for a model plus one or more named overlays. The exact API spelling remains unresolved, but the descriptor identity must include the base model and the selected overlay set so tools can distinguish <code>User</code>, <code>User</code> with warehouse metadata, and <code>User</code> with contract metadata.</p>
+<p>Schema descriptors may be requested for the base model with <code>schema_of[Model]()</code> or with selected overlays using <code>schema_of[Model, OverlayA, OverlayB]()</code>. The descriptor identity must include the base model and selected overlays in order so tools can distinguish <code>User</code>, <code>User</code> with warehouse metadata, and <code>User</code> with contract metadata.</p>
 <h3 id="type-mapping-boundary">Type mapping boundary<a class="headerlink" href="#type-mapping-boundary" title="Permanent link">&para;</a></h3>
-<p>Schema metadata must not define field types for target systems, storage systems, wire formats, or adapter projections. The source of type truth is the checked Incan type descriptor carried by the model schema descriptor.</p>
-<p>For example, this is rejected:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">schema</span> <span class="nc">UserWarehouse</span> <span class="k">for</span> <span class="nc">User</span><span class="p">:</span>
-    <span class="n">postgres</span><span class="p">:</span>
-        <span class="n">user_id</span><span class="o">.</span><span class="k">type</span> <span class="o">=</span> <span class="s2">&quot;varchar(64)&quot;</span>  <span class="c1"># rejected</span>
+<p>The checked Incan type descriptor remains the authority for a source field's type and declared constraints. Namespaced schema metadata may request a target-system, storage, wire, or adapter-specific mapping, including a key such as <code>postgres.type</code>. The compiler validates metadata syntax, safe values, field references, and merge conflicts; the owning adapter defines target type semantics and must validate the selected request against the checked source descriptor before generating or using the projection. Retaining an unconsumed request in metadata does not certify its compatibility.</p>
+<p>Target-mapping requests must use checked adapter-owned enum values rather than strings encoding SQL or another target type language. The adapter package declares the enum; the compiler checks case identity and payload names and types, while the adapter validates target semantics and source compatibility. For example, a proposed PostgreSQL adapter package could supply:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Proposed declaration supplied by the postgres_adapter package.</span>
+<span class="k">pub</span> <span class="k">enum</span> <span class="nc">PostgresType</span><span class="p">:</span>
+    <span class="nc">Text</span>
+    <span class="nc">VarChar</span><span class="p">(</span><span class="n">length</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span>
 </code></pre></div>
-<p>A database adapter, file-format adapter, query adapter, or wire-format adapter must map from the structured Incan type descriptor to its own physical or logical type system. If an adapter needs customization, that customization belongs to adapter configuration, adapter libraries, or a future type-mapping RFC, not to per-field schema metadata.</p>
-<p>Schema metadata may still carry projection facts that are not type definitions, such as column names, JSON property names, Protobuf tags, partition hints, index names, catalog terms, documentation grouping, or adapter-owned non-type options.</p>
+<p>The following model and schema overlay are application declarations using proposed RFC syntax. The imported PostgresType is supplied by that adapter package, not by the compiler or standard library:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">postgres_adapter</span><span class="w"> </span><span class="kn">import</span> <span class="nc">PostgresType</span>
+
+<span class="k">model</span> <span class="nc">Customer</span><span class="p">:</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+
+<span class="n">schema</span> <span class="nc">CustomerWarehouse</span> <span class="k">for</span> <span class="nc">Customer</span><span class="p">:</span>
+    <span class="n">postgres</span><span class="p">:</span>
+        <span class="n">name</span><span class="o">.</span><span class="k">type</span> <span class="o">=</span> <span class="nc">PostgresType</span><span class="o">.</span><span class="nc">Text</span>
+</code></pre></div>
+<p>An adapter may accept that request only under its checked mapping contract. Changing the request to <code>PostgresType.VarChar(length=200)</code> must not silently impose a 200-character domain limit on the unconstrained source str. PostgreSQL documents <a href="https://www.postgresql.org/docs/current/datatype-character.html">varchar(n) as length-limited and text as having no declared length limit</a>. An incompatible or unestablished mapping must receive a diagnostic; where a source descriptor already carries sufficient compatible constraints, an adapter may validate a corresponding target mapping. The compiler must not inspect arbitrary validator bodies to manufacture a compatibility proof.</p>
+<p>RFC 085 safe metadata rules permit structural enum-case values with recursively safe payloads, so the VarChar request does not execute a constructor or arbitrary user code. Descriptors must retain its checked enum identity, case identity, and named length payload. Adapters must consume that structure directly and render SQL only at the output boundary; they must not recover type choices by parsing display strings. A payload having the declared int type does not establish a valid target length: adapter validation must also reject unsupported or invalid parameter values.</p>
+<p>Compatibility checking must account for the source type, declared constraints, nullability, and the adapter's representation contract. A mapping request must not silently narrow the checked source contract, discard information, introduce unchecked coercion, or weaken RFC 103 secret protection. Unsupported mappings must not silently fall back to another target type. An explicit metadata override chooses a request; it cannot waive compatibility checking or alter Incan construction, field access, validation, or source type identity.</p>
+<p>Other projection facts, such as column names, JSON property names, Protobuf tags, partition hints, index names, and documentation grouping, retain their normal adapter-owned interpretation. Target mapping requests remain namespaced projection metadata rather than a second source type declaration.</p>
 <h3 id="projection-context">Projection context<a class="headerlink" href="#projection-context" title="Permanent link">&para;</a></h3>
 <p><code>schema</code> models projection context. Projection context is adapter-facing metadata that cannot be derived from the checked Incan model descriptor and should not live in adapter-wide configuration.</p>
 <p>Schema metadata may describe:</p>
@@ -10249,7 +10285,7 @@
 <li>projection layout hints, such as partition keys, clustering keys, sort keys, index names, or grouping hints;</li>
 <li>documentation presentation, such as generated-doc titles, grouping, display order, or projection-specific descriptions;</li>
 <li>catalog and governance terms that are projection-specific rather than intrinsic field facts;</li>
-<li>adapter-owned non-type options that affect output shape or metadata but do not redefine the field's checked type.</li>
+<li>adapter-owned options and explicit target-mapping requests that affect the projection without redefining the field's checked type and must pass the owning adapter's compatibility checks.</li>
 </ul>
 <p>Schema metadata should not repeat facts an adapter can derive from the checked descriptor plus its own configuration. If the adapter can infer a fact from field name, field type, field order, nullability, defaulting, alias metadata, or adapter configuration, that fact should not be written in <code>schema</code> unless it is intentionally overriding projection context.</p>
 <h3 id="descriptor-extraction-and-metadata-layer-use">Descriptor extraction and metadata-layer use<a class="headerlink" href="#descriptor-extraction-and-metadata-layer-use" title="Permanent link">&para;</a></h3>
@@ -10267,7 +10303,8 @@
 <li>explicit override records from <code>:=</code>;</li>
 <li>conflict diagnostics or rejected metadata where a tooling mode exposes failed extraction.</li>
 </ul>
-<p>Blast-radius and metadata-layer systems can use this extracted descriptor to answer questions such as which warehouse columns, API properties, ODCS fields, docs pages, generated Protobuf tags, or partner projections are affected by a model field change. Those systems may attach mutable evidence, ownership, review, confidence, lineage, and rollout state to descriptor anchors, but those records remain downstream metadata unless a future RFC promotes them into the checked descriptor.</p>
+<p>An extracted target-mapping request must remain distinguishable from a mapping validated by a selected adapter. A validated projection must retain the requested mapping, the checked source field identity and constraints, adapter identity and version where available, and its compatibility outcome. Merely extracting or merging metadata must not manufacture a successful adapter validation.</p>
+<p>Blast-radius and metadata-layer systems can use this extracted descriptor to answer questions such as which warehouse columns, API properties, ODCS fields, docs pages, generated Protobuf tags, or partner projections are affected by a model field change. Those systems may attach mutable evidence, ownership, review, confidence, lineage, and rollout state to descriptor anchors, but those records remain downstream metadata, not part of the checked descriptor.</p>
 <h3 id="schema-blocks">Schema blocks<a class="headerlink" href="#schema-blocks" title="Permanent link">&para;</a></h3>
 <p>A <code>schema:</code> block may appear inside a <code>model</code> body after field declarations.</p>
 <div class="language-text highlight"><pre><span></span><code>schema_block = &quot;schema&quot; &quot;:&quot; NEWLINE INDENT schema_stmt* DEDENT ;
@@ -10308,9 +10345,9 @@
     <span class="n">schema</span> <span class="kn">from</span><span class="w"> </span><span class="s2">&quot;./user.schema.yaml&quot;</span>
     <span class="n">schema</span> <span class="kn">from</span><span class="w"> </span><span class="nn">AuditFieldMetadata</span>
 </code></pre></div>
-<p><code>schema from "./file"</code> imports metadata from a local compile-time source. It must not fetch network resources and must not execute user code. The source file is a build input and must participate in reproducible builds and incremental invalidation.</p>
+<p><code>schema from "./file"</code> imports metadata from a local compile-time source. It must not fetch network resources and must not execute user code. The source file is a build input and must participate in reproducible builds and incremental invalidation. Imported target-mapping values must preserve and resolve the same enum type, case identity, and typed payload structure as inline metadata. A plain string such as "varchar(200)" must not be interpreted as a typed mapping request. External decoding must not execute YAML object constructors or arbitrary user code.</p>
 <p><code>schema from OtherModel</code> imports metadata by matching canonical field names. It does not import fields, types, methods, defaults, derives, or inheritance behavior. It is metadata-only reuse.</p>
-<p>A schema import must not introduce metadata for unknown fields unless the import is explicitly marked as partial-tolerant by a future RFC. Under this RFC, unknown imported fields are compile-time errors.</p>
+<p>A schema import must not introduce metadata for unknown fields. Unknown imported fields are compile-time errors.</p>
 <h3 id="named-schema-overlays">Named schema overlays<a class="headerlink" href="#named-schema-overlays" title="Permanent link">&para;</a></h3>
 <p>A named schema overlay attaches metadata to an existing model without editing the model declaration:</p>
 <div class="language-text highlight"><pre><span></span><code>schema_overlay = &quot;schema&quot; IDENT &quot;for&quot; type_path &quot;:&quot; NEWLINE INDENT schema_overlay_item* DEDENT ;
@@ -10325,6 +10362,7 @@ schema_overlay_item = schema_import | schema_stmt ;
 </code></pre></div>
 <p>The target of a schema overlay must resolve to a model type. A schema overlay must not add fields, remove fields, reorder fields, retype fields, add methods, add derives, or change construction behavior. It may only attach schema metadata to fields that exist on the target model.</p>
 <p>An overlay is a named schema metadata profile. It is not inheritance, not a model alias, and not a reopened model body. Ordinary construction, type checking, field access, and method resolution for the target model are unaffected.</p>
+<p>An overlay must not declare or override compiler-semantic field metadata, including alias, <code>default_factory</code>, validate, and normalize, whether directly or through a schema import. Such entries must receive a compiler diagnostic identifying the offending key, field, overlay, and source declaration or import. The same restriction applies to explicit := overrides: precedence does not authorize changing the model contract. An overlay may supply adapter-owned names such as json.name or <code>postgres.name</code>; these names affect only a projection whose explicitly selected adapter documents and consumes them. They must not change canonical field names, ordinary constructor argument names, or the model's compiler-semantic alias. This restriction concerns overlays of an existing model; it does not remove compiler-semantic metadata from the owning model's declarations under RFC 085.</p>
 <p>Multiple overlays may target the same model:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="n">schema</span> <span class="nc">UserWarehouse</span> <span class="k">for</span> <span class="nc">User</span><span class="p">:</span>
     <span class="n">postgres</span><span class="p">:</span>
@@ -10344,12 +10382,14 @@ schema_overlay_item = schema_import | schema_stmt ;
 </ol>
 <p>Within schema blocks and schema imports, <code>key = value</code> is set-if-unset. If the key already exists with a different value, the compiler must report a conflict. <code>key := value</code> is an explicit override and must record that an override occurred in checked metadata.</p>
 <p>Inline field metadata has highest precedence because it is closest to the field declaration. Duplicate inline keys are errors under RFC 085.</p>
+<p>For RFC 087 models composed through a from header, inherited descriptive and namespaced field metadata forms a baseline before these owning-model merge steps. Metadata authored inline on a source field remains inherited metadata after composition; it must not acquire target-inline precedence. Structurally compatible source fields may contribute distinct keys or equal checked values. Contradictory values require an explicit := reconciliation in the owning model's schema block, retaining all incoming values and their origins. Owning-model inline precedence must not silently settle such a conflict. Retained validation obligations are compiler-semantic contract facts and must not be replaced or suppressed by projection metadata. Structural disagreements are errors before metadata reconciliation, and unresolved composition conflicts must be rejected before any named overlay is selected.</p>
 <p>When an overlay is selected, overlay metadata is merged on top of the base model descriptor. Inside an overlay, imports and local schema statements merge in source order using the same <code>=</code> and <code>:=</code> rules. An overlay may explicitly override base metadata with <code>:=</code>, but <code>=</code> conflicts if the base descriptor already has a different value for the same field metadata key.</p>
 <p>When multiple overlays are selected together, they merge in the order selected by the descriptor API. Conflicting <code>=</code> assignments across overlays are errors. Explicit <code>:=</code> overrides must record the overlay that performed the override.</p>
+<p>These rules also apply to target-mapping requests. An explicit <code>:=</code> selects the effective request and records its provenance; it must not override the source type or suppress a later adapter incompatibility diagnostic. Two different mapping requests do not become compatible merely because precedence selects one.</p>
 <p>Merge results must be deterministic for a fixed source tree, selected overlay list, and schema import set.</p>
 <h3 id="adapter-interpretation">Adapter interpretation<a class="headerlink" href="#adapter-interpretation" title="Permanent link">&para;</a></h3>
 <p>Adapters consume schema descriptors explicitly.</p>
-<p>Baseline compilation must not interpret unknown namespaced metadata semantics, but schema metadata must still respect the type-mapping boundary. A schema block or overlay must not use metadata to define a field's target-system, storage, wire, or adapter type. Adapter-owned validation may reject additional namespace-specific keys when invoked.</p>
+<p>Baseline compilation must not interpret unknown namespaced metadata semantics. It must preserve explicit target-mapping requests and their provenance without treating a key ending in <code>type</code> as a source type declaration or rejecting it solely by that spelling. Schema blocks, imports, and overlays must not replace the checked source field type. An adapter consuming a target-mapping request must validate it before generating or using the projection and must reject incompatible, unsupported, or unestablished mappings with a clear diagnostic. Adapter-owned validation may reject additional namespace-specific keys when invoked.</p>
 <p>Adapters must treat generated outputs as projections of checked metadata. They must not silently invent field existence, field order, source type, or default facts that contradict the model schema descriptor. Target-specific type choices must be derived from checked Incan type descriptors and adapter-owned mapping rules.</p>
 <h3 id="diagnostics">Diagnostics<a class="headerlink" href="#diagnostics" title="Permanent link">&para;</a></h3>
 <p>The compiler must report diagnostics for at least:</p>
@@ -10358,16 +10398,18 @@ schema_overlay_item = schema_import | schema_stmt ;
 <li>schema import references an unknown field;</li>
 <li>schema overlay target is not a model type;</li>
 <li>schema overlay references an unknown field on the target model;</li>
+<li>schema overlay directly or indirectly declares or overrides compiler-semantic metadata such as alias, <code>default_factory</code>, validate, or normalize;</li>
 <li>schema merge conflict from <code>key = value</code>;</li>
 <li>invalid explicit override syntax;</li>
 <li>unsupported schema import source;</li>
 <li>external schema file cannot be read as a build input;</li>
 <li>external schema file contains unsafe metadata values;</li>
 <li>schema block statement cannot be normalized to field plus metadata key;</li>
-<li>schema metadata attempts to define target-system, storage, wire, or adapter type mappings;</li>
+<li>schema metadata attempts to replace a checked Incan source field type or constraint;</li>
 <li>schema descriptor cannot represent a field type structurally.</li>
 </ul>
 <p>Diagnostics should point at the schema statement or import that caused the error and should include the field name when applicable.</p>
+<p>An adapter consuming a target-mapping request must diagnose incompatible, unsupported, or unestablished mappings before generating or using the projection. The diagnostic must identify the canonical field, its checked source type and relevant constraints, the requested target mapping, the adapter, the originating metadata statement or import when available, and the incompatibility or missing compatibility support. For the Customer example above, requesting <code>PostgresType.VarChar(length=200)</code> must report that the unconstrained source str has no declared 200-character bound and the requested target would narrow it. The adapter must not truncate values, silently change the source contract, or claim that an explicit metadata override resolved that incompatibility.</p>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
 <h3 id="why-schema-blocks-exist">Why schema blocks exist<a class="headerlink" href="#why-schema-blocks-exist" title="Permanent link">&para;</a></h3>
 <p>Inline metadata is readable only while it is sparse. Adapter ecosystems can require many keys per field. <code>schema:</code> blocks let the model body remain readable as a shape while still keeping metadata in checked source.</p>
@@ -10379,13 +10421,13 @@ schema_overlay_item = schema_import | schema_stmt ;
 <p>External metadata sources are useful for generated or shared schema facts, but they must not turn compilation into arbitrary code execution. Schema imports are local, declarative build inputs.</p>
 <h3 id="why-adapters-are-explicit">Why adapters are explicit<a class="headerlink" href="#why-adapters-are-explicit" title="Permanent link">&para;</a></h3>
 <p>The compiler cannot own every ecosystem. It should provide a stable schema descriptor API. Libraries should own interpretation for their namespace. This lets the ecosystem grow without turning the compiler into a registry of SQL, Protobuf, JSON Schema, data-contract, and vendor-specific semantics.</p>
-<h3 id="why-schema-metadata-does-not-define-types">Why schema metadata does not define types<a class="headerlink" href="#why-schema-metadata-does-not-define-types" title="Permanent link">&para;</a></h3>
-<p>Type mapping is an adapter responsibility. A checked Incan model already carries a structured type descriptor for every field. A database adapter, file-format adapter, query adapter, or wire-format adapter must map that descriptor into its target type system. Putting <code>postgres.type</code>, <code>snowflake.type</code>, <code>arrow.type</code>, or similar keys into schema metadata would create a second source of type truth and make descriptors less reliable for compatibility and blast-radius analysis.</p>
+<h3 id="why-source-types-and-target-mappings-have-separate-authority">Why source types and target mappings have separate authority<a class="headerlink" href="#why-source-types-and-target-mappings-have-separate-authority" title="Permanent link">&para;</a></h3>
+<p>The checked Incan model carries the source type descriptor for every field. An explicit target-mapping request can sit beside other projection metadata without becoming a competing source declaration: the owning adapter must interpret and validate it against that descriptor. Allowing a request such as <code>postgres.type</code> makes per-field projection customization readable while preserving one source of truth for Incan types and constraints. Compatibility checks and provenance are required; neither a metadata value nor an explicit merge override proves that a target representation is valid.</p>
 <h3 id="relationship-to-rfc-085">Relationship to RFC 085<a class="headerlink" href="#relationship-to-rfc-085" title="Permanent link">&para;</a></h3>
 <p>RFC 085 owns field metadata keys, safe metadata values, default factories, and the type-constraint boundary. This RFC owns metadata aggregation, descriptor exposure, schema block readability, named overlays, external schema sources, and adapter consumption.</p>
 <h3 id="relationship-to-rfc-048-and-rfc-082">Relationship to RFC 048 and RFC 082<a class="headerlink" href="#relationship-to-rfc-048-and-rfc-082" title="Permanent link">&para;</a></h3>
 <p>RFC 048 owns checked metadata extraction and stable metadata artifacts. RFC 082 owns documentation generation from checked metadata. This RFC defines the schema descriptor facts and aggregation rules those systems must preserve when model schema metadata is present.</p>
-<p>For blast-radius and metadata-layer ambitions, RFC 086 descriptors are the bridge between checked model facts and downstream projections. A schema adapter should be able to declare or expose which descriptor and overlay it consumed, so later tooling can relate a model-field change to generated SQL, JSON Schema, Protobuf, ODCS, catalog, or documentation outputs.</p>
+<p>For blast-radius and metadata-layer ambitions, RFC 086 descriptors are the bridge between checked model facts and downstream projections. A schema adapter should be able to declare or expose which descriptor and overlay it consumed, so downstream tooling can relate a model-field change to generated SQL, JSON Schema, Protobuf, ODCS, catalog, or documentation outputs.</p>
 <h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
 <p>This RFC is additive.</p>
 <p>Projects can start with inline field metadata only. As metadata grows, they can migrate large adapter mappings into <code>schema:</code> blocks without changing the normalized schema descriptor.</p>
@@ -10427,19 +10469,19 @@ schema_overlay_item = schema_import | schema_stmt ;
 <p>Rejected because many adapter and contract profiles are downstream concerns owned outside the model's source module.</p>
 </li>
 <li>
-<p><strong>Allow schema metadata to define adapter types</strong></p>
+<p><strong>Treat target-mapping metadata as an independent type authority</strong></p>
 </li>
-<li>Rejected because target-system and wire-format type choices must be derived from checked Incan type descriptors by adapter-owned mapping rules.</li>
+<li>Rejected because a projection request must not override checked Incan types or constraints. Explicit namespaced requests are permitted only with owning-adapter compatibility checks; unsupported or conflicting requests require diagnostics.</li>
 </ol>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <p>Schema blocks add a second place to write field metadata. Deterministic precedence and conflict diagnostics are mandatory to avoid silent drift.</p>
-<p>External schema imports add build-input and reproducibility concerns. The feature must stay declarative and local-only unless a future RFC defines stronger supply-chain rules.</p>
+<p>External schema imports add build-input and reproducibility concerns. The feature must stay declarative and local-only.</p>
 <p>The descriptor API becomes a stable contract consumed by adapters, docs, package tooling, and possibly registries. Schema evolution will require versioning discipline.</p>
 <h2 id="implementation-architecture-non-normative">Implementation architecture (non-normative)<a class="headerlink" href="#implementation-architecture-non-normative" title="Permanent link">&para;</a></h2>
 <p>A useful implementation shape is to normalize inline metadata from RFC 085, schema blocks, and schema imports into one checked base field metadata map per model field before downstream metadata extraction. Named overlays can then normalize into separate overlay metadata maps keyed by target model and overlay name. Each normalized entry should retain source location and merge provenance so diagnostics, generated docs, metadata-layer tools, and blast-radius reports can explain where a value came from.</p>
 <p>Schema descriptors should be generated from checked model declarations after metadata merge. When overlays are selected, descriptor construction should merge the requested overlay maps over the base descriptor in a deterministic order. Adapters should consume descriptors rather than parsing source files or generated Rust.</p>
 <p>Adapter outputs should be able to carry or reference the descriptor identity they were generated from: base model anchor, selected overlay anchors, descriptor schema version, adapter name/version where available, and source artifact identity. This does not make adapter outputs authoritative, but it gives blast-radius tooling a reliable edge from source contract to projection.</p>
-<p>External schema import support can be staged after schema descriptors, schema blocks, and overlays, but the RFC-level contract treats them as one normalized metadata model.</p>
+<p>The RFC-level contract treats external schema imports, schema descriptors, schema blocks, and overlays as one normalized metadata model.</p>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Parser / AST</strong>: must support <code>schema:</code> blocks, <code>schema Name for Model:</code> overlays, <code>schema from ...</code>, and explicit override syntax in schema blocks and overlays.</li>
@@ -10453,9 +10495,11 @@ schema_overlay_item = schema_import | schema_stmt ;
 <li><strong>Build / Packaging</strong>: should track schema import files as build inputs and preserve schema descriptors in artifacts that claim checked metadata support, including overlay identity and descriptor/projection edges where available.</li>
 </ul>
 <h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
+<p>The decisions below record the earlier proposal. Implementation readiness was withdrawn during the October 2026 review; the open boundaries at the end must be resolved from practical evidence before promotion.</p>
 <ul>
 <li>Use <code>schema_of[Model]()</code> as the canonical user-facing descriptor API for base model descriptors.</li>
 <li>Use <code>schema_of[Model, Overlay]()</code> for descriptor requests with one overlay, and <code>schema_of[Model, OverlayA, OverlayB]()</code> for multiple overlays. Overlay order is semantically significant and defines merge order.</li>
+<li>Keep overlays strictly projection-only. Reject compiler-semantic keys, including alias, <code>default_factory</code>, and validate, in overlays and their imports, even with explicit overrides. Adapter-owned projection names remain permitted and must not alter the source model contract.</li>
 <li>Allow multiple overlays to be selected at once. Conflicts across selected overlays are diagnosed by the descriptor construction path according to the RFC merge rules.</li>
 <li>Support both per-field and grouped namespace schema block styles. They normalize to the same descriptor metadata map.</li>
 <li>Support local YAML schema import files first. JSON and an Incan-native metadata syntax can be added later without changing the core merge model.</li>
@@ -10463,8 +10507,17 @@ schema_overlay_item = schema_import | schema_stmt ;
 <li>Make <code>schema from OtherModel</code> match canonical field names only. Alias-based matching is excluded from this RFC because aliases are projection metadata, not source field identity.</li>
 <li>Register adapter-provided LSP validation through explicit tooling hooks supplied by adapter packages or build configuration. The compiler owns syntax and safe-value checks; adapters own namespace-specific validation.</li>
 <li>Represent descriptor/projection edges with base model anchor, selected overlay anchors in order, descriptor schema version, adapter identifier and version where available, source artifact identity where available, and field-level projection anchors.</li>
-<li>Reject schema metadata keys whose final segment is <code>type</code> in schema blocks, imports, and overlays. Schema metadata never defines target-system, storage, wire, or adapter-specific field types.</li>
+<li>Permit explicit namespaced target-mapping requests in schema blocks, imports, overlays, and RFC 085 field metadata. Represent these requests as adapter-owned checked enum values with safe constant payloads, retaining their type, case, and payload structure; do not use target-type strings for dispatch. The owning adapter must validate compatibility with the checked source type, constraints, nullability, and representation contract before using the projection. Reject incompatible, unsupported, or unestablished mappings; no silent narrowing, truncation, coercion, fallback, or weakening of secret protection is permitted. Existing metadata conflict and explicit override rules still apply, and an override cannot waive compatibility checking.</li>
 </ul>
+<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Which concrete gaps remain after the model-construction, validation, declaration-metadata, and structured-reflection surfaces are exercised in real libraries and applications?</li>
+<li>What is the smallest coherent schema contract beyond those surfaces, and which representation or source-interpretation responsibilities belong to libraries?</li>
+<li>If selected schema profiles can register validators or factories, how do they participate in canonical construction without replacing model obligations, duplicating execution, or changing ordinary construction globally?</li>
+<li>Is a whole-record decoding hook needed in the schema contract, or should ordered, source-specific interpretation remain a reader/adapter interface? The boundary must also avoid duplicating query and ingestion planning.</li>
+<li>Which existing cross-RFC schema references, especially owning-model metadata reconciliation, need an independent contract or explicit later release scope before their owning features can be implemented?</li>
+</ul>
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 

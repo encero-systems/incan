@@ -21,7 +21,7 @@
     
     
       
-        <title>RFC 108: Import-scoped extension properties - Incan Documentation</title>
+        <title>RFC 110: Three-way comparison with __cmp__ - Incan Documentation</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-108-import-scoped-extension-properties" class="md-skip">
+        <a href="#rfc-110-three-way-comparison-with-__cmp__" class="md-skip">
           Skip to content
         </a>
       
@@ -117,7 +117,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 108: Import-scoped extension properties
+              RFC 110: Three-way comparison with __cmp__
             
           </span>
         </div>
@@ -9731,34 +9731,6 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Motivation">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#prior-art-ruby-and-rails-active-support" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Prior art: Ruby and Rails Active Support
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#prior-art-rust-extension-traits" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Prior art: Rust extension traits
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
 </li>
       
         <li class="md-nav__item">
@@ -9796,10 +9768,43 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#calling-syntax-summary" class="md-nav__link">
+  <a href="#derive-it" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Calling syntax summary
+        Derive it
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#define-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Define it
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#range-checks-and-clamping" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Range checks and clamping
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#floats" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Floats
       
     </span>
   </a>
@@ -9824,10 +9829,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#vocab-declaration" class="md-nav__link">
+  <a href="#ordering" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Vocab declaration
+        Ordering
       
     </span>
   </a>
@@ -9835,10 +9840,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#extension-property-declaration" class="md-nav__link">
+  <a href="#the-hook" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Extension-property declaration
+        The hook
       
     </span>
   </a>
@@ -9846,10 +9851,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#activation-and-scope" class="md-nav__link">
+  <a href="#ord" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Activation and scope
+        Ord
       
     </span>
   </a>
@@ -9857,10 +9862,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#receiver-eligibility" class="md-nav__link">
+  <a href="#partialord" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Receiver eligibility
+        PartialOrd
       
     </span>
   </a>
@@ -9868,10 +9873,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#lookup-and-ambiguity" class="md-nav__link">
+  <a href="#cmp-and-compare" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Lookup and ambiguity
+        cmp and compare
       
     </span>
   </a>
@@ -9879,10 +9884,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#descriptor-facts" class="md-nav__link">
+  <a href="#diagnostics-and-lints" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Descriptor facts
+        Diagnostics and lints
       
     </span>
   </a>
@@ -9890,10 +9895,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#composition-and-aggregate-properties" class="md-nav__link">
+  <a href="#conformance-workloads" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Composition and aggregate properties
+        Conformance workloads
       
     </span>
   </a>
@@ -9901,32 +9906,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#runtime-anchors-and-effects" class="md-nav__link">
+  <a href="#compatibility" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Runtime anchors and effects
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#const-contexts" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Const contexts
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#diagnostics" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Diagnostics
+        Compatibility
       
     </span>
   </a>
@@ -9951,10 +9934,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#syntax" class="md-nav__link">
+  <a href="#why-no-comparable" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Syntax
+        Why no Comparable
       
     </span>
   </a>
@@ -9962,10 +9945,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#relationship-to-computed-properties" class="md-nav__link">
+  <a href="#why-cmp-is-imported" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Relationship to computed properties
+        Why cmp is imported
       
     </span>
   </a>
@@ -9973,10 +9956,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#relationship-to-rfc-027-vocab-surfaces" class="md-nav__link">
+  <a href="#why-clamp-cannot-fail" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Relationship to RFC 027 vocab surfaces
+        Why clamp cannot fail
       
     </span>
   </a>
@@ -9984,43 +9967,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#relationship-to-rust-shaped-extension-behavior" class="md-nav__link">
+  <a href="#prior-art" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Relationship to Rust-shaped extension behavior
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#relationship-to-type-ownership" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Relationship to type ownership
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#standard-library-examples" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Standard library examples
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#compatibility-and-migration" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Compatibility and migration
+        Prior art
       
     </span>
   </a>
@@ -10055,17 +10005,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#implementation-architecture" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Implementation architecture
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#layers-affected" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10077,10 +10016,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#unresolved-questions" class="md-nav__link">
+  <a href="#design-decisions" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Unresolved questions
+        Design Decisions
       
     </span>
   </a>
@@ -10107,322 +10046,246 @@
   
 
 
-<h1 id="rfc-108-import-scoped-extension-properties">RFC 108: Import-scoped extension properties<a class="headerlink" href="#rfc-108-import-scoped-extension-properties" title="Permanent link">&para;</a></h1>
+<h1 id="rfc-110-three-way-comparison-with-__cmp__">RFC 110: Three-way comparison with <code>__cmp__</code><a class="headerlink" href="#rfc-110-three-way-comparison-with-__cmp__" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Status:</strong> Draft</li>
+<li><strong>Status:</strong> Planned</li>
 <li><strong>Created:</strong> 2026-06-06</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong><ul>
-<li>RFC 027 (<code>incan-vocab</code> block registration and desugaring)</li>
-<li>RFC 040 (scoped DSL surface forms)</li>
-<li>RFC 045 (scoped DSL symbol surfaces)</li>
-<li>RFC 046 (computed properties)</li>
-<li>RFC 058 (<code>std.datetime</code> temporal values, intervals, and runtime timing)</li>
-<li>RFC 091 (constrained integer newtype storage carriers)</li>
-<li>RFC 107 (type-directed library APIs and compile-time type tokens)</li>
+<li>RFC 024 (extensible derive protocol)</li>
+<li>RFC 028 (trait-based operator overloading)</li>
+<li>RFC 042 (traits are always abstract)</li>
+<li>RFC 068 (protocol hooks for core language syntax)</li>
+<li>RFC 083 (symbol aliases)</li>
+<li>RFC 088 (iterator adapter surface)</li>
+<li>RFC 127 (lint catalog)</li>
+<li>RFC 136 (chained comparisons)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> —</li>
+<li><strong>Issue:</strong> <a href="https://github.com/encero-systems/incan/issues/2660">#2660</a></li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.3</li>
 <li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC defines import-scoped extension properties: library-authored <code>pub vocab</code> blocks may expose property-shaped receiver vocabulary such as <code>3.days</code>, <code>2.5.percent</code>, <code>"/users/{id}".route</code>, or <code>order.status.badge</code> only where that vocabulary is explicitly imported. The flagship use case is typed unit authoring, but the north-star feature is broader: a vocabulary can publish statically checked extension-property facts for ordinary Incan receivers without reopening types, mutating global member lookup, or relying on runtime method discovery. Extension-property facts are derived from typed Incan property bodies written as <code>property name on ReceiverType -&gt; ResultType:</code>.</p>
+<p>A type defines its total order in one place: <code>__cmp__(self, other) -&gt; Ordering</code>. All six comparison operators come from that one hook, <code>Ord</code> remains the capability that a bound asks for, and <code>cmp(a, b)</code>, also spelled <code>compare(a, b)</code>, is how code asks the question directly. <code>@derive(Ord)</code> generates the hook. This replaces the pair of <code>__eq__</code> and <code>__lt__</code> methods that ordered types must keep in agreement today, with no new trait.</p>
 <h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
 <ol>
-<li><strong>Vocabularies own extension properties:</strong> a <code>pub vocab</code> block is an importable vocabulary surface that may contain extension-property declarations.</li>
-<li><strong>Imports activate the surface:</strong> importing a vocabulary activates its extension properties in the importing module or lexical scope; dependency installation alone does nothing.</li>
-<li><strong>Receivers are not reopened:</strong> <code>int</code>, <code>decimal</code>, <code>FrozenStr</code>, custom nominal types, and foreign-backed types do not gain global members when a package is loaded.</li>
-<li><strong>Authoring is ordinary typed Incan:</strong> <code>property days on int -&gt; TimeDelta:</code> has a body, <code>self</code> has type <code>int</code>, and the compiler derives descriptor facts from the checked declaration.</li>
-<li><strong>Use sites are ordinary property reads:</strong> callers write <code>receiver.property</code>, not <code>receiver.property()</code>, following RFC 046's field-like property model.</li>
-<li><strong>Descriptor facts stay inspectable:</strong> the compiler records the vocabulary identity, property name, receiver type, result type, lowering target, source span, evaluation classification, const eligibility, family metadata when present, and conflict behavior.</li>
-<li><strong>Typed units are the proving case:</strong> temporal amounts, byte sizes, layout lengths, rates, basis points, and similar scalar wrappers demonstrate why receiver-first property syntax is valuable.</li>
-<li><strong>Other exact receivers are valid when scoped:</strong> <code>FrozenStr</code> route patterns and custom nominal UI projections are legitimate vocabulary overlays when the behavior belongs to an imported vocabulary rather than the receiver's core type.</li>
-<li><strong>Runtime magic is out of bounds:</strong> extension properties must be statically resolved, typechecked, lowered, documented, and diagnosed; load order, string lookup, monkey patching, and dynamic dispatch do not define the feature.</li>
+<li><strong>One hook.</strong> <code>__cmp__</code> answers less, equal or greater, so <code>==</code> and <code>&lt;</code> cannot disagree.</li>
+<li><strong><code>Ordering</code> is a type.</strong> The answer is <code>Ordering.Less</code>, <code>Ordering.Equal</code> or <code>Ordering.Greater</code>, never an integer.</li>
+<li><strong><code>Ord</code> stays the capability.</strong> Defining <code>__cmp__</code> makes the syntax work, and adopting <code>Ord</code> is what satisfies a bound, under RFC 068.</li>
+<li><strong>Total and partial orders stay apart.</strong> <code>__cmp__</code> means a total order. <code>__lt__</code> and its siblings remain the hooks for <code>PartialOrd</code>, where some pairs have no answer.</li>
+<li><strong><code>cmp</code> is library code.</strong> It is an ordinary function in <code>std.derives.comparison</code>, imported explicitly.</li>
 </ol>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>Incan already has computed properties, typed numeric values, newtypes, temporal intervals, frozen const-friendly values, custom nominal types, and vocabulary-driven DSL surfaces. What it lacks is a source-level way for a library to say: "when this vocabulary is imported, this receiver type has this value-like property, and the compiler can see exactly how it lowers." Constructor calls such as <code>TimeDelta.days(3) + TimeDelta.hours(12)</code> are clear and should remain valid, but they are heavier than the domain idea being expressed. <code>3.days</code> is short, readable, and still statically typed if the property resolves through an imported vocabulary fact.</p>
-<p>The same shape is useful outside temporal units. <code>256.mib</code> can carry byte-size semantics instead of a raw integer. <code>2.5.percent</code> can carry rate semantics instead of a float or string. <code>"/users/{id}".route</code> can parse and validate a route pattern from a <code>FrozenStr</code> before runtime. <code>order.status.badge</code> can be an admin-UI projection imported from the UI layer rather than a permanent core-domain member on <code>OrderStatus</code>.</p>
-<p>The design must not reopen the dynamic-language tradeoff that Incan deliberately avoids. The language should not let libraries mutate primitive types globally, shadow owned members by load order, or hide expensive or fallible runtime work behind property syntax. The useful Ruby/Rails lesson is the fluent domain shape; the Incan lesson is that the shape must remain explicit, typed, scoped, and inspectable.</p>
-<p>The earlier typed-unit framing is still important, but too narrow as the authoring model. Test-driving the syntax against <code>int</code>, <code>decimal</code>, <code>FrozenStr</code>, and custom nominal receivers shows that the language feature is import-scoped extension properties, with typed units as the strongest initial family of examples. Naming the broader feature now avoids painting RFC 108 into a unit-only corner while still keeping the unit examples concrete.</p>
-<p>This RFC also points toward a larger dogfooding direction without taking ownership of it. RFC 027 currently exposes vocab registration through Rust companion crates. A future Incan could author more of its vocabulary metadata, descriptors, and compiler-adjacent surfaces in Incan itself, much as Rust uses Rust to author much of rustc. This RFC's <code>pub vocab</code> syntax should align with that direction, but it does not rewrite the existing vocab desugarer architecture.</p>
-<h3 id="prior-art-ruby-and-rails-active-support">Prior art: Ruby and Rails Active Support<a class="headerlink" href="#prior-art-ruby-and-rails-active-support" title="Permanent link">&para;</a></h3>
-<p>Ruby on Rails' Active Support is direct ergonomic prior art for the motivating temporal shape. Active Support exposes duration helpers on Ruby numeric values and documents examples such as <code>1.month.ago</code>, with duration values supporting methods such as <code>ago</code> and <code>from_now</code> in the Rails API docs: https://api.rubyonrails.org/classes/ActiveSupport/Duration.html.</p>
-<p>Rails authors this by adding methods to existing Ruby classes. Conceptually, <code>Numeric</code> gets methods such as <code>days</code> and <code>hours</code> that return <code>ActiveSupport::Duration</code>, and <code>ActiveSupport::Duration</code> owns anchor methods such as <code>ago</code> and <code>from_now</code>. Ruby's runtime method table is the registry. That is a good explanation of the ergonomic surface and a poor model for Incan's safety goals.</p>
-<p>Incan should give Rails credit for the read shape while making the registry explicit, typed, import-scoped, and inspectable.</p>
-<h3 id="prior-art-rust-extension-traits">Prior art: Rust extension traits<a class="headerlink" href="#prior-art-rust-extension-traits" title="Permanent link">&para;</a></h3>
-<p>Rust is the closest prior art for the safety model. A Rust crate can define an extension trait, implement it for a primitive receiver, and make receiver method syntax such as <code>3.days()</code> available only when the trait is imported. That gives scoped activation, static checking, coherent lowering, and no runtime mutation of the primitive type. Incan should preserve those properties while using Incan's existing field-like property access for value-like nullary operations.</p>
-<p>Rust's limitation for this feature is syntax, not semantics. Rust has no field-like extension property surface, so the safe shape is method-like. Incan already has computed properties, so <code>property days on int -&gt; TimeDelta:</code> can express the same imported capability without making users write <code>3.days()</code>.</p>
+<p>Custom ordering today means two methods that have to agree:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">Task</span> <span class="k">with</span> <span class="kt">Ord</span><span class="p">:</span>
+    <span class="n">priority</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__eq__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="nc">Task</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">priority</span> <span class="o">==</span> <span class="n">other</span><span class="o">.</span><span class="n">priority</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">==</span> <span class="n">other</span><span class="o">.</span><span class="n">name</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__lt__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="nc">Task</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">priority</span> <span class="o">!=</span> <span class="n">other</span><span class="o">.</span><span class="n">priority</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">priority</span> <span class="o">&lt;</span> <span class="n">other</span><span class="o">.</span><span class="n">priority</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">&lt;</span> <span class="n">other</span><span class="o">.</span><span class="n">name</span>
+</code></pre></div>
+<p>If they ever disagree, <code>sorted</code> and <code>==</code> quietly contradict each other, and nothing can detect it. A three-way comparison answers both questions in one place. There is also no way today to ask for the answer itself: code that needs less, equal or greater has to make two comparisons.</p>
+<p>Python 2 had <code>__cmp__</code> and <code>cmp()</code>, and Python 3 removed them because <code>__cmp__</code> returned a bare integer and overlapped with the rich comparison hooks. Returning <code>Ordering</code>, and refusing the overlap, fixes both problems.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Define <code>pub vocab</code> as the source-level authoring surface for import-scoped extension properties.</li>
-<li>Define <code>property name on ReceiverType -&gt; ResultType:</code> as the extension-property declaration form inside a <code>vocab</code> block.</li>
-<li>Make imported vocabularies activate extension properties at use sites with ordinary property-read syntax.</li>
-<li>Allow receiver types beyond numeric primitives when the receiver is statically known, including <code>FrozenStr</code> and custom nominal types.</li>
-<li>Keep owned member lookup, trait member lookup, and extension-property lookup coherent and deterministic.</li>
-<li>Derive descriptor facts from checked Incan declarations rather than requiring authors to hand-maintain metadata fields.</li>
-<li>Preserve typed-unit examples as the primary readability and safety motivation.</li>
-<li>Support ordinary value composition such as <code>3.days + 12.hours</code> and leave room for aggregate vocabulary properties when the receiver is a checked family composition.</li>
-<li>Distinguish pure value construction from runtime-anchored conveniences such as <code>.from_now</code>, <code>.ago</code>, or clock-reading projections.</li>
-<li>Leave the larger RFC 027 vocab registration and desugarer rewrite as future-compatible but out of scope.</li>
+<li>Define a total order in one method.</li>
+<li>Give every comparison operator one source for an ordered type.</li>
+<li>Let code ask for the three-way answer directly.</li>
+<li>Keep <code>@derive(Ord)</code> and <code>T with Ord</code> as they are.</li>
+<li>Keep partial orders explicit through <code>PartialOrd</code>.</li>
 </ul>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>This RFC does not add Ruby-style monkey patching, class reopening, method-table mutation, or load-order-dependent behavior.</li>
-<li>This RFC does not rewrite the current Rust <code>incan-vocab</code> companion crate model or WASM desugarer runtime.</li>
-<li>This RFC does not make all vocab metadata, parser extensions, or desugar functions authorable in Incan.</li>
-<li>This RFC does not define a full dimensional-analysis type system.</li>
-<li>This RFC does not commit the standard library to build temporal, data-size, layout, finance, routing, UI, science, or percentage vocabularies as part of this RFC. Those names are examples and pressure tests for the mechanism.</li>
-<li>This RFC does not make all nullary methods callable as properties.</li>
-<li>This RFC does not introduce setter properties or mutable extension state.</li>
-<li>This RFC does not allow extension properties to override owned fields, methods, computed properties, or trait members.</li>
-<li>This RFC does not bless arbitrary cute receiver nouns such as <code>3.users</code>, <code>404.not_found</code>, or <code>5.retry_policy</code> as good API design merely because the syntax can express them.</li>
+<li>A new comparison trait beside <code>Eq</code> and <code>Ord</code>.</li>
+<li>Comparison across different types.</li>
+<li>Locale-sensitive string ordering, natural sort or collation.</li>
+<li>Treating an unrelated method named <code>compare</code> as part of comparison.</li>
 </ul>
 <h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
-<p>A vocabulary author writes a <code>pub vocab</code> block and declares extension properties with explicit receivers:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">pub</span> <span class="n">vocab</span> <span class="n">temporal_units</span><span class="p">:</span>
-    <span class="nb">property</span> <span class="n">days</span> <span class="n">on</span> <span class="nb">int</span> <span class="o">-&gt;</span> <span class="nc">TimeDelta</span><span class="p">:</span>
-        <span class="k">return</span> <span class="nc">TimeDelta</span><span class="o">.</span><span class="n">days</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
+<p><code>Ordering</code>, <code>cmp</code> and <code>compare</code> are proposed by this RFC. <code>Ord</code> is in the prelude.</p>
+<h3 id="derive-it">Derive it<a class="headerlink" href="#derive-it" title="Permanent link">&para;</a></h3>
+<p>For most types, deriving is enough. Fields compare in declaration order:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Ord</span><span class="p">)</span>
+<span class="k">model</span> <span class="nc">Version</span><span class="p">:</span>
+    <span class="n">major</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">minor</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">patch</span><span class="p">:</span> <span class="nb">int</span>
 
-    <span class="nb">property</span> <span class="n">hours</span> <span class="n">on</span> <span class="nb">int</span> <span class="o">-&gt;</span> <span class="nc">TimeDelta</span><span class="p">:</span>
-        <span class="k">return</span> <span class="nc">TimeDelta</span><span class="o">.</span><span class="n">hours</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
-
-    <span class="nb">property</span> <span class="n">minutes</span> <span class="n">on</span> <span class="nb">int</span> <span class="o">-&gt;</span> <span class="nc">TimeDelta</span><span class="p">:</span>
-        <span class="k">return</span> <span class="nc">TimeDelta</span><span class="o">.</span><span class="n">minutes</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">supports</span><span class="p">(</span><span class="n">candidate</span><span class="p">:</span> <span class="nc">Version</span><span class="p">,</span> <span class="n">minimum</span><span class="p">:</span> <span class="nc">Version</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">candidate</span> <span class="o">&gt;=</span> <span class="n">minimum</span>
 </code></pre></div>
-<p>Inside each property body, <code>self</code> has the receiver type named after <code>on</code>. The declaration is ordinary Incan code, not a metadata table. The compiler typechecks the body, records that <code>days</code> is available on <code>int</code> when <code>temporal_units</code> is active, and lowers <code>3.days</code> through the checked property body.</p>
-<p>Users activate the vocabulary by importing it:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.datetime.units</span><span class="w"> </span><span class="kn">import</span> <span class="n">temporal_units</span>
+<p><code>Version(major=1, minor=4, patch=0)</code> is greater than <code>Version(major=1, minor=3, patch=9)</code>, because <code>minor</code> breaks the tie after equal <code>major</code> values.</p>
+<h3 id="define-it">Define it<a class="headerlink" href="#define-it" title="Permanent link">&para;</a></h3>
+<p>For a custom order, write one method:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.derives.comparison</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Ordering</span><span class="p">,</span> <span class="n">cmp</span>
 
-<span class="n">deadline</span> <span class="o">=</span> <span class="p">(</span><span class="mf">3.</span><span class="n">days</span> <span class="o">+</span> <span class="mf">12.</span><span class="n">hours</span><span class="p">)</span><span class="o">.</span><span class="n">from_now</span>
-<span class="n">retry_window</span> <span class="o">=</span> <span class="mf">250.</span><span class="n">milliseconds</span>
-</code></pre></div>
-<p>The call-site rule is simple: if the vocabulary is active and the receiver type matches, <code>receiver.property</code> is available as a property read. Without the import, <code>3.days</code> is rejected with a missing-vocabulary diagnostic rather than falling back to runtime lookup.</p>
-<p>Data-size and layout units use the same authoring and call-site model:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">pub</span> <span class="n">vocab</span> <span class="n">byte_units</span><span class="p">:</span>
-    <span class="nb">property</span> <span class="n">kib</span> <span class="n">on</span> <span class="nb">int</span> <span class="o">-&gt;</span> <span class="nc">ByteSize</span><span class="p">:</span>
-        <span class="k">return</span> <span class="nc">ByteSize</span><span class="o">.</span><span class="n">kibibytes</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
+<span class="k">model</span> <span class="nc">Task</span> <span class="k">with</span> <span class="kt">Ord</span><span class="p">:</span>
+    <span class="n">priority</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
 
-    <span class="nb">property</span> <span class="n">mib</span> <span class="n">on</span> <span class="nb">int</span> <span class="o">-&gt;</span> <span class="nc">ByteSize</span><span class="p">:</span>
-        <span class="k">return</span> <span class="nc">ByteSize</span><span class="o">.</span><span class="n">mebibytes</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">__cmp__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="nc">Task</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Ordering</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">cmp</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">priority</span><span class="p">,</span> <span class="n">other</span><span class="o">.</span><span class="n">priority</span><span class="p">)</span><span class="o">.</span><span class="n">then</span><span class="p">(</span><span class="n">cmp</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">other</span><span class="o">.</span><span class="n">name</span><span class="p">))</span>
 </code></pre></div>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.data.units</span><span class="w"> </span><span class="kn">import</span> <span class="n">byte_units</span>
+<p><code>==</code>, <code>!=</code>, <code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code> and <code>&gt;=</code> all come from it, and <code>sorted</code>, <code>SortedDict</code> and <code>PriorityQueue</code> accept <code>Task</code> because it adopts <code>Ord</code>. Tuples compare element by element, so the same order can be one comparison:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">__cmp__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="nc">Task</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Ordering</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">cmp</span><span class="p">((</span><span class="bp">self</span><span class="o">.</span><span class="n">priority</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="p">),</span> <span class="p">(</span><span class="n">other</span><span class="o">.</span><span class="n">priority</span><span class="p">,</span> <span class="n">other</span><span class="o">.</span><span class="n">name</span><span class="p">))</span>
+</code></pre></div>
+<p>For a descending field, swap the arguments or use <code>.reversed()</code>:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">__cmp__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="nc">Task</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Ordering</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">cmp</span><span class="p">(</span><span class="n">other</span><span class="o">.</span><span class="n">priority</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">priority</span><span class="p">)</span><span class="o">.</span><span class="n">then</span><span class="p">(</span><span class="n">cmp</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">other</span><span class="o">.</span><span class="n">name</span><span class="p">))</span>
+</code></pre></div>
+<p>Without <code>with Ord</code>, the operators still work, because a hook is enough for syntax under RFC 068. A bound such as <code>T with Ord</code> needs the adoption, and so does <code>cmp</code>.</p>
+<p><code>compare</code> is an alias of <code>cmp</code>, for code that reads better spelled out:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.derives.comparison</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Ordering</span><span class="p">,</span> <span class="n">compare</span>
 
-<span class="n">upload_limit</span> <span class="o">=</span> <span class="mf">256.</span><span class="n">mib</span>
-<span class="n">chunk_size</span> <span class="o">=</span> <span class="mf">64.</span><span class="n">kib</span>
+<span class="k">match</span> <span class="n">compare</span><span class="p">(</span><span class="n">left</span><span class="p">,</span> <span class="n">right</span><span class="p">):</span>
+    <span class="nc">Ordering</span><span class="o">.</span><span class="nc">Less</span> <span class="o">=&gt;</span> <span class="n">move_left</span><span class="p">()</span>
+    <span class="nc">Ordering</span><span class="o">.</span><span class="nc">Equal</span> <span class="o">=&gt;</span> <span class="n">stop</span><span class="p">()</span>
+    <span class="nc">Ordering</span><span class="o">.</span><span class="nc">Greater</span> <span class="o">=&gt;</span> <span class="n">move_right</span><span class="p">()</span>
 </code></pre></div>
-<p>Finance and analytics examples show why decimal receivers matter:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">pub</span> <span class="n">vocab</span> <span class="n">rate_units</span><span class="p">:</span>
-    <span class="nb">property</span> <span class="n">percent</span> <span class="n">on</span> <span class="n">decimal</span> <span class="o">-&gt;</span> <span class="nc">Rate</span><span class="p">:</span>
-        <span class="k">return</span> <span class="nc">Rate</span><span class="o">.</span><span class="n">percent</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
-
-    <span class="nb">property</span> <span class="n">bps</span> <span class="n">on</span> <span class="nb">int</span> <span class="o">-&gt;</span> <span class="nc">Rate</span><span class="p">:</span>
-        <span class="k">return</span> <span class="nc">Rate</span><span class="o">.</span><span class="n">basis_points</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
+<h3 id="range-checks-and-clamping">Range checks and clamping<a class="headerlink" href="#range-checks-and-clamping" title="Permanent link">&para;</a></h3>
+<p>A range check is a chained comparison under RFC 136, with nothing new to learn. Inverted bounds are simply false:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">if</span> <span class="n">minimum</span> <span class="o">&lt;=</span> <span class="n">version</span> <span class="o">&lt;=</span> <span class="n">maximum</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;supported&quot;</span><span class="p">)</span>
 </code></pre></div>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.finance.units</span><span class="w"> </span><span class="kn">import</span> <span class="n">rate_units</span>
-
-<span class="n">fee_rate</span> <span class="o">=</span> <span class="mf">2.5</span><span class="o">.</span><span class="n">percent</span>
-<span class="n">spread</span> <span class="o">=</span> <span class="mf">120.</span><span class="n">bps</span>
+<p><code>clamp</code> limits a value to a range:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">volume</span> <span class="o">=</span> <span class="n">requested</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">100</span><span class="p">)</span>
 </code></pre></div>
-<p><code>FrozenStr</code> lets vocabularies define compile-time string surfaces without admitting arbitrary runtime strings:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">pub</span> <span class="n">vocab</span> <span class="n">route_literals</span><span class="p">:</span>
-    <span class="nb">property</span> <span class="n">route</span> <span class="n">on</span> <span class="kt">FrozenStr</span> <span class="o">-&gt;</span> <span class="nc">RoutePattern</span><span class="p">:</span>
-        <span class="k">return</span> <span class="nc">RoutePattern</span><span class="o">.</span><span class="n">parse_const</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
-</code></pre></div>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.web.routes</span><span class="w"> </span><span class="kn">import</span> <span class="n">route_literals</span>
-
-<span class="n">users</span> <span class="o">=</span> <span class="s2">&quot;/users/</span><span class="si">{id}</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">route</span>
-
-<span class="k">const</span> <span class="nc">HEALTH</span><span class="p">:</span> <span class="kt">FrozenStr</span> <span class="o">=</span> <span class="s2">&quot;/health&quot;</span>
-<span class="n">health</span> <span class="o">=</span> <span class="nc">HEALTH</span><span class="o">.</span><span class="n">route</span>
-
-<span class="n">path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">read_path</span><span class="p">()</span>
-<span class="n">dynamic</span> <span class="o">=</span> <span class="n">path</span><span class="o">.</span><span class="n">route</span>  <span class="c1"># error: `.route` requires FrozenStr, not runtime str</span>
-</code></pre></div>
-<p>This spelling reuses the existing <code>FrozenStr</code> concept instead of inventing a special <code>const str</code> receiver syntax. A literal or const-derived string may satisfy a <code>FrozenStr</code> receiver; a runtime <code>str</code> must use an explicit parser such as <code>RoutePattern.parse(path)</code> or another library-owned fallible API.</p>
-<p>Custom nominal receivers are valid when the property belongs to an imported vocabulary layer rather than the receiver's core type:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">pub</span> <span class="n">vocab</span> <span class="n">admin_ui</span><span class="p">:</span>
-    <span class="nb">property</span> <span class="n">badge</span> <span class="n">on</span> <span class="nc">OrderStatus</span> <span class="o">-&gt;</span> <span class="nc">Badge</span><span class="p">:</span>
-        <span class="k">match</span> <span class="bp">self</span><span class="p">:</span>
-            <span class="nc">OrderStatus</span><span class="o">.</span><span class="nc">Pending</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="nc">Badge</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;Pending&quot;</span><span class="p">)</span>
-            <span class="nc">OrderStatus</span><span class="o">.</span><span class="nc">Paid</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="nc">Badge</span><span class="o">.</span><span class="n">success</span><span class="p">(</span><span class="s2">&quot;Paid&quot;</span><span class="p">)</span>
-            <span class="nc">OrderStatus</span><span class="o">.</span><span class="nc">Cancelled</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="nc">Badge</span><span class="o">.</span><span class="n">muted</span><span class="p">(</span><span class="s2">&quot;Cancelled&quot;</span><span class="p">)</span>
-</code></pre></div>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">app.admin.ui</span><span class="w"> </span><span class="kn">import</span> <span class="n">admin_ui</span>
-
-<span class="n">badge</span> <span class="o">=</span> <span class="n">order</span><span class="o">.</span><span class="n">status</span><span class="o">.</span><span class="n">badge</span>
-</code></pre></div>
-<p>This is appropriate when <code>badge</code> is an admin presentation concern. If <code>OrderStatus.badge</code> is core domain behavior, the property should live on <code>OrderStatus</code> itself instead of being injected by a vocabulary.</p>
-<p>The syntax can express bad APIs too. The RFC should make that visible rather than pretending syntax solves taste:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">pub</span> <span class="n">vocab</span> <span class="n">suspicious</span><span class="p">:</span>
-    <span class="nb">property</span> <span class="n">users</span> <span class="n">on</span> <span class="nb">int</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nc">User</span><span class="p">]:</span>
-        <span class="k">return</span> <span class="n">db</span><span class="o">.</span><span class="n">users</span><span class="o">.</span><span class="n">limit</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
-
-    <span class="nb">property</span> <span class="n">json</span> <span class="n">on</span> <span class="nb">str</span> <span class="o">-&gt;</span> <span class="kt">Json</span><span class="p">:</span>
-        <span class="k">return</span> <span class="kt">Json</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
-</code></pre></div>
-<p>Those examples hide I/O, fallibility, or expensive runtime parsing behind property reads. They should be rejected by diagnostics when the compiler can prove the effect boundary, or strongly discouraged by docs and lints when the library surface is technically expressible but misleading.</p>
-<h3 id="calling-syntax-summary">Calling syntax summary<a class="headerlink" href="#calling-syntax-summary" title="Permanent link">&para;</a></h3>
-<p>Authoring syntax:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">pub</span> <span class="n">vocab</span> <span class="o">&lt;</span><span class="n">name</span><span class="o">&gt;</span><span class="p">:</span>
-    <span class="nb">property</span> <span class="o">&lt;</span><span class="n">property_name</span><span class="o">&gt;</span> <span class="n">on</span> <span class="o">&lt;</span><span class="nc">ReceiverType</span><span class="o">&gt;</span> <span class="o">-&gt;</span> <span class="o">&lt;</span><span class="nc">ResultType</span><span class="o">&gt;</span><span class="p">:</span>
-        <span class="o">&lt;</span><span class="n">body</span> <span class="n">using</span> <span class="bp">self</span><span class="o">&gt;</span>
-</code></pre></div>
-<p>Calling syntax:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">some.module</span><span class="w"> </span><span class="kn">import</span> <span class="o">&lt;</span><span class="n">name</span><span class="o">&gt;</span>
-
-<span class="n">value</span> <span class="o">=</span> <span class="n">receiver</span><span class="o">.&lt;</span><span class="n">property_name</span><span class="o">&gt;</span>
+<p>It raises the value to the low bound and then caps it at the high bound, so it cannot fail and needs no <code>?</code>. Inverted bounds return the high bound, and a lint flags inverted literals.</p>
+<h3 id="floats">Floats<a class="headerlink" href="#floats" title="Permanent link">&para;</a></h3>
+<p><code>float</code> is not <code>Ord</code>, because NaN has no place in an ordinary comparison. <code>total_cmp</code> uses IEEE 754's total order, in which every value has a place, so a model with a float field can still define an order:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">__cmp__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="nc">Candidate</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Ordering</span><span class="p">:</span>
+    <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">score</span><span class="o">.</span><span class="n">total_cmp</span><span class="p">(</span><span class="n">other</span><span class="o">.</span><span class="n">score</span><span class="p">)</span><span class="o">.</span><span class="n">then</span><span class="p">(</span><span class="n">cmp</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">other</span><span class="o">.</span><span class="n">name</span><span class="p">))</span>
 </code></pre></div>
 <h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
-<h3 id="vocab-declaration">Vocab declaration<a class="headerlink" href="#vocab-declaration" title="Permanent link">&para;</a></h3>
-<p>A <code>vocab</code> declaration defines an importable vocabulary surface. A <code>pub vocab</code> declaration exports that vocabulary from the module like other public declarations. Importing the vocabulary activates its extension-property facts according to ordinary import and reexport rules.</p>
-<p>The declaration form is:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">pub</span> <span class="n">vocab</span> <span class="nc">Name</span><span class="p">:</span>
-    <span class="nb">property</span> <span class="n">member</span> <span class="n">on</span> <span class="nc">ReceiverType</span> <span class="o">-&gt;</span> <span class="nc">ResultType</span><span class="p">:</span>
-        <span class="n">body</span>
-</code></pre></div>
-<p>The <code>pub</code> modifier follows the ordinary declaration visibility model. A private <code>vocab</code> may be used internally by the declaring module or package according to the same visibility rules as other declarations.</p>
-<h3 id="extension-property-declaration">Extension-property declaration<a class="headerlink" href="#extension-property-declaration" title="Permanent link">&para;</a></h3>
-<p>An extension-property declaration is valid inside a <code>vocab</code> body:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="nb">property</span> <span class="n">name</span> <span class="n">on</span> <span class="nc">ReceiverType</span> <span class="o">-&gt;</span> <span class="nc">ResultType</span><span class="p">:</span>
-    <span class="n">body</span>
-</code></pre></div>
-<p><code>name</code> is the property name exposed at use sites. <code>ReceiverType</code> is the source type that may receive the property when the vocabulary is active. <code>ResultType</code> is the property result type. The body is an ordinary property body, except that <code>self</code> is bound to the receiver value rather than to an enclosing class or model instance.</p>
-<p>The compiler must typecheck the body under <code>self: ReceiverType</code> and against the declared result type. The descriptor fact must be derived from the checked declaration. The lowering target is the property body or an equivalent generated helper with the same checked semantics. Authors must not need to repeat fields such as <code>constructor =</code>, <code>eval =</code>, or <code>const =</code> in a parallel metadata table.</p>
-<p>If future syntax allows author-provided purity, const, or runtime-anchor annotations, the compiler must verify those annotations against the body or against trusted lower-level metadata. An unchecked author assertion that a property is pure or const-evaluable does not satisfy this RFC.</p>
-<h3 id="activation-and-scope">Activation and scope<a class="headerlink" href="#activation-and-scope" title="Permanent link">&para;</a></h3>
-<p>An extension property is active only when its owning vocabulary is imported, reexported, or otherwise activated by a scoped-vocabulary mechanism accepted by the language. Activation must be visible in source or in checked package metadata. A dependency being installed or loaded must not alter member lookup by itself.</p>
-<p>When a module imports a vocabulary, that vocabulary's extension properties are visible in the covered scope. Public reexports may make a vocabulary available to downstream consumers if the reexported API surface explicitly includes it.</p>
-<p>Tooling must be able to report which vocabularies are active for a file, which extension properties they contribute, and where each property was declared.</p>
-<h3 id="receiver-eligibility">Receiver eligibility<a class="headerlink" href="#receiver-eligibility" title="Permanent link">&para;</a></h3>
-<p>The receiver expression for an extension property must typecheck as compatible with the declaration's <code>ReceiverType</code>. This RFC's examples include <code>int</code>, <code>decimal</code>, <code>FrozenStr</code>, and custom nominal types such as <code>OrderStatus</code> and <code>UserId</code>.</p>
-<p><code>FrozenStr</code> is the preferred spelling for const-friendly string receivers. A string literal or const-derived string may satisfy a <code>FrozenStr</code> receiver when the active extension property supplies that context. A runtime <code>str</code> must not satisfy <code>FrozenStr</code> merely because its value happens to be immutable at runtime.</p>
-<p>The north-star design may admit richer receiver predicates such as numeric families, trait-bounded receivers, or literal-only refinements, but those predicates must remain statically decidable, inspectable, and coherent. This RFC does not require Rust-shaped <code>impl</code> syntax or arbitrary foreign-for-foreign implementation rules to express receiver eligibility.</p>
-<h3 id="lookup-and-ambiguity">Lookup and ambiguity<a class="headerlink" href="#lookup-and-ambiguity" title="Permanent link">&para;</a></h3>
-<p>For a property read <code>receiver.name</code>, the checker must first typecheck the receiver. If ordinary owned member lookup on the receiver type finds a field, method, computed property, or trait member named <code>name</code>, ordinary member rules apply.</p>
-<p>If ordinary member lookup does not resolve the read, the checker may consider active extension-property facts whose receiver type accepts the receiver expression and whose property name is <code>name</code>. If exactly one fact applies, the read has that fact's result type and lowers through that fact's checked body.</p>
-<p>If more than one active fact applies and the language has no deterministic specificity rule for the pair, the checker must report an ambiguity diagnostic that names the competing vocabularies. The checker must not choose by import order, dependency order, or runtime load order.</p>
-<p>An extension property must not silently override an owned field, owned method, owned computed property, or trait member. This preserves the no-monkey-patching guarantee and keeps primary behavior attached to the type that owns it.</p>
-<h3 id="descriptor-facts">Descriptor facts<a class="headerlink" href="#descriptor-facts" title="Permanent link">&para;</a></h3>
-<p>Each checked extension-property declaration produces a descriptor fact containing at least:</p>
-<ul>
-<li>the stable vocabulary identity;</li>
-<li>the source-level property name;</li>
-<li>the receiver type or receiver predicate;</li>
-<li>the result type;</li>
-<li>the checked lowering target;</li>
-<li>source spans for the declaration and property name;</li>
-<li>package and module provenance;</li>
-<li>evaluation classification, such as pure construction, runtime anchor, or effectful operation when the compiler can classify it;</li>
-<li>const-evaluation eligibility when the body and dependencies permit const evaluation;</li>
-<li>optional semantic family membership for unit composition or aggregate properties;</li>
-<li>conflict and overlap metadata sufficient for deterministic lookup and diagnostics.</li>
-</ul>
-<p>The descriptor is a compiler-facing artifact. It may be serialized into package metadata, surfaced in LSP hover/completion, used by docs generation, and consumed by downstream builds. Its meaning is determined by checked Incan declarations, not by generated Rust names or runtime reflection.</p>
-<h3 id="composition-and-aggregate-properties">Composition and aggregate properties<a class="headerlink" href="#composition-and-aggregate-properties" title="Permanent link">&para;</a></h3>
-<p>Extension properties return ordinary typed values. Ordinary operators, methods, and owned properties should be used when the returned value can naturally own the next operation:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">deadline</span> <span class="o">=</span> <span class="p">(</span><span class="mf">3.</span><span class="n">days</span> <span class="o">+</span> <span class="mf">12.</span><span class="n">hours</span><span class="p">)</span><span class="o">.</span><span class="n">from_now</span>
-</code></pre></div>
-<p>In that example, <code>3.days</code> and <code>12.hours</code> produce <code>TimeDelta</code>, <code>+</code> combines <code>TimeDelta</code>, and <code>from_now</code> can be an owned property or method on <code>TimeDelta</code>.</p>
-<p>Some vocabularies may still need aggregate properties over checked compositions, such as a tuple whose elements all belong to a semantic family:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">deadline</span> <span class="o">=</span> <span class="p">(</span><span class="mf">3.</span><span class="n">days</span><span class="p">,</span> <span class="mf">12.</span><span class="n">hours</span><span class="p">)</span><span class="o">.</span><span class="n">from_now</span>
-</code></pre></div>
-<p>If aggregate extension properties are admitted, their descriptors must state the accepted aggregate receiver shape and family contract. The compiler must typecheck each component, reject incompatible families, and lower through an ordinary checked helper. The compiler must not infer tuple aggregation by concatenating source text or reading property names.</p>
-<h3 id="runtime-anchors-and-effects">Runtime anchors and effects<a class="headerlink" href="#runtime-anchors-and-effects" title="Permanent link">&para;</a></h3>
-<p>Property syntax should remain value-like. Pure unit construction such as <code>3.days</code>, <code>256.mib</code>, and <code>2.5.percent</code> fits naturally. Runtime-anchored properties such as <code>.from_now</code> and <code>.ago</code> require more care because they consult a clock or other ambient runtime capability.</p>
-<p>A runtime-anchored property must not be const-evaluable. It must be visible to inspection and diagnostics as runtime capability use. Libraries that provide runtime-anchored convenience properties should also provide explicit-context spellings suitable for tests and governed runtimes, such as <code>duration.after(clock.now())</code>, <code>duration.before(anchor)</code>, or another library-owned equivalent.</p>
-<p>Effectful, fallible, I/O-bound, or expensive operations should normally be methods or functions rather than properties. If the language later admits effectful extension properties, the compiler and tooling must make the effect boundary visible rather than allowing Ruby-style surprise behavior.</p>
-<h3 id="const-contexts">Const contexts<a class="headerlink" href="#const-contexts" title="Permanent link">&para;</a></h3>
-<p>A pure extension property may be valid in a <code>const</code> initializer only when its body is const-evaluable and every required conversion is permitted in const context. A runtime-anchored or effectful property must be rejected in const and compile-time-only contexts.</p>
-<h3 id="diagnostics">Diagnostics<a class="headerlink" href="#diagnostics" title="Permanent link">&para;</a></h3>
-<p>The compiler must diagnose:</p>
-<ul>
-<li>missing vocabulary activation;</li>
-<li>unknown extension property for the receiver type;</li>
-<li>ambiguous active vocabularies;</li>
-<li>receiver type mismatch, including runtime <code>str</code> where <code>FrozenStr</code> is required;</li>
-<li>invalid runtime-anchored or effectful property use in const contexts;</li>
-<li>aggregate property use on incompatible receiver families;</li>
-<li>attempted conflicts with owned members that the lookup model cannot resolve safely.</li>
-</ul>
-<p>Diagnostics should name the property, receiver type, owning vocabulary when known, and suggested import when a known vocabulary is missing. Diagnostics should avoid suggesting class reopening, monkey patching, or load-order fixes.</p>
-<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
-<h3 id="syntax">Syntax<a class="headerlink" href="#syntax" title="Permanent link">&para;</a></h3>
-<p>This RFC adds a declaration form, not a new use-site expression form:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">pub</span> <span class="n">vocab</span> <span class="n">temporal_units</span><span class="p">:</span>
-    <span class="nb">property</span> <span class="n">days</span> <span class="n">on</span> <span class="nb">int</span> <span class="o">-&gt;</span> <span class="nc">TimeDelta</span><span class="p">:</span>
-        <span class="k">return</span> <span class="nc">TimeDelta</span><span class="o">.</span><span class="n">days</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
-</code></pre></div>
-<p>Use sites continue to use ordinary property access:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="mf">3.</span><span class="n">days</span>
-<span class="mf">256.</span><span class="n">mib</span>
-<span class="s2">&quot;/users/</span><span class="si">{id}</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">route</span>
-<span class="n">order</span><span class="o">.</span><span class="n">status</span><span class="o">.</span><span class="n">badge</span>
-</code></pre></div>
-<p>The keyword <code>vocab</code> should align with the existing RFC 027 vocabulary direction. This RFC does not require <code>pub vocab</code> to replace every Rust companion-crate registration surface, but the spelling should be chosen so future Incan-authored vocabulary metadata can grow in the same direction.</p>
-<h3 id="relationship-to-computed-properties">Relationship to computed properties<a class="headerlink" href="#relationship-to-computed-properties" title="Permanent link">&para;</a></h3>
-<p>RFC 046 computed properties define field-like member reads on owned types. Extension properties reuse the same property-read mental model but change ownership. A computed property declared in a model, class, enum, or concrete trait implementation belongs to that receiver type. An extension property declared in a <code>vocab</code> belongs to the vocabulary and is visible only when imported.</p>
-<p>The <code>on ReceiverType</code> clause is the explicit source of <code>self</code> for an extension property. This avoids the ambiguity of a surrounding <code>for int:</code> block and keeps the receiver visible on every exported property.</p>
-<h3 id="relationship-to-rfc-027-vocab-surfaces">Relationship to RFC 027 vocab surfaces<a class="headerlink" href="#relationship-to-rfc-027-vocab-surfaces" title="Permanent link">&para;</a></h3>
-<p>RFC 027 defines the current Rust-facing registration and desugarer architecture for richer vocabulary surfaces. RFC 108 should not conflict with that architecture. A <code>pub vocab</code> block can be understood as an Incan-authored producer of checked vocabulary metadata. The extension-property subset can coexist with Rust companion crates, scoped symbols, scoped operators, block declarations, and external WASM desugarers.</p>
-<p>Future work may allow more RFC 027-style metadata and desugar hooks to be authored in Incan. This RFC deliberately avoids specifying that larger rewrite. The compatibility requirement is that <code>pub vocab</code> extension properties produce metadata that can live beside existing vocab metadata rather than forming a parallel system.</p>
-<h3 id="relationship-to-rust-shaped-extension-behavior">Relationship to Rust-shaped extension behavior<a class="headerlink" href="#relationship-to-rust-shaped-extension-behavior" title="Permanent link">&para;</a></h3>
-<p>Rust extension traits are the safety baseline for this feature, but not the exact source shape. In Rust, a trait import can make <code>.days()</code> visible for an integer receiver without changing the integer type globally. Incan wants the same import-scoped capability model, while allowing <code>.days</code> when the operation is value-like and nullary.</p>
-<p>The source syntax must not become Rust <code>impl Trait for Type</code>. Incan's user-facing model is vocabulary import plus property declaration. The backend may lower through Rust traits, helper functions, generated methods, or other static artifacts as long as the checked source contract is preserved.</p>
-<h3 id="relationship-to-type-ownership">Relationship to type ownership<a class="headerlink" href="#relationship-to-type-ownership" title="Permanent link">&para;</a></h3>
-<p>Extension properties are best used for vocabulary overlays, not primary behavior. If a project owns <code>OrderStatus</code> and <code>badge</code> is domain behavior, <code>OrderStatus</code> should declare an owned property. If <code>badge</code> belongs to an admin UI package, an imported <code>admin_ui</code> vocabulary may define <code>property badge on OrderStatus -&gt; Badge:</code>.</p>
-<p>This guidance matters because extension properties can otherwise scatter important behavior across imports. The language provides scoped expressiveness; API design still needs ownership discipline.</p>
-<h3 id="standard-library-examples">Standard library examples<a class="headerlink" href="#standard-library-examples" title="Permanent link">&para;</a></h3>
-<p>The standard-library-looking modules in this RFC are examples and pressure tests. They show that the mechanism should be able to support temporal, data-size, layout, finance, route, UI, scientific, or percentage vocabularies without new compiler special cases for each family. They are not delivery commitments. Each standard vocabulary, if pursued, should still have its own RFC, issue, or stdlib design note defining its value types, semantics, overflow behavior, const behavior, display, parsing, and runtime capabilities.</p>
-<h3 id="compatibility-and-migration">Compatibility and migration<a class="headerlink" href="#compatibility-and-migration" title="Permanent link">&para;</a></h3>
-<p>This RFC is additive. Existing code that does not import a vocabulary is unaffected. Constructor-style APIs such as <code>TimeDelta.days(3)</code> and explicit parsers such as <code>RoutePattern.parse(path)</code> remain valid and should continue to be documented where they are clearer, fallible, dynamic, or not value-like.</p>
-<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
+<h3 id="ordering"><code>Ordering</code><a class="headerlink" href="#ordering" title="Permanent link">&para;</a></h3>
 <ol>
-<li><strong>Constructor functions only.</strong> This preserves the current explicit style but leaves common scalar units and const string surfaces noisier than necessary and encourages raw values in source.</li>
-<li><strong>Global primitive extension methods.</strong> This gives the nicest use-site syntax but reintroduces monkey-patching hazards and makes receiver behavior depend on dependency graph accidents.</li>
-<li><strong>Rust-shaped <code>impl</code> syntax.</strong> Clear to Rust readers, but it creates a second source-level conformance grammar that Incan has already avoided elsewhere. <code>pub vocab</code> keeps the feature Incan-shaped while preserving Rust's safety properties.</li>
-<li><strong>A metadata-only DSL such as <code>unit_vocab</code> with <code>constructor = ...</code>.</strong> Rejected as the main authoring model because it asks authors to maintain a parallel metadata table and provides places to lie about purity, const behavior, and lowering.</li>
-<li><strong>String-based units such as <code>unit(3, "days")</code>.</strong> Easy to implement but loses checked names, completion, docs, refactoring, and source-level type evidence.</li>
-<li><strong>Only support numeric unit receivers.</strong> Too narrow. Test-driving the syntax shows <code>FrozenStr</code> and custom nominal overlays are legitimate import-scoped extension-property use cases.</li>
-<li><strong>Rewrite all vocab authoring in Incan now.</strong> Directionally attractive, but too broad for this RFC. RFC 108 should align with that future without owning the desugarer/runtime rewrite.</li>
+<li><code>std.derives.comparison</code> must provide <code>enum Ordering</code> with <code>Less</code>, <code>Equal</code> and <code>Greater</code> in that order, adopting <code>Eq</code>, <code>Ord</code>, <code>Hash</code>, <code>Copy</code>, <code>Clone</code> and <code>Debug</code>.</li>
+<li><code>Ordering</code> must provide <code>reversed(self) -&gt; Ordering</code>, and <code>then(self, other: Ordering) -&gt; Ordering</code>, which returns <code>self</code> unless it is <code>Equal</code>, and then returns <code>other</code>. <code>other</code> is evaluated before the call.</li>
 </ol>
-<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
+<h3 id="the-hook">The hook<a class="headerlink" href="#the-hook" title="Permanent link">&para;</a></h3>
+<ol>
+<li><code>__cmp__(self, other: Self) -&gt; Ordering</code> must define <code>==</code>, <code>!=</code>, <code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code> and <code>&gt;=</code> on a type that defines it, under RFC 068's structural hook resolution. Evaluating one of those operators must call it once.</li>
+<li>A type defining <code>__cmp__</code> must not also define <code>__eq__</code>, <code>__ne__</code>, <code>__lt__</code>, <code>__le__</code>, <code>__gt__</code> or <code>__ge__</code>, or derive <code>Eq</code>, <code>PartialEq</code>, <code>Ord</code> or <code>PartialOrd</code>. The diagnostic must name both.</li>
+<li>A <code>__cmp__</code> with another signature must be refused with a diagnostic naming the required one. An ordinary method named <code>compare</code> must have no effect on comparison.</li>
+<li><code>__cmp__</code> must define a total order: reflexive, antisymmetric and transitive. The compiler does not prove this, and documentation and the derive must treat it as the contract.</li>
+</ol>
+<h3 id="ord"><code>Ord</code><a class="headerlink" href="#ord" title="Permanent link">&para;</a></h3>
+<ol>
+<li><code>Ord</code> must require <code>__cmp__</code> and imply <code>Eq</code>, with its comparison operators provided from the hook. A type adopting <code>Ord</code> and defining <code>__lt__</code> instead of <code>__cmp__</code> must be refused, with a diagnostic pointing at <code>__cmp__</code>.</li>
+<li><code>Ord</code> must provide <code>clamp(self, low: Self, high: Self) -&gt; Self</code>, which returns <code>low</code> if <code>self</code> is below it, then <code>high</code> if the result is above it. It must not raise, and inverted bounds must return <code>high</code>.</li>
+<li><code>@derive(Ord)</code> must generate <code>__cmp__</code>, comparing fields in declaration order and returning the first result that is not <code>Equal</code>. For an enum, it must compare variants in declaration order and then payloads. A field or payload whose type is not <code>Ord</code> must be refused, naming it.</li>
+<li>Ordered built-in types must provide <code>__cmp__</code>, with results agreeing with their operators. A tuple must be <code>Ord</code> when its element types are, comparing element by element.</li>
+</ol>
+<h3 id="partialord"><code>PartialOrd</code><a class="headerlink" href="#partialord" title="Permanent link">&para;</a></h3>
+<ol>
+<li><code>PartialOrd</code> must be unchanged: <code>__lt__</code>, <code>__le__</code>, <code>__gt__</code> and <code>__ge__</code> remain its hooks, and a type defining only <code>__lt__</code> keeps its operators. <code>float</code> and <code>f32</code> stay <code>PartialOrd</code> and not <code>Ord</code>.</li>
+<li><code>float</code> and <code>f32</code> must provide <code>total_cmp(self, other: Self) -&gt; Ordering</code> using IEEE 754's totalOrder predicate.</li>
+</ol>
+<h3 id="cmp-and-compare"><code>cmp</code> and <code>compare</code><a class="headerlink" href="#cmp-and-compare" title="Permanent link">&para;</a></h3>
+<ol>
+<li><code>std.derives.comparison</code> must provide <code>pub def cmp[T with Ord](left: T, right: T) -&gt; Ordering</code>, returning <code>left.__cmp__(right)</code>, and <code>pub compare = alias cmp</code> under RFC 083. Neither must be added to the prelude.</li>
+</ol>
+<h3 id="diagnostics-and-lints">Diagnostics and lints<a class="headerlink" href="#diagnostics-and-lints" title="Permanent link">&para;</a></h3>
+<ol>
+<li>RFC 127's catalog must include a lint for a <code>clamp</code> whose literal bounds are inverted.</li>
+<li>Hover must show the generated <code>__cmp__</code> of a derive, and the operators a hook provides.</li>
+</ol>
+<h3 id="conformance-workloads">Conformance workloads<a class="headerlink" href="#conformance-workloads" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Workload</th>
+<th>Required evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>One source</td>
+<td>Every operator on a type with <code>__cmp__</code> agrees with it, and calls it once.</td>
+</tr>
+<tr>
+<td>Overlap</td>
+<td><code>__cmp__</code> with <code>__lt__</code>, <code>__eq__</code> or a comparison derive is refused.</td>
+</tr>
+<tr>
+<td>Adoption</td>
+<td>A hook without <code>with Ord</code> gives operators but fails a <code>T with Ord</code> bound, and <code>with Ord</code> satisfies it.</td>
+</tr>
+<tr>
+<td>Derive</td>
+<td>Fields compare in declaration order and enums by variant then payload, and a field that is not <code>Ord</code> is refused.</td>
+</tr>
+<tr>
+<td>Collections</td>
+<td><code>sorted</code>, <code>SortedDict</code>, <code>SortedSet</code> and <code>PriorityQueue</code> order by <code>__cmp__</code>.</td>
+</tr>
+<tr>
+<td>Clamp</td>
+<td>Values below, inside and above the range, and inverted bounds, behave as specified.</td>
+</tr>
+<tr>
+<td>Floats</td>
+<td><code>total_cmp</code> orders NaN, infinities and signed zeros by IEEE 754 totalOrder.</td>
+</tr>
+<tr>
+<td>Partial orders</td>
+<td>A type with only <code>__lt__</code> keeps its operators and does not satisfy <code>Ord</code>.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="compatibility">Compatibility<a class="headerlink" href="#compatibility" title="Permanent link">&para;</a></h3>
+<p>A type that adopts <code>Ord</code> by hand with <code>__eq__</code> and <code>__lt__</code> must move to <code>__cmp__</code>, and the diagnostic says how. <code>@derive(Ord)</code>, <code>T with Ord</code> and types with only <code>__lt__</code> are unaffected. In this repository that means a few datetime types in the standard library and some compiler fixtures.</p>
+<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
+<h3 id="why-no-comparable">Why no <code>Comparable</code><a class="headerlink" href="#why-no-comparable" title="Permanent link">&para;</a></h3>
+<p>A second trait would need rules for how it relates to <code>Ord</code>, what happens when they disagree, and how to avoid two ordering pathways, and every collection would have to choose one. <code>Comparable</code> is a friendlier word, but putting the method on <code>Ord</code> gives one name to one thing. The pattern then matches the rest of the language: a capability, a hook and a way to use it, as <code>Eq</code>, <code>__eq__</code> and <code>==</code> are.</p>
+<h3 id="why-cmp-is-imported">Why <code>cmp</code> is imported<a class="headerlink" href="#why-cmp-is-imported" title="Permanent link">&para;</a></h3>
+<p>An ordering is defined rarely, so the names are not worth a place in every module. <code>Ord</code> is already in the prelude, and an explicit import of <code>Ordering</code> and <code>cmp</code> keeps the prelude small and keeps their origin at the top of the file.</p>
+<h3 id="why-clamp-cannot-fail">Why <code>clamp</code> cannot fail<a class="headerlink" href="#why-clamp-cannot-fail" title="Permanent link">&para;</a></h3>
+<p>A fallible <code>clamp</code> would put <code>?</code> on a call whose only failure is a programming mistake, and a raising one would hide a panic in a small helper. Defining the result keeps it simple, and it is the same answer two nested comparisons would give. The lint catches the mistake where it can be seen.</p>
+<h3 id="prior-art">Prior art<a class="headerlink" href="#prior-art" title="Permanent link">&para;</a></h3>
+<p>Rust's <code>Ord::cmp</code> returns <code>Ordering</code>, with <code>then</code> and <code>reverse</code>, and its <code>clamp</code> panics on inverted bounds. Python 2's <code>__cmp__</code> returned an integer, and Python 3 removed it in favor of rich comparisons and <code>functools.total_ordering</code>. Ruby's <code>Comparable</code> builds its operators from <code>&lt;=&gt;</code>, which is the ergonomic idea here without the integer. Java and Kotlin use <code>Comparable</code> with an integer <code>compareTo</code>, and Swift's <code>Comparable</code> is built on <code>&lt;</code>. C++ <code>operator&lt;=&gt;</code> is three-way with distinct strong and partial orderings, the same split as <code>Ord</code> and <code>PartialOrd</code>.</p>
+<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Member lookup becomes more complex because active imports can contribute extension-property facts.</li>
-<li>API authors may overuse property syntax for behavior that should remain an explicit function or method.</li>
-<li>Import-scoped behavior can make source less obvious if tooling does not surface active vocabularies clearly.</li>
-<li>Custom receiver overlays can scatter behavior if package authors ignore type-ownership boundaries.</li>
-<li>Runtime-anchored properties such as <code>.from_now</code> are convenient but require careful docs and diagnostics so they do not hide clock or policy dependencies.</li>
-<li>The <code>pub vocab</code> authoring surface overlaps conceptually with RFC 027, so the metadata model must stay unified rather than creating a second vocabulary system.</li>
+<li><strong>A new <code>Comparable</code> trait:</strong> see "Why no <code>Comparable</code>".</li>
+<li><strong>Renaming <code>Ord</code> to <code>Comparable</code>:</strong> a friendlier word, at the cost of a rename across the language with no change in meaning.</li>
+<li><strong>A plain <code>compare</code> method as the hook:</strong> every other operator hook in Incan is a dunder.</li>
+<li><strong><code>__compare__</code>:</strong> clearer on first read, but stands out among <code>__eq__</code> and <code>__lt__</code>, and Python readers know <code>__cmp__</code>.</li>
+<li><strong>Integer results:</strong> admit invalid values and are what Python 3 removed.</li>
+<li><strong><code>cmp</code> in the prelude:</strong> a name every module gets for a rare need.</li>
+<li><strong>A <code>between</code> helper:</strong> RFC 136's chained comparison already says it.</li>
+<li><strong>A fallible <code>clamp</code>:</strong> see "Why <code>clamp</code> cannot fail".</li>
+<li><strong><code>Comparable[T]</code> across types:</strong> breaks the total-order laws, and converting first is clearer.</li>
+<li><strong>A <code>PartialComparable</code> trait:</strong> <code>PartialOrd</code> already exists.</li>
 </ul>
-<h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
-<p>This section is non-normative. A practical implementation can model <code>pub vocab</code> declarations as producers of checked vocabulary metadata. During symbol collection or typechecking, each <code>property name on ReceiverType -&gt; ResultType:</code> declaration is checked as a property body with an explicit receiver binding. The resulting extension-property facts are attached to the vocabulary symbol and serialized with package metadata. Member lookup asks ordinary owned members first, then active extension-property facts, and lowering emits a static call or generated helper for the selected property body.</p>
-<p>Existing RFC 027 metadata and desugarer artifacts can remain valid. <code>pub vocab</code> should produce compatible metadata records for the extension-property subset, allowing future Incan-authored vocab declarations to grow beside current Rust companion crates.</p>
+<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
+<p>Hand-written <code>__lt__</code> on an <code>Ord</code> type stops compiling, which is a migration even though it is small. <code>Ord</code> is a terser word than <code>Comparable</code>, and newcomers from Java or Swift will look for the other. <code>then</code> evaluates its argument even when it is not needed, so an expensive tie-break needs an <code>if</code>. Structural comparison depends on field order, so reordering fields can change an order.</p>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Parser / AST</strong>: parse <code>vocab</code> declarations and <code>property name on ReceiverType -&gt; ResultType:</code> inside vocab bodies while preserving spans for the vocabulary name, property name, receiver type, and result type.</li>
-<li><strong>Typechecker / Symbol resolution</strong>: bind <code>self</code> to the declared receiver type inside extension-property bodies, check result types, derive extension-property facts, activate imported vocabularies, and resolve property reads through owned members before active extension facts.</li>
-<li><strong>IR Lowering</strong>: lower selected extension-property reads to checked property bodies, generated helpers, or equivalent static calls while preserving vocabulary provenance and evaluation order.</li>
-<li><strong>Emission</strong>: emit static code for extension-property bodies without runtime member lookup, string dispatch, or monkey patching.</li>
-<li><strong>Stdlib / Runtime (<code>incan_stdlib</code>)</strong>: standard vocabularies may provide value types, helper functions, explicit dynamic alternatives, and runtime-anchor APIs used by extension properties.</li>
-<li><strong>Library packaging</strong>: package artifacts must carry vocabulary metadata and extension-property facts so consumers can resolve imports without source-layout assumptions.</li>
-<li><strong>Formatter</strong>: format <code>vocab</code> blocks and extension-property declarations consistently with existing declaration and property formatting.</li>
-<li><strong>LSP / Tooling</strong>: completion, hover, go-to-definition, generated docs, and diagnostics must show active vocabularies, extension-property receiver types, result types, provenance, missing imports, and runtime-anchor status.</li>
+<li><strong>Typechecker:</strong> the hook, its overlap rules and operator resolution.</li>
+<li><strong>Lowering and emission:</strong> operators from <code>__cmp__</code>, and the derive.</li>
+<li><strong>Standard library:</strong> <code>Ordering</code>, <code>cmp</code>, <code>compare</code>, <code>Ord</code> and <code>clamp</code>, written in Incan.</li>
+<li><strong>Built-in types:</strong> <code>__cmp__</code> on ordered types, tuples as <code>Ord</code>, and <code>total_cmp</code> on floats.</li>
+<li><strong>Lints:</strong> inverted literal bounds on <code>clamp</code>.</li>
+<li><strong>Language server:</strong> hover for generated hooks.</li>
+<li><strong>Documentation:</strong> the comparison reference and derive tables, with migration notes.</li>
 </ul>
-<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Is <code>vocab</code> the right keyword for this source-level authoring surface, or should it reuse a more explicit RFC 027 spelling?</li>
-<li>Should <code>property name on ReceiverType -&gt; ResultType:</code> be the final ordering, or should the receiver appear in another position while preserving readability?</li>
-<li>What receiver predicate language should be admitted beyond named receiver types such as <code>int</code>, <code>decimal</code>, <code>FrozenStr</code>, and custom nominal types?</li>
-<li>How should the language represent evaluation classification, const eligibility, and runtime anchors when they cannot be inferred from ordinary Incan bodies?</li>
-<li>Should string literals be contextualized as <code>FrozenStr</code> by active extension-property lookup, and what diagnostics should explain that behavior?</li>
-<li>Should aggregate extension properties over tuples or other family compositions be part of this RFC's accepted surface, or should ordinary value composition plus owned properties carry most examples?</li>
-<li>Should <code>.from_now</code> and <code>.ago</code> be properties, methods, or both, given that they read runtime clock state?</li>
-<li>How should <code>pub vocab</code> metadata compose with existing Rust companion-crate vocab registrations and future Incan-authored desugar functions?</li>
+<li><strong>One trait:</strong> no <code>Comparable</code>. <code>Ord</code> is the capability, <code>__cmp__</code> is the hook, and <code>cmp(a, b)</code> or <code>compare(a, b)</code> is the direct question.</li>
+<li><strong>Hook rules:</strong> defining <code>__cmp__</code> gives the six operators. Adopting <code>Ord</code> satisfies a bound. Mixing <code>__cmp__</code> with <code>__eq__</code>, <code>__lt__</code> or a comparison derive is refused.</li>
+<li><strong>Partial orders:</strong> <code>__lt__</code> and <code>PartialOrd</code> stay as they are. Floats get <code>total_cmp</code> rather than a new trait.</li>
+<li><strong><code>cmp</code>:</strong> ordinary library code, imported explicitly from <code>std.derives.comparison</code>, with <code>compare</code> as an RFC 083 alias.</li>
+<li><strong>Same type only:</strong> <code>__cmp__</code> takes <code>Self</code>.</li>
+<li><strong>Helpers:</strong> no <code>between</code>, because RFC 136 covers it. <code>clamp</code> cannot fail, and inverted bounds return the high bound.</li>
 </ul>
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 

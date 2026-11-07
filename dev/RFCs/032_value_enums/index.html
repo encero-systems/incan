@@ -10106,10 +10106,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#phase-1-parser-ast-and-formatter" class="md-nav__link">
+  <a href="#parser-ast-and-formatter" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Phase 1: Parser, AST, and formatter
+        Parser, AST, and formatter
       
     </span>
   </a>
@@ -10117,10 +10117,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#phase-2-typechecker-and-generated-surface" class="md-nav__link">
+  <a href="#typechecker-and-generated-surface" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Phase 2: Typechecker and generated surface
+        Typechecker and generated surface
       
     </span>
   </a>
@@ -10128,10 +10128,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#phase-3-lowering-emission-and-external-representation" class="md-nav__link">
+  <a href="#lowering-emission-and-external-representation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Phase 3: Lowering, emission, and external representation
+        Lowering, emission, and external representation
       
     </span>
   </a>
@@ -10139,10 +10139,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#phase-4-tests-docs-and-release-integration" class="md-nav__link">
+  <a href="#tests-docs-and-release-integration" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Phase 4: Tests, docs, and release integration
+        Tests, docs, and release integration
       
     </span>
   </a>
@@ -10287,13 +10287,13 @@
 </li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>Introduce <strong>value enums</strong> — enums whose variants carry an associated primitive value (<code>str</code> or <code>int</code>). This gives Incan a Python <code>StrEnum</code>/<code>IntEnum</code>-equivalent: enums that are more than labels but less than full ADTs. Value enums auto-generate <code>value()</code>, <code>from_value()</code>, string display, and parsing support, enabling clean string/integer lookups, serialization round-tripping, and future environment-variable resolution hooks.</p>
+<p>Introduce <strong>value enums</strong> — enums whose variants carry an associated primitive value (<code>str</code> or <code>int</code>). This gives Incan a Python <code>StrEnum</code>/<code>IntEnum</code>-equivalent: enums that are more than labels but less than full ADTs. Value enums auto-generate <code>value()</code>, <code>from_value()</code>, string display, and parsing support, enabling clean string/integer lookups, serialization round-tripping, and RFC 033 environment-variable resolution hooks.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Allow enum declarations to bind each variant to an explicit primitive <code>str</code> or <code>int</code> value.</li>
 <li>Provide a standard lookup surface for converting value-domain inputs into typed enum variants.</li>
 <li>Preserve existing regular enum and ADT behavior for declarations without a value type specifier.</li>
-<li>Make value enums usable by serialization, parsing, display, and future <code>ctx</code> axis resolution without requiring hand-written match helpers.</li>
+<li>Make value enums usable by serialization, parsing, display, and <code>ctx</code> axis resolution without requiring hand-written match helpers.</li>
 <li>Keep the feature explicit and predictable: no inferred values, no enum-as-primitive subtyping, and no custom value types.</li>
 </ul>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
@@ -10343,7 +10343,7 @@
         <span class="k">case</span> <span class="nc">Prod</span><span class="p">:</span>
             <span class="n">database_url</span> <span class="o">=</span> <span class="s2">&quot;postgres://prod/app&quot;</span>
 </code></pre></div>
-<p>When <code>Env</code> is resolved from an environment variable (<code>APP_ENV=production</code>), the runtime needs to map the string <code>"production"</code> to <code>Env.Prod</code>. With value enums, that future resolver has a standard lookup table:</p>
+<p>When <code>Env</code> is resolved from an environment variable (<code>APP_ENV=production</code>), the runtime needs to map the string <code>"production"</code> to <code>Env.Prod</code>. With value enums, that resolver has a standard lookup table:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">Env</span><span class="p">(</span><span class="nb">str</span><span class="p">):</span>
     <span class="nc">Dev</span> <span class="o">=</span> <span class="s2">&quot;development&quot;</span>
     <span class="nc">QA</span> <span class="o">=</span> <span class="s2">&quot;qa&quot;</span>
@@ -10456,8 +10456,8 @@
 <li><code>value()</code> returns the value type: <code>self.value() -&gt; str</code> for <code>StrEnum</code>, <code>self.value() -&gt; int</code> for <code>IntEnum</code>.</li>
 <li><code>from_value()</code> is a static method: <code>Env.from_value(s: str) -&gt; Option[Env]</code> / <code>HttpStatus.from_value(n: int) -&gt; Option[HttpStatus]</code>.</li>
 <li>Value enums participate in pattern matching exactly like regular unit-variant enums.</li>
-<li>Value enums can have methods (per RFC 050, once implemented).</li>
-<li>Value enums can adopt traits (per RFC 050, once implemented).</li>
+<li>Value enums can have methods (per RFC 050).</li>
+<li>Value enums can adopt traits (per RFC 050).</li>
 </ul>
 <h3 id="auto-generated-surface">Auto-generated surface<a class="headerlink" href="#auto-generated-surface" title="Permanent link">&para;</a></h3>
 <p>For <code>enum Foo(str)</code> with variants <code>A = "alpha"</code>, <code>B = "beta"</code>:</p>
@@ -10504,7 +10504,7 @@
 <li>String display emits the <strong>value</strong>, not the variant name (<code>"production"</code> not <code>"Prod"</code>).</li>
 <li>Serialization emits the <strong>value</strong>, not the variant name.</li>
 <li>Deserialization matches on the <strong>value</strong> (<code>"production"</code> → <code>Env.Prod</code>).</li>
-<li>Future configuration and environment resolution hooks should use the same value table when resolving value enum inputs.</li>
+<li>Configuration and environment resolution hooks should use the same value table when resolving value enum inputs.</li>
 <li>Language-level parsing surfaces use the same value table and failure semantics as <code>from_value()</code>, adapted to the parsing API's result type.</li>
 </ul>
 <p>Backends may realize this through generated display/parsing helpers, per-variant serialization metadata, or equivalent hooks. The emitted code shape is implementation detail; the language-level contract is that all external representations of a value enum converge on the associated value.</p>
@@ -10532,7 +10532,7 @@ enum Name:          # Regular ADT enum (unchanged)
 </ul>
 <h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
 <p><strong>Pattern matching</strong>: Value enums match by variant, not by value. <code>case Env.Dev:</code> matches the variant, regardless of the associated value. To match on the raw value, use <code>match env_string: case "production": ...</code>.</p>
-<p><strong>Traits (RFC 050)</strong>: Once enum methods and trait adoption land, value enums can have additional methods. The auto-generated <code>value()</code>, <code>from_value()</code>, and <code>message()</code> methods are reserved by value enums and cannot be redefined by user code.</p>
+<p><strong>Traits (RFC 050)</strong>: With enum methods and trait adoption, value enums can have additional methods. The auto-generated <code>value()</code>, <code>from_value()</code>, and <code>message()</code> methods are reserved by value enums and cannot be redefined by user code.</p>
 <p><strong>Serialization</strong>: Value enums serialize and deserialize using their associated values rather than their variant names.</p>
 <p><strong><code>ctx</code> (RFC 033)</strong>: Axis resolution gains a two-step lookup: (1) try <code>from_value()</code> for exact value match, (2) fall back to case-insensitive variant name match. This means <code>PIPELINE_ENV=production</code> resolves via value, and <code>PIPELINE_ENV=Prod</code> resolves via name.</p>
 <p><strong>Generics</strong>: Value enums cannot have type parameters. <code>enum Foo[T](str):</code> is a compile error — value enums are inherently concrete.</p>
@@ -10558,7 +10558,7 @@ enum Name:          # Regular ADT enum (unchanged)
 <div class="language-incan highlight"><pre><span></span><code><span class="n">strenum</span> <span class="nc">Env</span><span class="p">:</span>
     <span class="nc">Dev</span> <span class="o">=</span> <span class="s2">&quot;development&quot;</span>
 </code></pre></div>
-<p>Rejected: proliferates keywords. The <code>enum Name(type):</code> syntax is more composable and extensible (e.g., future <code>enum Foo(float):</code> if needed).</p>
+<p>Rejected: proliferates keywords. The <code>enum Name(type):</code> syntax is more composable and extensible.</p>
 <h3 id="make-enums-subtypes-of-their-value-type">Make enums subtypes of their value type<a class="headerlink" href="#make-enums-subtypes-of-their-value-type" title="Permanent link">&para;</a></h3>
 <p>In Python, <code>StrEnum</code> variants ARE strings — <code>Env.Dev == "development"</code> is <code>True</code>. We could do the same.</p>
 <p>Rejected: breaks Incan's type safety philosophy. A <code>str</code> and an <code>Env</code> should not be interchangeable. Explicit <code>.value()</code> is clearer and avoids subtle bugs where string comparisons accidentally match enum values.</p>
@@ -10583,27 +10583,27 @@ enum Name:          # Regular ADT enum (unchanged)
 <li><a href="https://github.com/encero-systems/incan/pull/411">#411</a> — implemented the core RFC 032 value-enum compiler, backend, serialization, manifest, docs, release-note, and verification surface.</li>
 </ul>
 <h2 id="implementation-plan">Implementation Plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
-<h3 id="phase-1-parser-ast-and-formatter">Phase 1: Parser, AST, and formatter<a class="headerlink" href="#phase-1-parser-ast-and-formatter" title="Permanent link">&para;</a></h3>
+<h3 id="parser-ast-and-formatter">Parser, AST, and formatter<a class="headerlink" href="#parser-ast-and-formatter" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Extend enum declaration parsing so <code>enum Name(str):</code> and <code>enum Name(int):</code> are accepted while regular <code>enum Name:</code> and payload-bearing ADT variants continue to behave as before.</li>
 <li>Preserve the optional value type specifier and each per-variant literal assignment in the AST.</li>
 <li>Keep invalid ordinary enum assignments rejected, and emit clear diagnostics for value enum syntax mistakes such as missing values, wrong literal kinds, unsupported value types, and payload-bearing value variants.</li>
 <li>Update formatter behavior so value enum declarations round-trip stably without rewriting regular enum declarations.</li>
 </ul>
-<h3 id="phase-2-typechecker-and-generated-surface">Phase 2: Typechecker and generated surface<a class="headerlink" href="#phase-2-typechecker-and-generated-surface" title="Permanent link">&para;</a></h3>
+<h3 id="typechecker-and-generated-surface">Typechecker and generated surface<a class="headerlink" href="#typechecker-and-generated-surface" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Validate value enum declarations after symbols are collected: allowed value type, required values, value literal type compatibility, duplicate raw values, no payload fields, and no user-defined/generated method name conflicts.</li>
 <li>Register the generated <code>value()</code> and <code>from_value()</code> method surface so normal member lookup and call checking can typecheck value enum usage.</li>
 <li>Preserve existing <code>message()</code> behavior as variant-name access and keep value enums distinct from their raw <code>str</code> / <code>int</code> value types.</li>
 </ul>
-<h3 id="phase-3-lowering-emission-and-external-representation">Phase 3: Lowering, emission, and external representation<a class="headerlink" href="#phase-3-lowering-emission-and-external-representation" title="Permanent link">&para;</a></h3>
+<h3 id="lowering-emission-and-external-representation">Lowering, emission, and external representation<a class="headerlink" href="#lowering-emission-and-external-representation" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Lower value enum metadata into the IR representation used by enum emission.</li>
 <li>Emit generated helpers for value lookup and reverse lookup, including <code>value()</code> and <code>from_value()</code>.</li>
-<li>Preserve the canonical external representation for display, parsing, serialization, and deserialization hooks supported by the backend. Configuration and environment resolution remain future integration work.</li>
+<li>Preserve the canonical external representation for display, parsing, serialization, and deserialization hooks supported by the backend. Configuration and environment resolution belong to RFC 033.</li>
 <li>Keep emitted code shape backend-owned while preserving the language-level contract defined by this RFC.</li>
 </ul>
-<h3 id="phase-4-tests-docs-and-release-integration">Phase 4: Tests, docs, and release integration<a class="headerlink" href="#phase-4-tests-docs-and-release-integration" title="Permanent link">&para;</a></h3>
+<h3 id="tests-docs-and-release-integration">Tests, docs, and release integration<a class="headerlink" href="#tests-docs-and-release-integration" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Add parser, formatter, typechecker, lowering/emission, and codegen snapshot coverage for valid and invalid value enums.</li>
 <li>Add end-to-end tests that exercise value lookup in expression positions, not only declarations.</li>
@@ -10648,7 +10648,7 @@ enum Name:          # Regular ADT enum (unchanged)
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Surface value-enum backing metadata in LSP/completion/hover details.</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Update authored user-facing docs for value enum syntax and behavior.</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add release notes for RFC 032 implementation.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Bump active dev version to <code>0.3.0-dev.23</code>.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Bump the active development version.</li>
 </ul>
 <h3 id="verification">Verification<a class="headerlink" href="#verification" title="Permanent link">&para;</a></h3>
 <ul class="task-list">
@@ -10677,7 +10677,7 @@ enum Name:          # Regular ADT enum (unchanged)
 <p><strong>The associated value is the canonical external representation.</strong> Display, parsing, serialization, deserialization, and configuration/environment resolution must use the associated value rather than the variant name whenever a value enum crosses a data boundary.</p>
 </li>
 <li>
-<p><strong>Value enums do not expose <code>from_name()</code>.</strong> Name-to-variant lookup is reflection/introspection behavior, not value-domain lookup. If Incan later gains general enum reflection, name lookup belongs there rather than in value enums.</p>
+<p><strong>Value enums do not expose <code>from_name()</code>.</strong> Name-to-variant lookup is reflection/introspection behavior, not value-domain lookup. Name lookup belongs to general enum reflection rather than to value enums.</p>
 </li>
 <li>
 <p><strong>RFC 050 <code>with</code> clauses follow the value type specifier.</strong> The combined spelling is <code>enum Env(str) with TraitName:</code> rather than placing <code>with</code> before <code>(str)</code> or using a separate value-enum declaration form.</p>

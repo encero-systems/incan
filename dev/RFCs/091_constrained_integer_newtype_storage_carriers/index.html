@@ -21,7 +21,7 @@
     
     
       
-        <title>RFC 091: Constrained integer newtype storage carriers - Incan Documentation</title>
+        <title>RFC 091: Integer storage carriers - Incan Documentation</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-091-constrained-integer-newtype-storage-carriers" class="md-skip">
+        <a href="#rfc-091-integer-storage-carriers" class="md-skip">
           Skip to content
         </a>
       
@@ -117,7 +117,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 091: Constrained integer newtype storage carriers
+              RFC 091: Integer storage carriers
             
           </span>
         </div>
@@ -9823,10 +9823,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#treat-the-carrier-as-an-implicit-additional-bound" class="md-nav__link">
+  <a href="#require-every-bound-to-be-written-and-keep-the-range-inside-i64" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Treat the carrier as an implicit additional bound
+        Require every bound to be written, and keep the range inside i64
       
     </span>
   </a>
@@ -9894,10 +9894,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#unresolved-questions" class="md-nav__link">
+  <a href="#design-decisions" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Unresolved questions
+        Design Decisions
       
     </span>
   </a>
@@ -9924,9 +9924,9 @@
   
 
 
-<h1 id="rfc-091-constrained-integer-newtype-storage-carriers">RFC 091: Constrained integer newtype storage carriers<a class="headerlink" href="#rfc-091-constrained-integer-newtype-storage-carriers" title="Permanent link">&para;</a></h1>
+<h1 id="rfc-091-integer-storage-carriers">RFC 091: Integer storage carriers<a class="headerlink" href="#rfc-091-integer-storage-carriers" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Status:</strong> Draft</li>
+<li><strong>Status:</strong> Planned</li>
 <li><strong>Created:</strong> 2026-05-07</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong><ul>
@@ -9935,49 +9935,51 @@
 <li>RFC 058 (<code>std.datetime</code>)</li>
 <li>RFC 085 (field metadata and type-shaped constraints)</li>
 <li>RFC 088 (iterator adapter surface)</li>
+<li>RFC 121 (unified Incan/Rust type substrate)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> https://github.com/encero-systems/incan/issues/537</li>
+<li><strong>Issue:</strong> <a href="https://github.com/encero-systems/incan/issues/537">#537</a></li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.3</li>
 <li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC lets constrained integer newtypes keep Incan's logical <code>int</code> semantics at the source level while choosing an exact-width storage carrier for their generated representation. A type such as <code>Month = newtype int[ge=1, le=12, storage=u8]</code> remains a nominal validated integer-like domain type, accepts ordinary integer inputs through the RFC 017 validated-newtype boundary, and must never silently truncate or wrap values, but its backing storage may use <code>u8</code> instead of the default <code>int</code> carrier.</p>
+<p>An Incan integer type has a storage carrier, and <code>int</code> is the default: the built-in <code>int</code> means <code>newtype Int[storage=i64]</code>. This RFC lets an author select a different exact-width carrier, narrower or wider than <code>i64</code>, with <code>int[storage=i8]</code>, <code>type Month = newtype int[ge=1, le=12, storage=u8]</code> or <code>type bigint = newtype int[storage=i128]</code>. The carrier sets how a value is stored and how far its range reaches, written bounds narrow that range, and a value must never silently truncate or wrap.</p>
 <h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
 <ol>
-<li><strong>Logical type and storage carrier are separate:</strong> the left side of the constrained primitive describes the source-level value domain, while <code>storage</code> describes the backing integer carrier used after validation.</li>
-<li><strong>Validation remains authoritative:</strong> bounds such as <code>ge</code>, <code>gt</code>, <code>le</code>, and <code>lt</code> define the allowed values; the storage carrier does not add hidden validation rules.</li>
-<li><strong>No ambient primitive conversion:</strong> the compiler may insert validated newtype coercions at RFC 017 sites, but must not use this feature as a reason to insert unrelated primitive conversions or lossy casts.</li>
-<li><strong>Representability is statically checked:</strong> a storage carrier is valid only when every value allowed by the declared constraints fits in that carrier.</li>
-<li><strong>Arithmetic must preserve invariants:</strong> operations that reconstruct a storage-backed newtype must re-enter the same checked construction path rather than relying on carrier overflow behavior.</li>
+<li><strong><code>int</code> is the default, not a special case:</strong> <code>int[...]</code> without <code>storage</code> keeps the <code>i64</code> carrier, and <code>storage</code> replaces it.</li>
+<li><strong>The carrier sets the range and bounds narrow it:</strong> an integer type admits its carrier's values, narrowed by any <code>ge</code>, <code>gt</code>, <code>le</code> or <code>lt</code> that is written. A side with no written bound reaches the carrier's limit.</li>
+<li><strong>A written bound must fit its carrier:</strong> this is statically checked.</li>
+<li><strong>No ambient primitive conversion:</strong> the compiler may insert validated coercions at RFC 017 sites, but must not use this feature as a reason to insert unrelated primitive conversions or lossy casts.</li>
+<li><strong>Arithmetic must preserve the range:</strong> operations that reconstruct a storage-backed type must re-enter the same checked construction path rather than relying on carrier overflow behavior.</li>
 </ol>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>Validated newtypes already give Incan good domain modeling for primitive values: <code>PositiveInt</code>, <code>RetryAttempts</code>, <code>UserId</code>, and similar types can validate inputs while remaining cheap and explicit. The gap is that the logical primitive and the storage primitive are currently the same thing. A constrained integer whose valid range is <code>1..12</code> should not need to store an <code>i64</code> just because the public source-level concept is "an integer with a narrow valid domain."</p>
-<p>This matters for dense data models, standard-library domain types, schema-backed values, and future purpose-built libraries that carry many small integer fields. <code>std.datetime</code> is a concrete example: <code>Month</code>, <code>Hour</code>, <code>Minute</code>, <code>Second</code>, and <code>Nanosecond</code> all have small, deterministic value domains, but the user-facing surface should still feel like ordinary integer construction and validation rather than manual resizing into exact-width primitive types.</p>
-<p>The feature also keeps Incan honest about where safety belongs. Users should be able to say "this is an integer domain type stored compactly" without opening the door to ambient <code>int -&gt; u8</code> truncation. The compiler should check that the storage carrier can hold the declared domain and then generate the necessary validated construction.</p>
+<p>Validated newtypes already give Incan good domain modeling for primitive values: <code>PositiveInt</code>, <code>RetryAttempts</code>, <code>UserId</code>, and similar types can validate inputs while remaining cheap and explicit. The gap is that every one of them stores an <code>i64</code>. A constrained integer whose valid range is <code>1..12</code> should not need eight bytes because the public source-level concept is "an integer with a narrow valid domain."</p>
+<p>This matters for dense data models, standard-library domain types, schema-backed values, and purpose-built libraries that carry many small integer fields. <code>std.datetime</code> is a concrete example: <code>Month</code>, <code>Hour</code>, <code>Minute</code>, <code>Second</code>, and <code>Nanosecond</code> all have small, deterministic value domains, but the user-facing surface should still feel like ordinary integer construction and validation rather than manual resizing into exact-width primitive types.</p>
+<p>The same gap exists in the other direction. A value that needs more than 64 bits, such as a large counter or an amount in very small units, should not have to give up ordinary integer input and validated construction to get there. Treating <code>i64</code> as one carrier among several covers both directions with one rule.</p>
+<p>The feature also keeps Incan honest about where safety belongs. Users should be able to say "this is an integer stored in this carrier" without opening the door to ambient <code>int -&gt; u8</code> truncation.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Allow constrained integer newtypes to declare an exact-width integer storage carrier.</li>
-<li>Preserve RFC 017 validated-newtype coercion ergonomics for storage-backed constrained newtypes.</li>
-<li>Reject storage carriers that cannot hold every value allowed by the declared constraints.</li>
-<li>Keep bare <code>int</code> semantics unchanged.</li>
-<li>Make compact domain types suitable for standard-library values such as datetime components and for user-defined dense model fields.</li>
+<li>Allow any integer type written with <code>int[...]</code> to select an exact-width integer carrier, narrower or wider than <code>i64</code>.</li>
+<li>Define an integer type's range once: the carrier's range, narrowed by written bounds.</li>
+<li>Preserve RFC 017 validated-newtype coercion ergonomics for storage-backed newtypes.</li>
+<li>Reject written bounds that the carrier cannot hold.</li>
+<li>Keep <code>int</code> itself stored as <code>i64</code>.</li>
+<li>Make compact domain types suitable for standard-library values such as datetime components and for user-defined dense model fields, and make wide integer types as easy to declare as narrow ones.</li>
 <li>Preserve clear diagnostics for invalid constraints, unsupported storage carriers, and values that fail validation.</li>
 </ul>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
 <li>This RFC does not introduce ambient primitive auto-resizing, truncation, wrapping, or saturation.</li>
-<li>This RFC does not change the representation of bare <code>int</code>.</li>
+<li>This RFC does not change the representation of <code>int</code>.</li>
 <li>This RFC does not require the compiler to infer the smallest possible carrier automatically.</li>
 <li>This RFC does not allow constrained exact-width primitive underlyings such as <code>i8[ge=1, le=12]</code>; exact-width primitives are storage carriers in this RFC, not constrained source-level domains.</li>
 <li>This RFC does not introduce bitfields, packed model layout, or C ABI layout guarantees.</li>
-<li>This RFC does not make constrained primitives universal stand-alone types outside the validated-newtype model.</li>
 <li>This RFC does not define floating-point, decimal, or arbitrary-precision storage carriers.</li>
 <li>This RFC does not decide timezone, calendar, or locale semantics for datetime APIs.</li>
 </ul>
 <h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
-<p>Users define compact domain integers by writing a constrained integer newtype and adding a storage carrier:</p>
+<p>Users pick a carrier by adding <code>storage</code> to an integer type:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="nb">type</span> <span class="nc">Month</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span><span class="p">[</span><span class="n">ge</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">le</span><span class="o">=</span><span class="mi">12</span><span class="p">,</span> <span class="n">storage</span><span class="o">=</span><span class="kt">u8</span><span class="p">]</span>
 <span class="nb">type</span> <span class="nc">Hour</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span><span class="p">[</span><span class="n">ge</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">lt</span><span class="o">=</span><span class="mi">24</span><span class="p">,</span> <span class="n">storage</span><span class="o">=</span><span class="kt">u8</span><span class="p">]</span>
 <span class="nb">type</span> <span class="nc">Nanosecond</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span><span class="p">[</span><span class="n">ge</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">lt</span><span class="o">=</span><span class="mi">1000000000</span><span class="p">,</span> <span class="n">storage</span><span class="o">=</span><span class="kt">u32</span><span class="p">]</span>
@@ -9992,28 +9994,45 @@
     <span class="n">bill_for</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span>
     <span class="n">bill_for</span><span class="p">(</span><span class="mi">13</span><span class="p">)</span>
 </code></pre></div>
-<p>The first call constructs a valid <code>Month</code>. The second call fails validation because <code>13</code> is outside the declared domain. The failure is about the domain constraint, not about an attempted primitive cast.</p>
-<p>The storage carrier is not a shortcut for writing constraints. This is invalid because the declared domain admits values too large for <code>u8</code>:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="nb">type</span> <span class="nc">Count</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span><span class="p">[</span><span class="n">ge</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">storage</span><span class="o">=</span><span class="kt">u8</span><span class="p">]</span>
+<p>The first call constructs a valid <code>Month</code>. The second call fails validation because <code>13</code> is outside the declared range. The failure is about the range, not about an attempted primitive cast.</p>
+<p>A side with no written bound reaches as far as the carrier does:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nb">type</span> <span class="nc">Count</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span><span class="p">[</span><span class="n">ge</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">storage</span><span class="o">=</span><span class="kt">u8</span><span class="p">]</span>    <span class="c1"># 0 to 255</span>
+<span class="nb">type</span> <span class="nc">Delta</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span><span class="p">[</span><span class="n">storage</span><span class="o">=</span><span class="kt">i8</span><span class="p">]</span>          <span class="c1"># -128 to 127</span>
+<span class="nb">type</span> <span class="kt">bigint</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span><span class="p">[</span><span class="n">storage</span><span class="o">=</span><span class="kt">i128</span><span class="p">]</span>       <span class="c1"># every i128 value</span>
 </code></pre></div>
-<p>The correct declaration must make the source-level domain fit the carrier:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="nb">type</span> <span class="nc">Count</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span><span class="p">[</span><span class="n">ge</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">le</span><span class="o">=</span><span class="mi">255</span><span class="p">,</span> <span class="n">storage</span><span class="o">=</span><span class="kt">u8</span><span class="p">]</span>
+<p>This is the same rule that gives <code>int</code> its range. The built-in <code>int</code> means <code>newtype Int[storage=i64]</code>, so <code>int[ge=0]</code> admits zero up to the largest <code>i64</code>, and <code>int[ge=0, storage=u64]</code> admits zero up to the largest <code>u64</code>.</p>
+<p>A written bound must fit the carrier, so this is invalid because <code>300</code> cannot be stored in a <code>u8</code>:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nb">type</span> <span class="nc">Count</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span><span class="p">[</span><span class="n">le</span><span class="o">=</span><span class="mi">300</span><span class="p">,</span> <span class="n">storage</span><span class="o">=</span><span class="kt">u8</span><span class="p">]</span>
 </code></pre></div>
-<p>Using an unsigned carrier may be useful even when it does not save bytes. For example, <code>storage=u64</code> stores the same width as the default <code>i64</code>-shaped <code>int</code> carrier, but it can be a better backing representation for a non-negative domain that needs the full positive range. Compactness comes from smaller carriers such as <code>u8</code>, <code>u16</code>, and <code>u32</code>.</p>
+<p>A carrier wider than <code>i64</code> works the same way. Every <code>int</code> fits in a <code>bigint</code>, so a plain <code>int</code> flows in without being able to fail, and a literal may use the whole range. Going back to <code>int</code> can lose values, so it is explicit and checked:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nb">type</span> <span class="kt">bigint</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span><span class="p">[</span><span class="n">storage</span><span class="o">=</span><span class="kt">i128</span><span class="p">]</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">record</span><span class="p">(</span><span class="n">total</span><span class="p">:</span> <span class="kt">bigint</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">return</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">record</span><span class="p">(</span><span class="mi">42</span><span class="p">)</span>
+    <span class="n">record</span><span class="p">(</span><span class="mi">170141183460469231731687303715884105727</span><span class="p">)</span>
+</code></pre></div>
+<p><code>storage</code> is accepted wherever <code>int[...]</code> is, so a field that needs a compact integer but no reusable name can say so directly:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">Sample</span><span class="p">:</span>
+    <span class="nb">channel</span><span class="p">:</span> <span class="nb">int</span><span class="p">[</span><span class="n">storage</span><span class="o">=</span><span class="kt">u8</span><span class="p">]</span>
+    <span class="n">month</span><span class="p">:</span> <span class="nc">Month</span>
+</code></pre></div>
 <h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
-<p>A constrained integer newtype may declare a storage carrier inside the constrained primitive bracket list using a storage attribute, drafted here as <code>storage=&lt;integer-carrier&gt;</code>. The storage carrier must be one of the supported exact-width integer primitive types: <code>i8</code>, <code>i16</code>, <code>i32</code>, <code>i64</code>, <code>i128</code>, <code>u8</code>, <code>u16</code>, <code>u32</code>, <code>u64</code>, or <code>u128</code>. The storage attribute must be accepted only on constrained <code>int</code> newtype underlyings. It must not be accepted on bare <code>int</code>, unconstrained <code>int</code> outside a newtype declaration, <code>float</code>, <code>decimal</code>, <code>str</code>, <code>bytes</code>, collection types, model fields directly, function parameters directly, arbitrary type expressions, or exact-width primitive underlyings such as <code>i8[ge=1, le=12]</code>. If a constrained integer newtype omits <code>storage</code>, it must retain existing behavior.</p>
-<p>The storage attribute must not be treated as a validation constraint. The declared comparison constraints define the source-level domain, and the compiler must reject a storage-backed newtype when those constraints do not prove that every valid source-level value fits in the storage carrier. The compiler must reject duplicate storage attributes, unsupported storage carrier names, contradictory constraints, and storage carriers whose value domain is incompatible with the declared constraints. For example, <code>int[ge=0, storage=u8]</code> must be rejected because values greater than <code>255</code> are valid according to the declared constraints but cannot be represented by <code>u8</code>.</p>
-<p>The source-level type of a storage-backed newtype remains the nominal newtype, not the carrier primitive. A <code>Month</code> is not a <code>u8</code>, and a <code>u8</code> is not automatically a <code>Month</code>. RFC 017 implicit validated-newtype coercion may apply to storage-backed constrained integer newtypes at the same sites where it applies to other validated newtypes, and that coercion must validate the source-level constraints before constructing the newtype. The compiler must not insert ambient primitive conversions because a storage carrier exists. In particular, a general <code>int</code> expression must not silently become <code>u8</code>, <code>u16</code>, or any other exact-width primitive unless an existing explicit conversion or checked validated-newtype path requires it.</p>
-<p>Integer literals flowing into a storage-backed newtype should receive precise compile-time diagnostics when their value is statically known to fail the declared constraints. Runtime integer values flowing into a storage-backed newtype must use the same validation behavior as other constrained newtypes. If the value fails validation, the failure mode must match RFC 017 for the relevant construction site. Operations that produce a storage-backed newtype must not use storage overflow semantics as the domain semantics. Reconstructing the newtype from an arithmetic result must validate the logical domain.</p>
-<p>Serialization, reflection, library manifests, and generated metadata should preserve both the logical constrained type and the storage carrier so that downstream compilation and tooling see the same contract. A storage carrier does not by itself promise stable C ABI layout or packed model layout.</p>
+<p>An integer type may declare a storage carrier inside the constrained primitive bracket list using <code>storage=&lt;integer-carrier&gt;</code>. The storage carrier must be one of the supported exact-width integer primitive types: <code>i8</code>, <code>i16</code>, <code>i32</code>, <code>i64</code>, <code>i128</code>, <code>u8</code>, <code>u16</code>, <code>u32</code>, <code>u64</code>, or <code>u128</code>. The storage attribute must be accepted wherever a constrained <code>int[...]</code> type is accepted, with or without comparison bounds. It must not be accepted on <code>float</code>, <code>decimal</code>, <code>str</code>, <code>bytes</code>, collection types, or exact-width primitive underlyings such as <code>i8[ge=1, le=12]</code>. An <code>int</code> or <code>int[...]</code> that omits <code>storage</code> has the carrier <code>i64</code>.</p>
+<p>The range of an integer type must be computed as follows: the lower limit is the tightest written <code>ge</code> or <code>gt</code> bound, or the carrier's minimum when none is written, and the upper limit is the tightest written <code>le</code> or <code>lt</code> bound, or the carrier's maximum when none is written. The compiler must reject a type whose effective written bounds fall outside the carrier's range. The compiler must reject duplicate storage attributes, unsupported storage carrier names, and contradictory constraints. For example, <code>int[le=300, storage=u8]</code> and <code>int[ge=-1, storage=u8]</code> must be rejected, while <code>int[ge=0, storage=u8]</code> admits <code>0..255</code> and <code>int[gt=-1, lt=256, storage=u8]</code> also admits <code>0..255</code>.</p>
+<p>The source-level type of a storage-backed newtype remains the nominal newtype, not the carrier primitive. A <code>Month</code> is not a <code>u8</code>, and a <code>u8</code> is not automatically a <code>Month</code>. An unnamed <code>int[storage=u8]</code> is likewise an integer type with that carrier, not the primitive <code>u8</code>. RFC 017 implicit validated-newtype coercion may apply to storage-backed newtypes at the same sites where it applies to other validated newtypes, and that coercion must validate the range before constructing the value. Where the type's range contains every <code>int</code> value, that coercion cannot fail. The compiler must not insert ambient primitive conversions because a storage carrier exists. In particular, a general <code>int</code> expression must not silently become <code>u8</code>, <code>u16</code>, or any other exact-width primitive, and a value whose range exceeds <code>int</code> must not silently become <code>int</code>; each needs an existing explicit conversion or a checked validated-newtype path.</p>
+<p>Reading a newtype's underlying value with <code>.0</code> must produce <code>int</code> when the type's range fits in <code>int</code>, and the carrier otherwise. <code>Month.0</code> is an <code>int</code>, and <code>bigint.0</code> is an <code>i128</code>.</p>
+<p>An integer literal takes its limits from the type it flows into. A literal beyond the range of <code>int</code> must be accepted where that type admits it. Literals flowing into a storage-backed type should receive precise compile-time diagnostics when their value is statically known to fall outside the range. Runtime integer values flowing into a storage-backed type must use the same validation behavior as other constrained newtypes. If the value fails validation, the failure mode must match RFC 017 for the relevant construction site. Operations that produce a storage-backed type must not use carrier overflow as their semantics: an arithmetic result outside the range must fail through that same validation path, including where the range is the carrier's whole range.</p>
+<p>Checked reflection, library manifests, and generated type metadata must preserve the written constraints, the carrier and the resulting range so that downstream compilation and tooling see the same contract. Serialized type descriptors must retain those facts when their owning format exposes them; ordinary value serialization retains its owning format contract, without a new wire object introduced by this RFC. Supported structured type reflection must expose the carrier by default as a representation fact beside the nominal type, logical underlying type, and checked constraints. The carrier must not replace those semantic facts or imply primitive substitutability, an implicit conversion, or a C ABI guarantee. The descriptor follows the owning reflection contract; this RFC does not add a separate runtime reflection API. A storage carrier does not by itself promise stable C ABI layout or packed model layout.</p>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
-<p>The proposed spelling keeps storage in the same bracket block as the domain constraints because it modifies the constrained primitive's backing storage, and the <code>storage</code> value is a type name parsed as a bare identifier from the exact-width integer primitive set:</p>
+<p>The spelling keeps storage in the same bracket block as the bounds because it belongs to the same integer type, and the <code>storage</code> value is a type name parsed as a bare identifier from the exact-width integer primitive set:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="nb">type</span> <span class="nc">Port</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span><span class="p">[</span><span class="n">ge</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">le</span><span class="o">=</span><span class="mi">65535</span><span class="p">,</span> <span class="n">storage</span><span class="o">=</span><span class="kt">u16</span><span class="p">]</span>
-<span class="nb">type</span> <span class="nc">SmallDelta</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span><span class="p">[</span><span class="n">ge</span><span class="o">=-</span><span class="mi">128</span><span class="p">,</span> <span class="n">le</span><span class="o">=</span><span class="mi">127</span><span class="p">,</span> <span class="n">storage</span><span class="o">=</span><span class="kt">i8</span><span class="p">]</span>
+<span class="nb">type</span> <span class="nc">SmallDelta</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span><span class="p">[</span><span class="n">storage</span><span class="o">=</span><span class="kt">i8</span><span class="p">]</span>
 </code></pre></div>
-<p>This RFC intentionally uses <code>int[...]</code> as the source-level constrained domain and exact-width primitives as storage carriers. <code>type Month = newtype i8[ge=1, le=12]</code> is not the same contract: it exposes <code>i8</code> as the source-level underlying type, so ordinary <code>int</code> input would need an ambient primitive conversion before validation. That is out of scope for this RFC. The storage-backed spelling is <code>type Month = newtype int[ge=1, le=12, storage=i8]</code>.</p>
-<p>Representability checking is based on the effective lower and upper bounds of the declared constraints. For <code>int[ge=0, le=255, storage=u8]</code>, the source-level domain is <code>0..255</code>, so every value fits in <code>u8</code>; for <code>int[gt=-1, lt=256, storage=u8]</code>, the source-level domain is also <code>0..255</code>, so it also fits in <code>u8</code>. Open-ended domains must be checked against the logical <code>int</code> domain: <code>int[ge=0, storage=u64]</code> is representable because the logical <code>int</code> domain's non-negative values fit in <code>u64</code>, while <code>int[ge=0, storage=u32]</code> is not representable because the logical <code>int</code> domain admits non-negative values greater than <code>u32</code> can represent.</p>
-<p>The storage carrier should be preserved as part of the newtype's checked API metadata so documentation and schema tools can show both the semantic domain and the storage choice without guessing from generated output. <code>storage</code> should not change field-level validation: a model field of type <code>Month</code> still validates through <code>Month</code>, and a model field of type <code>int[ge=1, le=12, storage=u8]</code> is outside this RFC because constrained primitives remain intended as newtype underlyings.</p>
+<p>This RFC intentionally uses <code>int[...]</code> as the source-level integer type and exact-width primitives as storage carriers. <code>type Month = newtype i8[ge=1, le=12]</code> is not the same contract: it exposes <code>i8</code> as the source-level underlying type, so ordinary <code>int</code> input would need an ambient primitive conversion before validation. The storage-backed spelling is <code>type Month = newtype int[ge=1, le=12, storage=i8]</code>.</p>
+<p>The carrier remains visible in checked API metadata so documentation and schema tools can show both the range and the storage choice without guessing from generated output. Documentation and hover must show the resulting range, so <code>int[ge=0, storage=u8]</code> reads as <code>0..255</code> even though <code>255</code> was not written. <code>storage</code> does not change where validation happens: a model field of type <code>Month</code> validates through <code>Month</code>, and a model field of type <code>int[ge=1, le=12, storage=u8]</code> validates that range at the same sites as RFC 085's <code>int[ge=0]</code>.</p>
 <p>For datetime-style domain types, this RFC enables compact definitions without weakening cross-field validation:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="nb">type</span> <span class="nc">Month</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span><span class="p">[</span><span class="n">ge</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">le</span><span class="o">=</span><span class="mi">12</span><span class="p">,</span> <span class="n">storage</span><span class="o">=</span><span class="kt">u8</span><span class="p">]</span>
 <span class="nb">type</span> <span class="nc">DayOfMonth</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span><span class="p">[</span><span class="n">ge</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">le</span><span class="o">=</span><span class="mi">31</span><span class="p">,</span> <span class="n">storage</span><span class="o">=</span><span class="kt">u8</span><span class="p">]</span>
@@ -10026,40 +10045,41 @@
 <p><code>DayOfMonth</code> can express the standalone day range, but a checked <code>Date</code> constructor must still validate that the day exists in the given year and month. Storage carriers do not replace semantic validation that depends on multiple fields.</p>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <h3 id="use-exact-width-primitive-types-directly">Use exact-width primitive types directly<a class="headerlink" href="#use-exact-width-primitive-types-directly" title="Permanent link">&para;</a></h3>
-<p>Users can already write exact-width primitives such as <code>u8</code> and <code>u32</code>, but direct primitive fields do not carry domain names, validation hooks, or RFC 017 boundary behavior. <code>month: u8</code> also accepts <code>0</code>, which is not a valid month. Domain newtypes are the right surface; exact-width primitives are the right carrier.</p>
+<p>Users can already write exact-width primitives such as <code>u8</code> and <code>i128</code>, but direct primitive fields do not carry domain names, validation hooks, or RFC 017 boundary behavior. <code>month: u8</code> also accepts <code>0</code>, which is not a valid month, and <code>total: i128</code> does not accept an ordinary <code>int</code>. Integer types are the right surface; exact-width primitives are the right carrier.</p>
 <h3 id="make-intge0-automatically-choose-an-unsigned-carrier">Make <code>int[ge=0]</code> automatically choose an unsigned carrier<a class="headerlink" href="#make-intge0-automatically-choose-an-unsigned-carrier" title="Permanent link">&para;</a></h3>
 <p>Automatic carrier selection hides an ABI-relevant and tooling-relevant choice behind validation syntax. It also creates compatibility risk when a later constraint change silently changes layout. This RFC keeps storage explicit.</p>
-<h3 id="treat-the-carrier-as-an-implicit-additional-bound">Treat the carrier as an implicit additional bound<a class="headerlink" href="#treat-the-carrier-as-an-implicit-additional-bound" title="Permanent link">&para;</a></h3>
-<p>Letting <code>int[ge=0, storage=u8]</code> mean <code>0..255</code> is terse, but it makes storage metadata change the semantic domain. That would be surprising in API docs and dangerous when users change representation for performance. This RFC requires the semantic bounds to be written explicitly unless the open-ended logical domain is already provably representable by the carrier.</p>
+<h3 id="require-every-bound-to-be-written-and-keep-the-range-inside-i64">Require every bound to be written, and keep the range inside <code>i64</code><a class="headerlink" href="#require-every-bound-to-be-written-and-keep-the-range-inside-i64" title="Permanent link">&para;</a></h3>
+<p>Requiring <code>int[ge=0, le=255, storage=u8]</code> and refusing <code>int[ge=0, storage=u8]</code> prevents a carrier change from changing a range. It also makes <code>i64</code> the only real range and <code>int</code> a special case, and it rules out carriers wider than <code>i64</code>, because <code>int[storage=i128]</code> would store 128 bits and admit 64. A carrier sets the limit for <code>int</code> already, and every other carrier should do the same.</p>
 <h3 id="use-typeu64">Use <code>type=u64</code><a class="headerlink" href="#use-typeu64" title="Permanent link">&para;</a></h3>
-<p><code>type</code> is misleading because the source-level type is still a constrained <code>int</code> newtype. The carrier is a storage detail with observable code-generation and metadata consequences, so <code>storage</code> is clearer.</p>
+<p><code>type</code> is misleading because the source-level type is still an integer type with its own range, not the primitive. The carrier is a storage detail with observable code-generation and metadata consequences, so <code>storage</code> is clearer.</p>
 <h3 id="add-model-field-storage-metadata">Add model field storage metadata<a class="headerlink" href="#add-model-field-storage-metadata" title="Permanent link">&para;</a></h3>
-<p>Field-level storage metadata would let users write <code>month: int { storage=u8 }</code>, but that duplicates type-shaped constraints and weakens reuse. If <code>Month</code> is a meaningful domain concept, the storage and validation should travel with the type.</p>
+<p>Field-level metadata would let users write <code>month: int { storage=u8 }</code>, but a carrier decides which values a type admits, so it belongs in the type. RFC 085 keeps type constraints out of field metadata for the same reason.</p>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
-<p>This adds another dimension to constrained primitive syntax. Users must understand the difference between logical constraints and storage carriers.</p>
-<p>Storage carriers make generated layout more intentional, which means changing <code>storage</code> can become a compatibility concern for libraries that expose generated Rust or serialized representations.</p>
-<p>The compiler must prove representability from constraints. That proof is straightforward for integer comparison constraints, but it becomes more complex if future RFCs add richer numeric predicates.</p>
+<p>This adds another dimension to integer type syntax. Users must understand the difference between bounds and storage carriers.</p>
+<p>Changing the carrier of a type with an unwritten bound changes its range. That is an API change, and it is why documentation, hover and reflection show the resulting range. An author who wants a fixed range while tuning storage writes both bounds.</p>
+<p>Storage carriers make generated layout more intentional, which means changing <code>storage</code> can become a compatibility concern for libraries that expose generated host projections or serialized representations.</p>
+<p>Carriers wider than <code>i64</code> mean a value's reachable range can exceed <code>int</code>, so reading such a value back as <code>int</code> needs an explicit, checked step.</p>
 <p>The feature can be overused. Not every domain integer needs compact storage, and <code>storage</code> should not become noise in ordinary model declarations.</p>
 <h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
-<p>This section is non-normative. The recommended shape is to keep the constrained primitive as the user-facing semantic type, preserve a separate storage-carrier annotation in checked type metadata, validate carrier admissibility during semantic analysis, and lower the newtype backing storage to the chosen carrier only after the compiler has proven that every validated value is representable. Construction should continue to flow through the validated-newtype path, with generated conversions occurring after validation rather than by exposing lossy primitive casts at the source level.</p>
+<p>This section is non-normative. The recommended shape is to keep the integer type as the user-facing semantic type, preserve a separate storage-carrier annotation in checked type metadata, validate the carrier during semantic analysis, and lower the value to the chosen carrier after computing its range. Construction should continue to flow through the validated-newtype path, with generated conversions occurring after validation rather than by exposing lossy primitive casts at the source level.</p>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Parser / AST</strong>: constrained primitive bracket syntax must accept one storage-carrier attribute alongside comparison constraints.</li>
-<li><strong>Typechecker / Symbol resolution</strong>: constrained integer newtypes must validate carrier names, duplicate storage attributes, constraint consistency, representability, and RFC 017 coercion behavior.</li>
-<li><strong>IR Lowering</strong>: storage-backed newtypes must carry the logical domain and the chosen backing carrier into lowered form.</li>
-<li><strong>Emission</strong>: generated Rust output must store the newtype using the selected exact-width carrier while preserving checked construction semantics.</li>
-<li><strong>Stdlib / Runtime (<code>incan_stdlib</code>)</strong>: validation error rendering and numeric conversion helpers may need to support storage-backed construction paths.</li>
+<li><strong>Parser / AST</strong>: constrained primitive bracket syntax must accept one storage-carrier attribute with or without comparison constraints.</li>
+<li><strong>Typechecker / Symbol resolution</strong>: integer types must validate carrier names, duplicate storage attributes, constraint consistency, written bounds against the carrier, the resulting range, literals beyond <code>int</code>, and RFC 017 coercion behavior.</li>
+<li><strong>IR Lowering</strong>: storage-backed types must carry the range and the chosen backing carrier into lowered form.</li>
+<li><strong>Backend representation</strong>: the selected backend must store the value using the chosen exact-width carrier while preserving checked construction semantics; this contract must not depend on emitted Rust source.</li>
+<li><strong>Stdlib / Runtime</strong>: validation error rendering and numeric conversion helpers must support storage-backed construction paths, including carriers wider than <code>i64</code>.</li>
 <li><strong>Formatter</strong>: constrained primitive formatting must preserve the storage attribute in a stable order.</li>
-<li><strong>LSP / Tooling</strong>: hover, completion, diagnostics, and metadata extraction should surface the logical constrained type and the storage carrier distinctly.</li>
+<li><strong>LSP / Tooling</strong>: hover, completion, diagnostics, and metadata extraction should surface the range and the storage carrier distinctly.</li>
 </ul>
-<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Should <code>storage</code> support <code>isize</code> and <code>usize</code>, or should the first version intentionally restrict carriers to target-stable exact-width integer primitives?</li>
-<li>Should storage carriers for constrained <code>float</code> newtypes be included in this RFC or left to a follow-up after integer carriers ship?</li>
-<li>Should reflection APIs expose the storage carrier by default, or should this remain compiler and manifest metadata only?</li>
+<li><code>int</code> is the default carrier rather than a special case: the built-in <code>int</code> means <code>newtype Int[storage=i64]</code>, and every integer type follows one rule, where the carrier sets the range and written bounds narrow it. Widening and narrowing are the same feature.</li>
+<li><code>storage</code> is accepted wherever <code>int[...]</code> is, and does not require comparison bounds or a named newtype.</li>
+<li>Storage carriers are the exact-width integer primitives enumerated in the reference contract. Target-dependent isize/usize and floating-point carriers are outside this proposal; expanding that set requires a separate contract.</li>
+<li><code>.0</code> produces <code>int</code> when the range fits in <code>int</code>, and the carrier otherwise, so existing newtypes keep reading as integers and a wide value is never silently cut down.</li>
+<li>Supported structured reflection exposes the carrier by default as a representation fact alongside the type and its constraints. The carrier sets the reach of an unwritten bound, and it does not change assignability, conversion, or ABI guarantees. This incorporates the agreed reflection direction without selecting a new reflection entry point.</li>
 </ul>
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 

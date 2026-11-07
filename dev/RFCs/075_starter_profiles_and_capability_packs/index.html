@@ -9801,6 +9801,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#answering-prompts-or-passing-values" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Answering prompts or passing values
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#adding-a-mix" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9983,6 +9994,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#file-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        File ownership
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#optional-file-groups" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Optional file groups
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#manifest-mutation-rules" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10038,6 +10071,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#one-planning-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One planning contract
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#lockfile-interaction" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10053,6 +10097,17 @@
     <span class="md-ellipsis">
       
         Security and trust
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#provider-validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Provider validation
       
     </span>
   </a>
@@ -10281,10 +10336,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#add-mix-removal-in-v1" class="md-nav__link">
+  <a href="#add-mix-removal" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Add mix removal in v1
+        Add mix removal
       
     </span>
   </a>
@@ -10330,10 +10385,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#unresolved-questions" class="md-nav__link">
+  <a href="#design-decisions" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Unresolved questions
+        Design Decisions
       
     </span>
   </a>
@@ -10362,7 +10417,7 @@
 
 <h1 id="rfc-075-starter-profiles-and-mixes">RFC 075: starter profiles and mixes<a class="headerlink" href="#rfc-075-starter-profiles-and-mixes" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Status:</strong> Draft</li>
+<li><strong>Status:</strong> Planned</li>
 <li><strong>Created:</strong> 2026-04-25</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong><ul>
@@ -10371,7 +10426,8 @@
 <li>RFC 027 (incan-vocab and library metadata)</li>
 <li>RFC 031 (Incan library system phase 1)</li>
 <li>RFC 033 (<code>ctx</code> typed configuration context)</li>
-<li>RFC 034 (<code>incan.pub</code> package registry)</li>
+<li>RFC 118 (Oven command families and dependency addition)</li>
+<li>RFC 125 (<code>loaves.pub</code> Loaf registry; supersedes RFC 034)</li>
 <li>RFC 073 (environment matrices and toolchain constraints)</li>
 <li>RFC 074 (template rendering and boilerplate provenance)</li>
 <li>RFC 076 (project mutation policy and recovery)</li>
@@ -10379,13 +10435,13 @@
 <li>RFC 118 (Incan and Oven command-line surfaces)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> https://github.com/encero-systems/incan/issues/403</li>
+<li><strong>Issue:</strong> <a href="https://github.com/encero-systems/incan/issues/403">https://github.com/encero-systems/incan/issues/403</a></li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> ~~v0.3~~ v0.5</li>
 <li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC extends the Loaf/Oven project model with starter profiles and mixes. A starter profile is a declarative recipe for creating or initializing a project with a coherent set of files, manifest entries, and mixes. A mix is a reusable, explicit project mutation that can add package dependencies, scripts, environment configuration, starter files, tooling metadata, and follow-up diagnostics to an existing project. Starter and mix descriptors may depend on other descriptors, but they must resolve into one reviewable mutation plan. The goal is not hidden framework magic; the goal is to keep the Cargo-shaped package workflow from RFC 034 (<code>oven add &lt;pkg&gt;</code>) while adding an explicit project-mix workflow (<code>oven mix add &lt;mix&gt;</code>) for setup that changes source files, scripts, envs, and tooling metadata.</p>
+<p>This RFC extends the Loaf/Oven project model with starter profiles and mixes. A starter profile is a declarative recipe for creating or initializing a project with a coherent set of files, manifest entries, and mixes. A mix is a reusable, explicit project mutation that can add package dependencies, scripts, environment configuration, starter files, tooling metadata, and follow-up diagnostics to an existing project. Starter and mix descriptors may depend on other descriptors, but they must resolve into one reviewable mutation plan. The goal is not hidden framework magic; the goal is to keep the package workflow from RFC 118 (<code>oven add &lt;pkg&gt;</code>), with registry authority under RFC 125, while adding an explicit project-mix workflow (<code>oven mix add &lt;mix&gt;</code>) for setup that changes source files, scripts, envs, and tooling metadata.</p>
 <h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
 <p>Read this RFC as nine foundations plus five mechanisms:</p>
 <ol>
@@ -10405,7 +10461,7 @@
 <li><strong>Mechanism E:</strong> lifecycle tooling exposes machine-readable starter, mix, and project-mix views so LSP servers and IDE plugins can offer completion, code actions, run actions, and project-shape diagnostics from the same contract as the CLI.</li>
 </ol>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>RFC 015 deliberately defines a small, explicit project lifecycle CLI: create a project, initialize metadata, define scripts and envs, bump versions, and run named env commands. That is the right base layer, but a minimal <code>hello world</code> scaffold is not enough once the ecosystem has reusable libraries for common domains such as CLIs, HTTP clients, web entrypoints, serialization, testing, data access, and documentation. Rust users can often add a crate and immediately use its API; Incan should preserve that simple dependency story through RFC 034's <code>oven add &lt;pkg&gt;</code> while also recognizing that application mixes often need a small amount of project setup. Without a first-class starter model, users will copy examples by hand, drift from recommended dependency combinations, and re-learn the same manifest wiring in every repository.</p>
+<p>RFC 015 deliberately defines a small, explicit project lifecycle CLI: create a project, initialize metadata, define scripts and envs, bump versions, and run named env commands. That is the right base layer, but a minimal <code>hello world</code> scaffold is not enough once the ecosystem has reusable libraries for common domains such as CLIs, HTTP clients, web entrypoints, serialization, testing, data access, and documentation. Rust users can often add a crate and immediately use its API; Incan should preserve that simple dependency story through RFC 118's <code>oven add &lt;pkg&gt;</code> while also recognizing that application mixes often need a small amount of project setup. Without a first-class starter model, users will copy examples by hand, drift from recommended dependency combinations, and re-learn the same manifest wiring in every repository.</p>
 <p>Library metadata and manifests already point toward a more declarative ecosystem. RFC 027 says feature and dependency metadata should travel through library manifests rather than ad-hoc compiler scans, and RFC 031 establishes <code>.incnlib</code> as a semantic library artifact. Those pieces help libraries describe themselves, but they do not answer the project-author question: "start this repo with the standard shape for X" or "add the standard support for Y to this repo."</p>
 <p>The missing layer is an explicit project mutation contract. Users need a command that can say what it will do, apply the change deterministically, and leave behind normal files that can be reviewed in source control. That is a different problem from typechecking, package resolution, environment matrix execution, or future product-specific app templates. This RFC defines the generic Oven-side layer those higher-level experiences can build on. RFC 118 may expose downward-delegating Incan conveniences, but it must not duplicate Oven mutation planning, resolver, policy, or receipt behavior.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
@@ -10423,15 +10479,15 @@
 <li>Define a review-first mix update path so a project can move an applied mix from one recorded descriptor version to another without treating the change as an automatic package upgrade or silent template rewrite.</li>
 <li>Provide machine-readable inspection surfaces so LSP and IDE tooling can list starters, preview mix changes, show enabled mixes, and surface project-specific actions without reimplementing descriptor resolution.</li>
 <li>Allow starter and mix descriptors to be resolved from source-agnostic catalogs such as built-in descriptors, local paths, git sources, public package registries, or private catalogs.</li>
-<li>Leave room for public and private catalog-backed starter discovery without requiring catalog support in the first implementation.</li>
-<li>Treat <code>incan.pub</code> as the eventual default public remote discovery and trust layer for starter and mix descriptors, while allowing non-public catalogs to use the same descriptor semantics and keeping local application semantics in the lifecycle CLI.</li>
+<li>Support public and private catalog-backed starter and mix discovery.</li>
+<li>Use <code>loaves.pub</code> as the default public discovery and trust layer for starter and mix descriptors, while allowing non-public catalogs to use the same descriptor semantics and keeping local application semantics in the lifecycle CLI.</li>
 <li>Align with RFC 033 when generated projects need typed configuration: starter-provided config should prefer <code>ctx</code> source files over untyped sidecar YAML where compiler visibility matters.</li>
 </ul>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Defining product-specific application templates or app framework semantics.</li>
-<li>Defining a public registry protocol for distributing starters. RFC 034 remains the owner of package registry semantics.</li>
-<li>Defining package ranking, recommendations, telemetry, download analytics, or marketplace UI details for <code>incan.pub</code>.</li>
+<li>Defining a public registry protocol for distributing starters. RFC 125 is the owner of package registry semantics, superseding RFC 034; RFC 117 owns the Loaf project and dependency model.</li>
+<li>Defining package ranking, recommendations, telemetry, download analytics, or marketplace UI details for <code>loaves.pub</code>.</li>
 <li>Defining private catalog hosting, identity, authorization, administration, or commercial policy.</li>
 <li>Defining the low-level <code>.incnlib</code> mix manifest schema in full. This RFC may consume library-declared mix metadata when available, but it primarily defines the project lifecycle UX for applying starter and mix descriptors.</li>
 <li>Making every package addition mutate project structure. Plain dependency addition remains valid; mix setup is for packages that advertise it and for users who request it through the mix command surface.</li>
@@ -10470,7 +10526,22 @@ http-client builtin   Project preconfigured for typed HTTP calls and JSON handli
 <p><code>oven init</code> may also accept a starter:</p>
 <div class="language-text highlight"><pre><span></span><code>oven init --starter cli
 </code></pre></div>
-<p>This uses the same descriptor as <code>oven new</code>, but conflict handling is stricter because files may already exist. By default, generated files must not overwrite existing files. If a starter cannot be applied without overwriting or merging conflicting data, the CLI must stop with a diagnostic and suggest <code>--dry-run</code> or explicit overwrite flags.</p>
+<p>This uses the same descriptor as <code>oven new</code>. In an empty directory it creates the project. In a directory that already has a <code>loaf.toml</code> or source files, it is adoption, and the user must say so:</p>
+<div class="language-text highlight"><pre><span></span><code>oven init --starter cli --adopt --dry-run
+oven init --starter cli --adopt
+</code></pre></div>
+<p>Without <code>--adopt</code>, the CLI stops and points at the adoption preview rather than inferring permission to restructure an existing project. The adoption plan keeps existing files and manifest entries intact, lists every conflict, and applies only after each conflict is resolved explicitly, by skipping the change, keeping the existing content, or an explicit overwrite flag.</p>
+<h3 id="answering-prompts-or-passing-values">Answering prompts or passing values<a class="headerlink" href="#answering-prompts-or-passing-values" title="Permanent link">&para;</a></h3>
+<p>A starter or mix can declare typed parameters, using RFC 074's parameter declarations. A person at a terminal is prompted for each value that is missing:</p>
+<div class="language-text highlight"><pre><span></span><code>$ oven new weather_tool --starter http-client
+Base URL for the API [https://api.example.com]: https://weather.example.com
+Request timeout in seconds [10]:
+</code></pre></div>
+<p>An agent or CI job passes the same values as flags or a values file and gets exactly the same result:</p>
+<div class="language-text highlight"><pre><span></span><code>oven new weather_tool --starter http-client --set base_url=https://weather.example.com --set timeout=10
+oven new weather_tool --starter http-client --values http-client.values.toml
+</code></pre></div>
+<p>Prompts are only a way of collecting the declared parameters. Every prompted value can also be supplied non-interactively, it is validated by the same parameter kind either way, and a non-interactive run with a missing required value fails with a diagnostic listing what is missing.</p>
 <h3 id="adding-a-mix">Adding a mix<a class="headerlink" href="#adding-a-mix" title="Permanent link">&para;</a></h3>
 <p>An existing project may add one reusable mix without switching to a different starter:</p>
 <div class="language-text highlight"><pre><span></span><code>oven mix add std.http-client
@@ -10494,7 +10565,7 @@ oven mix update cli --to 1.6.0
 <p>The lifecycle CLI resolves the currently recorded descriptor source and target descriptor version, verifies that the source identity has not silently changed, expands descriptor dependencies, renders affected RFC 074 templates with preserved or supplied values, and produces one receiver-side mutation plan.</p>
 <p>For example, a dry run for <code>cli 1.3.0 -&gt; 1.6.0</code> might report:</p>
 <div class="language-text highlight"><pre><span></span><code>Mix update: cli 1.3.0 -&gt; 1.6.0
-Source: incan.pub:app-cli
+Source: loaves.pub:app-cli
 Publisher: encero
 Source identity changed: no
 Descriptor integrity: verified
@@ -10522,9 +10593,37 @@ Files:
     status: new high-risk file
     action: requires policy approval
 </code></pre></div>
-<p>The user-facing update unit is the mix because that is how the project concern was applied. RFC 074 still owns the lower-level template behavior for individual files: managed files may be updated when unchanged, bootstrap files are not rewritten by normal mix updates, advisory files are explained but not owned, and edited managed files must stop with a conflict or use a documented merge strategy. RFC 076 evaluates the resulting mutation plan before anything is written.</p>
+<p>The user-facing update unit is the mix because that is how the project concern was applied. Each file's ownership policy, defined under File ownership below, decides what the update may do: managed files may be updated, bootstrap files are not rewritten by normal mix updates, and advisory files are explained but not owned. RFC 074 owns the lower-level template mechanics, including the three-way merge that keeps user edits in a managed file and stops at each real conflict. RFC 076 evaluates the resulting mutation plan before anything is written.</p>
 <p><code>oven mix diff</code> should show the receiver-side patch that would land in the project. Catalog or registry source diffs between descriptor versions are useful supporting evidence, but they are not a substitute for the rendered project diff.</p>
-<p>If the descriptor declares ordered migration steps between intermediate versions, the CLI may collapse them into one target update as long as the resulting plan remains explainable. If a required step cannot be represented declaratively, the update must stop and present manual instructions rather than running arbitrary provider code.</p>
+<p>The migration steps travel with the mix, not with the project. The provider writes them into the newer descriptor version, inside the Loaf it publishes:</p>
+<div class="language-text highlight"><pre><span></span><code>app-cli 1.6.0 (a Loaf on loaves.pub)
+  loaf.toml
+  mixes/
+    cli.toml              # the [mix] descriptor, with its [[migrations]]
+  templates/
+    main.incn.template
+</code></pre></div>
+<div class="language-toml highlight"><pre><span></span><code><span class="c1"># app-cli 1.6.0: mixes/cli.toml</span>
+<span class="k">[[migrations]]</span>
+<span class="n">from</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;1.3&quot;</span>
+<span class="n">to</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;1.6&quot;</span>
+
+<span class="k">[[migrations.steps]]</span>
+<span class="n">op</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;rename_script&quot;</span>
+<span class="n">from</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;run&quot;</span>
+<span class="n">to</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;cli.run&quot;</span>
+
+<span class="k">[[migrations.steps]]</span>
+<span class="n">op</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;manual&quot;</span>
+<span class="n">text</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;Replace `App.start()` with `App.run()` in your entrypoint.&quot;</span>
+</code></pre></div>
+<p>The project only records that it applied <code>cli</code> at <code>1.3.0</code>. <code>oven mix update cli --to 1.6.0</code> reads the 1.6.0 descriptor, selects the migrations that lead from the recorded version to the target, checks each step against the project, and shows one plan:</p>
+<div class="language-text highlight"><pre><span></span><code>rename script &quot;run&quot; -&gt; &quot;cli.run&quot;
+  precondition: script &quot;run&quot; is [&quot;oven&quot;, &quot;run&quot;]   ok
+manual: Replace `App.start()` with `App.run()` in your entrypoint.
+  shown, not applied
+</code></pre></div>
+<p>If the user had changed the <code>run</code> script, that step would be a conflict to resolve, not a guess. The provider writes the steps once, and every project updating from 1.3 gets the same plan for the same project state. A change the step vocabulary cannot express stays a manual instruction rather than provider code.</p>
 <h3 id="ide-and-editor-support">IDE and editor support<a class="headerlink" href="#ide-and-editor-support" title="Permanent link">&para;</a></h3>
 <p>The same starter and mix metadata should power editor workflows. An editor or LSP client should be able to ask the toolchain which starters and mixes are available, which ones are compatible with the current project, and what changes a mix would make before applying it.</p>
 <p>Examples of editor-facing behavior this RFC enables:</p>
@@ -10537,6 +10636,7 @@ Files:
 <li>agent-assist affordances that suggest relevant project skills or maintenance workflows for a mix, without running them implicitly</li>
 </ul>
 <p>These workflows must be backed by the same mutation plan and descriptor resolution rules as the CLI. An IDE integration should not have to scrape generated files or duplicate starter semantics to understand the project.</p>
+<p>For example, a code action "Add testing.basic mix" previews exactly the plan that <code>oven mix add testing.basic --dry-run</code> prints, because one planning library produces both. If the user edits <code>tests/test_main.incn</code> after the preview and then applies it, the apply step finds that the file changed since the preview, refuses the stale plan, and asks for a new preview.</p>
 <h3 id="concrete-walkthrough-adding-a-cli-mix">Concrete walkthrough: adding a CLI mix<a class="headerlink" href="#concrete-walkthrough-adding-a-cli-mix" title="Permanent link">&para;</a></h3>
 <p>Suppose a user has an existing project:</p>
 <div class="language-text highlight"><pre><span></span><code>weather_core/
@@ -10562,7 +10662,7 @@ Apply setup with:
 <p>The CLI resolves <code>cli</code> as a mix, sees that its recommended provider is <code>app-cli</code>, validates the descriptor against the active project, and prints a mutation plan:</p>
 <div class="language-text highlight"><pre><span></span><code>Mix: cli
 Package: app-cli 0.3.1
-Source: incan.pub:app-cli@0.3.1
+Source: loaves.pub:app-cli@0.3.1
 Requires Incan: &gt;=0.3,&lt;0.4
 
 Would update dependencies:
@@ -10618,7 +10718,13 @@ Agent guidance:
 
 <span class="k">[oven.mixes]</span>
 <span class="n">enabled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;cli&quot;</span><span class="p">]</span>
+
+<span class="k">[oven.mixes.details.cli]</span>
+<span class="n">source</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;loaves.pub:app-cli&quot;</span>
+<span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.3.1&quot;</span>
+<span class="n">requested_by</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;user&quot;</span>
 </code></pre></div>
+<p>Oven also writes the mix's descriptor digest and expanded graph to <code>oven.provenance.toml</code>, so the project can later explain which mix added the <code>run</code> script.</p>
 <p>After application, the project has both the package dependency and the project setup needed to use it as a CLI application mix. The project does not need the original descriptor to build. The descriptor was the recipe; the resulting source files and manifest are the durable project state. Tooling may still use the recorded mix provenance to explain the project, offer run actions, or suggest relevant agent guidance.</p>
 <h3 id="starter-and-mix-descriptors">Starter and mix descriptors<a class="headerlink" href="#starter-and-mix-descriptors" title="Permanent link">&para;</a></h3>
 <p>Descriptor syntax is a tooling contract, not Incan source syntax. A descriptor may be represented as TOML, JSON, or another stable encoding, but the semantic fields are:</p>
@@ -10685,8 +10791,8 @@ Agent guidance:
   mixes/
     cli.toml
   templates/
-    main.incn.tpl
-    test_cli.incn.tpl
+    main.incn.template
+    test_cli.incn.template
 </code></pre></div>
 <p><code>mixes/cli.toml</code> might contain:</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[mix]</span>
@@ -10701,12 +10807,12 @@ Agent guidance:
 <span class="n">advertises</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;cli&quot;</span><span class="p">]</span>
 
 <span class="k">[[files]]</span>
-<span class="n">source</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;templates/main.incn.tpl&quot;</span>
+<span class="n">source</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;templates/main.incn.template&quot;</span>
 <span class="n">target</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;src/main.incn&quot;</span>
 <span class="n">mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;create&quot;</span>
 
 <span class="k">[[files]]</span>
-<span class="n">source</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;templates/test_cli.incn.tpl&quot;</span>
+<span class="n">source</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;templates/test_cli.incn.template&quot;</span>
 <span class="n">target</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;tests/test_cli.incn&quot;</span>
 <span class="n">mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;create&quot;</span>
 
@@ -10741,7 +10847,8 @@ Agent guidance:
 <p>A <strong>starter profile</strong> is a named descriptor that can create a new project or initialize an existing directory by applying a deterministic set of project mutations.</p>
 <p>A <strong>mix</strong> is a named descriptor that applies one reusable project concern to an existing project. A starter profile may include mixes.</p>
 <p>A <strong>project mutation</strong> is a planned change to project files, <code>loaf.toml</code>, dependency declarations, env definitions, scripts, generated docs, or other explicit artifacts owned by the project.</p>
-<p>A <strong>starter catalog</strong> is a source of starter and mix descriptors. V1 implementations must support built-in descriptors. They may also support explicit local descriptor paths. Future source kinds may include git references, package-provided descriptors, public catalog sources, and private catalog sources.</p>
+<p>A <strong>starter catalog</strong> is a source of starter and mix descriptors. The source kinds are built-in descriptors, explicit local descriptor paths, descriptors provided by Loaf packages from <code>loaves.pub</code>, git references, and public and private catalog sources. Implementations must support all of them under one identity, version, and validation model: a mix written as a local file and later published to <code>loaves.pub</code> remains the same kind of mix.</p>
+<p>Every source must resolve a descriptor to its exact content, identified by source, id, version, and digest, before any plan is built. Offline operation must use the verified descriptors already available locally, such as built-ins, local paths, and <code>loaves.pub</code> descriptors Oven already holds. A fact that could not be fetched or verified must be reported as unknown, never assumed compatible.</p>
 <p>A <strong>catalog-backed source</strong> is a starter catalog backed by a registry or service that can provide discovery, integrity metadata, yanking state, publisher identity, compatibility information, and descriptor payloads or references. Catalog-backed sources do not apply mutations directly to a project.</p>
 <p>A <strong>private catalog</strong> is a catalog-backed source for organization-specific or team-specific starters and mixes that should not be discoverable through the public package ecosystem. Private catalog descriptors may describe whole project blueprints, internal platform conventions, or cross-package mixes. They do not need to be scoped to one public package.</p>
 <h3 id="identifier-rules">Identifier rules<a class="headerlink" href="#identifier-rules" title="Permanent link">&para;</a></h3>
@@ -10760,11 +10867,14 @@ Agent guidance:
 <li><code>oven mix add &lt;mix-id&gt;</code></li>
 <li><code>oven mix update &lt;mix-id&gt; --to &lt;version-or-ref&gt;</code></li>
 <li><code>oven new &lt;name&gt; --starter &lt;starter-id&gt;</code></li>
-<li><code>oven init --starter &lt;starter-id&gt;</code></li>
+<li><code>oven init --starter &lt;starter-id&gt; [--adopt]</code></li>
+<li><code>oven starter validate &lt;descriptor&gt;</code> and <code>oven mix validate &lt;descriptor&gt;</code></li>
 </ul>
+<p>Every command that takes parameters must accept <code>--set &lt;name&gt;=&lt;value&gt;</code> and <code>--values &lt;file&gt;</code> and must prompt only for missing values when attached to an interactive terminal. Prompted, flagged, and file-supplied values must normalize to the same typed parameter values under RFC 074's parameter kinds; a non-interactive run with a missing required value must fail with a diagnostic listing every missing parameter.</p>
+<p><code>oven init --starter</code> must require <code>--adopt</code> when the directory already contains a <code>loaf.toml</code> or source files, and must otherwise refuse with a diagnostic pointing at <code>--adopt --dry-run</code>. An adoption plan must preserve existing files and manifest entries, list every conflict, and apply only after each conflict is resolved explicitly.</p>
 <p><code>oven starter show</code> and <code>oven mix show</code> must report the descriptor source, required Incan constraint, descriptor dependencies, included mixes, planned manifest effects, declared files, and known conflicts if evaluated in a project context.</p>
 <p><code>oven mix add</code> requires a project root. If no <code>loaf.toml</code> is found, it must fail with a diagnostic suggesting <code>oven init</code> or <code>oven new</code>.</p>
-<p><code>oven add &lt;pkg&gt;</code> remains the RFC 034 package dependency command. If the added package advertises mixes, the CLI should report those mixes and show the corresponding <code>oven mix add &lt;mix-id&gt;</code> command, but it must not apply project setup as part of plain dependency addition.</p>
+<p><code>oven add &lt;pkg&gt;</code> remains the RFC 118 package dependency command. If the added package advertises mixes, the CLI should report those mixes and show the corresponding <code>oven mix add &lt;mix-id&gt;</code> command, but it must not apply project setup as part of plain dependency addition.</p>
 <p><code>oven mix status</code> requires a project root. It must report enabled mix provenance and should report whether the project still appears consistent with each enabled mix's declared expectations. When catalog or registry metadata is available, status should also report the latest compatible descriptor version and whether the recorded source is yanked, revoked, superseded, or unknown.</p>
 <p><code>oven mix diff</code> requires a project root and an enabled mix. It must resolve the current recorded descriptor and requested target descriptor, then show the receiver-side mutation plan without writing files. Source-level descriptor diffs may be shown as supporting information, but the rendered project diff is the review artifact.</p>
 <p><code>oven mix update</code> requires a project root and an enabled mix. It applies an explicit receiver-approved mutation plan for moving from the recorded descriptor version to the requested target version or ref. It must support <code>--dry-run</code>, must preserve recorded source identity unless the user explicitly requests a source switch, and must not bypass RFC 076 policy.</p>
@@ -10784,7 +10894,7 @@ Agent guidance:
 <p>Machine-readable output must include stable ids, titles, descriptions, descriptor sources, compatibility state, descriptor dependencies, included mixes, file mutations, generated-file ownership policies, manifest mutations, declared tooling actions, file roles, agent guidance metadata, diagnostics, and unresolved conflicts where applicable.</p>
 <p>Human-readable output may be optimized for terminal use, but it must not be the only supported inspection surface.</p>
 <h3 id="descriptor-compatibility">Descriptor compatibility<a class="headerlink" href="#descriptor-compatibility" title="Permanent link">&para;</a></h3>
-<p>Each starter or mix descriptor may declare <code>requires-incan</code>. If present, the active toolchain must satisfy the descriptor constraint before the descriptor is applied.</p>
+<p>Each starter or mix descriptor may declare <code>requires-incan</code>. If present, the toolchain selected under RFC 073 must satisfy the descriptor constraint before the descriptor is applied.</p>
 <p>If a descriptor is applied to an existing project, its <code>requires-incan</code> must also be compatible with the project's effective toolchain constraint. The descriptor must not silently loosen <code>[project].requires-incan</code>. If the descriptor requires a narrower range, the CLI may propose a manifest update, but it must show the resulting effective constraint before writing.</p>
 <p>If applying a descriptor would create an invalid RFC 073 environment matrix or env-level toolchain constraint, the CLI must reject the plan before writing files.</p>
 <h3 id="descriptor-dependencies">Descriptor dependencies<a class="headerlink" href="#descriptor-dependencies" title="Permanent link">&para;</a></h3>
@@ -10796,13 +10906,21 @@ Agent guidance:
 <li>package dependencies or dev-dependencies</li>
 <li>required project mixes that must already be enabled</li>
 </ul>
-<p>The CLI must resolve descriptor dependencies into a directed acyclic graph before planning file or manifest mutations. If the graph contains a cycle, incompatible version requirements, ambiguous providers, or a missing dependency, planning must fail before any project files are written.</p>
+<p>The CLI must resolve descriptor dependencies into a directed acyclic graph before planning file or manifest mutations. If the graph contains a cycle, incompatible version requirements, ambiguous providers, or a missing dependency, planning must fail before any project files are written, with a diagnostic that names the descriptors involved. Two requested mixes must never silently pick incompatible versions of a shared descriptor.</p>
+<p>An optional dependency must be an explicit edge, enabled by a declared parameter or an explicit user choice and shown in the plan as included or skipped with its reason. Once enabled, it must be resolved exactly like a required dependency, with the same cycle, version, and provider checks; optional edges must not weaken that model.</p>
 <p>Dependency resolution must be visible in dry-run output. If applying <code>sample_query.project</code> also applies <code>sample_query.session</code>, <code>testing.basic</code>, and three templates, the dry run must show those transitive effects explicitly.</p>
 <p>Descriptors should stay small enough that dependency graphs remain explainable. A large starter may compose smaller mixes, but the user-facing plan must still make clear which concern contributes which files, manifest entries, scripts, and generated-file ownership policies.</p>
 <h3 id="applicability-and-back-off">Applicability and back-off<a class="headerlink" href="#applicability-and-back-off" title="Permanent link">&para;</a></h3>
 <p>Starter and mix descriptors may declare applicability checks for project state they require or expect. Applicability checks are descriptive planning inputs, not hidden runtime behavior.</p>
 <p>Applicability checks may inspect explicit project metadata such as package dependencies, manifest keys, env definitions, scripts, known file roles, mix provenance, template provenance, and declared expected files. They must not depend on executing project code or running arbitrary provider scripts.</p>
-<p>The planner must classify each descriptor and mutation with explainable states such as <code>applicable</code>, <code>already-satisfied</code>, <code>skipped</code>, <code>blocked</code>, <code>conflicting</code>, or <code>unsafe</code> when those states apply. For example, a CLI mix may skip creating <code>src/main.incn</code> when the project already has a declared <code>main</code> script and file role, but it must show that decision in dry-run and machine-readable output.</p>
+<p>The planner must classify each descriptor with exactly one of these states:</p>
+<ul>
+<li><code>applicable</code>: the descriptor can be applied to this project.</li>
+<li><code>already-applied</code>: the same descriptor version is already recorded and its expected shape is present, so a repeated request changes nothing.</li>
+<li><code>conflicting</code>: applying it would conflict with existing files, manifest entries, dependencies, or another mix.</li>
+<li><code>unsupported</code>: the project or toolchain cannot take it, for example because of <code>requires-incan</code> or a missing required project mix.</li>
+</ul>
+<p>It must classify each mutation as <code>planned</code>, <code>already-satisfied</code>, <code>skipped</code>, <code>blocked</code>, <code>conflicting</code>, or <code>unsafe</code>. Every state other than <code>applicable</code> and <code>planned</code> must carry a reason code and structured data, including the missing prerequisites for <code>unsupported</code> and <code>blocked</code>. Reason codes are stable kebab-case identifiers documented with the CLI, such as <code>missing-prerequisite</code>, <code>toolchain-incompatible</code>, <code>file-exists</code>, <code>user-edited</code>, <code>ownership-bootstrap</code>, and <code>policy-denied</code>; a provider-specific code must be namespaced by its package. For example, a CLI mix may skip creating <code>src/main.incn</code> when the project already has a declared <code>main</code> script and file role, but it must show that decision, with its reason code, in dry-run and machine-readable output. An agent can then tell a harmless repeated request from a real incompatibility.</p>
 <p>Back-off behavior must be conservative. If the planner cannot prove that an existing file, manifest entry, or dependency already satisfies a mix expectation, it must report a conflict or warning rather than silently assuming success.</p>
 <h3 id="project-mutation-planning">Project mutation planning<a class="headerlink" href="#project-mutation-planning" title="Permanent link">&para;</a></h3>
 <p>Before applying a starter or mix, the CLI must build a mutation plan. The plan must include:</p>
@@ -10810,7 +10928,8 @@ Agent guidance:
 <li>files to create</li>
 <li>files to merge</li>
 <li>files that would conflict</li>
-<li>generated-file ownership policies from RFC 074</li>
+<li>the ownership policy of every file</li>
+<li>optional file groups included or skipped, with the reason for each</li>
 <li>manifest tables and keys to add or update</li>
 <li>dependency and dev-dependency changes</li>
 <li>applicability states and back-off decisions</li>
@@ -10831,7 +10950,27 @@ Agent guidance:
 <p>The default mode is <code>create</code>.</p>
 <p>A descriptor must not overwrite an existing file by default. If a file conflict occurs, the CLI must stop before writing and report the conflicting path. Overwrite flags may exist, but they must be explicit at the command line and must not be implied by <code>--yes</code>.</p>
 <p>File entries may reference templates governed by RFC 074. Starter and mix application must consume rendered files from the template layer; it must not define a second templating language or execute arbitrary generator code.</p>
-<p>If a file entry references an RFC 074 template, the mutation plan must carry the template's generated-file ownership policy. Bootstrap-owned files are created during greenfield application but should not be updated by normal mix refreshes. Managed files may participate in explicit template update workflows. Advisory files may record origin metadata without granting future ownership to the toolchain.</p>
+<h3 id="file-ownership">File ownership<a class="headerlink" href="#file-ownership" title="Permanent link">&para;</a></h3>
+<p>Every file entry carries one ownership policy, and this RFC is its single definition. RFC 074's template descriptors use the same <code>ownership</code> field and template provenance records it; neither layer may define a second ownership flag.</p>
+<ul>
+<li><code>bootstrap</code>: created during initial application and not rewritten by normal mix refreshes or template updates. It suits files users customize immediately, such as application source, domain models, local configuration examples and initial docs.</li>
+<li><code>managed</code>: eligible for explicit updates, through mix refreshes or RFC 074 template updates, while preserving user edits under RFC 074's merge and conflict rules. It suits files that should follow upstream evolution, such as tool configuration, shared helpers, CI boilerplate and formatter or linter configuration.</li>
+<li><code>advisory</code>: origin metadata only. Tooling may explain where the file came from but must never treat it as owned.</li>
+</ul>
+<p>A file entry that declares no ownership is <code>bootstrap</code>. <code>managed</code> must be declared explicitly, and only for files that are genuinely regenerated from upstream, so editing application source such as <code>src/main.incn</code> is ordinary ownership rather than a generated-file violation.</p>
+<p>A recorded rendering digest is a precondition fact for an update, never permission to erase a file that has changed.</p>
+<h3 id="optional-file-groups">Optional file groups<a class="headerlink" href="#optional-file-groups" title="Permanent link">&para;</a></h3>
+<p>A starter or mix may declare optional groups of files, such as docs, CI, test fixtures, backend-specific files or deployment scaffolding, and the condition that enables each:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[[file_groups]]</span>
+<span class="n">id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;docs&quot;</span>
+<span class="n">enabled_by</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;enable_docs&quot;</span>
+
+<span class="k">[[file_groups.files]]</span>
+<span class="n">source</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;templates/docs/index.md.template&quot;</span>
+<span class="n">target</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;docs/index.md&quot;</span>
+<span class="n">language</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;markdown&quot;</span>
+</code></pre></div>
+<p>The planner must decide every group before any file is rendered, and must hand RFC 074's renderer the explicit selected file set. It must not create a full tree and delete disabled parts afterward: that makes dry runs less honest and leaves provenance unable to tell an excluded file from one the user later removed. The plan must report each group as included, skipped, blocked or unavailable, with the parameter, project metadata, source compatibility or policy condition that decided it.</p>
 <h3 id="manifest-mutation-rules">Manifest mutation rules<a class="headerlink" href="#manifest-mutation-rules" title="Permanent link">&para;</a></h3>
 <p>Manifest mutations must be deterministic and must preserve unrelated user-authored manifest content.</p>
 <p>For scalar keys, applying a descriptor must fail if the target key already exists with a different value unless the descriptor declares a supported merge rule or the user supplies an explicit override flag.</p>
@@ -10839,46 +10978,62 @@ Agent guidance:
 <p>For dependency tables, applying a descriptor must reject incompatible duplicate dependency requirements unless a documented resolver can prove the resulting requirement is compatible. The CLI must not silently replace a user-authored dependency constraint with a starter-provided one.</p>
 <p>For env definitions under <code>[oven.envs.*]</code>, applying a descriptor must use RFC 073 validation rules. Inherited envs, scripts, matrices, and toolchain constraints must remain valid after the mutation.</p>
 <h3 id="mix-provenance">Mix provenance<a class="headerlink" href="#mix-provenance" title="Permanent link">&para;</a></h3>
-<p>When <code>oven mix add</code> applies a mix, the project manifest should record that the mix is enabled:</p>
+<p>When <code>oven mix add</code> applies a mix, it must record what was applied. The intent goes in <code>loaf.toml</code>:</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[oven.mixes]</span>
 <span class="n">enabled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;testing.basic&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;std.http-client&quot;</span><span class="p">]</span>
+
+<span class="k">[oven.mixes.details.</span><span class="s2">&quot;std.http-client&quot;</span><span class="k">]</span>
+<span class="n">source</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;loaves.pub:std-http&quot;</span>
+<span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.4.2&quot;</span>
+<span class="n">requested_by</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;user&quot;</span>
+
+<span class="k">[oven.mixes.details.</span><span class="s2">&quot;std.http-client&quot;</span><span class="k">.values]</span>
+<span class="n">base_url</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;https://weather.example.com&quot;</span>
 </code></pre></div>
+<p>The evidence goes in the <code>[mixes]</code> table of RFC 074's tool-owned <code>oven.provenance.toml</code>, next to template evidence: the descriptor digest, the expanded transitive mix graph, integrity and signature state, and the Incan version used. <code>oven.lock</code> holds neither. Small manifests are not a reason to hide a project mutation, so recording is not optional.</p>
 <p>The enabled list is provenance and tooling state. It does not replace explicit dependencies, source files, envs, or config declarations. Removing an item from the list must not be interpreted as uninstalling generated files or dependencies.</p>
 <p>Mix provenance must preserve the descriptor source kind, source identity, selected descriptor version or content hash when available, provider package when applicable, applied mix id, expanded transitive mix graph, and the Incan version used to apply the descriptor. When available, it should also preserve publisher identity, integrity/signature state, yanking or revocation state, catalog trust tier, and the top-level user request that caused transitive mixes to be applied.</p>
-<p>The compact <code>enabled = [...]</code> form is sufficient for human-readable manifest summaries, but tools that support refresh, status, or security review need access to the richer provenance record. That richer record may live in <code>loaf.toml</code>, a sidecar state file, or a future lock/state artifact, but it must be explicit project tooling state rather than inferred from generated files.</p>
+<p>The compact <code>enabled = [...]</code> form is sufficient for human-readable manifest summaries; refresh, status, and security review read the details and the evidence file. Both are explicit project tooling state rather than inferred from generated files. Sensitive parameter values follow RFC 074's rule: they never appear in either file.</p>
 <p>If a mix is already recorded as enabled, <code>oven mix add &lt;mix-id&gt;</code> should be idempotent. It may revalidate that the expected project shape is still present, but it must not duplicate manifest entries or files.</p>
 <p>Mix provenance should preserve enough information to explain transitive additions. A project may record that a starter enabled <code>sample_query.project</code>, and that <code>sample_query.project</code> pulled in <code>sample_query.session</code> and <code>testing.basic</code>. Tooling should be able to show the user both the top-level request and the expanded mix graph.</p>
-<p>Mix provenance is also the anchor for future updates. A project that records <code>cli@1.3.0</code> can later ask for a reviewable update to <code>cli@1.6.0</code> only if tooling can identify the recorded descriptor source, selected version or content hash, parameter values or safe value fingerprints, transitive descriptor graph, generated-file ownership, and applied template provenance. If that information is missing, <code>oven mix update</code> must degrade to an explicit adoption or manual-migration flow rather than guessing.</p>
-<p>Descriptor-version updates may include declarative migration metadata. V1 migration metadata should stay non-executable: manifest key additions, manifest key renames, parameter renames, template id changes, file ownership changes, dependency version changes, action descriptor changes, and manual instruction blocks are acceptable shapes. Arbitrary shell, Python, plugin, or provider-defined migration hooks are out of scope for this RFC.</p>
+<p>Mix provenance is also the anchor for updates. A project that records <code>cli@1.3.0</code> can later ask for a reviewable update to <code>cli@1.6.0</code> only if tooling can identify the recorded descriptor source, selected version or content hash, parameter values or safe value fingerprints, transitive descriptor graph, generated-file ownership, and applied template provenance. If that information is missing, <code>oven mix update</code> must degrade to an explicit adoption or manual-migration flow rather than guessing.</p>
+<p>Descriptor-version updates may include declarative migrations, written in the newer descriptor version as <code>[[migrations]]</code> entries with <code>from</code> and <code>to</code> versions and ordered <code>steps</code>. Each step must use one of these operations: <code>add_manifest_key</code>, <code>rename_manifest_key</code>, <code>rename_script</code>, <code>rename_parameter</code>, <code>change_template_id</code>, <code>change_file_ownership</code>, <code>change_dependency_version</code>, <code>change_action_descriptor</code>, or <code>manual</code>. Arbitrary shell, Python, plugin, or provider-defined migration hooks are not part of this design.</p>
+<p>Migration planning must be deterministic. Its inputs are the recorded and target descriptor versions, pinned by digest, and the current manifest and file digests; the same inputs must produce the same ordered plan. Every operation except <code>manual</code> must state its precondition, such as the current value of the script it renames, and the planner must check it against the project. A failed precondition must become a conflict in the plan, never a guess. A <code>manual</code> step must be shown to the user and never applied. When several migrations lie between the recorded and target versions, the planner may collapse them into one plan only while each step remains attributable to its migration. Applying must recheck every precondition and file digest, and must refuse a plan whose inputs changed after it was previewed.</p>
 <h3 id="tooling-metadata">Tooling metadata<a class="headerlink" href="#tooling-metadata" title="Permanent link">&para;</a></h3>
 <p>Starters and mixes may declare tooling metadata that describes editor-visible project shape without changing language semantics.</p>
 <p>Tooling metadata may include:</p>
 <ul>
-<li>file roles such as <code>main</code>, <code>library</code>, <code>test</code>, <code>config</code>, <code>generated</code>, <code>docs</code>, or <code>example</code></li>
-<li>action descriptors or action references mapped to RFC 015 scripts, env scripts, or project entrypoints</li>
+<li>file roles, from the standard set <code>main</code>, <code>library</code>, <code>test</code>, <code>config</code>, <code>generated</code>, <code>docs</code>, and <code>example</code></li>
+<li>action descriptors or action references mapped to RFC 015 scripts, env scripts, or project entrypoints, whose <code>kind</code> is one of RFC 078's typed action kinds</li>
 <li>config declarations that point at generated <code>ctx</code> types</li>
 <li>documentation links for a mix or generated file role</li>
 <li>expected files that tooling can validate after application</li>
 </ul>
+<p>Standard roles and action kinds are checked identities with typed schemas, so an editor knows that a declared action is a test action without interpreting its display name. Any other role or kind must be namespaced as <code>&lt;namespace&gt;.&lt;name&gt;</code>, with the namespace declared by the providing package. Validation must reject an unknown unnamespaced value, and tooling must never treat a display name or free-form string as semantic authority.</p>
 <p>Tooling metadata must be descriptive. It must not grant special compiler privileges or activate runtime behavior that is not otherwise present in source files or the manifest.</p>
 <p>If tooling metadata references files, paths must be relative to the project root and must not escape it. If it references scripts or envs, those scripts and envs must exist after the mutation plan is applied.</p>
 <p>The LSP or another editor-facing tool may use this metadata for completions, code actions, diagnostics, project-tree grouping, and run/debug affordances. It must still treat the compiler and lifecycle CLI as the source of truth for validation.</p>
 <p>RFC 078 owns typed action semantics, execution modes, risk labels, dry-run expectations for action execution, and <code>oven action run</code>. This RFC only lets starters and mixes contribute or reference action descriptors as part of a project mutation plan. A descriptor that mentions an action must remain descriptive until the user or tooling explicitly invokes the action through RFC 078 behavior.</p>
 <h3 id="agent-guidance-metadata">Agent guidance metadata<a class="headerlink" href="#agent-guidance-metadata" title="Permanent link">&para;</a></h3>
 <p>Starters and mixes may declare agent guidance metadata that describes project-relevant skills, workflows, or maintenance affordances for agentic tooling.</p>
-<p>Agent guidance metadata may include:</p>
+<p>An <code>[[agent_guidance]]</code> entry has these standard structured fields:</p>
 <ul>
-<li>skill ids or workflow ids relevant to the mix</li>
-<li>short descriptions of when the guidance applies</li>
-<li>file roles, mixes, or manifest sections that trigger the guidance</li>
-<li>links to documentation or local instruction files bundled with the package</li>
-<li>safety labels such as <code>read-only</code>, <code>project-mutation</code>, <code>networked</code>, or <code>requires-human-review</code></li>
+<li><code>id</code>, <code>title</code>, <code>kind</code> (<code>skill</code> or <code>workflow</code>), and <code>description</code> of when the guidance applies;</li>
+<li><code>applies_to</code>: the file roles, mixes, or manifest sections that trigger it;</li>
+<li><code>entrypoints</code>: the files or declarations an agent should start from;</li>
+<li><code>contracts</code>: the documentation, local instruction files bundled with the package, or specifications the work must follow;</li>
+<li><code>effects</code>: safety labels from the set <code>read-only</code>, <code>project-mutation</code>, <code>networked</code>, and <code>requires-human-review</code>;</li>
+<li><code>verification</code>: the actions or scripts that check the work, referenced by id and never run by the guidance itself.</li>
 </ul>
+<p>For example, guidance for a testing mix can name <code>tests/</code> as its entrypoint and the <code>run-tests</code> action as its verification, without gaining any authority to execute that action. Runtime-specific extras must sit under a namespaced <code>extensions.&lt;namespace&gt;</code> table and are inert: tooling must not give them meaning beyond the namespace owner's documentation.</p>
 <p>Agent guidance metadata is descriptive. It must not cause a starter or mix to install, enable, or execute an agent automatically. It must not embed secrets, credentials, or hidden prompts that change project behavior. If an agent tool consumes this metadata, it remains responsible for its own permission model and user confirmation rules.</p>
 <p>This metadata is useful because mixes encode project intent. If a project enables a testing mix, an agent can be told which test-writing workflow is relevant. If a project enables an HTTP client mix, an agent can be told which docs, config files, and validation checks matter. The starter/mix layer should expose that intent once instead of forcing every agent integration to rediscover it from filenames.</p>
 <h3 id="dry-run-behavior">Dry-run behavior<a class="headerlink" href="#dry-run-behavior" title="Permanent link">&para;</a></h3>
-<p><code>--dry-run</code> must be supported for <code>oven new --starter</code>, <code>oven init --starter</code>, and <code>oven mix add</code>.</p>
-<p>Dry-run output must include the full mutation plan and must not write project files, lockfiles, or generated artifacts. If a dry run detects conflicts, it must report them with the same diagnostics that a real apply would use. The plan must explain why each descriptor or mutation is applicable, already satisfied, skipped, blocked, conflicting, or unsafe when those states apply.</p>
+<p><code>--dry-run</code> must be supported for <code>oven new --starter</code>, <code>oven init --starter</code>, <code>oven mix add</code>, and <code>oven mix update</code>.</p>
+<p>Dry-run output must include the full mutation plan and must not write project files, lockfiles, or generated artifacts. If a dry run detects conflicts, it must report them with the same diagnostics that a real apply would use. The plan must explain each descriptor and mutation state with its reason code.</p>
+<h3 id="one-planning-contract">One planning contract<a class="headerlink" href="#one-planning-contract" title="Permanent link">&para;</a></h3>
+<p>One library-level contract must resolve descriptors and build mutation plans for every consumer: the CLI, its dry runs, the LSP, and editor integrations. A consumer may reach it in-process or by running the CLI with <code>--format json</code> as a subprocess, but neither path may reimplement resolution, compatibility, conflict detection, or mutation semantics, so the CLI and an editor report the same conflicts for the same selected graph.</p>
+<p>Every plan must carry its preconditions: the resolved descriptor identities and digests, and the digests of the manifest and every file it reads or changes. Applying a plan, whether just built or previewed earlier in an editor, must recheck those preconditions and must refuse a plan whose inputs changed since it was built, asking for a new preview rather than replaying an outdated approval over new edits.</p>
 <p>Implementations must provide a machine-readable dry-run format for the full mutation plan. Security-sensitive mutation categories, conflicts, descriptor source identity, provenance changes, and receiver-side rendered file changes must be represented in that format rather than only in human-readable prose.</p>
 <h3 id="lockfile-interaction">Lockfile interaction<a class="headerlink" href="#lockfile-interaction" title="Permanent link">&para;</a></h3>
 <p>Starter and mix application may update <code>loaf.toml</code>, but it must not silently rewrite <code>oven.lock</code> unless the command documents and exposes that behavior. The default behavior should leave lockfile updates to the next <code>oven lock</code>, <code>oven bake</code>, or <code>oven test</code> flow governed by RFC 020.</p>
@@ -10887,7 +11042,7 @@ Agent guidance:
 <p>Applying a starter or mix must not execute arbitrary code from the descriptor.</p>
 <p>Descriptors must not embed secrets. If generated code needs credentials, it should create typed configuration placeholders, environment-variable references, or documented setup steps.</p>
 <p>Descriptors loaded from local paths must be treated as untrusted input for parsing and file path handling. File targets must be normalized relative to the project root and must not escape it.</p>
-<p>Registry-backed descriptors, if added later, must inherit registry integrity, checksum, and signature rules from the package distribution layer rather than creating a second supply-chain story.</p>
+<p>Registry-backed descriptors must inherit registry integrity, checksum, and signature rules from the package distribution layer rather than creating a second supply-chain story.</p>
 <p>Applying or refreshing a mix is a supply-chain-sensitive project mutation. It may add dependencies, scripts, env definitions, generated source files, CI configuration, tooling metadata, or agent guidance. The lifecycle CLI must therefore present the mutation as a reviewable project diff, not as a cosmetic package setup step.</p>
 <p>The receiving project owns acceptance of mix mutations. A starter or mix descriptor is a recipe for a proposed project patch; it is not authority for the provider, registry, catalog, package, or automation system to write into the receiver's codebase. This is especially important for refreshing an already-applied mix, where the command is changing an existing project rather than creating an empty one.</p>
 <p>Mix plans must show the rendered receiver-side result, not only descriptor diffs. A descriptor diff can explain why a change is proposed, but reviewers need to inspect the actual project patch: source files, generated tests, scripts, envs, manifests, CI/configuration, tooling metadata, and agent guidance.</p>
@@ -10897,6 +11052,15 @@ Agent guidance:
 <p>Project and organization policy may restrict which catalog sources, publishers, trust tiers, or descriptor pin forms are allowed for starters and mixes. Policy may also require approval for high-risk mutation categories before <code>oven mix add</code> or a future mix refresh writes changes. This mirrors code review ownership for CI workflows: source files, scripts, CI config, env definitions, and agent guidance may need different reviewers.</p>
 <p>Automated mix update should follow a review-first model. It may detect stale descriptors, vulnerable sources, or newer compatible versions, but it should emit a reviewable mutation plan or pull-request-sized patch rather than applying changes unattended. The plan should show before/after descriptor source, version or content hash, provider identity, known advisory state, yanking state, and every security-sensitive mutation category.</p>
 <p>Automation that proposes a mix update must not also satisfy the receiver's approval requirement. If policy requires review for a mutation category, the approver must be independent from the tool, service, or agent that produced the proposed patch. Mix update should therefore integrate with normal code review instead of bypassing it.</p>
+<h3 id="provider-validation">Provider validation<a class="headerlink" href="#provider-validation" title="Permanent link">&para;</a></h3>
+<p><code>oven starter validate</code> and <code>oven mix validate</code> must run the same checks as RFC 074's <code>oven template validate</code> for every template the descriptor references, and must also check:</p>
+<ul>
+<li>the descriptor schema, identifiers, standard or namespaced tooling values, and agent guidance fields;</li>
+<li>the dependency graph, including cycles, version conflicts, and ambiguous providers;</li>
+<li>applicability fixtures: declared fixture projects must classify as the descriptor expects, including at least one project on which it is <code>unsupported</code> or <code>conflicting</code>;</li>
+<li>mutation-plan fixtures: applying the descriptor to each fixture project must produce the declared plan, and each declared migration must plan cleanly from its <code>from</code> version.</li>
+</ul>
+<p>A mix must therefore demonstrate what it edits and how it behaves on an incompatible project. With <code>--strict</code>, warnings are errors. The result must be reported in a versioned machine-readable form. Publishing to <code>loaves.pub</code> must require a passing strict result; promotion to a higher trust tier is a separate policy step under RFCs 076 and 125.</p>
 <h3 id="diagnostics">Diagnostics<a class="headerlink" href="#diagnostics" title="Permanent link">&para;</a></h3>
 <p>Diagnostics for failed starter or mix application must name:</p>
 <ul>
@@ -10912,9 +11076,9 @@ Agent guidance:
 <p>RFC 015 remains the historical source of the baseline lifecycle ideas. RFC 117 prospectively supersedes its manifest filename, discovery, lock, and environment-configuration placement. This RFC adds richer starter selection and mix application on top of the <code>loaf.toml</code> project model without reviving the old manifest contract.</p>
 <p>The RFC 015 default scaffold remains valid and should stay small. Starter profiles are the place for opinionated project shapes.</p>
 <h3 id="relationship-to-library-metadata">Relationship to library metadata<a class="headerlink" href="#relationship-to-library-metadata" title="Permanent link">&para;</a></h3>
-<p>Mixes are project-level activation units. Library manifests may eventually advertise mixes, dependencies, config needs, or generated helper files, but applying those mixes to a project remains a lifecycle CLI operation through <code>oven mix add</code>. This avoids a hidden model where merely importing a package or adding a dependency rewrites the project or changes source layout.</p>
+<p>Mixes are project-level activation units. Library manifests may advertise mixes, dependencies, config needs, or generated helper files, but applying those mixes to a project remains a lifecycle CLI operation through <code>oven mix add</code>. This avoids a hidden model where merely importing a package or adding a dependency rewrites the project or changes source layout.</p>
 <p>Where library manifests and starter descriptors overlap, library manifest data should be the source of truth for package-owned dependency and feature requirements. Starter descriptors should compose those mixes rather than copy stale requirements by hand.</p>
-<p>Plain package addition remains owned by RFC 034. A package may advertise mixes, and the package-add workflow may point users at those mixes, but mix application is a separate command surface because it may create files and mutate project structure.</p>
+<p>Plain package addition remains owned by RFC 118, with registry semantics under RFC 125. A package may advertise mixes, and the package-add workflow may point users at those mixes, but mix application is a separate command surface because it may create files and mutate project structure.</p>
 <h3 id="relationship-to-ctx">Relationship to <code>ctx</code><a class="headerlink" href="#relationship-to-ctx" title="Permanent link">&para;</a></h3>
 <p>If a starter or mix needs application configuration visible to the compiler, it should generate Incan source using <code>ctx</code> rather than creating an untyped sidecar configuration format. Sidecar files remain appropriate for operational data that the compiler should not understand.</p>
 <p>Generated <code>ctx</code> declarations must follow normal source rules. The starter mechanism does not grant special access to configuration values.</p>
@@ -10922,7 +11086,7 @@ Agent guidance:
 <p>Starter and mix descriptors may add env definitions. If they add matrix envs, those envs must satisfy RFC 073. This RFC does not redefine matrix expansion or toolchain constraint semantics.</p>
 <h3 id="relationship-to-catalogs-and-package-registries">Relationship to catalogs and package registries<a class="headerlink" href="#relationship-to-catalogs-and-package-registries" title="Permanent link">&para;</a></h3>
 <p>This RFC defines descriptor semantics and local lifecycle behavior. Catalog source kind is a distribution concern, not a different mix system. A starter or mix descriptor should mean the same thing whether it came from a built-in source, local file, git reference, public registry, or private catalog.</p>
-<p><code>incan.pub</code> is positioned to become the default public remote catalog because it already owns package identity, versioning, checksums, signatures, yanking, dependency metadata, and package discovery. Starter and mix descriptors published through <code>incan.pub</code> should reuse that trust and compatibility model instead of creating a parallel public marketplace.</p>
+<p><code>loaves.pub</code> is positioned to become the default public remote catalog because it already owns package identity, versioning, checksums, signatures, yanking, dependency metadata, and package discovery. Starter and mix descriptors published through <code>loaves.pub</code> should reuse that trust and compatibility model instead of creating a parallel public marketplace.</p>
 <p>Private catalogs serve a different need: project and organization blueprints that may be broader than one library package. For example, a private descriptor can describe an end-to-end application shape that includes a CLI, API layer, analytics layer, data quality checks, governance conventions, and agent-relevant guidance. That descriptor can still be represented as ordinary starter and mix metadata. The local lifecycle CLI remains the executor.</p>
 <p>The catalog or registry role should be discovery and verification:</p>
 <ul>
@@ -10934,13 +11098,13 @@ Agent guidance:
 <li>provide descriptor payloads or descriptor references for the local CLI to resolve</li>
 </ul>
 <p>The catalog or registry must not be required to compute or apply project mutation plans. The local lifecycle CLI remains responsible for resolving the current project, checking local files, producing dry-run output, enforcing overwrite rules, and writing changes. This boundary keeps remote behavior cacheable and auditable while preserving local control over project mutation.</p>
-<p>Published starters and mixes should eventually be validated before promotion. At minimum, catalog tooling should be able to check that descriptors parse, dependency graphs resolve, referenced templates exist, and fixture values can render. Full target-project update tests can be a later quality gate.</p>
+<p>Publishing a starter or mix to <code>loaves.pub</code> must require a passing strict <code>oven mix validate</code> result, described under provider validation. Promotion to a higher trust tier is a separate policy step under RFCs 076 and 125.</p>
 <h3 id="relationship-to-rfc-076">Relationship to RFC 076<a class="headerlink" href="#relationship-to-rfc-076" title="Permanent link">&para;</a></h3>
 <p>RFC 076 owns project and organization policy for approving receiver-side mutations, restricting descriptor sources, classifying mutation risk, handling yanked or malicious sources, and recovering from unsafe applied mutations. This RFC defines the starter and mix mutation plans that RFC 076 policy evaluates.</p>
 <h3 id="relationship-to-rfc-078">Relationship to RFC 078<a class="headerlink" href="#relationship-to-rfc-078" title="Permanent link">&para;</a></h3>
 <p>RFC 078 owns the action model. Starter and mix descriptors may contribute action descriptors, but they do not define action execution semantics. During starter or mix application, actions are planned and recorded as metadata; they are not run implicitly. When a user later lists, dry-runs, or runs an action, RFC 078 behavior applies.</p>
 <h3 id="relationship-to-lsp-and-ide-integrations">Relationship to LSP and IDE integrations<a class="headerlink" href="#relationship-to-lsp-and-ide-integrations" title="Permanent link">&para;</a></h3>
-<p>The lifecycle CLI should expose descriptor and project-mix information in a stable machine-readable form so editor integrations can stay thin. Editor plugins may provide rich UI, and they may use cached <code>incan.pub</code> catalog data for discovery, but they should not own the semantics of starter resolution, mix compatibility, conflict detection, or manifest mutation.</p>
+<p>The language server uses the one planning contract above, in-process or through the CLI's <code>--format json</code> output, so editor integrations stay thin. Editor plugins may provide rich UI, and they may use cached <code>loaves.pub</code> catalog data for discovery, but they must not own the semantics of starter resolution, mix compatibility, conflict detection, or manifest mutation. Whether the language server links the planning library or runs the CLI is an integration choice, not a second semantic engine.</p>
 <p>This mirrors the broader Incan tooling direction: the language server and editor integrations should surface compiler and lifecycle knowledge rather than reverse-engineer it from conventions. Starter profiles and mixes should therefore be designed as toolchain data first and editor UI inputs second.</p>
 <h3 id="relationship-to-agentic-tooling">Relationship to agentic tooling<a class="headerlink" href="#relationship-to-agentic-tooling" title="Permanent link">&para;</a></h3>
 <p>Agentic tooling should be treated like another consumer of project metadata, not as a privileged project mutation path. Starters and mixes may advertise relevant skills and workflows, but those advertisements must flow through the same machine-readable inspection surfaces used by IDEs and CLIs.</p>
@@ -10948,29 +11112,30 @@ Agent guidance:
 <h3 id="compatibility-and-migration">Compatibility and migration<a class="headerlink" href="#compatibility-and-migration" title="Permanent link">&para;</a></h3>
 <p>This RFC is additive. Existing projects that use RFC 015 commands without starters continue to behave the same way.</p>
 <p>Existing examples can be converted into starter profiles gradually, but examples remain valuable documentation. A starter profile should not replace explanatory docs; it should make a documented recommended shape executable.</p>
-<p>Projects may choose never to record mix provenance. That should not prevent ordinary builds, but it may limit future inspection commands that explain which project concerns were added by tooling.</p>
+<p>Mix provenance is always recorded when a mix is applied. Removing it must not break ordinary builds, but status, update, and explanation commands then treat the affected mixes as unknown rather than guessing.</p>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <h3 id="fold-starter-profiles-into-rfc-015">Fold starter profiles into RFC 015<a class="headerlink" href="#fold-starter-profiles-into-rfc-015" title="Permanent link">&para;</a></h3>
-<p>Rejected because RFC 015 is already a coherent lifecycle foundation. Adding starter catalogs, mix composition, conflict planning, and provenance would broaden it from "project lifecycle CLI" into "project application framework setup." A follow-up RFC keeps the base layer shippable and easier to implement.</p>
+<p>Rejected because RFC 015 is already a coherent lifecycle foundation. Adding starter catalogs, mix composition, conflict planning, and provenance would broaden it from "project lifecycle CLI" into "project application framework setup." A separate RFC keeps the base layer small and coherent.</p>
 <h3 id="keep-only-examples-and-documentation">Keep only examples and documentation<a class="headerlink" href="#keep-only-examples-and-documentation" title="Permanent link">&para;</a></h3>
 <p>Rejected because copy-paste examples drift. Users need a deterministic command that applies the recommended shape, reports conflicts, and records what changed.</p>
 <h3 id="use-arbitrary-generator-scripts">Use arbitrary generator scripts<a class="headerlink" href="#use-arbitrary-generator-scripts" title="Permanent link">&para;</a></h3>
-<p>Rejected because arbitrary scripts make starters powerful but unsafe, hard to inspect, and hard to reproduce. Static descriptors plus file templates are sufficient for v1 and keep the trust boundary narrow.</p>
+<p>Rejected because arbitrary scripts make starters powerful but unsafe, hard to inspect, and hard to reproduce. Static descriptors plus file templates are sufficient and keep the trust boundary narrow.</p>
 <h3 id="make-package-import-activate-mixes-automatically">Make package import activate mixes automatically<a class="headerlink" href="#make-package-import-activate-mixes-automatically" title="Permanent link">&para;</a></h3>
 <p>Rejected because imports should not mutate projects or create hidden configuration. Mix activation should be explicit through <code>oven mix add</code> or a selected starter profile.</p>
 <h3 id="make-plain-oven-add-pkg-apply-default-mix-setup">Make plain <code>oven add &lt;pkg&gt;</code> apply default mix setup<a class="headerlink" href="#make-plain-oven-add-pkg-apply-default-mix-setup" title="Permanent link">&para;</a></h3>
-<p>Rejected because it overloads dependency addition with project mutation. RFC 034 defines <code>oven add &lt;pkg&gt;</code> as the package workflow, analogous to <code>cargo add</code>. It should be safe to add a dependency without creating source files or scripts. Packages may advertise mixes and the CLI may suggest them after adding the dependency, but applying mix setup belongs to <code>oven mix add</code>.</p>
+<p>Rejected because it overloads dependency addition with project mutation. RFC 118 defines <code>oven add &lt;pkg&gt;</code> as the package workflow, analogous to <code>cargo add</code>. It should be safe to add a dependency without creating source files or scripts. Packages may advertise mixes and the CLI may suggest them after adding the dependency, but applying mix setup belongs to <code>oven mix add</code>.</p>
 <h3 id="store-all-starter-behavior-in-loaftoml">Store all starter behavior in <code>loaf.toml</code><a class="headerlink" href="#store-all-starter-behavior-in-loaftoml" title="Permanent link">&para;</a></h3>
 <p>Rejected because starters often need file templates, docs, and sample tests. <code>loaf.toml</code> should record project metadata and applied mix provenance, not become a large embedded template archive.</p>
-<h3 id="add-mix-removal-in-v1">Add mix removal in v1<a class="headerlink" href="#add-mix-removal-in-v1" title="Permanent link">&para;</a></h3>
-<p>Rejected because removal is substantially harder than addition. Generated files may have been edited by users, dependencies may be shared by multiple mixes, and manifest changes may no longer be attributable to one mix. V1 should focus on safe creation, addition, and inspection.</p>
+<h3 id="add-mix-removal">Add mix removal<a class="headerlink" href="#add-mix-removal" title="Permanent link">&para;</a></h3>
+<p>Rejected because removal is substantially harder than addition. Generated files may have been edited by users, dependencies may be shared by multiple mixes, and manifest changes may no longer be attributable to one mix. This design covers safe creation, addition, update, and inspection.</p>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Starter catalogs introduce another project-facing concept that must be documented and supported.</li>
 <li>Mix provenance can drift from the actual project shape if users manually edit generated files or dependencies.</li>
 <li>Descriptor conflict handling will need careful design to avoid both false positives and accidental overwrites.</li>
 <li>Built-in starters may create expectations that the core toolchain supports every domain equally well.</li>
-<li>Without registry-backed catalogs in v1, the first implementation may feel limited to built-in and local descriptors.</li>
+<li>Supporting every catalog source kind under one validation model makes each source kind carry the same identity, digest, and integrity obligations.</li>
+<li>The fixed migration step vocabulary cannot automate every migration; source rewrites stay manual instructions.</li>
 </ul>
 <h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
 <p>The recommended implementation shape is to treat starter and mix application as a planning problem before it is a file-writing problem.</p>
@@ -10978,31 +11143,30 @@ Agent guidance:
 <p>The same mutation plan should power dry-run output, human diagnostics, and machine-readable inspection. This keeps <code>oven new --starter</code>, <code>oven init --starter</code>, <code>oven mix add</code>, and <code>oven mix update</code> aligned rather than implementing separate generators and updaters.</p>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Manifest schema / configuration validation:</strong> <code>loaf.toml</code> should allow mix provenance under <code>[oven.mixes]</code>; starter-applied env, script, dependency, and project metadata changes must validate under RFCs 020, 073, 076, and 117.</li>
-<li><strong>CLI / tooling:</strong> <code>oven starter</code>, <code>oven mix</code>, <code>oven new --starter</code>, <code>oven init --starter</code>, <code>oven mix add</code>, <code>oven mix diff</code>, and <code>oven mix update</code> are new lifecycle tooling surfaces. They must support inspection, dry-run planning, conflict diagnostics, deterministic application, and review-first descriptor-version updates.</li>
+<li><strong>Manifest schema / configuration validation:</strong> <code>loaf.toml</code> records mix intent under <code>[oven.mixes]</code> and its <code>details</code> tables, and mix evidence goes in the <code>[mixes]</code> table of <code>oven.provenance.toml</code>; starter-applied env, script, dependency, and project metadata changes must validate under RFCs 020, 073, 076, and 117.</li>
+<li><strong>CLI / tooling:</strong> <code>oven starter</code>, <code>oven mix</code>, <code>oven new --starter</code>, <code>oven init --starter [--adopt]</code>, <code>oven mix add</code>, <code>oven mix diff</code>, <code>oven mix update</code>, and the <code>validate</code> commands are new lifecycle tooling surfaces, all built on one planning library. They must support prompts and equivalent non-interactive values, inspection, dry-run planning with checked preconditions, conflict diagnostics, deterministic application, and review-first descriptor-version updates through declared migrations.</li>
 <li><strong>LSP / IDE tooling:</strong> editor-facing tools should consume machine-readable starter, mix, mutation-plan, file-role, and action metadata from the lifecycle layer. They may expose completions, code actions, project diagnostics, and run/debug affordances, but they must not fork descriptor semantics.</li>
 <li><strong>Agentic tooling:</strong> agent-facing tools may consume mix provenance, file roles, and agent guidance metadata to select relevant skills or workflows, but starter/mix descriptors remain descriptive and must not execute agents implicitly.</li>
 <li><strong>Project scaffolding:</strong> the project generator must support descriptor-backed file creation, manifest mutation, safe path normalization, and non-overwrite defaults.</li>
-<li><strong>Library/package integration:</strong> future library mix metadata should feed starter and mix descriptors where possible, but project mutation remains explicit. Package and registry metadata may also feed descriptor dependency resolution and status reporting.</li>
+<li><strong>Library/package integration:</strong> library mix metadata feeds starter and mix descriptors where possible, but project mutation remains explicit. Package and registry metadata may also feed descriptor dependency resolution and status reporting.</li>
+<li><strong>Registry:</strong> <code>loaves.pub</code> serves starter and mix descriptors from Loaf packages and requires a passing strict <code>validate</code> result to publish them.</li>
 <li><strong>Documentation:</strong> user docs must explain the difference between minimal scaffolds, starter profiles, mixes, package dependencies, and runtime configuration.</li>
 </ul>
-<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Should v1 support only built-in starter catalogs and explicit local descriptor paths, with <code>incan.pub</code> as a designed follow-up, or should registry-backed descriptor discovery be part of the first accepted design?</li>
-<li>Should <code>oven mix add</code> always record mix provenance under <code>[oven.mixes]</code>, or should provenance be opt-in for projects that want very small manifests?</li>
-<li>How much of descriptor dependency resolution belongs in v1, and should optional dependencies be allowed before required dependency graphs are fully implemented?</li>
-<li>Which files should starters mark as bootstrap-owned versus managed by default?</li>
-<li>Should <code>oven init --starter</code> have an explicit adoption mode, or should existing-project adoption be auto-detected?</li>
-<li>What provider validation should be required before a starter or mix can be published or promoted through <code>incan.pub</code>?</li>
-<li>Should starter descriptors support interactive prompts in v1, or should all parameterization come from command-line flags and project metadata?</li>
-<li>Which <code>tooling.file_roles</code> and <code>tooling.actions</code> values should be standardized in v1 versus left as free-form extension strings?</li>
-<li>Which <code>agent_guidance</code> fields should be standardized in v1, and which should remain extension metadata for agent runtimes to interpret?</li>
-<li>Which applicability states and reason-code vocabulary should be standardized in v1?</li>
-<li>Which declarative migration operations should be standardized for v1 mix updates, and which should remain manual instructions?</li>
-<li>Should the LSP call the lifecycle CLI as a subprocess for starter/mix inspection, or should the compiler expose the same descriptor-resolution API directly to tooling crates?</li>
+<li>Descriptors come from built-ins, local paths, Loaf packages on <code>loaves.pub</code>, git references, and public or private catalogs, all under one identity, version, digest, and validation model. Catalogs find and verify descriptors; the local planner builds and applies plans. Offline work uses verified local evidence and reports anything unverified as unknown.</li>
+<li>Mix provenance is always recorded: intent (source, version, parameters, top-level request) in <code>loaf.toml</code>, evidence (digest, expanded graph, integrity state) in the <code>[mixes]</code> table of <code>oven.provenance.toml</code>, nothing in <code>oven.lock</code>.</li>
+<li>Required descriptor graphs are resolved completely, with cycle, version, and provider diagnostics. Optional dependencies are explicit edges that, once enabled, resolve exactly like required ones.</li>
+<li>A file without declared ownership is <code>bootstrap</code>; <code>managed</code> is declared explicitly for genuinely regenerated files.</li>
+<li><code>oven init --starter</code> on a non-empty directory requires <code>--adopt</code>, previews an adoption plan, and needs every conflict resolved explicitly.</li>
+<li><code>oven starter validate</code> and <code>oven mix validate</code> run RFC 074's template checks plus applicability, dependency, mutation-plan, and migration fixtures, including an incompatible project. Publishing to <code>loaves.pub</code> requires a passing strict result; promotion is a separate policy step.</li>
+<li>Prompts collect the same typed parameters that <code>--set</code> and <code>--values</code> supply, with identical validation; a non-interactive run lists every missing required value.</li>
+<li>Standard file roles and RFC 078 action kinds are checked identities; any other value is namespaced by its package, and free-form strings never carry meaning.</li>
+<li>Agent guidance has standard <code>entrypoints</code>, <code>contracts</code>, <code>effects</code>, and <code>verification</code> fields; runtime-specific extras are namespaced and inert, and guidance never grants authority to run anything.</li>
+<li>Descriptor states are <code>applicable</code>, <code>already-applied</code>, <code>conflicting</code>, and <code>unsupported</code>; mutation states are <code>planned</code>, <code>already-satisfied</code>, <code>skipped</code>, <code>blocked</code>, <code>conflicting</code>, and <code>unsafe</code>. Each carries a stable reason code and structured data, such as missing prerequisites.</li>
+<li>Migrations live in the newer descriptor version as ordered steps from a fixed operation set plus <code>manual</code>. Each step checks its precondition; failed preconditions become conflicts; the same inputs give the same plan; and apply refuses a plan whose inputs changed.</li>
+<li>One library-level planning contract serves the CLI, dry runs, and the language server. A subprocess is only a transport, and every plan carries the preconditions that apply rechecks.</li>
 </ul>
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 

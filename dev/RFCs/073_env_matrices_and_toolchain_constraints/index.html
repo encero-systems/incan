@@ -9862,6 +9862,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#toolchain-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Toolchain selection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#environment-schema-additions" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10039,10 +10050,32 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#add-toolchain-installation-and-discovery-in-the-same-rfc" class="md-nav__link">
+  <a href="#check-only-the-active-toolchain" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Add toolchain installation and discovery in the same RFC
+        Check only the active toolchain
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#download-a-missing-toolchain-automatically" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Download a missing toolchain automatically
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#skip-cells-whose-toolchain-does-not-fit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Skip cells whose toolchain does not fit
       
     </span>
   </a>
@@ -10102,7 +10135,7 @@
   <a href="#design-decisions" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Design decisions
+        Design Decisions
       
     </span>
   </a>
@@ -10131,7 +10164,7 @@
 
 <h1 id="rfc-073-environment-matrices-and-toolchain-constraints">RFC 073: environment matrices and toolchain constraints<a class="headerlink" href="#rfc-073-environment-matrices-and-toolchain-constraints" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Status:</strong> Draft</li>
+<li><strong>Status:</strong> Planned</li>
 <li><strong>Created:</strong> 2026-04-25</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong><ul>
@@ -10147,7 +10180,6 @@
 <li><strong>Issue:</strong> https://github.com/encero-systems/incan/issues/401</li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> ~~v0.3~~ v0.5</li>
-<li><strong>Target scope:</strong> v0.6, slice 7 (Oven CLI delivery, #1142); brought into scope 2026-09-10. Table root is <code>[envs]</code> per RFC 117.</li>
 <li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
@@ -10159,31 +10191,31 @@
 <li><strong>Foundation:</strong> The project root defines a baseline toolchain contract, and each environment or matrix cell may only narrow that contract for its own workflows.</li>
 <li><strong>Foundation:</strong> A matrix env is still one named env in the manifest, but it expands into multiple concrete env instances at execution time.</li>
 <li><strong>Foundation:</strong> Matrix orchestration belongs to Oven, not to the test runner. RFC 019 remains the owner of test collection, parametrization, fixtures, reporting, and parallel test execution semantics.</li>
-<li><strong>Mechanism A:</strong> Execution commands compute an effective <code>requires-incan</code> constraint and fail early when the active toolchain does not satisfy it, while inspection commands surface compatibility without being blocked by it.</li>
+<li><strong>Mechanism A:</strong> Execution commands compute an effective <code>requires-incan</code> constraint and select an installed toolchain that satisfies it, failing early when none does, while inspection commands surface compatibility without being blocked by it.</li>
 <li><strong>Mechanism B:</strong> <code>[[envs.&lt;name&gt;.matrix]]</code> in <code>loaf.toml</code> declares one or more axes that generate concrete env instances by Cartesian product.</li>
 <li><strong>Mechanism C:</strong> Selecting a concrete env instance runs one resolved env; selecting a matrix root env runs the target script across all generated env instances in deterministic order.</li>
 </ol>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>RFC 015 deliberately stopped before two capabilities that matter in real projects. First, <code>requires-incan</code> exists in the manifest shape, but without enforcement it is only an annotation. That is not enough for CI, compatibility validation, or contributor onboarding. A project that claims support for <code>&gt;=0.3,&lt;0.4</code> needs the toolchain to reject <code>0.4</code> immediately rather than failing later in confusing ways.</p>
-<p>Second, named envs without matrices solve only the single-configuration case. Hatch's value is not just that it names environments; it also lets one logical workflow expand across versions and variants without repo-local shell scripts. Incan needs the same capability for compatibility checks, release validation, feature toggles, and future runner work built on top of RFC 019.</p>
+<p>RFC 015 deliberately stopped before two capabilities that matter in real projects. First, <code>requires-incan</code> exists in the manifest shape, but without enforcement it is only an annotation. That is not enough for CI, compatibility validation, or contributor onboarding. A project that claims support for <code>&gt;=0.3,&lt;0.4</code> must not be built with <code>0.4</code>, and must not fail later in confusing ways.</p>
+<p>Second, named envs without matrices solve only the single-configuration case. Hatch's value is not just that it names environments; it also lets one logical workflow expand across versions and variants without repo-local shell scripts. Incan needs the same capability for compatibility checks, release validation, feature toggles, and runner work built on top of RFC 019.</p>
 <p>The key boundary is that this RFC should not re-specify the test runner. A matrix env may run <code>oven test</code>, but the semantics of how tests are discovered, filtered, reported, or parallelized remain owned by RFC 019. This RFC is about orchestrating repeated command contexts, not about changing what a test run means.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Make <code>[project].requires-incan</code> and env-level <code>requires-incan</code> enforceable for project-aware execution commands.</li>
 <li>Allow named envs to expand into multiple concrete env instances through declarative matrices.</li>
-<li>Keep the ambient <code>default</code> env model from RFC 015 while allowing matrices on explicit envs.</li>
+<li>Keep RFC 117's standard environments while allowing matrices on explicit envs.</li>
 <li>Make matrix execution deterministic and scriptable for CI and local compatibility testing.</li>
 <li>Ensure env-specific constraints can narrow a project contract but cannot silently loosen it.</li>
 <li>Keep the lifecycle CLI surface simple enough that users can understand what will run before it runs.</li>
-<li>Leave room for future toolchain installation and discovery work without blocking constraint enforcement now.</li>
+<li>Select among installed toolchains, so one project can be tested against several Incan versions on one machine.</li>
 </ul>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Defining a toolchain installer, downloader, or registry client.</li>
+<li>Defining how toolchains are installed; RFC 118 owns that. A run never downloads a toolchain by itself.</li>
 <li>Replacing RFC 019's ownership of test-runner behavior such as <code>--jobs</code>, discovery, or report formats.</li>
 <li>Adding Python-style virtual environment creation or shell activation semantics.</li>
 <li>Designing a general templating language for scripts or manifest interpolation.</li>
-<li>Making matrices inherit across env templates; that adds surprising expansion behavior and is not required for the first version.</li>
+<li>Making matrices inherit across env templates; that adds surprising expansion behavior.</li>
 </ul>
 <h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
 <h3 id="project-wide-toolchain-constraints">Project-wide toolchain constraints<a class="headerlink" href="#project-wide-toolchain-constraints" title="Permanent link">&para;</a></h3>
@@ -10193,15 +10225,18 @@
 <span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.3.0&quot;</span>
 <span class="n">requires-incan</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;&gt;=0.3,&lt;0.4&quot;</span>
 </code></pre></div>
-<p>From that point on, project-aware execution commands must validate the active toolchain before doing real work:</p>
+<p>From that point on, project-aware execution commands must select a toolchain that satisfies it before doing real work:</p>
 <div class="language-text highlight"><pre><span></span><code>oven run
 oven bake
 oven test
 oven lock
-oven env run default test
+oven env run dev test
 </code></pre></div>
-<p>If the active toolchain does not satisfy the constraint, the command fails immediately with a diagnostic that names the active version and the required constraint.</p>
-<p>Inspection commands such as <code>oven env show</code> should still be able to report the effective constraint and whether the current toolchain satisfies it.</p>
+<p>Several Incan versions can be installed side by side. If the active toolchain fits, it is used. Otherwise Oven uses the newest installed toolchain that fits, and the receipt records which one ran. If none fits, the command fails immediately and says how to get one:</p>
+<div class="language-text highlight"><pre><span></span><code>no installed toolchain satisfies &gt;=0.3,&lt;0.4 (active: 0.4.2)
+help: incan toolchain install 0.3
+</code></pre></div>
+<p>Inspection commands such as <code>oven env show</code> should still be able to report the effective constraint and which toolchain would be selected.</p>
 <p>Single-file commands remain separate. <code>incan run script.incn</code> without a project root does not consult <code>requires-incan</code> because there is no project manifest to read.</p>
 <h3 id="env-specific-toolchain-constraints">Env-specific toolchain constraints<a class="headerlink" href="#env-specific-toolchain-constraints" title="Permanent link">&para;</a></h3>
 <p>An environment may narrow the project-wide contract for a particular workflow:</p>
@@ -10216,7 +10251,7 @@ oven env run default test
 <span class="k">[envs.release.scripts]</span>
 <span class="n">build</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;oven&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;bake&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;--locked&quot;</span><span class="p">]</span>
 </code></pre></div>
-<p>Now <code>oven env run release build</code> requires an active toolchain compatible with the intersection of the project and env constraints. In this example that intersection is still <code>&gt;=0.4,&lt;0.5</code>, because the env narrows the broader project contract.</p>
+<p>Now <code>oven env run release build</code> requires a toolchain compatible with the intersection of the project and env constraints. In this example that intersection is still <code>&gt;=0.4,&lt;0.5</code>, because the env narrows the broader project contract.</p>
 <h3 id="matrix-environments">Matrix environments<a class="headerlink" href="#matrix-environments" title="Permanent link">&para;</a></h3>
 <p>A matrix environment defines one logical workflow that expands into multiple concrete envs:</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[envs.compat]</span>
@@ -10249,7 +10284,7 @@ oven env run &#39;compat[incan=0.3,profile=release]&#39; test
 oven env run &#39;compat[incan=0.4,profile=debug]&#39; test
 oven env run &#39;compat[incan=0.4,profile=release]&#39; test
 </code></pre></div>
-<p>The CLI should make that expansion visible in dry-run and show output so users can see what is going to execute.</p>
+<p>Each cell selects its own toolchain, so the <code>0.3</code> cells run on an installed <code>0.3</code> and the <code>0.4</code> cells on an installed <code>0.4</code>. A cell with no fitting toolchain fails rather than being skipped, because a green result must mean the cell ran. The CLI should make that expansion visible in dry-run and show output so users can see what is going to execute.</p>
 <h3 id="relationship-to-rfc-019">Relationship to RFC 019<a class="headerlink" href="#relationship-to-rfc-019" title="Permanent link">&para;</a></h3>
 <p>If an env script happens to be <code>["oven", "test"]</code>, the matrix only repeats the test command in multiple env contexts. It does not change the selected test semantics inside any one run. Discovery, fixtures, markers, output formats, and test parallelism remain defined by RFC 019.</p>
 <h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
@@ -10267,18 +10302,21 @@ oven env run &#39;compat[incan=0.4,profile=release]&#39; test
 <ul>
 <li><code>oven env list</code>, <code>oven env show</code>, <code>oven plan</code>, <code>oven inspect</code></li>
 <li><code>incan check</code>, <code>incan version</code></li>
-<li>future read-only or manifest-maintenance commands that do not compile, execute, or lock project code</li>
+<li>other read-only or manifest-maintenance commands that do not compile, execute, or lock project code</li>
 </ul>
 <p>If <code>[project].requires-incan</code> is absent, the project-level baseline constraint is unconstrained.</p>
 <p>If the command resolves an environment, the environment may contribute its own <code>requires-incan</code>. Environment and matrix constraints must intersect with inherited constraints; they do not replace them. An env that declares a broader range than the project baseline does not widen the effective constraint. An env or matrix cell whose declared constraint is disjoint from its inherited constraint makes that env definition invalid.</p>
-<p>If the active Incan toolchain version does not satisfy the effective constraint, the command must fail before running scripts, reading lock policy, compiling user code, or mutating project files.</p>
+<h3 id="toolchain-selection">Toolchain selection<a class="headerlink" href="#toolchain-selection" title="Permanent link">&para;</a></h3>
+<p>Oven must select a toolchain for each concrete env from the toolchains installed in the Incan home, under RFC 118. If the active toolchain satisfies the effective constraint, it must be selected. Otherwise the newest installed toolchain that satisfies it must be selected. The selected toolchain must carry out the whole operation, and the receipt must record it. Selection must be deterministic for a given set of installed toolchains, and must never download anything.</p>
+<p>If no installed toolchain satisfies the effective constraint, the command must fail before running scripts, reading lock policy, compiling user code, or mutating project files.</p>
 <p>The diagnostic must include:</p>
 <ul>
-<li>the active toolchain version</li>
+<li>the active toolchain version and the installed versions</li>
 <li>the effective <code>requires-incan</code> constraint</li>
 <li>the source layers that contributed to the effective constraint</li>
+<li>the command that installs a fitting toolchain</li>
 </ul>
-<p>For inspection commands, the CLI should surface the same effective constraint and should indicate whether the active toolchain satisfies it.</p>
+<p>For inspection commands, the CLI should surface the same effective constraint and should indicate which toolchain would be selected.</p>
 <p>Commands that do not resolve a project root must not attempt to infer or enforce <code>requires-incan</code>.</p>
 <h3 id="environment-schema-additions">Environment schema additions<a class="headerlink" href="#environment-schema-additions" title="Permanent link">&para;</a></h3>
 <p>This RFC adds the following optional fields to <code>[envs.&lt;name&gt;]</code> in <code>loaf.toml</code>:</p>
@@ -10309,13 +10347,13 @@ oven env run &#39;compat[incan=0.4,profile=release]&#39; test
 </code></pre></div>
 <p>The displayed axis order must follow the axis declaration order from the matrix table.</p>
 <p>Concrete env selection on the CLI must accept axis assignments in any order, but the tool must normalize them in output and diagnostics.</p>
-<p>Matrices must not be inherited through <code>extends</code> or the ambient <code>default</code> env. Only the matrix declarations physically present on the selected env generate cells. This keeps expansion local and predictable.</p>
+<p>Matrices must not be inherited through <code>extends</code> or the standard <code>dev</code> env. Only the matrix declarations physically present on the selected env generate cells. This keeps expansion local and predictable.</p>
 <p>If a matrix table would generate duplicate concrete env names, the manifest is invalid and the CLI must fail with a diagnostic naming the collision.</p>
 <h3 id="effective-env-resolution">Effective env resolution<a class="headerlink" href="#effective-env-resolution" title="Permanent link">&para;</a></h3>
 <p>For a concrete matrix env, the effective configuration is computed in this order:</p>
 <ol>
 <li>project base config</li>
-<li>ambient <code>default</code> env, unless the selected root env is detached</li>
+<li>the standard <code>dev</code> env, unless the selected root env is detached</li>
 <li>envs named in <code>extends</code>, in declaration order</li>
 <li>selected root env</li>
 <li>matrix value overlays, in matrix-axis declaration order for the chosen cell</li>
@@ -10334,20 +10372,20 @@ oven env run &#39;compat[incan=0.4,profile=release]&#39; test
 <li>if <code>&lt;env&gt;</code> is a matrix root env, run the script once for each generated concrete env in deterministic order</li>
 </ul>
 <p>When running a matrix root env, the CLI must print which concrete env is currently executing.</p>
-<p>The default matrix execution policy is sequential. Future RFCs may add concurrent matrix execution, but this RFC does not require it.</p>
+<p>The default matrix execution policy is sequential. Concurrent matrix execution is not part of this design.</p>
 <p>The aggregate exit status for matrix-root execution must be non-zero if any concrete env run fails. The CLI may stop at the first failure or continue through all cells if an explicit flag requests that behavior, but the default policy must be documented and consistent across commands.</p>
 <h3 id="dry-run-and-diagnostics">Dry-run and diagnostics<a class="headerlink" href="#dry-run-and-diagnostics" title="Permanent link">&para;</a></h3>
 <p>When <code>--dry-run</code> is supported for <code>oven env run</code>, it must show:</p>
 <ul>
 <li>the concrete env instances that would run</li>
-<li>the effective <code>requires-incan</code> for each instance</li>
+<li>the effective <code>requires-incan</code> and selected toolchain for each instance</li>
 <li>the final argv, cwd, and env-var additions for each instance</li>
 </ul>
-<p>If a concrete env cannot be resolved because of an invalid matrix assignment, unknown axis, missing script, or unsatisfied <code>requires-incan</code>, the diagnostic must name the concrete env string that failed.</p>
+<p>If a concrete env cannot be resolved because of an invalid matrix assignment, unknown axis, missing script, or no fitting toolchain, the diagnostic must name the concrete env string that failed.</p>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
 <h3 id="why-requires-incan-is-an-executable-contract">Why <code>requires-incan</code> is an executable contract<a class="headerlink" href="#why-requires-incan-is-an-executable-contract" title="Permanent link">&para;</a></h3>
 <p>RFC 015 already established <code>requires-incan</code> as part of project metadata. Leaving it unenforced weakens the whole lifecycle surface because users cannot rely on project manifests to describe supported toolchains. This RFC makes the field operational: if a project or env declares a requirement, the CLI must treat it as a contract.</p>
-<p>This remains a constraint story, not a toolchain installation story. The CLI validates the active toolchain it is running under. A future RFC may define discovery or auto-selection of other installed Incan versions, but that is not required for useful enforcement.</p>
+<p>Enforcement alone would make the most useful matrix impossible, because a single active toolchain could only ever pass one <code>incan</code> axis value. So Oven selects among the toolchains already installed. Installing one stays an explicit step, since a test run must not quietly download a compiler.</p>
 <h3 id="why-requires-incan-intersects-instead-of-replacing">Why <code>requires-incan</code> intersects instead of replacing<a class="headerlink" href="#why-requires-incan-intersects-instead-of-replacing" title="Permanent link">&para;</a></h3>
 <p>Replacement is too loose. If the project says <code>&gt;=0.3,&lt;0.5</code> and an env says <code>&gt;=0.2,&lt;0.3</code>, replacement would let one env claim support outside the project's declared contract. That weakens the meaning of the project baseline and makes compatibility harder to audit.</p>
 <p>Intersection preserves the right asymmetry: the project defines the broad contract, and envs may narrow it for more specific workflows. If a project says <code>&gt;=0.3,&lt;0.5</code> and an env says <code>&gt;=0.4,&lt;0.5</code>, the effective constraint is the tighter env range. If the env says <code>&gt;=0.2,&lt;0.3</code>, the configuration is invalid because the env contradicts the project contract instead of refining it.</p>
@@ -10356,16 +10394,15 @@ oven env run &#39;compat[incan=0.4,profile=release]&#39; test
 <p>The author who wants a matrix must declare it on the env that owns it. That keeps reviewable configuration local and avoids debugging invisible expansion from templates.</p>
 <h3 id="why-matrix-values-use-overlays-instead-of-manifest-interpolation">Why matrix values use overlays instead of manifest interpolation<a class="headerlink" href="#why-matrix-values-use-overlays-instead-of-manifest-interpolation" title="Permanent link">&para;</a></h3>
 <p>Hatch supports context formatting, but that is broader than Incan needs here. The immediate need is to vary a few env properties, especially <code>requires-incan</code> and environment variables, across a Cartesian product. Overlay values accomplish that without introducing a string templating language into scripts or dependency specifications.</p>
-<p>If a future RFC needs interpolation, it can add it later. This RFC deliberately keeps the matrix mechanism concrete and explicit.</p>
+<p>This RFC deliberately keeps the matrix mechanism concrete and explicit.</p>
 <h3 id="compatibility-and-migration">Compatibility and migration<a class="headerlink" href="#compatibility-and-migration" title="Permanent link">&para;</a></h3>
 <p>This RFC is additive at the manifest-schema level, but enforcement changes behavior:</p>
 <ul>
-<li>projects that already set <code>[project].requires-incan</code> will start seeing early failures on incompatible toolchains for execution commands</li>
+<li>projects that set <code>[project].requires-incan</code> get a fitting installed toolchain, or an early failure when none is installed</li>
 <li>envs may add <code>requires-incan</code> and matrices without changing non-matrix env behavior</li>
-<li>envs that try to broaden or contradict the project baseline will now fail validation instead of being interpreted permissively</li>
-<li>existing RFC 015 env definitions remain valid</li>
+<li>envs that try to broaden or contradict the project baseline fail validation instead of being interpreted permissively</li>
 </ul>
-<p>Because enforcement makes previously ignored metadata meaningful, the rollout should treat newly failing projects as configuration issues rather than compiler regressions. The diagnostics must make that clear.</p>
+<p>Enforcement makes previously ignored metadata meaningful, so a project that newly fails has a configuration issue rather than a compiler regression. The diagnostics must make that clear.</p>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <h3 id="keep-requires-incan-as-documentation-only">Keep <code>requires-incan</code> as documentation only<a class="headerlink" href="#keep-requires-incan-as-documentation-only" title="Permanent link">&para;</a></h3>
 <p>Rejected because it fails the main reason to have the field at all. Projects and CI need early, actionable validation, not passive notes.</p>
@@ -10373,22 +10410,26 @@ oven env run &#39;compat[incan=0.4,profile=release]&#39; test
 <p>Rejected because it leaves the most useful Hatch-like workflow unsupported: one repo validating different toolchain contracts for different named workflows.</p>
 <h3 id="add-matrix-execution-only-for-oven-test">Add matrix execution only for <code>oven test</code><a class="headerlink" href="#add-matrix-execution-only-for-oven-test" title="Permanent link">&para;</a></h3>
 <p>Rejected because it would couple environment orchestration to the testing surface and duplicate concepts that belong in the lifecycle layer. A matrix env should be able to run build, test, docs, release, or any future named script.</p>
-<h3 id="add-toolchain-installation-and-discovery-in-the-same-rfc">Add toolchain installation and discovery in the same RFC<a class="headerlink" href="#add-toolchain-installation-and-discovery-in-the-same-rfc" title="Permanent link">&para;</a></h3>
-<p>Rejected because that turns one coherent lifecycle extension into an installer design. Constraint enforcement is useful on its own and should not wait on a full toolchain-management story.</p>
+<h3 id="check-only-the-active-toolchain">Check only the active toolchain<a class="headerlink" href="#check-only-the-active-toolchain" title="Permanent link">&para;</a></h3>
+<p>Rejected because a matrix over Incan versions could then never pass on one machine.</p>
+<h3 id="download-a-missing-toolchain-automatically">Download a missing toolchain automatically<a class="headerlink" href="#download-a-missing-toolchain-automatically" title="Permanent link">&para;</a></h3>
+<p>Rejected because a test run should not quietly fetch a compiler, which is awkward in CI and governed runs. The failure names the install command instead.</p>
+<h3 id="skip-cells-whose-toolchain-does-not-fit">Skip cells whose toolchain does not fit<a class="headerlink" href="#skip-cells-whose-toolchain-does-not-fit" title="Permanent link">&para;</a></h3>
+<p>Rejected because the result would be green without having tested what it claims.</p>
 <h3 id="make-matrices-inherit-through-extends">Make matrices inherit through <code>extends</code><a class="headerlink" href="#make-matrices-inherit-through-extends" title="Permanent link">&para;</a></h3>
 <p>Rejected because it makes expansion harder to predict and review. Explicit local matrix declarations are easier to reason about.</p>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Enforced <code>requires-incan</code> will break some projects that currently carry stale metadata without consequences.</li>
 <li>Matrix configuration introduces another layer of manifest complexity and can become noisy if overused.</li>
-<li>Without a separate toolchain installer story, some users will still need to manage multiple Incan versions manually.</li>
+<li>Oven has to run a toolchain other than the one that was invoked, and a user may be surprised which one ran unless the output says so.</li>
 <li>Intersected constraints are stricter, which means some env configurations that look plausible at first glance will be rejected as contradictory.</li>
-<li>Sequential matrix execution may be slower than users expect until there is a later concurrency story.</li>
+<li>Sequential matrix execution may be slower than users expect.</li>
 </ul>
 <h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
 <p>The recommended implementation shape is to treat toolchain validation and matrix resolution as two separate phases before command execution.</p>
 <p>First, resolve the project root and manifest-backed env model exactly once. Then resolve the requested env into either one concrete env or an ordered list of concrete envs. Finally, validate <code>requires-incan</code> per concrete env before launching any child process or compiler work for that env.</p>
-<p>This separation matters because the same concrete-env resolution should power <code>list</code>, <code>show</code>, <code>run</code>, and future machine-readable output. Matrix expansion should therefore be a reusable lifecycle-layer capability rather than logic embedded only inside one command path.</p>
+<p>This separation matters because the same concrete-env resolution should power <code>list</code>, <code>show</code>, <code>run</code>, and machine-readable output. Matrix expansion should therefore be a reusable lifecycle-layer capability rather than logic embedded only inside one command path.</p>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Manifest schema / configuration validation:</strong> the schema must admit env-level <code>requires-incan</code> and matrix declarations, validate axis shapes, and reject duplicate concrete env names or invalid overlay keys.</li>
@@ -10397,14 +10438,13 @@ oven env run &#39;compat[incan=0.4,profile=release]&#39; test
 <li><strong>Testing surface integration:</strong> <code>oven env run ... test</code> must remain only an orchestration wrapper around RFC 019 semantics, not a second test-runner implementation.</li>
 <li><strong>Documentation:</strong> user docs and reference docs must explain the difference between project constraints, env constraints, root envs, and concrete matrix env instances.</li>
 </ul>
-<h2 id="design-decisions">Design decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
-<p>Resolved 2026-09-10 when this RFC was brought into the v0.6 scope.</p>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ul>
+<li><strong>Oven selects among installed toolchains.</strong> The active toolchain is used if it fits, otherwise the newest installed one that fits, and the receipt records it. No fitting toolchain is a failure that names the install command, and a run never downloads anything. Cells are never skipped.</li>
 <li><strong>Matrix-root execution stops at the first failing cell by default.</strong> An explicit <code>--keep-going</code> continues through every cell and prints a per-cell summary at the end. The aggregate exit status is non-zero if any cell failed in either mode, the chosen mode is recorded in the receipt, and every Oven command that expands a matrix uses the same default. Stopping early is the conservative default for a tool whose other operations fail closed; the flag exists for CI.</li>
-<li><strong>No <code>--toolchain</code> override.</strong> Toolchain selection is a plan fact under RFC 117 and RFC 119, derived from the installed toolchain and the effective <code>requires-incan</code> and <code>requires-oven</code> constraints, and recorded in the receipt. A command-line override would let one invocation bypass a constraint the project declared, which is the failure this RFC exists to prevent. A future RFC may add explicit toolchain selection as a plan input; it will never be a constraint bypass. The enforced constraint is always one the project's own manifest declares, so the escape is always available to the author: edit <code>requires-incan</code> or <code>requires-oven</code> in <code>loaf.toml</code>. A dependency's published requirement (RFC 117) only lets the resolver skip versions the installed toolchain cannot build; it never triggers this refusal, so no failure is ever raised against a Loaf the author does not control.</li>
+<li><strong>No <code>--toolchain</code> override.</strong> Toolchain selection is a plan fact under RFC 117 and RFC 119, derived from the installed toolchains and the effective <code>requires-incan</code> and <code>requires-oven</code> constraints, and recorded in the receipt. A command-line override would let one invocation bypass a constraint the project declared, which is the failure this RFC exists to prevent. Explicit toolchain selection as a plan input is not part of this design; toolchain selection is never a constraint bypass. The enforced constraint is always one the project's own manifest declares, so the escape is always available to the author: edit <code>requires-incan</code> or <code>requires-oven</code> in <code>loaf.toml</code>. A dependency's published requirement (RFC 117) only lets the resolver skip versions the installed toolchain cannot build; it never triggers this refusal, so no failure is ever raised against a Loaf the author does not control.</li>
 <li><strong><code>oven env list</code> always shows root environments; <code>--expanded</code> is always explicit.</strong> When a project has only matrix environments, the default listing shows each root with its cell count and the exact <code>--expanded</code> invocation, so the expanded view is one keystroke away without a mode that changes shape depending on manifest contents.</li>
 </ul>
-<p>Amendments made at the same time: the table root is <code>[envs]</code> (RFC 117), not <code>[oven.envs]</code>; <code>requires-oven</code> joins <code>requires-incan</code> with identical semantics; and the command lists reflect RFC 118's surfaces.</p>
 
 
 

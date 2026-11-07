@@ -21,7 +21,7 @@
     
     
       
-        <title>RFC 079: incan.pub artifact graph - Incan Documentation</title>
+        <title>RFC 079: loaves.pub artifact graph - Incan Documentation</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-079-incanpub-artifact-graph" class="md-skip">
+        <a href="#rfc-079-loavespub-artifact-graph" class="md-skip">
           Skip to content
         </a>
       
@@ -117,7 +117,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 079: incan.pub artifact graph
+              RFC 079: loaves.pub artifact graph
             
           </span>
         </div>
@@ -9789,6 +9789,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#who-signs-what" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who signs what
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -9873,6 +9884,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#signatures" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Signatures
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#private-catalogs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Private catalogs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#integrity-and-event-log-model" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9901,10 +9934,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#relationship-to-rfc-034" class="md-nav__link">
+  <a href="#relationship-to-rfc-125" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Relationship to RFC 034
+        Relationship to RFC 125
       
     </span>
   </a>
@@ -9962,10 +9995,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#keep-incanpub-package-only" class="md-nav__link">
+  <a href="#keep-loavespub-package-only" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Keep incan.pub package-only
+        Keep loaves.pub package-only
       
     </span>
   </a>
@@ -10044,10 +10077,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#unresolved-questions" class="md-nav__link">
+  <a href="#design-decisions" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Unresolved questions
+        Design Decisions
       
     </span>
   </a>
@@ -10074,36 +10107,36 @@
   
 
 
-<h1 id="rfc-079-incanpub-artifact-graph">RFC 079: <code>incan.pub</code> artifact graph<a class="headerlink" href="#rfc-079-incanpub-artifact-graph" title="Permanent link">&para;</a></h1>
+<h1 id="rfc-079-loavespub-artifact-graph">RFC 079: <code>loaves.pub</code> artifact graph<a class="headerlink" href="#rfc-079-loavespub-artifact-graph" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Status:</strong> Draft</li>
+<li><strong>Status:</strong> Planned</li>
 <li><strong>Created:</strong> 2026-04-26</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong><ul>
 <li>RFC 020 (Cargo offline and locked policy)</li>
 <li>RFC 027 (incan-vocab and library metadata)</li>
 <li>RFC 031 (Incan library system phase 1)</li>
-<li>RFC 034 (<code>incan.pub</code> package registry)</li>
+<li>RFC 125 (<code>loaves.pub</code> Loaf registry; supersedes RFC 034)</li>
 <li>RFC 074 (template rendering and boilerplate provenance)</li>
-<li>RFC 075 (starter profiles and capability packs)</li>
+<li>RFC 075 (starter profiles and mixes)</li>
 <li>RFC 076 (project mutation policy and recovery)</li>
 <li>RFC 077 (workspace and multi-package projects)</li>
 <li>RFC 078 (tool execution and typed workflow actions)</li>
-<li>RFC 080 (AI assets and agent metadata)</li>
+<li>RFC 080 (declared AI assets)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> https://github.com/encero-systems/incan/issues/407</li>
+<li><strong>Issue:</strong> <a href="https://github.com/encero-systems/incan/issues/407">https://github.com/encero-systems/incan/issues/407</a></li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.3</li>
 <li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC defines the north-star model for <code>incan.pub</code> as an artifact graph rather than only a package file registry. Packages remain central, but the registry should also understand related templates, starters, capabilities, docs, examples, actions, policies, advisories, workspaces, AI assets, evals, and agent guidance so users and tools can discover coherent project capabilities instead of isolated tarballs.</p>
+<p>This RFC defines the north-star model for <code>loaves.pub</code> as an artifact graph rather than only a package file registry. Packages remain central, but the registry should also understand related templates, starters, mixes, docs, examples, actions, policies, advisories, workspaces, AI assets, evals, and agent guidance so users and tools can discover coherent project capabilities instead of isolated tarballs.</p>
 <h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
 <p>Read this RFC as seven foundations:</p>
 <ol>
 <li><strong>Packages are one artifact type:</strong> packages remain publishable units, but not every useful ecosystem object is only a package.</li>
-<li><strong>Relationships are first-class:</strong> a package may advertise capabilities, templates, actions, AI assets, docs, examples, and policies.</li>
+<li><strong>Relationships are first-class:</strong> a package may advertise mixes, templates, actions, AI assets, docs, examples, and policies.</li>
 <li><strong>Discovery follows intent:</strong> users search for "CLI app", "HTTP client", "data quality", "local embedding model", or "workspace starter", not only package names.</li>
 <li><strong>Trust metadata travels with artifacts:</strong> identity, integrity, provenance, yanking, advisories, compatibility, and policy-relevant metadata are graph data.</li>
 <li><strong>Local tooling executes decisions:</strong> the registry may discover and verify artifacts, but local lifecycle tooling plans and applies receiver-side mutations.</li>
@@ -10112,24 +10145,24 @@
 </ol>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
 <p>npm's strength is not only that it stores packages; it makes packages discoverable, scriptable, auditable, and operationally useful. Cargo and crates.io make package identity, docs, versions, features, and lockfiles feel coherent. Hugging Face shows how model and dataset cards turn artifacts into documented, searchable ecosystem objects. Incan should combine those lessons without treating the registry as a remote project mutator.</p>
-<p>RFC 034 defines the package registry foundation. RFC 074, RFC 075, RFC 076, RFC 077, RFC 078, and RFC 080 all introduce related objects that need discovery and trust: templates, capabilities, policies, workspaces, actions, and AI assets. This RFC captures the long-term registry graph that connects them.</p>
+<p>RFC 125 defines the Loaf registry foundation, superseding RFC 034, while RFC 117 owns project and dependency authority. RFC 074, RFC 075, RFC 076, RFC 077, RFC 078, and RFC 080 all introduce related objects that need discovery and trust: templates, mixes, policies, workspaces, actions, and AI assets. This RFC captures the long-term registry graph that connects them.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Define registry-visible artifact kinds beyond packages.</li>
 <li>Define artifact relationships such as advertises, requires, renders, provides, evaluates, supersedes, yanks, derives-from, and compatible-with.</li>
-<li>Define structured card metadata for packages, capabilities, templates, tools, AI assets, datasets, evals, examples, and workspaces.</li>
+<li>Define structured card metadata for packages, mixes, templates, tools, AI assets, datasets, evals, examples, and workspaces.</li>
 <li>Define discovery and ranking inputs without specifying marketplace UI details.</li>
 <li>Define graph metadata that local tooling can use for status, audit, update proposal, policy evaluation, and recovery.</li>
 <li>Keep project mutation local and receiver-owned.</li>
-<li>Leave room for public and private catalogs to share descriptor semantics.</li>
+<li>Let public and private catalogs share descriptor, identity, and trust semantics.</li>
+<li>Define who signs each kind of registry event.</li>
 </ul>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Defining the complete public registry protocol.</li>
+<li>Defining the registry transport protocol or signing mechanics, which RFC 125 owns.</li>
 <li>Defining commercial marketplace ranking, billing, telemetry, or recommendation algorithms.</li>
-<li>Replacing RFC 034 package identity and transport semantics.</li>
-<li>Letting <code>incan.pub</code> compute or apply receiver-side project mutation plans.</li>
-<li>Requiring every artifact type to ship in the first <code>incan.pub</code> implementation.</li>
+<li>Replacing RFC 125 Loaf package identity, trust, or transport semantics, or RFC 117 project and dependency authority.</li>
+<li>Letting <code>loaves.pub</code> compute or apply receiver-side project mutation plans.</li>
 <li>Defining AI model execution semantics. RFC 080 owns AI asset metadata and execution constraints.</li>
 </ul>
 <h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
@@ -10138,7 +10171,7 @@
 <div class="language-text highlight"><pre><span></span><code>Package: app-cli 0.3.1
 
 Provides:
-  capability cli
+  mix cli
   template cli.main
   action run-cli
   docs cli.quickstart
@@ -10149,15 +10182,21 @@ Compatible with:
 Advisory state:
   current
 </code></pre></div>
-<p>A user can discover by capability rather than package:</p>
-<div class="language-text highlight"><pre><span></span><code>incan pub search capability:cli
-incan capability show cli --source incan.pub
+<p>A user can discover by mix rather than package:</p>
+<div class="language-text highlight"><pre><span></span><code>oven registry search kind:mix cli
+oven mix show cli --source loaves.pub
 </code></pre></div>
 <p>The local CLI still owns the dry-run and mutation plan.</p>
 <h3 id="cards">Cards<a class="headerlink" href="#cards" title="Permanent link">&para;</a></h3>
-<p>Artifacts should have a card: structured metadata plus human-readable explanation. A capability card might include:</p>
+<p>Every artifact has a card: structured metadata plus human-readable explanation, like a model card on Hugging Face or a crate's page on crates.io. The publisher writes it into the source Loaf, next to the artifact it describes:</p>
+<div class="language-text highlight"><pre><span></span><code>app-cli 0.3.1 (source Loaf, signed by its publisher)
+  loaf.toml
+  mixes/cli.toml
+  cards/cli.toml        # the mix&#39;s card
+</code></pre></div>
+<p>A mix card might include:</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[card]</span>
-<span class="n">kind</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;capability&quot;</span>
+<span class="n">kind</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;mix&quot;</span>
 <span class="n">id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;cli&quot;</span>
 <span class="n">title</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;Command-line application&quot;</span>
 <span class="n">license</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;Apache-2.0&quot;</span>
@@ -10170,16 +10209,50 @@ incan capability show cli --source incan.pub
 <span class="k">[card.examples]</span>
 <span class="n">quickstart</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;docs/cli.md&quot;</span>
 </code></pre></div>
-<p>The exact syntax is not normative in this Draft. The requirement is that artifact cards provide both discovery metadata and enough context for humans to judge intended use.</p>
+<p>Because the card is inside the Loaf, it is covered by the publisher's signature and the Loaf's digest. <code>loaves.pub</code> reads it to build search entries and artifact pages, and each of those points back at the card's digest; the registry never keeps an editable copy that could drift from what the publisher signed. To correct a card for a version that is already published, such as fixing a typo, the publisher publishes a signed card update carrying the corrected card. The artifact itself does not change, and the registry shows the newest accepted card while keeping the earlier ones.</p>
+<h3 id="who-signs-what">Who signs what<a class="headerlink" href="#who-signs-what" title="Permanent link">&para;</a></h3>
+<p>Every change to registry state is an event. The publisher signs what they write; <code>loaves.pub</code> countersigns every event it accepts, recording where it sits in the log; and the registry signs alone only for its own interventions:</p>
+<table>
+<thead>
+<tr>
+<th>Event</th>
+<th>Publisher signs</th>
+<th>Registry signs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>publish, yank or unyank of one's own version, card update, supersede, compatibility claim</td>
+<td>yes</td>
+<td>yes, as acceptance</td>
+</tr>
+<tr>
+<td>ownership transfer</td>
+<td>the old and the new owner</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>advisory attach or resolve</td>
+<td>the advisory's author</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>malware takedown, legal removal, revocation</td>
+<td>no</td>
+<td>yes, with a reason</td>
+</tr>
+</tbody>
+</table>
+<p>A compromised registry therefore cannot forge a publisher's claim, and a client can check both who said something and when it was accepted.</p>
 <h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
 <h3 id="artifact-kinds">Artifact kinds<a class="headerlink" href="#artifact-kinds" title="Permanent link">&para;</a></h3>
-<p>The artifact graph should support these kinds over time:</p>
+<p>The artifact graph must support these kinds:</p>
 <ul>
 <li><code>package</code></li>
 <li><code>library</code></li>
 <li><code>template</code></li>
 <li><code>starter</code></li>
-<li><code>capability</code></li>
+<li><code>mix</code></li>
 <li><code>action</code></li>
 <li><code>tool</code></li>
 <li><code>workspace</code></li>
@@ -10194,9 +10267,9 @@ incan capability show cli --source incan.pub
 <li><code>eval</code></li>
 <li><code>agent-guidance</code></li>
 </ul>
-<p>Implementations may add artifact kinds, but unknown kinds must remain visible in machine-readable output.</p>
+<p>Each kind must have a versioned, typed descriptor defined by the RFC that owns it: packages and libraries by RFCs 117 and 125, templates by RFC 074, starters and mixes by RFC 075, policies by RFC 076, workspaces by RFC 077, actions and tools by RFC 078, AI assets, datasets, evals and agent guidance by RFC 080, and docs bundles by RFC 082. This RFC defines <code>advisory</code>. The graph must not use generic untyped nodes to suggest support for a kind that has no descriptor. A client that meets a kind it does not recognize must keep it visible in machine-readable output as unknown and must not interpret it.</p>
 <h3 id="relationship-kinds">Relationship kinds<a class="headerlink" href="#relationship-kinds" title="Permanent link">&para;</a></h3>
-<p>The graph should support relationship kinds such as:</p>
+<p>The graph must support these relationship kinds:</p>
 <ul>
 <li><code>provides</code></li>
 <li><code>advertises</code></li>
@@ -10218,7 +10291,8 @@ incan capability show cli --source incan.pub
 </ul>
 <p>Relationships should include source identity, version constraints, and compatibility information when available.</p>
 <h3 id="cards-and-metadata">Cards and metadata<a class="headerlink" href="#cards-and-metadata" title="Permanent link">&para;</a></h3>
-<p>Artifact cards should include:</p>
+<p>A card must be a file at <code>cards/&lt;id&gt;.toml</code> in the source Loaf that publishes its artifact, so it is covered by the publisher's signature and the Loaf's digest. Registry search entries, indexes, and pages must be projections tied to the card's digest; the registry must not hold an editable copy that can replace the authored card. A correction to a published version's card must be a publisher-signed card update that carries the new card and leaves the artifact's identity unchanged.</p>
+<p>Artifact cards must include:</p>
 <ul>
 <li>stable id</li>
 <li>kind</li>
@@ -10235,70 +10309,78 @@ incan capability show cli --source incan.pub
 <li>examples and quickstart references</li>
 <li>limitations or intended-use notes when applicable</li>
 </ul>
-<p>For AI assets, cards should also include model lineage, datasets, evals, adapters, intended use, limitations, privacy concerns, and local/cloud execution requirements as defined by RFC 080.</p>
+<p>For AI assets, cards should also show the declared kind, digest, license, execution and data retention from RFC 080, and may carry richer metadata such as lineage, evals and limitations from a higher-level framework.</p>
 <h3 id="local-tooling-boundary">Local tooling boundary<a class="headerlink" href="#local-tooling-boundary" title="Permanent link">&para;</a></h3>
 <p>The artifact graph may provide descriptor payloads or descriptor references. It may provide source diffs, compatibility information, advisories, yanking state, integrity metadata, and recommended replacements.</p>
 <p>The artifact graph must not be required to compute or apply receiver-side mutation plans. Local lifecycle tooling remains responsible for project inspection, policy evaluation, dry-run output, rendered diffs, conflict handling, and file writes.</p>
 <h3 id="discovery">Discovery<a class="headerlink" href="#discovery" title="Permanent link">&para;</a></h3>
-<p>Discovery should support artifact kind, package, capability, action, domain, tag, license, compatibility, risk category, AI task, model family, dataset, and advisory state.</p>
-<p>Discovery output should be machine-readable and should expose why a result matched the query when that information is available.</p>
+<p>Every search result must carry the artifact's identity, kind, version, description, declared compatibility, provenance, and trust status, including yanking, revocation, and advisory state. Discovery must support filtering by artifact kind, package, mix, action, domain, tag, license, compatibility, risk category, AI task, model family, dataset, and advisory state.</p>
+<p>Discovery output must be machine-readable and should expose why a result matched the query. Ranking orders results; it must never become semantic authority, so a rank never stands in for compatibility, trust, or identity.</p>
 <h3 id="advisories-and-yanking">Advisories and yanking<a class="headerlink" href="#advisories-and-yanking" title="Permanent link">&para;</a></h3>
-<p>The graph should represent advisories and yanking as relationships rather than opaque package flags. A yanked capability descriptor, revoked model, or vulnerable template source can then be connected to affected packages, templates, actions, and projects through local provenance.</p>
+<p>The graph must represent advisories and yanking as relationships rather than opaque package flags. An advisory must be its own separately attributable, signed record that references the immutable artifact versions it affects; it must never rewrite the affected artifact or its card. A later advisory that corrects or replaces an earlier one must say so with an explicit supersession. A yanked mix descriptor, revoked model, or vulnerable template source can then be connected to affected packages, templates, actions, and projects through local provenance.</p>
+<h3 id="signatures">Signatures<a class="headerlink" href="#signatures" title="Permanent link">&para;</a></h3>
+<p>Publisher-authored events must carry the publisher's signature, and every accepted event must carry the registry's signature recording its acceptance and position in the log:</p>
+<ul>
+<li>publish, yank and unyank of one's own version, card update, supersession, and compatibility assertions: signed by the publisher and countersigned by the registry;</li>
+<li>ownership transfer: signed by the previous and the new owner and countersigned by the registry;</li>
+<li>advisory attach and resolve: signed by the advisory's author and countersigned by the registry;</li>
+<li>malware takedown, legal removal, and revocation: signed by the registry alone, with a recorded reason.</li>
+</ul>
+<p>Signing identities, keyless signing, the transparency log, and registry key delegation are RFC 125's.</p>
+<h3 id="private-catalogs">Private catalogs<a class="headerlink" href="#private-catalogs" title="Permanent link">&para;</a></h3>
+<p>A private catalog must use the same descriptors, identities, card rules, event kinds, and signature rules as <code>loaves.pub</code>. It differs only in visibility and authorization: who may read, publish, and administer its artifacts. A private artifact referencing a public one, or the reverse, must use the same relationship kinds and identities, and RFC 075's source-precedence rules govern which catalog provides an ambiguous id.</p>
 <h3 id="integrity-and-event-log-model">Integrity and event log model<a class="headerlink" href="#integrity-and-event-log-model" title="Permanent link">&para;</a></h3>
 <p>The artifact graph should be built from immutable artifact versions and signed registry events rather than from a mutable ad-hoc catalog. Package archives, template bundles, model weights, docs bundles, datasets, eval suites, generated artifacts, and similar versioned payloads should have content-addressed identities. A stable asset name or channel such as <code>latest</code>, <code>stable</code>, or <code>recommended</code> is a registry pointer, not the artifact version itself.</p>
 <p>Registry state changes should be represented as signed events. Event kinds include publish, yank, unyank, supersede, ownership transfer, advisory attach, advisory resolve, revocation, compatibility assertion, and metadata/card update. The queryable artifact graph is then a projection over the accepted event stream plus the immutable artifact payloads it references.</p>
-<p>This keeps the useful properties usually sought from blockchain-style designs: tamper evidence, provenance, auditable state transitions, and independently verifiable artifact identity. It avoids making consensus, token economics, or irreversible public-chain writes part of the core <code>incan.pub</code> contract. Moderation, malware response, accidental secret publication, legal takedowns, private catalogs, and key rotation all require registry-controlled state transitions that remain auditable without pretending every piece of state should be globally immutable.</p>
-<p>The event log should be append-only from the registry's perspective, with corrections represented by later events rather than in-place rewrites. Implementations may publish Merkle checkpoints or anchor event-log roots in an external transparency system later, but that is an optional hardening layer. It must not be required for the first useful artifact graph.</p>
+<p>This keeps the useful properties usually sought from blockchain-style designs: tamper evidence, provenance, auditable state transitions, and independently verifiable artifact identity. It avoids making consensus, token economics, or irreversible public-chain writes part of the core <code>loaves.pub</code> contract. Moderation, malware response, accidental secret publication, legal takedowns, private catalogs, and key rotation all require registry-controlled state transitions that remain auditable without pretending every piece of state should be globally immutable.</p>
+<p>The event log must be append-only from the registry's perspective, with corrections represented by later events rather than in-place rewrites. RFC 125's signed periodic checkpoints cover the log; anchoring them in an external transparency system is not required by the artifact graph.</p>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
-<h3 id="relationship-to-rfc-034">Relationship to RFC 034<a class="headerlink" href="#relationship-to-rfc-034" title="Permanent link">&para;</a></h3>
-<p>RFC 034 owns core package registry semantics. This RFC extends the registry's conceptual model from package versions to related artifact nodes and relationships.</p>
-<p>This RFC inherits RFC 034's amended package artifact boundary: generated Rust source is not the public package compatibility path. Artifact graph nodes may describe generated implementation artifacts for inspection, provenance, compatibility reports, or migration, but package semantics must remain grounded in Incan manifests, semantic metadata, ABI/package metadata, and registry artifact relationships.</p>
+<h3 id="relationship-to-rfc-125">Relationship to RFC 125<a class="headerlink" href="#relationship-to-rfc-125" title="Permanent link">&para;</a></h3>
+<p>RFC 125 supersedes RFC 034 and owns core Loaf registry semantics. This RFC extends the registry's conceptual model from package versions to related artifact nodes and relationships.</p>
+<p>This RFC consumes RFC 125's source-Loaf and baked-asset identity chain and RFC 117's checked package authority. Package semantics must remain grounded in Incan manifests, semantic metadata, ABI/package metadata, and registry artifact relationships, never in implementation artifacts a node may describe for inspection or provenance.</p>
 <h3 id="relationship-to-rfc-074-and-rfc-075">Relationship to RFC 074 and RFC 075<a class="headerlink" href="#relationship-to-rfc-074-and-rfc-075" title="Permanent link">&para;</a></h3>
-<p>Template, starter, and capability descriptors are local tooling contracts. The graph can distribute and index them, but local lifecycle tooling owns rendering and mutation planning.</p>
+<p>Template, starter, and mix descriptors are local tooling contracts. The graph can distribute and index them, but local lifecycle tooling owns rendering and mutation planning.</p>
 <h3 id="relationship-to-rfc-076">Relationship to RFC 076<a class="headerlink" href="#relationship-to-rfc-076" title="Permanent link">&para;</a></h3>
 <p>Policy evaluation consumes graph metadata such as source identity, publisher, trust tier, advisory state, yanking state, and recommended recovery paths.</p>
 <h3 id="relationship-to-rfc-080">Relationship to RFC 080<a class="headerlink" href="#relationship-to-rfc-080" title="Permanent link">&para;</a></h3>
-<p>AI assets become first-class graph nodes so model, dataset, prompt, adapter, eval, and agent metadata can be discovered and governed alongside packages and capabilities.</p>
+<p>AI assets become first-class graph nodes so model, dataset, prompt, adapter, eval, and agent metadata can be discovered and governed alongside packages and mixes. What AI assets need from the graph is immutable identities and typed relationships, such as <code>uses-model</code>, <code>uses-dataset</code>, <code>evaluated-by</code>, and <code>derived-from</code>, to their sources, profiles, and observations. A recommendation marketplace is not part of that need.</p>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
-<h3 id="keep-incanpub-package-only">Keep <code>incan.pub</code> package-only<a class="headerlink" href="#keep-incanpub-package-only" title="Permanent link">&para;</a></h3>
-<p>Rejected because templates, capabilities, actions, policies, and AI assets would then need parallel registries or ad-hoc package conventions.</p>
+<h3 id="keep-loavespub-package-only">Keep <code>loaves.pub</code> package-only<a class="headerlink" href="#keep-loavespub-package-only" title="Permanent link">&para;</a></h3>
+<p>Rejected because templates, mixes, actions, policies, and AI assets would then need parallel registries or ad-hoc package conventions.</p>
 <h3 id="treat-every-artifact-as-a-package">Treat every artifact as a package<a class="headerlink" href="#treat-every-artifact-as-a-package" title="Permanent link">&para;</a></h3>
-<p>Rejected because not every artifact has package semantics. A prompt template, eval suite, capability descriptor, or advisory is meaningfully related to packages but should not necessarily be published as its own dependency.</p>
+<p>Rejected because not every artifact has package semantics. A prompt template, eval suite, mix descriptor, or advisory is meaningfully related to packages but should not necessarily be published as its own dependency.</p>
 <h3 id="let-the-registry-apply-project-mutations">Let the registry apply project mutations<a class="headerlink" href="#let-the-registry-apply-project-mutations" title="Permanent link">&para;</a></h3>
 <p>Rejected because receiver-side mutation must remain local, reviewable, and policy-controlled.</p>
 <h3 id="use-a-blockchain-as-the-core-registry-ledger">Use a blockchain as the core registry ledger<a class="headerlink" href="#use-a-blockchain-as-the-core-registry-ledger" title="Permanent link">&para;</a></h3>
-<p>Rejected for the core <code>incan.pub</code> design. Blockchain infrastructure adds operational, cost, latency, governance, and user-experience complexity without matching the registry's primary trust boundary. <code>incan.pub</code> needs signed publishers, content-addressed artifacts, auditable registry events, moderation, yanking, recovery, private-catalog compatibility, and predictable EU-hosted operations. A signed append-only event log with optional external checkpoints provides the relevant integrity properties without binding the registry to a token, chain, or external consensus layer.</p>
+<p>Rejected for the core <code>loaves.pub</code> design. Blockchain infrastructure adds operational, cost, latency, governance, and user-experience complexity without matching the registry's primary trust boundary. <code>loaves.pub</code> needs signed publishers, content-addressed artifacts, auditable registry events, moderation, yanking, recovery, private-catalog compatibility, and predictable EU-hosted operations. A signed append-only event log with optional external checkpoints provides the relevant integrity properties without binding the registry to a token, chain, or external consensus layer.</p>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
 <li>A graph model is more complex than a package index.</li>
 <li>Artifact cards require authors to maintain metadata.</li>
 <li>Discovery quality depends on consistent metadata and relationship hygiene.</li>
-<li>The first implementation must avoid overbuilding marketplace features before package basics are stable.</li>
 </ul>
 <h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
-<p>The recommended implementation shape is to start by indexing package-provided relationships that already exist in descriptors and manifests. Over time, the registry can add explicit card metadata, artifact pages, advisory relationships, AI asset nodes, and richer graph queries.</p>
-<p>This RFC is intentionally a registry graph direction, not a blocker for the local lifecycle slice. RFC 074, RFC 075, RFC 076, and RFC 078 must be able to work with built-in descriptors and explicit local sources before <code>incan.pub</code> provides rich graph semantics. The first useful registry implementation should therefore be narrow: index package-provided relationships, expose source identity and compatibility metadata, and avoid requiring the full artifact taxonomy before local lifecycle behavior can ship.</p>
+<p>The recommended implementation shape indexes package-provided relationships that already exist in descriptors and manifests, and adds explicit card metadata, artifact pages, advisory relationships, AI asset nodes, and richer graph queries on top of them.</p>
+<p>The local lifecycle does not depend on this RFC. RFC 074, RFC 075, RFC 076, and RFC 078 must be able to work with built-in descriptors and explicit local sources without <code>loaves.pub</code> graph semantics.</p>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Registry / package integration:</strong> <code>incan.pub</code> needs artifact kinds, relationship metadata, cards, advisories, and graph queries.</li>
+<li><strong>Registry / package integration:</strong> <code>loaves.pub</code> needs artifact kinds, relationship metadata, cards, advisories, and graph queries.</li>
 <li><strong>CLI / tooling:</strong> lifecycle commands need graph-backed discovery, status, audit, and source resolution.</li>
 <li><strong>Manifest schema / configuration validation:</strong> packages and descriptors need a way to declare graph relationships and cards.</li>
 <li><strong>LSP / IDE tooling:</strong> editor tooling may consume graph metadata for discovery, code actions, docs, and project diagnostics.</li>
-<li><strong>Agentic tooling:</strong> agents may use graph metadata to select capabilities, actions, docs, evals, and skills, subject to policy.</li>
+<li><strong>Agentic tooling:</strong> agents may use graph metadata to select mixes, actions, docs, evals, and skills, subject to policy.</li>
 <li><strong>Documentation:</strong> docs must explain artifact kinds, cards, relationships, and local mutation boundaries.</li>
 </ul>
-<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Which artifact kinds should be included in the first graph implementation?</li>
-<li>Should cards live inside package archives, registry-side metadata, or both?</li>
-<li>Which graph event kinds require publisher signatures, registry signatures, or both?</li>
-<li>What discovery fields are required for v1 search?</li>
-<li>Should advisories be separate artifacts or metadata attached to packages and descriptors?</li>
-<li>How should private catalogs share graph semantics with public <code>incan.pub</code>?</li>
-<li>What minimum graph support is required before AI assets from RFC 080 become useful?</li>
+<li>The graph covers the artifact kinds that agreed RFCs define, each with a versioned typed descriptor from its owning RFC; there are no generic untyped nodes, and an unrecognized kind stays visible as unknown.</li>
+<li>Cards live in the source Loaf at <code>cards/&lt;id&gt;.toml</code>, covered by the publisher's signature and the Loaf's digest. Registry indexes and pages are projections tied to the card's digest, and corrections are publisher-signed card updates rather than registry edits.</li>
+<li>Publishers sign what they author; the registry countersigns every accepted event and signs alone only for its own interventions, such as takedowns and revocations, with a reason. Ownership transfers carry both owners' signatures. Signing mechanics are RFC 125's.</li>
+<li>Every search result carries identity, kind, version, description, declared compatibility, provenance, and trust status. Ranking never becomes semantic authority.</li>
+<li>Advisories are separately attributable signed records that reference immutable artifact versions, with explicit supersession; they never rewrite an artifact or its card.</li>
+<li>Private catalogs use the same descriptors, identities, card rules, events, and signatures as <code>loaves.pub</code>, with their own visibility and authorization.</li>
+<li>AI assets need immutable identities and typed relationships to their sources, profiles, and observations; a recommendation marketplace is not part of that need.</li>
 </ul>
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 

@@ -21,7 +21,7 @@
     
     
       
-        <title>RFC 067: std.ci — deterministic CI and automation scripting primitives - Incan Documentation</title>
+        <title>RFC 080: Declared AI assets - Incan Documentation</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-067-stdci-deterministic-ci-and-automation-scripting-primitives" class="md-skip">
+        <a href="#rfc-080-declared-ai-assets" class="md-skip">
           Skip to content
         </a>
       
@@ -117,7 +117,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 067: std.ci — deterministic CI and automation scripting primitives
+              RFC 080: Declared AI assets
             
           </span>
         </div>
@@ -9768,10 +9768,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#reading-the-execution-environment" class="md-nav__link">
+  <a href="#declaring-assets" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Reading the execution environment
+        Declaring assets
       
     </span>
   </a>
@@ -9779,10 +9779,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#reading-workflow-payloads" class="md-nav__link">
+  <a href="#using-an-asset" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Reading workflow payloads
+        Using an asset
       
     </span>
   </a>
@@ -9790,10 +9790,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#writing-outputs" class="md-nav__link">
+  <a href="#restricting-assets" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Writing outputs
+        Restricting assets
       
     </span>
   </a>
@@ -9801,10 +9801,21 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#exiting-clearly" class="md-nav__link">
+  <a href="#checking-a-project" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Exiting clearly
+        Checking a project
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#building-on-this" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Building on this
       
     </span>
   </a>
@@ -9829,10 +9840,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#module-family" class="md-nav__link">
+  <a href="#declarations" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Module family
+        Declarations
       
     </span>
   </a>
@@ -9840,10 +9851,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#environment-access" class="md-nav__link">
+  <a href="#execution-and-data" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Environment access
+        Execution and data
       
     </span>
   </a>
@@ -9851,10 +9862,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#workflow-file-handling" class="md-nav__link">
+  <a href="#activation-and-running" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Workflow file handling
+        Activation and running
       
     </span>
   </a>
@@ -9862,10 +9873,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#exit-behavior" class="md-nav__link">
+  <a href="#policy-and-auditing" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Exit behavior
+        Policy and auditing
       
     </span>
   </a>
@@ -9873,21 +9884,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#determinism-and-testability" class="md-nav__link">
+  <a href="#conformance-workloads" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Determinism and testability
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#secrets-and-diagnostics" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Secrets and diagnostics
+        Conformance workloads
       
     </span>
   </a>
@@ -9912,10 +9912,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#syntax" class="md-nav__link">
+  <a href="#why-so-little" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Syntax
+        Why so little
       
     </span>
   </a>
@@ -9923,10 +9923,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#semantics" class="md-nav__link">
+  <a href="#why-prompts-have-no-syntax" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Semantics
+        Why prompts have no syntax
       
     </span>
   </a>
@@ -9934,21 +9934,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#interaction-with-existing-features" class="md-nav__link">
+  <a href="#prior-art" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Interaction with existing features
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#compatibility-migration" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Compatibility / migration
+        Prior art
       
     </span>
   </a>
@@ -9983,17 +9972,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#implementation-architecture" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Implementation architecture
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#layers-affected" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10005,10 +9983,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#unresolved-questions" class="md-nav__link">
+  <a href="#design-decisions" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Unresolved questions
+        Design Decisions
       
     </span>
   </a>
@@ -10035,198 +10013,211 @@
   
 
 
-<h1 id="rfc-067-stdci-deterministic-ci-and-automation-scripting-primitives">RFC 067: <code>std.ci</code> — deterministic CI and automation scripting primitives<a class="headerlink" href="#rfc-067-stdci-deterministic-ci-and-automation-scripting-primitives" title="Permanent link">&para;</a></h1>
+<h1 id="rfc-080-declared-ai-assets">RFC 080: Declared AI assets<a class="headerlink" href="#rfc-080-declared-ai-assets" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Status:</strong> Draft</li>
-<li><strong>Created:</strong> 2026-04-16</li>
+<li><strong>Status:</strong> Planned</li>
+<li><strong>Created:</strong> 2026-04-26</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong><ul>
-<li>RFC 015 (hatch-like tooling and project lifecycle CLI)</li>
-<li>RFC 051 (<code>JsonValue</code> for <code>std.json</code>)</li>
-<li>RFC 055 (<code>std.fs</code> path-centric filesystem APIs)</li>
-<li>RFC 063 (<code>std.process</code> process spawning and command execution)</li>
-<li>RFC 066 (<code>std.http</code> HTTP client surface)</li>
+<li>RFC 075 (starter profiles and mixes)</li>
+<li>RFC 076 (project mutation policy and <code>oven audit</code>)</li>
+<li>RFC 078 (typed workflow actions)</li>
+<li>RFC 079 (<code>loaves.pub</code> artifact graph)</li>
+<li>RFC 104 (capabilities and receipts)</li>
+<li>RFC 117 (<code>loaf.toml</code> and Oven's language-neutral project model)</li>
+<li>RFC 124 (Oven store unit identity)</li>
+<li>RFC 125 (<code>loaves.pub</code> registry)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> https://github.com/encero-systems/incan/issues/85</li>
+<li><strong>Issue:</strong> https://github.com/encero-systems/incan/issues/408</li>
 <li><strong>RFC PR:</strong> —</li>
-<li><strong>Written against:</strong> v0.2</li>
+<li><strong>Written against:</strong> v0.3</li>
 <li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC proposes <code>std.ci</code> as Incan's standard library surface for deterministic CI and automation scripts. The module family standardizes environment access, workflow input and output files, small automation-oriented filesystem helpers, argument and exit handling, and integration with <code>std.http</code> and <code>JsonValue</code> so repository automation does not need to fall back to fragile shell glue or JavaScript snippets.</p>
+<p>A project can depend on a model or a prompt, and those affect behavior as much as code does. <code>[assets.&lt;id&gt;]</code> in <code>loaf.toml</code> declares them, so each has an identity, a change to one is reviewable, policy can restrict it, and <code>oven audit</code> reports it. Declaring an asset never downloads or runs anything. Incan owns only this general part. Providers, runtimes, measurements, model selection and eval metrics change far more often than a compiler release, so they belong to a higher-level framework, which builds on these declarations.</p>
 <h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
-<p>Read this RFC as one foundation plus three mechanisms:</p>
 <ol>
-<li><strong>Foundation:</strong> CI scripting is ordinary Incan automation work, not a special-purpose embedded DSL or provider-specific builtin.</li>
-<li><strong>Mechanism A:</strong> <code>std.ci</code> provides a narrow set of primitives for the execution environment: env vars, argument access, output files, and explicit exit behavior.</li>
-<li><strong>Mechanism B:</strong> network access remains a separate general-purpose concern through <code>std.http</code>, not a CI-only HTTP surface.</li>
-<li><strong>Mechanism C:</strong> provider-specific behavior such as GitHub payload interpretation should live in libraries built on these primitives rather than as a special builtin contract.</li>
+<li><strong>An asset is a declared artifact.</strong> It has a kind, a source or a path, and a digest.</li>
+<li><strong>Declaring is not running.</strong> Nothing downloads or executes until an RFC 078 action explicitly does it.</li>
+<li><strong>Local and remote are distinct.</strong> Sending data to a remote model is a policy question, so a model says which it is.</li>
+<li><strong>Unknown means riskiest.</strong> A missing digest or an unknown retention label is visible, and policy can refuse it.</li>
+<li><strong>Incan stays general.</strong> It knows no provider, runtime or metric, and a higher layer can attach its own metadata without changing Incan.</li>
 </ol>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>CI automation is usually held together by shell scripts, YAML snippets, and tiny bits of JavaScript. That works, but it is a poor foundation for a language that wants to be credible in tooling and automation. Scripts become hard to test locally, hard to refactor, hard to type-check, and hard to reuse.</p>
-<p>This is especially visible for workflows such as issue triage, label synchronization, release automation, or event-driven repository checks. Those tasks typically need the same small set of capabilities:</p>
-<ul>
-<li>read environment variables</li>
-<li>read an event payload file</li>
-<li>write outputs or step summaries</li>
-<li>make HTTP requests</li>
-<li>exit clearly and deterministically</li>
-</ul>
-<p>Today, each of those usually gets reinvented with ad hoc shell behavior or backend-specific libraries. <code>std.ci</code> should provide one explicit and testable base layer instead.</p>
+<p>A project may need a local embedding model, a prompt, a dataset and an eval that checks them. Treated as loose files and documentation, these leave too much implicit: nobody can easily tell which model is required, whether data leaves the machine, or that a prompt changed between versions. A prompt change can matter as much as a code change, and it should be just as visible.</p>
+<p>Hugging Face shows the value of metadata-rich model and dataset cards, and Ollama shows the value of a small local model blueprint. Those details also change quickly. A compiler release is the wrong place to track them, while what every project needs, identity, review and policy, is stable.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Provide a small stdlib surface for deterministic CI and automation scripts.</li>
-<li>Standardize environment-variable access, argument access, exit behavior, and workflow-output file handling.</li>
-<li>Keep HTTP out of the CI module itself by composing through RFC 066 <code>std.http</code>.</li>
-<li>Make the surface portable across hosted CI systems while still being usable for GitHub Actions-style workflows.</li>
-<li>Support local fixture-driven testing of automation scripts.</li>
-<li>Keep secrets handling explicit and conservative.</li>
+<li>Let a project declare models, prompts, datasets, evals and agent guidance.</li>
+<li>Make a changed asset reviewable, and an unpinned one visible.</li>
+<li>Let RFC 076 policy restrict sources, licenses, and local versus remote execution.</li>
+<li>Report assets through <code>oven audit</code>, alongside packages.</li>
+<li>Let a higher layer extend the declarations without changing Incan.</li>
 </ul>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Shipping a GitHub-specific, GitLab-specific, or provider-specific SDK as part of <code>std.ci</code>.</li>
-<li>Replacing <code>std.http</code>, <code>std.fs</code>, or <code>std.process</code>; <code>std.ci</code> should compose with them, not duplicate them.</li>
-<li>Defining a full JWT or cryptography story here beyond whatever minimal hooks later prove necessary.</li>
-<li>Defining a workflow YAML format or a hosted-runner orchestration system.</li>
-<li>Making CI automation a language feature rather than a stdlib surface.</li>
+<li>Defining a model runtime, inference server, or provider integration.</li>
+<li>Provider-specific fields, execution profiles and measurements, model selection and fallbacks, eval metrics and thresholds, or agent guidance formats. A higher-level framework owns these.</li>
+<li>A prompt template language. Prompts are files.</li>
+<li>Guaranteeing model safety, truthfulness, privacy, or quality.</li>
+<li>An agent marketplace.</li>
 </ul>
 <h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
-<h3 id="reading-the-execution-environment">Reading the execution environment<a class="headerlink" href="#reading-the-execution-environment" title="Permanent link">&para;</a></h3>
-<p>An automation script should be able to read environment variables explicitly:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.ci.env</span><span class="w"> </span><span class="kn">import</span> <span class="nb">get</span><span class="p">,</span> <span class="n">get_optional</span>
+<h3 id="declaring-assets">Declaring assets<a class="headerlink" href="#declaring-assets" title="Permanent link">&para;</a></h3>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[assets.embedder]</span>
+<span class="n">kind</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;model&quot;</span>
+<span class="n">source</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;ollama:nomic-embed-text&quot;</span>
+<span class="n">digest</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;sha256:...&quot;</span>
+<span class="n">execution</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;local&quot;</span>
+<span class="n">license</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;Apache-2.0&quot;</span>
 
-<span class="n">event_path</span> <span class="o">=</span> <span class="nb">get</span><span class="p">(</span><span class="s2">&quot;GITHUB_EVENT_PATH&quot;</span><span class="p">)</span><span class="o">?</span>
-<span class="n">token</span> <span class="o">=</span> <span class="n">get_optional</span><span class="p">(</span><span class="s2">&quot;GITHUB_TOKEN&quot;</span><span class="p">)</span>
-</code></pre></div>
-<p>Missing required values should be explicit failures, not silent <code>None</code> unless the user asked for optional access.</p>
-<h3 id="reading-workflow-payloads">Reading workflow payloads<a class="headerlink" href="#reading-workflow-payloads" title="Permanent link">&para;</a></h3>
-<p>Scripts should be able to combine <code>std.ci</code> primitives with <code>JsonValue</code>:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.ci.env</span><span class="w"> </span><span class="kn">import</span> <span class="nb">get</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">std.ci.fs</span><span class="w"> </span><span class="kn">import</span> <span class="n">read_text</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">std.json</span><span class="w"> </span><span class="kn">import</span> <span class="nc">JsonValue</span>
+<span class="k">[assets.summarizer]</span>
+<span class="n">kind</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;model&quot;</span>
+<span class="n">source</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;provider:summary-large&quot;</span>
+<span class="n">execution</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;remote&quot;</span>
+<span class="n">retains-data</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;no&quot;</span>
 
-<span class="n">payload</span> <span class="o">=</span> <span class="nc">JsonValue</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">read_text</span><span class="p">(</span><span class="nb">get</span><span class="p">(</span><span class="s2">&quot;GITHUB_EVENT_PATH&quot;</span><span class="p">)</span><span class="o">?</span><span class="p">)</span><span class="o">?</span><span class="p">)</span><span class="o">?</span>
-<span class="n">issue_number</span> <span class="o">=</span> <span class="n">payload</span><span class="p">[</span><span class="s2">&quot;issue&quot;</span><span class="p">][</span><span class="s2">&quot;number&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">as_int</span><span class="p">()</span>
-</code></pre></div>
-<p>This is still ordinary Incan. The CI-specific part is only how the script learns where the payload file lives.</p>
-<h3 id="writing-outputs">Writing outputs<a class="headerlink" href="#writing-outputs" title="Permanent link">&para;</a></h3>
-<p>Workflow systems often expose file-based output channels. The stdlib should make that explicit:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.ci.output</span><span class="w"> </span><span class="kn">import</span> <span class="n">set_output</span>
+<span class="k">[assets.summarize-errors]</span>
+<span class="n">kind</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;prompt&quot;</span>
+<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;prompts/summarize-errors.prompt&quot;</span>
+<span class="n">for</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;summarizer&quot;</span>
+<span class="n">purpose</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;Summarize compiler diagnostics for developers.&quot;</span>
 
-<span class="n">set_output</span><span class="p">(</span><span class="s2">&quot;triaged&quot;</span><span class="p">,</span> <span class="s2">&quot;true&quot;</span><span class="p">)</span><span class="o">?</span>
-</code></pre></div>
-<p>or, for a more direct file-oriented model:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.ci.env</span><span class="w"> </span><span class="kn">import</span> <span class="nb">get</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">std.ci.fs</span><span class="w"> </span><span class="kn">import</span> <span class="n">append_text</span>
+<span class="k">[assets.summary-goldens]</span>
+<span class="n">kind</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;dataset&quot;</span>
+<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;datasets/diagnostic-summaries.jsonl&quot;</span>
 
-<span class="n">append_text</span><span class="p">(</span><span class="nb">get</span><span class="p">(</span><span class="s2">&quot;GITHUB_OUTPUT&quot;</span><span class="p">)</span><span class="o">?</span><span class="p">,</span> <span class="s2">&quot;triaged=true</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span><span class="o">?</span>
+<span class="k">[assets.summary-regression]</span>
+<span class="n">kind</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;eval&quot;</span>
+<span class="n">action</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;eval-summaries&quot;</span>
+<span class="n">dataset</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;summary-goldens&quot;</span>
 </code></pre></div>
-<p>The important point is that the file-write behavior is explicit and testable.</p>
-<h3 id="exiting-clearly">Exiting clearly<a class="headerlink" href="#exiting-clearly" title="Permanent link">&para;</a></h3>
-<p>Automation scripts should be able to fail or succeed explicitly:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.ci.process</span><span class="w"> </span><span class="kn">import</span> <span class="n">exit</span>
+<p>None of this downloads or runs anything. A prompt or dataset in the repository is reviewed like any other file, and <code>summarizer</code> above has no digest, so it shows up as unpinned.</p>
+<h3 id="using-an-asset">Using an asset<a class="headerlink" href="#using-an-asset" title="Permanent link">&para;</a></h3>
+<p>An action says which assets it uses:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@action</span><span class="p">(</span><span class="n">kind</span><span class="o">=</span><span class="nc">ActionKind</span><span class="o">.</span><span class="nc">Eval</span><span class="p">,</span> <span class="n">uses</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;summarizer&quot;</span><span class="p">,</span> <span class="s2">&quot;summarize-errors&quot;</span><span class="p">],</span> <span class="n">caps</span><span class="o">=</span><span class="p">[</span><span class="n">host</span><span class="o">.</span><span class="k">model</span><span class="o">.</span><span class="n">invoke</span><span class="p">])</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">eval_summaries</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">EvalReport</span><span class="p">,</span> <span class="nc">EvalError</span><span class="p">]:</span>
+    <span class="o">...</span>
+</code></pre></div>
+<p><code>oven action run eval-summaries --dry-run</code> shows the assets and whether data would leave the machine, and policy can refuse before anything runs. The receipt records which assets ran, by digest. Downloading a model is an ordinary action using <code>host.http.request</code>, not a new command.</p>
+<h3 id="restricting-assets">Restricting assets<a class="headerlink" href="#restricting-assets" title="Permanent link">&para;</a></h3>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[[policy.assets]]</span>
+<span class="n">execution</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;remote&quot;</span>
+<span class="n">outcome</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;require-approval&quot;</span>
 
-<span class="k">if</span> <span class="ow">not</span> <span class="n">ok</span><span class="p">:</span>
-    <span class="n">exit</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+<span class="k">[[policy.assets]]</span>
+<span class="n">pinned</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
+<span class="n">outcome</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;block&quot;</span>
 </code></pre></div>
-<p>This does not replace structured <code>Result</code>-returning APIs. It only gives the script one explicit terminal action when needed.</p>
+<h3 id="checking-a-project">Checking a project<a class="headerlink" href="#checking-a-project" title="Permanent link">&para;</a></h3>
+<p><code>oven audit</code> reports assets beside packages: an unpinned model, a remote model with unknown retention, or a file that no longer matches a pinned digest.</p>
+<h3 id="building-on-this">Building on this<a class="headerlink" href="#building-on-this" title="Permanent link">&para;</a></h3>
+<p>A higher-level framework adds what it needs under an <code>x-</code> table, which Incan keeps and shows but does not interpret:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[assets.embedder.x-runtime]</span>
+<span class="n">quantization</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;q4&quot;</span>
+<span class="n">min-memory</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;8GiB&quot;</span>
+</code></pre></div>
 <h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
-<h3 id="module-family">Module family<a class="headerlink" href="#module-family" title="Permanent link">&para;</a></h3>
-<p><code>std.ci</code> must provide a narrow but sufficient set of modules or equivalent surfaces covering:</p>
-<ul>
-<li>environment access</li>
-<li>workflow input and output file handling</li>
-<li>process arguments and exit behavior</li>
-<li>deterministic helper behavior suitable for local testing</li>
-</ul>
-<p>The module family may be split as:</p>
-<ul>
-<li><code>std.ci.env</code></li>
-<li><code>std.ci.fs</code></li>
-<li><code>std.ci.process</code></li>
-<li><code>std.ci.output</code></li>
-</ul>
-<p>or another equivalent subdivision, but the public contract must remain small and explicit.</p>
-<h3 id="environment-access">Environment access<a class="headerlink" href="#environment-access" title="Permanent link">&para;</a></h3>
-<p>The environment-access surface must provide:</p>
-<ul>
-<li>a required getter that fails clearly when a variable is absent</li>
-<li>an optional getter that returns <code>None</code> when absent</li>
-</ul>
-<p>It must not silently coerce missing values into empty strings.</p>
-<h3 id="workflow-file-handling">Workflow file handling<a class="headerlink" href="#workflow-file-handling" title="Permanent link">&para;</a></h3>
-<p>The CI surface must support the common workflow pattern of reading payload files and writing output files. It may do this either through:</p>
-<ul>
-<li>explicit helpers such as <code>set_output(...)</code>, or</li>
-<li>a smaller primitive model built on environment variables and append-safe file helpers</li>
-</ul>
-<p>This RFC does not require one exact spelling yet, but it does require the capability.</p>
-<h3 id="exit-behavior">Exit behavior<a class="headerlink" href="#exit-behavior" title="Permanent link">&para;</a></h3>
-<p><code>std.ci</code> must provide explicit process-exit behavior or a functionally equivalent way to terminate with a chosen exit code.</p>
-<h3 id="determinism-and-testability">Determinism and testability<a class="headerlink" href="#determinism-and-testability" title="Permanent link">&para;</a></h3>
-<p>The module family should prefer deterministic behavior:</p>
-<ul>
-<li>no hidden network</li>
-<li>no hidden retries</li>
-<li>no hidden provider-specific fallbacks</li>
-</ul>
-<p>CI scripts must remain locally testable with fixture payloads and explicit environment setup.</p>
-<h3 id="secrets-and-diagnostics">Secrets and diagnostics<a class="headerlink" href="#secrets-and-diagnostics" title="Permanent link">&para;</a></h3>
-<p>The CI surface should avoid exposing secrets carelessly in debug-facing or error-facing helpers. It does not need to define a complete secret type system, but it should follow conservative diagnostic practices and defer richer secret handling to dedicated follow-up work where needed.</p>
+<h3 id="declarations">Declarations<a class="headerlink" href="#declarations" title="Permanent link">&para;</a></h3>
+<ol>
+<li><code>[assets.&lt;id&gt;]</code> in <code>loaf.toml</code> must declare an asset. <code>kind</code> must be <code>model</code>, <code>prompt</code>, <code>dataset</code>, <code>eval</code> or <code>agent-guidance</code>, or an extension prefixed <code>x-</code>. An unknown kind must stay visible in machine-readable output and must default to <code>require-approval</code>.</li>
+<li>An asset must name exactly one of <code>source</code> or <code>path</code>, except an <code>eval</code>, which must name an <code>action</code> from RFC 078 and may name a <code>dataset</code>.</li>
+<li><code>digest</code> must use the same content digest form as Oven's store under RFC 124. A <code>source</code> without a <code>digest</code> is unpinned, and must be reported as such. A <code>path</code> with a <code>digest</code> must be verified by <code>oven audit</code>.</li>
+<li><code>license</code>, <code>purpose</code> and <code>for</code> are optional. <code>for</code> must name another asset.</li>
+<li>Tables prefixed <code>x-</code> must be preserved and shown in machine-readable output, and must not affect Incan's behavior.</li>
+</ol>
+<h3 id="execution-and-data">Execution and data<a class="headerlink" href="#execution-and-data" title="Permanent link">&para;</a></h3>
+<ol>
+<li>A <code>model</code> must declare <code>execution</code> as <code>local</code> or <code>remote</code>.</li>
+<li>A <code>remote</code> model may declare <code>retains-data</code> as <code>no</code> or <code>yes</code>. If absent, it must be <code>unknown</code>, and must be treated as the riskiest value.</li>
+<li>An asset declared <code>local</code> must not silently be replaced by a remote one. Any tool that does so without an explicit declaration is misreporting what ran.</li>
+</ol>
+<h3 id="activation-and-running">Activation and running<a class="headerlink" href="#activation-and-running" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Declaring, resolving or adding an asset, including through an RFC 075 mix, must not download or run anything.</li>
+<li><code>@action</code> and <code>[actions.&lt;id&gt;]</code> must accept <code>uses</code>, naming assets. A dry run must show those assets, their execution and retention. Policy must be evaluated against them before an action runs, and the action's RFC 104 receipt must record their identities and digests.</li>
+<li>Eval results must live in the action's receipt. A registry card may show them under RFC 079, and the project must not store them.</li>
+<li>A changed <code>prompt</code>, <code>dataset</code> or <code>agent-guidance</code> file must be an ordinary file change, classified under RFC 076's <code>ai-asset</code> risk category when a mutation plan proposes it. An <code>agent-guidance</code> asset must declare any mutation, network, model or tool risk it can lead to.</li>
+</ol>
+<h3 id="policy-and-auditing">Policy and auditing<a class="headerlink" href="#policy-and-auditing" title="Permanent link">&para;</a></h3>
+<ol>
+<li><code>[[policy.assets]]</code> must support matching on <code>kind</code>, <code>source</code>, <code>license</code>, <code>execution</code>, <code>retains-data</code> and <code>pinned</code>, with an RFC 076 outcome.</li>
+<li><code>oven audit</code> must report unpinned assets, <code>unknown</code> retention, and a digest mismatch. A mismatch must fail, and the others must be warnings unless <code>--deny</code> is used.</li>
+</ol>
+<h3 id="conformance-workloads">Conformance workloads<a class="headerlink" href="#conformance-workloads" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Workload</th>
+<th>Required evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Declaring</td>
+<td>Each kind parses, an unknown kind stays visible, and an <code>x-</code> table is preserved without effect.</td>
+</tr>
+<tr>
+<td>No side effects</td>
+<td>Adding an asset, including through a mix, downloads and runs nothing.</td>
+</tr>
+<tr>
+<td>Pinning</td>
+<td>A missing digest is reported as unpinned, and a changed file fails against its digest.</td>
+</tr>
+<tr>
+<td>Policy</td>
+<td>Remote, unpinned and unknown-retention rules block or require approval before an action runs.</td>
+</tr>
+<tr>
+<td>Running</td>
+<td>A dry run lists the assets, and the receipt records what ran by digest.</td>
+</tr>
+</tbody>
+</table>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
-<h3 id="syntax">Syntax<a class="headerlink" href="#syntax" title="Permanent link">&para;</a></h3>
-<p>This RFC introduces no new language syntax.</p>
-<h3 id="semantics">Semantics<a class="headerlink" href="#semantics" title="Permanent link">&para;</a></h3>
-<p>The semantic center is narrowness:</p>
-<ul>
-<li><code>std.ci</code> is not a general automation framework</li>
-<li><code>std.ci</code> is not an HTTP stack</li>
-<li><code>std.ci</code> is not a provider-specific SDK</li>
-</ul>
-<p>It is a small bridge between hosted automation environments and ordinary Incan code.</p>
-<h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong>RFC 066 (<code>std.http</code>)</strong>: HTTP access for automation scripts should go through <code>std.http</code>, not a CI-only network API.</li>
-<li><strong>RFC 051 (<code>JsonValue</code>)</strong>: event payload parsing should compose naturally with <code>JsonValue</code>.</li>
-<li><strong>RFC 055 (<code>std.fs</code>)</strong>: path and file handling should stay coherent with the broader filesystem surface where possible.</li>
-<li><strong>RFC 063 (<code>std.process</code>)</strong>: argument access and exit behavior should align with the broader process model rather than diverge.</li>
-<li><strong>RFC 015</strong>: a future CLI wrapper such as <code>incan ci</code> may exist, but it is not required for the base stdlib contract.</li>
-</ul>
-<h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
-<p>This feature is additive. Existing bash, shell, or JavaScript-based CI steps remain valid. The design claim is that Incan should offer a better standard path for new automation scripts once the module exists.</p>
+<h3 id="why-so-little">Why so little<a class="headerlink" href="#why-so-little" title="Permanent link">&para;</a></h3>
+<p>Everything left out is real and useful, but changes quickly. A framework can release when a provider changes, and a compiler should not have to. What stays here rarely changes: a declared artifact has an identity, a reviewer can see it change, and policy can see where data goes. A plain project gets all of that with no framework.</p>
+<h3 id="why-prompts-have-no-syntax">Why prompts have no syntax<a class="headerlink" href="#why-prompts-have-no-syntax" title="Permanent link">&para;</a></h3>
+<p>A universal template language would be wrong for most tools and would date quickly. A prompt is a file, and its reviewability is what matters here.</p>
+<h3 id="prior-art">Prior art<a class="headerlink" href="#prior-art" title="Permanent link">&para;</a></h3>
+<p>Hugging Face model cards and Ollama's Modelfile inform what metadata exists, and a framework can carry the richer forms. Oven's lockfile and store already handle identity for packages, so assets use the same digest form.</p>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Keep shell and JavaScript glue only</strong></li>
-<li>Rejected because it leaves automation brittle, weakly typed, and difficult to test.</li>
-<li><strong>Make GitHub a builtin</strong></li>
-<li>Rejected because it introduces too much provider policy too early.</li>
-<li><strong>Push everything into <code>std.http</code> plus <code>std.fs</code></strong></li>
-<li>Rejected because CI environments do have a small amount of distinct execution-context behavior worth standardizing.</li>
+<li><strong>Keep everything in Incan:</strong> providers, execution profiles and metrics would be tied to compiler releases.</li>
+<li><strong>Remove this from Incan entirely:</strong> a plain project could not declare a prompt or a model, and policy could not see them.</li>
+<li><strong>Leave AI metadata as documentation:</strong> prompts and models affect behavior and safety, so tooling has to be able to see them.</li>
+<li><strong>Hardcode one provider:</strong> the ecosystem has local runtimes, remote providers and private catalogs.</li>
+<li><strong>A dedicated model download command:</strong> a download is an action like any other, with a capability and a receipt.</li>
+<li><strong>Run setup when a mix is applied:</strong> downloads and inference are policy-relevant and must be explicit.</li>
 </ul>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
-<li>There is a real risk of overfitting the module to one provider if the design is not kept disciplined.</li>
-<li>Output-file and env-var conventions vary across systems, so portability rules need careful wording.</li>
-<li>Secret-handling expectations need to be conservative even if the module stays intentionally small.</li>
+<li>Two places to look: Incan for declarations, and a framework for AI specifics.</li>
+<li>A provider can under-declare, and <code>retains-data</code> is a claim, not something Incan can verify.</li>
+<li>Without a framework, a project has to write its own actions to download and run models.</li>
 </ul>
-<h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
-<p><em>(Non-normative.)</em> A sensible rollout starts with <code>env</code>, <code>fs</code>, and <code>process</code> primitives plus fixture-driven examples that demonstrate local testing against payload files. Once <code>std.http</code> is available, real CI automation flows can compose on top without needing any provider-specific builtin APIs.</p>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Stdlib / runtime</strong>: must provide the CI module family and its deterministic environment-facing helpers.</li>
-<li><strong>Language surface</strong>: the module family must be available as specified and must compose cleanly with ordinary Incan code.</li>
-<li><strong>Execution handoff</strong>: implementations must preserve explicit environment, file, and exit semantics without hidden provider-specific behavior.</li>
-<li><strong>Docs / tooling</strong>: examples should show local fixture-driven testing and explicit composition with <code>std.http</code> and <code>JsonValue</code>.</li>
+<li><strong>Manifest schema / configuration validation:</strong> <code>[assets.&lt;id&gt;]</code>, and <code>[[policy.assets]]</code> under RFC 076.</li>
+<li><strong>Stdlib:</strong> <code>uses</code> on RFC 078's <code>@action</code>.</li>
+<li><strong>CLI / tooling:</strong> dry runs and <code>oven audit</code> report assets, and receipts record them.</li>
+<li><strong>Package and catalog integration:</strong> published assets can be artifact-graph nodes under RFC 079.</li>
+<li><strong>LSP / IDE tooling:</strong> editors may surface asset warnings from machine-readable output.</li>
+<li><strong>Documentation:</strong> local versus remote execution, pinning, and what a framework adds.</li>
 </ul>
-<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Should output-file helpers such as <code>set_output(...)</code> be first-class, or should the contract stay one layer lower and rely on environment variables plus file append helpers?</li>
-<li>Should <code>std.ci</code> standardize step-summary and annotation helpers in the base module family, or leave those to follow-up provider libraries?</li>
-<li>Does a minimal JWT-signing helper belong here for GitHub App workflows, or should all cryptographic behavior remain outside this RFC?</li>
-<li>Should a future <code>incan ci</code> CLI wrapper be part of the same design family, or remain separate from the stdlib contract?</li>
+<li><strong>Incan owns the general part.</strong> Identity, review, policy and auditing live here. Providers, runtimes, execution profiles, measurements, model selection, fallbacks, eval metrics and agent guidance formats belong to a higher-level framework, which extends declarations through <code>x-</code> tables.</li>
+<li><strong>Kinds:</strong> <code>model</code>, <code>prompt</code>, <code>dataset</code>, <code>eval</code> and <code>agent-guidance</code>, plus <code>x-</code> extensions.</li>
+<li><strong>Prompt syntax:</strong> none. Prompts are files with a declared purpose.</li>
+<li><strong>Remote metadata and privacy:</strong> <code>execution</code> is <code>local</code> or <code>remote</code>, and <code>retains-data</code> is <code>no</code>, <code>yes</code> or <code>unknown</code>, with unknown treated as the riskiest.</li>
+<li><strong>Digests:</strong> the same content digest Oven already uses.</li>
+<li><strong>Eval results:</strong> in the action's receipt, never in the project.</li>
+<li><strong>Downloads:</strong> an ordinary action using <code>host.http.request</code>, with no new command.</li>
+<li><strong>Agent guidance:</strong> files that declare their risk categories.</li>
 </ul>
-<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 

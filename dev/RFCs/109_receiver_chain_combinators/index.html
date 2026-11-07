@@ -9779,10 +9779,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#standard-surface" class="md-nav__link">
+  <a href="#availability" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Standard surface
+        Availability
       
     </span>
   </a>
@@ -9790,10 +9790,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#then-semantics" class="md-nav__link">
+  <a href="#then" class="md-nav__link">
     <span class="md-ellipsis">
       
-        then semantics
+        then
       
     </span>
   </a>
@@ -9801,10 +9801,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#tap-semantics" class="md-nav__link">
+  <a href="#tap" class="md-nav__link">
     <span class="md-ellipsis">
       
-        tap semantics
+        tap
       
     </span>
   </a>
@@ -9812,10 +9812,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#error-behavior" class="md-nav__link">
+  <a href="#failure-and-order" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Error behavior
+        Failure and order
       
     </span>
   </a>
@@ -9823,10 +9823,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#evaluation-order" class="md-nav__link">
+  <a href="#diagnostics-and-tooling" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Evaluation order
+        Diagnostics and tooling
       
     </span>
   </a>
@@ -9834,10 +9834,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#diagnostics" class="md-nav__link">
+  <a href="#conformance-workloads" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Diagnostics
+        Conformance workloads
       
     </span>
   </a>
@@ -9862,10 +9862,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#syntax" class="md-nav__link">
+  <a href="#why-they-are-always-available" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Syntax
+        Why they are always available
       
     </span>
   </a>
@@ -9873,10 +9873,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#calling-syntax" class="md-nav__link">
+  <a href="#a-possible-implementation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Calling syntax
+        A possible implementation
       
     </span>
   </a>
@@ -9884,65 +9884,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#semantics" class="md-nav__link">
+  <a href="#relationship-to-other-surfaces" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Semantics
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#activation-and-method-resolution" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Activation and method resolution
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#relationship-to-future-extension-mechanisms" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Relationship to future extension mechanisms
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#interaction-with-existing-result-combinators" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Interaction with existing Result combinators
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#interaction-with-iterator-adapters" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Interaction with iterator adapters
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#interaction-with-pipe-operators" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Interaction with pipe operators
+        Relationship to other surfaces
       
     </span>
   </a>
@@ -9961,10 +9906,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#compatibility-and-migration" class="md-nav__link">
+  <a href="#compatibility" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Compatibility and migration
+        Compatibility
       
     </span>
   </a>
@@ -10010,10 +9955,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#unresolved-questions" class="md-nav__link">
+  <a href="#design-decisions" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Unresolved questions
+        Design Decisions
       
     </span>
   </a>
@@ -10042,7 +9987,7 @@
 
 <h1 id="rfc-109-receiver-chain-combinators-tap-and-then">RFC 109: Receiver chain combinators (<code>tap</code> and <code>then</code>)<a class="headerlink" href="#rfc-109-receiver-chain-combinators-tap-and-then" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Status:</strong> Draft</li>
+<li><strong>Status:</strong> Planned</li>
 <li><strong>Created:</strong> 2026-06-06</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong><ul>
@@ -10052,219 +9997,214 @@
 <li>RFC 068 (protocol hooks for core language syntax)</li>
 <li>RFC 070 (result combinators for <code>Result[T, E]</code>)</li>
 <li>RFC 088 (iterator adapter surface)</li>
+<li>RFC 108 (import-scoped extensions)</li>
+<li>RFC 110 (<code>Ordering.then</code>)</li>
+<li>RFC 128 (callable types)</li>
+<li>RFC 129 (binding and <code>mut</code> parameters)</li>
+<li>RFC 154 (retained capturing callables)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> —</li>
+<li><strong>Issue:</strong> <a href="https://github.com/encero-systems/incan/issues/2661">#2661</a></li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.3</li>
 <li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC proposes two standard receiver-chain combinators, <code>tap</code> and <code>then</code>, so ordinary values can be observed, configured, and transformed in left-to-right chains without losing Incan's explicit mutability, callable typing, and compile-time ownership guarantees.</p>
-<p>The north star is the ergonomic shape Ruby popularized with <code>tap</code> and <code>then</code>, but specified as a typed Incan surface: receiver evaluation is explicit and single-pass, callbacks are statically typed, read-only observation must not force <code>Clone</code>, and mutation is visible at the callback parameter.</p>
+<p><code>value.then(f)</code> passes a value to a function and returns the result, and <code>value.tap(f)</code> lets a function look at or change a value and then hands the same value on. Both are available on every value with no import, so a value can flow left to right through small steps without temporary variables. They are ordinary library code: an extension in <code>std.chain</code> that the standard prelude activates, with no compiler knowledge of the names. A member a type authors itself always takes precedence.</p>
 <h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
 <ol>
-<li><strong><code>then</code> transforms the receiver:</strong> <code>value.then(f)</code> evaluates <code>value</code>, passes the receiver value to <code>f</code>, and returns <code>f(value)</code>.</li>
-<li><strong><code>tap</code> preserves the receiver:</strong> <code>value.tap(f)</code> evaluates <code>value</code>, lets <code>f</code> observe or mutate that receiver, requires <code>f</code> to return <code>None</code>, and returns the same receiver value after the callback.</li>
-<li><strong>Read-only taps borrow:</strong> <code>tap</code> may adapt a callback to a borrowed receiver boundary, using the same ownership planning already used by <code>Result.inspect</code>, so observing a non-<code>Clone</code> value does not clone it.</li>
-<li><strong>Mutating taps are explicit:</strong> <code>value.tap((mut x) =&gt; x.normalize())</code> gives the callback mutable access to the receiver and returns the mutated receiver. There is no separate <code>tap_mut</code> spelling.</li>
-<li><strong>Callbacks are ordinary callables where possible:</strong> named functions, closures, callable objects, and future callable presets should use the same function-value model as the rest of Incan, subject to the borrow and mutability contracts in this RFC.</li>
-<li><strong>Container-specific combinators stay distinct:</strong> <code>Result.inspect</code>, <code>Result.and_then</code>, and iterator <code>.inspect()</code> keep their branch-local or item-local semantics; general <code>tap</code> and <code>then</code> operate on the receiver itself.</li>
+<li><strong><code>then</code> transforms.</strong> <code>value.then(f)</code> evaluates <code>value</code>, passes it to <code>f</code> and returns what <code>f</code> returns.</li>
+<li><strong><code>tap</code> preserves.</strong> <code>value.tap(f)</code> evaluates <code>value</code>, gives <code>f</code> access to it, and returns the same value. <code>f</code> must return <code>None</code>.</li>
+<li><strong>Looking does not clone.</strong> A read-only <code>tap</code> borrows, so observing a value that is not <code>Clone</code> works.</li>
+<li><strong>Changing is visible.</strong> <code>value.tap((mut x) =&gt; x.normalize())</code> says so at the callback's parameter, and there is no <code>tap_mut</code>.</li>
+<li><strong>Always available, not special.</strong> <code>std.chain</code> is library code, and the prelude activates it, as the prelude makes <code>Eq</code> and <code>Clone</code> available.</li>
+<li><strong>Authored members win.</strong> A type's own <code>tap</code> or <code>then</code> is never overridden.</li>
+<li><strong>Container combinators stay distinct.</strong> <code>Result.inspect</code>, <code>Result.and_then</code> and iterator <code>.inspect()</code> work on a branch or an item, while <code>tap</code> and <code>then</code> work on the whole value.</li>
 </ol>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>Python code often uses temporary variables to inspect or configure an intermediate value before passing it onward. That style is explicit, but it interrupts the value flow and makes simple construction pipelines longer than the work they perform. Rust has a strong combinator culture for <code>Option</code>, <code>Result</code>, and iterators, and Incan already adopted that direction for <code>Result</code> in RFC 070, but Rust does not give every ordinary value a standard <code>tap</code> or <code>then</code> method. Ruby's <code>tap</code> and <code>then</code> are strong prior art for the receiver-chain ergonomics; Incan should take the readability lesson without adopting Ruby's dynamic dispatch model.</p>
-<p>Incan already has first-class function references, closures, borrowed callable lowering for observer-style combinators, <code>Result</code> combinators, iterator adapters, and explicit receiver mutability in method signatures. A small receiver-chain surface can reuse those ingredients. The goal is not to make every program point-free or to hide side effects. The goal is to let authors keep a clear left-to-right flow when an intermediate value needs a small observer, configuration step, or final transformation.</p>
-<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Add a standard <code>then</code> combinator for receiver-to-callback transformation.</li>
-<li>Add a standard <code>tap</code> combinator for observer/configuration steps that return the original receiver.</li>
-<li>Preserve explicit mutability through callback parameter spelling instead of adding <code>tap_mut</code>.</li>
-<li>Preserve non-<code>Clone</code> values through observer borrowing where possible.</li>
-<li>State the calling syntax and temporary-variable equivalence clearly enough that <code>tap</code> does not become runtime magic.</li>
-<li>Keep <code>tap</code> and <code>then</code> visually and semantically distinct from <code>Result.and_then</code>, <code>Result.inspect</code>, and iterator <code>.inspect()</code>.</li>
-<li>Define evaluation order, callback typing, return behavior, and diagnostics clearly enough for compiler, stdlib, LSP, and docs support.</li>
-</ul>
-<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
-<ul>
-<li>This RFC does not add a new pipe operator; RFC 028 already defines operator hooks for <code>|&gt;</code> and <code>&lt;|</code>.</li>
-<li>This RFC does not replace <code>Result.map</code>, <code>Result.and_then</code>, <code>Result.inspect</code>, iterator adapters, or <code>?</code>.</li>
-<li>This RFC does not add statement-bodied closures.</li>
-<li>This RFC does not allow implicit mutation inside <code>tap</code>; mutation must remain visible through existing mutability rules.</li>
-<li>This RFC does not require fallible observer helpers such as <code>try_tap</code>, although the design should leave room for them.</li>
-<li>This RFC does not require users to rewrite straightforward local-variable code into chains.</li>
-</ul>
-<h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
-<p>Use <code>then</code> when the receiver should become the input to the next operation:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">user</span> <span class="o">=</span> <span class="n">load_user</span><span class="p">(</span><span class="nb">id</span><span class="p">)</span><span class="o">?</span>
-    <span class="o">.</span><span class="n">then</span><span class="p">(</span><span class="n">normalize_user</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">then</span><span class="p">(</span><span class="n">save_user</span><span class="p">)</span><span class="o">?</span>
-</code></pre></div>
-<p>That chain is equivalent in intent to:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">loaded</span> <span class="o">=</span> <span class="n">load_user</span><span class="p">(</span><span class="nb">id</span><span class="p">)</span><span class="o">?</span>
-<span class="n">normalized</span> <span class="o">=</span> <span class="n">normalize_user</span><span class="p">(</span><span class="n">loaded</span><span class="p">)</span>
-<span class="n">user</span> <span class="o">=</span> <span class="n">save_user</span><span class="p">(</span><span class="n">normalized</span><span class="p">)</span><span class="o">?</span>
-</code></pre></div>
-<p>Use <code>tap</code> when a value should be observed or configured while the chain keeps the same value:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">saved</span> <span class="o">=</span> <span class="nc">User</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;Danny&quot;</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">tap</span><span class="p">((</span><span class="k">mut</span> <span class="n">user</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">user</span><span class="o">.</span><span class="n">activate</span><span class="p">())</span>
-    <span class="o">.</span><span class="n">tap</span><span class="p">((</span><span class="n">user</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="n">user</span><span class="o">.</span><span class="n">summary</span><span class="p">))</span>
-    <span class="o">.</span><span class="n">then</span><span class="p">(</span><span class="n">save_user</span><span class="p">)</span><span class="o">?</span>
-</code></pre></div>
-<p>That chain is equivalent in intent to binding the intermediate value, mutating or observing it, and then passing it onward:</p>
+<p>Code often needs one small step on an intermediate value, such as configuring it, logging it or passing it on, and a temporary variable interrupts the flow for that step:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">mut</span> <span class="n">user</span> <span class="o">=</span> <span class="nc">User</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;Danny&quot;</span><span class="p">)</span>
 <span class="n">user</span><span class="o">.</span><span class="n">activate</span><span class="p">()</span>
 <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="n">user</span><span class="o">.</span><span class="n">summary</span><span class="p">)</span>
 <span class="n">saved</span> <span class="o">=</span> <span class="n">save_user</span><span class="p">(</span><span class="n">user</span><span class="p">)</span><span class="o">?</span>
 </code></pre></div>
-<p>The mutability is visible at the callback parameter. There is no separate <code>tap_mut</code> spelling because Incan already has a source-level way to say that a value is being mutated.</p>
-<p>Short closures are useful when the observer is local to the chain:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">config</span> <span class="o">=</span> <span class="nc">Config</span><span class="o">.</span><span class="n">default</span><span class="p">()</span>
-    <span class="o">.</span><span class="n">tap</span><span class="p">((</span><span class="k">mut</span> <span class="n">c</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">c</span><span class="o">.</span><span class="n">enable_cache</span><span class="p">())</span>
-    <span class="o">.</span><span class="n">tap</span><span class="p">((</span><span class="n">c</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="n">c</span><span class="o">.</span><span class="n">summary</span><span class="p">))</span>
-    <span class="o">.</span><span class="n">then</span><span class="p">(</span><span class="n">validate_config</span><span class="p">)</span><span class="o">?</span>
+<p>Ruby's <code>tap</code> and <code>then</code> show the readability gain. Rust shows how to keep it typed, with explicit mutability and observers such as <code>inspect</code> that preserve their receiver. Incan already has the parts: closures, callable types and <code>mut</code> in function types.</p>
+<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Provide <code>then</code> and <code>tap</code> on every value with no import.</li>
+<li>Keep mutation visible at the callback's parameter.</li>
+<li>Let a read-only <code>tap</code> work on values that are not <code>Clone</code>.</li>
+<li>Keep them as library code, with no compiler knowledge of the names.</li>
+<li>Keep them distinct from branch-local and item-local combinators.</li>
+</ul>
+<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>A new pipe operator. RFC 028 defines the hooks for <code>|&gt;</code> and <code>&lt;|</code>.</li>
+<li>Replacing <code>Result.map</code>, <code>Result.and_then</code>, <code>Result.inspect</code>, iterator adapters or <code>?</code>.</li>
+<li>Statement-bodied closures.</li>
+<li>Fallible observers. A fallible step uses <code>then</code>.</li>
+<li>Asking anyone to rewrite straightforward local-variable code into chains.</li>
+</ul>
+<h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
+<p>Use <code>then</code> when a value should become the input to the next step:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">user</span> <span class="o">=</span> <span class="n">load_user</span><span class="p">(</span><span class="nb">id</span><span class="p">)</span><span class="o">?</span>
+    <span class="o">.</span><span class="n">then</span><span class="p">(</span><span class="n">normalize_user</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">then</span><span class="p">(</span><span class="n">save_user</span><span class="p">)</span><span class="o">?</span>
 </code></pre></div>
-<p>Named functions should also work when their callable shape fits the tap contract:</p>
+<p>Use <code>tap</code> when a step should keep the value:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">saved</span> <span class="o">=</span> <span class="nc">User</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;Danny&quot;</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">tap</span><span class="p">((</span><span class="k">mut</span> <span class="n">user</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">user</span><span class="o">.</span><span class="n">activate</span><span class="p">())</span>
+    <span class="o">.</span><span class="n">tap</span><span class="p">((</span><span class="n">user</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="n">user</span><span class="o">.</span><span class="n">summary</span><span class="p">))</span>
+    <span class="o">.</span><span class="n">then</span><span class="p">(</span><span class="n">save_user</span><span class="p">)</span><span class="o">?</span>
+</code></pre></div>
+<p><code>mut</code> on the parameter is how you say the step changes the value. Named functions work too, read-only or mutating:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">log_config</span><span class="p">(</span><span class="n">config</span><span class="p">:</span> <span class="nc">Config</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">summary</span><span class="p">)</span>
 
+<span class="k">def</span><span class="w"> </span><span class="nf">enable_cache</span><span class="p">(</span><span class="k">mut</span> <span class="n">config</span><span class="p">:</span> <span class="nc">Config</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">config</span><span class="o">.</span><span class="n">cache</span> <span class="o">=</span> <span class="k">true</span>
+
 <span class="n">config</span> <span class="o">=</span> <span class="nc">Config</span><span class="o">.</span><span class="n">default</span><span class="p">()</span>
+    <span class="o">.</span><span class="n">tap</span><span class="p">(</span><span class="n">enable_cache</span><span class="p">)</span>
     <span class="o">.</span><span class="n">tap</span><span class="p">(</span><span class="n">log_config</span><span class="p">)</span>
     <span class="o">.</span><span class="n">then</span><span class="p">(</span><span class="n">validate_config</span><span class="p">)</span><span class="o">?</span>
 </code></pre></div>
-<p>For read-only taps, the implementation may borrow the receiver while calling the observer so the original value can keep moving through the chain without <code>Clone</code>. This matches the existing ownership policy used by observer-style <code>Result</code> combinators.</p>
-<p><code>tap</code> operates on the receiver itself. This is different from <code>Result.inspect</code>, which observes only the <code>Ok</code> payload while preserving the original <code>Result</code>:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kt">result</span><span class="o">.</span><span class="nb">inspect</span><span class="p">(</span><span class="n">log_success</span><span class="p">)</span>   <span class="c1"># observes Ok(T)</span>
-<span class="kt">result</span><span class="o">.</span><span class="n">tap</span><span class="p">(</span><span class="n">log_result</span><span class="p">)</span>        <span class="c1"># observes Result[T, E] itself</span>
+<p>A callback may capture what it needs, under RFC 154, because it finishes within the call.</p>
+<p><code>tap</code> works on the whole value, unlike the combinators that look inside one:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kt">result</span><span class="o">.</span><span class="nb">inspect</span><span class="p">(</span><span class="n">log_success</span><span class="p">)</span>   <span class="c1"># observes the Ok payload</span>
+<span class="kt">result</span><span class="o">.</span><span class="n">tap</span><span class="p">(</span><span class="n">log_result</span><span class="p">)</span>        <span class="c1"># observes the Result itself</span>
 </code></pre></div>
-<p>Likewise, iterator <code>.inspect()</code> observes each item in a lazy sequence, while <code>tap</code> observes the iterator value itself.</p>
-<h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
-<h3 id="standard-surface">Standard surface<a class="headerlink" href="#standard-surface" title="Permanent link">&para;</a></h3>
-<p>The user-facing surface is ordinary method-call syntax:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">value</span><span class="o">.</span><span class="n">then</span><span class="p">(</span><span class="n">transform</span><span class="p">)</span>
-<span class="n">value</span><span class="o">.</span><span class="n">tap</span><span class="p">(</span><span class="n">observer</span><span class="p">)</span>
-<span class="n">value</span><span class="o">.</span><span class="n">tap</span><span class="p">((</span><span class="k">mut</span> <span class="n">value</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">value</span><span class="o">.</span><span class="n">normalize</span><span class="p">())</span>
-</code></pre></div>
-<p>The exact declaration form may use traits, compiler-recognized stdlib methods, a future method-extension mechanism, or a desugared form backed by stdlib callables. The RFC does not require hard-coding magic names into the parser. Whatever implementation path is chosen, the source behavior must match the semantic contracts below.</p>
-<p>Semantic shape:</p>
-<div class="language-text highlight"><pre><span></span><code>then[T, U](self: T, transform: consumes T -&gt; U) -&gt; U
-tap[T](self: T, observer: observes T -&gt; None) -&gt; T
-tap[T](mut self: T, observer: mutates T -&gt; None) -&gt; T
-</code></pre></div>
-<p>The <code>text</code> block is intentionally not final Incan declaration syntax. Today's public function type spelling, <code>(T) -&gt; U</code>, is enough for simple consuming transforms and for read-only observers after borrowed callable adaptation, but it does not by itself describe mutable receiver access. The RFC therefore treats the exact public callable spelling for mutating tap callbacks as a design decision rather than pretending the simple <code>(T) -&gt; None</code> signature carries every case.</p>
-<h3 id="then-semantics"><code>then</code> semantics<a class="headerlink" href="#then-semantics" title="Permanent link">&para;</a></h3>
-<p><code>value.then(f)</code> must evaluate <code>value</code> exactly once, evaluate <code>f</code> exactly once, call <code>f(value)</code>, and return the callback result. The receiver is passed as the callback argument according to ordinary Incan ownership and lowering rules for function calls.</p>
-<p>If <code>f</code> returns <code>Result[U, E]</code>, then <code>value.then(f)</code> returns <code>Result[U, E]</code> and callers may use <code>?</code> in the ordinary way:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">validated</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">then</span><span class="p">(</span><span class="n">validate_config</span><span class="p">)</span><span class="o">?</span>
-</code></pre></div>
-<p><code>then</code> does not inspect <code>Result</code> or <code>Option</code> branches. Calling <code>result.then(f)</code> passes the entire <code>Result</code> to <code>f</code>. Branch-local fallible chaining remains <code>result.and_then(f)</code>.</p>
-<h3 id="tap-semantics"><code>tap</code> semantics<a class="headerlink" href="#tap-semantics" title="Permanent link">&para;</a></h3>
-<p><code>value.tap(f)</code> must evaluate <code>value</code> exactly once, evaluate <code>f</code> exactly once, call <code>f</code> with access to the receiver, and return the receiver after the callback completes.</p>
-<p>The callback must return <code>None</code>. If the callback returns another value, the compiler must reject the call or require an explicit discard form if a future RFC introduces one. This avoids silently dropping meaningful callback results.</p>
-<p>For non-mutating observers, <code>tap</code> should pass the value by observer borrow when the original value must remain available afterward. A conforming implementation must not require <code>T with Clone</code> merely because <code>tap</code> observes <code>T</code> and returns it. This is the same lowering policy described for observer-style helper functions in the duckborrowing docs and already used by <code>Result.inspect</code> / <code>Result.inspect_err</code>.</p>
-<p>For mutating observers, the callback parameter must make mutation visible:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">value</span><span class="o">.</span><span class="n">tap</span><span class="p">((</span><span class="k">mut</span> <span class="n">x</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">x</span><span class="o">.</span><span class="n">normalize</span><span class="p">())</span>
-</code></pre></div>
-<p>This must lower like an explicit mutable binding followed by a mutating method call on that binding, then returning the binding:</p>
-<div class="language-text highlight"><pre><span></span><code>mut x = value
-x.normalize()
-return x
-</code></pre></div>
-<p>A mutating tap must not be specified as "pass <code>T</code> by value into an arbitrary callback and return the original anyway"; that would be incoherent for owned non-<code>Copy</code> values. The callback needs mutable access to the receiver that <code>tap</code> will return. Inline closures are the clearest source form for this. Named callables should be accepted only when their callable shape can receive the same mutable receiver access without moving the value away from <code>tap</code>.</p>
-<h3 id="error-behavior">Error behavior<a class="headerlink" href="#error-behavior" title="Permanent link">&para;</a></h3>
-<p><code>tap</code> is not fallible by default. A callback returning <code>Result[None, E]</code> does not match <code>tap</code> unless a future callable-conversion rule explicitly permits it. Authors who need a fallible observer can use <code>then</code> with an explicit function that returns the original value on success:</p>
+<p>A step that can fail is a <code>then</code> that returns the value:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">log_and_keep</span><span class="p">(</span><span class="n">user</span><span class="p">:</span> <span class="nc">User</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">User</span><span class="p">,</span> <span class="nc">LogError</span><span class="p">]:</span>
     <span class="n">write_audit_log</span><span class="p">(</span><span class="n">user</span><span class="p">)</span><span class="o">?</span>
     <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">user</span><span class="p">)</span>
 
 <span class="n">user</span> <span class="o">=</span> <span class="n">user</span><span class="o">.</span><span class="n">then</span><span class="p">(</span><span class="n">log_and_keep</span><span class="p">)</span><span class="o">?</span>
 </code></pre></div>
-<p>A future <code>try_tap</code> helper may be useful, but it should be specified as a separate receiver-preserving fallible combinator rather than smuggling fallibility into ordinary <code>tap</code>.</p>
-<h3 id="evaluation-order">Evaluation order<a class="headerlink" href="#evaluation-order" title="Permanent link">&para;</a></h3>
-<p>Receiver evaluation must happen before callback evaluation. The callback must run before <code>tap</code> returns the receiver or before <code>then</code> returns the transformed value. Early returns, <code>?</code> propagation, and panics inside the callback follow ordinary function-call behavior.</p>
-<h3 id="diagnostics">Diagnostics<a class="headerlink" href="#diagnostics" title="Permanent link">&para;</a></h3>
-<p>The compiler should diagnose:</p>
-<ul>
-<li>unknown <code>tap</code> or <code>then</code> when the standard surface is not active;</li>
-<li>callback arity mismatch;</li>
-<li>callback return type mismatch for <code>tap</code>;</li>
-<li>attempts to mutate through a non-mut callback parameter;</li>
-<li>mutating tap callbacks whose callable shape would move the receiver away from <code>tap</code>;</li>
-<li>attempted branch-local use where <code>Result.and_then</code>, <code>Result.inspect</code>, or iterator <code>.inspect()</code> is likely intended;</li>
-<li>ambiguous resolution if a type defines its own incompatible <code>tap</code> or <code>then</code> member.</li>
-</ul>
-<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
-<h3 id="syntax">Syntax<a class="headerlink" href="#syntax" title="Permanent link">&para;</a></h3>
-<p>This RFC uses ordinary method-call syntax:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">value</span><span class="o">.</span><span class="n">tap</span><span class="p">(</span><span class="n">observer</span><span class="p">)</span>
-<span class="n">value</span><span class="o">.</span><span class="n">then</span><span class="p">(</span><span class="n">transform</span><span class="p">)</span>
-</code></pre></div>
-<p>No new parser token is required unless the final method-extension mechanism requires one. The feature is intended to feel like ordinary Incan method chaining, not a special form.</p>
-<h3 id="calling-syntax">Calling syntax<a class="headerlink" href="#calling-syntax" title="Permanent link">&para;</a></h3>
-<p>The intended calling syntax is:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">value</span><span class="o">.</span><span class="n">then</span><span class="p">(</span><span class="n">named_transform</span><span class="p">)</span>
-<span class="n">value</span><span class="o">.</span><span class="n">then</span><span class="p">((</span><span class="n">x</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">transform</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>
-<span class="n">value</span><span class="o">.</span><span class="n">tap</span><span class="p">(</span><span class="n">named_observer</span><span class="p">)</span>
-<span class="n">value</span><span class="o">.</span><span class="n">tap</span><span class="p">((</span><span class="n">x</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">summary</span><span class="p">))</span>
-<span class="n">value</span><span class="o">.</span><span class="n">tap</span><span class="p">((</span><span class="k">mut</span> <span class="n">x</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">x</span><span class="o">.</span><span class="n">normalize</span><span class="p">())</span>
-</code></pre></div>
-<p>The named-function forms are ordinary function values. The closure forms are often clearer when the observer is local, when mutation is involved, or when the compiler must infer a borrowed callback boundary.</p>
-<h3 id="semantics">Semantics<a class="headerlink" href="#semantics" title="Permanent link">&para;</a></h3>
-<p><code>then</code> is a receiver-threading transform. <code>tap</code> is a receiver-preserving observer/configuration step. The two names should remain small and orthogonal. Libraries should not overload <code>tap</code> to transform values or <code>then</code> to ignore callback results.</p>
-<h3 id="activation-and-method-resolution">Activation and method resolution<a class="headerlink" href="#activation-and-method-resolution" title="Permanent link">&para;</a></h3>
-<p>The final prelude/import policy is unresolved. The strongest language-level shape is that <code>tap</code> and <code>then</code> are standard receiver combinators available on all ordinary values once the relevant stdlib/prelude surface is active.</p>
-<p>If a type defines its own concrete member named <code>tap</code> or <code>then</code>, ordinary member resolution should prefer the concrete member because it is part of the type's authored API. The standard combinator should be available through a function fallback, such as <code>std.chain.tap(value, observer)</code> or <code>std.chain.then(value, transform)</code>, if the method name is shadowed or ambiguous. The exact fallback path is a design decision, but the RFC should not require silent override of user-authored members.</p>
-<h3 id="relationship-to-future-extension-mechanisms">Relationship to future extension mechanisms<a class="headerlink" href="#relationship-to-future-extension-mechanisms" title="Permanent link">&para;</a></h3>
-<p>RFC 108 explores import-scoped extension properties, and Incan may later grow a broader extension-method or <code>vocab</code> authoring story. RFC 109 should not block that direction. <code>tap</code> and <code>then</code> may eventually be authored through the same mechanism that lets libraries add statically typed receiver vocabulary, but this RFC is about the standard combinator semantics and calling surface, not about making arbitrary extension methods available for every library.</p>
-<h3 id="interaction-with-existing-result-combinators">Interaction with existing <code>Result</code> combinators<a class="headerlink" href="#interaction-with-existing-result-combinators" title="Permanent link">&para;</a></h3>
-<p><code>Result.map</code>, <code>Result.map_err</code>, <code>Result.and_then</code>, <code>Result.or_else</code>, <code>Result.inspect</code>, and <code>Result.inspect_err</code> remain the branch-aware API for <code>Result</code>. <code>tap</code> and <code>then</code> operate on the whole receiver, so they compose with <code>Result</code> but do not replace its branch-aware methods.</p>
-<h3 id="interaction-with-iterator-adapters">Interaction with iterator adapters<a class="headerlink" href="#interaction-with-iterator-adapters" title="Permanent link">&para;</a></h3>
-<p>Iterator <code>.inspect()</code> remains an item observer in a lazy pipeline. <code>iterator.tap(f)</code> observes the iterator object itself before it is consumed or transformed.</p>
-<h3 id="interaction-with-pipe-operators">Interaction with pipe operators<a class="headerlink" href="#interaction-with-pipe-operators" title="Permanent link">&para;</a></h3>
-<p>RFC 028 defines <code>|&gt;</code> and <code>&lt;|</code> operator hooks for libraries that want pipeline-like operators. <code>then</code> is the method-chain spelling for ordinary receiver threading. The two surfaces may coexist, but this RFC does not require <code>a.then(f)</code> and <code>a |&gt; f</code> to be aliases.</p>
-<h3 id="prior-art">Prior art<a class="headerlink" href="#prior-art" title="Permanent link">&para;</a></h3>
-<p>Ruby provides the most direct prior art for the names and fluent reading style: <code>tap</code> observes/configures while returning the receiver, and <code>then</code> threads the receiver into a block and returns the block result. Rust provides the stronger safety precedent through owned method receivers, explicit mutable receivers, <code>Result</code>/<code>Option</code>/iterator combinators, and observer helpers such as <code>inspect</code> that preserve the original container. Incan should deliberately combine Ruby's readability with Rust-shaped static guarantees.</p>
-<h3 id="compatibility-and-migration">Compatibility and migration<a class="headerlink" href="#compatibility-and-migration" title="Permanent link">&para;</a></h3>
-<p>This RFC is additive. Existing values and methods are unaffected unless a user-defined type already exposes a member named <code>tap</code> or <code>then</code>. If a type defines an incompatible member, ordinary member resolution and diagnostics must make the conflict visible rather than silently selecting the standard combinator.</p>
-<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
+<p>A type's own member takes precedence, so <code>cmp(a, b).then(cmp(c, d))</code> calls RFC 110's <code>Ordering.then</code>. When a member shadows the combinator, the plain functions still work: <code>std.chain.then(value, transform)</code>.</p>
+<h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
+<h3 id="availability">Availability<a class="headerlink" href="#availability" title="Permanent link">&para;</a></h3>
 <ol>
-<li><strong>Temporary variables only.</strong> This is explicit and already works, but it makes simple observer/configuration flows noisier than necessary.</li>
-<li><strong>Only a pipe operator.</strong> A pipe operator can thread values through functions, but it does not solve receiver-preserving observation as directly as <code>tap</code>.</li>
-<li><strong>Separate <code>tap</code> and <code>tap_mut</code>.</strong> This makes mutation obvious but duplicates a distinction Incan already expresses through <code>mut</code> parameters.</li>
-<li><strong>Use <code>inspect</code> as the universal name.</strong> This collides with established branch-local and iterator-item semantics. <code>tap</code> is clearer for the receiver-preserving operation.</li>
-<li><strong>Allow callback results to be silently ignored.</strong> This follows Ruby more closely but is less safe in a typed language because accidentally returning meaningful data would disappear.</li>
-<li><strong>Model <code>tap</code> as an ordinary consuming function only.</strong> This would be simpler to type, but it would either require cloning for read-only observation or make mutating taps incoherent for owned non-<code>Copy</code> values.</li>
+<li><code>std.chain</code> must provide <code>then</code> and <code>tap</code> as an RFC 108 extension, and as plain functions <code>then(value, transform)</code> and <code>tap(value, observer)</code>.</li>
+<li>The standard prelude must activate the extension in every module. It must not need an import, and the compiler must have no knowledge of the names beyond extensions and the prelude.</li>
+<li>A member a type defines, including through an adopted trait, must take precedence over the extension, under RFC 108. A shadowed call must not be reported as a conflict.</li>
 </ol>
-<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
+<h3 id="then"><code>then</code><a class="headerlink" href="#then" title="Permanent link">&para;</a></h3>
+<ol>
+<li><code>value.then(f)</code> must evaluate <code>value</code> once, then <code>f</code>, call <code>f</code> once with <code>value</code> under ordinary ownership rules, and return the result.</li>
+<li><code>then</code> must not look inside a <code>Result</code> or an <code>Option</code>. <code>result.then(f)</code> passes the whole <code>Result</code>, and <code>?</code> applies to what <code>f</code> returns in the ordinary way.</li>
+</ol>
+<h3 id="tap"><code>tap</code><a class="headerlink" href="#tap" title="Permanent link">&para;</a></h3>
+<ol>
+<li><code>value.tap(f)</code> must evaluate <code>value</code> once, then <code>f</code>, call <code>f</code> once with access to the value, and return the value.</li>
+<li><code>f</code> must return <code>None</code>. Any other return type must be refused with a diagnostic pointing at a named function or <code>then</code>. <code>Result[None, E]</code> is not <code>None</code>.</li>
+<li>A read-only <code>f</code>, <code>Callable[(T) -&gt; None]</code>, must borrow the value, and <code>tap</code> must not require <code>T with Clone</code>.</li>
+<li>A mutating <code>f</code>, <code>Callable[(mut T) -&gt; None]</code>, whether a closure with a <code>mut</code> parameter or a named function declaring one, must change the value <code>tap</code> returns. Changing the value through a parameter not marked <code>mut</code> must be refused.</li>
+</ol>
+<h3 id="failure-and-order">Failure and order<a class="headerlink" href="#failure-and-order" title="Permanent link">&para;</a></h3>
+<ol>
+<li>The receiver must be evaluated before the callback runs, and the callback must finish before the result is returned. A <code>return</code>, <code>?</code> or panic inside a callback follows ordinary rules for a function call.</li>
+</ol>
+<h3 id="diagnostics-and-tooling">Diagnostics and tooling<a class="headerlink" href="#diagnostics-and-tooling" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Diagnostics must cover arity and return-type mismatches, changing a value through a non-<code>mut</code> parameter, and <code>then</code> or <code>tap</code> where <code>Result.and_then</code>, <code>Result.inspect</code> or iterator <code>.inspect()</code> was likely meant.</li>
+<li>Completion and hover must show that these come from <code>std.chain</code>, and must explain the difference from those combinators. The formatter must treat them as ordinary method chains.</li>
+</ol>
+<h3 id="conformance-workloads">Conformance workloads<a class="headerlink" href="#conformance-workloads" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Workload</th>
+<th>Required evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Availability</td>
+<td><code>then</code> and <code>tap</code> work on models, classes, enums, primitives, <code>Result</code> and generic values, with no import.</td>
+</tr>
+<tr>
+<td>Ownership</td>
+<td>A read-only <code>tap</code> works on a value that is not <code>Clone</code>, and a mutating <code>tap</code> returns the changed value.</td>
+</tr>
+<tr>
+<td>Callables</td>
+<td>Closures, named functions, bound methods, callable objects and capturing closures all work, read-only and mutating.</td>
+</tr>
+<tr>
+<td>Precedence</td>
+<td>A type's own <code>then</code>, including <code>Ordering.then</code>, wins, and <code>std.chain.then</code> still reaches the combinator.</td>
+</tr>
+<tr>
+<td>Refusals</td>
+<td>A non-<code>None</code> observer and a change through a non-<code>mut</code> parameter are refused with their diagnostics.</td>
+</tr>
+<tr>
+<td>Control flow</td>
+<td><code>?</code> on a <code>then</code> result, and a panic in a callback, behave as in an ordinary call.</td>
+</tr>
+<tr>
+<td>Single evaluation</td>
+<td>The receiver and callback are each evaluated once.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
+<h3 id="why-they-are-always-available">Why they are always available<a class="headerlink" href="#why-they-are-always-available" title="Permanent link">&para;</a></h3>
+<p>An import to use something as small as <code>tap</code> is friction at the moment it would help, and these names are meant as a general way of writing code rather than a specialized library. The prelude is how Incan makes such things available. Activating an ordinary extension there gives that with no compiler knowledge of the names.</p>
+<h3 id="a-possible-implementation">A possible implementation<a class="headerlink" href="#a-possible-implementation" title="Permanent link">&para;</a></h3>
+<p>Non-normatively, the extension could read:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># std/chain.incn</span>
+<span class="k">pub</span> <span class="n">extension</span> <span class="nb">chain</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">then</span><span class="p">[</span><span class="nc">T</span><span class="p">,</span> <span class="nc">U</span><span class="p">](</span><span class="bp">self</span><span class="p">:</span> <span class="nc">T</span><span class="p">,</span> <span class="n">transform</span><span class="p">:</span> <span class="nc">Callable</span><span class="p">[(</span><span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">U</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nc">U</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">transform</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">tap</span><span class="p">[</span><span class="nc">T</span><span class="p">](</span><span class="bp">self</span><span class="p">:</span> <span class="nc">T</span><span class="p">,</span> <span class="n">observer</span><span class="p">:</span> <span class="nc">Callable</span><span class="p">[(</span><span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span>
+        <span class="n">observer</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">tap</span><span class="p">[</span><span class="nc">T</span><span class="p">](</span><span class="k">mut</span> <span class="bp">self</span><span class="p">:</span> <span class="nc">T</span><span class="p">,</span> <span class="n">observer</span><span class="p">:</span> <span class="nc">Callable</span><span class="p">[(</span><span class="k">mut</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span>
+        <span class="n">observer</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span>
+</code></pre></div>
+<h3 id="relationship-to-other-surfaces">Relationship to other surfaces<a class="headerlink" href="#relationship-to-other-surfaces" title="Permanent link">&para;</a></h3>
+<p>RFC 028's <code>|&gt;</code> remains a hook for libraries that want the operator, and is not an alias of <code>then</code>. RFC 122's fieldmethods work on a model being constructed, while <code>tap</code> and <code>then</code> work on finished values.</p>
+<h3 id="prior-art">Prior art<a class="headerlink" href="#prior-art" title="Permanent link">&para;</a></h3>
+<p>Ruby provides the names and the reading style: <code>tap</code> observes and returns its receiver, and <code>then</code> passes it to a block. Rust provides the safety precedent, with explicit mutable receivers and observers such as <code>inspect</code>. Kotlin's <code>also</code> and <code>let</code> are the same pair, available on every value through its standard library.</p>
+<h3 id="compatibility">Compatibility<a class="headerlink" href="#compatibility" title="Permanent link">&para;</a></h3>
+<p>This RFC is additive. A type with its own <code>tap</code> or <code>then</code> keeps it.</p>
+<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Universal-looking methods increase the standard surface that users must learn.</li>
-<li><code>tap</code> can encourage side-effect-heavy chains if style guidance is weak.</li>
-<li>Borrow-preserving and mutating <code>tap</code> require careful lowering so non-<code>Clone</code> values remain ergonomic without hiding moves.</li>
-<li>The relationship between method chaining, pipe operators, and container-specific combinators must be documented clearly.</li>
-<li>The names <code>tap</code> and <code>then</code> are short enough that shadowing by user-authored methods is plausible.</li>
+<li><strong>Temporary variables only:</strong> explicit and already works, but noisy for small steps.</li>
+<li><strong>An explicit import:</strong> hides a general-purpose feature behind a line that has to be remembered.</li>
+<li><strong>Compiler-recognized methods:</strong> would need special handling for two library names, when an extension activated by the prelude needs none.</li>
+<li><strong>Only a pipe operator:</strong> threads values through functions but has no answer for keeping the value.</li>
+<li><strong>Separate <code>tap</code> and <code>tap_mut</code>:</strong> duplicates what <code>mut</code> on the parameter already says.</li>
+<li><strong><code>inspect</code> as the universal name:</strong> already means branch-local and item-local observation.</li>
+<li><strong>Ignoring callback results:</strong> a meaningful return value would silently disappear.</li>
+<li><strong>A <code>try_tap</code>:</strong> <code>then</code> with a function returning the value already says it.</li>
+<li><strong>Treating <code>a |&gt; f</code> as <code>a.then(f)</code>:</strong> <code>|&gt;</code> is defined by its hook, which a library may give another meaning.</li>
 </ul>
+<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
+<p>Every type gains two names in completion lists, and short names like these are plausible for a type to define with another meaning, as <code>Ordering.then</code> does. <code>tap</code> can encourage long side-effecting chains if style guidance is weak. The extension depends on RFC 108 supporting methods and receivers of any type.</p>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Typechecker / Symbol resolution:</strong> the standard surface must resolve <code>tap</code> and <code>then</code> for ordinary receiver values while respecting user-defined members and conflicts.</li>
-<li><strong>Callable typing:</strong> callbacks must typecheck with receiver, mutability, arity, and return-type contracts.</li>
-<li><strong>Ownership planning / duckborrowing:</strong> read-only taps must preserve receiver ownership through borrowed callable adaptation instead of clone requirements.</li>
-<li><strong>IR Lowering:</strong> <code>tap</code> must preserve receiver ownership while allowing observer borrowing and explicit mutable callback access.</li>
-<li><strong>Emission:</strong> generated code must evaluate the receiver and callback once and preserve the specified control-flow behavior.</li>
-<li><strong>Stdlib / Runtime (<code>incan_stdlib</code>):</strong> the standard library should provide the user-facing combinator declarations, traits, or fallback functions chosen by the final design.</li>
-<li><strong>Formatter:</strong> chained <code>tap</code> and <code>then</code> calls should format like ordinary method chains.</li>
-<li><strong>LSP / Tooling:</strong> completion and hover should explain the difference between <code>tap</code>, <code>then</code>, <code>Result.inspect</code>, <code>Result.and_then</code>, and iterator <code>.inspect()</code>.</li>
+<li><strong>Standard library:</strong> <code>std.chain</code> and activation in the prelude.</li>
+<li><strong>Extensions:</strong> RFC 108's methods, generic receivers and prelude activation.</li>
+<li><strong>Ownership:</strong> borrowing for read-only observers and access for mutating ones, under RFC 129.</li>
+<li><strong>Formatter:</strong> ordinary method-chain layout.</li>
+<li><strong>Language server:</strong> completion and hover.</li>
+<li><strong>Documentation:</strong> guidance on when a chain helps and when a local variable reads better.</li>
 </ul>
-<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Should <code>tap</code> and <code>then</code> be prelude methods on all values, explicitly imported stdlib extension methods, compiler-recognized methods backed by the stdlib, or authored through a future extension-method mechanism?</li>
-<li>What exact callable type spelling should represent mutable callback access in the public reference docs?</li>
-<li>Should named mutable callables be accepted for mutating <code>tap</code>, or should mutating tap initially require inline closures until callable borrow spelling is explicit?</li>
-<li>Should this RFC include <code>try_tap</code> for fallible observers, or should fallible observation remain an explicit <code>then</code> pattern?</li>
-<li>Should <code>a |&gt; f</code> be documented as equivalent to <code>a.then(f)</code> for simple function application, or should pipe operators remain fully library-defined?</li>
-<li>Should <code>tap</code> allow observer callbacks that return <code>None</code> only, or should there be an explicit discard marker for intentionally ignored results?</li>
-<li>What fallback path should expose the standard combinator when a type already has an authored <code>tap</code> or <code>then</code> member?</li>
+<li><strong>Availability:</strong> on every value with no import. <code>std.chain</code> is library code, activated by the prelude, and the compiler has no knowledge of the names.</li>
+<li><strong>Shadowing:</strong> a type's own member always wins, and <code>std.chain.then</code> and <code>std.chain.tap</code> remain available as plain functions.</li>
+<li><strong>Callable spelling:</strong> <code>Callable[(T) -&gt; None]</code> observes and <code>Callable[(mut T) -&gt; None]</code> changes, and named functions work for both.</li>
+<li><strong>Observers return <code>None</code>:</strong> no discard marker. Anything else is a named function or <code>then</code>.</li>
+<li><strong>No <code>try_tap</code>:</strong> a fallible step is a <code>then</code>.</li>
+<li><strong><code>|&gt;</code> stays separate:</strong> it is a library hook, not an alias.</li>
 </ul>
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 

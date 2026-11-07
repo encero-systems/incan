@@ -9818,6 +9818,28 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#actions-written-in-incan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Actions written in Incan
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#listing-actions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Listing actions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#action-kinds" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10017,6 +10039,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#describe-actions-in-toml-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Describe actions in TOML only
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#discover-actions-from-source-with-no-listing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Discover actions from source, with no listing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#make-every-action-a-package-dependency" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10080,7 +10124,7 @@
   <a href="#design-decisions" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Design decisions
+        Design Decisions
       
     </span>
   </a>
@@ -10109,35 +10153,38 @@
 
 <h1 id="rfc-078-tool-execution-and-typed-workflow-actions">RFC 078: tool execution and typed workflow actions<a class="headerlink" href="#rfc-078-tool-execution-and-typed-workflow-actions" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Status:</strong> Draft</li>
+<li><strong>Status:</strong> Planned</li>
 <li><strong>Created:</strong> 2026-04-26</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong><ul>
 <li>RFC 015 (hatch-like tooling and project lifecycle CLI)</li>
 <li>RFC 020 (Cargo offline and locked policy)</li>
-<li>RFC 034 (<code>incan.pub</code> package registry)</li>
-<li>RFC 075 (starter profiles and capability packs)</li>
+<li>RFC 036 (user-defined decorators)</li>
+<li>RFC 075 (starter profiles and mixes)</li>
 <li>RFC 076 (project mutation policy and recovery)</li>
 <li>RFC 077 (workspace and multi-package projects)</li>
-<li>RFC 079 (<code>incan.pub</code> artifact graph)</li>
-<li>RFC 080 (AI assets and agent metadata)</li>
+<li>RFC 079 (<code>loaves.pub</code> artifact graph)</li>
+<li>RFC 080 (declared AI assets)</li>
+<li>RFC 090 (typed CLI framework)</li>
+<li>RFC 104 (capabilities, limits and receipts)</li>
 <li>RFC 117 (<code>loaf.toml</code> and Oven's language-neutral project model)</li>
 <li>RFC 118 (Incan and Oven command-line surfaces)</li>
+<li>RFC 124 (Oven store unit identity)</li>
+<li>RFC 125 (<code>loaves.pub</code> registry)</li>
 </ul>
 </li>
 <li><strong>Issue:</strong> https://github.com/encero-systems/incan/issues/406</li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> ~~v0.3~~ v0.5</li>
-<li><strong>Target scope:</strong> v0.6, slice 7 (Oven CLI delivery, #1142); brought into scope 2026-09-10. Table root is <code>[actions]</code> per RFC 117.</li>
 <li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC defines a typed workflow-action and tool-execution model for Loaf projects. It gives Oven the inspectable lifecycle center of gravity that npm scripts and uv tool execution provide, while avoiding arbitrary install-time mutation as the default: packages, starters, capabilities, and AI assets may advertise actions, but Oven exposes them as typed, inspectable, policy-gated commands.</p>
+<p>This RFC defines a typed workflow-action and tool-execution model for Loaf projects. It gives Oven the inspectable lifecycle center of gravity that Hatch scripts, npm scripts and uv tool execution provide, while avoiding arbitrary install-time mutation as the default: packages, starters, mixes, and AI assets may advertise actions, but Oven exposes them as typed, inspectable, policy-gated commands. An action written in Incan is a function with <code>@action</code>, and <code>loaf.toml</code> lists what a project offers, including tools that are not written in Incan.</p>
 <h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
 <p>Read this RFC as seven foundations:</p>
 <ol>
 <li><strong>Actions are project workflow contracts:</strong> an action describes a known project operation such as run, test, lint, format, generate, validate, publish, evaluate, or serve.</li>
-<li><strong>Tools are executable providers:</strong> a tool may come from a package, built-in command, local path, registry artifact, or AI asset runtime, but its source and permissions are explicit.</li>
+<li><strong>Tools are executable providers:</strong> a tool may come from a package, built-in command, local path, registry artifact, or a runtime from a higher-level framework, but its source and permissions are explicit.</li>
 <li><strong>Execution mode matters:</strong> actions distinguish project-context execution from isolated one-off tool execution.</li>
 <li><strong>No hidden lifecycle hooks:</strong> installing a package or resolving a dependency must not run arbitrary project mutation hooks.</li>
 <li><strong>Policy gates risk:</strong> actions that mutate files, access the network, use models, or run external tools are classified for RFC 076 policy.</li>
@@ -10145,65 +10192,80 @@
 <li><strong>Machine-readable action metadata is first-class:</strong> CLI, LSP, IDEs, docs tooling, and agents consume the same action model.</li>
 </ol>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>npm became central to JavaScript partly because <code>npm run</code> gave every project a common task surface. uv improved Python workflows by making project commands and ephemeral tools fast and unified. Incan should have a similarly ergonomic workflow layer, but should avoid making arbitrary shell hooks the primary integration mechanism.</p>
-<p>RFC 015 already has envs and scripts. RFC 075 lets capabilities advertise tooling actions. This RFC turns those pieces into a coherent model: actions have kinds, inputs, outputs, scope, risk labels, source identity, and execution mode. That gives users a predictable command loop while giving policy, IDEs, and agents enough structure to reason about what a command will do.</p>
+<p>Hatch gives a Python project named scripts inside its environments, and that is where this design started. npm became central to JavaScript partly because <code>npm run</code> gave every project a common task surface. uv improved Python workflows by making project commands and ephemeral tools fast and unified. Incan should have a similarly ergonomic workflow layer, but should avoid making arbitrary shell hooks the primary integration mechanism.</p>
+<p>RFC 015 already has envs and scripts. RFC 075 lets mixes advertise tooling actions. This RFC turns those pieces into a coherent model: actions have kinds, inputs, outputs, scope, risk labels, source identity, and execution mode. That gives users a predictable command loop while giving policy, IDEs, and agents enough structure to reason about what a command will do.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Define typed workflow actions for common project operations.</li>
 <li>Define tool execution modes for project-context tools and isolated one-off tools.</li>
-<li>Allow packages, capabilities, starters, workspaces, and AI assets to advertise actions without executing them implicitly.</li>
+<li>Let an action be written in Incan, with typed parameters and checked capabilities.</li>
+<li>Allow packages, mixes, starters, workspaces, and AI assets to advertise actions without executing them implicitly.</li>
 <li>Classify action risk for RFC 076 policy.</li>
 <li>Define action inputs, outputs, required envs, workspace scope, and mutation behavior.</li>
 <li>Define action capability requirements, optional capability requests, receipt-schema expectations, and dry-run metadata that can be compared with RFC 104 runtime receipts.</li>
 <li>Provide machine-readable action discovery for CLI, LSP, IDEs, docs tooling, and agents.</li>
-<li>Leave room for <code>incan.pub</code> to index tools and actions as ecosystem artifacts.</li>
+<li>Leave room for <code>loaves.pub</code> to index tools and actions as ecosystem artifacts.</li>
 </ul>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Replacing general-purpose shells.</li>
 <li>Defining a remote build or distributed task execution service.</li>
 <li>Allowing package install or import to run arbitrary setup hooks.</li>
-<li>Defining exact syntax for every action kind in v1.</li>
-<li>Defining AI model execution semantics in full. RFC 080 owns AI assets and model metadata.</li>
-<li>Defining no-std/freestanding target profiles, kernel support, unsafe/layout controls, panic strategy, or allocator strategy. Action capability and receipt metadata may inform those later RFCs, but this RFC is not the freestanding/kernel RFC.</li>
-<li>Requiring every project script to be converted to a typed action immediately.</li>
+<li>Defining exact syntax for every action kind.</li>
+<li>Defining AI model execution semantics. RFC 080 owns declared AI assets, and a higher-level framework owns runtimes.</li>
+<li>Defining no-std/freestanding target profiles, kernel support, unsafe/layout controls, panic strategy, or allocator strategy. Action capability and receipt metadata may inform those RFCs, but this RFC is not the freestanding/kernel RFC.</li>
+<li>Requiring every project script to be converted to a typed action.</li>
 </ul>
 <h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
 <h3 id="declaring-actions">Declaring actions<a class="headerlink" href="#declaring-actions" title="Permanent link">&para;</a></h3>
-<p>A project or capability may declare typed actions:</p>
-<div class="language-toml highlight"><pre><span></span><code><span class="k">[[actions]]</span>
-<span class="n">id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;test&quot;</span>
-<span class="n">kind</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;test&quot;</span>
-<span class="n">command</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;incan&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;test&quot;</span><span class="p">]</span>
-<span class="n">scope</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;member&quot;</span>
-<span class="n">mutates</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[]</span>
+<p>An action written in Incan is a function:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># tools/client.incn</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.actions</span><span class="w"> </span><span class="kn">import</span> <span class="nc">ActionKind</span><span class="p">,</span> <span class="n">action</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.fs</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Path</span>
 
-<span class="k">[[actions]]</span>
-<span class="n">id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;generate-client&quot;</span>
-<span class="n">kind</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;generate&quot;</span>
-<span class="n">tool</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;pub:openapi-client&quot;</span>
-<span class="n">inputs</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;openapi.yaml&quot;</span><span class="p">]</span>
-<span class="n">outputs</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;src/generated/client.incn&quot;</span><span class="p">]</span>
-<span class="n">mutates</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;source&quot;</span><span class="p">]</span>
-<span class="n">requires-review</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<span class="nd">@action</span><span class="p">(</span><span class="n">kind</span><span class="o">=</span><span class="nc">ActionKind</span><span class="o">.</span><span class="nc">Generate</span><span class="p">,</span> <span class="n">caps</span><span class="o">=</span><span class="p">[</span><span class="n">host</span><span class="o">.</span><span class="n">fs</span><span class="o">.</span><span class="n">write</span><span class="p">],</span> <span class="n">outputs</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;src/generated/client.incn&quot;</span><span class="p">])</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">generate_client</span><span class="p">(</span><span class="n">spec</span><span class="p">:</span> <span class="kt">Path</span> <span class="o">=</span> <span class="kt">Path</span><span class="p">(</span><span class="s2">&quot;openapi.yaml&quot;</span><span class="p">))</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="nc">GenerateError</span><span class="p">]:</span>
+    <span class="o">...</span>
 </code></pre></div>
-<p>The exact encoding is not normative in this Draft. The key requirement is that actions are inspectable before they run.</p>
+<p><code>loaf.toml</code> lists what the project offers, including tools that are not written in Incan. A mix or package may advertise the same entries:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[actions.generate-client]</span>
+<span class="n">entry</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;tools.client.generate_client&quot;</span>
+
+<span class="k">[actions.format-sql]</span>
+<span class="n">kind</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;format&quot;</span>
+<span class="n">tool</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;pub:sqlfmt&quot;</span>
+<span class="n">mutates</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;source&quot;</span><span class="p">]</span>
+
+<span class="k">[actions.lint-docs]</span>
+<span class="n">kind</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;lint&quot;</span>
+<span class="n">command</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;vale&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;docs/&quot;</span><span class="p">]</span>
+<span class="n">scope</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;member&quot;</span>
+</code></pre></div>
+<p>An action is inspectable before it runs, whichever form it takes.</p>
 <h3 id="running-project-actions">Running project actions<a class="headerlink" href="#running-project-actions" title="Permanent link">&para;</a></h3>
 <p>A user can run a project action:</p>
-<div class="language-text highlight"><pre><span></span><code>oven action run test
+<div class="language-text highlight"><pre><span></span><code>oven action run lint-docs
+oven action run generate-client --spec other.yaml
 oven action run generate-client --dry-run
 </code></pre></div>
-<p>The dry run shows the tool source, inputs, outputs, workspace scope, env, mutation risk categories, and policy outcome.</p>
-<p>For capability-aware actions, the dry run should also show required capabilities, optional capabilities, expected receipt kinds, redaction-sensitive fields, replay expectations, and whether any capability requirement comes from the action itself, a package descriptor, a capability pack, a tool source, or policy expansion.</p>
+<p>A function's parameters become flags through RFC 090's <code>std.cli</code>, so <code>--spec</code> is parsed and type-checked. The dry run shows the tool source, inputs, outputs, workspace scope, env, mutation risk categories, and policy outcome.</p>
+<p>For actions with declared capabilities, the dry run should also show required capabilities, optional capabilities, expected receipt kinds, redaction-sensitive fields, replay expectations, and whether any capability requirement comes from the action itself, a package descriptor, a mix, a tool source, or policy expansion.</p>
 <h3 id="running-one-off-tools">Running one-off tools<a class="headerlink" href="#running-one-off-tools" title="Permanent link">&para;</a></h3>
-<p>Incan may support isolated tool execution:</p>
+<p>Oven supports isolated tool execution:</p>
 <div class="language-text highlight"><pre><span></span><code>oven tool run formatter@1.2.0 -- src/
 oven tool run pub:docs-preview --port 8000
 </code></pre></div>
 <p>An isolated tool should not become a project dependency merely because it was executed once. If it mutates the project, the mutation must still be visible and policy-gated.</p>
 <h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
+<h3 id="actions-written-in-incan">Actions written in Incan<a class="headerlink" href="#actions-written-in-incan" title="Permanent link">&para;</a></h3>
+<p><code>std.actions</code> must provide <code>action</code> and <code>ActionKind</code>. <code>action</code> must be an ordinary RFC 036 decorator factory that returns an action value, with no compiler knowledge of the name beyond what RFC 104 checks.</p>
+<p>A function with <code>@action</code> must take parameters that <code>std.cli</code> can derive flags from, either individually or as one model, and must return <code>None</code>, a typed report model, or a <code>Result</code> of either. An <code>Err</code>, or a report that marks failure, must be a non-zero exit. <code>kind</code>, <code>caps</code>, <code>uses</code>, <code>inputs</code>, <code>outputs</code>, <code>mutates</code> and <code>scope</code> must have the same meaning as in <code>loaf.toml</code>, where <code>uses</code> names RFC 080 assets.</p>
+<p><code>caps=</code> must follow RFC 104: a compile error when it omits something the body uses, and a ceiling while the action runs. It is optional, and without it the action has neither.</p>
+<p><code>--dry-run</code> on an Incan action must report its declarations without running its body.</p>
+<h3 id="listing-actions">Listing actions<a class="headerlink" href="#listing-actions" title="Permanent link">&para;</a></h3>
+<p><code>[actions.&lt;id&gt;]</code> in <code>loaf.toml</code> must name exactly one of <code>entry</code>, <code>tool</code> or <code>command</code>. <code>entry</code> must name a function with <code>@action</code>, and anything else must be a diagnostic. No decorator may register an action as a side effect, and an <code>@action</code> function no <code>loaf.toml</code> lists must not be runnable through <code>oven action run</code>. A project must be able to list its actions by id even when its code does not currently compile, with details it cannot determine reported as unavailable.</p>
 <h3 id="action-kinds">Action kinds<a class="headerlink" href="#action-kinds" title="Permanent link">&para;</a></h3>
-<p>V1 should standardize a small action-kind vocabulary:</p>
+<p>A small action-kind vocabulary is standardized:</p>
 <ul>
 <li><code>run</code>: run an application entrypoint</li>
 <li><code>test</code>: run tests</li>
@@ -10235,12 +10297,12 @@ oven tool run pub:docs-preview --port 8000
 <li>git sources</li>
 <li>public catalog tools</li>
 <li>private catalog tools</li>
-<li>AI asset runtimes from RFC 080</li>
+<li>runtimes a higher-level framework provides</li>
 </ul>
 <p>The selected tool source, version, content hash, publisher, and trust metadata must be represented in machine-readable output when available.</p>
 <h3 id="inputs-outputs-and-mutation">Inputs, outputs, and mutation<a class="headerlink" href="#inputs-outputs-and-mutation" title="Permanent link">&para;</a></h3>
 <p>Actions should declare inputs and outputs when they can. Actions that mutate files must declare mutation categories compatible with RFC 076 risk categories.</p>
-<p>If an action mutates source files, scripts, CI configuration, env definitions, manifests, generated-file ownership, or agent guidance, it must support dry-run or plan output unless the action kind is explicitly marked as non-plannable. Non-plannable mutating actions should require review by default.</p>
+<p>If an action mutates source files, scripts, CI configuration, env definitions, manifests, generated-file ownership, or agent guidance, it must support dry-run or plan output unless the action kind is explicitly marked as non-plannable. Non-plannable mutating actions must default to the <code>require-approval</code> outcome under RFC 076.</p>
 <h3 id="workspace-scope">Workspace scope<a class="headerlink" href="#workspace-scope" title="Permanent link">&para;</a></h3>
 <p>Workspace-aware actions must declare supported scopes:</p>
 <ul>
@@ -10265,7 +10327,7 @@ oven tool run pub:docs-preview --port 8000
 <li>expected receipt event kinds and redaction-sensitive attributes where the provider can declare them.</li>
 </ul>
 <p>Action metadata does not grant authority. It describes expected authority so lifecycle tooling, policy, CI, LSP, docs, and agents can review the action before it runs. Runtime authority remains governed by RFC 104.</p>
-<p>A dry-run or plan for a capability-aware action must include the declared capability requirements, source of each requirement, policy outcome when evaluated, and whether the action is expected to emit a runtime report. After execution, the action's RFC 104 run report should be comparable with the dry-run plan. Undeclared runtime capability use, denied operations, unused broad grants, and redacted receipt attributes should be visible as machine-readable facts rather than only terminal text.</p>
+<p>A dry-run or plan for an action with declared capabilities must include the declared capability requirements, source of each requirement, policy outcome when evaluated, and whether the action is expected to emit a runtime report. After execution, the action's RFC 104 run report should be comparable with the dry-run plan. Undeclared runtime capability use, denied operations, unused broad grants, and redacted receipt attributes should be visible as machine-readable facts rather than only terminal text.</p>
 <h3 id="machine-readable-discovery">Machine-readable discovery<a class="headerlink" href="#machine-readable-discovery" title="Permanent link">&para;</a></h3>
 <p>The CLI must expose a machine-readable action list containing:</p>
 <ul>
@@ -10286,8 +10348,8 @@ oven tool run pub:docs-preview --port 8000
 <h3 id="relationship-to-rfc-015">Relationship to RFC 015<a class="headerlink" href="#relationship-to-rfc-015" title="Permanent link">&para;</a></h3>
 <p>RFC 015 scripts and envs remain valid. This RFC layers typed actions above scripts so tooling can understand project workflows without parsing arbitrary shell commands.</p>
 <h3 id="relationship-to-rfc-075">Relationship to RFC 075<a class="headerlink" href="#relationship-to-rfc-075" title="Permanent link">&para;</a></h3>
-<p>Starter and capability descriptors may advertise actions. Those actions must remain descriptive until a user or tool explicitly runs them.</p>
-<p>RFC 075 owns how starter and capability mutation plans add, merge, or record action descriptors in project metadata. This RFC owns what those action descriptors mean once discovered: action kinds, execution modes, source resolution, risk classification, dry-run behavior, policy checks, and invocation.</p>
+<p>Starter and mix descriptors may advertise actions. Those actions must remain descriptive until a user or tool explicitly runs them.</p>
+<p>RFC 075 owns how starter and mix mutation plans add, merge, or record action descriptors in project metadata. This RFC owns what those action descriptors mean once discovered: action kinds, execution modes, source resolution, risk classification, dry-run behavior, policy checks, and invocation.</p>
 <h3 id="relationship-to-rfc-076">Relationship to RFC 076<a class="headerlink" href="#relationship-to-rfc-076" title="Permanent link">&para;</a></h3>
 <p>RFC 076 policy evaluates action risk, source identity, mutating behavior, network behavior, model use, and approval requirements.</p>
 <h3 id="relationship-to-rfc-104">Relationship to RFC 104<a class="headerlink" href="#relationship-to-rfc-104" title="Permanent link">&para;</a></h3>
@@ -10299,6 +10361,10 @@ oven tool run pub:docs-preview --port 8000
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <h3 id="use-arbitrary-scripts-only">Use arbitrary scripts only<a class="headerlink" href="#use-arbitrary-scripts-only" title="Permanent link">&para;</a></h3>
 <p>Rejected because arbitrary scripts are ergonomic but opaque. Typed actions preserve script convenience while giving tools, policy, and agents structured metadata.</p>
+<h3 id="describe-actions-in-toml-only">Describe actions in TOML only<a class="headerlink" href="#describe-actions-in-toml-only" title="Permanent link">&para;</a></h3>
+<p>Rejected because actions would stay untyped, with strings for inputs, and RFC 104's compile check would have nothing to check.</p>
+<h3 id="discover-actions-from-source-with-no-listing">Discover actions from source, with no listing<a class="headerlink" href="#discover-actions-from-source-with-no-listing" title="Permanent link">&para;</a></h3>
+<p>Rejected because Oven would have to compile a project just to say what actions it has, and a broken project could not list them.</p>
 <h3 id="make-every-action-a-package-dependency">Make every action a package dependency<a class="headerlink" href="#make-every-action-a-package-dependency" title="Permanent link">&para;</a></h3>
 <p>Rejected because many tools are one-off or developer-only utilities. Isolated tool execution keeps projects cleaner.</p>
 <h3 id="run-package-hooks-during-install">Run package hooks during install<a class="headerlink" href="#run-package-hooks-during-install" title="Permanent link">&para;</a></h3>
@@ -10311,30 +10377,30 @@ oven tool run pub:docs-preview --port 8000
 <li>Policy-gated action execution may feel heavier than simple scripts.</li>
 </ul>
 <h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
-<p>The recommended implementation shape is to build an action registry from built-ins, <code>loaf.toml</code> project and workspace data, package metadata, starter/capability descriptors, and AI assets. <code>oven action list</code> and IDE tooling consume this registry. <code>oven action run</code> resolves source, inherited workspace scope, env, policy, target context, and execution mode before invoking anything. RFC 118 may expose an Incan convenience that delegates downward to this operation, but it must not resolve or execute actions independently.</p>
+<p>The recommended implementation shape is to build an action registry from built-ins, <code>loaf.toml</code> project and workspace data, package metadata, starter and mix descriptors, and AI assets. <code>oven action list</code> and IDE tooling consume this registry. <code>oven action run</code> resolves source, inherited workspace scope, env, policy, target context, and execution mode before invoking anything. RFC 118 has no Incan alias for actions.</p>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Manifest schema / configuration validation:</strong> projects need typed action metadata, tool source references, execution modes, inputs, outputs, and mutation categories.</li>
+<li><strong>Stdlib:</strong> <code>std.actions</code>, with <code>action</code> and <code>ActionKind</code>, using <code>std.cli</code> for parameters.</li>
+<li><strong>Manifest schema / configuration validation:</strong> <code>[actions.&lt;id&gt;]</code> needs <code>entry</code>, <code>tool</code> or <code>command</code>, execution modes, inputs, outputs, and mutation categories.</li>
 <li><strong>CLI / tooling:</strong> commands need action listing, dry-run planning, isolated tool execution, source resolution, capability preview, receipt expectation display, and policy gating.</li>
 <li><strong>Workspace tooling:</strong> actions must support hierarchical sub-Loaf selection within one inherited root-workspace authority and must show the selected closure in plans and receipts.</li>
 <li><strong>LSP / IDE tooling:</strong> editor integrations should surface actions, run/debug affordances, policy outcomes, and mutation previews.</li>
 <li><strong>Package and catalog integration:</strong> packages and catalogs may advertise tool binaries and action descriptors.</li>
-<li><strong>Runtime / reporting:</strong> actions that execute through capability-aware runtimes should produce RFC 104-compatible report identities so declared authority and actual receipts can be compared.</li>
+<li><strong>Runtime / reporting:</strong> actions should produce RFC 104-compatible report identities so declared authority and actual receipts can be compared.</li>
 <li><strong>Agentic tooling:</strong> agents may consume action metadata, capability requirements, dry-run plans, and receipt expectations, but action execution remains subject to policy and user approval.</li>
 <li><strong>Documentation:</strong> docs must distinguish scripts, actions, tools, project-context execution, and isolated execution.</li>
 </ul>
-<h2 id="design-decisions">Design decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
-<p>Resolved 2026-09-10 when this RFC was brought into the v0.6 scope.</p>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Standard action kinds.</strong> The ten kinds in the reference section are standardized for v1. Extension kinds use an <code>x-</code> prefix, appear in machine-readable output, and receive conservative policy handling.</li>
+<li><strong>Actions are written two ways, with one model.</strong> A function with <code>@action</code> from <code>std.actions</code> gets typed parameters through <code>std.cli</code>, and RFC 104's <code>caps=</code> check and ceiling. <code>tool</code> and <code>command</code> describe what is not written in Incan. <code>[actions.&lt;id&gt;]</code> lists both, so nothing registers as a side effect and listing needs no compile.</li>
+<li><strong>Standard action kinds.</strong> The ten kinds in the reference section are standardized. Extension kinds use an <code>x-</code> prefix, appear in machine-readable output, and receive conservative policy handling.</li>
 <li><strong><code>oven run</code> and <code>oven test</code> are not actions.</strong> <code>run</code>, <code>test</code>, <code>build</code>, <code>bake</code>, and <code>check</code> remain first-class Oven command families with their own plan identities (RFC 118). Actions are the extension mechanism for everything else and are invoked through <code>oven action run &lt;id&gt;</code>. A project action may declare kind <code>run</code> or <code>test</code>, but it never redefines or shadows the built-in operation, so there is no npm-scripts-style override of <code>oven test</code>.</li>
 <li><strong>Minimum dry-run contract for mutating external tools.</strong> The plan must show the tool's source identity, version, and content hash; execution mode; argv, working directory, and environment additions; declared mutation categories and target paths; capability requirements (RFC 104); and the policy outcome. A tool that cannot predict its outputs declares <code>outputs = "unpredictable"</code>, is non-plannable, requires approval by default, and runs in a staging directory whose post-run diff is presented as a mutation plan before anything is adopted into the project (RFC 112 for the atomic adoption).</li>
 <li><strong>Isolated tool execution uses the Oven store.</strong> Tools are units under RFC 124, cached globally by unit identity and shared across projects; there is no per-project tool cache. <code>--fresh</code> requests a temporary environment for one run.</li>
 <li><strong>Inputs and outputs for unpredictable tools.</strong> Declared as <code>outputs = "unpredictable"</code>; observed outputs are recorded in the receipt and surfaced as the post-run diff above. Tools that can predict outputs declare them and are checked against the receipt.</li>
 <li><strong>Secrets and credentials.</strong> Action metadata may declare named credential requirements (kind and purpose), never values. Policy mediates each request; values are resolved from Oven-controlled secure storage (the credential references RFC 117 already keeps outside the project) as RFC 103 secret values; every request is receipted under RFC 104 with redaction.</li>
-<li><strong>AI-backed actions.</strong> Metadata carries three fields, execution locality (<code>local</code> or <code>cloud</code>), a cost class, and a privacy label, referencing RFC 080 assets where they exist; policy may block cloud execution. The field shapes are fixed here so <code>[actions]</code> need not change when RFC 080 lands; their detailed semantics remain RFC 080's.</li>
+<li><strong>AI-backed actions.</strong> Metadata carries three fields, execution locality (<code>local</code> or <code>remote</code>), a cost class, and a privacy label, referencing RFC 080 assets where they exist; policy may block remote execution. The field shapes are fixed here; their detailed semantics remain RFC 080's.</li>
 </ul>
-<p>Amendment made at the same time: the table root is <code>[actions]</code> (RFC 117), not <code>[oven.actions]</code>.</p>
 
 
 

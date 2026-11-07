@@ -9997,7 +9997,7 @@
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Replacing specialized packaging toolchains.</li>
-<li>Covering every archive format in the first contract.</li>
+<li>Covering every archive format.</li>
 <li>Embedding package manager semantics into archive APIs.</li>
 <li>Implicitly trusting archive paths, links, or metadata from untrusted archives.</li>
 </ul>
@@ -10050,8 +10050,7 @@
 <li><code>read_entry(...)</code></li>
 </ul>
 <h3 id="format-set">Format set<a class="headerlink" href="#format-set" title="Permanent link">&para;</a></h3>
-<p>Initial format set is fixed to <code>tar</code> and <code>zip</code>.</p>
-<p>Other formats may be added in later RFCs, but this RFC does not leave the initial set open.</p>
+<p>The format set is fixed to <code>tar</code> and <code>zip</code>; this RFC does not leave it open.</p>
 <h3 id="compression-layering">Compression layering<a class="headerlink" href="#compression-layering" title="Permanent link">&para;</a></h3>
 <p>Compression remains explicit:</p>
 <ul>
@@ -10145,7 +10144,7 @@
 </ul>
 <h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ul>
-<li>The initial format set is <code>tar</code> and <code>zip</code>.</li>
+<li>The format set is <code>tar</code> and <code>zip</code>.</li>
 <li><code>std.archive</code> is container-focused and is not folded into <code>std.fs</code> or <code>std.compression</code>.</li>
 <li><code>tar</code> compression is represented via explicit <code>compression=...</code> options.</li>
 <li>Safe extraction is the default (<code>policy="safe"</code>), and unsafe behavior is explicit opt-in.</li>

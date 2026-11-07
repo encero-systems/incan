@@ -9654,10 +9654,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-incanpub-role" class="md-nav__link">
+  <a href="#the-loavespub-role" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The incan.pub role
+        The loaves.pub role
       
     </span>
   </a>
@@ -10287,10 +10287,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-incanpub-role" class="md-nav__link">
+  <a href="#the-loavespub-role" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The incan.pub role
+        The loaves.pub role
       
     </span>
   </a>
@@ -10449,7 +10449,7 @@ incan capability show cli
 </code></pre></div>
 <p>The dry-run should show a receiver-side plan:</p>
 <div class="language-text highlight"><pre><span></span><code>Capability: cli
-Source: incan.pub package app-cli 0.3.1
+Source: loaves.pub package app-cli 0.3.1
 
 Files:
   create   src/main.incn              ownership=bootstrap
@@ -10605,7 +10605,7 @@ incan policy check --format json
 <li>which workspace member a command or mutation targets</li>
 </ul>
 <h3 id="5-registry-discovery-local-execution">5. Registry discovery, local execution<a class="headerlink" href="#5-registry-discovery-local-execution" title="Permanent link">&para;</a></h3>
-<p><code>incan.pub</code> should become the public artifact graph for discovery, provenance, compatibility, advisories, and trust metadata. It should not be the authority that mutates local projects.</p>
+<p><code>loaves.pub</code> should become the public artifact graph for discovery, provenance, compatibility, advisories, and trust metadata. It should not be the authority that mutates local projects.</p>
 <p>The registry can answer "what exists?", "who published it?", "what does it provide?", "what is it compatible with?", "is it yanked or affected by an advisory?", and "what relationships does it have?" The local lifecycle CLI answers "what would this do to my project?", "does policy allow it?", and "what files would change?"</p>
 <h3 id="6-policy-is-not-optional-plumbing">6. Policy is not optional plumbing<a class="headerlink" href="#6-policy-is-not-optional-plumbing" title="Permanent link">&para;</a></h3>
 <p>The security model is part of the product. A template update can inject code. A capability refresh can add a script. A typed action can mutate source. An AI-backed action can send project data to a remote provider. Agent guidance can influence project-changing workflows.</p>
@@ -10615,7 +10615,7 @@ incan policy check --format json
 <p>AI should enter the ecosystem through the same rule as everything else: if it can influence behavior, mutation, data flow, or developer decisions, it should be inspectable and policy-relevant.</p>
 <h2 id="operating-model">Operating model<a class="headerlink" href="#operating-model" title="Permanent link">&para;</a></h2>
 <p>The ecosystem should be deliberately layered:</p>
-<div class="language-text highlight"><pre><span></span><code>incan.pub artifact graph
+<div class="language-text highlight"><pre><span></span><code>loaves.pub artifact graph
   discovers packages, templates, capabilities, actions, policies, AI assets
 
 local lifecycle CLI
@@ -10651,8 +10651,8 @@ LSP, IDE, CI, docs, agents
 <p>Source: <a href="https://huggingface.co/docs/hub/model-cards">Hugging Face model cards</a>.</p>
 <p>Ollama shows that a compact model blueprint can describe base model, parameters, prompt template, system message, adapters, license, and version requirements. Incan should borrow the idea that model behavior is describable as reviewable metadata, while keeping execution explicit and policy-gated.</p>
 <p>Source: <a href="https://docs.ollama.com/modelfile">Ollama Modelfile reference</a>.</p>
-<h2 id="the-incanpub-role">The <code>incan.pub</code> role<a class="headerlink" href="#the-incanpub-role" title="Permanent link">&para;</a></h2>
-<p><code>incan.pub</code> should become the ecosystem's context engine.</p>
+<h2 id="the-loavespub-role">The <code>loaves.pub</code> role<a class="headerlink" href="#the-loavespub-role" title="Permanent link">&para;</a></h2>
+<p><code>loaves.pub</code> should become the ecosystem's context engine.</p>
 <p>As a package registry, it stores and serves packages. As an artifact graph, it also understands the things around packages:</p>
 <ul>
 <li>templates a package provides</li>
@@ -10668,7 +10668,7 @@ LSP, IDE, CI, docs, agents
 <p>Private catalogs should share the same descriptor semantics. A private catalog may describe a broad end-to-end application blueprint that is not scoped to one public library: CLI, API, analytics, governance, data-quality checks, deployment conventions, and relevant agent guidance. That should not require a different local mutation system. The descriptor source is different; the receiver-owned planning, policy, and provenance model is the same.</p>
 <p>This division matters:</p>
 <ul>
-<li><code>incan.pub</code> and catalogs discover, verify, relate, and distribute artifacts.</li>
+<li><code>loaves.pub</code> and catalogs discover, verify, relate, and distribute artifacts.</li>
 <li>The local lifecycle CLI resolves project context, renders templates, builds mutation plans, evaluates policy, and writes files.</li>
 <li>IDEs, CI, and agents consume the same inspection output rather than inventing their own interpretation.</li>
 </ul>
@@ -10707,7 +10707,7 @@ incan policy check --format json
 <li>A template or capability update shows the rendered project diff, not only the provider-side descriptor diff.</li>
 <li>A workspace command never silently targets more members than the user selected.</li>
 <li>An IDE can discover actions, capabilities, file roles, policy warnings, and AI assets from machine-readable lifecycle output.</li>
-<li><code>incan.pub</code> can answer intent-driven questions, not only package-name queries.</li>
+<li><code>loaves.pub</code> can answer intent-driven questions, not only package-name queries.</li>
 <li>AI prompts, models, evals, and agent guidance are visible artifacts with provenance and policy state.</li>
 <li>Automation can propose updates, but cannot approve its own receiver-side project mutation.</li>
 </ul>
@@ -10721,7 +10721,7 @@ incan policy check --format json
 <li>policy decides whether mutations are allowed</li>
 <li>workspaces define topology</li>
 <li>actions run typed workflows</li>
-<li><code>incan.pub</code> discovers and verifies artifacts</li>
+<li><code>loaves.pub</code> discovers and verifies artifacts</li>
 <li>AI assets describe model/prompt/eval/agent metadata</li>
 </ul>
 <p>Another risk is under-specifying provenance. If provenance is too weak, update and recovery workflows become theater. The selected source identity, immutable version or content hash, rendered hash, publisher or trust metadata, and ownership policy need to survive beyond the first command.</p>
@@ -10757,8 +10757,8 @@ incan policy check --format json
 <li><a href="../../RFCs/076_project_mutation_policy_and_recovery/">RFC 076: project mutation policy and recovery</a> defines receiver-side policy, risk classification, approval, quarantine, advisory handling, and recovery for project mutations.</li>
 <li><a href="../../RFCs/closed/implemented/077_workspace_and_multi_package_projects/">RFC 077: workspace and multi-package projects</a> defines workspace topology, member selection, shared lock and policy state, and workspace-scoped mutations.</li>
 <li><a href="../../RFCs/078_tool_execution_and_typed_workflow_actions/">RFC 078: tool execution and typed workflow actions</a> defines typed actions, tool sources, execution modes, dry-run behavior, and policy-gated workflow execution.</li>
-<li><a href="../../RFCs/079_incan_pub_artifact_graph/">RFC 079: incan.pub artifact graph</a> defines the registry as an artifact graph across packages, templates, capabilities, actions, policies, examples, advisories, and AI assets.</li>
-<li><a href="../../RFCs/080_ai_assets_models_prompts_evals_and_agent_metadata/">RFC 080: AI assets, models, prompts, evals, and agent metadata</a> defines AI-native artifacts, local versus remote execution metadata, prompts, evals, datasets, model provenance, and agent guidance.</li>
+<li><a href="../../RFCs/079_incan_pub_artifact_graph/">RFC 079: loaves.pub artifact graph</a> defines the registry as an artifact graph across packages, templates, capabilities, actions, policies, examples, advisories, and AI assets.</li>
+<li><a href="../../RFCs/080_declared_ai_assets/">RFC 080: Declared AI assets</a> defines AI-native artifacts, local versus remote execution metadata, prompts, evals, datasets, model provenance, and agent guidance.</li>
 </ul>
 <h2 id="proposed-incremental-path">Proposed incremental path<a class="headerlink" href="#proposed-incremental-path" title="Permanent link">&para;</a></h2>
 <p>The north star is large, but the first implementation should prove one full vertical slice rather than many disconnected stubs.</p>

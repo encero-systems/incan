@@ -9714,15 +9714,25 @@
 
 <h1 id="rfc-121-unified-incanrust-type-substrate">RFC 121: Unified Incan/Rust type substrate<a class="headerlink" href="#rfc-121-unified-incanrust-type-substrate" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Status:</strong> Draft</li>
+<li><strong>Status:</strong> Planned</li>
 <li><strong>Created:</strong> 2026-08-19</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong><ul>
 <li>RFC 005 (Rust interop)</li>
+<li>RFC 009 (sized integers)</li>
 <li>RFC 024 (extensible derive protocol)</li>
+<li>RFC 029 (union types)</li>
+<li>RFC 030 (<code>std.collections</code>)</li>
 <li>RFC 041 (first-class Rust interop authoring)</li>
 <li>RFC 043 (Rust trait implementation from Incan)</li>
+<li>RFC 091 (integer storage carriers)</li>
 <li>RFC 097 (Rust-hosted Incan caller)</li>
+<li>RFC 120 (canonical source symbol identity)</li>
+<li>RFC 128 (one callable trait over function types)</li>
+<li>RFC 129 (shared or copied bindings)</li>
+<li>RFC 141 (type matching; <code>std.reflection</code>)</li>
+<li>RFC 144 (trait fields and type-owned constants)</li>
+<li>RFC 164 (explicit ownership and borrowing)</li>
 <li>
 <h1 id="975-oven-cargo-free-incanrust-toolchain">975 (Oven: Cargo-free Incan/Rust toolchain)<a class="headerlink" href="#975-oven-cargo-free-incanrust-toolchain" title="Permanent link">&para;</a></h1>
 </li>
@@ -9737,41 +9747,58 @@
 <li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>Incan and Rust are one type substrate, expressed through two surface syntaxes — not two independently-typed systems bridged by a conversion layer at every boundary. Incan's built-in and stdlib types are defined to use the same underlying Rust representation, so crossing between Incan-authored and Rust-authored code, in either direction, is representation-identical rather than converted. This is the same relationship Kotlin has to Java: Kotlin's <code>String</code> is <code>java.lang.String</code>, not a wrapper around one, because both languages target the same underlying object model.</p>
+<p>Incan and Rust are one type substrate, expressed through two surface syntaxes — not two independently-typed systems bridged by a conversion layer at every boundary. Every Incan type compiles to one real Rust type: <code>List[str]</code> is <code>Vec&lt;String&gt;</code>, <code>int</code> is <code>i64</code> unless the type selects another carrier, and a <code>model</code> is a Rust struct. Crossing between Incan-authored and Rust-authored code, in either direction, passes the same value rather than converting it. This is the same relationship Kotlin has to Java: Kotlin's <code>String</code> is <code>java.lang.String</code>, not a wrapper around one, because both languages target the same underlying object model.</p>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
 <p>Before Oven, this was not a real option. Rust was built by a separate toolchain (Cargo), so Incan's own type system had to be treated as independent — something that got translated to Rust as a backend implementation detail, at every boundary crossing, because there was no single build authority that could guarantee both sides stayed representation-compatible. Once Oven owns the full build graph for both Incan-authored and Rust-authored code in one project (RFC 119), that structural constraint disappears. There is no longer a reason to keep them as two systems needing a bridge.</p>
-<p>This surfaced directly out of RFC 097 (Rust-hosted Incan caller). Its "Type projection" section describes checked, sometimes-costly conversions for crossing into Rust — "checked <code>i64</code> boundary," borrowed-versus-owned string decisions, generated adapter code per type. Once RFC 097's caller boundary stopped being framed as bridging two independently-built binaries (the same realization that removed its constructed handle-object pattern), the conversion framing for <em>types</em> stopped making sense for the same reason: there is nothing to check or convert if the two sides were never different representations to begin with.</p>
-<p>RFC 097 intentionally does not take this on fully — it states the caller-boundary consequences of this idea without owning the underlying substrate claim, because the claim affects more than one RFC. RFC 005, RFC 041, and RFC 043 govern the reverse direction (Incan importing and using Rust) and would need the same treatment for the model to be symmetric. This RFC exists to state that shared claim once, in one place, rather than have each interop RFC independently reinvent a piece of it.</p>
+<p>A conversion framing has real costs. It implies generated adapter code per type, a check at each crossing, and a decision per signature about how a string or integer travels. It also leaves room for two libraries to produce two incompatible copies of the same standard type. If the two sides were never different representations, there is nothing to check or convert.</p>
+<p>This claim affects several RFCs: RFC 097 for Rust calling Incan, and RFC 005, RFC 041 and RFC 043 for Incan calling Rust. This RFC states it once, in one place.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>State the substrate-identity principle formally: Incan and Rust share one type substrate.</li>
-<li>Define which categories of Incan types are covered — primitives, stdlib/compound types, user-authored models/enums/newtypes — and how each relates to its Rust representation.</li>
-<li>Define how canonical shared identity works for stdlib/compound types, so two different Incan libraries using the same stdlib type don't produce incompatible generated copies.</li>
-<li>Establish that this principle holds symmetrically for both interop directions: Rust calling Incan-authored code, and Incan importing and using Rust.</li>
-<li>Leave room for named, explicit exceptions where full representation identity turns out not to be achievable.</li>
+<li>State the principle: Incan and Rust share one type substrate.</li>
+<li>Give one rule for each category of type: built-ins, integer carriers, standard-library types, user-declared types, unions and traits.</li>
+<li>Give every standard-library type one definition, so values pass freely between libraries.</li>
+<li>Hold symmetrically for Rust calling Incan and Incan calling Rust.</li>
+<li>Keep what authors already have: exact-width integers, storage carriers, validated construction and RFC 041's admitted adaptations.</li>
+<li>Name every exception explicitly.</li>
+<li>Make a type's Rust representation something any tool or program can read.</li>
 </ul>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>This RFC does not require implementation in v0.6. It is the intended 1.0 north star, not scoped work for the current milestone; RFC 097 already states its caller-boundary consequences without needing this RFC to land first.</li>
-<li>This RFC does not itself rewrite RFC 097's "Type projection" section or RFC 005/041/043's conversion rules — those are follow-up revisions once this RFC's model is accepted.</li>
-<li>This RFC does not claim every Incan type can be made representation-identical to a Rust type. It states the principle and the target; specific exceptions, if any prove necessary, are named explicitly rather than silently assumed away.</li>
-<li>This RFC does not define a new intermediate ABI, FFI boundary, or serialization format. It is the opposite: for representation-identical types, there is no boundary left to define.</li>
-<li>This RFC does not change Incan's own authoring syntax. <code>model</code>, <code>enum</code>, and <code>newtype</code> keep meaning what they mean to an Incan author; this RFC is about what those declarations compile to, not how they're written.</li>
-<li>This RFC does not extend this claim to Incan's trait/dispatch system (RFC 025's multi-instantiation dispatch, RFC 043's Rust trait implementation) — see Unresolved questions.</li>
+<li>This RFC does not change Incan's authoring syntax. <code>model</code>, <code>enum</code>, and <code>newtype</code> keep meaning what they mean to an Incan author; this RFC is about what those declarations are in Rust.</li>
+<li>This RFC does not define a new ABI, FFI boundary, C layout guarantee or serialization format. For identical types, there is no boundary left to define.</li>
+<li>This RFC does not change how operators behave. <code>//</code> on an <code>int</code> still rounds down.</li>
+<li>This RFC does not remove validation. A rule a type declares still holds.</li>
+<li>This RFC does not edit RFC 005, RFC 041 or RFC 043, which are closed.</li>
 </ul>
 <h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
-<p>Take the same running example RFC 097 already uses: an Incan-authored <code>policy</code> library, defining a request/decision pair and a policy function, called from Oven's Rust-authored core.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">pub</span> <span class="k">model</span> <span class="nc">ProviderRequest</span><span class="p">:</span>
-    <span class="k">pub</span> <span class="n">target</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="k">pub</span> <span class="n">requested_capabilities</span><span class="p">:</span> <span class="kt">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+<p>Here is what an Incan author writes:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">pub</span> <span class="nb">type</span> <span class="nc">Month</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span><span class="p">[</span><span class="n">ge</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">le</span><span class="o">=</span><span class="mi">12</span><span class="p">,</span> <span class="n">storage</span><span class="o">=</span><span class="kt">u8</span><span class="p">]</span>
 
-<span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">evaluate_policy</span><span class="p">(</span><span class="n">request</span><span class="p">:</span> <span class="nc">ProviderRequest</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">ProviderDecision</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+<span class="k">pub</span> <span class="k">model</span> <span class="nc">Reading</span><span class="p">:</span>
+    <span class="k">pub</span> <span class="n">month</span><span class="p">:</span> <span class="nc">Month</span>
+    <span class="k">pub</span> <span class="nb">channel</span><span class="p">:</span> <span class="nb">int</span><span class="p">[</span><span class="n">storage</span><span class="o">=</span><span class="kt">u8</span><span class="p">]</span>
+    <span class="k">pub</span> <span class="n">counts</span><span class="p">:</span> <span class="kt">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span>
+    <span class="k">pub</span> <span class="n">labels</span><span class="p">:</span> <span class="kt">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span>
+    <span class="k">pub</span> <span class="n">note</span><span class="p">:</span> <span class="kt">Option</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+
+<span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">summarize</span><span class="p">(</span><span class="n">reading</span><span class="p">:</span> <span class="nc">Reading</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
     <span class="o">...</span>
 </code></pre></div>
-<p><strong>Before this RFC (conversion framing):</strong> <code>request.requested_capabilities</code>, a <code>List[str]</code>, crosses into Rust through a projection step — RFC 097's original "Type projection" table describes this as producing a <code>Vec&lt;String&gt;</code> via a conversion, with <code>int</code> similarly requiring a "checked <code>i64</code> boundary." The mental model is two type systems, bridged.</p>
-<p><strong>Under this RFC (identity framing):</strong> <code>List[str]</code> <em>is</em> <code>Vec&lt;String&gt;</code>. There is no conversion step, because Incan's <code>List[str]</code> was never a different representation from <code>Vec&lt;String&gt;</code> — it is defined, in the compiler's own type system, to be that Rust type. The same is true of <code>int</code> and <code>i64</code>: nothing is checked at a boundary, because there is no boundary between two different representations to check.</p>
-<p>This is already true today for one category of type: RFC 097 already states that a <code>model</code> projects to "a Rust caller struct," used directly. This RFC generalizes that same relationship — already correct for user-authored models — to primitives and to Incan's stdlib types as well.</p>
-<p>The stdlib case needs one more piece: canonical sharing. Suppose two different Incan libraries, <code>policy</code> and <code>billing</code>, both use Incan's stdlib <code>Duration</code> type in a caller-visible signature:</p>
+<p>And here is what those types are to Rust code in the same project:</p>
+<div class="language-rust highlight"><pre><span></span><code><span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">Month</span><span class="p">(</span><span class="kt">u8</span><span class="p">);</span>
+
+<span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">Reading</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">month</span><span class="p">:</span><span class="w"> </span><span class="nc">Month</span><span class="p">,</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">channel</span><span class="p">:</span><span class="w"> </span><span class="kt">u8</span><span class="p">,</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">counts</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="kt">i64</span><span class="o">&gt;</span><span class="p">,</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">labels</span><span class="p">:</span><span class="w"> </span><span class="nc">HashMap</span><span class="o">&lt;</span><span class="nb">String</span><span class="p">,</span><span class="w"> </span><span class="nb">String</span><span class="o">&gt;</span><span class="p">,</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">note</span><span class="p">:</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="nb">String</span><span class="o">&gt;</span><span class="p">,</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>Nothing is converted when a <code>Reading</code> crosses between the two. <code>counts</code> was never a different representation from <code>Vec&lt;i64&gt;</code>, so a Rust function can read it directly.</p>
+<p><strong>Integers follow their carrier.</strong> <code>int</code> is <code>i64</code> by default, not always. RFC 091 lets a type select another carrier, and that carrier is its real Rust type. <code>channel</code> above is a <code>u8</code>, <code>Month</code> is a struct holding a <code>u8</code>, and <code>type bigint = newtype int[storage=i128]</code> is a struct holding an <code>i128</code>. Exact-width types from RFC 009, such as <code>i8</code> and <code>u128</code>, are the Rust types of the same name.</p>
+<p><strong>Identity removes conversion, not checks.</strong> Every <code>i64</code> is a valid <code>int</code>, so there is nothing to check when one crosses. A <code>Month</code> has a rule, so its Rust field is private and Rust code builds one only through its checked constructor.</p>
+<p><strong>Standard-library types have one definition.</strong> Suppose two libraries both use <code>Duration</code> in a public signature:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="c1"># policy/sources/incan/lib.incn</span>
 <span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">evaluate_policy</span><span class="p">(</span><span class="n">request</span><span class="p">:</span> <span class="nc">ProviderRequest</span><span class="p">,</span> <span class="n">window</span><span class="p">:</span> <span class="nc">Duration</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">ProviderDecision</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
     <span class="o">...</span>
@@ -9780,69 +9807,179 @@
 <span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">charge_for</span><span class="p">(</span><span class="n">amount</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">window</span><span class="p">:</span> <span class="nc">Duration</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Receipt</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
     <span class="o">...</span>
 </code></pre></div>
-<p>Without canonical sharing, each library's caller artifact could regenerate its own <code>Duration</code> struct — two Rust types with the same name, structurally identical, but nominally incompatible, so a Rust caller couldn't pass one library's <code>Duration</code> value to the other's function. With canonical sharing, both <code>policy::caller::incan::Duration</code> and <code>billing::caller::incan::Duration</code> resolve to the <em>same</em> Rust type, defined once in a shared location, re-exported rather than regenerated. This is the same principle RFC 097 already requires for <code>rusttype</code> values crossing the caller boundary — "the generated caller type and host type refer to the same Rust path and compatible version" — extended from "Rust types Incan wraps" to "Incan's own stdlib types."</p>
-<p>User-authored types (<code>ProviderRequest</code>, <code>ProviderDecision</code>) don't need this canonical-sharing treatment the same way — each library legitimately owns its own domain types, and there is no ambiguity about which library's <code>ProviderRequest</code> a given signature means.</p>
+<p>Both signatures name the same Rust type, declared once by the standard-library Loaf that owns <code>Duration</code>, so a Rust caller can pass one library's value to the other. User-declared types need no such sharing, because each library owns its own <code>ProviderRequest</code>.</p>
+<p><strong>Borrowing has one spelling.</strong> <code>str</code> is <code>String</code>, and <code>Borrowed[str]</code> is what Rust calls <code>&amp;str</code>. An Incan author writes RFC 164's contracts, or lets RFC 129 infer them, and never needs a Rust spelling.</p>
+<p><strong>A trait is a real Rust trait.</strong> Adopting a trait in Incan produces a real implementation that Rust code can call and bound on, with named exceptions where Rust has no matching concept.</p>
+<p><strong>A representation can be read.</strong> A program can ask a type what it is in Rust, and each field names the type it belongs to:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">print_layout</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">for</span> <span class="n">field</span> <span class="ow">in</span> <span class="nc">Reading</span><span class="o">.</span><span class="n">__fields__</span><span class="p">():</span>
+        <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">field</span><span class="o">.</span><span class="n">parent</span><span class="si">}</span><span class="s2">.</span><span class="si">{</span><span class="n">field</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2"> is </span><span class="si">{</span><span class="n">field</span><span class="o">.</span><span class="k">type</span><span class="o">.</span><span class="n">representation</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<div class="language-text highlight"><pre><span></span><code>shop.readings.Reading.month is Month(u8)
+shop.readings.Reading.channel is u8
+shop.readings.Reading.counts is Vec&lt;i64&gt;
+shop.readings.Reading.labels is HashMap&lt;String, String&gt;
+shop.readings.Reading.note is Option&lt;String&gt;
+</code></pre></div>
 <h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
-<p>An Incan implementation adopting this substrate model must satisfy the following, for every type crossing between Incan-authored and Rust-authored code, in either direction:</p>
-<ul>
-<li>A caller-visible or interop-visible Incan primitive type (<code>int</code>, <code>bool</code>, <code>float</code>) must compile to its named native Rust type directly — <code>int</code> to <code>i64</code>, <code>bool</code> to <code>bool</code>, <code>float</code> to <code>f64</code> — with no generated wrapper type and no runtime check at the crossing point. <code>str</code> remains a policy choice between <code>String</code> and borrowed forms (RFC 097 already establishes this), not a representation check; whichever form is chosen, it is a real <code>String</code>/<code>&amp;str</code>, not a wrapped copy.</li>
-<li>Every Incan stdlib/compound type (<code>List[T]</code>, <code>Dict[K, V]</code>, <code>Option[T]</code>, <code>Result[T, E]</code>, and any other stdlib-owned type) must have exactly one canonical Rust definition, shared by reference across every consumer, never regenerated per library or per caller artifact. Two Incan libraries using the same stdlib type in a caller-visible or interop-visible signature must produce mutually compatible Rust values.</li>
-<li>A user-authored <code>model</code>, <code>enum</code>, or <code>newtype</code> declaration must compile to a genuine Rust struct or enum that the declaration is sugar over, not a separate internal representation later projected into one. Incan's own checks (validation, invariants) attach to that same real type; they do not require a shadow representation to enforce.</li>
-<li>This must hold symmetrically: the same identity relationship applies whether Rust-authored code is calling into Incan-authored code (RFC 097) or Incan-authored code is importing and using a Rust type (RFC 005, RFC 041, RFC 043). Neither direction may define its own, different relationship between an Incan type and its Rust representation.</li>
-<li>Where full representation identity is not achievable for some type or case, that gap must be explicit and diagnosable — a named, documented exception — not a silent fallback to conversion behavior that the rest of this contract assumes doesn't exist.</li>
-</ul>
+<ol>
+<li>
+<p>Every Incan type must compile to one real Rust type. Passing a value between Incan-authored and Rust-authored code must pass that value, with no generated wrapper, adapter or check at the crossing, except as rules 9 and 13 allow.</p>
+</li>
+<li>
+<p>Built-in types must have these Rust types:</p>
+<table>
+<thead>
+<tr>
+<th>Incan</th>
+<th>Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>int</code>, <code>i64</code></td>
+<td><code>i64</code></td>
+</tr>
+<tr>
+<td><code>float</code>, <code>f64</code></td>
+<td><code>f64</code></td>
+</tr>
+<tr>
+<td><code>bool</code></td>
+<td><code>bool</code></td>
+</tr>
+<tr>
+<td><code>str</code></td>
+<td><code>String</code></td>
+</tr>
+<tr>
+<td><code>bytes</code></td>
+<td><code>Vec&lt;u8&gt;</code></td>
+</tr>
+<tr>
+<td><code>None</code></td>
+<td><code>()</code></td>
+</tr>
+<tr>
+<td><code>i8</code> to <code>i128</code>, <code>u8</code> to <code>u128</code>, <code>isize</code>, <code>usize</code>, <code>f32</code></td>
+<td>the Rust type of the same name</td>
+</tr>
+<tr>
+<td><code>Option[T]</code></td>
+<td><code>Option&lt;T&gt;</code></td>
+</tr>
+<tr>
+<td><code>Result[T, E]</code></td>
+<td><code>Result&lt;T, E&gt;</code></td>
+</tr>
+<tr>
+<td><code>Tuple[A, B, ...]</code></td>
+<td><code>(A, B, ...)</code></td>
+</tr>
+<tr>
+<td><code>List[T]</code></td>
+<td><code>Vec&lt;T&gt;</code></td>
+</tr>
+<tr>
+<td><code>Dict[K, V]</code></td>
+<td><code>HashMap&lt;K, V&gt;</code></td>
+</tr>
+<tr>
+<td><code>Set[T]</code></td>
+<td><code>HashSet&lt;T&gt;</code></td>
+</tr>
+</tbody>
+</table>
+</li>
+<li>
+<p>An integer type with an RFC 091 carrier must be stored in that carrier. An unnamed <code>int[...]</code> must compile to its carrier, and a <code>newtype</code> must compile to a Rust struct holding its carrier. This RFC must not narrow what RFC 009 or RFC 091 allow an author to declare.</p>
+</li>
+<li>
+<p>Every other standard-library type, including <code>FrozenStr</code>, <code>FrozenBytes</code>, <code>FrozenList[T]</code>, <code>FrozenDict[K, V]</code>, and <code>FrozenSet[T]</code>, must have exactly one Rust definition, owned by the standard-library Loaf that declares it and identified by its RFC 120 canonical identity. Consumers must reference that definition and must not regenerate it. Two libraries using the same standard-library type must produce mutually compatible Rust values.</p>
+</li>
+<li>
+<p>A user-declared <code>model</code> or <code>class</code> must compile to a Rust struct, an <code>enum</code> to a Rust enum, and a <code>newtype</code> to a Rust struct holding its underlying type. Incan's validation and derives (RFC 024) must attach to that same type, with no shadow representation.</p>
+</li>
+<li>
+<p>An anonymous union (RFC 029) must compile to one Rust enum per distinct set of member types, shared by every use of that set. <code>T | None</code> must be <code>Option&lt;T&gt;</code>.</p>
+</li>
+<li>
+<p>Identity must not remove a declared rule. Rust code must not be able to build a <code>newtype</code>, or a <code>model</code> with a constrained field, in a way that breaks a declared rule, except by going through its checked constructor.</p>
+</li>
+<li>
+<p><code>Borrowed[T]</code> must be a Rust shared reference to <code>T</code>, and <code>BorrowedMut[T]</code> an exclusive one. <code>Borrowed[str]</code> must be <code>&amp;str</code>, and <code>Borrowed[bytes]</code> must be <code>&amp;[u8]</code>. A plain parameter follows RFC 129 and RFC 164. Incan source must not need a Rust spelling for any of these.</p>
+</li>
+<li>
+<p>Where a Rust API asks for a different type than the value has, the adaptations RFC 041 admits, such as <code>float</code> to <code>f32</code> or <code>FrozenList[T]</code> to <code>Vec&lt;T&gt;</code>, must remain available. They must stay bounded by that table and visible in the target signature.</p>
+</li>
+<li>
+<p>An Incan trait must compile to a real Rust trait, and adopting it must compile to a real implementation.</p>
+</li>
+<li>
+<p>All of these rules must hold whether Rust-authored code calls Incan-authored code (RFC 097) or Incan-authored code imports and uses Rust (RFC 005, RFC 041, RFC 043). A Rust type imported into Incan must remain that Rust type.</p>
+</li>
+<li>
+<p>These rules cover representation, not operators. An Incan operator must keep its Incan meaning on a value, and a Rust operator its Rust meaning on the same value.</p>
+</li>
+<li>
+<p>Any departure from these rules must be a named exception on a published list, with its reason, and with a diagnostic when code relies on identity the exception does not provide. An implementation must not fall back silently to conversion.</p>
+</li>
+<li>
+<p><code>std.reflection</code> must expose these facts. <code>TypeInfo</code> must provide <code>identity</code>, the RFC 120 canonical identity printed as its full path, and <code>representation</code>, the Rust type. <code>FieldInfo</code> must provide <code>parent</code>, the identity of the type that declares the field. RFC 128's <code>SignatureInfo</code> must provide the declaration's identity, and each of its parameter entries the same <code>parent</code>.</p>
+</li>
+<li>
+<p><code>incan inspect types</code> must report, for a given type, its identity, its Rust representation, and any exception that applies to it. It must also list every named exception.</p>
+</li>
+</ol>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
-<h3 id="primitive-identity">Primitive identity<a class="headerlink" href="#primitive-identity" title="Permanent link">&para;</a></h3>
-<p>Incan's primitive types are declared, at the language's own type-system level, to use exactly the Rust representation already named for them — not merely mapped to that representation at emission time. This is a frontend/type-system commitment, not a backend/codegen optimization: the guarantee needs to hold before lowering, so that both RFC 097's caller boundary and RFC 005/041/043's Rust-interop boundary can rely on it without re-deriving it independently.</p>
-<h3 id="canonical-stdlibcompound-type-identity">Canonical stdlib/compound type identity<a class="headerlink" href="#canonical-stdlibcompound-type-identity" title="Permanent link">&para;</a></h3>
-<p>Incan's stdlib-owned compound types need one canonical Rust definition, in one shared location every consumer references rather than regenerates. The exact crate/module this lives in (a dedicated shared crate, a module of the RFC 097 support crate, or elsewhere) is an open question (see Unresolved questions) — the requirement this RFC states is the property, not the specific location: canonical, not per-consumer.</p>
-<h3 id="user-authored-domain-types">User-authored domain types<a class="headerlink" href="#user-authored-domain-types" title="Permanent link">&para;</a></h3>
-<p>A <code>model</code>, <code>enum</code>, or <code>newtype</code> is sugar over an ordinary Rust struct/enum declaration, with Incan's own validation and derive machinery (RFC 024) attaching directly to that real type. Because the derive protocol already targets real Rust traits (Debug, Eq, Clone, and user-authored derives per RFC 024), a model's derives were already, in effect, real Rust derives on a real Rust struct — this RFC states that relationship as the general rule rather than a caller-boundary-specific behavior.</p>
-<h3 id="relationship-to-rfc-097">Relationship to RFC 097<a class="headerlink" href="#relationship-to-rfc-097" title="Permanent link">&para;</a></h3>
-<p>RFC 097 states the caller-boundary consequences of this model (free functions instead of a handle object, no runtime version check, models already projecting directly to structs) without asserting the general substrate claim this RFC makes. Once this RFC is accepted, RFC 097's "Type projection" section should be revised to describe identity rather than conversion for the categories this RFC covers — a follow-up pass, not a change required to unblock RFC 097 itself.</p>
-<h3 id="relationship-to-rfc-005-rfc-041-rfc-043">Relationship to RFC 005 / RFC 041 / RFC 043<a class="headerlink" href="#relationship-to-rfc-005-rfc-041-rfc-043" title="Permanent link">&para;</a></h3>
-<p>These RFCs own the reverse interop direction — Incan importing and using Rust — and currently describe that direction in their own terms. For the model in this RFC to be symmetric rather than a one-directional caller-boundary optimization, each needs an equivalent follow-up revision once this RFC's principle is accepted. This RFC does not perform those revisions itself.</p>
-<h3 id="migrationconvergence-path">Migration/convergence path<a class="headerlink" href="#migrationconvergence-path" title="Permanent link">&para;</a></h3>
-<p>Closing any gap between Incan's current internal type representations and this RFC's target is compiler-owned type-system work, not something this RFC schedules or gates on a deadline. Where a gap is real (see Unresolved questions), it should be tracked as an explicit, named exception until closed — not treated as failure to adopt this RFC.</p>
+<h3 id="integers-and-carriers">Integers and carriers<a class="headerlink" href="#integers-and-carriers" title="Permanent link">&para;</a></h3>
+<p><code>int</code> is <code>i64</code> by default because it means <code>newtype Int[storage=i64]</code>, and RFC 009 keeps <code>int</code> and <code>i64</code> interchangeable. RFC 091 owns which carriers exist and which values each type admits. This RFC adds only that the chosen carrier is the type's real Rust representation, so narrowing and widening both come with no conversion.</p>
+<h3 id="why-dict-is-hashmap">Why <code>Dict</code> is <code>HashMap</code><a class="headerlink" href="#why-dict-is-hashmap" title="Permanent link">&para;</a></h3>
+<p>RFC 041 already lowers <code>Dict[K, V]</code> to <code>HashMap&lt;K, V&gt;</code>, and that fixes its requirements: keys must be hashable and comparable, and iteration order is not promised. A program that needs an order uses RFC 030's <code>OrderedDict</code> or <code>SortedDict</code>, which are standard-library types under rule 4.</p>
+<h3 id="frozen-types">Frozen types<a class="headerlink" href="#frozen-types" title="Permanent link">&para;</a></h3>
+<p><code>FrozenStr</code>, <code>FrozenBytes</code>, <code>FrozenList[T]</code>, <code>FrozenDict[K, V]</code>, and <code>FrozenSet[T]</code> are standard-library types over baked, read-only data, so rule 4 covers them. They are not <code>Vec</code> or <code>HashMap</code> with immutability added. RFC 041's table lists those Rust types for them, and this RFC treats that as what rule 9 keeps: the adaptation a Rust API can ask for.</p>
+<h3 id="traits-and-the-exception-list">Traits and the exception list<a class="headerlink" href="#traits-and-the-exception-list" title="Permanent link">&para;</a></h3>
+<p>The list starts with one entry:</p>
+<ul>
+<li><strong>Trait fields (RFC 144):</strong> a Rust trait has no fields. An adopter's field is a real struct field, and the trait requirement appears in Rust as accessor methods. RFC 144's type-owned constants are not an exception, because Rust has associated constants.</li>
+</ul>
+<h3 id="relationship-to-other-rfcs">Relationship to other RFCs<a class="headerlink" href="#relationship-to-other-rfcs" title="Permanent link">&para;</a></h3>
+<p>RFC 097 describes the caller boundary in terms of this RFC, and its type table lists identities. RFC 005, RFC 041 and RFC 043 are closed and stay as written, so this RFC and the language reference hold the contract where they differ.</p>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Keep Incan and Rust as two independently-typed systems, bridged by conversion at every boundary (status quo).</strong> This is what RFC 097 and the Rust-interop RFCs currently describe piecemeal. It works, but implies ongoing translation and checking cost, and per-boundary duplicated logic, that a single-toolchain, Oven-owned build graph no longer requires.</li>
-<li><strong>Apply this only to RFC 097's caller boundary, leaving the reverse direction conversion-based.</strong> Rejected as the long-term target — it would leave the model asymmetric: the same substrate calling one direction, two systems calling the other.</li>
-<li><strong>Write a fully formal, ABI-level unification spec now, in this RFC.</strong> Rejected as premature. This RFC establishes the target principle and what it requires of each category of type; the detailed mechanics (canonical module location, frontend representation changes) belong to implementation-phase follow-up work once actually undertaken, not to this RFC.</li>
+<li><strong>Keep Incan and Rust as two independently-typed systems, bridged by conversion at every boundary.</strong> It works, but it implies ongoing translation and checking cost, and duplicated logic per boundary, that a single Oven-owned build graph no longer requires.</li>
+<li><strong>Apply this only to RFC 097's caller boundary.</strong> Rejected because it would leave the model asymmetric: one substrate calling in one direction, two systems calling in the other.</li>
+<li><strong>A dedicated crate for shared standard-library types.</strong> Rejected because standard-library types already live in Loaves with RFC 120 identity, so a separate crate would add a second home for them.</li>
+<li><strong>A per-call choice between <code>String</code> and <code>&amp;str</code>.</strong> Rejected because RFC 164 and RFC 129 already say how a value is passed, and strings need no policy of their own.</li>
+<li><strong>Fix <code>int</code> at <code>i64</code> everywhere.</strong> Rejected because it would take away RFC 009's exact-width types and RFC 091's carriers.</li>
 </ul>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Requires the compiler's own type system (HIR/Body IR, frontend) to converge toward representation identity for primitives and stdlib types — real engineering work, not free, and not scoped or scheduled by this RFC.</li>
-<li>Symmetric treatment means RFC 005, RFC 041, and RFC 043 each need a follow-up revision pass; this RFC creates that obligation without discharging it.</li>
-<li>A canonical shared stdlib-type module is new shared infrastructure to design, own, and version.</li>
-<li>Removes the "checked boundary" safety net for primitives in favor of relying on the frontend's own correctness to guarantee Incan's type semantics genuinely match Rust's — raising the bar on that guarantee rather than backstopping it with a runtime check.</li>
+<li>A built-in's Rust type becomes a promise. Changing what <code>Dict</code> is in Rust would break Rust code that names it.</li>
+<li>Without a check at the crossing, the guarantee rests on the compiler's own correctness rather than a runtime backstop.</li>
+<li>Rust code sees Incan's choices directly, including <code>i64</code> indexes and owned strings where a hand-written Rust API might do otherwise.</li>
+<li>The exception list has to be kept accurate, because it is what makes the rest of the contract trustworthy.</li>
 </ul>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Typechecker / language type system</strong>: primitive and stdlib type definitions must commit to Rust-representation identity at the type-system level, not only at emission time.</li>
-<li><strong>IR Lowering / Emission</strong>: no conversion/adapter emission for representation-identical types; lowering passes a real value through rather than constructing a projected copy.</li>
-<li><strong>Stdlib (<code>incan_stdlib</code>)</strong>: owns the canonical shared definitions for stdlib/compound types.</li>
-<li><strong>RFC 097's caller boundary</strong>: "Type projection" section requires a follow-up revision from conversion framing to identity framing.</li>
-<li><strong>RFC 005 / RFC 041 / RFC 043's Rust-interop boundary</strong>: require an equivalent follow-up revision for the reverse direction.</li>
+<li><strong>Typechecker / language type system</strong>: each type's Rust representation is a checked fact, not a decision made during emission.</li>
+<li><strong>IR Lowering / Emission</strong>: no conversion or adapter for identical types, and values pass through unchanged.</li>
+<li><strong>Standard-library Loaves</strong>: own the single definition of each standard-library type.</li>
+<li><strong>Reflection</strong>: <code>TypeInfo</code>, <code>FieldInfo</code> and <code>SignatureInfo</code> gain the facts in rule 14.</li>
+<li><strong>LSP / Tooling</strong>: <code>incan inspect types</code> and hover report representation, identity and exceptions.</li>
+<li><strong>Library artifacts</strong>: a Loaf records each public type's identity and representation, so consumers can confirm they agree.</li>
 </ul>
-<h2 id="inspectability-and-tooling-surface">Inspectability and tooling surface<a class="headerlink" href="#inspectability-and-tooling-surface" title="Permanent link">&para;</a></h2>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Artifact or metadata:</strong> the canonical Rust path for every Incan stdlib/compound type should be a checked, versioned fact — the same kind of identity record RFC 097 already defines for caller artifacts — so tooling can confirm two consumers agree on the same underlying type rather than silently diverging.</li>
-<li><strong>Inspection command:</strong> <code>incan inspect types</code> (exact spelling not normative) should report, for a given Incan type, its concrete Rust representation and, for stdlib types, the canonical path every consumer resolves to.</li>
-<li><strong>Diagnostics:</strong> a named, explicit exception (see Unresolved questions) must produce a diagnostic when relied upon incorrectly — for example, code assuming representation identity for a type that has a documented exception should fail clearly, not silently misbehave.</li>
-<li><strong>Provenance:</strong> the frontend's commitment to a given type's Rust representation should be traceable to one canonical declaration (in the compiler's own type-system source, or the stdlib's canonical module for stdlib types), not scattered per-boundary.</li>
-<li><strong>Not implicit:</strong> which types are covered by this identity guarantee, and which (if any) are named exceptions, must be an explicit, documented list — not left for a reader to infer from behavior.</li>
+<li><strong>Shared standard-library types live in the Loaf that declares them,</strong> with RFC 120 identity, so no separate crate exists.</li>
+<li><strong><code>String</code> versus <code>&amp;str</code> is not a separate policy.</strong> <code>str</code> is owned, <code>Borrowed[str]</code> is the borrowed form, and RFC 164 and RFC 129 decide how a value is passed.</li>
+<li><strong>Closed RFCs stay frozen.</strong> RFC 005, RFC 041 and RFC 043 are not edited, and RFC 097 is updated directly.</li>
+<li><strong>Traits are covered,</strong> with named exceptions, starting with RFC 144's trait fields.</li>
+<li><strong>The rule covers representation, not operators.</strong> <code>int</code> is <code>i64</code>, while <code>//</code> rounds down and Rust's <code>/</code> truncates.</li>
+<li><strong><code>int</code> is a default carrier, not a fixed type.</strong> Nothing an author can declare under RFC 009 or RFC 091 is lost.</li>
+<li><strong>RFC 041's table is the base for built-ins, and its adaptations stay.</strong> Frozen types are the correction: they are standard-library types, with <code>Vec</code>, <code>HashMap</code> and <code>HashSet</code> remaining as adaptations.</li>
+<li><strong>Representation is readable through reflection,</strong> and each field names its parent by identity.</li>
 </ul>
-<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Are there any Incan type-system semantics that cannot be made representation-identical to a natural Rust type — different overflow/panic semantics, different string-encoding guarantees, or similar — and if so, how should those exceptions be named and diagnosed?</li>
-<li>What is the actual canonical location for the shared stdlib-type module — part of <code>incan_stdlib</code>, a new dedicated crate, or something else?</li>
-<li>Does <code>str</code>'s owned-versus-borrowed (<code>String</code> vs <code>&amp;str</code>) choice remain a genuine per-call-site policy decision under this model, or does it need its own resolution to fit cleanly under "representation identity"?</li>
-<li>What is the actual sequencing for revisiting RFC 005/041/043 and RFC 097's "Type projection" section once this RFC is accepted — one combined follow-up, or a separate pass per RFC?</li>
-<li>Does this RFC's principle extend to Incan's trait/dispatch system (RFC 025's multi-instantiation dispatch, RFC 043's Rust trait implementation), or is it scoped to data/type-shape identity only?</li>
-</ul>
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 

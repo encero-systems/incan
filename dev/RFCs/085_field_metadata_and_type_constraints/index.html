@@ -9764,6 +9764,45 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Guide-level explanation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#relationship-to-rfc-096-one-contract-two-spellings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Relationship to RFC 096: one contract, two spellings
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#metadata-on-enum-variants" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Metadata on enum variants
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rename-a-field-without-losing-its-history" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rename a field without losing its history
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -9783,6 +9822,28 @@
     <span class="md-ellipsis">
       
         Field metadata syntax
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#enum-variant-metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Enum variant metadata
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rename-continuity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rename continuity
       
     </span>
   </a>
@@ -9812,10 +9873,43 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#data-exchange-direction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data-exchange direction
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#defaults-and-default-factories" class="md-nav__link">
     <span class="md-ellipsis">
       
         Defaults and default factories
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#field-validation-metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Field validation metadata
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#explicit-normalization-metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Explicit normalization metadata
       
     </span>
   </a>
@@ -9950,6 +10044,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#failure-policy-prior-art" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Failure-policy prior art
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#relationship-to-rfc-048-and-rfc-082" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10059,17 +10164,31 @@
 <li><strong>Related:</strong><ul>
 <li>RFC 017 (validated newtypes with implicit coercion)</li>
 <li>RFC 021 (model field metadata and schema-safe aliases)</li>
+<li>RFC 033 (dependency-resolved configuration defaults)</li>
 <li>RFC 048 (checked contract metadata, Incan emit, and interrogation tooling)</li>
 <li>RFC 082 (checked API documentation generation)</li>
+<li>RFC 086 (schema projections and adapter interpretation)</li>
+<li>RFC 087 (reusable field contracts and named validation checks)</li>
+<li>RFC 096 (equivalent declaration-local braced metadata spelling)</li>
+<li>RFC 103 (secret values and non-disclosure)</li>
+<li>RFC 122 (canonical model construction and fieldmethods)</li>
+<li>RFC 128 (checked callable signatures)</li>
+<li>RFC 131 (typed errors and validation umbrellas)</li>
+<li>RFC 132 (frozen classes)</li>
+<li>RFC 137 (named enum payload fields)</li>
+<li>RFC 150 (deprecation facts, whose vocabulary <code>renamed_from</code> shares)</li>
+<li>RFC 165 (typed embedded storage, whose field identities derive from the earliest name)</li>
+<li>RFC 142 (shared failure-policy vocabulary)</li>
+<li>RFC 143 (cloning with field overrides)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> #472</li>
+<li><strong>Issue:</strong> <a href="https://github.com/encero-systems/incan/issues/472">#472</a></li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.3</li>
 <li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC strengthens Incan model fields as readable row-contract declarations. It expands RFC 021 field metadata beyond <code>alias</code> and <code>description</code>, adds <code>default_factory</code> as a field construction feature, defines a standard set of high-signal field contract keys, extends metadata values beyond scalar literals, and draws a hard boundary between field metadata and type-shaped validation. Field metadata describes the field as a field; type-specific constraints belong in constrained types, validated newtypes, or type expressions. The result is a model body that remains readable while carrying enough checked metadata for documentation, data contracts, reflection, downstream schema adapters, metadata-layer extraction, and blast-radius analysis.</p>
+<p>This RFC strengthens Incan model fields as readable row-contract declarations. It expands RFC 021 field metadata beyond <code>alias</code> and <code>description</code>, adds <code>default_factory</code> and checked validate callable metadata as field construction features, defines a standard set of high-signal field contract keys, extends metadata values beyond scalar literals, and draws a hard boundary between field metadata and type-shaped validation. Field metadata describes the field as a field; type-specific constraints belong in constrained types, validated newtypes, or type expressions. The result is a model body that remains readable while carrying enough checked metadata for documentation, data contracts, reflection, downstream schema adapters, metadata-layer extraction, and blast-radius analysis.</p>
 <h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
 <ol>
 <li><strong>The model field is the row-contract unit:</strong> field name, type, nullability, defaulting, aliasing, description, and high-signal field facts are checked source facts.</li>
@@ -10080,6 +10199,7 @@
 <li><strong>Metadata has lanes:</strong> compiler-semantic keys affect language behavior, standard descriptive keys are checked and preserved for tools, and namespaced keys are inert metadata for explicit consumers.</li>
 <li><strong>Evidence is not inline truth:</strong> confidence, evidence trails, timestamps, review state, and authority records should attach to stable field anchors in metadata artifacts, not clutter handwritten model declarations.</li>
 <li><strong>Extraction is a first-class consumer:</strong> the checked metadata extractor must preserve field facts in a stable, machine-readable form suitable for docs, adapters, artifact inspection, dependency indexing, compatibility checks, and blast-radius analysis.</li>
+<li><strong>Variants carry metadata like fields:</strong> an enum variant takes the same brackets, right after its name, and metadata never changes how an enum is built or matched.</li>
 </ol>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
 <p>RFC 021 intentionally created a field metadata slot but standardized only <code>alias</code> and <code>description</code>. That was enough for schema-safe names and basic docs, but not enough for model-driven contracts, schema projection, default factories, classification, primary keys, examples, and field tags.</p>
@@ -10091,7 +10211,10 @@
 <ul>
 <li>Extend RFC 021 field metadata while preserving the existing syntax.</li>
 <li>Define standard compiler-known field metadata keys beyond <code>alias</code> and <code>description</code>.</li>
+<li>Let enum variants carry the same metadata as fields, readable through <code>__variants__()</code>.</li>
 <li>Add <code>default_factory</code> for fresh per-instance defaults.</li>
+<li>Attach custom field checks with <code>validate=check</code> metadata while retaining type-shaped constraints and typed error diagnostics.</li>
+<li>Allow fallible default factories with original failures retained under a ValidationError umbrella and a statically visible Result-returning construction contract.</li>
 <li>Make <code>default_factory</code> mutually exclusive with RHS defaults.</li>
 <li>Support richer safe metadata values such as lists and dictionaries where appropriate.</li>
 <li>Support namespaced metadata keys as inert preserved metadata.</li>
@@ -10112,6 +10235,24 @@
 <li>Making field metadata an unrestricted object language.</li>
 </ul>
 <h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
+<h3 id="relationship-to-rfc-096-one-contract-two-spellings">Relationship to RFC 096: one contract, two spellings<a class="headerlink" href="#relationship-to-rfc-096-one-contract-two-spellings" title="Permanent link">&para;</a></h3>
+<p>RFC 085 defines what field metadata means: the checked keys, accepted values, callable references, defaulting and validation obligations, and the distinction between field facts and type constraints. RFC 096 adds a braced spelling for that same declaration-local metadata. It does not define another metadata system or another construction pipeline.</p>
+<p>These independent model declarations carry equivalent field contracts under the proposed combined syntax. The factory is application-defined:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">empty_labels</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+    <span class="k">return</span> <span class="p">[]</span>
+
+<span class="k">model</span> <span class="nc">InlineSettings</span><span class="p">:</span>
+    <span class="n">labels</span> <span class="p">[</span><span class="n">default_factory</span><span class="o">=</span><span class="n">empty_labels</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Search labels&quot;</span><span class="p">]:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+
+<span class="k">model</span> <span class="nc">BlockSettings</span><span class="p">:</span>
+    <span class="n">labels</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="p">{</span>
+        <span class="n">default_factory</span> <span class="o">=</span> <span class="n">empty_labels</span>
+        <span class="n">description</span> <span class="o">=</span> <span class="s2">&quot;Search labels&quot;</span>
+    <span class="p">}</span>
+</code></pre></div>
+<p>Both declarations store the same checked factory reference and description. Each constructor calls the factory only when labels are omitted; extracting metadata calls neither factory. Reflection, generated documentation and schema adapters consume the same normalized field facts, retaining the source locations needed for diagnostics rather than interpreting the spelling.</p>
+<p>Bracket metadata, RFC 021 alias sugar and RFC 096 blocks may contribute disjoint keys to one declaration. Repeating a declaration-local key across these forms is an error, even if its values are equal; a later block does not override a bracket entry. RFC 086 schema projections and RFC 087 composition retain their own merge and reconciliation contracts.</p>
+<p>RFC 096 also permits braced options on constrained newtype underlyings, such as int comparison bounds and RFC 091 storage selection. Those remain type options rather than field metadata: changing the layout does not move gt, pattern or storage into the field's metadata lane. Namespaced metadata remains inert until an explicit consumer interprets it, and either field spelling retains the same secrecy and validation obligations. RFC 096 owns formatting and the opt-in policy for equivalent layout normalization; this RFC owns the underlying field contract.</p>
 <p>Use inline metadata for high-signal facts:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">Customer</span><span class="p">:</span>
     <span class="nb">id</span> <span class="p">[</span><span class="n">primary_key</span><span class="o">=</span><span class="k">true</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Stable customer identifier&quot;</span><span class="p">]:</span> <span class="nc">CustomerId</span>
@@ -10127,6 +10268,31 @@
 <div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">Invalid</span><span class="p">:</span>
     <span class="n">labels</span> <span class="p">[</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>  <span class="c1"># rejected</span>
 </code></pre></div>
+<p>Default factories may also fail. The imports below are existing stdlib APIs, <code>default_endpoint</code> is application-defined, and fallible factory integration is proposed behavior:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.environ</span><span class="w"> </span><span class="kn">import</span> <span class="nb">get</span><span class="p">,</span> <span class="nc">EnvironError</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">default_endpoint</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nc">EnvironError</span><span class="p">]:</span>
+    <span class="k">return</span> <span class="nb">get</span><span class="p">(</span><span class="s2">&quot;SERVICE_ENDPOINT&quot;</span><span class="p">)</span>
+
+<span class="k">model</span> <span class="nc">ServiceConfig</span><span class="p">:</span>
+    <span class="n">endpoint</span> <span class="p">[</span><span class="n">default_factory</span><span class="o">=</span><span class="n">default_endpoint</span><span class="p">]:</span> <span class="nb">str</span>
+</code></pre></div>
+<p>Canonical construction of ServiceConfig returns <code>Result[ServiceConfig, ValidationError]</code>. A missing environment value is captured under RFC 131's ValidationError umbrella, retaining the original EnvironError and its diagnostics. Supplying <code>endpoint</code> explicitly skips this factory, but the constructor keeps the same declared Result type. An unsuccessful factory does not expose a partially initialized model or turn its error into text. Factory metadata stores a checked callable reference; its body runs during construction when needed, never during metadata extraction.</p>
+<p>Factory failure handling is configurable. Ordinary construction defaults to FailFast: after a needed factory returns Err, later factories are not invoked. A caller may explicitly select CollectAll to attempt the remaining eligible default factories and retain their failures together under ValidationError. Both policies preserve original typed failures and have the same declared constructor result type. CollectAll is an explicit choice to execute additional factory bodies, including their ordinary permitted effects; it does not retry failed factories or roll back effects. A check requiring a field whose factory failed remains blocked, and no partially initialized model is returned. The toggle concerns factory evaluation; it does not replace a decoder's complete input-validation contract or a streaming consumer's independent failure policy.</p>
+<p>Factories can also declare typed dependencies on other fields, following the same resolved-default principle as RFC 033 ctx declarations. The following application-defined factory and model illustrate proposed behavior:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">default_dsn</span><span class="p">(</span><span class="n">host</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">port</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;postgresql://</span><span class="si">{</span><span class="n">host</span><span class="si">}</span><span class="s2">:</span><span class="si">{</span><span class="n">port</span><span class="si">}</span><span class="s2">/app&quot;</span>
+
+<span class="k">model</span> <span class="nc">DatabaseConfig</span><span class="p">:</span>
+    <span class="n">host</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;localhost&quot;</span>
+    <span class="n">port</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">5432</span>
+    <span class="n">dsn</span> <span class="p">[</span><span class="n">default_factory</span><span class="o">=</span><span class="n">default_dsn</span><span class="p">]:</span> <span class="nb">str</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">example</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">config</span> <span class="o">=</span> <span class="nc">DatabaseConfig</span><span class="p">(</span><span class="n">host</span><span class="o">=</span><span class="s2">&quot;db.internal&quot;</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">55432</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="n">config</span><span class="o">.</span><span class="n">dsn</span> <span class="o">==</span> <span class="s2">&quot;postgresql://db.internal:55432/app&quot;</span>
+</code></pre></div>
+<p>The declared host and port parameters identify canonical stored fields and receive their effective normalized values. Supplying dsn explicitly skips this factory. Dependencies may refer to later-declared fields; resolution follows the checked dependencies rather than assuming every default is ready in source order. Cycles and conflicts with the model's authored construction-hook order require clear diagnostics. Dependency failure blocks the factory instead of calling it with unavailable values. This is ordinary per-instance model construction; ctx retains its separate shared lazy resolution and publication contract.</p>
 <p>Type-specific validation stays in the type:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="nb">type</span> <span class="nc">PositiveCents</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span><span class="p">[</span><span class="n">gt</span><span class="o">=</span><span class="mi">0</span><span class="p">]</span>
 <span class="nb">type</span> <span class="nc">CurrencyCode</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">str</span><span class="p">[</span><span class="n">pattern</span><span class="o">=</span><span class="s2">&quot;^[A-Z]</span><span class="si">{3}</span><span class="s2">$&quot;</span><span class="p">]</span>
@@ -10140,8 +10306,43 @@
     <span class="n">created_at</span> <span class="p">[</span><span class="n">postgres</span><span class="o">.</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;created_at&quot;</span><span class="p">,</span> <span class="n">spark</span><span class="o">.</span><span class="n">partition</span><span class="o">=</span><span class="k">true</span><span class="p">]:</span> <span class="nc">DateTime</span>
 </code></pre></div>
 <p>For large adapter mappings, use the schema block surface from RFC 086 rather than turning every field into a wall of brackets.</p>
+<h3 id="metadata-on-enum-variants">Metadata on enum variants<a class="headerlink" href="#metadata-on-enum-variants" title="Permanent link">&para;</a></h3>
+<p>An enum variant takes the same metadata as a field, in the same position, right after its name:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">PaymentMethod</span><span class="p">:</span>
+    <span class="nc">Card</span> <span class="p">[</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;Credit or debit card&quot;</span><span class="p">]</span>
+    <span class="nc">BankTransfer</span> <span class="p">[</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;SEPA or ACH transfer&quot;</span><span class="p">,</span> <span class="n">tags</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;slow&quot;</span><span class="p">]]</span>
+
+<span class="k">enum</span> <span class="nc">Environment</span><span class="p">(</span><span class="nb">str</span><span class="p">):</span>
+    <span class="nc">Production</span> <span class="p">[</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;The live system&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;production&quot;</span>
+    <span class="nc">Staging</span> <span class="o">=</span> <span class="s2">&quot;staging&quot;</span>
+
+<span class="k">enum</span> <span class="nc">BuildOutcome</span><span class="p">:</span>
+    <span class="nc">Finished</span> <span class="p">[</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;The build succeeded&quot;</span><span class="p">](</span><span class="n">report</span><span class="p">:</span> <span class="nc">BuildReport</span><span class="p">)</span>
+    <span class="nc">Failed</span><span class="p">(</span><span class="n">message</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span>
+</code></pre></div>
+<p>Generated documentation shows these descriptions, and <code>Environment.__variants__()</code> gives a library the same facts <code>__fields__()</code> gives it for a model. RFC 090 uses this for command descriptions, and a namespaced key such as <code>Card [json.name="card"]</code> is available to whichever library consumes it. Metadata does not change how an enum is built or matched, and an RFC 032 value stays the enum's backing value.</p>
+<h3 id="rename-a-field-without-losing-its-history">Rename a field without losing its history<a class="headerlink" href="#rename-a-field-without-losing-its-history" title="Permanent link">&para;</a></h3>
+<p>A rename usually changes nothing about what a field means. <code>renamed_from</code> says so, and can carry when, why and until when:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="nc">Record</span><span class="p">)</span>
+<span class="k">model</span> <span class="nc">Customer</span><span class="p">:</span>
+    <span class="n">email_address</span> <span class="p">[</span><span class="n">renamed_from</span><span class="o">=</span><span class="s2">&quot;email&quot;</span><span class="p">]:</span> <span class="nb">str</span>
+
+    <span class="n">phone</span><span class="p">:</span> <span class="nb">str</span> <span class="p">{</span>
+        <span class="n">renamed_from</span> <span class="p">{</span>
+            <span class="n">name</span> <span class="o">=</span> <span class="s2">&quot;telephone&quot;</span>
+            <span class="n">since</span> <span class="o">=</span> <span class="s2">&quot;2.3&quot;</span>
+            <span class="n">retire_in</span> <span class="o">=</span> <span class="s2">&quot;3.0&quot;</span>
+            <span class="n">message</span> <span class="o">=</span> <span class="s2">&quot;Matches the billing API&quot;</span>
+            <span class="n">by</span> <span class="o">=</span> <span class="s2">&quot;cloud audit finding&quot;</span>
+            <span class="n">issue</span> <span class="o">=</span> <span class="s2">&quot;#1042&quot;</span>
+        <span class="p">}</span>
+    <span class="p">}</span>
+</code></pre></div>
+<p>The field keeps its identity. <code>std.db</code> reads records stored under the old name with no migration, an API diff reports a rename rather than a removal and an addition, and generated documentation shows the history. The nested block shares RFC 150's lifecycle facts, so <code>since</code>, <code>retire_in</code>, <code>message</code>, <code>by</code> and <code>issue</code> mean what they mean on <code>deprecated</code>, and all of them are optional. <code>by</code> says who or what decided, whether a person, a team or a tool's finding. <code>retire_in</code> is a plan rather than a deadline: once the package reaches that version, a lint suggests removing the lifecycle facts, and nothing changes on its own. The earlier name stays, because RFC 165 derives the field's identity from it. Enum variants take the same key.</p>
+<p><code>renamed_from</code> is separate from <code>as</code>, which sets a wire name. <code>email_address [renamed_from="email"] as "email": str</code> keeps JSON using <code>email</code>.</p>
 <h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
 <h3 id="field-metadata-syntax">Field metadata syntax<a class="headerlink" href="#field-metadata-syntax" title="Permanent link">&para;</a></h3>
+<p>RFC 096 declaration-local braced blocks must normalize to the same checked keys, safe values and callable identities specified here. They must preserve these semantics and source provenance rather than run metadata callables or change schema/composition precedence. Declaration-local duplicate keys across brackets, alias sugar and blocks must be diagnosed under RFC 096, without selecting a winner by spelling or order.</p>
 <p>RFC 021 field metadata remains valid:</p>
 <div class="language-text highlight"><pre><span></span><code>field_decl = IDENT field_meta? alias_sugar? &quot;:&quot; type_expr default? ;
 field_meta = &quot;[&quot; field_meta_args? &quot;]&quot; ;
@@ -10151,6 +10352,27 @@ metadata_key = IDENT (&quot;.&quot; IDENT)* ;
 </code></pre></div>
 <p>This RFC extends <code>metadata_key</code> to allow dotted namespaced keys. Unqualified keys are reserved for compiler-known or language-standard metadata. Dotted keys are namespaced metadata.</p>
 <p>The <code>as "wire"</code> alias sugar from RFC 021 remains valid and continues to be equivalent to <code>alias="wire"</code> where RFC 021 says it is allowed.</p>
+<h3 id="enum-variant-metadata">Enum variant metadata<a class="headerlink" href="#enum-variant-metadata" title="Permanent link">&para;</a></h3>
+<p>Enum variants accept the same metadata syntax as fields:</p>
+<div class="language-text highlight"><pre><span></span><code>variant_decl = IDENT field_meta? variant_payload? variant_value? ;
+</code></pre></div>
+<ul>
+<li>Variant metadata must accept the standard descriptive keys <code>description</code>, <code>title</code>, <code>deprecated</code>, <code>tags</code> and <code>classification</code>, the key <code>renamed_from</code>, and namespaced keys, with the same safe values as field metadata. A key that only makes sense for a stored field, such as <code>alias</code>, <code>default_factory</code>, <code>validate</code>, <code>primary_key</code>, <code>read_only</code> or <code>write_only</code>, must be refused with a diagnostic naming the key.</li>
+<li>Variant metadata must not change construction, matching, exhaustiveness, identity or an RFC 032 value.</li>
+<li><code>Enum.__variants__()</code> must return a <code>FrozenList[VariantInfo]</code> without needing a value of the enum. Each <code>VariantInfo</code> must carry the variant's <code>name</code>, <code>description</code>, payload <code>fields</code> as <code>FieldInfo</code> records, and <code>extra</code> for its other metadata. Checked metadata must preserve the same facts across package boundaries.</li>
+<li><code>error</code> cases are not variants for this purpose, because RFC 131 gives each case its own declaration body.</li>
+<li><code>T.__doc__()</code> on a model, class or enum must return an <code>Option[DocInfo]</code>, RFC 128's parsed form of a docstring, so that a library reads a type's documentation the same way it reads a function's.</li>
+</ul>
+<h3 id="rename-continuity">Rename continuity<a class="headerlink" href="#rename-continuity" title="Permanent link">&para;</a></h3>
+<p><code>renamed_from</code> must accept an earlier name, a list of earlier names, or a nested block under RFC 096, on a field or an enum variant. The block must contain <code>name</code>, a string or list of strings, and may contain RFC 150's shared lifecycle facts, <code>since</code>, <code>retire_in</code>, <code>message</code>, <code>by</code> and <code>issue</code>, each at most once and using the same descriptor as <code>deprecated</code>. <code>by</code> and <code>issue</code> are unverified descriptive text and grant nothing.</p>
+<ul>
+<li>The field or variant must keep its stable anchor across a declared rename. Without <code>renamed_from</code>, a rename is a new source identity.</li>
+<li>A list of earlier names must be in the order the names were used, earliest first.</li>
+<li>An earlier name that still exists on the same model or enum must be refused, and so must one name claimed twice.</li>
+<li><code>retire_in</code> must not change behavior. Once the package's version reaches it, a lint must suggest removing the lifecycle facts and must keep the earlier name, because RFC 165 derives the field's identity from it.</li>
+<li>Checked metadata must preserve every rename fact, so that API diffs, generated documentation, RFC 106's graph and RFC 165's stored records can use them.</li>
+<li>A rename must not change a wire name or make a decoder accept the old one. Wire names follow <code>alias</code> and <code>as</code>.</li>
+</ul>
 <h3 id="safe-metadata-values">Safe metadata values<a class="headerlink" href="#safe-metadata-values" title="Permanent link">&para;</a></h3>
 <p>Metadata values must be safe metadata values. A safe metadata value must be representable without executing user code. This RFC requires support for:</p>
 <ul>
@@ -10158,24 +10380,28 @@ metadata_key = IDENT (&quot;.&quot; IDENT)* ;
 <li>integer literals;</li>
 <li>float literals;</li>
 <li>boolean literals;</li>
-<li>enum variant paths;</li>
+<li>enum variant paths and structural enum-case values with recursively safe, type-checked payloads, including RFC 137 named payloads;</li>
 <li>lists of safe metadata values;</li>
 <li>dictionaries with string keys and safe metadata values;</li>
-<li>callable symbol paths only for keys that explicitly accept callables, such as <code>default_factory</code>.</li>
+<li>callable symbol paths only for keys that explicitly accept callables, such as <code>default_factory</code> and validate, and checked fieldmethod identity paths within normalize lists under RFC 122.</li>
 </ul>
-<p>Implementations must reject metadata expressions that require function calls, constructors, closures, comprehensions, mutation, I/O, async evaluation, or runtime module initialization.</p>
+<p>Structural enum-case values are a narrow exception to call-shaped syntax: the callee must resolve to an enum case, and the compiler must check its payload arity, names, and types without executing user code. A function or constructor with a similar spelling must not qualify. Checked metadata must preserve the enum type identity, case identity, and payload structure rather than flattening the value to its display text.</p>
+<p>Implementations must reject metadata expressions that require arbitrary function calls, model or class construction, closures, comprehensions, mutation, I/O, async evaluation, or runtime module initialization. Accepting structural enum cases does not authorize constructor hooks, validators, or other user code to run during extraction.</p>
 <h3 id="metadata-lanes">Metadata lanes<a class="headerlink" href="#metadata-lanes" title="Permanent link">&para;</a></h3>
 <p>Compiler-semantic keys are interpreted by the language and can affect construction, name resolution, serialization defaults, reflection, or diagnostics. This RFC defines:</p>
 <ul>
 <li><code>alias: str</code></li>
-<li><code>default_factory: Callable[(), T]</code></li>
+<li><code>validate</code>: a checked synchronous callable taking one explicitly typed field-value parameter and returning <code>Result[None, E]</code>, where E provides RFC 131's common Error interface.</li>
+<li><code>normalize</code>: an ordered list of checked source fieldmethod identities resolving composed normalization under RFC 087 and RFC 122. These references are construction operations, not ordinary callable values.</li>
+<li><code>default_factory</code>: a checked callable with zero arguments or explicitly typed field-dependency parameters, returning a field value <code>T</code> or a fallible <code>Result[T, E]</code>, where <code>E</code> provides the common Error interface.</li>
+<li><code>canonical: bool</code>: whether a field counts toward RFC 165's canonical hash, which it does when the key is absent.</li>
 </ul>
 <p>Standard descriptive keys are checked and preserved by the compiler but do not change ordinary execution by themselves. This RFC defines:</p>
 <ul>
 <li><code>description: str</code></li>
 <li><code>title: str</code></li>
 <li><code>examples: list[T]</code> where each example is a safe metadata value assignable to the field type, or a string example when type-checked examples are not available;</li>
-<li><code>deprecated: bool | str</code></li>
+<li><code>deprecated: bool | str</code>, or the structured <code>deprecated { ... }</code> value of RFC 150, all filling one deprecation descriptor</li>
 <li><code>classification: str</code></li>
 <li><code>tags: list[str]</code></li>
 <li><code>primary_key: bool</code></li>
@@ -10185,16 +10411,49 @@ metadata_key = IDENT (&quot;.&quot; IDENT)* ;
 <li><code>write_only: bool</code></li>
 </ul>
 <p>Namespaced keys are inert metadata preserved for explicit consumers. A namespaced key has at least one dot, such as <code>postgres.name</code>, <code>spark.partition</code>, <code>proto.tag</code>, <code>json.name</code>, or <code>vendor.rule</code>. Baseline compilation must validate syntax and safe value shape, store the value, and expose it through checked metadata. Baseline compilation must not interpret ecosystem-specific semantics for unknown namespaces.</p>
+<h3 id="data-exchange-direction">Data-exchange direction<a class="headerlink" href="#data-exchange-direction" title="Permanent link">&para;</a></h3>
+<p><code>read_only</code> and <code>write_only</code> describe data-exchange contracts. An adapter interpreting <code>read_only=true</code> may expose the field in output but must exclude it from accepted input for that projection. An adapter interpreting <code>write_only=true</code> may accept the field as input but must exclude it from output. An adapter must explicitly document whether and how it consumes these checked facts and must enforce the interpretation it advertises. RFC 086 owns projection and adapter integration; the compiler preserves and type-checks the metadata rather than independently changing ordinary execution.</p>
+<p>These keys must not independently restrict ordinary Incan construction, field access, or mutation, or change member visibility. Visibility and RFC 132 freezing remain governed by their language contracts. For example, <code>id [read_only=true]: int</code> does not by itself prohibit an application from supplying <code>id</code> to an ordinary model constructor. Excluding that field from an external input projection must not waive the model's checked construction requirements.</p>
+<p><code>write_only</code> is not secret protection for logs, diagnostics, inspection, or retained errors. RFC 103's checked secret types and non-disclosure contract apply independently, including failures before secret construction. An adapter or serializer must not use these metadata keys to weaken secret protection. Documentation and tooling must distinguish data-exchange direction from language-level access restrictions and secrecy guarantees.</p>
 <h3 id="defaults-and-default-factories">Defaults and default factories<a class="headerlink" href="#defaults-and-default-factories" title="Permanent link">&para;</a></h3>
 <p>A field may define at most one defaulting mechanism.</p>
 <p>An RHS default value defines a direct default:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="nb">count</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
 </code></pre></div>
-<p><code>default_factory</code> defines a zero-argument callable used to produce a default when the field is omitted:</p>
+<p><code>default_factory</code> identifies a callable used to produce a default when the field is omitted. A factory needing no other fields takes zero arguments:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="n">tags</span> <span class="p">[</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]]:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
 </code></pre></div>
-<p>The <code>default_factory</code> callable must be a statically resolvable callable symbol or constructor surface. It must take no arguments and return a value assignable to the field type.</p>
+<p>The <code>default_factory</code> callable must be a statically resolvable synchronous callable symbol or constructor surface. It may take zero arguments or declare explicitly typed parameters identifying dependencies on canonical stored fields of the owning model. Each dependency parameter must resolve by its name to a canonical field, with the resolved field value assignable to its declared parameter type. Wire aliases and ambient variables must not substitute for these field identities. Variadic or otherwise unresolvable dependency signatures must receive a diagnostic. The callable must return either a value assignable to the target field type or <code>Result[T, E]</code>, where T is assignable to that field type and E provides RFC 131's common Error interface. Signature checking uses the declared callable contract rather than executing the factory or inspecting its body to guess dependencies or failures. Checked metadata and tooling must expose the dependency field identities, parameter types, callable identity, and fallible result contract.</p>
+<p>Dependencies must resolve to their effective normalized stored values before the factory runs, including explicit constructor inputs, presets, other defaults, and applicable construction hooks. A factory receives those values through ordinary checked argument rules; it does not receive or expose a partially initialized Self or the construction context. A later declaration may supply a dependency, so field declaration order alone must not make a valid acyclic factory dependency unavailable. Among eligible factories whose dependencies are ready, canonical field declaration order supplies deterministic scheduling. RFC 122's authored fieldmethod order must remain intact: dependency scheduling must not silently reorder those methods. A conflicting read/write schedule must receive a diagnostic identifying the participating fields and hooks.</p>
+<p>Supplying the target field explicitly skips its factory and its dependency resolution unless another active construction operation needs those fields. The declared factory dependency graph must be acyclic. The compiler must reject a cycle with a diagnostic showing the dependency chain and available source locations; an otherwise infallible constructor must not acquire an undocumented runtime failure path from dependency resolution. Resolution must not repeatedly recompute values until they appear to stabilize. If a dependency fails, its dependent factory must remain unexecuted and observable as blocked. CollectAll may continue independent eligible factories but must not fabricate failures from blocked factory bodies. This follows RFC 033's dependency-resolution principle while retaining ordinary model construction and RFC 143 cloning contracts.</p>
+<p>A fallible factory makes the model's canonical construction contract <code>Result[Self, ValidationError]</code>, including for a model without <code>@derive(Validate)</code>. This result type must remain consistent when a caller supplies values that skip every fallible factory. Generated construction captures original factory failures under the non-generic ValidationError umbrella, preserving their concrete identities, payloads, hierarchy, and diagnostics. A model already using that umbrella must not acquire an additional nested Result. Caller-supplied effective field values, including constructor presets, bypass that field's default factory. Each invoked factory runs at most once per construction attempt, with no implicit retry or fallback after Err. No failed construction may expose a partially initialized model.</p>
+<p>Callable references remain safe metadata: resolving, extracting, or documenting the reference must not run its body. A factory's runtime body may perform ordinary permitted application operations; restrictions on metadata evaluation do not prohibit those runtime operations. RFC 122 construction forms must preserve the canonical result type. RFC 143 cloning retains stored baseline values and must not rerun their default factories; the keyword overload still preserves the canonical Result type and finalization requirements, while zero-argument Clone remains <code>Self</code>.</p>
+<p>Factory evaluation must expose an explicit selectable failure policy using FailFast and CollectAll semantics. FailFast is the default for ordinary construction and must stop factory evaluation at the first observed Err in canonical construction order. CollectAll must continue with the remaining eligible factories in that order and preserve each produced failure under the common ValidationError umbrella. No concurrent factory execution is implied. Checks requiring unavailable field values must remain unexecuted and observable as blocked; failures from unexecuted code must not be invented. Policy selection, including runtime selection, must not change the constructor's static Result type. Ignoring a failed factory cannot establish a field value or authorize successful construction of an incomplete model.</p>
 <p>It is a compile-time error to specify both <code>default_factory</code> and an RHS default value on the same field.</p>
+<h3 id="field-validation-metadata">Field validation metadata<a class="headerlink" href="#field-validation-metadata" title="Permanent link">&para;</a></h3>
+<p><code>validate=check</code> must reference a statically resolved synchronous check callable. Its one explicitly typed parameter must accept the field's checked value type under ordinary argument rules, and its result must be <code>Result[None, E]</code> where E provides RFC 131's common Error interface. The compiler must diagnose unsupported signatures and non-callable values rather than dispatching through strings. The check declares acceptance or failure; it must not return a replacement field value. Simple type-shaped constraints remain expressible in the type lane rather than being moved to metadata.</p>
+<p>The following application declarations describe proposed behavior:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">error</span> <span class="nc">LabelError</span><span class="p">:</span>
+    <span class="nc">Empty</span> <span class="o">=</span> <span class="s2">&quot;A label cannot be empty.&quot;</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">non_empty</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="nc">LabelError</span><span class="p">]:</span>
+    <span class="k">if</span> <span class="n">value</span> <span class="o">==</span> <span class="s2">&quot;&quot;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="nc">LabelError</span><span class="o">.</span><span class="nc">Empty</span><span class="p">)</span>
+    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>
+
+<span class="n">field</span> <span class="n">name</span> <span class="p">[</span><span class="n">validate</span><span class="o">=</span><span class="n">non_empty</span><span class="p">]:</span> <span class="nb">str</span>
+
+<span class="k">model</span> <span class="nc">Product</span><span class="p">:</span>
+    <span class="n">field</span> <span class="n">name</span>
+</code></pre></div>
+<p>The attached check is part of the reusable field contract. It must be retained wherever that contract is used, with the target field and original callable identity available to diagnostics. RFC 087 additionally admits model-owned <code>@validate(field_name)</code> checks and bare <code>@validate</code> whole-model checks. A model-specific check must not mutate the shared field declaration or infect unrelated users of that field. An explicit metadata override must not erase retained validation obligations.</p>
+<p>Field checks must inspect final normalized values, including effective defaults and factory results, without running during metadata resolution or extraction. Registered checks make canonical construction return <code>Result[Self, ValidationError]</code> without an additional <code>@derive(Validate)</code> requirement, preserving each original typed error through RFC 131's umbrella. All supported construction and finalization paths must preserve this checked result contract. RFC 122 owns execution integration, check eligibility, composed-pipeline coordination, and the breaking migration from legacy Validate registration. For validate, this RFC selects a single callable metadata value; additional list-valued or multiple-target validation syntax has not been selected.</p>
+<p>Field check callables and their transitive helpers must be deterministic and free of external side effects under RFC 122's construction-safety rules. I/O, ambient environment access, mutable global state, clock access, randomness, and asynchronous work must receive compiler diagnostics identifying the forbidden operation and reachable call chain. This applies when a callable is registered as a check; metadata extraction still must not execute it. Default factories retain their separate permitted runtime effects. Capability-governed external validation may be considered separately; no such exception is selected here.</p>
+<p>After normalization, field-targeted checks run in canonical field declaration order before whole-model checks, which run in their declaration order. All inspect the same final normalized state. Retained whole-model checks follow recursive left-to-right from-source traversal before target-owned checks; first appearance fixes a same-origin, same-binding check's position and later paths do not rerun it. Checks must handle their inputs independently of whether another check has run or succeeded. For several checks on one field, reusable/source checks run first under first-appearance coalescing, then target-local checks in declaration order. Complete the field's eligible checks before moving to the next field. RFC 122 specifies the full traversal and coverage contract.</p>
+<p>Registered checks default to CollectAll, retaining all failures from eligible checks under the same ValidationError umbrella. Explicit FailFast is available without changing the constructor's static result type. Checks requiring unavailable data remain blocked with clear diagnostics, and Ignore cannot permit an invalid model. Models declare the checks, while the runtime selects execution policy through RFC 122's scoped validation_policy context manager. Policy is not a model field or a constructor data argument, and the scope preserves the canonical Result type and restores the prior policy on exit. Ordinary helper and library calls within the same execution context inherit the active scope; function boundaries do not reset it. RFC 122 owns check scheduling and eligibility; RFC 094 and RFC 142 own suspension and spawned-task integration respectively. This validation default is separate from the FailFast default for factory evaluation above.</p>
+<h3 id="explicit-normalization-metadata">Explicit normalization metadata<a class="headerlink" href="#explicit-normalization-metadata" title="Permanent link">&para;</a></h3>
+<p>A target model may explicitly resolve overlapping field-backed normalization through <code>field name [normalize=[TrimmedName.name, LowercaseName.name]]: str</code>. In this single-field form, each entry must resolve to a retained source field-backed fieldmethod targeting that canonical field, with its input type matching the field type. The first step receives the effective newly supplied input; each subsequent step receives the value bound by its predecessor. The ordered list must account for every distinct conflicting source normalizer. RFC 122 owns construction activation, input forwarding, and execution; the metadata does not introduce a second normalization engine or make fieldmethods ordinary callable values.</p>
+<p>This local declaration refines the composed field's normalization rather than replacing the field contract. Its type and other structural facts must remain compatible, and all retained validation obligations remain enforced on the final value. Checked metadata must preserve operation identities, target bindings, order, and source provenance without executing the operations during extraction. The same spelling admits computed source operations with multi-field write sets: a computed entry receives its own captured named construction input, while a following field-backed entry receives the resulting value of its target field. The computed write set must include the field carrying normalize metadata and preserve its other targets. Competing effective inputs to the same pipeline step must receive a diagnostic rather than implicit precedence; stored defaults and retained clone state are not newly supplied competing inputs. RFC 122 supplies the complete duration example and retains remaining activation questions; extraction must preserve these input and write-target identities without executing the operations.</p>
 <h3 id="type-shaped-constraints">Type-shaped constraints<a class="headerlink" href="#type-shaped-constraints" title="Permanent link">&para;</a></h3>
 <p>Type-specific constraints should be expressed in type syntax, constrained primitives, validated newtypes, or named semantic types:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="n">age</span><span class="p">:</span> <span class="nb">int</span><span class="p">[</span><span class="n">ge</span><span class="o">=</span><span class="mi">0</span><span class="p">]</span>
@@ -10203,7 +10462,7 @@ metadata_key = IDENT (&quot;.&quot; IDENT)* ;
 </code></pre></div>
 <p>Field metadata must not become the primary location for numeric bounds, string patterns, length constraints, item constraints, or enum membership when the type system can express those constraints.</p>
 <p>Adapters may project type constraints into external schemas. For example, a JSON Schema adapter may map <code>str[pattern="..."]</code> into a JSON Schema <code>pattern</code>. That is an adapter projection of checked type facts, not a separate field metadata truth.</p>
-<p>Field metadata must not define target-system, storage, wire, or adapter-specific field types. An adapter must map from the checked Incan type descriptor to its own type system. For example, a database adapter maps <code>UserId</code> or <code>str[pattern="..."]</code> to the appropriate database type through adapter-owned rules, not through <code>postgres.type</code> metadata on the field.</p>
+<p>Field metadata must not redefine the checked Incan source type or its constraints. An adapter must map from the structured Incan type descriptor to its own type system. Explicit namespaced metadata may request a target mapping, such as <code>postgres.type</code>, under RFC 086's adapter-owned compatibility contract. These requests must use checked adapter-owned enum values, including safe constant payloads when needed, rather than SQL fragments or other strings encoding target types. The owning adapter must validate the request before using the projection and reject incompatible, unsupported, or unestablished mappings. A request cannot silently narrow source constraints, discard information, introduce unchecked coercion, or weaken secret protection; metadata precedence cannot waive those checks.</p>
 <h3 id="metadata-preservation">Metadata preservation<a class="headerlink" href="#metadata-preservation" title="Permanent link">&para;</a></h3>
 <p>Checked metadata extraction must preserve all compiler-semantic keys, standard descriptive keys, and namespaced keys. Generated docs should render standard descriptive keys when useful. Namespaced keys may be displayed in advanced views or consumed by adapters, but they should not dominate the ordinary field documentation view.</p>
 <p>Reflection must expose enough metadata for schema adapters and documentation tooling to recover the checked field contract without parsing source text.</p>
@@ -10224,6 +10483,7 @@ metadata_key = IDENT (&quot;.&quot; IDENT)* ;
 <li>canonical field name and alias metadata;</li>
 <li>field type as a checked type reference or structured descriptor hook;</li>
 <li>default/default-factory facts;</li>
+<li>attached validation callable identity, checked parameter and result contracts, and provenance;</li>
 <li>metadata lane for each key;</li>
 <li>safe serialized metadata value;</li>
 <li>enough provenance to distinguish inline field metadata from metadata merged later by RFC 086.</li>
@@ -10237,10 +10497,15 @@ metadata_key = IDENT (&quot;.&quot; IDENT)* ;
 <li>unsafe metadata values;</li>
 <li>invalid metadata value type for a compiler-known key;</li>
 <li>both RHS default and <code>default_factory</code> on the same field;</li>
-<li><code>default_factory</code> target is not a zero-argument callable returning the field type;</li>
+<li><code>default_factory</code> target is not a synchronous callable with a supported field-value or <code>Result[T, E]</code> return contract;</li>
+<li>a factory dependency parameter does not resolve to a canonical stored field or has an incompatible type;</li>
+<li>declared factory dependencies form a cycle or conflict with the checked fieldmethod execution order; diagnostics must show the participating fields, dependencies, and available source locations;</li>
+<li>a fallible factory's error type does not provide the common Error interface;</li>
+<li>a caller treats a fallible model constructor's Result as a completed model value; diagnostics must show the generated Result signature and explain the need to handle or propagate the validation failure;</li>
+<li>validate metadata references a non-callable, unsupported signature, incompatible field-value parameter, or error type without the common Error interface;</li>
 <li>invalid namespaced key syntax;</li>
 <li>namespaced metadata appears where the grammar does not allow metadata;</li>
-<li>field metadata attempts to define target-system, storage, wire, or adapter type mappings;</li>
+<li>field metadata attempts to redefine the checked Incan source type or its constraints;</li>
 <li>field metadata attempts to express a type-specific constraint that must be written in type syntax, when the compiler can identify that misuse.</li>
 </ul>
 <p>Diagnostics should point at the metadata key that caused the error and should include the field name when applicable.</p>
@@ -10264,12 +10529,15 @@ metadata_key = IDENT (&quot;.&quot; IDENT)* ;
 <p>RFC 021 remains the foundation. <code>alias</code>, <code>description</code>, <code>as</code> sugar, alias-aware constructor keys, alias-aware member access, and reflection behavior continue to apply. This RFC expands the metadata key space and safe value model.</p>
 <h3 id="relationship-to-rfc-017">Relationship to RFC 017<a class="headerlink" href="#relationship-to-rfc-017" title="Permanent link">&para;</a></h3>
 <p>RFC 017 owns validated newtypes and type-level validation. This RFC does not move type constraints into field metadata. It clarifies that field metadata and type constraints are separate lanes of the model contract.</p>
+<h3 id="failure-policy-prior-art">Failure-policy prior art<a class="headerlink" href="#failure-policy-prior-art" title="Permanent link">&para;</a></h3>
+<p>Pydantic provides <a href="https://docs.pydantic.dev/latest/concepts/performance/#failing-early-with-failfast">opt-in FailFast for sequence validation</a>, while its <a href="https://docs.pydantic.dev/latest/concepts/models/#error-handling">normal validation reports can contain multiple failures</a>. That is prior art for making early stopping an explicit policy, not evidence that Pydantic normally defaults all validation to FailFast or provides this same factory-policy toggle. Incan deliberately chooses FailFast as the ordinary default for potentially effectful factory evaluation, with explicit CollectAll preserving multiple original failures through the ValidationError umbrella. RFC 142 supplies the shared policy vocabulary; factory evaluation does not inherit every policy available to stream consumers.</p>
 <h3 id="relationship-to-rfc-048-and-rfc-082">Relationship to RFC 048 and RFC 082<a class="headerlink" href="#relationship-to-rfc-048-and-rfc-082" title="Permanent link">&para;</a></h3>
 <p>RFC 048 owns checked metadata extraction and stable metadata artifacts. RFC 082 owns documentation generation from checked metadata. This RFC defines additional field metadata facts that those systems must be able to preserve and project.</p>
 <p>For metadata-layer and blast-radius ambitions, the important contract is that these field facts are extracted as checked facts with stable anchors, not rediscovered by parsing source text or generated Rust. Downstream systems can attach mutable governance and evidence records to those anchors while the source model remains the readable row-contract declaration.</p>
 <h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
 <p>This RFC is additive. Existing RFC 021 metadata remains valid.</p>
 <p>Code using only <code>alias</code> and <code>description</code> can continue unchanged.</p>
+<p>An infallible default factory does not itself change an ordinary constructor's result type. Introducing a fallible default factory into a previously infallible public model changes its construction contract to <code>Result[Self, ValidationError]</code> and therefore requires callers to migrate. Checked API metadata, signature help, and diagnostics must expose this change even when a particular call supplies the affected field explicitly. Adding field metadata is not a promise that every change to compiler-semantic metadata is behaviorally or signature compatible.</p>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <ol>
 <li><strong>Keep only <code>alias</code> and <code>description</code></strong></li>
@@ -10312,7 +10580,7 @@ metadata_key = IDENT (&quot;.&quot; IDENT)* ;
 <li><strong>Parser / AST</strong>: must support dotted metadata keys and richer safe metadata values.</li>
 <li><strong>Typechecker / Symbol resolution</strong>: must validate compiler-known metadata keys, default factories, safe metadata values, and type-shaped constraint boundaries.</li>
 <li><strong>Checked metadata extractor</strong>: must preserve field metadata lanes, stable field anchors, default factories, namespaced metadata, safe value representations, and enough provenance for metadata-layer and blast-radius consumers.</li>
-<li><strong>IR Lowering / Emission</strong>: must preserve construction semantics for defaults and default factories while making field metadata available to reflection and artifacts.</li>
+<li><strong>IR Lowering / Emission</strong>: must preserve construction semantics for defaults and default factories, capture fallible factory failures under ValidationError, and preserve canonical result types while making field metadata available to reflection and artifacts.</li>
 <li><strong>Stdlib / Runtime</strong>: must expose field metadata consistently through reflection.</li>
 <li><strong>Formatter</strong>: must format inline metadata and multiline metadata lists deterministically.</li>
 <li><strong>LSP / Tooling</strong>: should provide hover, completion, diagnostics, and go-to-definition behavior for standard field metadata.</li>
@@ -10320,12 +10588,29 @@ metadata_key = IDENT (&quot;.&quot; IDENT)* ;
 </ul>
 <h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ul>
+<li>Treat ordered normalize metadata as compiler-semantic resolution of composed operations. Preserve source identities, target bindings, complete computed write sets, and validation obligations. Computed entries receive their named construction inputs; following field-backed entries receive resulting target values. Competing effective inputs to one step must receive a diagnostic. RFC 122 owns execution and remaining activation questions.</li>
+<li>
+<p>Treat <code>validate=check</code> as compiler-semantic callable metadata, retained with reusable field contracts under RFC 087. Checks receive a typed field value and return <code>Result[None, E]</code>; they do not normalize or replace values. Registered checks activate validated construction without an extra Validate derive, retaining original errors under the common ValidationError umbrella. RFC 122 owns detailed execution integration.</p>
+</li>
+<li>
+<p>Registered validation checks default to CollectAll with explicit FailFast available. Both preserve the canonical Result type and typed failures. Blocked checks remain distinguishable from executed failures; factory evaluation retains its separate FailFast default under this RFC.</p>
+</li>
+<li>
+<p>Default factories may return <code>T</code> or <code>Result[T, E]</code> with a common-interface error. A fallible factory makes canonical model construction consistently return <code>Result[Self, ValidationError]</code>; the umbrella retains the original typed failure. Supplying the field skips the factory without changing the signature. Invoked factories run at most once per attempt, with no implicit retry, and failed construction never exposes a partial model. Metadata extraction does not execute factories.</p>
+</li>
+<li>Factories may declare typed field dependencies through parameter names resolving to canonical stored fields. They receive effective normalized values, with dependency-based scheduling, deterministic ordering among ready factories, and diagnostics for cycles or conflicts with RFC 122's preserved authored hook order. Failed dependencies block dependent factories. RFC 033 provides the same resolution principle for ctx; ordinary model construction does not acquire ctx's shared lazy publication or resource semantics.</li>
+<li>Factory failure handling is configurable: ordinary construction defaults to FailFast, and explicit CollectAll attempts remaining eligible factories in canonical order and retains their original failures under ValidationError. The return type remains unchanged, dependent checks remain blocked when required values are unavailable, and neither policy retries factories or promises effect rollback. Pydantic is prior art for configurable early stopping, not for the selected Incan default.</li>
+<li>RFC 122 construction preserves this canonical result type. RFC 143 cloning retains already stored values without replaying their default factories; keyword cloning preserves the canonical construction result and zero-argument Clone remains <code>Self</code>.</li>
 <li>Stabilize the standard descriptive key set in this RFC as <code>description</code>, <code>title</code>, <code>examples</code>, <code>deprecated</code>, <code>classification</code>, <code>tags</code>, <code>primary_key</code>, <code>primary_key_position</code>, <code>business_name</code>, <code>read_only</code>, and <code>write_only</code>.</li>
 <li>Keep <code>classification</code> and <code>tags</code> as unqualified standard descriptive keys. They are intentionally lightweight checked facts, not a full governance policy model.</li>
-<li>Include lists and dictionaries in the first safe metadata value set. Descriptor serialization must support them rather than deferring them.</li>
+<li>Keep <code>read_only</code> and <code>write_only</code> as data-exchange contracts consumed and enforced by explicitly documented adapters. They do not independently restrict Incan construction, access, mutation, or visibility, and do not provide or weaken secret protection. RFC 086 owns projection interpretation; language visibility, RFC 132 freezing, and RFC 103 secrecy remain separate contracts.</li>
+<li>Permit namespaced target-mapping requests under RFC 086's owning-adapter compatibility checks. Source field types and constraints remain authoritative. Incompatible, unsupported, or unestablished mappings require diagnostics, and metadata override precedence cannot waive those checks.</li>
+<li>Support structural enum-case metadata with recursively safe, checked payloads. Preserve enum and case identities and payload structure without executing arbitrary constructors or user code.</li>
+<li>Include lists and dictionaries in the safe metadata value set. Descriptor serialization must support them.</li>
 <li>Allow <code>examples</code> to contain safe metadata values assignable to the field type, with string examples allowed when typed examples are not available.</li>
-<li>Keep <code>primary_key</code> and <code>primary_key_position</code> as field metadata. Composite key order is represented by field-level positions; richer model-level identity constraints can be defined by a future RFC if needed.</li>
-<li>Treat stable field anchors as source-field and model-field metadata identities, not as external alias identities. A canonical field rename is a new source identity unless a future migration or rename-marker feature explicitly preserves continuity. External aliases and adapter mappings do not by themselves preserve the Incan field anchor.</li>
+<li>Keep <code>primary_key</code> and <code>primary_key_position</code> as field metadata. Composite key order is represented by field-level positions; richer model-level identity constraints are not part of this design.</li>
+<li>Treat stable field anchors as source-field and model-field metadata identities, not as external alias identities. A rename is a new source identity unless <code>renamed_from</code> declares continuity, and that key carries RFC 150's shared lifecycle facts: <code>since</code>, <code>retire_in</code>, <code>message</code>, <code>by</code> and <code>issue</code>. RFC 165 derives a field's encoded identity from its earliest name, so that name stays when the lifecycle facts go. External aliases and adapter mappings do not by themselves preserve the Incan field anchor.</li>
+<li>Enum variants take the same metadata as fields, with the same <code>name [metadata]</code> shape and RFC 096 blocks. <code>__variants__()</code> exposes it, as <code>__fields__()</code> does for models, and <code>T.__doc__()</code> exposes a type's parsed docstring. A key meaningful only for a stored field is refused on a variant.</li>
 </ul>
 
 

@@ -10088,10 +10088,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#why-metrics-remain-unresolved" class="md-nav__link">
+  <a href="#why-aggregation-belongs-to-deployment-policy" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Why metrics remain unresolved
+        Why aggregation belongs to deployment policy
       
     </span>
   </a>
@@ -10148,10 +10148,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#unresolved-questions" class="md-nav__link">
+  <a href="#design-decisions" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Unresolved questions
+        Design Decisions
       
     </span>
   </a>
@@ -10180,7 +10180,7 @@
 
 <h1 id="rfc-093-stdtelemetry-opentelemetry-aligned-observability">RFC 093: <code>std.telemetry</code> — OpenTelemetry-aligned observability<a class="headerlink" href="#rfc-093-stdtelemetry-opentelemetry-aligned-observability" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Status:</strong> Draft</li>
+<li><strong>Status:</strong> Planned</li>
 <li><strong>Created:</strong> 2026-05-11</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong><ul>
@@ -10192,7 +10192,7 @@
 <li>RFC 063 (<code>std.process</code> process spawning and command execution)</li>
 <li>RFC 066 (<code>std.http</code> HTTP client surface)</li>
 <li>RFC 072 (<code>std.logging</code>)</li>
-<li>RFC 080 (AI assets, models, prompts, evals, and agent metadata)</li>
+<li>RFC 080 (declared AI assets)</li>
 <li>RFC 084 (RHS partial callable presets)</li>
 <li>RFC 089 (<code>std.environ</code>)</li>
 <li>RFC 090 (typed CLI framework)</li>
@@ -10201,7 +10201,7 @@
 <li>OpenTelemetry specification and semantic conventions (external)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> #559</li>
+<li><strong>Issue:</strong> <a href="https://github.com/encero-systems/incan/issues/559">#559</a></li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.3</li>
 <li><strong>Shipped in:</strong> —</li>
@@ -10218,7 +10218,7 @@
 <li><strong>Tracing is decorator-first:</strong> function spans should use <code>@telemetry.trace</code> with an ambient default span name derived from the fully qualified Incan symbol. Explicit names and attribute factories are available when needed.</li>
 <li><strong>Baggage and context are values:</strong> context propagation is explicit at API boundaries, and baggage is a distinct key-value carrier rather than a disguised log attribute map.</li>
 <li><strong>Semantic conventions are generated helpers:</strong> OpenTelemetry semantic conventions should be exposed through <code>std.telemetry.semconv</code> helpers and constants, not copied as unstructured strings into every stdlib module.</li>
-<li><strong>Metrics are part of the north star:</strong> <code>std.telemetry.metrics</code> belongs in the observability surface. Its meter API must address cardinality, aggregation, units, temporality, and views as part of the normative design.</li>
+<li><strong>Metrics are part of the north star:</strong> <code>std.telemetry.metrics</code> belongs in the observability surface. Instruments declare their measurement type, unit and permitted labels. Deployment policy selects aggregation and limits the number of distinct label combinations.</li>
 </ol>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
 <p>Incan can do better than treating observability as an afterthought bolted onto individual libraries. OpenTelemetry gives the ecosystem a shared data model for logs, traces, metrics, baggage, resources, instrumentation scope, and semantic conventions. If Incan aligns early, standard-library modules can produce useful telemetry with consistent attributes, users can add exporters without rewriting application code, and generated or checked API metadata can surface observability behavior cleanly.</p>
@@ -10235,14 +10235,14 @@
 <li>Define context and baggage APIs that avoid the reserved <code>ctx</code> spelling and keep baggage distinct from attributes.</li>
 <li>Define <code>std.telemetry.semconv</code> as the home for semantic-convention constants and typed helper functions.</li>
 <li>Define a stdlib instrumentation policy model so modules such as <code>std.http</code>, <code>std.process</code>, <code>std.fs</code>, <code>std.testing</code>, and AI/MCP surfaces can emit consistent telemetry when enabled.</li>
-<li>Include metrics in the telemetry direction while keeping the meter API subject to the same normative design bar as logs and traces.</li>
+<li>Support typed counters and histograms with explicit units, checked labels and bounded aggregation.</li>
 </ul>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Making telemetry export implicit merely because a module is imported.</li>
 <li>Replacing <code>std.logging</code> with <code>std.telemetry</code>; simple logs should remain simple.</li>
 <li>Exposing Rust <code>tracing</code>, OpenTelemetry SDK crates, subscribers, collectors, or exporter implementation details in ordinary Incan source.</li>
-<li>Standardizing a final metrics API in this RFC.</li>
+<li>Selecting an exporter-specific metrics backend or prescribing one bucket layout for all deployments.</li>
 <li>Adding a <code>with</code> statement in this RFC.</li>
 <li>Treating baggage as ordinary event attributes.</li>
 <li>Vendoring a frozen copy of all OpenTelemetry semantic conventions into handwritten stdlib source.</li>
@@ -10264,14 +10264,15 @@
 <p>Applications that want OpenTelemetry-compatible observability configure it once near the entrypoint:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">std.telemetry</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">telemetry</span>
 
-<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="n">telemetry</span><span class="o">.</span><span class="nc">ConfigurationError</span><span class="p">]:</span>
     <span class="n">telemetry</span><span class="o">.</span><span class="n">configure</span><span class="p">(</span>
         <span class="n">service</span><span class="o">=</span><span class="s2">&quot;checkout-api&quot;</span><span class="p">,</span>
-        <span class="n">version</span><span class="o">=</span><span class="nc">VERSION</span><span class="p">,</span>
+        <span class="n">version</span><span class="o">=</span><span class="s2">&quot;1.0.0&quot;</span><span class="p">,</span>
         <span class="n">environment</span><span class="o">=</span><span class="s2">&quot;production&quot;</span><span class="p">,</span>
         <span class="n">export</span><span class="o">=</span><span class="n">telemetry</span><span class="o">.</span><span class="n">otlp</span><span class="p">(</span><span class="n">endpoint</span><span class="o">=</span><span class="s2">&quot;http://collector:4318&quot;</span><span class="p">),</span>
         <span class="n">instrument</span><span class="o">=</span><span class="n">telemetry</span><span class="o">.</span><span class="n">instrument</span><span class="o">.</span><span class="n">stdlib</span><span class="p">(),</span>
-    <span class="p">)</span>
+    <span class="p">)</span><span class="o">?</span>
+    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>
 </code></pre></div>
 <p>After configuration, logs emitted through <code>std.logging</code> can be enriched with the configured resource, instrumentation scope, and active trace context. Stdlib modules that are enabled by instrumentation policy may emit spans, events, or attributes through the same provider.</p>
 <h3 id="decorator-first-tracing">Decorator-first tracing<a class="headerlink" href="#decorator-first-tracing" title="Permanent link">&para;</a></h3>
@@ -10283,7 +10284,7 @@
     <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;accepted&quot;</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;order.id&quot;</span><span class="p">:</span> <span class="n">req</span><span class="o">.</span><span class="n">order_id</span><span class="p">})</span>
     <span class="k">return</span> <span class="n">charge</span><span class="p">(</span><span class="n">req</span><span class="p">)</span>
 </code></pre></div>
-<p>The default span name is derived from the fully qualified Incan symbol, such as <code>checkout.submit</code>. Users should not have to repeat the function name as a string for ordinary tracing.</p>
+<p>If this function is declared in the <code>orders</code> module of the <code>checkout</code> Loaf, its default span name is <code>checkout.orders.submit</code>. Users should not have to repeat the function name as a string for ordinary tracing.</p>
 <p>Users can override the span name and provide an attribute factory when a domain-specific operation name is clearer:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">submit_attrs</span><span class="p">(</span><span class="n">req</span><span class="p">:</span> <span class="kt">Request</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">telemetry</span><span class="o">.</span><span class="nc">Attributes</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">telemetry</span><span class="o">.</span><span class="n">semconv</span><span class="o">.</span><span class="n">http</span><span class="o">.</span><span class="n">server_request</span><span class="p">(</span><span class="n">method</span><span class="o">=</span><span class="s2">&quot;POST&quot;</span><span class="p">,</span> <span class="n">route</span><span class="o">=</span><span class="s2">&quot;/checkout&quot;</span><span class="p">)</span> <span class="o">|</span> <span class="p">{</span><span class="s2">&quot;order.id&quot;</span><span class="p">:</span> <span class="n">req</span><span class="o">.</span><span class="n">order_id</span><span class="p">}</span>
@@ -10307,10 +10308,15 @@
 <p>Telemetry APIs should therefore stay partial-friendly: prefer named parameters, expose semantic-convention helpers as plain functions that return <code>Attributes</code>, and allow configured decorator callables to be named and reused. Partials are not a separate telemetry abstraction; they are the language-level way to preset ordinary callable surfaces. Top-level partials still follow RFC 084's declaration-safe preset rules, so dynamic values and function references belong in local partials, wrapper functions, or decorator application arguments rather than top-level partial presets.</p>
 <h3 id="block-level-spans-use-vocabulary-syntax">Block-level spans use vocabulary syntax<a class="headerlink" href="#block-level-spans-use-vocabulary-syntax" title="Permanent link">&para;</a></h3>
 <p>RFC 095 defines <code>span</code> as a standard telemetry vocabulary block layered over RFC 094 context managers. This gives non-function operation scopes a native spelling without making general resource management telemetry-shaped:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">std.telemetry.vocab</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">std.telemetry</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">telemetry</span>
 
-<span class="n">span</span> <span class="s2">&quot;cache.lookup&quot;</span><span class="p">,</span> <span class="n">attributes</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;cache.key&quot;</span><span class="p">:</span> <span class="n">key</span><span class="p">}:</span>
-    <span class="kt">result</span> <span class="o">=</span> <span class="n">cache</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+<span class="nd">@telemetry</span><span class="o">.</span><span class="n">attributes</span><span class="p">(</span><span class="s2">&quot;cache&quot;</span><span class="p">)</span>
+<span class="k">model</span> <span class="nc">CacheAttributes</span><span class="p">:</span>
+    <span class="n">key</span><span class="p">:</span> <span class="nb">str</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">lookup</span><span class="p">(</span><span class="n">cache</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">],</span> <span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Option</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+    <span class="n">span</span> <span class="s2">&quot;lookup&quot;</span><span class="p">,</span> <span class="n">attributes</span><span class="o">=</span><span class="nc">CacheAttributes</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="n">key</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">cache</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
 </code></pre></div>
 <p>Manual span handles remain available as a lower-level escape hatch, but ordinary source should prefer <code>@telemetry.trace</code> for whole functions and <code>span "name":</code> for meaningful sub-operation blocks.</p>
 <h3 id="baggage-and-context">Baggage and context<a class="headerlink" href="#baggage-and-context" title="Permanent link">&para;</a></h3>
@@ -10347,8 +10353,10 @@
     <span class="k">return</span> <span class="p">{</span><span class="n">semconv</span><span class="o">.</span><span class="n">http</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">method</span><span class="p">:</span> <span class="s2">&quot;POST&quot;</span><span class="p">,</span> <span class="n">semconv</span><span class="o">.</span><span class="n">http</span><span class="o">.</span><span class="n">route</span><span class="p">:</span> <span class="s2">&quot;/checkout&quot;</span><span class="p">}</span>
 </code></pre></div>
 <h3 id="stdlib-instrumentation">Stdlib instrumentation<a class="headerlink" href="#stdlib-instrumentation" title="Permanent link">&para;</a></h3>
-<p>Applications control stdlib instrumentation policy:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<p>The following independent application chooses its instrumentation policy at startup.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">std.telemetry</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">telemetry</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="n">telemetry</span><span class="o">.</span><span class="nc">ConfigurationError</span><span class="p">]:</span>
     <span class="n">telemetry</span><span class="o">.</span><span class="n">configure</span><span class="p">(</span>
         <span class="n">service</span><span class="o">=</span><span class="s2">&quot;checkout-api&quot;</span><span class="p">,</span>
         <span class="n">export</span><span class="o">=</span><span class="n">telemetry</span><span class="o">.</span><span class="n">otlp</span><span class="p">(),</span>
@@ -10357,7 +10365,8 @@
             <span class="n">telemetry</span><span class="o">.</span><span class="n">instrument</span><span class="o">.</span><span class="n">std_process</span><span class="p">(),</span>
             <span class="n">telemetry</span><span class="o">.</span><span class="n">instrument</span><span class="o">.</span><span class="n">std_fs</span><span class="p">(</span><span class="n">level</span><span class="o">=</span><span class="n">telemetry</span><span class="o">.</span><span class="nc">InstrumentationLevel</span><span class="o">.</span><span class="nc">ERRORS</span><span class="p">),</span>
         <span class="p">],</span>
-    <span class="p">)</span>
+    <span class="p">)</span><span class="o">?</span>
+    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>
 </code></pre></div>
 <p>This keeps telemetry ambient only after explicit configuration. Libraries emit useful telemetry when a provider exists, but they do not own exporter setup.</p>
 <h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
@@ -10390,24 +10399,51 @@
 <li><code>TelemetryContext</code></li>
 <li><code>SchemaUrl</code> or equivalent schema-version metadata</li>
 </ul>
-<p><code>TelemetryValue</code> must support at least <code>None</code>, booleans, strings, integers, floats, bytes, lists, and maps whose nested values are also telemetry values. Implementations may add model-to-telemetry conversion hooks, but they must not silently stringify structured values when the destination claims structured preservation.</p>
+<p><code>TelemetryValue</code> must support at least <code>None</code>, booleans, strings, integers, floats, bytes, lists, and maps whose nested values are also telemetry values. Attribute construction requires an explicit, checked conversion for raw bytes and custom models. Apply RFC 103 redaction and bounded nesting, collection size and attribute count to the converted value. For example, a Boolean <code>cached</code> is an ordinary attribute. A <code>Customer</code> model requires an explicit selection of safe data before recording.</p>
 <p><code>Attributes</code> is a string-keyed map of <code>TelemetryValue</code>. Attribute keys may use OpenTelemetry semantic-convention names such as <code>service.name</code>, <code>http.request.method</code>, <code>db.system.name</code>, or <code>gen_ai.request.model</code>.</p>
 <h3 id="resource">Resource<a class="headerlink" href="#resource" title="Permanent link">&para;</a></h3>
-<p><code>Resource</code> represents the entity that produced telemetry. At minimum it must support service identity:</p>
-<ul>
-<li><code>service.name</code></li>
-<li><code>service.version</code></li>
-<li>deployment environment when known</li>
-<li>process/runtime identity when known</li>
-</ul>
-<p>The <code>configure(...)</code> convenience parameters <code>service</code>, <code>version</code>, and <code>environment</code> lower into <code>Resource</code> attributes. Direct resource construction must also be available for advanced users.</p>
+<p>A <code>Resource</code> describes the application that produced the telemetry. Resolve its attributes per key when installing the provider. Explicit application settings (including a supplied <code>Resource</code>) take precedence over deployment values, which take precedence over detected defaults. Follow the <a href="https://opentelemetry.io/docs/specs/otel/resource/sdk/">OpenTelemetry Resource SDK</a> and the <a href="https://opentelemetry.io/docs/specs/otel/configuration/sdk-environment-variables/">SDK environment variable rules</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Incan resolution, from highest priority to fallback</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>service.name</code></td>
+<td>Explicit service name, then <code>OTEL_SERVICE_NAME</code>, then <code>service.name</code> in <code>OTEL_RESOURCE_ATTRIBUTES</code>, then the application Loaf’s name. If none is available, use <code>unknown_service:&lt;executable&gt;</code> or <code>unknown_service</code> when the executable name is unavailable.</td>
+</tr>
+<tr>
+<td><code>service.version</code></td>
+<td>Explicit version, then <code>service.version</code> in <code>OTEL_RESOURCE_ATTRIBUTES</code>, then the application Loaf’s version if known. Otherwise omit it.</td>
+</tr>
+<tr>
+<td><code>deployment.environment.name</code></td>
+<td>Explicit environment, then <code>deployment.environment.name</code> in <code>OTEL_RESOURCE_ATTRIBUTES</code>. If neither supplies it, omit it.</td>
+</tr>
+</tbody>
+</table>
+<p>The Resource also supports process and runtime identity when known. The convenience arguments <code>service</code>, <code>version</code>, and <code>environment</code> set these three attributes. A library emitting a span uses the application’s Resource. The service identity stays the same when the deployment tier changes. See the OpenTelemetry <a href="https://opentelemetry.io/docs/specs/semconv/resource/service/">service</a> and <a href="https://opentelemetry.io/docs/specs/semconv/resource/deployment-environment/">deployment</a> conventions.</p>
+<p>For example, deploy version <code>1.4.0</code> of the <code>checkout</code> application Loaf with these settings:</p>
+<div class="language-sh highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">OTEL_SERVICE_NAME</span><span class="o">=</span>orders-api
+<span class="nb">export</span><span class="w"> </span><span class="nv">OTEL_RESOURCE_ATTRIBUTES</span><span class="o">=</span>deployment.environment.name<span class="o">=</span>staging
+</code></pre></div>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">std.telemetry</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">telemetry</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="n">telemetry</span><span class="o">.</span><span class="nc">ConfigurationError</span><span class="p">]:</span>
+    <span class="n">telemetry</span><span class="o">.</span><span class="n">configure</span><span class="p">()</span><span class="o">?</span>
+    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>
+</code></pre></div>
+<p>The frozen Resource has service name <code>orders-api</code>, version <code>1.4.0</code>, and environment <code>staging</code>. Removing <code>OTEL_SERVICE_NAME</code> from this launch makes the service name fall back to <code>checkout</code>. Calling <code>configure(service="checkout-worker")</code> instead uses that explicit name and still picks up the deployed environment.</p>
 <h3 id="instrumentation-scope">Instrumentation scope<a class="headerlink" href="#instrumentation-scope" title="Permanent link">&para;</a></h3>
 <p><code>InstrumentationScope</code> represents the logical emitter. For <code>std.logging</code>, the logger name is the default scope name. For tracing decorators, the scope should default to the containing module or package identity. A scope may include name, version, schema URL, and attributes.</p>
 <p><code>std.logging.get_logger("app.checkout")</code> and <code>std.telemetry.get_tracer("app.checkout")</code> should produce compatible scope identity. They do not need to share object identity, but records emitted from both should be correlatable by scope name and configured resource.</p>
 <h3 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h3>
 <p><code>std.telemetry.configure(...)</code> installs process-level telemetry policy:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">configure</span><span class="p">(</span>
-    <span class="n">service</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">service</span><span class="p">:</span> <span class="kt">Option</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">version</span><span class="p">:</span> <span class="kt">Option</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">environment</span><span class="p">:</span> <span class="kt">Option</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">resource</span><span class="p">:</span> <span class="kt">Option</span><span class="p">[</span><span class="nc">Resource</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
@@ -10415,9 +10451,11 @@
     <span class="n">propagation</span><span class="p">:</span> <span class="nc">PropagationPolicy</span> <span class="o">=</span> <span class="nc">PropagationPolicy</span><span class="o">.</span><span class="nc">DEFAULT</span><span class="p">,</span>
     <span class="n">sampling</span><span class="p">:</span> <span class="nc">SamplingPolicy</span> <span class="o">=</span> <span class="nc">SamplingPolicy</span><span class="o">.</span><span class="nc">DEFAULT</span><span class="p">,</span>
     <span class="n">instrument</span><span class="p">:</span> <span class="nc">InstrumentationPolicy</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nc">InstrumentationPolicy</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-<span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">TelemetryProvider</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">TelemetryProvider</span><span class="p">,</span> <span class="nc">ConfigurationError</span><span class="p">]</span>
 </code></pre></div>
-<p>Calling <code>configure(...)</code> more than once must be deterministic. The accepted behavior may be replacement, explicit error, or scoped provider installation, but it must not silently merge incompatible exporter or resource policies.</p>
+<p>The first successful call atomically installs a process-wide provider and freezes its configuration for the lifetime of the process. The provider must own or retain an immutable snapshot of its resource and policies, including the selection and configuration of exporters. Mutating caller-owned configuration inputs after installation cannot alter the installed settings. The provider can continue emitting, buffering and flushing telemetry.</p>
+<p>Every subsequent call returns <code>Err(ConfigurationError.AlreadyConfigured)</code>, including a call with identical arguments. A rejected call leaves the active provider in place and must not start another exporter. A failed initial setup releases any partially acquired resources and leaves the process unconfigured, so a corrected call can succeed. Concurrent attempts must produce at most one successful installation.</p>
+<p>For example, once the application configures the service as <code>checkout</code>, a later call specifying <code>billing</code> returns <code>AlreadyConfigured</code>. Subsequent spans still identify the service as <code>checkout</code>. Tests that need independent process-wide configurations can run in separate processes.</p>
 <p>Libraries must not call <code>configure(...)</code> during import or normal helper execution. Application entrypoints, command runners, test harnesses, and embedding hosts may call it.</p>
 <h3 id="logging-integration">Logging integration<a class="headerlink" href="#logging-integration" title="Permanent link">&para;</a></h3>
 <p><code>std.logging</code> records must use <code>std.telemetry.core</code> value types where those types are available. When no telemetry provider is configured, <code>std.logging</code> still produces local human or JSON output according to <code>basic_config(...)</code>.</p>
@@ -10436,7 +10474,7 @@
 <span class="k">def</span><span class="w"> </span><span class="nf">submit</span><span class="p">(</span><span class="n">req</span><span class="p">:</span> <span class="kt">Request</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kt">Response</span><span class="p">,</span> <span class="nc">Error</span><span class="p">]:</span>
     <span class="o">...</span>
 </code></pre></div>
-<p>With no explicit name, the span name must default to the fully qualified Incan symbol. For a function <code>submit</code> in module <code>checkout</code>, the default name should be <code>checkout.submit</code> or the package-qualified equivalent once package identity is available.</p>
+<p>By default, the span name is the fully qualified Incan name of the traced declaration. It includes the declaring Loaf, module path and any enclosing type. For example, <code>submit</code> in the <code>orders</code> module of the <code>checkout</code> Loaf produces <code>checkout.orders.submit</code>. The same declaration spelling in the <code>billing</code> Loaf produces <code>billing.orders.submit</code>. Calling the first function through an import alias such as <code>send_order</code> still produces <code>checkout.orders.submit</code>. An explicit <code>@telemetry.trace(name=...)</code> supplies the span name instead.</p>
 <p>The decorator may accept:</p>
 <ul>
 <li>explicit span name</li>
@@ -10447,7 +10485,18 @@
 <li>error recording policy</li>
 </ul>
 <p>The decorator must start a span before function body execution, make that span current while the function executes, record errors according to policy, and end the span when the function returns, propagates an error, or exits through panic/assert behavior.</p>
-<p>Async functions must preserve the same logical current span across suspension points once async context propagation is supported.</p>
+<p>For a traced function returning a <code>Result</code>, the span reports that call's own return value. An <code>Err</code> marks the call as failed and identifies the returned error by its RFC 131 type and case. An <code>Ok</code> records a successful call, including when the function recovered from a child call's failure. If the caller propagates the error with <code>?</code>, its own span also reports failure because it returned <code>Err</code>. Error identity suffices for this rule; it does not require exporting payloads or arguments.</p>
+<p>For example, a customer lookup can recover from an unavailable cache by reading from the database. With all three functions traced, the trace reads:</p>
+<div class="language-text highlight"><pre><span></span><code>load_customer           succeeded
+  read_from_cache       failed: CacheError.Unavailable
+  read_from_database    succeeded
+</code></pre></div>
+<p>On export, an ordinary successful call leaves the OTel span status <code>Unset</code> and omits <code>error.type</code>. For a returned <code>Err</code>, export status <code>Error</code> with <code>error.type</code> identifying the RFC 131 error case. In the cache example only the cache span carries the error type. See the <a href="https://opentelemetry.io/docs/specs/semconv/general/recording-errors/">OTel error conventions</a>.</p>
+<p>When a panic unwinds through traced calls, record one failure at its origin. For an assertion failure, include the failed condition and its authored source location, resolvable against the build that produced the trace. Each enclosing span that exits through the same panic reports failure and refers to that origin. Apply RFC 103 redaction to exported evidence. The default trace omits arguments and locals. RFC 131 controls stack trace capture.</p>
+<div class="language-text highlight"><pre><span></span><code>import_orders    failed: panic propagated from write_batch
+  write_batch    failed: assertion `len(rows) &gt; 0` at writer.incn:42
+</code></pre></div>
+<p>An async function retains its current span across suspension and resumption. At spawn, each child inherits a snapshot of the spawning task’s context and the link to its active parent span. If two siblings inherit the same parent, adding baggage in one child affects only that child’s context. Ending either task leaves the other task’s context valid.</p>
 <h3 id="explicit-spans">Explicit spans<a class="headerlink" href="#explicit-spans" title="Permanent link">&para;</a></h3>
 <p>Manual spans are allowed:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="n">span</span> <span class="o">=</span> <span class="n">telemetry</span><span class="o">.</span><span class="n">start_span</span><span class="p">(</span><span class="s2">&quot;cache.lookup&quot;</span><span class="p">,</span> <span class="n">attributes</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;cache.key&quot;</span><span class="p">:</span> <span class="n">key</span><span class="p">})</span>
@@ -10458,6 +10507,8 @@
 <h3 id="context-and-baggage">Context and baggage<a class="headerlink" href="#context-and-baggage" title="Permanent link">&para;</a></h3>
 <p>The API must avoid the reserved <code>ctx</code> spelling. Use <code>context</code>, <code>TelemetryContext</code>, and <code>current_context(...)</code>.</p>
 <p><code>TelemetryContext</code> must carry current span context and baggage. <code>Baggage</code> is a separate key-value carrier and must not be treated as identical to attributes. Baggage may be propagated; attributes describe a specific telemetry record.</p>
+<p>With HTTP instrumentation enabled, extract valid W3C Trace Context from inbound requests and inject the active context into outbound requests using <code>traceparent</code> and, when present, <code>tracestate</code>. A Python caller, an Incan handler and a Rust downstream service can then produce spans under the same trace ID. The default sampler follows the parent’s sampling decision and samples new root traces. See <a href="https://opentelemetry.io/docs/specs/otel/context/api-propagators/">OTel propagators</a> and <a href="https://opentelemetry.io/docs/specs/otel/trace/sdk/#sampling">parent-based sampling</a>.</p>
+<p>Baggage travels with a request under the propagation policy. By default none of its keys are copied to span or log attributes. A public, non-secret key is eligible for copying when explicitly selected by application policy. For example, <code>checkout</code> can send <code>region="eu"</code> to <code>billing</code> for routing. If the application selects <code>region</code> for span attributes, the collector also sees <code>region="eu"</code> on those spans. Secret values are excluded from both propagation and attribute export, even when a key is selected. See <a href="https://opentelemetry.io/docs/concepts/signals/baggage/">OTel baggage</a>.</p>
 <p><code>TelemetryContext.with_baggage(key, value)</code> returns a new context with an additional baggage item. It must not mutate unrelated active context invisibly.</p>
 <p><code>telemetry.run(context, fn, *args, **kwargs)</code> runs a callable inside a telemetry context. The exact variadic spelling should follow existing Incan callable conventions.</p>
 <h3 id="semantic-conventions_1">Semantic conventions<a class="headerlink" href="#semantic-conventions_1" title="Permanent link">&para;</a></h3>
@@ -10468,6 +10519,7 @@
 <span class="k">def</span><span class="w"> </span><span class="nf">user_attrs</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">telemetry</span><span class="o">.</span><span class="nc">Attributes</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">semconv</span><span class="o">.</span><span class="n">http</span><span class="o">.</span><span class="n">server_request</span><span class="p">(</span><span class="n">method</span><span class="o">=</span><span class="s2">&quot;GET&quot;</span><span class="p">,</span> <span class="n">route</span><span class="o">=</span><span class="s2">&quot;/users/</span><span class="si">{id}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">status_code</span><span class="o">=</span><span class="mi">200</span><span class="p">)</span>
 </code></pre></div>
+<p>RFC 095 span blocks accept typed attribute models. Generate those models, the convenience functions that return attribute maps, and the key constants from the same pinned convention metadata. For example, a block can use <code>semconv.HttpServer(request=semconv.HttpRequest(method="GET"), route="/users/{id}")</code>. Map-returning helpers serve call sites that accept <code>Attributes</code>.</p>
 <p>Constants should remain available:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">std.telemetry</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">telemetry</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.telemetry</span><span class="w"> </span><span class="kn">import</span> <span class="n">semconv</span>
@@ -10475,7 +10527,8 @@
 <span class="k">def</span><span class="w"> </span><span class="nf">user_attrs</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">telemetry</span><span class="o">.</span><span class="nc">Attributes</span><span class="p">:</span>
     <span class="k">return</span> <span class="p">{</span><span class="n">semconv</span><span class="o">.</span><span class="n">http</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">method</span><span class="p">:</span> <span class="s2">&quot;GET&quot;</span><span class="p">}</span>
 </code></pre></div>
-<p>The semantic-convention surface must record the OpenTelemetry semantic-convention version it was generated from. Packages may support multiple convention versions, but one active version per Incan release is acceptable for the standard library.</p>
+<p>HTTP instrumentation names the server span using the method and matched route template, for example <code>GET /customers/{id}</code> for a request to <code>/customers/42</code>. If the route template is unavailable, use the method alone. A traced Incan function inside that request still produces its declaration name, such as <code>checkout.customers.load</code>. See the <a href="https://opentelemetry.io/docs/specs/semconv/http/http-spans/">OTel HTTP span conventions</a>.</p>
+<p>Each Incan release pins one OpenTelemetry semantic-convention version for its generated standard helpers. Generated metadata must identify the version and mark experimental helpers. An ordinary dependency refresh retains the same attribute keys. When a release intentionally updates the pin, it must identify changed, renamed and removed helpers and their affected keys so applications can update instrumentation and dashboards together.</p>
 <h3 id="exporters">Exporters<a class="headerlink" href="#exporters" title="Permanent link">&para;</a></h3>
 <p>Exporter APIs must be explicit. <code>telemetry.otlp(...)</code> constructs exporter configuration; it must not export anything until installed in <code>configure(...)</code> or an equivalent provider.</p>
 <p>The exporter surface should include at least:</p>
@@ -10484,9 +10537,13 @@
 <li>stdout/debug exporter</li>
 <li>OTLP exporter shape</li>
 </ul>
-<p>OTLP transport details such as HTTP versus gRPC, batching, retry, shutdown flushing, environment variable mapping, and collector compatibility are part of the exporter contract.</p>
+<p>The OTLP exporter supports <code>http/protobuf</code> (default) and <code>grpc</code>. Use standard OTLP configuration to select the protocol and endpoint. For example, an application that installs <code>telemetry.otlp()</code> can send to an HTTP/Protobuf collector with <code>OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4318</code>. To use a gRPC collector instead, set <code>OTEL_EXPORTER_OTLP_PROTOCOL=grpc</code> and point <code>OTEL_EXPORTER_OTLP_ENDPOINT</code> at its gRPC endpoint. The same instrumented code serves both deployments. Follow the <a href="https://opentelemetry.io/docs/specs/otel/protocol/exporter/">OTLP exporter specification</a>.</p>
+<p>Protobuf encoding belongs to the OTLP exporter. Applications using only local logging or core telemetry types must build independently of the OTLP codec and transport dependencies. Applications using either OTLP transport must build with the supported Incan toolchain alone. If bindings are generated, use pinned schemas and supply the resulting bindings with the exporter. Regeneration belongs to exporter maintenance. An ordinary consumer build must neither require a system <code>protoc</code> or CMake for Protobuf nor silently download or build a vendored <code>protoc</code>.</p>
+<p>Implementation acceptance includes clean builds of a local-logging program and an OTLP program on a host without <code>protoc</code> or CMake. Inspect their resolved build dependencies and build steps to catch transitive generator dependencies. Exercise both OTLP transports against a collector and verify it receives a known span.</p>
+<p>Batching, retry, shutdown flushing and collector compatibility remain part of the exporter contract.</p>
+<p>Explicit flush reports whether pending export succeeded, failed, or timed out. Shutdown attempts to drain buffered records within a bound before releasing exporter resources. For example, <code>oven test</code> can finish its last test span and shut down telemetry before exiting. A collector outage can be reported separately while the command retains the actual test result. See the <a href="https://opentelemetry.io/docs/specs/otel/trace/sdk/#forceflush">OTel tracing SDK lifecycle</a>.</p>
 <h3 id="stdlib-instrumentation-policy">Stdlib instrumentation policy<a class="headerlink" href="#stdlib-instrumentation-policy" title="Permanent link">&para;</a></h3>
-<p>Stdlib instrumentation must be controlled by application policy. A module should not emit network-exported telemetry solely because it was imported.</p>
+<p>Stdlib instrumentation must be controlled by application policy. The application explicitly enables instrumentation at configuration time. Importing a stdlib module or choosing an exporter alone does not enable that module’s automatic instrumentation. Local logging continues to follow the application’s logging settings.</p>
 <p>Instrumentation policy should support:</p>
 <ul>
 <li>enabling all conservative stdlib instrumentation</li>
@@ -10497,8 +10554,12 @@
 </ul>
 <p>Stdlib modules should use semantic conventions where they correspond to common operations.</p>
 <h3 id="metrics">Metrics<a class="headerlink" href="#metrics" title="Permanent link">&para;</a></h3>
-<p><code>std.telemetry.metrics</code> is the OpenTelemetry-compatible metrics namespace. The meter API must address instrument kind, aggregation, units, temporality, views, cardinality control, async runtime behavior, and exporter cost.</p>
-<p>The RFC deliberately treats metrics as part of the observability contract, not an optional add-on. Any accepted meter API must carry the same design weight as logs and traces.</p>
+<p><code>std.telemetry.metrics</code> provides typed counters and histograms. A declaration specifies its measurement type, unit, and permitted label keys and value types. Recording a value or label that does not match the declaration must produce a diagnostic. The application declares what it measures. Deployment policy chooses compatible aggregation and bounds the number of distinct label combinations an instrument tracks.</p>
+<p>For example, declare an HTTP duration histogram in seconds with labels for the matched route and response class. Two successful requests to <code>/orders/41</code> and <code>/orders/42</code> contribute two measurements to the same series:</p>
+<div class="language-text highlight"><pre><span></span><code>instrument: http.server.request.duration   kind: histogram   unit: s
+route=/orders/{id}   response_class=2xx   observations: 0.012, 0.034
+</code></pre></div>
+<p>A request ID belongs on the trace. Recording it as a label on this histogram is a diagnostic because the declaration permits only route and response class. Even a declared string label can have many distinct values; the deployment limit must bound series growth during collection.</p>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
 <h3 id="why-stdtelemetry-rather-than-only-stdlogging">Why <code>std.telemetry</code> rather than only <code>std.logging</code><a class="headerlink" href="#why-stdtelemetry-rather-than-only-stdlogging" title="Permanent link">&para;</a></h3>
 <p>OpenTelemetry is broader than logging. Logs need resources, instrumentation scopes, trace context, baggage policy, and exporters to become fully useful in production. Traces and metrics need the same provider configuration and semantic-convention vocabulary. Keeping all of that inside <code>std.logging</code> would overload a simple logging API and confuse users who only want local log output.</p>
@@ -10512,8 +10573,8 @@
 <p>Baggage propagates across boundaries; attributes describe a particular telemetry record. Automatically copying all baggage into every span or log can leak sensitive data and create high-cardinality telemetry. The API should make propagation and record attributes distinct, with explicit policy for copying selected baggage keys.</p>
 <h3 id="why-semantic-conventions-need-helpers">Why semantic conventions need helpers<a class="headerlink" href="#why-semantic-conventions-need-helpers" title="Permanent link">&para;</a></h3>
 <p>OpenTelemetry semantic conventions are valuable because they standardize attribute names and meanings. They are also large and evolving. Handwritten string constants scattered through stdlib code would drift. Generated helpers and constants give users discoverability, type hints, and version metadata while still producing standard OTel keys.</p>
-<h3 id="why-metrics-remain-unresolved">Why metrics remain unresolved<a class="headerlink" href="#why-metrics-remain-unresolved" title="Permanent link">&para;</a></h3>
-<p>Metrics are deceptively easy to sketch and hard to get right. A counter and histogram API is not enough; production metrics require aggregation, temporality, cardinality controls, units, views, async instruments, and exporter behavior. The namespace belongs in the telemetry design, and the meter API must answer those questions as part of the contract.</p>
+<h3 id="why-aggregation-belongs-to-deployment-policy">Why aggregation belongs to deployment policy<a class="headerlink" href="#why-aggregation-belongs-to-deployment-policy" title="Permanent link">&para;</a></h3>
+<p>The application knows that it measured an HTTP duration in seconds. Operators can change histogram aggregation or the series limit for that deployment without changing the measurement at every request handler.</p>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <ol>
 <li><strong>Only align <code>std.logging</code> with OpenTelemetry and stop there</strong></li>
@@ -10554,9 +10615,9 @@
 <li>The API surface is larger than a logging-only design.</li>
 <li>OpenTelemetry alignment introduces terminology that simple users may not care about.</li>
 <li>Provider/exporter behavior needs careful policy and shutdown semantics.</li>
-<li>Semantic-convention helpers need a generation and versioning story.</li>
+<li>Upgrading pinned semantic conventions can require coordinated changes to application code and dashboards.</li>
 <li>Tracing decorators need robust interaction with async functions and error handling.</li>
-<li>Metrics require deeper API design than logs and traces because their correctness depends on aggregation, temporality, views, and cardinality control.</li>
+<li>Wide label sets can exhaust a series budget and reduce the detail visible to operators.</li>
 </ul>
 <h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
 <p>This section is non-normative. A pragmatic implementation should preserve the same layering as the public contract: <code>std.telemetry.core</code> pure data types remain independent from provider/exporter behavior; <code>std.logging</code> integration uses the shared data model; provider installation can support no-op and local debug exporters without changing application call sites; network exporters add delivery policy rather than new record shapes. Tracing decorators are the safer common path compared with manual span balancing. Semantic-convention helpers should be generated from pinned OpenTelemetry convention metadata rather than maintained by hand. Stdlib instrumentation should use conservative policies so enabling telemetry does not produce noisy or sensitive data by default.</p>
@@ -10571,22 +10632,21 @@
 <li><strong>LSP / Tooling</strong>: completions, hovers, and diagnostics should explain semantic-convention helpers, telemetry decorators, baggage/context APIs, and instrumentation policy.</li>
 <li><strong>Docs / examples</strong>: docs must distinguish simple <code>std.logging</code> from opt-in <code>std.telemetry</code>, show controlled ambient setup, and document data-export implications.</li>
 </ul>
-<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ul>
-<li>What is the exact normative shape of <code>TelemetryValue</code>, especially for bytes, nested models, and custom conversion hooks?</li>
-<li>Should <code>configure(...)</code> replace an existing provider, reject repeated calls, or support scoped provider installation?</li>
-<li>How much of <code>Resource</code> should be inferred automatically from project metadata versus supplied explicitly?</li>
-<li>What is the precise package/module qualification rule for default decorator span names?</li>
-<li>What error-status mapping should <code>@telemetry.trace</code> apply to <code>Result</code> returns versus raised panics or exceptions?</li>
-<li>What is the minimal safe context propagation story for async tasks and spawned work?</li>
-<li>Which baggage keys, if any, should be copied into attributes by default?</li>
-<li>How should semantic-convention helpers be generated, versioned, and exposed when OpenTelemetry convention stability changes?</li>
-<li>What meter API should <code>std.telemetry.metrics</code> expose, and how should it control cardinality and aggregation?</li>
-<li>Which exporter transports belong in standard telemetry support?</li>
-<li>Which stdlib modules should have default instrumentation, and what default instrumentation policy avoids noisy or sensitive telemetry?</li>
+<li><strong>Process configuration:</strong> The first successful installation freezes the settings. Every later installation attempt returns a typed error.</li>
+<li><strong>Export:</strong> Support OTLP over HTTP/Protobuf by default and gRPC through configuration.</li>
+<li><strong>Resource identity:</strong> Resolve explicit attributes first, then standard OpenTelemetry environment settings, then application Loaf defaults for service name and version.</li>
+<li><strong>Attribute values:</strong> Bound structured values, redact secrets and require checked conversion for bytes and custom models.</li>
+<li><strong>Async context:</strong> Preserve the active span across suspension and snapshot context independently for each spawned task.</li>
+<li><strong>Stdlib instrumentation:</strong> Automatic recording by stdlib modules requires explicit application opt-in.</li>
+<li><strong>Baggage:</strong> Copy only public, non-secret keys explicitly selected by application policy into record attributes.</li>
+<li><strong>Default span names:</strong> Use the fully qualified name of the declaration, independent of how the caller imports it.</li>
+<li><strong>Traced results:</strong> Each span reports its own call’s outcome. A caller that recovers can succeed while the failed child remains visible.</li>
+<li><strong>Panics and assertions:</strong> Record the origin once. Spans unwound by the same failure refer to that origin.</li>
+<li><strong>Convention versions:</strong> Pin one version per Incan release, mark experimental helpers and identify changes during an intentional upgrade.</li>
+<li><strong>Metrics:</strong> Declare typed instruments, explicit units and permitted labels. Deployment policy selects compatible aggregation and bounds label combinations.</li>
 </ul>
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 

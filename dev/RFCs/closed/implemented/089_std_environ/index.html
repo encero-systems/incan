@@ -9917,10 +9917,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#relationship-to-stdcienv" class="md-nav__link">
+  <a href="#ci-scripts-and-provider-libraries" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Relationship to std.ci.env
+        CI scripts and provider libraries
       
     </span>
   </a>
@@ -10215,7 +10215,7 @@
 <li>RFC 017 (validated newtypes with implicit coercion)</li>
 <li>RFC 033 (<code>ctx</code> typed configuration context)</li>
 <li>RFC 063 (<code>std.process</code> process spawning and command execution)</li>
-<li>RFC 067 (<code>std.ci</code> deterministic CI and automation scripting primitives)</li>
+<li>RFC 067 (retired proposal for CI-specific standard modules)</li>
 <li>RFC 070 (Result combinators)</li>
 </ul>
 </li>
@@ -10233,7 +10233,7 @@
 <li><strong>Missing and malformed are distinct:</strong> a missing variable is not the same as a present variable that cannot be parsed or validated.</li>
 <li><strong>Typed reads compose with the type system:</strong> <code>get_as[T]</code> should parse supported primitive targets and should validate newtypes through their <code>from_underlying</code> hooks where applicable.</li>
 <li><strong>Application configuration remains higher-level:</strong> ordinary programs may use <code>std.environ</code> directly, but structured app config should prefer RFC 033 <code>ctx</code> once available.</li>
-<li><strong>CI wrappers stay narrow:</strong> RFC 067 <code>std.ci.env</code> may wrap or re-export this surface, but CI should not be the only route to reading environment variables.</li>
+<li><strong>CI scripts use ordinary environment access:</strong> provider libraries can wrap this surface when they need runner-specific conventions.</li>
 </ol>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
 <p>Environment variables are a normal runtime boundary for applications, CLIs, automation scripts, and deployment platforms. In Python, users commonly reach for <code>os.environ</code> or <code>os.environ.get(...)</code>; when they come to Incan, they should have an obvious equivalent that does not require Rust interop, shell glue, CI-only APIs, or a full application <code>ctx</code> declaration.</p>
@@ -10258,7 +10258,7 @@
 <li>Provide typed reads through <code>get_as[T]</code>.</li>
 <li>Make typed reads compose with validated newtypes and <code>from_underlying</code>.</li>
 <li>Keep secrets and diagnostics conservative.</li>
-<li>Make <code>std.ci.env</code> and <code>ctx</code> able to build on or align with the same underlying semantics.</li>
+<li>Let automation libraries and <code>ctx</code> build on the same underlying semantics.</li>
 </ul>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
@@ -10388,8 +10388,8 @@
 <h3 id="relationship-to-ctx">Relationship to <code>ctx</code><a class="headerlink" href="#relationship-to-ctx" title="Permanent link">&para;</a></h3>
 <p>RFC 033 <code>ctx</code> remains the preferred surface for typed application configuration. <code>std.environ</code> is lower-level. It is appropriate for small scripts, library code that needs one runtime variable, and building blocks for higher-level configuration surfaces.</p>
 <p><code>ctx</code> may use <code>std.environ</code> semantics internally, but this RFC does not require a particular implementation relationship.</p>
-<h3 id="relationship-to-stdcienv">Relationship to <code>std.ci.env</code><a class="headerlink" href="#relationship-to-stdcienv" title="Permanent link">&para;</a></h3>
-<p>RFC 067 <code>std.ci.env</code> is CI-oriented. It may wrap, re-export, or mirror <code>std.environ</code> functions, but CI should not be the only namespace where environment access exists.</p>
+<h3 id="ci-scripts-and-provider-libraries">CI scripts and provider libraries<a class="headerlink" href="#ci-scripts-and-provider-libraries" title="Permanent link">&para;</a></h3>
+<p>RFC 067 was retired. CI scripts use <code>std.environ</code> directly. External provider libraries may interpret their runner’s variable names and formats.</p>
 <p>Provider-specific behavior must remain outside <code>std.environ</code>. <code>std.environ</code> reads process environment variables; it does not know about GitHub Actions, GitLab CI, buildkite, or any other runner.</p>
 <h3 id="relationship-to-stdprocess">Relationship to <code>std.process</code><a class="headerlink" href="#relationship-to-stdprocess" title="Permanent link">&para;</a></h3>
 <p>RFC 063 <code>std.process</code> owns child-process environment construction through command builder methods such as <code>env</code>, <code>env_remove</code>, and <code>env_clear</code>. <code>std.environ</code> owns current-process environment reads. The two surfaces should use compatible key/value expectations but must not be conflated.</p>
@@ -10403,7 +10403,7 @@
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <ol>
 <li><strong>Use only <code>ctx</code> for environment variables</strong> — Rejected because <code>ctx</code> is a structured configuration feature. Programs and libraries still need a small runtime primitive for direct environment reads.</li>
-<li><strong>Use only <code>std.ci.env</code></strong> — Rejected because environment variables are not CI-specific. CI should be a specialized wrapper, not the only environment namespace.</li>
+<li><strong>Use only <code>std.ci.env</code></strong> — Rejected because environment variables are not CI-specific. Provider-specific wrappers can live in external Loaves.</li>
 <li><strong>Name the module <code>std.env</code></strong> — Rejected because <code>env</code> already appears heavily in project lifecycle terminology and RFC 033 axis examples. <code>std.environ</code> is more explicit and Python-familiar.</li>
 <li><strong>Single <code>get(key, default=...)</code> function</strong> — Rejected because it blurs required, optional, defaulted, and typed access into one overloaded call shape. Separate helpers keep call sites obvious.</li>
 <li><strong>Return empty string for missing variables</strong> — Rejected because it hides configuration mistakes and collapses absence into a valid value.</li>
@@ -10413,7 +10413,7 @@
 </ol>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
-<li>The surface adds another configuration-adjacent API next to <code>ctx</code>, project lifecycle environments, <code>std.ci.env</code>, and <code>std.process</code> env builders.</li>
+<li>The surface adds another configuration-adjacent API next to <code>ctx</code>, project lifecycle environments, and <code>std.process</code> env builders.</li>
 <li><code>get_as[T]</code> introduces protocol complexity around parsing, newtypes, validation errors, and default handling.</li>
 <li>A read-only environment API may frustrate users who expect Python-like mutation through <code>os.environ</code>.</li>
 <li>Platform differences around key casing, encoding, and process environment mutation remain visible at the boundary.</li>
@@ -10511,7 +10511,7 @@
 <li><code>get_as[T]</code> uses the existing source-owned <code>TryFrom[str]</code> protocol. The compiler provides conformance for the primitive and validated-newtype families required here; user-defined targets opt in by implementing the trait.</li>
 <li><code>std.environ</code> intentionally exposes Unicode <code>str</code> values only. Platform byte-oriented access requires a separate proposal.</li>
 <li>A default for a newtype target may use the underlying type when ordinary RFC 017 implicit checked construction permits that call-site coercion. Otherwise callers must pass an already constructed target value.</li>
-<li><code>std.ci.env</code> may retain CI-specific wrappers and diagnostics. This RFC requires semantic alignment, not direct reexports.</li>
+<li>External CI libraries may provide provider-specific wrappers and diagnostics over the same environment semantics.</li>
 <li><code>get_optional</code> and <code>get_or</code> are deliberately lossy convenience functions. Precise host failure categories remain available through <code>get</code> and <code>get_as</code>.</li>
 </ul>
 

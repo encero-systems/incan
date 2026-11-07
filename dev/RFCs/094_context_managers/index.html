@@ -9764,6 +9764,89 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Guide-level explanation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#test-drive-a-database-transaction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test drive: a database transaction
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#test-drive-existing-drop-based-resources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test drive: existing drop-based resources
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#test-drive-deliberate-persistence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test drive: deliberate persistence
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#test-drive-locks-and-suspension" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test drive: locks and suspension
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#test-drive-cleanup-that-suspends" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test drive: cleanup that suspends
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#test-drive-the-bodys-exit-reason" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test drive: the body's exit reason
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#result-matching-is-independent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Result matching is independent
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -9805,6 +9888,17 @@
     <span class="md-ellipsis">
       
         Entry and exit
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#scoped-bindings-and-resource-escape" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scoped bindings and resource escape
       
     </span>
   </a>
@@ -9906,6 +10000,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#why-stdscope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why std.scope
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#interaction-with-vocabulary-dsls" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9966,10 +10071,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#unresolved-questions" class="md-nav__link">
+  <a href="#design-decisions" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Unresolved questions
+        Design Decisions
       
     </span>
   </a>
@@ -9998,7 +10103,7 @@
 
 <h1 id="rfc-094-context-managers">RFC 094: Context managers<a class="headerlink" href="#rfc-094-context-managers" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Status:</strong> Draft</li>
+<li><strong>Status:</strong> Planned</li>
 <li><strong>Created:</strong> 2026-05-11</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong><ul>
@@ -10008,46 +10113,60 @@
 <li>RFC 040 (scoped DSL surface forms)</li>
 <li>RFC 045 (scoped DSL symbol surfaces)</li>
 <li>RFC 055 (<code>std.fs</code>)</li>
+<li>RFC 070 (ordinary Result combinators)</li>
 <li>RFC 081 (language-shaped DSL embeddings)</li>
 <li>RFC 093 (<code>std.telemetry</code>)</li>
 <li>RFC 095 (<code>span</code> vocabulary blocks)</li>
+<li>RFC 098 (<code>infer</code> members in trait headers)</li>
+<li>RFC 122 (scoped validation policy)</li>
+<li>RFC 129 (binding, borrowing, and ownership rules)</li>
+<li>RFC 131 (typed error values and propagation)</li>
+<li>RFC 134 (exiting pattern bindings inside resource scopes)</li>
+<li>RFC 142 (async iteration, task ownership and cancellation)</li>
+<li>RFC 147 (independent local Result matching)</li>
+<li>RFC 154 (closures that capture entered views)</li>
+<li>RFC 164 (explicit ownership and borrowing; entered views declared <code>from self</code>)</li>
+<li>RFC 165 (<code>std.db</code> lazy scope descriptors)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> #560</li>
+<li><strong>Issue:</strong> <a href="https://github.com/encero-systems/incan/issues/560">#560</a></li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.3</li>
 <li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC adds context managers to Incan: a general scoped-lifetime construct for resources that must be entered before a block and exited after the block regardless of how control leaves it. The user-facing syntax is Python-familiar, but the semantics are intentionally closer to Rust's scope-based cleanup model: context managers guarantee cleanup, report an exit outcome, and must not catch, suppress, or transform control flow. The same mechanism also becomes the substrate that vocabulary blocks can target when a domain-specific block needs compiler-guaranteed scope entry and exit.</p>
+<p>This RFC adds context managers to Incan: a general scoped-lifetime construct for resources that must be entered before a block and exited after the block regardless of how control leaves it. The user-facing syntax is Python-familiar, but the semantics are intentionally closer to Rust's scope-based cleanup model: context managers guarantee a cleanup attempt, report an exit outcome, and must not catch or suppress the body's failure. A manager may declare typed fallible finalization, whose failure must prevent an otherwise successful operation from being reported as successful. The same mechanism also becomes the substrate that vocabulary blocks can target when a domain-specific block needs compiler-guaranteed scope entry and exit.</p>
 <h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
 <p>Read this RFC as six foundations:</p>
 <ol>
 <li><strong>Scoped lifetime is a language primitive:</strong> users should be able to express "this value is active for this block" without manual <code>close()</code>, <code>end()</code>, <code>release()</code>, or paired setup/cleanup calls.</li>
 <li><strong>Cleanup is guaranteed after entry:</strong> once <code>__enter__</code> succeeds, <code>__exit__</code> must run exactly once when the block exits, including fallthrough, <code>return</code>, <code>break</code>, <code>continue</code>, <code>?</code> propagation, and panic/assert exits.</li>
-<li><strong>No exception model is introduced:</strong> <code>with</code> does not add <code>try</code>, <code>except</code>, <code>catch</code>, or suppression semantics. <code>ScopeExit</code> is informational and cleanup-oriented.</li>
+<li><strong>Cleanup is distinct from Result handling:</strong> the manager must not suppress a failure or catch a panic. Local typed Result matching belongs to RFC 147; ScopeExit remains informational and cleanup-oriented.</li>
 <li><strong>The protocol is explicit and typed:</strong> context-manager support is ordinary Incan API surface, not hidden naming magic that only the compiler understands.</li>
 <li><strong>Vocabulary blocks may desugar through context managers:</strong> domain-specific soft syntax can use the same scoped cleanup contract instead of inventing one-off entry/exit behavior.</li>
 <li><strong>Async safety is explicit:</strong> context managers that interact with task-local state, guards, locks, spans, or transactions must not be accidentally held across suspension points without a type-level contract.</li>
 </ol>
+<p>The purpose of with is a scoped resource lifetime or temporary runtime state that must be finished or restored. An ordinary fallible calculation or validation check needs no with statement merely because it returns Result; ordinary matching and RFC 070 combinators remain available. Local Result handling with <code>except</code> belongs to RFC 147 and is not a prerequisite for this lifetime contract.</p>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
 <p>Many useful APIs have paired lifecycle calls: open/close, acquire/release, begin/commit-or-rollback, enter/exit, capture/restore, start/end. Manual pairing is easy to get wrong, especially when a block has early returns or <code>?</code> propagation. Incan already has a Python-influenced surface, so users will expect a first-class scoped resource construct once the stdlib grows beyond simple values.</p>
 <p>The language also needs a principled substrate for scoped vocabulary forms. Telemetry spans are the immediate example, but they are not the only one. A <code>span</code> block should not be a special cleanup snowflake in the parser; it should use a general scoped-lifetime hook. Tests, temporary directories, output capture, transactions, locks, and scoped runtime policy all want the same guarantee.</p>
 <p>Rust gives useful prior art here without requiring Rust syntax. Rust uses lexical scope and the <code>Drop</code> trait to run cleanup when values leave scope. That design is not Python's <code>with</code>, but it proves the central idea: cleanup should be tied to scope and ownership, not remembered by convention. Incan should expose the idea in a Python-readable form while keeping Rust's refusal to treat cleanup as exception suppression.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Add <code>with</code> statement syntax for scoped context managers.</li>
-<li>Define a typed <code>ContextManager[T]</code> protocol.</li>
+<li>Add with statement syntax for scoped context managers, and <code>async with</code> for managers whose entry or exit suspends.</li>
+<li>Define the typed <code>ContextManager</code> and <code>AsyncContextManager</code> protocols.</li>
 <li>Define <code>ScopeExit</code> as the informational outcome passed to context-manager cleanup.</li>
 <li>Guarantee cleanup after successful entry on all block exit paths.</li>
-<li>Explicitly prohibit context managers from suppressing or rewriting control flow.</li>
+<li>Prohibit context managers from suppressing the body's failure or arbitrarily rewriting control flow, while allowing declared typed finalization failure to prevent successful completion.</li>
+<li>Expose fallible finalization in the checked context-manager contract without requiring every manager to be fallible.</li>
 <li>Allow context-manager lowering to serve as the substrate for descriptor-gated vocabulary blocks.</li>
 <li>Define async interaction rules conservatively enough that task-local guards and telemetry spans are not accidentally mis-scoped.</li>
 <li>Provide a clear model for stdlib resources such as files, locks, temporary directories, captured output, and scoped configuration.</li>
 </ul>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Adding <code>try</code>, <code>except</code>, <code>catch</code>, or exception handlers.</li>
+<li>Adding general try blocks, exception throwing, panic-catching handlers, or a catchable exception runtime.</li>
+<li>Defining local except matching or a general scope-result capture API; RFC 147 owns independent Result matching.</li>
 <li>Copying Python's <code>__exit__</code> suppression behavior.</li>
 <li>Making all cleanup fallible or forcing cleanup errors into every function signature.</li>
 <li>Defining the <code>span</code> vocabulary block in this RFC.</li>
@@ -10057,13 +10176,16 @@
 <li>Leaving async context managers underspecified when the async safety contract affects correctness.</li>
 </ul>
 <h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
-<p>The common shape is a scoped resource:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">with</span> <span class="nc">File</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="n">path</span><span class="p">)</span> <span class="k">as</span> <span class="n">file</span><span class="p">:</span>
-    <span class="n">data</span> <span class="o">=</span> <span class="n">file</span><span class="o">.</span><span class="n">read_text</span><span class="p">()</span>
+<p>The examples describe proposed <code>with</code> behavior and proposed context-manager integration for existing resource types. The acquisition and operation spellings for <code>Path</code>, <code>File</code>, and <code>TemporaryDirectory</code> follow their current source APIs; those types do not thereby already implement this RFC. Helpers such as <code>capture_output</code>, <code>temporary_env</code>, <code>build_report</code>, and <code>publish_report</code> stand for application-defined operations.</p>
+<p>The common shape is a scoped resource acquired through an explicit fallible call:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">with</span> <span class="kt">Path</span><span class="p">(</span><span class="s2">&quot;events.log&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">&quot;a&quot;</span><span class="p">)</span><span class="o">?</span> <span class="k">as</span> <span class="n">file</span><span class="p">:</span>
+    <span class="n">file</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;started</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span><span class="o">?</span>
+    <span class="n">file</span><span class="o">.</span><span class="n">flush</span><span class="p">()</span><span class="o">?</span>
 </code></pre></div>
-<p><code>File.open(path)</code> produces a context manager. The manager enters the resource, binds the yielded value to <code>file</code>, runs the block, and exits the resource no matter how the block completes.</p>
-<p>The construct is not an error handler:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">with</span> <span class="n">capture_output</span><span class="p">()</span> <span class="k">as</span> <span class="n">captured</span><span class="p">:</span>
+<p>The <code>open</code> call returns a Result. The header's <code>?</code> propagates an acquisition failure before the context is entered. On success, the proposed manager integration enters the resource, binds the entered value to <code>file</code>, runs the block, and exits the context when the block completes. The explicit <code>flush()?</code> keeps a fallible flush visible; context cleanup does not silently convert it into an infallible operation.</p>
+<p>A with statement establishes a resource lifetime, not a local error handler:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">captured</span> <span class="o">=</span> <span class="n">capture_output</span><span class="p">()</span>
+<span class="k">with</span> <span class="n">captured</span><span class="p">:</span>
     <span class="n">run_command</span><span class="p">()</span><span class="o">?</span>
 
 <span class="k">assert</span> <span class="n">captured</span><span class="o">.</span><span class="n">stderr</span> <span class="o">==</span> <span class="s2">&quot;&quot;</span>
@@ -10074,19 +10196,96 @@
     <span class="n">run_worker</span><span class="p">()</span>
 </code></pre></div>
 <p>The block activates the manager for its duration, then restores the previous state.</p>
+<h3 id="test-drive-a-database-transaction">Test drive: a database transaction<a class="headerlink" href="#test-drive-a-database-transaction" title="Permanent link">&para;</a></h3>
+<p>A transaction is the case where cleanup has a real outcome. Here <code>Pool</code>, <code>Connection</code>, <code>DbError</code> and their methods stand for an application's database client:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.scope</span><span class="w"> </span><span class="kn">import</span> <span class="nc">ContextManager</span><span class="p">,</span> <span class="nc">ScopeExit</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Transaction</span> <span class="k">with</span> <span class="nc">ContextManager</span><span class="p">[</span><span class="kt">Result</span><span class="p">[</span><span class="nc">Borrowed</span><span class="p">[</span><span class="nc">Connection</span><span class="p">],</span> <span class="nc">DbError</span><span class="p">],</span> <span class="kt">Result</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="nc">DbError</span><span class="p">]]:</span>
+    <span class="n">connection</span><span class="p">:</span> <span class="nc">Connection</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__enter__</span><span class="p">(</span><span class="k">mut</span> <span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Borrowed</span><span class="p">[</span><span class="nc">Connection</span><span class="p">],</span> <span class="nc">DbError</span><span class="p">]</span> <span class="kn">from</span><span class="w"> </span><span class="nn">self</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">connection</span><span class="o">.</span><span class="n">begin</span><span class="p">()</span><span class="o">?</span>
+        <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">connection</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__exit__</span><span class="p">(</span><span class="k">mut</span> <span class="bp">self</span><span class="p">,</span> <span class="n">exit</span><span class="p">:</span> <span class="nc">ScopeExit</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="nc">DbError</span><span class="p">]:</span>
+        <span class="k">match</span> <span class="n">exit</span><span class="p">:</span>
+            <span class="nc">ScopeExit</span><span class="o">.</span><span class="nc">Success</span> <span class="o">|</span> <span class="nc">ScopeExit</span><span class="o">.</span><span class="nc">Return</span> <span class="o">=&gt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">connection</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
+            <span class="n">_</span> <span class="o">=&gt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">connection</span><span class="o">.</span><span class="n">rollback</span><span class="p">()</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">transfer</span><span class="p">(</span><span class="n">pool</span><span class="p">:</span> <span class="nc">Pool</span><span class="p">,</span> <span class="n">source</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">target</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">amount</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="nc">DbError</span><span class="p">]:</span>
+    <span class="k">with</span> <span class="nc">Transaction</span><span class="p">(</span><span class="n">connection</span><span class="o">=</span><span class="n">pool</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span><span class="o">?</span><span class="p">)</span> <span class="k">as</span> <span class="n">db</span><span class="p">:</span>
+        <span class="n">db</span><span class="o">.</span><span class="n">debit</span><span class="p">(</span><span class="n">account</span><span class="o">=</span><span class="n">source</span><span class="p">,</span> <span class="n">amount</span><span class="o">=</span><span class="n">amount</span><span class="p">)</span><span class="o">?</span>
+        <span class="n">db</span><span class="o">.</span><span class="n">credit</span><span class="p">(</span><span class="n">account</span><span class="o">=</span><span class="n">target</span><span class="p">,</span> <span class="n">amount</span><span class="o">=</span><span class="n">amount</span><span class="p">)</span><span class="o">?</span>
+    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>
+</code></pre></div>
+<p><code>pool.connect()?</code> acquires a connection before the context exists; a failure there returns before anything is entered. Entering then begins the transaction. If that fails, the block does not run and <code>transfer</code> returns the error, as <code>?</code> would. If the debit or credit fails, its <code>?</code> leaves the block, exit observes <code>ScopeExit.Error</code> and rolls back, and <code>transfer</code> returns that failure. If both succeed, exit commits. A rejected commit becomes <code>transfer</code>'s error, so the caller never sees <code>Ok(None)</code> for work that was not saved. If the credit and the rollback both fail, <code>transfer</code> returns both under <code>ScopeFailure.Multiple</code>. <code>db</code> is a view tied to the transaction, so it cannot be returned or stored past the block.</p>
 <p>Multiple resources can be nested explicitly:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">with</span> <span class="nc">TemporaryDirectory</span><span class="p">()</span> <span class="k">as</span> <span class="nb">dir</span><span class="p">:</span>
-    <span class="k">with</span> <span class="nc">File</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="nb">dir</span> <span class="o">/</span> <span class="s2">&quot;report.txt&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">file</span><span class="p">:</span>
-        <span class="n">file</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="n">report</span><span class="p">)</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">with</span> <span class="nc">TemporaryDirectory</span><span class="o">.</span><span class="n">try_new</span><span class="p">()</span><span class="o">?</span> <span class="k">as</span> <span class="n">directory</span><span class="p">:</span>
+    <span class="k">with</span> <span class="p">(</span><span class="n">directory</span><span class="o">.</span><span class="n">path</span><span class="p">()</span> <span class="o">/</span> <span class="s2">&quot;report.txt&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">&quot;w&quot;</span><span class="p">)</span><span class="o">?</span> <span class="k">as</span> <span class="n">file</span><span class="p">:</span>
+        <span class="n">file</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">report</span><span class="p">)</span><span class="o">?</span>
+        <span class="n">file</span><span class="o">.</span><span class="n">flush</span><span class="p">()</span><span class="o">?</span>
 </code></pre></div>
 <p>This RFC does not need multiple-manager header syntax. Explicit nesting is unambiguous, easy to format, and enough to define the semantics.</p>
-<p>Vocabulary blocks may use the same mechanism while exposing domain syntax:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">std.telemetry.vocab</span>
+<h3 id="test-drive-existing-drop-based-resources">Test drive: existing drop-based resources<a class="headerlink" href="#test-drive-existing-drop-based-resources" title="Permanent link">&para;</a></h3>
+<p>Temporary directories already remove their backing tree when their non-persisted owning wrapper is dropped. A context manager adds an explicit source boundary; it must not be presented as the first cleanup mechanism for these resources:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">with</span> <span class="nc">TemporaryDirectory</span><span class="o">.</span><span class="n">try_new</span><span class="p">()</span><span class="o">?</span> <span class="k">as</span> <span class="n">workspace</span><span class="p">:</span>
+    <span class="n">build_report</span><span class="p">(</span><span class="n">workspace</span><span class="o">.</span><span class="n">path</span><span class="p">())</span><span class="o">?</span>
+    <span class="n">publish_report</span><span class="p">(</span><span class="n">workspace</span><span class="o">.</span><span class="n">path</span><span class="p">())</span><span class="o">?</span>
 
-<span class="n">span</span> <span class="s2">&quot;checkout.charge&quot;</span><span class="p">,</span> <span class="n">attributes</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;order.id&quot;</span><span class="p">:</span> <span class="n">order</span><span class="o">.</span><span class="n">id</span><span class="p">}:</span>
-    <span class="n">receipt</span> <span class="o">=</span> <span class="n">charge</span><span class="p">(</span><span class="n">order</span><span class="p">)</span><span class="o">?</span>
+<span class="n">continue_with_other_work</span><span class="p">()</span>
+</code></pre></div>
+<p>The intended resource scope ends before the final helper runs. If building or publication propagates an error, the entered context still exits and the original propagation continues. An actual stdlib adaptation must establish how this boundary releases the resource's ownership, rather than merely emit an exit method while retaining the live resource elsewhere.</p>
+<p>An owned path is not the resource itself:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">scratch_path</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kt">Path</span><span class="p">,</span> <span class="nc">IoError</span><span class="p">]:</span>
+    <span class="k">with</span> <span class="nc">TemporaryDirectory</span><span class="o">.</span><span class="n">try_new</span><span class="p">()</span><span class="o">?</span> <span class="k">as</span> <span class="n">workspace</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">workspace</span><span class="o">.</span><span class="n">path</span><span class="p">())</span>
+</code></pre></div>
+<p>The returned <code>Path</code> may remain a valid value while referring to a directory that cleanup removed. Keeping a path value alive does not retain a temporary directory. This is distinct from returning a borrow or live handle that depends on the scoped resource and would become invalid at exit.</p>
+<h3 id="test-drive-deliberate-persistence">Test drive: deliberate persistence<a class="headerlink" href="#test-drive-deliberate-persistence" title="Permanent link">&para;</a></h3>
+<p>The existing temporary-directory API has an explicit <code>persist()</code> operation. A future context adaptation must preserve its meaning:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">retained_report</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kt">Path</span><span class="p">,</span> <span class="nc">IoError</span><span class="p">]:</span>
+    <span class="k">with</span> <span class="nc">TemporaryDirectory</span><span class="o">.</span><span class="n">try_new</span><span class="p">()</span><span class="o">?</span> <span class="k">as</span> <span class="n">workspace</span><span class="p">:</span>
+        <span class="n">build_report</span><span class="p">(</span><span class="n">workspace</span><span class="o">.</span><span class="n">path</span><span class="p">())</span><span class="o">?</span>
+        <span class="n">retained</span> <span class="o">=</span> <span class="n">workspace</span><span class="o">.</span><span class="n">persist</span><span class="p">()</span><span class="o">?</span>
+        <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">retained</span><span class="p">)</span>
+</code></pre></div>
+<p>Successful persistence disables automatic removal of that directory. Context exit must not delete it anyway or attempt to release the same consumed handle twice. This is a resource-specific ownership transfer, not a general permission for arbitrary <code>as</code> bindings to escape.</p>
+<h3 id="test-drive-locks-and-suspension">Test drive: locks and suspension<a class="headerlink" href="#test-drive-locks-and-suspension" title="Permanent link">&para;</a></h3>
+<p>The current async mutex releases its guard when the guard is dropped. A proposed integration could make a short critical section visible, with the guard as the manager and its <code>__enter__</code> returning <code>Reference[Counter] from self</code>:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">bump</span><span class="p">(</span><span class="n">shared_counter</span><span class="p">:</span> <span class="kt">Mutex</span><span class="p">[</span><span class="nc">Counter</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nc">Counter</span><span class="p">:</span>
+    <span class="k">with</span> <span class="k">await</span> <span class="n">shared_counter</span><span class="o">.</span><span class="n">lock</span><span class="p">()</span> <span class="k">as</span> <span class="n">counter</span><span class="p">:</span>
+        <span class="n">counter</span><span class="o">.</span><span class="n">increment</span><span class="p">()</span>
+        <span class="k">return</span> <span class="n">counter</span>      <span class="c1"># refused: `counter` borrows the guard, which exits here</span>
+</code></pre></div>
+<p>The lock acquisition suspends before context entry. <code>counter</code> is exclusive access tied to the guard, so the checker refuses returning it, storing it, capturing it in a task, or capturing it in a closure that outlives the suite; the guard's exit releases the lock with no live view left behind. Returning <code>counter.value()</code>, an owned copy of the count, is fine. An <code>await</code> inside the suite is permitted only when the guard and <code>counter</code> satisfy the ordinary checked suspension proof. The current async mutex supports guards held across await; the context protocol must not assume that every guard is unsafe or that every resource is safe to suspend.</p>
+<h3 id="test-drive-cleanup-that-suspends">Test drive: cleanup that suspends<a class="headerlink" href="#test-drive-cleanup-that-suspends" title="Permanent link">&para;</a></h3>
+<p>Some cleanup has to wait, such as committing over the network. Such a manager adopts <code>AsyncContextManager</code>, whose hooks are async, and is used with <code>async with</code> inside an async function:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">save</span><span class="p">(</span><span class="n">client</span><span class="p">:</span> <span class="nc">Client</span><span class="p">,</span> <span class="n">report</span><span class="p">:</span> <span class="nc">Report</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="nc">UploadError</span><span class="p">]:</span>
+    <span class="k">async</span> <span class="k">with</span> <span class="n">client</span><span class="o">.</span><span class="n">upload</span><span class="p">(</span><span class="s2">&quot;reports/latest.json&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">upload</span><span class="p">:</span>
+        <span class="k">await</span> <span class="n">upload</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">report</span><span class="o">.</span><span class="n">to_json</span><span class="p">())</span><span class="o">?</span>
+    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>
+</code></pre></div>
+<p>Entering opens the upload and the exit awaits its completion. A failed completion becomes <code>save</code>'s error under the same fallible-exit rules as <code>with</code>. A plain <code>with</code> over an async manager, or <code>async with</code> over a synchronous one, is refused with a diagnostic naming the other form.</p>
+<h3 id="test-drive-the-bodys-exit-reason">Test drive: the body's exit reason<a class="headerlink" href="#test-drive-the-bodys-exit-reason" title="Permanent link">&para;</a></h3>
+<p>Inside an entered context, these are two ways to leave a Result-returning function with a failure. Here operation is an application-defined Result-returning function and failure is an application error value:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">operation</span><span class="p">()</span><span class="o">?</span>
+</code></pre></div>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="n">failure</span><span class="p">)</span>
+</code></pre></div>
+<p>Both exits must report failure to cleanup. A transaction-like manager must not roll back for question-mark propagation but treat an explicit error return as success. The evaluated Result outcome determines failure, including when an ordinary return expression evaluates to Err rather than spelling Err directly. Diagnostics may additionally retain whether the exit used return or question-mark propagation; that distinction must not replace its failure classification. A failed Result merely stored or inspected inside the suite does not itself constitute a failed scope exit.</p>
+<p>Vocabulary blocks may use the same mechanism while exposing domain syntax:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">std.telemetry</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">take_one</span><span class="p">(</span><span class="n">remaining</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+    <span class="n">span</span> <span class="s2">&quot;reserve&quot;</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">remaining</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="s2">&quot;quota exhausted&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">remaining</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
 </code></pre></div>
 <p>The <code>span</code> block is not defined here, but the important contract is that a vocabulary desugarer can target a context manager and receive the same cleanup guarantee as <code>with</code>.</p>
+<h3 id="result-matching-is-independent">Result matching is independent<a class="headerlink" href="#result-matching-is-independent" title="Permanent link">&para;</a></h3>
+<p>RFC 147 owns local typed Result matching, through a <code>?</code> followed by one <code>except:</code> block of ordinary match arms. This RFC does not require an except block, scope capture expression, new outcome container, or per-failure dispatch mechanism to establish a resource lifetime. Its fallible-finalization propagation contract remains an obligation of the resource construct itself.</p>
 <h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
 <h3 id="syntax">Syntax<a class="headerlink" href="#syntax" title="Permanent link">&para;</a></h3>
 <p>A <code>with</code> statement has one context expression, an optional binding, and an indented suite:</p>
@@ -10095,16 +10294,41 @@
 
 <span class="k">with</span> <span class="n">expression</span> <span class="k">as</span> <span class="n">name</span><span class="p">:</span>
     <span class="n">suite</span>
+
+<span class="k">async</span> <span class="k">with</span> <span class="n">expression</span> <span class="k">as</span> <span class="n">name</span><span class="p">:</span>
+    <span class="n">suite</span>
 </code></pre></div>
-<p>The <code>with</code> token is a statement introducer. It must not change the meaning of <code>with</code> in type-parameter bounds or type conformance positions that already use the spelling.</p>
-<p>The context expression must typecheck to <code>ContextManager[T]</code> or another type accepted by an explicitly defined context-manager adaptation rule. If an <code>as name</code> binding is present, <code>name</code> has type <code>T</code> inside the suite. If no binding is present, the entered value is discarded after entry.</p>
+<p>Local Result-matching syntax is outside this RFC and belongs to RFC 147.</p>
+<p>The <code>with</code> token is a statement introducer. It must not change the meaning of <code>with</code> in type-parameter bounds or type conformance positions that already use the spelling. <code>async with</code> is permitted only inside an async function.</p>
+<p>The context expression of <code>with</code> must typecheck to <code>ContextManager[Entry, ExitOutcome]</code>, and that of <code>async with</code> to <code>AsyncContextManager[Entry, ExitOutcome]</code>, or to another type accepted by an explicitly defined context-manager adaptation rule. A <code>with</code> over a type that adopts only the async protocol, or an <code>async with</code> over a type that adopts only the synchronous one, must be refused with a diagnostic naming the form that applies. If an <code>as name</code> binding is present, <code>name</code> has the bound type defined under fallible entry below, only inside the suite. If no binding is present, no entered value is exposed by a binding; the manager must remain alive until exit. Omitting <code>as</code> must not release the manager early or skip its exit call.</p>
 <h3 id="protocol">Protocol<a class="headerlink" href="#protocol" title="Permanent link">&para;</a></h3>
-<p>The core protocol is:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">pub</span> <span class="k">trait</span> <span class="nc">ContextManager</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
-    <span class="k">def</span><span class="w"> </span><span class="fm">__enter__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span>
-    <span class="k">def</span><span class="w"> </span><span class="fm">__exit__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">exit</span><span class="p">:</span> <span class="nc">ScopeExit</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+<p>The synchronous protocol is one trait in <code>std.scope</code> whose exit outcome is chosen by each implementation, using RFC 098's <code>infer</code> members:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">pub</span> <span class="k">trait</span> <span class="nc">ContextManager</span><span class="p">[</span><span class="nc">Entry</span><span class="p">,</span> <span class="n">infer</span> <span class="nc">ExitOutcome</span><span class="p">]:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__enter__</span><span class="p">(</span><span class="k">mut</span> <span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Entry</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__exit__</span><span class="p">(</span><span class="k">mut</span> <span class="bp">self</span><span class="p">,</span> <span class="n">exit</span><span class="p">:</span> <span class="nc">ScopeExit</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Self</span><span class="o">.</span><span class="nc">ExitOutcome</span>
 </code></pre></div>
-<p><code>__enter__</code> starts the scoped lifetime and returns the value exposed to the block. <code>__exit__</code> ends the scoped lifetime and receives the exit outcome. <code>__exit__</code> must not suppress, replace, or redirect the original control flow.</p>
+<p><code>__enter__</code> starts the scoped lifetime and returns what entering produces. <code>__exit__</code> ends the scoped lifetime and receives the exit outcome. The two type arguments therefore read as what entering gives and what exiting gives. A successful cleanup preserves the original control flow. A manager must not suppress the body's failure, but a declared typed finalization failure may prevent otherwise successful completion.</p>
+<p>An adopting type supplies both arguments explicitly. For the exit outcome the checker must accept only <code>None</code> or <code>Result[None, E]</code>, where E satisfies RFC 131's common Error contract:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">CapturedOutput</span> <span class="k">with</span> <span class="nc">ContextManager</span><span class="p">[</span><span class="nc">CapturedOutput</span><span class="p">,</span> <span class="kc">None</span><span class="p">]:</span>
+    <span class="o">...</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">ReadScope</span> <span class="k">with</span> <span class="nc">ContextManager</span><span class="p">[</span><span class="kt">Result</span><span class="p">[</span><span class="nc">Reader</span><span class="p">,</span> <span class="nc">DbError</span><span class="p">],</span> <span class="kc">None</span><span class="p">]:</span>
+    <span class="o">...</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Transaction</span> <span class="k">with</span> <span class="nc">ContextManager</span><span class="p">[</span><span class="kt">Result</span><span class="p">[</span><span class="nc">Borrowed</span><span class="p">[</span><span class="nc">Connection</span><span class="p">],</span> <span class="nc">DbError</span><span class="p">],</span> <span class="kt">Result</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="nc">DbError</span><span class="p">]]:</span>
+    <span class="o">...</span>
+</code></pre></div>
+<p><code>None</code> declares infallible cleanup. For <code>Result[None, E]</code>, <code>Ok(None)</code> means cleanup succeeded and <code>Err(error)</code> reports its typed failure. Fallibility is therefore part of the checked public contract, known statically wherever the manager is used. Independent local Result matching belongs to RFC 147.</p>
+<p>The entry argument declares fallible entry the same way. When <code>Entry</code> is <code>Result[T, E]</code>, with E satisfying the Error contract, successful entry binds T, not Result[T, E]; for any other <code>Entry</code>, <code>as</code> binds <code>Entry</code> itself. An entry failure does not execute the suite and must propagate into the enclosing function's Result, as <code>?</code> would. The checker must refuse a <code>with</code> over a manager with fallible entry in a function whose declared result cannot carry that failure; there is no implicit unwrap or panic conversion. This interpretation is specific to context entry and is not general Result method forwarding.</p>
+<p>The <code>with</code> statement holds the manager exclusively for the whole scope, so both hooks take <code>mut self</code>. When the context expression is a temporary, the scope owns the manager. When it is an existing place, such as <code>with captured:</code>, the scope exclusively borrows that place and the place remains usable after the block; it is neither moved nor copied.</p>
+<p><code>Entry</code> declares what the binding may outlive, using RFC 164's ownership modes. An owned <code>T</code> is independent of the manager and may escape the suite under ordinary ownership rules, as a <code>Path</code> may. An entered value of <code>Borrowed[T]</code> or <code>Reference[T]</code>, alone or inside the Result of fallible entry, must be declared <code>from self</code> or from a field path of <code>self</code> on the adopting <code>__enter__</code>, and is then tied to the retained manager:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">Guard</span> <span class="k">with</span> <span class="nc">ContextManager</span><span class="p">[</span><span class="nc">Reference</span><span class="p">[</span><span class="nc">Counter</span><span class="p">],</span> <span class="kc">None</span><span class="p">]:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__enter__</span><span class="p">(</span><span class="k">mut</span> <span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Reference</span><span class="p">[</span><span class="nc">Counter</span><span class="p">]</span> <span class="kn">from</span><span class="w"> </span><span class="nn">self</span><span class="p">:</span>
+        <span class="o">...</span>
+</code></pre></div>
+<p>The checker must refuse returning such a binding, storing it, capturing it in a task, or capturing it in a closure that outlives the suite, under RFC 154, and the binding's borrow must end before <code>__exit__</code> runs. An implementation of <code>__enter__</code> must not declare a borrowed source other than its receiver.</p>
+<p>A lazy scope descriptor can therefore be used directly in a header such as <code>with db.open(path).read() as reader:</code>. RFC 165 owns that library adaptation: header evaluation constructs the descriptor, while entry performs the database acquisition and starts the read. A fallible eager acquisition still uses its explicit Result handling before entry, as in the earlier file examples.</p>
+<p>If composite entry acquires one resource and then fails acquiring another, the entry implementation owns cleanup of the already acquired resources. The compiler does not call the outer manager's exit hook after failed entry. Any cleanup failure must be retained alongside the entry failure, with the same typed failure and provenance guarantees as work/finalization failures. Successfully entered enclosing managers still exit normally on propagation.</p>
 <p><code>ScopeExit</code> must distinguish at least these outcomes:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">pub</span> <span class="k">enum</span> <span class="nc">ScopeExit</span><span class="p">:</span>
     <span class="nc">Success</span>
@@ -10113,25 +10337,44 @@
     <span class="nc">Continue</span>
     <span class="nc">Error</span>
     <span class="nc">Panic</span>
+    <span class="nc">Cancelled</span>
 </code></pre></div>
-<p>An implementation may attach structured payloads to these variants if the language's public error and panic representations support that cleanly. Payloads must not be required for the cleanup guarantee.</p>
+<p>ScopeExit is a reason-only enum owned by std.scope. Error includes both question-mark error propagation and a return whose evaluated Result is Err. Return denotes other explicit returns, including an Ok result. The failure outcome takes precedence over the return spelling for cleanup classification. Cancelled denotes a synchronous manager exiting because its enclosing task was cancelled while the suite was suspended. Detailed originals, diagnostic provenance and the exit mechanism remain separate from these reason tags.</p>
+<p>The reason tags must not carry a Python-style exception triple or acquire payload-dependent suppression behavior. Panic remains distinct from a recoverable Error value, and Cancelled remains distinct from both, as RFC 142 requires of cancellation and application failure.</p>
 <h3 id="entry-and-exit">Entry and exit<a class="headerlink" href="#entry-and-exit" title="Permanent link">&para;</a></h3>
 <p>The context expression must be evaluated exactly once before entering the suite.</p>
 <p>If evaluating the context expression fails, <code>__enter__</code> is not called and <code>__exit__</code> is not called.</p>
 <p>If <code>__enter__</code> fails, <code>__exit__</code> is not called because no scoped lifetime was successfully established.</p>
 <p>If <code>__enter__</code> succeeds, <code>__exit__</code> must be called exactly once after the suite exits. This requirement applies to normal fallthrough, <code>return</code>, <code>break</code>, <code>continue</code>, <code>?</code> propagation, and panic/assert exits.</p>
-<p>If <code>__exit__</code> itself fails or panics during normal fallthrough, that failure becomes the block's exit. If <code>__exit__</code> fails while another exit is already in progress, the implementation must define a deterministic precedence rule and diagnostics should make the double-failure situation visible. This RFC does not require cleanup failures to be silently ignored.</p>
+<p>Managers may declare typed fallible finalization using a Result error channel. If the body otherwise succeeds but finalization fails, the scope must report that failure rather than continue or return as though the complete operation succeeded. Fallibility must be visible in the checked manager contract, and the compiler must require valid handling or propagation. This does not require infallible managers to invent an error channel. The infallible <code>__exit__ -&gt; None</code> form has no recoverable error channel; the fallible form returns <code>Result[None, E]</code>, with E bound by the manager's adopted exit outcome.</p>
+<p>A fallible exit failure must propagate into the enclosing function's Result, as <code>?</code> would. The checker must refuse a <code>with</code> over a fallible manager in a function whose declared result cannot carry that failure. A failed cleanup overrides a pending success, <code>return</code>, <code>break</code> or <code>continue</code>: the scope exits with the failure instead, so a loop does not continue and a function does not return its pending value as though the work had been saved. Every failure that already existed is retained alongside it.</p>
+<p>For example, a transaction-like manager may commit when its suite completes successfully. Inserts can succeed while the database subsequently rejects the commit. The caller must receive that finalization failure; successful execution of the insert statements is not proof that the transaction was saved. This scenario illustrates the context-manager contract and does not define a stdlib transaction API or select a universal commit-on-exit policy.</p>
+<p>Every failure produced by the body or attempted finalization must be retained. If the body and cleanup both fail, neither error may replace, erase, or reduce the other to message text. Nested scopes must retain additional cleanup failures while preserving the required cleanup attempts for other successfully entered managers. Each retained typed error keeps its original identity, payload, diagnostic origin, upstream relationships, and any captured stack trace under RFC 131. Diagnostic presentation or propagation precedence must not determine which failures survive. Independent body and cleanup failures are aggregate members; retaining them together must not invent a caused_by relationship between them.</p>
+<p>When only one work or finalization path fails, the original typed failure must propagate through a compatible enclosing error contract. When multiple paths fail, std.scope.ScopeFailure.Multiple must retain an immutable tuple of the original typed failures and per-member scope and phase provenance. The aggregate belongs to resource scopes, not to every Error. Reports must present work failure first, followed by attempted cleanup failures in actual inside-out order. An enclosing manager must still attempt cleanup and retain any additional failure. Independent members must not acquire a caused_by relationship merely because they are reported together. A single failure or the aggregate propagates under the exit-outcome rule above.</p>
+<p>A panic always takes precedence over typed failures. When the body panics, each successfully entered manager's exit runs with <code>ScopeExit.Panic</code> and the scope exits by panicking. When a cleanup panics, the scope exits by panicking even if the body succeeded or a typed failure was pending. In both cases every typed failure that already existed, from the body or from an exit, must be attached to the panic's report with its original identity and provenance under RFC 131; a panic never becomes a Result, and no typed failure is discarded because a panic occurred. Enclosing managers still exit with <code>ScopeExit.Panic</code> and attach their own failures. A cleanup that panics while a panic is already unwinding aborts the process after both panics are reported, since the runtime cannot unwind twice; the cleanup guarantee does not cover enclosing managers in that case. Fallible cleanup must not be described as error suppression or as proof that cleanup always succeeds.</p>
+<p>The cleanup guarantee applies to exits for which the runtime can execute cleanup, including panic/assert unwinding. It cannot promise execution of user cleanup during immediate process abort or external process termination. This boundary must not introduce a catchable exception model.</p>
+<h3 id="scoped-bindings-and-resource-escape">Scoped bindings and resource escape<a class="headerlink" href="#scoped-bindings-and-resource-escape" title="Permanent link">&para;</a></h3>
+<p>The manager must remain available for its required exit call. The compiler must not move it away, clone it implicitly, or let an entered value consume it in a way that prevents that call. An <code>as</code> binding must follow ordinary mutation permissions and must not acquire writable access solely because it appears in a context header.</p>
+<p>Borrowed values that would be invalidated by context exit must not escape the suite through return values, storage, closures, or tasks. Independently owned results may escape when ordinary ownership rules permit it. An owned path string or <code>Path</code> value must not be treated as a lifetime guarantee for the resource it names.</p>
+<p>An adaptation promising resource release at exit must establish that retained handles or aliases cannot silently keep that same resource active beyond the promised boundary. Such a manager must enter with a <code>from self</code> view, never an owned clone of a shared handle to the live resource. A resource-specific operation such as temporary-directory persistence may transfer ownership deliberately through an explicit method; exit must respect that operation without double cleanup.</p>
 <h3 id="control-flow">Control flow<a class="headerlink" href="#control-flow" title="Permanent link">&para;</a></h3>
-<p><code>with</code> must not introduce a catchable exception model. The body's control-flow decision remains authoritative after cleanup. A <code>return</code> still returns, a <code>break</code> still breaks, a <code>continue</code> still continues, <code>?</code> propagation still propagates, and panic/assert exits still exit according to the existing language rules.</p>
+<p>The manager must not catch or suppress the body's failure or catch panics. When cleanup succeeds, the body's control-flow decision remains authoritative: a <code>return</code> still returns, a <code>break</code> still breaks, a <code>continue</code> still continues, <code>?</code> propagation still propagates, and panic/assert exits still exit according to the existing language rules. Declared fallible finalization must not report successful completion when it fails: a failed cleanup overrides a pending success, <code>return</code>, <code>break</code> or <code>continue</code> as failure, while retaining every existing failure. Successful cleanup must not change those exits. Interaction with panic is specified below. RFC 147 owns any independently selected local Result-handling boundary and must not bypass required cleanup.</p>
 <p><code>__exit__</code> receives <code>ScopeExit</code> only so it can perform correct cleanup and record metadata. For example, a transaction manager may roll back on <code>Error</code>, a telemetry manager may set span status on <code>Error</code> or <code>Panic</code>, and an output-capture manager may restore stdout/stderr regardless of outcome.</p>
 <h3 id="vocabulary-desugaring">Vocabulary desugaring<a class="headerlink" href="#vocabulary-desugaring" title="Permanent link">&para;</a></h3>
 <p>Descriptor-gated vocabulary blocks may declare that they lower to a context manager. Such a vocabulary block must preserve the same entry/exit guarantees as <code>with</code>.</p>
 <p>A vocabulary block may provide additional compile-time information to the context manager, such as lexical symbol identity, source span, block name, static attributes, or descriptor identity. That additional information must not weaken the core cleanup guarantee.</p>
 <p>Vocabulary blocks must remain explicitly activated through the project's vocabulary mechanism. A context-manager protocol implementation alone must not cause new statement syntax to appear in unrelated modules.</p>
+<p>Diagnostics for a vocabulary block must use the authored block, its header or the responsible body expression as the primary span. The vocabulary or provider identity and the entry/exit lowering chain must be retained as structured secondary evidence, inspectable by tools. When both the work and cleanup fail, both must be shown. Diagnostics must not present the generated <code>with</code> as though the user had written it, and must not change secrecy rules.</p>
 <h3 id="async-interaction">Async interaction<a class="headerlink" href="#async-interaction" title="Permanent link">&para;</a></h3>
-<p>The RFC must choose a conservative async rule. A synchronous context manager whose scoped state is task-local, thread-local, guard-based, or otherwise sensitive to suspension should not be held across <code>await</code> by accident.</p>
-<p>At minimum, the compiler must either reject <code>await</code> inside a <code>with</code> suite unless the manager type is marked await-safe, or require a distinct async context-manager protocol for suites that may suspend. The same rule must apply to vocabulary blocks that lower through context managers.</p>
-<p>This RFC leaves the exact spelling of await-safe context managers unresolved, but the contract must be decided before the RFC advances beyond Draft.</p>
+<p>A synchronous context manager's suite may contain <code>await</code> only when the retained manager, the entered value and any state they borrow satisfy the ordinary checked suspension proof, the same proof that governs any value held across <code>await</code>. When the proof fails, the compiler must diagnose the resource and the <code>await</code>; it must not silently clone or move state to make suspension legal. There is no unchecked await-safe marker.</p>
+<p>Awaited acquisition happens before entry, as in <code>with await shared_counter.lock() as counter:</code>. A synchronous <code>__exit__</code> must never hide an await. An entry or exit that itself needs to suspend uses the async protocol, also in <code>std.scope</code>:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">pub</span> <span class="k">trait</span> <span class="nc">AsyncContextManager</span><span class="p">[</span><span class="nc">Entry</span><span class="p">,</span> <span class="n">infer</span> <span class="nc">ExitOutcome</span><span class="p">]:</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="fm">__enter__</span><span class="p">(</span><span class="k">mut</span> <span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Entry</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="fm">__exit__</span><span class="p">(</span><span class="k">mut</span> <span class="bp">self</span><span class="p">,</span> <span class="n">exit</span><span class="p">:</span> <span class="nc">ScopeExit</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Self</span><span class="o">.</span><span class="nc">ExitOutcome</span>
+</code></pre></div>
+<p><code>async with</code> awaits <code>__enter__</code> before the suite and awaits <code>__exit__</code> after it. Every rule above for <code>with</code> applies unchanged: the entry and exit outcomes, the bound type, borrowed views, failure retention, panic precedence and exit order. The ordinary checked suspension proof still governs the manager and entered value across any <code>await</code> in the suite and across both awaited hooks. A type may adopt both protocols.</p>
+<p>A synchronous manager whose suite is suspended when its enclosing task is cancelled still exits, with <code>ScopeExit.Cancelled</code>. An async manager's <code>__exit__</code> cannot be awaited once its task has been cancelled, because nothing remains to drive it: it is not called, and the manager is released under its ordinary ownership contract. An async manager whose resource needs release on cancellation must therefore make that release part of dropping the manager, as a connection rolls back an uncommitted transaction when it is dropped. A fallible exit that fails during cancellation has no caller to receive the failure; it must be reported through runtime diagnostics rather than discarded silently. This does not introduce a recoverable cancellation model, which remains RFC 142's concern.</p>
+<p>The same rules apply to vocabulary blocks that lower through context managers.</p>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
 <h3 id="syntax-and-grammar">Syntax and grammar<a class="headerlink" href="#syntax-and-grammar" title="Permanent link">&para;</a></h3>
 <p>The source form should intentionally be small. One manager per statement avoids the formatting and error-order complexity of Python's comma-separated manager list. Explicit nesting covers the same behavior while making exit order visible.</p>
@@ -10140,8 +10383,12 @@
 <p>Nested context managers exit inside-out because the inner <code>with</code> suite exits before the outer one. Any multiple-manager header syntax must preserve the same order as explicit nesting.</p>
 <h3 id="interaction-with-destructors">Interaction with destructors<a class="headerlink" href="#interaction-with-destructors" title="Permanent link">&para;</a></h3>
 <p>Context managers are explicit source-level scoped lifetimes. They do not require Incan to expose Rust's <code>Drop</code> trait directly, and they should not rely on backend-specific destructor timing as their public contract.</p>
+<p>Existing source resources already own drop-based runtime handles. Merely adding a no-op <code>__exit__</code> to such a wrapper does not establish scoped release if the live handle can survive elsewhere. Conversely, forcing a raw close through one alias while another valid owner still uses the handle would violate ordinary ownership expectations. The adaptation must connect the promised boundary to checked ownership or an explicit resource-state transition; that choice must be visible in its public contract.</p>
+<p>The receiver and entry rules above supply that contract: the scope holds the manager exclusively, and an entered view declared <code>from self</code> cannot outlive it. A resource adaptation still has to choose which kind of entered value it returns, and that choice is visible in its adopted <code>Entry</code>.</p>
 <h3 id="interaction-with-result-and">Interaction with <code>Result</code> and <code>?</code><a class="headerlink" href="#interaction-with-result-and" title="Permanent link">&para;</a></h3>
-<p>The <code>?</code> operator remains ordinary error propagation. A context manager observes <code>ScopeExit.Error</code> and then the original propagation continues. There is no <code>__exit__ -&gt; bool</code> hook because suppression would blur cleanup with error handling.</p>
+<p>The <code>?</code> operator remains ordinary error propagation. A context manager observes <code>ScopeExit.Error</code> and then the original propagation continues. An explicit return whose evaluated Result is Err has the same failure classification, and its original return continues after cleanup. There is no <code>__exit__ -&gt; bool</code> hook because suppression would blur cleanup with error handling.</p>
+<h3 id="why-stdscope">Why <code>std.scope</code><a class="headerlink" href="#why-stdscope" title="Permanent link">&para;</a></h3>
+<p><code>ContextManager</code>, <code>AsyncContextManager</code>, <code>ScopeExit</code> and <code>ScopeFailure</code> describe resource scopes in general: files, locks, transactions, captured output and spans all use them. Scoped validation policy (RFC 122) is one user of the module rather than its owner, so the protocol lives beside the scope vocabulary instead of under a validation or resource module.</p>
 <h3 id="interaction-with-vocabulary-dsls">Interaction with vocabulary DSLs<a class="headerlink" href="#interaction-with-vocabulary-dsls" title="Permanent link">&para;</a></h3>
 <p>Context managers are not a macro system. A vocabulary block that lowers to a context manager is still owned by its descriptor and must follow the scoped DSL rules for activation, parsing, formatting, diagnostics, and ambiguity. The context manager only supplies the scoped entry/exit runtime contract.</p>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
@@ -10161,13 +10408,17 @@
 <li>
 <p>Model context managers as destructors only. Rejected because destructors are not visible enough in Incan source, cannot receive an explicit <code>ScopeExit</code>, and would tie the public contract too closely to backend behavior.</p>
 </li>
+<li>
+<p>Make with the host for general Result capture and local except matching. Not selected as this RFC's purpose: validation and calculations may fail without acquiring a resource, so RFC 147 owns the handling feature independently.</p>
+</li>
 </ol>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>with</code> adds another statement form and must coexist cleanly with existing <code>with</code> usage in type positions.</li>
 <li>Context managers can hide meaningful side effects at block boundaries if APIs are poorly named.</li>
 <li>Cleanup failure precedence is subtle when a body is already exiting with another error.</li>
-<li>Async safety requires real design work; copying synchronous guard behavior into async code would be a correctness bug.</li>
+<li>Two protocols and two statement forms exist because an exit that suspends cannot hide inside a synchronous hook.</li>
+<li>An async exit cannot run after its task is cancelled; an async manager's resource release on cancellation depends on its ordinary drop.</li>
 <li>Vocabulary desugaring through context managers adds power that must remain descriptor-gated and visible to tooling.</li>
 </ul>
 <h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
@@ -10175,25 +10426,45 @@
 <p>Vocabulary blocks that lower through context managers can use the same internal representation after their descriptor has parsed and validated the block-specific header.</p>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Parser / AST</strong>: new <code>with</code> statement syntax and a scoped statement representation are needed.</li>
-<li><strong>Typechecker / Symbol resolution</strong>: context expressions must satisfy the context-manager protocol, <code>as</code> bindings must receive the entered type, and async-safety constraints must be enforced.</li>
-<li><strong>IR Lowering</strong>: all suite exit edges must carry cleanup while preserving original control flow.</li>
+<li><strong>Parser / AST</strong>: new <code>with</code> and <code>async with</code> statement syntax and a scoped statement representation are needed.</li>
+<li><strong>Typechecker / Symbol resolution</strong>: context expressions must satisfy the context-manager protocol, <code>as</code> bindings must receive the entered type and suite scope, declared finalization fallibility must be checked, and ownership, escape, and async-safety constraints must be enforced.</li>
+<li><strong>IR Lowering</strong>: all suite exit edges must carry cleanup, preserve original control flow on successful cleanup, and retain every body and finalization failure without skipping required outer cleanup.</li>
 <li><strong>Emission</strong>: generated code must guarantee exactly-once cleanup after successful entry without relying on user-written cleanup calls.</li>
-<li><strong>Stdlib / Runtime (<code>incan_stdlib</code>)</strong>: standard resources such as files, temporary directories, locks, capture helpers, scoped environment overrides, and telemetry span handles may implement the protocol.</li>
+<li><strong>Stdlib / Runtime</strong>: source-authored standard resource APIs and their existing runtime carriers may adapt files, temporary directories, locks, capture helpers, scoped environment overrides, and telemetry span handles to the protocol.</li>
 <li><strong>Formatter</strong>: <code>with</code> suites need stable formatting and vocabulary blocks must preserve their descriptor-owned layout.</li>
 <li><strong>LSP / Tooling</strong>: hover, go-to-definition, diagnostics, and control-flow explanation should show the context-manager protocol and scoped binding.</li>
 </ul>
-<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ul>
-<li>What is the exact public spelling and payload shape of <code>ScopeExit</code>?</li>
-<li>Should <code>__enter__</code> and <code>__exit__</code> use double-underscore names, or should Incan prefer explicit protocol names such as <code>enter_context</code> and <code>exit_context</code>?</li>
-<li>What deterministic precedence rule should apply when <code>__exit__</code> fails while the suite is already exiting with an error or panic?</li>
-<li>Should <code>as</code> allow pattern bindings, or only a single identifier?</li>
-<li>What is the exact async-safety rule: reject <code>await</code> in synchronous context-manager suites, require an await-safe marker, or introduce a separate async context-manager protocol?</li>
-<li>How should tooling display vocabulary blocks that lower through context managers without pretending the user wrote a <code>with</code> statement?</li>
+<li>Retain <code>__enter__</code> and <code>__exit__</code> as the protocol hook names.</li>
+<li>Permit declared fallible entry through the adopted <code>Entry</code> argument: <code>ContextManager[Result[T, E], ExitOutcome]</code>. Successful entry binds T; failure skips the body, propagates into the enclosing Result as <code>?</code> would, is refused where that Result cannot carry it, and does not call that manager's exit hook. Composite acquisition cleans up its own partial resources and preserves all failures. Lazy descriptors support fluent library resource scopes without general Result unwrapping.</li>
+<li>The scope holds the manager exclusively, so both hooks take <code>mut self</code>; a place used as the context expression is borrowed for the scope, not moved. <code>Entry</code> uses RFC 164 modes to declare what the binding may outlive: an owned value may escape, while <code>Borrowed[T]</code> or <code>Reference[T]</code> declared <code>from self</code> is tied to the manager and cannot be returned, stored or captured past the block. A manager promising release must enter with such a view, never an owned clone of a shared live handle; deliberate transfers such as <code>persist()</code> stay explicit methods.</li>
+<li>A panic always takes precedence: the scope exits by panicking and every existing typed failure is attached to the panic's report. A cleanup that panics during unwinding aborts after both panics are reported.</li>
+<li>An entry or exit that suspends uses <code>AsyncContextManager</code> with async hooks, through <code>async with</code> inside async functions, under the same rules as <code>with</code>. A synchronous manager exits with <code>ScopeExit.Cancelled</code> when its task is cancelled; an async manager's exit cannot be awaited then, so its release on cancellation belongs to its ordinary drop.</li>
+<li>RFC 122's active validation policy belongs to the current execution context and survives suspension there. Cleanup restores the previous policy on every exit where cleanup executes, including return, propagation and cancellation. Independent execution contexts must not leak policy into one another. This rule does not choose inheritance for explicitly spawned tasks, which belongs to RFC 142, or permit every synchronous manager to suspend safely.</li>
+<li><code>as</code> accepts ordinary irrefutable binding patterns. A refutable extraction requires an explicit failure path rather than an implicit panic; no new starred pattern syntax is introduced.</li>
+<li>
+<p>Entered borrowed views invalidated by exit cannot escape through returns, storage, closures or tasks. Independently owned results may escape under ordinary ownership rules; explicit resource-specific checked transfer can preserve a resource beyond the scope. Retaining an owned path does not keep its resource alive. Receiver and protocol details must enforce these rules without changing them.</p>
+</li>
+<li>
+<p>Retain with for explicit scoped resource lifetimes and temporary runtime state with guaranteed finalization attempts or restoration. Temporary workspaces and scoped validation policy are motivating cases. Existing drop-based resource cleanup remains relevant; the context adaptation must establish the promised explicit boundary rather than claim to invent automatic cleanup. Ordinary Result handling does not require with. Local <code>except</code> handling belongs to RFC 147.</p>
+</li>
+<li>
+<p>Separate local except matching into RFC 147. Its block of match arms is an independent Result-handling feature, not part of the with grammar specified here. Resource lifetime and finalization must remain complete without that extension.</p>
+</li>
+<li>
+<p>Always retain failures from the body and every attempted cleanup, including nested cleanup failures. Preserve original typed identities and diagnostic provenance under RFC 131; reporting or propagation precedence must never discard another failure. Independent failures remain distinct aggregate members rather than invented upstream causes. ScopeFailure.Multiple and work-before-inside-out-cleanup presentation are selected. Propagation follows the protocol decision above; under a panic, the retained failures travel on the panic's report.</p>
+</li>
+<li>
+<p>Permit declared typed fallible finalization. If the body succeeds but finishing the resource fails, the caller must receive a failure rather than false success. The fallible <code>__exit__</code> returns <code>Result[None, E]</code>: Ok(None) completes cleanup, while Err retains its typed failure. Keep fallibility visible and checked without making every manager fallible. Propagation through pending returns and loop control follows the protocol decision above; simultaneous body/finalization failures must all be retained. Local Result matching is explored independently in RFC 147.</p>
+</li>
+<li>
+<p>One synchronous protocol, <code>ContextManager[Entry, infer ExitOutcome]</code>, with both arguments supplied explicitly at adoption. The checker accepts only <code>None</code> or <code>Result[None, E]</code> with E satisfying Error. A fallible exit propagates into a compatible enclosing Result; a failed cleanup overrides a pending success, return, break or continue as failure while retaining every existing failure; a function whose declared result cannot carry the failure is refused. <code>with</code> syntax is unchanged.</p>
+</li>
+<li><code>await</code> inside a synchronous manager's suite is allowed only when the manager, entered value and borrowed state satisfy the ordinary checked suspension proof; otherwise the resource and the <code>await</code> are diagnosed, without silent cloning. Awaited acquisition happens before entry. An exit that suspends uses the async protocol above.</li>
+<li>Diagnostics use the authored vocabulary block, header or responsible body expression as the primary span, with the vocabulary identity and entry/exit lowering chain as structured secondary evidence. Work and cleanup failures are both shown, and the generated <code>with</code> is not presented as handwritten.</li>
+<li>Cleanup must observe failure for both question-mark error propagation and an explicit return whose evaluated Result is Err. Diagnostic metadata may additionally preserve the exit mechanism, but the return spelling must not hide failure or change cleanup into error suppression. ScopeExit uses the reason-only cases Success, Return, Break, Continue, Error, Panic and Cancelled; detailed failure evidence remains separate.</li>
 </ul>
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 
