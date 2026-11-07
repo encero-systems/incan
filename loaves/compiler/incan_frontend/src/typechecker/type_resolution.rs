@@ -43,7 +43,6 @@ impl TypeChecker {
                         if payload.len() == 1 && self.explicit_ownership_mode(name).is_some_and(&defer))
                 })
             {
-                // One component carries the view; every other component stays an ordinary type.
                 for (position, argument) in arguments.iter().enumerate() {
                     match &argument.node {
                         Type::Generic(_, payload) if position == index => {
@@ -52,6 +51,9 @@ impl TypeChecker {
                         _ => self.refuse_unimplemented_ownership_annotation(argument),
                     }
                 }
+            } else if carried {
+                let mut deferred = false;
+                self.refuse_result_ownership_except(ty, &defer, &mut deferred);
             } else {
                 self.refuse_unimplemented_ownership_annotation(ty);
             }
@@ -100,6 +102,41 @@ impl TypeChecker {
             self.refuse_unhashable_collection_keys(ty, &resolved);
         }
         resolved
+    }
+
+    /// Defer the first supported result mode at any aggregate depth while refusing every other ownership wrapper.
+    /// The checked contract later requires one declared source and validates that complete structural path.
+    fn refuse_result_ownership_except(
+        &mut self,
+        annotation: &Spanned<Type>,
+        defer: &impl Fn(incan_lang::lang::types::ownership::OwnershipMode) -> bool,
+        deferred: &mut bool,
+    ) {
+        match &annotation.node {
+            Type::Generic(name, arguments) if self.explicit_ownership_mode(name).is_some() => {
+                if arguments.len() == 1 && !*deferred && self.explicit_ownership_mode(name).is_some_and(defer) {
+                    *deferred = true;
+                    self.refuse_unimplemented_ownership_annotation(&arguments[0]);
+                } else {
+                    self.refuse_unimplemented_ownership_annotation(annotation);
+                }
+            }
+            Type::Generic(_, arguments) | Type::DottedGeneric(_, arguments) | Type::Tuple(arguments) => {
+                for argument in arguments {
+                    self.refuse_result_ownership_except(argument, defer, deferred);
+                }
+            }
+            Type::Function(parameters, result) => {
+                for parameter in parameters {
+                    self.refuse_result_ownership_except(parameter, defer, deferred);
+                }
+                self.refuse_result_ownership_except(result, defer, deferred);
+            }
+            Type::Ref(inner) | Type::RefMut(inner) | Type::MutParam(inner) => {
+                self.refuse_result_ownership_except(inner, defer, deferred);
+            }
+            _ => self.refuse_unimplemented_ownership_annotation(annotation),
+        }
     }
 
     /// Return the nominal type a module-qualified spelling was proven to name, for the shared type resolver.

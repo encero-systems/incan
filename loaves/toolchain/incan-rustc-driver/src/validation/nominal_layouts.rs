@@ -147,6 +147,8 @@ pub(super) fn validate_models(plan: &Plan) -> Result<(), PlanError> {
             || !derives_valid
             || !valid_library_item(&declaration.library_item)
             || (declaration.library_item.is_empty() && !declaration.library_type_arguments.is_empty())
+            || declaration.view_lifetime_count < 0
+            || (!declaration.library_item.is_empty() && declaration.view_lifetime_count != 0)
         {
             return Err(PlanError::Invalid {
                 function: declaration.name.clone(),
@@ -181,6 +183,7 @@ pub(super) fn validate_models(plan: &Plan) -> Result<(), PlanError> {
         }
         for field in &declaration.fields {
             if declaration.library_item.is_empty()
+                && declaration.view_lifetime_count == 0
                 && borrowed_alias_in_source_type(plan, &field.ty, &mut BTreeSet::new())
             {
                 return Err(PlanError::Unsupported {
@@ -189,9 +192,14 @@ pub(super) fn validate_models(plan: &Plan) -> Result<(), PlanError> {
                 });
             }
             span(&field.span)?;
+            // A closed generic carrier may retain native references when lowering supplied the exact hidden lifetime
+            // inventory. A linked alias instead obtains that inventory from its exact metadata type.
+            let field_type = scalar(&field.ty);
+            let retained_view_field = (declaration.view_lifetime_count > 0 || !declaration.library_item.is_empty())
+                && external_signature_type(&field_type);
             if (!tuple && !identifier(&field.name))
                 || !fields.insert(&field.name)
-                || !source_signature_type(&scalar(&field.ty))
+                || (!source_signature_type(&field_type) && !retained_view_field)
             {
                 return Err(PlanError::Invalid {
                     function: declaration.name.clone(),

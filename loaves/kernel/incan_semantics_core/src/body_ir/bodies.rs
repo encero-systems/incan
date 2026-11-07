@@ -180,14 +180,17 @@ pub struct CheckedOwnedInitializer {
 }
 
 /// A body's result borrows one slot of `Body::params` (a method's receiver is slot 0) with shared or exclusive
-/// access, either as the whole result or as one payload of a `Result` or `Option` result. The body requires a
-/// checked profile, and so does every caller.
+/// access, either as the whole result or inside a checked aggregate. The body requires a checked profile, and so
+/// does every caller.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReturnedView {
     /// Zero-based index in the owning `Body::params` inventory.
     pub slot: usize,
     /// `Shared` for a `Borrowed[T]` result, `Exclusive` for a `Reference[T]` result.
     pub access: crate::IncanInputAccess,
+    /// Structural type-component path to the reference stored in the physical result. Empty means the whole result.
+    #[serde(default)]
+    pub component: Vec<usize>,
     /// The result payload carrying the view: `0` for the `Ok` or `Some` payload, `1` for the `Err` payload; `None` for
     /// a view that is the whole result.
     pub carried: Option<usize>,
@@ -385,7 +388,10 @@ impl Body {
         if let Some(view) = &self.returned_view {
             let source = self.params.get(view.slot);
             if view.access == crate::IncanInputAccess::Owned {
-                if view.carried.is_some() || source.is_none_or(|source| source.input_access.is_inferred()) {
+                if !view.component.is_empty()
+                    || view.carried.is_some()
+                    || source.is_none_or(|source| source.input_access.is_inferred())
+                {
                     return Some("owned result dependency must retain one explicit parameter slot");
                 }
             } else if !matches!(
@@ -408,6 +414,11 @@ impl Body {
                 return Some(
                     "carried returned view requires a payload of a Result or Option result or a tuple element",
                 );
+            }
+            if let Some(payload) = view.carried
+                && view.component.as_slice() != [payload]
+            {
+                return Some("carried returned view disagrees with its structural result component");
             }
         }
         if profile.version == 1 && !profile.owned_initializers.is_empty() {

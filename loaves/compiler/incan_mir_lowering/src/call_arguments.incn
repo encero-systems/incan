@@ -303,7 +303,15 @@ def explicit_argument_operand(
                 Some(_global) => return Err("unsupported Body IR explicit argument from static storage")
                 None => pass
             if is_element_place(builder, read.place)?:
-                return Err("unsupported Body IR explicit argument requires retained indexed storage")
+                if access != IncanInputAccess.Shared or read.fact != OwnershipFact.Borrow:
+                    return Err("unsupported Body IR explicit argument requires retained shared indexed storage")
+                referent, writable = reference_contract(ty)?
+                if writable or element_place_type(builder, read.place)? != referent:
+                    return Err("unsupported Body IR explicit indexed argument carrier mismatch")
+                match shared_element_place(builder, read.place, span)?:
+                    Some(source) =>
+                        return explicit_place_argument(builder, source, read.fact, ty, access, span)
+                    None => return Err("unsupported Body IR explicit argument requires retained list element storage")
             source = scalar_place(builder, read.place, span)?
             return explicit_place_argument(builder, source, read.fact, ty, access, span)
         RustOperand.Constant(constant) => return explicit_constant_argument(builder, constant, ty, access, span)

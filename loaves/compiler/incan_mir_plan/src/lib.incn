@@ -279,6 +279,9 @@ pub model ModelDeclaration:
     pub field_public: list[bool]
     pub derives: list[str]
     pub span: SourceSpan
+    # Source-owned closed generic carriers retain one native lifetime parameter for each reference in their field
+    # layout. Zero keeps the ordinary owned-layout declaration.
+    pub view_lifetime_count: int = 0
     # A specialized carrier keeps its source name for derived Debug and declaration metadata.
     pub source_name: str = ""
     # A stdlib layout names the compiled SDK crate item that owns its storage; the plan never declares it. With no

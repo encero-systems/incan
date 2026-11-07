@@ -390,6 +390,8 @@ struct BodyBuilder<'type_info, 'source> {
     awaited_view_places: HashMap<ast::Span, (bir::Place, incan_semantics_core::IncanInputAccess)>,
     /// Each local bound to such a call, by identity: the call's span, whose substituted place a match takes out.
     carried_view_locals: HashMap<incan_semantics_core::CanonicalSymbolId, ast::Span>,
+    /// Locals that own a user-defined or nested aggregate whose selected generic component is a physical reference.
+    aggregate_view_locals: HashSet<incan_semantics_core::CanonicalSymbolId>,
     /// Statement-if scopes whose branch states are independently joined for authenticated whole owners.
     input_if_scopes: Vec<bir::ScopeId>,
     /// Statement loops whose exit states are joined for authenticated whole owners, innermost last.

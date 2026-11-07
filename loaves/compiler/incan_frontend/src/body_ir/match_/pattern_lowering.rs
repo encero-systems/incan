@@ -68,13 +68,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     None => {
                         let total_reads = reads.count_reads(name);
                         let previous = self.bindings.get(name).copied();
-                        let local = self.declare_new_local_with_reads(
-                            name.clone(),
-                            expected_ty.clone(),
-                            arm_scope,
-                            span,
-                            total_reads,
-                        );
+                        let storage_ty = super::parameter_types::physical_type_argument(expected_ty.clone());
+                        let local =
+                            self.declare_new_local_with_reads(name.clone(), storage_ty, arm_scope, span, total_reads);
                         seen.insert(name.clone(), local);
                         saved_bindings.push((name.clone(), previous));
                         local

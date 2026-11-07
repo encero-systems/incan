@@ -15,6 +15,7 @@ pub(super) fn validate_function(plan: &Plan, function: &Function) -> Result<(), 
         .iter()
         .chain(function.parameters.iter().map(|parameter| &parameter.ty))
         .any(|ty| borrowed_alias_in_source_type(plan, ty, &mut BTreeSet::new()))
+        && function.signature_lifetimes.is_empty()
     {
         return Err(invalid(
             function,

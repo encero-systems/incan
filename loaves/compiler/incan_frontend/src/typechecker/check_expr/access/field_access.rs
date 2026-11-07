@@ -44,7 +44,8 @@ impl TypeChecker {
                     return Some(ResolvedType::Unknown);
                 }
                 self.retain_declared_nominal_field(span, &info.ty, &subst, info.identity.as_ref());
-                substitute_resolved_type(&info.ty, &subst)
+                let resolved = substitute_resolved_type(&info.ty, &subst);
+                self.explicit_ownership_value_type(&resolved).unwrap_or(resolved)
             }
             TypeInfo::Class(class) => {
                 // RFC 021: No alias-aware resolution for classes (models only)
@@ -60,7 +61,8 @@ impl TypeChecker {
                     return Some(ResolvedType::Unknown);
                 }
                 self.retain_declared_nominal_field(span, &info.ty, &subst, info.identity.as_ref());
-                substitute_resolved_type(&info.ty, &subst)
+                let resolved = substitute_resolved_type(&info.ty, &subst);
+                self.explicit_ownership_value_type(&resolved).unwrap_or(resolved)
             }
             TypeInfo::Enum(enum_info) => {
                 let resolved = Self::resolve_nominal_enum_field_type(type_name, type_args, field, enum_info)?;

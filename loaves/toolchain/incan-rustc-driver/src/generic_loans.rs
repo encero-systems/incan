@@ -44,8 +44,10 @@ pub(crate) fn signature<'tcx>(
             Err(error) if slot < raw.inputs().len() => match target.kind() {
                 ty::Ref(region, inner, mutable) => {
                     loans.ordinal = 0;
-                    let inner = replace(*inner, &site.path, expected, &mut loans)?;
-                    Ty::new_ref(tcx, *region, inner, *mutable)
+                    match replace(*inner, &site.path, expected, &mut loans) {
+                        Ok(inner) => Ty::new_ref(tcx, *region, inner, *mutable),
+                        Err(_) => return Err(error),
+                    }
                 }
                 _ => return Err(error),
             },
@@ -69,7 +71,7 @@ fn replace<'tcx>(
     loans: &mut Loans<'tcx>,
 ) -> Result<Ty<'tcx>, PlanError> {
     let Some((&head, tail)) = path.split_first() else {
-        if loans.tcx.erase_and_anonymize_regions(value) != loans.tcx.erase_and_anonymize_regions(expected) {
+        if erase_regions(value, loans.tcx) != erase_regions(expected, loans.tcx) {
             return Err(invalid(
                 "generic loan occurrence differs from its selected type argument",
             ));
@@ -108,6 +110,29 @@ fn replace<'tcx>(
             Ok(Ty::new_adt(loans.tcx, *definition, loans.tcx.mk_args(&arguments)))
         }
         _ => Err(invalid("generic loan projection has no native type subtree")),
+    }
+}
+
+/// Remove every region form before comparing native structure; source binders and plan-erased regions represent the
+/// same selected loan site, while ADT and type-argument identity must still match exactly.
+fn erase_regions<'tcx>(value: Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Ty<'tcx> {
+    value.fold_with(&mut EraseAllRegions { tcx })
+}
+
+/// Canonicalize bound, free and erased regions to the one comparison-only erased region.
+struct EraseAllRegions<'tcx> {
+    tcx: TyCtxt<'tcx>,
+}
+
+impl<'tcx> TypeFolder<TyCtxt<'tcx>> for EraseAllRegions<'tcx> {
+    /// Supply the native type interner.
+    fn cx(&self) -> TyCtxt<'tcx> {
+        self.tcx
+    }
+
+    /// Region identity is deliberately outside structural type selection at this boundary.
+    fn fold_region(&mut self, _region: ty::Region<'tcx>) -> ty::Region<'tcx> {
+        self.tcx.lifetimes.re_erased
     }
 }
 

@@ -13,3 +13,12 @@ pub class SampleBuffer:
             return Err("full")
         self.samples.append(sample)
         return Ok(self)
+
+
+pub class BufferView[T]:
+    pub buffer: T
+
+
+pub def view_buffer(buffer: Borrowed[SampleBuffer]) -> BufferView[Borrowed[SampleBuffer]] from buffer:
+    """Retain a borrowed buffer in a provider-defined generic carrier."""
+    return BufferView[Borrowed[SampleBuffer]](buffer=buffer)

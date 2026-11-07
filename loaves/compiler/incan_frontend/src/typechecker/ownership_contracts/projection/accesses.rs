@@ -379,6 +379,11 @@ impl SourceAccesses<'_, '_> {
                     self.expression(value, false)?;
                 }
             }
+            Expr::Tuple(elements) => {
+                for value in elements {
+                    self.expression(value, false)?;
+                }
+            }
             Expr::ListComp(comprehension) => self.comprehension(&comprehension.clauses, &[&comprehension.expr])?,
             Expr::DictComp(comprehension) => {
                 self.comprehension(&comprehension.clauses, &[&comprehension.key, &comprehension.value])?
@@ -716,6 +721,7 @@ impl SourceAccesses<'_, '_> {
                     match (value, view) {
                         (Some(value), Some(view)) => match view.carried {
                             Some(payload) => self.carried_return(value, payload)?,
+                            None if !view.component.is_empty() => self.expression(value, true)?,
                             // A returned view borrows its source place: the graph holds a borrow, not a value access.
                             None => self.view_return(value)?,
                         },

@@ -203,8 +203,9 @@ pub(in crate::body_ir) fn collect_local_nominal_declarations(
         .collect()
 }
 
-/// Retain source field order while resolving types from the checked class layout or span-keyed model facts.
-/// A missing field fact keeps the existing unknown carrier rather than inferring a layout from source spelling.
+/// Retain source field order while resolving types from the checked class layout or span-keyed model facts. A field
+/// written exactly as a declaration parameter keeps that template even when a checked constructor has already closed
+/// one use; physical instance specialization owns its replacement. Missing facts retain an unknown carrier.
 pub(super) fn nominal_field_types(
     fields: &[ast::Spanned<ast::FieldDecl>],
     class_layout: Option<&ClassLayoutInfo>,
@@ -214,6 +215,11 @@ pub(super) fn nominal_field_types(
     fields
         .iter()
         .map(|field| {
+            if let ast::Type::Simple(name) = &field.node.ty.node
+                && type_parameters.contains(name)
+            {
+                return IncanType::TypeVar(name.clone());
+            }
             if let Some(layout) = class_layout {
                 layout
                     .fields

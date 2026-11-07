@@ -28,6 +28,10 @@ mod operations;
 mod retained_results;
 mod values;
 
+/// Source-analysis refusal for a borrowed place passed into a plain owned nominal field. The caller turns this typed
+/// boundary into the targeted public diagnostic instead of exposing a generic graph-admission failure.
+pub(super) const BORROWED_VALUE_IN_OWNED_FIELD: &str = "a plain owned field cannot store a borrowed value";
+
 /// A source shape whose access behavior has not been projected. The anchor is the unsupported operation itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::typechecker) struct Unavailable {
@@ -130,6 +134,8 @@ struct Builder<'a> {
     /// The `Result` or `Option` payload or the tuple element carrying the returned view, or `None` for a view returned
     /// whole.
     view_carried: Option<usize>,
+    /// Complete result type path to the declared view; nonempty with no builtin carried payload denotes an aggregate.
+    view_component: Vec<usize>,
     /// Whether the declared result is a tuple, so `view_carried` names one of its elements.
     view_in_tuple: bool,
     /// Returns that do not borrow the declared view source. These are program errors, reported by the caller.
@@ -287,6 +293,7 @@ fn build_graph(
         owned_source: None,
         view: None,
         view_carried: None,
+        view_component: Vec::new(),
         view_in_tuple: false,
         view_errors: Vec::new(),
     };
@@ -329,6 +336,7 @@ fn build_graph(
         };
         builder.view = Some((view.access == incan_semantics_core::IncanInputAccess::Exclusive, place));
         builder.view_carried = view.carried;
+        builder.view_component = view.component.to_vec();
         builder.view_in_tuple = super::super::written_tuple_elements(&callable.return_type().node).is_some();
     }
     if let Some(source) = owned_source {

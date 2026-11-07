@@ -629,10 +629,9 @@ fn carried_return_type(
         .and_then(|binding| binding.identity.as_ref())
         .and_then(|identity| facts.type_info.declarations.ownership_contracts.get(identity));
     match crate::ownership_metadata::returned_view(contract) {
-        Ok(Some(view)) => match view.carried {
-            Some(payload) => super::returned_views::reference_carrier(ty, view.access, payload),
-            None => ty,
-        },
+        Ok(Some(view)) if !view.component.is_empty() => {
+            super::returned_views::reference_authored_component(ty, view.access, view.component)
+        }
         _ => ty,
     }
 }
@@ -648,6 +647,7 @@ fn result_dependency(builder: &BodyBuilder<'_, '_>) -> Option<bir::ReturnedView>
             builder.retained_result_source.map(|slot| bir::ReturnedView {
                 slot,
                 access: incan_semantics_core::IncanInputAccess::Owned,
+                component: Vec::new(),
                 carried: None,
             })
         })

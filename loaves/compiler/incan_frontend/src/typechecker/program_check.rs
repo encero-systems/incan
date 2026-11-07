@@ -126,6 +126,7 @@ impl TypeChecker {
         self.body_checks.clear();
         self.checked_bodies.clear();
         self.checked_declarations.clear();
+        self.refused_ownership_authorities.clear();
         self.diagnostic_owner_ranges.clear();
         self.body_open_diagnostics.clear();
         self.visibility_point = VisibilityPoint::Collecting;

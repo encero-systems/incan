@@ -70,6 +70,7 @@ from hashed_collections import (
     read_dictionary_element,
 )
 from carrier_operands import boundary_operand, element_operand
+from explicit_arguments import reference_contract
 
 
 pub def list_borrow(mut builder: Builder, place: Place, mutable: bool, span: SourceSpan) -> Result[Operand, str]:
@@ -518,7 +519,7 @@ def read_element_field(
     projection: &PlaceElem,
     span: SourceSpan,
 ) -> Result[Place, str]:
-    """Read a field from a list element, copying scalars and function pointers while cloning owned values."""
+    """Read a list element field, copying shared references and scalar values while cloning owned values."""
     steps = field_steps(
         builder.constructors,
         builder.nominals,
@@ -532,6 +533,14 @@ def read_element_field(
     for step in steps:
         field = appended_field(field, step, span)?
     ty = steps[len(steps) - 1].ty
+    match reference_contract(ty):
+        Ok((_referent, writable)) =>
+            if writable:
+                return Err("unsupported Body IR exclusive reference field inside a list element")
+            output = temporary(builder, ty, span)
+            builder.emit(plan_assign(output, RvalueKind.Use(read_place(field, false, span)), span))
+            return Ok(output)
+        Err(_reason) => pass
     if ty == PlanType.String:
         return clone_text(builder, field, span)
     if is_nominal_type(ty):

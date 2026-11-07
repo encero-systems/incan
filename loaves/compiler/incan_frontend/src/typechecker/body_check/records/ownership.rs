@@ -95,7 +95,11 @@ pub(super) fn read(positions: &Positions, fields: &[String]) -> Result<CheckedOw
             let fields = (0..size)
                 .map(|_| positions.canonical(next(&mut values)?))
                 .collect::<Result<Vec<_>, _>>()?;
-            Some(ResultDependency { slot, fields })
+            Some(ResultDependency {
+                slot,
+                fields,
+                aggregate: false,
+            })
         }
         _ => return Err(NodeBindingError::MissingNode),
     };

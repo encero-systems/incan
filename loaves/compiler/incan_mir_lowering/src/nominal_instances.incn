@@ -222,7 +222,8 @@ pub def specialize_nominals_with_instances(
                     instance = borrowed_at(instances, int(position.clone()))
                     if instance.declaration.canonical == canonical:
                         closed: Body = close_owner_body(body, instance)?
-                        result.bodies.push(closed)
+                        if retained_body_types(constructors, module, closed, instances)?:
+                            result.bodies.push(closed)
             None => pass
     return Ok((result, instances))
 
@@ -410,6 +411,70 @@ def collect_nominal_type(
         RustType.RefMut(inner) => return collect_nominal_type(constructors, module, inner, instances, ancestors)
         _ => pass
     return Ok(None)
+
+
+def retained_body_types(
+    constructors: &ConstructorIndex,
+    module: &BodyIrModule,
+    body: &Body,
+    instances: &list[NominalInstance],
+) -> Result[bool, str]:
+    """Admit a closed method frame only when every nominal local and result already has retained storage."""
+    for local in body.locals:
+        if not retained_type(constructors, module, local.ty, instances)?:
+            return Ok(false)
+    return retained_type(constructors, module, body.return_type, instances)
+
+
+def retained_type(
+    constructors: &ConstructorIndex,
+    module: &BodyIrModule,
+    ty: &RustType,
+    instances: &list[NominalInstance],
+) -> Result[bool, str]:
+    """Check one closed type recursively without extending the specialization inventory during final emission."""
+    match ty:
+        RustType.Generic(base=base, args=arguments) =>
+            for argument in arguments:
+                if not retained_type(constructors, module, argument, instances)?:
+                    return Ok(false)
+            if not closed_arguments(arguments):
+                return Ok(true)
+            for index in named_declarations(constructors, module, str(base))?:
+                declaration = nominal_at(module.nominal_declarations, index)
+                if not admitted_owner(declaration):
+                    continue
+                if len(declaration.type_parameters) != len(arguments):
+                    return Err(f"unsupported Body IR nominal type argument arity on {base}")
+                mut retained_arguments = arguments.clone()
+                if native_owner(declaration):
+                    retained_arguments = representation_arguments(
+                        module.nominal_declarations,
+                        constructors,
+                        retained_arguments,
+                    )
+                for position in range(len(instances)):
+                    instance = borrowed_at(instances, position)
+                    if (
+                        instance.declaration.canonical == declaration.canonical
+                        and instance.arguments == retained_arguments
+                    ):
+                        return Ok(true)
+                return Ok(false)
+            return Ok(true)
+        RustType.Tuple(elements) =>
+            for element in elements:
+                if not retained_type(constructors, module, element, instances)?:
+                    return Ok(false)
+        RustType.Function(params=parameters, return_type=result) =>
+            for parameter in parameters:
+                if not retained_type(constructors, module, parameter.ty, instances)?:
+                    return Ok(false)
+            return retained_type(constructors, module, result, instances)
+        RustType.Ref(inner) => return retained_type(constructors, module, inner, instances)
+        RustType.RefMut(inner) => return retained_type(constructors, module, inner, instances)
+        _ => pass
+    return Ok(true)
 
 
 def collect_generic_nominal_type(

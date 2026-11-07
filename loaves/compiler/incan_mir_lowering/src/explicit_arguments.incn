@@ -14,7 +14,7 @@ pub def direct_view_access(body: &RustBody) -> Option[IncanInputAccess]:
     """The access of a body's direct returned view; a carried view returns an owned carrier and has none."""
     match body.returned_view:
         Some(view) =>
-            if view.access != IncanInputAccess.Owned and view.carried.is_none():
+            if view.access != IncanInputAccess.Owned and len(view.component) == 0:
                 return Some(view.access)
         None => pass
     return None
@@ -156,7 +156,7 @@ pub def reference_contract(ty: PlanType) -> Result[tuple[PlanType, bool], str]:
         PlanType.SliceMutRef(elements) => return Ok((PlanType.NativeSlice(elements), true))
         PlanType.ValidationErrorRef => return Ok((PlanType.ValidationError, false))
         _ => pass
-    return Err("unsupported Body IR explicit reference carrier")
+    return Err(f"unsupported Body IR explicit reference carrier {ty:?}")
 
 
 def require_writable_path(locals: &list[Local], source: Place) -> Result[None, str]:

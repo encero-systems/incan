@@ -3,16 +3,26 @@
 from rust::incan_semantics_core import IncanInputAccess, IncanType as RustType
 from rust::incan_semantics_core::body_ir import Body
 from pub::incan_mir_plan import GenericLoan, PlanType
+from type_parameters import source_nominal_owner, source_nominal_owners
 
 
 pub def generic_loans(body: &Body, arguments: list[PlanType]) -> list[GenericLoan]:
     """1. Retain parameter occurrences. 2. Retain result occurrences under the same source type identities."""
     mut loans: list[GenericLoan] = []
+    source_nominals = source_nominal_owners(body)
     # 1. A source type parameter keeps its identity at every structural occurrence in an input.
     for slot in range(len(body.params)):
-        type_generic_loans(body.params[slot].ty, body.type_parameters, arguments, slot, [], loans)
+        type_generic_loans(body.params[slot].ty, body.type_parameters, arguments, source_nominals, slot, [], loans)
     # 2. Return occurrences carry exactly the same identity, including loans hidden inside native values.
-    type_generic_loans(body.return_type, body.type_parameters, arguments, len(body.params), [], loans)
+    type_generic_loans(
+        body.return_type,
+        body.type_parameters,
+        arguments,
+        source_nominals,
+        len(body.params),
+        [],
+        loans,
+    )
     return loans
 
 
@@ -20,6 +30,7 @@ def type_generic_loans(
     ty: &RustType,
     names: list[str],
     arguments: list[PlanType],
+    source_nominals: &dict[str, bool],
     slot: int,
     path: list[int],
     mut loans: list[GenericLoan],
@@ -31,11 +42,14 @@ def type_generic_loans(
                 if names[index] == str(name):
                     loans.append(GenericLoan(slot=slot, path=path, parameter=index, ty=arguments[index]))
                     return
-        RustType.Ref(inner) => type_generic_loans(inner, names, arguments, slot, path + [0], loans)
-        RustType.RefMut(inner) => type_generic_loans(inner, names, arguments, slot, path + [0], loans)
-        RustType.Tuple(elements) => element_generic_loans(elements, names, arguments, slot, path, loans)
-        RustType.Generic(base=_base, args=elements) =>
-            element_generic_loans(elements, names, arguments, slot, path, loans)
+        RustType.Ref(inner) => type_generic_loans(inner, names, arguments, source_nominals, slot, path + [0], loans)
+        RustType.RefMut(inner) => type_generic_loans(inner, names, arguments, source_nominals, slot, path + [0], loans)
+        RustType.Tuple(elements) =>
+            element_generic_loans(elements, names, arguments, source_nominals, slot, path, loans)
+        RustType.Generic(base=base, args=elements) =>
+            if source_nominal_owner(source_nominals, str(base)):
+                return
+            element_generic_loans(elements, names, arguments, source_nominals, slot, path, loans)
         _ => pass
 
 
@@ -43,13 +57,14 @@ def element_generic_loans(
     elements: &list[RustType],
     names: list[str],
     arguments: list[PlanType],
+    source_nominals: &dict[str, bool],
     slot: int,
     path: list[int],
     mut loans: list[GenericLoan],
 ) -> None:
     """Keep distinct source type parameters distinct even when their concrete native types happen to be equal."""
     for index in range(len(elements)):
-        type_generic_loans(elements[index], names, arguments, slot, path + [index], loans)
+        type_generic_loans(elements[index], names, arguments, source_nominals, slot, path + [index], loans)
 
 
 pub def signature_lifetimes(body: &Body, arguments: list[RustType]) -> Result[list[list[str]], str]:
@@ -74,13 +89,14 @@ pub def signature_lifetimes(body: &Body, arguments: list[RustType]) -> Result[li
                 slot = int(view.slot)
                 signature[slot] = ["view"] + signature[slot]
                 result = signature[len(signature) - 1]
-                match view.carried:
-                    Some(payload) =>
-                        position = payload_reference(body.return_type, int(payload), body.type_parameters, arguments)
-                        if position >= len(result):
-                            return Err("carried returned view has no payload reference")
-                        signature[len(signature) - 1] = result[:position] + ["view"] + result[position + 1:]
-                    None => signature[len(signature) - 1] = ["view"] + result
+                if len(view.component) == 0:
+                    signature[len(signature) - 1] = ["view"] + result
+                else:
+                    position = component_reference(body.return_type, view.component, body.type_parameters, arguments)
+                    if position >= len(result):
+                        return Err("aggregate returned view has no component reference")
+                    signature[len(signature) - 1] = result[:position] + ["view"] + result[position + 1:]
+                retain_unique_source_elision(signature)
                 return Ok(signature)
         None => pass
     # 4. A generic source signature with one elided input loan ties an elided output to it. If substituting a
@@ -124,18 +140,24 @@ def named_source_elisions(names: list[str]) -> list[str]:
     return retained
 
 
-def payload_reference(result: &RustType, payload: int, names: list[str], arguments: list[RustType]) -> int:
-    """
-    The position of a carried view's reference among its result's references: after every earlier payload's, or
-    every earlier tuple element's.
-    """
+def component_reference(result: &RustType, component: list[usize], names: list[str], arguments: list[RustType]) -> int:
+    """Return the preorder position of the reference stored at one checked aggregate component."""
+    if len(component) == 0:
+        return 0
+    slot = component[0]
     match result:
-        RustType.Generic(base=_base, args=elements) => return references_before(elements, payload, names, arguments)
-        RustType.Tuple(elements) => return references_before(elements, payload, names, arguments)
+        RustType.Generic(base=_base, args=elements) =>
+            return references_before(elements, slot, names, arguments) + component_reference(
+                elements[int(slot)], component[1:], names, arguments
+            )
+        RustType.Tuple(elements) =>
+            return references_before(elements, slot, names, arguments) + component_reference(
+                elements[int(slot)], component[1:], names, arguments
+            )
         _ => return 0
 
 
-def references_before(elements: &list[RustType], payload: int, names: list[str], arguments: list[RustType]) -> int:
+def references_before(elements: &list[RustType], payload: usize, names: list[str], arguments: list[RustType]) -> int:
     """Count the references of the components before the one carrying a view."""
     mut position = 0
     for index in range(payload):

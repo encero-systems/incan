@@ -97,7 +97,7 @@ pub def model_type(
             ):
                 return retained_model_type(constructors, declarations, ty)
             retained_base = str(base)
-            match retained_nominal_type(constructors, declarations, retained_base, arguments):
+            match retained_nominal_type(constructors, declarations, retained_base, arguments)?:
                 Some(retained) => return Ok(retained)
                 None => pass
             return generic_tuple_type(ty)
@@ -109,23 +109,27 @@ def retained_nominal_type(
     declarations: &list[NominalDeclaration],
     base: str,
     arguments: &list[RustType],
-) -> Option[PlanType]:
-    """Normalize one queried native specialization once; source owners keep their complete borrowed key."""
+) -> Result[Option[PlanType], str]:
+    """Normalize one queried specialization once and name the retained sibling keys when its closed layout is missing."""
     mut owner = -1
     match constructors.generic_owners.get(base):
         Some(position) => owner = position.clone()
-        None => return None
+        None => return Ok(None)
     template = borrowed_at(declarations, owner)
     mut name = ""
     if native_owner(template):
         name = nominal_symbol(base, representation_arguments(declarations, constructors, arguments))
     else:
         name = nominal_symbol(base, arguments)
+    mut retained: list[str] = []
     for index in range(len(declarations)):
         declaration = borrowed_at(declarations, index)
-        if declaration.canonical == template.canonical and declaration.name == name:
-            return Some(PlanType.Model(index, model_symbol(str(declaration.name))))
-    return None
+        if declaration.canonical != template.canonical:
+            continue
+        retained.append(str(declaration.name))
+        if declaration.name == name:
+            return Ok(Some(PlanType.Model(index, model_symbol(str(declaration.name)))))
+    return Err(f"unsupported Body IR unretained nominal specialization {name}; retained siblings {retained:?}")
 
 
 def retained_model_type(

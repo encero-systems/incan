@@ -98,14 +98,14 @@ impl BodyBuilder<'_, '_> {
         span: HirSourceSpan,
         out: &mut Vec<bir::Statement>,
     ) -> Option<Result<(), String>> {
-        let access = self
-            .input_body
-            .as_ref()
-            .ok()?
-            .as_ref()?
-            .view_local(identity, &assignment.value);
-        let access = match access {
-            Ok(access) => access?,
+        let proof = self.input_body.as_ref().ok()?.as_ref()?;
+        let access = match proof.view_local(identity, &assignment.value) {
+            Ok(Some(access)) => access,
+            Ok(None) => match proof.aggregate_view_local(identity, &assignment.value) {
+                Ok(Some(access)) => access,
+                Ok(None) => return None,
+                Err(reason) => return Some(Err(reason.into())),
+            },
             Err(reason) => return Some(Err(reason.into())),
         };
         self.retain_input_local_binding(assignment, identity, access);
@@ -119,6 +119,20 @@ impl BodyBuilder<'_, '_> {
                 let place = self
                     .assignment_target_place(assignment, ty, remaining, scope, span, out)
                     .ok_or("carried view local has no checked storage")?;
+                self.finish_assignment(assignment, place, value, false, span, out);
+                Ok(())
+            })());
+        }
+        // A user-defined aggregate carrying a view owns its carrier and stores the physical reference in the selected
+        // component. Keep that storage local instead of turning the whole aggregate into an alias of its source.
+        if let Some((call, component)) = self.aggregate_view_call(&assignment.value) {
+            self.aggregate_view_locals.insert(identity.clone());
+            return Some((|| {
+                let ty = super::returned_views::reference_authored_component(self.resolve_ty(call), access, &component);
+                let value = self.lower_expr_to_operand(&assignment.value, scope, out);
+                let place = self
+                    .assignment_target_place(assignment, ty, remaining, scope, span, out)
+                    .ok_or("aggregate view local has no checked storage")?;
                 self.finish_assignment(assignment, place, value, false, span, out);
                 Ok(())
             })());

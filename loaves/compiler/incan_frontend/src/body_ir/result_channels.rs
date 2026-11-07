@@ -47,14 +47,19 @@ impl BodyBuilder<'_, '_> {
 
     /// A canonical read of a local keeps the Result channels its defining Body IR value retained.
     pub(super) fn retained_result_read_type(&self, span: ast::Span, recorded: IncanType) -> IncanType {
+        let Some(identity) = self.type_info.resolved_identity(span) else {
+            return recorded;
+        };
         let Some(local) = self
-            .type_info
-            .resolved_identity(span)
-            .and_then(|identity| self.identity_bindings.get(identity))
+            .identity_bindings
+            .get(identity)
             .and_then(|local| self.locals.get(local.index()))
         else {
             return recorded;
         };
+        if self.aggregate_view_locals.contains(identity) {
+            return local.ty.clone();
+        }
         self.refine_result_channels(&recorded, &local.ty)
     }
 

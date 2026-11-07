@@ -446,6 +446,26 @@ def view_operand(
         _ => return Err("unsupported Body IR returned view without a source place")
 
 
+pub def authenticated_component_operand(
+    mut builder: Builder,
+    operand: &RustOperand,
+    expected: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Borrow one stored aggregate component from the place authenticated by the body's returned-view contract."""
+    _referent, writable = reference_contract(expected)?
+    mut access = IncanInputAccess.Shared
+    mut fact = OwnershipFact.Borrow
+    if writable:
+        access = IncanInputAccess.Exclusive
+        fact = OwnershipFact.MutBorrow
+    match operand:
+        RustOperand.Place(read) =>
+            source = scalar_place(builder, read.place, span)?
+            return explicit_place_argument(builder, source, fact, expected, access, span)
+        _ => return Err("unsupported Body IR aggregate returned view without a source place")
+
+
 pub def carrier_payload(
     mut builder: Builder,
     payload: &RustOperand,

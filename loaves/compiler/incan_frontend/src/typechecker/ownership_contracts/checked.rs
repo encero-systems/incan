@@ -160,8 +160,15 @@ impl TypeChecker {
                 )
                 .with_stable_code("INCAN-T0123")
             })?;
-            let underlying = crate::ownership_metadata::input_value_type(Some(contract), slot, &parameter.ty)
-                .map_err(|reason| CompileError::type_error(reason.into(), span).with_stable_code("INCAN-T0123"))?;
+            let underlying = crate::ownership_metadata::input_value_type_matching(
+                Some(contract),
+                slot,
+                &parameter.ty,
+                &|declared, instantiated| {
+                    self.types_compatible(declared, instantiated) && self.types_compatible(instantiated, declared)
+                },
+            )
+            .map_err(|reason| CompileError::type_error(reason.into(), span).with_stable_code("INCAN-T0123"))?;
             let projected = output.get_or_insert_with(|| parameters.to_vec());
             projected[slot].ty = underlying.clone();
         }
@@ -557,7 +564,7 @@ impl TypeChecker {
             Some((_, receiver)) => self.substitute_self_in_resolved_type(view.mode.underlying.clone(), receiver),
             None => view.mode.underlying.clone(),
         };
-        if returned != held {
+        if !self.types_compatible(&returned, &held) || !self.types_compatible(&held, &returned) {
             return Err(Self::ownership_source_error(
                 &format!("Returned view type '{returned}' differs from its source's type '{held}'"),
                 signature.result.span,
@@ -574,7 +581,7 @@ impl TypeChecker {
         result: &ResolvedType,
     ) -> ResolvedType {
         let contract = self.type_info.declarations.ownership_contracts.get(identity);
-        crate::ownership_metadata::result_value_type(contract, result).unwrap_or_else(|_| result.clone())
+        crate::ownership_metadata::result_expression_type(contract, result).unwrap_or_else(|_| result.clone())
     }
 
     /// Project a selected declaration's returned view into the call's value type, as for its inputs. The published
@@ -600,7 +607,7 @@ impl TypeChecker {
         {
             return Ok(None);
         }
-        crate::ownership_metadata::result_value_type(Some(contract), result)
+        crate::ownership_metadata::result_expression_type(Some(contract), result)
             .map(Some)
             .map_err(refusal)
     }
@@ -665,7 +672,23 @@ impl TypeChecker {
                 ));
             };
             let (fields, _) = self.resolve_ownership_source_fields(ty, source)?;
-            contract.result_source = Some(ResultDependency { slot, fields });
+            let result_mode = contract.modes.iter().find(|mode| mode.component.parameter.is_none());
+            let aggregate = result_mode.is_some_and(|mode| {
+                let [component] = mode.component.children.as_slice() else {
+                    return !mode.component.children.is_empty();
+                };
+                !(signature.result_type.is_result()
+                    || (signature.result_type.is_option() && *component == 0)
+                    || signature
+                        .result_type
+                        .tuple_elements()
+                        .is_some_and(|elements| *component < elements.len()))
+            });
+            contract.result_source = Some(ResultDependency {
+                slot,
+                fields,
+                aggregate,
+            });
         }
         if contract.modes.is_empty() && contract.result_source.is_none() {
             return Ok(None);

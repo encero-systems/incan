@@ -80,7 +80,7 @@ use crate::body_ir::{
 /// because decoding the prior diagnostic row shape would shift every following structured field.
 /// Version 51 closes the builtin-method operation over text, iterator, carrier, clone, and numeric methods as well, so
 /// partial operation registries are refused rather than reintroducing name-based dispatch.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 51;
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 52;
 
 /// Only the binding-aware combined layout is admitted. Missing input authority cannot be reconstructed from a
 /// native ABI, and a prior layout cannot silently omit initializer transfers, explicit local obligations, returned
