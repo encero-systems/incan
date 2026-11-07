@@ -6,6 +6,8 @@ from bakery import bakery, claim
 from files import read_json
 from json_fields import field, required_items, required_text, strings
 from intake import ManifestReader
+from home_paths import TOOLCHAIN
+from lock_format import lock_path, read_lock, recorded_bindings
 from loaf_local_graph import LocalFacet
 from observation import Observation, observe
 from pub::incan_platform.trace import Operation
@@ -14,8 +16,8 @@ from registry_units import RegistryUnit, RegistrySelection, RegistryDemand, Regi
 from registry_metadata import complete_legacy, completion_selection
 from registry_pages import artifact_stamps, directory_stamps, question, recall_catalog, retain_catalog
 from registry_pages import current as catalog_current
-from toml_fields import optional_string, read_manifest
 from toolchain import load_toolchain, located, rust_compiler
+from unit_freshness import compiler_fingerprint
 from unit_freshness import record
 from unit_publication import import_payload
 from registry_units import sole_library as registry_artifact
@@ -28,6 +30,7 @@ pub def read_registry_units(
     path: Path,
     project: str = "",
     reader: ManifestReader = ManifestReader(),
+    use_project_lock: bool = true,
 ) -> Result[RegistryUnits, str]:
     """
     Registry units from a closure result (`incan.oven.closure/1`): every compiled unit and its store directory.
@@ -47,13 +50,13 @@ pub def read_registry_units(
         completion_clock = begin()
         if catalog_current(catalog):
             record_work(Operation.RegistryCompletion, path.0, completion_clock)
-            return project_registry(catalog_registry(catalog.units, path)?, project, reader)
+            return project_registry(catalog_registry(catalog.units, path)?, project, reader, use_project_lock)
     # 3. Only one caller completes a missing generation; waiters recheck after taking its claim.
     held = claim(bakery()?, f"registry/catalog/{key}")?
     if let Some(catalog) = recall_catalog(key)?:
         if catalog_current(catalog):
-            return project_registry(catalog_registry(catalog.units, path)?, project, reader)
-    return project_registry(read_registry_catalog(path, key, observed)?, project, reader)
+            return project_registry(catalog_registry(catalog.units, path)?, project, reader, use_project_lock)
+    return project_registry(read_registry_catalog(path, key, observed)?, project, reader, use_project_lock)
 
 
 def read_registry_catalog(path: Path, key: str, observed: Observation) -> Result[RegistryUnits, str]:
@@ -97,28 +100,31 @@ def catalog_registry(units: list[RegistryUnit], path: Path) -> Result[RegistryUn
     )
 
 
-pub def project_registry(registry: RegistryUnits, project: str, reader: ManifestReader) -> Result[RegistryUnits, str]:
-    """A project's explicit build.registry-lock supersedes the installation's standard-producer root selection."""
-    path = registry_record_path(project, reader)?
-    if path == "":
+pub def project_registry(
+    registry: RegistryUnits,
+    project: str,
+    reader: ManifestReader,
+    use_project_lock: bool = true,
+) -> Result[RegistryUnits, str]:
+    """Apply the root project's validated oven.lock as the exact producer constraint for registry selection."""
+    _ = reader
+    if not use_project_lock or project == "" or not Path(project).joinpath("loaf.toml").is_file():
         return Ok(registry)
+    path = lock_path(Path(project))
+    if not path.is_file():
+        return Ok(registry)
+    lock = read_lock(path)?
+    toolchain = load_toolchain()?
+    identity = compiler_fingerprint(toolchain)?
+    if lock.toolchain.version != TOOLCHAIN or lock.toolchain.identity != identity:
+        return Err(
+            f"{path.0}: toolchain {lock.toolchain.version} ({lock.toolchain.identity}) differs from {TOOLCHAIN} ({identity}); run `oven lock`",
+        )
     mut selected = registry
-    selected.recorded_bindings = registry_record(registry.units, Path(path))?
+    selected.recorded_bindings = recorded_bindings(lock, registry.units)?
     selected.installation_bindings = []
+    selected.resolution_mode = lock.mode
     return Ok(selected)
-
-
-pub def registry_record_path(project: str, reader: ManifestReader) -> Result[str, str]:
-    """Locate a project's explicit producer record for ordinary preparation and resident input observation."""
-    if project == "" or not Path(project).joinpath("loaf.toml").is_file():
-        return Ok("")
-    manifest = read_manifest(Path(project), reader)?
-    match optional_string(manifest, "build.registry-lock")?:
-        None => return Ok("")
-        Some(path) =>
-            if path == "":
-                return Err(f"{project}: build.registry-lock must name a producer closure")
-            return Ok(located(Path(project), path))
 
 
 def recorded_registry_bindings(units: list[RegistryUnit], source: Path) -> Result[list[Tuple[str, str]], str]:
@@ -218,15 +224,20 @@ pub def selected_registry(
     profile: str,
 ) -> Result[RegistryUnits, str]:
     """Select every local facet's registry roots together before any producer compiles or any alias is bound."""
-    mut demands: list[RegistryDemand] = []
-    for facet in facets:
-        for record in facet.registry:
-            demands.append(RegistryDemand(selection=registry_selection(record)?, domain=facet.domain.value()))
-    selected = registry.select(demands, profile)?
+    selected = resolve_registry(registry, facets, profile)?
     for unit in selected.units:
         if unit.entry != "":
             import_payload(Path(registry_artifact(unit)?), unit.entry)?
     return Ok(selected)
+
+
+pub def resolve_registry(registry: RegistryUnits, facets: list[LocalFacet], profile: str) -> Result[RegistryUnits, str]:
+    """Resolve exact registry producers without importing their payloads, as `oven lock` requires."""
+    mut demands: list[RegistryDemand] = []
+    for facet in facets:
+        for record in facet.registry:
+            demands.append(RegistryDemand(selection=registry_selection(record)?, domain=facet.domain.value()))
+    return registry.select(demands, profile)
 
 
 pub def registry_features(value: JsonValue) -> Result[list[str], str]:

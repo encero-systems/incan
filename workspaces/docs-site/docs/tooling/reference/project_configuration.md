@@ -77,12 +77,13 @@ A requirement must match an available toolchain registry unit. Declaration does 
 | `target` | String | Authored compilation-target intent. |
 | `profile` | String | Authored profile intent; CLI unit commands default to `debug` and accept `--profile`. |
 | `rust-edition` | String | Authored Rust edition intent. |
-| `registry-lock` | Nonempty string | Path to an `incan.oven.closure/1` producer record, relative to the project or absolute. Its `units` select exact registry `entry` identities in `host` or `target` domains, overriding the installation's standard selection. Missing entries, incompatible requirements and undecided ambiguities are refused. Omitted by default. |
 | `unstable-features` | Array of distinct Rust identifiers | Unstable features of the pinned compiler that the Loaf's Incan units enable, such as `rustc_private`. Empty by default. |
 | `toolchain-components` | Array of distinct component names | Components of the pinned toolchain that the Loaf's Incan units require, such as `rustc-dev`. A name uses ASCII letters, digits, `-` and `_`. Empty by default. |
 | `sysroot-dependencies` | Array of distinct Rust identifiers | Libraries of the pinned toolchain that the Loaf's Incan units link, such as `rustc_driver`. Empty by default. |
 
 Declaring a target or profile does not install its artifacts.
+
+`registry-lock` is not an accepted `[build]` field. Exact selected producers are generated in [`oven.lock`](lock_file.md); the project manifest does not name a second producer record.
 
 The Loaf's Incan units are its programs, its tests and its library. A unit enables only the unstable features its Loaf declares and links only the toolchain libraries its Loaf declares; a library the Loaf does not declare is refused when a `rust::` import names it. A declared component that the pinned toolchain does not have installed is refused, as is a declared sysroot dependency that does not name exactly one library in the toolchain's `lib/rustlib/HOST/lib`. A declared library is importable through `rust::`. An executable that links one loads it, with the standard library it was built with, from the pinned toolchain's sysroot, and never links shared development libraries. The declaration is part of each unit's identity: declaring, changing or removing it compiles the unit again.
 

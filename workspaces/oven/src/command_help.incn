@@ -18,6 +18,7 @@ const DESCRIBE_USAGE: str = "oven describe-unit PATH [UNIT OPTIONS]"
 const OWNER_USAGE: str = "oven owner stop"
 const BAKERY_USAGE: str = "oven bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE"
 const DEPENDENCIES_USAGE: str = "oven inspect dependencies PATH [UNIT OPTIONS]"
+const LOCK_USAGE: str = "oven lock [--versions lowest|lowest-direct|newest] [PATH]"
 pub const UNIT_VALUE_OPTIONS: FrozenList[str] = [
     "--profile",
     "--features",
@@ -40,6 +41,7 @@ pub def usage(surface: str) -> str:
                 OWNER_USAGE,
                 BAKERY_USAGE,
                 DEPENDENCIES_USAGE,
+                LOCK_USAGE,
             ],
         )
     return overview(
@@ -69,6 +71,14 @@ pub def command_help(surface: str, command: str, arguments: list[str]) -> Option
             return Some(unit_help(surface, command))
     elif command == "explain" and requested(arguments):
         return Some(render(EXPLAIN_USAGE, [], "incan explain INCAN-T0001"))
+    elif command == "lock" and requested(arguments, ["--versions"]):
+        return Some(
+            render(
+                LOCK_USAGE,
+                ["  --versions MODE  Select lowest, lowest-direct or newest; an omitted mode remains sticky."],
+                "oven lock --versions lowest .",
+            ),
+        )
     elif (
         command == "bakery"
         and len(arguments) > 0
@@ -143,6 +153,7 @@ def unit_help(surface: str, command: str) -> str:
                 "  --argv0 TEXT          Set the program's argument zero.",
                 "  --program-entry PATH  Add a program entry; repeatable.",
                 "  --engine-report       Retain and print unit counters with INCAN_ENGINE=records.",
+                "  --locked              Refuse a missing or stale oven.lock.",
                 "  --                    Pass remaining arguments to the program.",
             ],
             f"{surface} run src/main.incn -- hello",
@@ -154,7 +165,11 @@ def unit_help(surface: str, command: str) -> str:
             f"{surface} check src/main.incn --format json",
         )
     if command == "test":
-        return render(f"{surface} {TEST_OPERANDS}", options, f"{surface} test tests/test_example.incn")
+        return render(
+            f"{surface} {TEST_OPERANDS}",
+            options + ["  --locked              Refuse a missing or stale oven.lock."],
+            f"{surface} test tests/test_example.incn",
+        )
     if command == "describe-unit":
         return render(DESCRIBE_USAGE, options, "oven describe-unit src/main.incn")
     if command == "inspect dependencies":
@@ -165,6 +180,7 @@ def unit_help(surface: str, command: str) -> str:
             "  --substitute NAME=DIR  Supply a local Rust dependency substitution; repeatable.",
             "  --program-entry PATH   Add a program entry to a program build; repeatable.",
             "  --engine-report        Retain and print unit counters with INCAN_ENGINE=records.",
+            "  --locked               Refuse a missing or stale oven.lock.",
         ],
         f"{surface} build src/main.incn --profile debug",
     )
