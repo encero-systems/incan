@@ -11,8 +11,8 @@
     - RFC 076 (project mutation policy and recovery)
     - RFC 077 (workspace and multi-package projects)
     - RFC 078 (tool execution and typed workflow actions)
-    - RFC 079 (`incan.pub` artifact graph)
-    - RFC 080 (AI assets, models, prompts, evals, and agent metadata)
+    - RFC 079 (`loaves.pub` artifact graph)
+    - RFC 080 (declared AI assets)
     - RFC 082 (checked API documentation generation)
     - RFC 085 (field metadata and type-shaped constraints)
     - RFC 086 (schema descriptors and adapters)
@@ -23,13 +23,13 @@
 - **Issue:** https://github.com/encero-systems/incan/issues/666
 - **RFC PR:** —
 - **Written against:** v0.3
-- **Shipped in:** 0.4 baseline; full RFC scope remains future work
+- **Shipped in:** —
 
 ## Summary
 
 This RFC defines the Incan Semantic Layer Inspection Surface: a local, versioned, machine-readable project model that joins checked source facts, project lifecycle facts, actions, capabilities, policy outcomes, provenance, artifacts, schema descriptors, AI assets, evals, and agent guidance into one inspectable contract for CLI, LSP, CI, docs tooling, registries, and agents. The goal is not to replace the subsystem RFCs that own those facts; the goal is to make their outputs converge into one semantic layer so tools do not scrape source files, generated Rust, manifests, README conventions, or unrelated command output to understand an Incan project.
 
-The 0.4 release accepts this RFC as the semantic-inspection direction and ships the first baseline surfaces: `incan check --format json`, `incan build --report json`, `incan inspect rust --format json`, and `incan inspect codegraph --format jsonl`. Those commands are deliberately focused rather than a full semantic package. They establish versioned JSON contracts, shared project/source identity expectations, explicit diagnostics, generated artifact breadcrumbs, and degraded-state graph output that later phases can join into the broader model described here.
+The 0.4 baseline shipped `incan check --format json`, `incan build --report json`, `incan inspect rust --format json`, and `incan inspect codegraph --format jsonl`. Those commands are deliberately focused rather than a full semantic package. They establish versioned JSON contracts, shared project/source identity expectations, explicit diagnostics, generated artifact breadcrumbs, and degraded-state graph output that join into the broader model described here.
 
 ## Core model
 
@@ -37,7 +37,7 @@ Read this RFC as nine foundations:
 
 1. **The semantic layer is local first:** the source of truth for project inspection is the local project or workspace, not a remote registry.
 2. **Checked source facts and lifecycle facts meet in one model:** compiler-owned facts from RFC 048 and lifecycle-owned facts from RFC 074 through RFC 080 must be joinable through stable identities.
-3. **Inspection is a product surface:** `incan inspect` or an equivalent command is a stable interface, not debug output.
+3. **Inspection is a product surface:** `incan inspect` is a stable interface, not debug output.
 4. **LSP is the proving consumer:** editor features should consume the same semantic layer as the CLI, CI, docs tooling, and agents.
 5. **Human output is a view:** terminal prose may summarize inspection results, but machine-readable output is the canonical integration contract.
 6. **Degraded states are explicit:** incomplete, stale, unsupported, unresolved, blocked, or policy-redacted facts must be represented directly instead of disappearing or being silently guessed.
@@ -60,7 +60,7 @@ This RFC therefore makes the integration surface explicit. Incan should provide 
 - Define a canonical local semantic inspection surface for Incan projects and workspaces.
 - Define a versioned machine-readable semantic package format that can join compiler facts, project facts, lifecycle facts, and artifact facts.
 - Define required stable identity classes for declarations, fields, modules, files, actions, capabilities, policies, generated artifacts, AI assets, evals, and graph edges.
-- Define high-level command surfaces such as `incan inspect`, `incan graph explain`, and machine-readable LSP-facing equivalents without requiring exact final flag spelling.
+- Define the command surfaces `incan inspect` and `incan inspect explain`, and machine-readable LSP-facing equivalents.
 - Define the relationship between RFC 048 checked metadata, RFC 074 template provenance, RFC 075 capabilities, RFC 076 policy, RFC 077 workspaces, RFC 078 actions, RFC 079 artifact graph data, and RFC 080 AI assets.
 - Define how degraded, incomplete, unsupported, stale, blocked, and redacted facts are represented.
 - Make generated behavior and compiler-selected behavior explainable, including derives, decorators, vocabulary desugarings, trait resolution, associated type projection, type-directed overload selection, ownership and clone planning, and generated artifact relationships where those facts are available.
@@ -71,8 +71,7 @@ This RFC therefore makes the integration surface explicit. Incan should provide 
 
 - This RFC does not define a new source syntax.
 - This RFC does not replace RFC 048 checked metadata, RFC 074 templates, RFC 075 capabilities, RFC 076 policy, RFC 077 workspaces, RFC 078 actions, RFC 079 registry graph semantics, or RFC 080 AI asset semantics.
-- This RFC does not require a public `incan.pub` registry to exist before local inspection works.
-- This RFC does not require every current or future artifact kind to be implemented before the first inspection surface ships.
+- This RFC does not require a public `loaves.pub` registry to exist before local inspection works.
 - This RFC does not define the full LSP protocol mapping for every editor feature.
 - This RFC does not allow agents to bypass policy, approval, sandboxing, or user review.
 - This RFC does not require inspection commands to execute project code, run tools, fetch remote schemas, download models, or contact external services.
@@ -107,9 +106,9 @@ An editor can use the same model to power richer project affordances. Hovering a
 Users and tools should also be able to ask why a relationship exists:
 
 ```text
-incan graph explain model:OrderSummary.status
-incan graph explain action:validate-schema
-incan graph explain artifact:target/schema/order_summary.json
+incan inspect explain model:OrderSummary.status
+incan inspect explain action:validate-schema
+incan inspect explain artifact:target/schema/order_summary.json
 ```
 
 Example human-readable explanation:
@@ -157,18 +156,18 @@ The semantic package must not require remote registry access for basic local ins
 
 ### Command surface
 
-The CLI must provide a project inspection command. The recommended spelling is:
+The CLI must provide a project inspection command:
 
 ```text
 incan inspect --format json
 ```
 
-The exact final spelling may change, but the command must expose the semantic package in a documented machine-readable format.
+The command must expose the semantic package in a documented machine-readable format.
 
-The CLI should provide a graph explanation command. The recommended spelling is:
+The CLI must provide a graph explanation command:
 
 ```text
-incan graph explain <selector> --format json
+incan inspect explain <selector> --format json
 ```
 
 Selectors should support at least declarations, model fields, files, actions, capabilities, generated artifacts, policy decisions, and AI assets when those objects are present in the semantic package.
@@ -218,11 +217,11 @@ Implementations may add extension edge kinds. Unknown edge kinds must remain vis
 
 ### Generated behavior explanations
 
-The semantic package must represent compiler-owned or compiler-selected behavior as explainable facts when those facts are available. This includes behavior that can otherwise feel hidden to users: derives and their generated protocol implementations, user-defined decorators and preserved callable identity, vocabulary block desugarings, import-scoped extension properties, trait adoption and associated type resolution, type-token overload selection, type-directed return mapping, ownership and clone planning at checked value-use boundaries, generated Rust or future backend artifacts, generated docs, schema adapter outputs, and template-generated source.
+The semantic package must represent compiler-owned or compiler-selected behavior as explainable facts when those facts are available. This includes behavior that can otherwise feel hidden to users: derives and their generated protocol implementations, user-defined decorators and preserved callable identity, vocabulary block desugarings, import-scoped extensions, trait adoption and associated type resolution, type-token overload selection, type-directed return mapping, ownership and clone planning at checked value-use boundaries, generated Rust or other backend artifacts, generated docs, schema adapter outputs, and template-generated source.
 
 An explanation fact must identify the source anchor, the selected semantic rule or provider, the generated or resolved target when there is one, the relevant checked inputs, and any degraded state. For example, a derive explanation should identify the derive name, source declaration, generated behavior surface, conflicting custom hooks if present, and generated artifact relationship when available. A trait-resolution explanation should identify the trait target, bounds or associated type bindings that made it legal, and the reason an alternative target was rejected when ambiguity exists. A value-use explanation should identify whether a value is moved, borrowed, cloned, converted, or materialized for the checked boundary when the compiler exposes that decision.
 
-Generated behavior explanations are not required to expose private backend internals. The requirement is that user-visible behavior, public metadata, diagnostics, docs, LSP hovers, package manifests, and generated artifacts can point to one checked explanation instead of forcing users or agents to reverse-engineer generated Rust or inspect compiler source. If a behavior cannot be explained because the owning subsystem has not implemented the fact yet, the semantic package should mark the fact as `unsupported` or `partial` rather than silently omitting an expected explanation.
+Generated behavior explanations are not required to expose private backend internals. The requirement is that user-visible behavior, public metadata, diagnostics, docs, LSP hovers, package manifests, and generated artifacts can point to one checked explanation instead of forcing users or agents to reverse-engineer generated Rust or inspect compiler source. If a behavior cannot be explained because the owning subsystem does not provide the fact, the semantic package should mark the fact as `unsupported` or `partial` rather than silently omitting an expected explanation.
 
 ### Degraded and partial facts
 
@@ -307,7 +306,7 @@ Registry metadata may enrich local inspection, but it must not replace receiver-
 
 ### Relationship to RFC 080
 
-RFC 080 owns AI asset metadata, prompt templates, datasets, evals, agent guidance, and local/cloud execution constraints. This RFC requires those facts to appear in inspection output when they are project-relevant and available.
+RFC 080 owns declared AI assets, including prompts, datasets, evals, agent guidance, and local or remote execution. This RFC requires those facts to appear in inspection output when they are project-relevant and available.
 
 Prompt templates and system messages that affect project behavior must be inspectable as artifacts. Agent guidance must remain descriptive and must not cause implicit agent execution.
 
@@ -323,7 +322,7 @@ RFC 092 owns interactive runtime target manifests and host capability contracts.
 
 ### Relationship to trait, type-directed, and vocabulary RFCs
 
-RFC 098, RFC 099, and RFC 107 define type-system surfaces whose behavior must remain visible across package and tooling boundaries. RFC 027, RFC 040, RFC 045, and future vocabulary RFCs define scoped vocabulary surfaces with similar inspectability pressure. This RFC is the aggregation point for their inspectability contracts: associated type declarations and bindings, generic trait adoption families, type-token overloads and type-directed return mappings, alias and reexport invariants, vocabulary descriptors, extension-property resolution, and degraded-state markers should appear as semantic package facts where their owning RFCs define them.
+RFC 098, RFC 099, and RFC 107 define type-system surfaces whose behavior must remain visible across package and tooling boundaries. RFC 027, RFC 040, RFC 045, and other vocabulary RFCs define scoped vocabulary surfaces with similar inspectability pressure. This RFC is the aggregation point for their inspectability contracts: associated type declarations and bindings, generic trait adoption families, type-token overloads and type-directed return mappings, alias and reexport invariants, vocabulary descriptors, extension-property resolution, and degraded-state markers should appear as semantic package facts where their owning RFCs define them.
 
 ## Alternatives considered
 
@@ -335,7 +334,7 @@ Rejected because it preserves fragmentation. Independent outputs can be useful, 
 
 Rejected because CI, docs tooling, registry tooling, and agents need the same facts outside an editor. LSP is the proving consumer, not the source of truth.
 
-### Put the semantic layer in `incan.pub`
+### Put the semantic layer in `loaves.pub`
 
 Rejected because local projects must remain inspectable without registry access, and local tooling owns receiver-side mutation plans and policy. Registry graph metadata can enrich inspection but must not be required for it.
 
@@ -355,7 +354,7 @@ A broad semantic package can become too large or too slow if every command eager
 
 Versioning the inspection schema creates compatibility work. Once tools and agents depend on the JSON shape, changes need migration discipline.
 
-There is a risk of overpromising if implementation work tries to expose every artifact kind at once. Implementation sequencing should prove the local compiler and lifecycle join while preserving the full 1.0 contract described by this RFC.
+There is a risk of overpromising if implementation work tries to expose every artifact kind at once.
 
 ## Implementation architecture
 
@@ -382,13 +381,13 @@ Implementations should support focused queries so LSP and CI can request only th
 - **Registry / package integration**: should map local artifact identities and relationship edges to registry artifact graph metadata when publishing or inspecting packages.
 - **Agentic tooling**: may consume the semantic package for context selection and proposal generation, but must respect policy outcomes and approval boundaries.
 
-## Future design questions
+## Design Decisions
 
-- Should the canonical command be `incan inspect`, `incan project inspect`, `incan graph inspect`, or another spelling?
-- Should graph explanation be a subcommand of inspection, such as `incan inspect explain`, or a separate `incan graph explain` command?
-- Which semantic package schema fields are mandatory for the 1.0 north-star contract, and which unsupported domains should appear as explicit degraded facts until their owning RFCs land?
-- Which identity formats should be stable across machines, packages, and versions, and which should be explicitly local-only?
-- Should focused LSP queries use the same JSON schema directly or a protocol-specific projection that preserves semantic package identities?
-- How should semantic package fragments be cached and invalidated without standardizing compiler-internal storage?
-- Should exported package artifacts embed a semantic package fragment, or should they embed only RFC 048 metadata plus artifact graph metadata until a later publishing RFC?
-- What compatibility policy should apply when an older tool consumes a newer semantic package with unknown object or edge kinds?
+- **Command:** `incan inspect` is the canonical command, as RFC 118 assigns semantic products to `incan`. `incan inspect rust` and `incan inspect codegraph` are focused views of it.
+- **Explanation:** `incan inspect explain <selector>` is part of the same family, with no separate `graph` command.
+- **Required fields:** every semantic package must carry its schema version, the producing toolchain, the selected scope, project and member identities, objects, edges, diagnostics and a state for each fact. Every domain in the model must appear. A domain the toolchain cannot produce reports `unsupported` with a reason, so a consumer never has to guess from absence.
+- **Identities:** declarations and fields use RFC 120 and RFC 106 identities, stable across machines and versions until renamed. Artifacts use RFC 124's content identities, stable across machines. Project files use project-relative paths. Absolute paths, process and session handles and RFC 167 live handles are marked `local-only`.
+- **LSP:** custom requests return semantic package fragments in the same schema. A standard LSP response, such as a hover, keeps the shape the protocol defines and carries the semantic identity it refers to.
+- **Caching:** a fragment must record the input identities it was computed from, and a cached fragment whose inputs changed must be reported as `stale` or recomputed. How fragments are stored is an implementation matter.
+- **Published Loaves:** a Loaf carries RFC 048 metadata and artifact graph metadata and embeds no semantic package fragment, so each fact lives once. `incan inspect` projects a fragment from those records on demand.
+- **Compatibility:** the schema version has a major and a minor part. New object and edge kinds are additive within a major version, and an older tool must keep unknown kinds visible rather than drop them. A fact marked as required semantics that a tool does not understand must be refused explicitly, and a newer major version must be refused with a diagnostic.

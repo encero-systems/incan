@@ -1,15 +1,15 @@
 # RFC 082: Checked API documentation generation
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-04-28
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
     - RFC 015 (project lifecycle and CLI tooling)
     - RFC 031 (library system phase 1)
-    - RFC 034 (`incan.pub` registry)
+    - RFC 125 (`loaves.pub` Loaf registry; supersedes RFC 034)
     - RFC 048 (checked contract metadata, Incan emit, and interrogation tooling)
-    - RFC 079 (`incan.pub` artifact graph)
-- **Issue:** —
+    - RFC 079 (`loaves.pub` artifact graph)
+- **Issue:** [#556](https://github.com/encero-systems/incan/issues/556)
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** —
@@ -32,14 +32,14 @@ This RFC defines first-class Incan API documentation generation on top of RFC 04
 
 Incan packages need trustworthy API reference documentation. The language already has enough structure to describe public functions, models, fields, decorators, aliases, constants, and docstrings, but handwritten docs drift unless the toolchain checks them against the compiled API surface. Source scraping is not good enough because it duplicates compiler behavior and breaks once packages are consumed as built artifacts rather than editable source trees.
 
-RFC 048 solves the first half of the problem by defining checked metadata extraction. That is deliberately a metadata contract, not a docs product. The next layer is still needed: users need a command that turns checked metadata into readable reference docs, package tooling needs a deterministic artifact it can publish or inspect, and downstream systems need a stable input that does not require them to parse Incan or generated Rust.
+RFC 048 solves the first half of the problem by defining checked metadata extraction. That is deliberately a metadata contract, not a docs product. The next layer is still needed: users need a command that turns checked metadata into readable reference docs, package tooling needs a deterministic artifact it can publish or inspect, and downstream systems need a stable input that does not require them to parse Incan or inspect compiler internals.
 
 The end-state should look closer to a compiler-backed reference docs pipeline than to a static-site theme. Incan should be able to produce accurate package reference docs from checked APIs. Downstream site tooling can decide how those docs become a polished website, product portal, search experience, or registry page.
 
 ## Goals
 
 - Define a first-class docs generation command family for source packages and metadata-bearing artifacts.
-- Require documentation generation to consume RFC 048 checked API metadata rather than source scraping or generated Rust.
+- Require documentation generation to consume RFC 048 checked API metadata rather than source scraping or compiler-internal representations.
 - Define deterministic Markdown reference output as the stable documentation artifact.
 - Define stable declaration anchors so generated docs can be linked by registries, package browsers, editors, and hosted sites.
 - Define explicit validation modes for docstring drift, including parameters, returns, fields, aliases, and exposed decorator metadata where those are mechanically checkable.
@@ -62,7 +62,7 @@ The end-state should look closer to a compiler-backed reference docs pipeline th
 A package author can generate API reference docs from checked source:
 
 ```shell
-incan docs --format markdown --output docs/api
+incan docs build --output docs/api
 ```
 
 The command parses and typechecks the package, asks the RFC 048 metadata layer for public API structure, validates docstrings according to the selected mode, and writes deterministic Markdown files. The generated files are readable in a repository, can be packaged as derived artifacts, and can be consumed by a site tool without that site tool needing to understand Incan typechecking.
@@ -70,10 +70,12 @@ The command parses and typechecks the package, asks the RFC 048 metadata layer f
 A stricter workflow can run documentation validation without producing a full reference tree:
 
 ```shell
-incan docs --check
+incan docs check
 ```
 
-If a public function documents a parameter that no longer exists, omits a required return section under the active policy, or describes a field that is not present in the checked model metadata, the command reports diagnostics against the source declaration or metadata-bearing artifact.
+If a public function documents a parameter that no longer exists, omits a required return section under the active policy, or describes a field that is not present in the checked model metadata, the command reports diagnostics against the source declaration or metadata-bearing artifact. During ordinary work such drift is a warning, so a stale parameter name in prose is visible without blocking unrelated editing; `incan docs check` and `incan docs build --strict` turn it into an error for CI and publishing. Source that is actually invalid, such as a wrong type, stays an ordinary compiler error.
+
+`incan docs` on its own lists the family's commands, so authors find `build` and `check` without a separate documentation tool.
 
 The input source remains ordinary Incan:
 
@@ -115,10 +117,22 @@ That Markdown is not the authoritative API. It is a projection of checked metada
 For a built package that carries RFC 048 metadata, a registry or package browser can generate the same reference docs without a source checkout:
 
 ```shell
-incan docs --from-artifact dist/stats.incnlib --format markdown --output docs/api
+incan docs build --from-artifact dist/stats.incnlib --output docs/api
 ```
 
-A downstream site generator can then treat the generated Markdown and metadata as input to a richer site: navigation, search, cross-package landing pages, branding, publishing, and hosted previews are downstream presentation choices.
+Docstrings link to other declarations the way MkDocs and Sphinx cross-references do, with a Markdown reference link whose target is a public symbol path:
+
+```incan
+pub def median(values: List[float]) -> float:
+    """
+    Return the middle value. For the arithmetic mean, see [avg][stats.avg].
+    """
+    ...
+```
+
+The generator resolves `stats.avg` against checked metadata, including through public aliases, and links it to the `#fn-avg` anchor; an unknown or ambiguous target is a drift diagnostic. Alongside the Markdown, the generator writes a versioned symbol inventory, like Sphinx's `objects.inv`, so other packages' docs can link into this one, and a versioned search index of public symbols, like MkDocs' search index, for site tools to build search on.
+
+A downstream site generator can then treat the generated Markdown, inventory, index, and metadata as input to a richer site: navigation, search UI and ranking, cross-package landing pages, branding, themes, publishing, and hosted previews are downstream presentation choices.
 
 ## Reference-level explanation
 
@@ -126,7 +140,7 @@ A downstream site generator can then treat the generated Markdown and metadata a
 
 Documentation generation must consume checked API metadata as defined by RFC 048. The metadata may come from a source root after parsing and typechecking, from an in-memory compiler result, or from a supported built artifact that carries RFC 048 metadata.
 
-Documentation generation must not treat raw source text, generated Rust, or untyped sidecar files as authoritative for public declarations, signatures, decorator arguments, aliases, model fields, or type information.
+Documentation generation must not treat raw source text, compiler-internal representations, or untyped sidecar files as authoritative for public declarations, signatures, decorator arguments, aliases, model fields, or type information.
 
 If the input artifact does not carry RFC 048 metadata, the command must report that checked documentation generation is unavailable for that artifact rather than inventing a best-effort API by scraping files.
 
@@ -134,7 +148,7 @@ If the input artifact does not carry RFC 048 metadata, the command must report t
 
 The default documented surface is the public package API exposed by RFC 048 metadata. That includes public functions and methods, public models/classes/traits/enums/newtypes/type aliases, exported constants or statics that RFC 048 exposes as safe metadata, public aliases, relevant decorators, checked signatures, model fields, field metadata, field documentation, docstrings, module paths, package identity, and stable anchors.
 
-Private declarations are not included in generated reference docs by default. A future extension may define private or internal docs generation, but it must be opt-in and must not weaken the default public API contract.
+Private declarations are not included in generated reference docs by default. An explicit `--include-private` option may add private and internal declarations; it must not change the public API contract or the anchors of public declarations.
 
 ### Output formats
 
@@ -150,23 +164,34 @@ Generated declaration anchors must be stable across formatting-only source chang
 
 Anchors must not rely solely on source line numbers. Line numbers may be included as diagnostic context, but they are not stable documentation identity.
 
-If two public declarations would produce the same anchor, the generator must apply a documented deterministic disambiguation rule or emit a diagnostic if no stable disambiguation is possible.
+If two public declarations would produce the same anchor, the generator must apply a documented deterministic disambiguation rule or emit a diagnostic if no stable disambiguation is possible. Formatting-only edits must not change an anchor; moving or renaming a declaration may change it deliberately.
+
+A docstring cross-reference is a Markdown reference link whose target is a public symbol path, such as `[avg][stats.avg]` or `[stats.avg][]`. The generator must resolve each target against checked metadata, through public aliases to the canonical declaration, and must link it to that declaration's anchor. An unresolved or ambiguous target must be reported as drift.
+
+Every generation must also produce, versioned with the documentation bundle:
+
+- a **symbol inventory** mapping each public symbol path, and each public alias, to its canonical declaration, kind, signature summary, and anchor, so other packages' documentation can resolve references into this package, as Sphinx's `objects.inv` allows;
+- a **search index** of public symbols with their kind, signature summary, first docstring sentence, and anchor, for site tools to build search on.
+
+Search ranking, search UI, navigation, theming, and site layout are not part of this contract.
 
 ### Validation modes
 
 Docs generation must support a validation-only mode. Validation compares mechanically checkable docstring sections against RFC 048 metadata.
 
-Validation must detect documented parameters that do not exist, public parameters missing required documentation under strict policy, documented return sections that contradict the checked return type, documented fields that do not exist, and exposed decorator or alias claims that contradict checked metadata.
+The recognized sections are `Args:` (or `Parameters:`), `Returns:`, `Errors:`, `Fields:`, `Aliases:` and `Decorators:`. `Errors:` lists the error cases a `Result`-returning function can produce, by name.
+
+Validation must detect documented parameters that do not exist, public parameters missing required documentation under strict policy, documented return sections that contradict the checked return type, documented errors the checked return type cannot produce, documented fields that do not exist, and exposed decorator or alias claims that contradict checked metadata.
 
 Validation must not execute user code. It may rely on parsed docstrings, checked declarations, compiler-known safe constants, and safe metadata values exposed by RFC 048.
 
-The default severity policy is an unresolved design question. The command must nevertheless make strict validation available so CI and package publishing can reject stale docs.
+Mechanically established drift must be a warning by default. `incan docs check` and `incan docs build --strict` must report drift as an error and exit unsuccessfully, so CI and package publishing can reject stale docs. Diagnostics must name the exact stale parameter, field, section, or reference by comparing against checked metadata. Source that fails to typecheck remains an ordinary compiler error and is not reported as documentation drift.
 
 ### Package artifacts
 
-A package may carry generated documentation artifacts, RFC 048 metadata sufficient to regenerate them, or both. When both are present, tooling should be able to validate that the generated docs match the carried metadata under the declared generator version.
+A published package must carry the RFC 048 metadata needed to regenerate its reference docs. It may also carry a generated documentation bundle, which must record the digest of the metadata it was generated from and its generator version. Tooling must validate that digest before trusting a carried bundle, and must regenerate from the metadata when the bundle is missing, stale, or produced by an unsupported generator version. Rendered documentation never replaces checked facts.
 
-Registry and package-browser tooling should prefer checked metadata or declared documentation artifacts over source scraping. If a package contains neither, tooling must report that checked reference docs are unavailable.
+Registry and package-browser tooling must use checked metadata or a validated documentation bundle, never source scraping. If a package contains neither, tooling must report that checked reference docs are unavailable.
 
 Generated docs are derived artifacts. Publishing them must not change the package's checked API identity.
 
@@ -174,15 +199,13 @@ Generated docs are derived artifacts. Publishing them must not change the packag
 
 Diagnostics must point at the declaration, docstring section, artifact metadata entry, or generated documentation entry that caused the mismatch, depending on the available input.
 
-Diagnostics should use checked names and public API concepts rather than generated Rust names or backend implementation details.
+Diagnostics should use checked names and public API concepts rather than backend implementation details.
 
 ## Design details
 
 ### Command model
 
-The command family should fit RFC 015 project lifecycle conventions. This RFC uses `incan docs` examples to describe the user workflow; final command spelling remains an unresolved question until the CLI design is accepted.
-
-The command should support at least three user workflows: generate Markdown from a source package, validate docs without writing output, and generate Markdown from a metadata-bearing artifact.
+Documentation is a semantic product, so the command family belongs to `incan` under RFC 118's command ownership. `incan docs` lists the family. `incan docs build` generates Markdown, the symbol inventory, and the search index from a source package or, with `--from-artifact`, from a metadata-bearing artifact. `incan docs check` validates without writing output. Both support RFC 118's `--format json` structured output for their diagnostics and results. Carrying the bundle in a package is part of Oven's bake and publish flow, which uses the same generator.
 
 ### Documentation bundle
 
@@ -222,7 +245,7 @@ Packaging flows that already preserve RFC 048 metadata can enable artifact-time 
    - Rejected because HTML is useful for preview but awkward as the stable artifact for registries, package diffs, source control review, and downstream composition.
 
 4. **Leave docs entirely to downstream tools**
-   - Rejected because downstream tools should not have to parse Incan, duplicate typechecking, or inspect generated Rust to produce accurate API reference docs.
+   - Rejected because downstream tools should not have to parse Incan, duplicate typechecking, or inspect compiler internals to produce accurate API reference docs.
 
 5. **Clone rustdoc or Griffe behavior wholesale**
    - Rejected because those tools are useful prior art, but Incan has its own package model, RFC 048 metadata layer, docstring validation needs, artifact story, and hosted-site boundary.
@@ -244,20 +267,17 @@ Packaging flows that already preserve RFC 048 metadata can enable artifact-time 
 - **Parser / frontend**: must preserve docstrings and documentation-relevant source spans well enough for RFC 048 metadata extraction and diagnostics.
 - **Typechecker / symbol resolution**: must provide checked public API facts through RFC 048 rather than requiring docs tooling to rediscover names, signatures, decorators, aliases, or fields.
 - **Checked metadata extractor**: must provide the public API metadata needed by the documentation bundle and must report unsupported or unsafe metadata values explicitly.
-- **CLI / tooling**: must expose documentation generation, validation-only mode, artifact input, output selection, and actionable diagnostics.
-- **Formatter / docs renderer**: must produce deterministic Markdown for a fixed checked metadata document and generator configuration.
-- **Build / packaging**: should preserve RFC 048 metadata, generated documentation bundles, or both when a package opts into checked documentation artifacts.
+- **CLI / tooling**: `incan docs build` and `incan docs check` expose documentation generation, validation, artifact input, output selection, structured output, and actionable diagnostics.
+- **Formatter / docs renderer**: must produce deterministic Markdown, a symbol inventory, and a search index for a fixed checked metadata document and generator configuration, resolving docstring cross-references.
+- **Build / packaging**: must preserve RFC 048 metadata in published packages and may carry a documentation bundle bound to that metadata by digest.
 - **LSP / editor tooling**: should be able to preview generated declaration docs and validation diagnostics from the same documentation bundle model.
 - **Registry / package browser**: should consume checked documentation artifacts or regenerate docs from carried RFC 048 metadata rather than scraping source.
 - **Hosted site tooling**: should consume generated Markdown and documentation bundles as checked inputs for hosted site generation, navigation, search, and product presentation.
 
-## Unresolved questions
+## Design Decisions
 
-- Should the accepted command spelling be `incan docs`, `incan docs build`, or a subcommand under a broader inspection namespace?
-- Is Markdown the only required renderer, or should local HTML preview also be required?
-- Should docstring drift be an error by default, a warning by default, or only hard-fail under `--check` or `--strict`?
-- Should packages ship generated documentation bundles, RFC 048 metadata only, or both when publishing?
-- What is the minimum cross-linking and search-index metadata that belongs in this RFC before hosted site tooling takes over site generation?
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- Markdown is the required renderer. HTML and local preview remain optional projections of the same checked documentation model, as specified under Output formats; they must not introduce additional API facts.
+- The command family is `incan docs`, with `incan docs build` and `incan docs check`, owned by `incan` as a semantic product under RFC 118 and sharing its `--format json` convention.
+- Docstring drift is a warning by default; `incan docs check` and `incan docs build --strict` make it an error. Source that fails to typecheck stays an ordinary compiler error.
+- Published packages must carry RFC 048 metadata. A generated documentation bundle is optional, is bound to that metadata by digest, and is regenerated when missing or stale; rendered docs never replace checked facts.
+- The generator owns canonical declaration anchors, checked docstring cross-references written as Markdown reference links to symbol paths, a versioned symbol inventory for cross-package links, and a versioned search index. Search ranking and UI, navigation, theming, and publishing stay with downstream site tooling, in the way MkDocs and Sphinx separate their indexes from their themes.

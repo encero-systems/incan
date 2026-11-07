@@ -5,6 +5,7 @@
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
     - RFC 033 (`ctx` typed configuration context)
+    - RFC 037 (`std.web`, where a request is a boundary)
     - RFC 055 (`std.fs` path-centric filesystem APIs)
     - RFC 063 (`std.process` process spawning and command execution)
     - RFC 066 (`std.http` HTTP client surface)
@@ -19,6 +20,11 @@
     - RFC 095 (`span` vocabulary blocks)
     - RFC 102 (semantic layer inspection surface)
     - RFC 103 (secret values and redaction-safe values)
+    - RFC 142 (task context)
+    - RFC 147 (Result matching with `except`)
+    - RFC 156 (typed MCP servers and `@tool(caps=...)`)
+    - RFC 165 (`std.db` record format and retention)
+    - RFC 169 (record streams and resumable changes)
 - **Issue:** https://github.com/encero-systems/incan/issues/662
 - **RFC PR:** -
 - **Written against:** v0.3
@@ -30,7 +36,7 @@ This RFC defines ambient runtime capabilities and receipts for Incan. Importing 
 
 ## Core model
 
-Read this RFC as eleven foundations:
+Read this RFC as thirteen foundations:
 
 1. **Import is not authority:** source code may import `std.fs`, `std.process`, `std.environ`, `std.http`, or a capability-aware package without automatically receiving permission to perform those operations.
 2. **Observation is ambient:** ordinary stdlib and library calls can emit structured receipts without requiring users to annotate every function with effect types.
@@ -43,6 +49,8 @@ Read this RFC as eleven foundations:
 9. **Replay claims must be honest:** the runtime should describe what can be replayed exactly, what requires fixtures, and what cannot be replayed.
 10. **Policy consumes receipts:** policy systems, CI, editors, docs tooling, and agents consume the same capability declarations and receipt facts; they do not infer authority from prose or hidden conventions.
 11. **Receipt evidence is bound to execution:** a receipt records the exact authority decision, execution boundary, normalized operation inputs, observed outcome, and any applicable attestation or redaction commitment. It must not merely record that source code intended to make a call.
+12. **A program can limit itself:** `capabilities.restrict` and `caps=` reduce what the code they cover may do, in every mode, and nothing can widen them again. Strict enforcement of grants remains optional, and these limits do not.
+13. **Receipts are typed records:** a program can follow them live, a long-running program never has to exit to report, and retention decides how long they stay.
 
 ## Motivation
 
@@ -77,7 +85,7 @@ The key design constraint is usability. This RFC must not turn ordinary Incan in
 - This RFC does not require every function type to include a capability parameter or effect row.
 - This RFC does not make imports fail merely because the current run has not granted a capability.
 - This RFC does not define a complete operating-system sandbox.
-- This RFC does not define no-std/freestanding target profiles, kernel support, unsafe/layout controls, panic strategy, or allocator strategy. Capability and receipt metadata may inform those later RFCs, but this RFC is not the freestanding/kernel RFC.
+- This RFC does not define no-std/freestanding target profiles, kernel support, unsafe/layout controls, panic strategy, or allocator strategy. Capability and receipt metadata may inform those RFCs, but this RFC is not the freestanding/kernel RFC.
 - This RFC does not guarantee perfect deterministic replay for external systems.
 - This RFC does not replace `std.telemetry`, `std.logging`, diagnostics, or semantic inspection.
 - This RFC does not require every package to publish capability metadata.
@@ -246,6 +254,36 @@ incan run app.incn --allow host.env.read,host.http.request --report json
 
 `incan run` defaults to `observe`: ordinary local development stays uninterrupted while authority facts are recorded without unexpectedly denying an undeclared access, and `--report` makes those facts available to a machine-readable consumer. `permissive` is an explicit escape hatch for runs that must disable observation. `incan test` defaults to `governed` with nothing pre-granted, so a test that unexpectedly reaches the real filesystem or network fails with a capability diagnostic instead of silently succeeding -- the same test-isolation property most test frameworks already enforce by convention, made structural here instead. A typed action runs under whatever mode and grants its invoking context provides (a CI job's explicit `--allow`, a host's policy-selected grant set); this RFC does not define a third default distinct from `incan run` and `incan test`, since actions are never invoked in a vacuum.
 
+### Limits
+
+A program may reduce its own authority. A grant says what the host allows the program to do, and a limit is the program saying that this part of it may do less. One web server handles many callers, so a grant fixed for a whole run cannot express "this request may only touch member 42".
+
+```incan
+with capabilities.restrict(manage_members, member_id=member.id):
+    await store.remove(id)?    # refused unless id is the member's own
+```
+
+`capabilities.restrict(capability, **scope)` must be an RFC 094 context manager. `Restriction(capability, **scope)` is the same limit as a value, for a boundary to apply, such as an RFC 037 guard. A limit must obey these rules:
+
+- **Limits apply in every mode.** A limit must be enforced in `observe`, `governed` and `permissive`. Modes decide what the host grants, and a limit is the program limiting itself. `permissive` stays receipt-free, so a refusal there has no receipt.
+- **Access only goes down.** Effective authority must be the intersection of the grant, any host ceiling, and every active limit. A nested limit must combine with the one above it and must never widen it, and there must be no operation that lifts a limit.
+- **Limits follow the task.** Like the current span under RFC 095, the active limits belong to the task's context under RFC 142: they must survive `await`, and a task must inherit its parent's limits, including a task that outlives the block or request that started it. The manager must carry the same contract RFC 094 requires of task-local state held across suspension.
+- **Limits end with their scope.** On every way out of a `with` block, the limits above it apply again. A closure saved inside a block and called later runs under whatever limits apply at that moment.
+- **A scope is checked against the operation.** A scope must be compared with the actual attributes of the operation at the moment it happens, as for a grant.
+- **A request is a boundary that can only reduce.** A server may apply a limit for one request. It must never grant anything.
+
+`caps=[...]` on an `@action`, on an RFC 156 `@tool` and on an RFC 037 route or group is also a ceiling: while the call runs, it may use only what the declaration covers, including through callbacks and trait calls the static check cannot see. A use outside the declaration must be refused at runtime and recorded. Without `caps=`, there is no ceiling and no static check. A route may omit it, and a governed run still enforces its grants.
+
+Limits are a safety net for code that declares its capabilities, not a sandbox. They cover only operations that require a capability, and they do not defend against hostile code in the same process.
+
+### How code sees a refusal
+
+A refused operation must not run, and its caller must see an ordinary error. A callable with `@provider_operation` must return a `Result` whose error type can hold `CapabilityDenied`, and anything else must be a compile error. A standard-library operation that already returns a `Result` must report a refusal the same way.
+
+An operation with no error to return, such as reading the clock, cannot do this, so a refusal must stop the calling task as a panic does. A server reports that as a 500.
+
+`?` propagates a refusal like any other error, and RFC 147's `except` may handle it. Handling a refusal must not remove its receipt.
+
 ### Capability declarations
 
 Capability declarations live in source, as a first-class `capability` declaration form -- not in package manifest metadata, generated descriptors, or capability packs. This is required, not a style preference: deriving a capability's fully-qualified identity from its declaration location (see "Capability identities") only works if the declaration site is something the compiler resolves, the same way it resolves a function or type declaration.
@@ -292,10 +330,11 @@ A receipt is a structured runtime fact emitted by a capability-aware operation. 
 - event id or sequence id;
 - capability identity;
 - operation kind;
-- status, such as observed, allowed, denied, failed, redacted, or skipped;
+- status, such as observed, allowed, denied, failed, redacted, skipped, or unknown;
 - source location or semantic identity when available;
 - package/module/function identity when available;
 - parent span or context id when available;
+- the caller on whose behalf the operation ran, when a boundary has established one, protected like any other sensitive value;
 - redacted attributes;
 - sensitivity metadata;
 - replay classification.
@@ -303,6 +342,8 @@ A receipt is a structured runtime fact emitted by a capability-aware operation. 
 - an authority-decision binding;
 - an execution-evidence binding; and
 - a boundary attestation and redaction commitment when applicable.
+
+A status of `unknown` means the operation may have executed and confirmation is unavailable, such as a request that timed out. Such a receipt must carry an operation identity, so that a later receipt or query can reconcile the outcome. A retry must reuse that identity or reconcile first; a timeout must not be read as evidence that repeating an effect is safe.
 
 A receipt should include operation-specific attributes such as environment variable key, filesystem path policy, HTTP method, URL policy, process command policy, model id policy, artifact id, action id, or policy id. Sensitive values must be redacted by default.
 
@@ -363,11 +404,32 @@ A permissive report may state `authority_reporting: disabled`. It must not conta
 
 Report output reuses the existing `--report`/`--report-output` contract `incan build` already established, rather than defining a new one: `--report json` writes to stdout by default, and `--report-output <PATH>` redirects it to a file. Receipts and run reports use a numeric `schema_version`, matching the same convention already used by `incan check --format json`, `incan build --report json`, and other existing JSON report surfaces; this RFC does not define a new versioning scheme.
 
+### Receipts as records
+
+Receipts must be typed records in `std.db`'s format, so a run's evidence is read the same way as any other records. A run that never ends, such as a server or a worker, must not have to exit to report, and must not hold its receipts until exit.
+
+```incan
+# Follow refusals live, and pick up where this left off after a restart
+async def watch_refusals(last_seen: ResumePosition) -> None:
+    refused = receipts.changes(after=last_seen).filter((r) => r.status == ReceiptStatus.Denied)
+    async for receipt in refused:
+        alert(receipt)
+```
+
+- `receipts.changes(after=position)` must deliver receipts as an RFC 169 `RecordStream`, and a saved position must resume it. `--report json` is one way of reading the same records, and must be able to cover any retained range of a run that is still going.
+- Every report anchor must commit to the anchor before it, so a missing or edited range is detectable.
+- Evidence must be exportable as an RFC 165 sealed set.
+- What survives a crash is what the selected store reports as achieved.
+- Receipts must follow a family retention policy under RFC 165, with a default of 24 hours. A deployment relying on receipts as evidence sets its own.
+- Recording a receipt must not itself produce receipts.
+
+How the store is selected and how it commits are not this RFC's concern.
+
 ### Typed action alignment
 
 Typed actions from RFC 078 provide the expected authority contract before execution. A typed action may declare required capabilities, optional capabilities, receipt schemas, mutation categories, network or model access, input and output artifacts, replay expectations, and non-plannable behavior. Those declarations are static metadata; they do not grant authority.
 
-When a typed action runs under this RFC, the run report must preserve the action identity and should include enough metadata to compare declared capability requirements with runtime behavior. If the action emits a receipt for a capability that was not declared by the action, package, or selected capability pack, the report should mark the mismatch. If the action declares a required capability that is never requested during a successful run, the report may mark the declaration as unused rather than treating it as an error by default. Policy may choose to reject undeclared capability use, require review for unused broad grants, or allow either case in permissive workflows.
+When a typed action runs under this RFC, the run report must preserve the action identity and should include enough metadata to compare declared capability requirements with runtime behavior. A use outside the declaration is refused under "Limits", and the report should mark the mismatch. If the action declares a required capability that is never requested during a successful run, the report may mark the declaration as unused rather than treating it as an error by default. Policy may choose to reject undeclared capability use, require review for unused broad grants, or allow either case in permissive workflows.
 
 Dry-run output from RFC 078 and run reports from this RFC should use compatible capability identities, action identities, risk categories, redaction markers, artifact identities, and replay classifications. A user, CI job, LSP client, or agent should be able to read the dry-run plan, run the action, and compare the actual receipts without interpreting separate schemas.
 
@@ -376,11 +438,13 @@ The declared-versus-actual comparison this section already requires for runtime 
 - if the body requires a capability the declaration omits, this is a compile error ("incomplete action caps"), not a warning -- an action whose declared caps are incomplete is guaranteed to fail at runtime the first time a governed run reaches the undeclared operation, so catching it statically is strictly better than discovering it as a runtime denial;
 - if the declaration lists a capability the body never actually uses, this is a warning, matching the non-error default this section already establishes for runtime-observed unused declarations, not a new stricter policy for the static case.
 
+A declared capability covers what it `requires` for this check, so a declaration need not repeat the host capabilities beneath it. This changes only the check: those host capabilities must still be granted separately. An RFC 156 `@tool` and an RFC 037 route or group follow the same check whenever they declare `caps=`.
+
 This diagnostic must be available through the same channel as any other typechecker diagnostic, including LSP, so it is visible while authoring the decorator, not only at build time. An editor may offer a quick fix that inserts a missing capability into the declared list, the same shape as a quick fix for a missing import.
 
 ### Replay classification
 
-Each receipt and run report must classify replayability. This RFC requires four classifications for the first implementation, each motivated by an operation this RFC already describes:
+Each receipt and run report must classify replayability. This RFC requires four classifications, each motivated by an operation this RFC already describes:
 
 - `deterministic`: the operation can be replayed from recorded local inputs, such as a filesystem write whose output is fully determined by its recorded arguments.
 - `external`: replay depends on an external system and cannot be exact without a recording, such as an HTTP call to a partner API whose response can change between calls.
@@ -485,7 +549,7 @@ Stdlib APIs that already perform authority-bearing operations should be updated 
 
 ### Full algebraic effects
 
-Rejected for now. Algebraic effects or effect rows may become useful later, but they would fight Incan's Python-shaped ergonomics if introduced as the first user-facing authority model.
+Rejected. Algebraic effects or effect rows would fight Incan's Python-shaped ergonomics as the user-facing authority model.
 
 ### Stdlib-only auditing
 
@@ -511,7 +575,7 @@ Capability names can sprawl if packages publish overly fine-grained or inconsist
 
 Receipts can create overhead and sensitive metadata risk. Implementations must make reporting configurable, preserve redaction, and avoid accidental remote export.
 
-Governed mode can frustrate users if diagnostics are vague or if common operations require too many grants. The initial capability set should stay coarse and understandable until real usage proves finer scope is needed.
+Governed mode can frustrate users if diagnostics are vague or if common operations require too many grants. The capability set should stay coarse and understandable.
 
 ## Implementation architecture
 
@@ -536,23 +600,23 @@ Generated build artifacts and run reports should be ordinary artifacts that RFC 
 
 ## Implementation Plan
 
-### Phase 1: Compiler-owned declarations and decision facts
+### Compiler-owned declarations and decision facts
 
 - Resolve capability declarations and provider-operation requirements as canonical semantic identities.
 - Preserve capability, operation, source span, execution mode, effective grant or denial, ceiling, and denial reason in one generic authority decision.
 - Apply authority only when an admitted authority-bearing operation is invoked, never when its module is imported.
 
-### Phase 2: Project policy and execution boundaries
+### Project policy and execution boundaries
 
 - Let a Loaf project declare target selection, execution policy, and environment grants without allowing source to grant host authority to itself.
 - Have Oven enforce the selected project policy and link each execution to the stable authority decision.
 
-### Phase 3: Receipts and report consumers
+### Receipts and report consumers
 
 - Extend the #1028 operation-receipt, redaction, replay, and report work across stdlib and package boundaries.
 - Keep receipts linked to authority decisions rather than duplicating authority or policy semantics.
 
-### Phase 4: Remaining language and tooling integration
+### Language and tooling integration
 
 - Add typed-action declaration alignment, standard-library host capability families, diagnostics, semantic inspection, and user-facing documentation.
 
@@ -577,6 +641,13 @@ Generated build artifacts and run reports should be ordinary artifacts that RFC 
 - [ ] Expose static declarations and runtime facts through semantic inspection.
 - [ ] Document the user-facing policy, report, and diagnostic surfaces.
 
+### Limits and long-running runs
+
+- [ ] Enforce `capabilities.restrict`, `Restriction` and `caps=` ceilings in every mode, across `await` and spawned tasks.
+- [ ] Report refusals through `CapabilityDenied`, and require it of provider operations.
+- [ ] Record the caller on receipts when a boundary has established one.
+- [ ] Store receipts as typed records, with `receipts.changes(after=)`, chained anchors, sealed-set export and retention.
+
 ## Design Decisions
 
 - **Capability identities are checked symbols, not strings:** a capability's fully-qualified identity is derived from where it is declared (package or toolchain identity plus module path), never typed by the author. Two packages cannot collide on a capability name because the namespace segment comes from an identity a registry already enforces as unique. A capability reference at a use site resolves like an import; a misspelled or nonexistent reference is a compile error, not a runtime surprise.
@@ -587,7 +658,7 @@ Generated build artifacts and run reports should be ordinary artifacts that RFC 
 - **No implicit host-capability grants:** a package capability's `requires` list documents which host capabilities its implementation needs, for tooling and policy to inspect, but granting the package capability never automatically grants what it requires. Those must always be listed and granted separately.
 - **Receipt/report schema versioning is not this RFC's decision to make** -- it is already established product convention. Receipts and run reports use a numeric `schema_version`, matching `incan check`, `incan build`, and other existing JSON report surfaces exactly. There is no starting version number for this RFC to bless.
 - **Report output reuses `incan build`'s existing `--report`/`--report-output` contract** rather than defining a new one.
-- **Four required replay classifications** for the first implementation: `deterministic`, `external`, `fixture-required`, `redacted`. `unavailable` remains a trivial fallback needing no further design.
+- **Four required replay classifications:** `deterministic`, `external`, `fixture-required`, `redacted`. `unavailable` remains a trivial fallback needing no further design.
 - **Telemetry export is confirmed orthogonal** to receipt generation, per this RFC's existing text: receipts remain available to local reports and policy regardless of whether `std.telemetry` is configured; telemetry is a second consumer of the same stream, not a dependency of producing it.
 - **Authority-bearing operations are receipt-required, not result-required:** in reporting modes, the runtime retains evidence for each attempted operation even when user code ignores its ordinary return value. `permissive` is explicitly receipt-free and may report only `authority_reporting: disabled`; `observe` and `governed` retain receipts, including denials.
 - **Report-anchor authentication and execution attestation are distinct:** a report anchor is either locally recorded or host-signed and covers its ordered receipt set. Each receipt is separately locally recorded or boundary-attested, covering its exact boundary, normalized inputs, outcome, issuer, and verification material where applicable. A report must not aggregate those facts into a strongest attestation or upgrade a local receipt.
@@ -596,3 +667,7 @@ Generated build artifacts and run reports should be ordinary artifacts that RFC 
 - **Capability budgets use the same grant syntax as scope**, via a reserved `budget.<key>=<value>` prefix, in CLI grants, package metadata, and typed action declarations alike -- no separate budget declaration form.
 - **Typed actions get a static caps-completeness check**, extending "Typed action alignment" from a runtime-only comparison to a compile-time one: the typechecker resolves every call in an `@action`-decorated body, unions the capabilities it actually requires, and diffs that against the declared `caps=[...]` list. A missing required capability is a compile error; an unused declared capability is a warning, matching the non-error default this RFC already gives runtime-observed unused declarations. The diagnostic is available through LSP the same way any other typechecker diagnostic is, including a quick fix to insert a missing capability.
 - **Host-supplied capability ceilings bound effective grants via intersection, never union:** a host may supply a maximum grant set sourced from outside the invocation itself -- for example, a harness-written policy file for an agent or CI job. The effective grant for any invocation is always the intersection of its ceiling and what it requests; an invocation can only receive less than its ceiling, never more, regardless of what it asks for. This RFC defines the ceiling as a distinct grant source and the intersection rule; it does not define how the ceiling's own source is protected from tampering, which is an operating-system/sandbox concern already excluded by this RFC's Non-Goals.
+- **A program can limit itself, in every mode:** `capabilities.restrict`, `Restriction` and `caps=` reduce authority by intersection, follow the task, and cannot be lifted. A request is a boundary that can only reduce. They hold in `observe` and `permissive` too, because otherwise the default run would only record what a limit was meant to stop.
+- **`caps=` means one thing everywhere:** on an action, a tool, a route or a group, it is a checked declaration and a runtime ceiling. A declared capability covers what it `requires` for the check, and grants nothing.
+- **A refusal is an ordinary error:** `CapabilityDenied`, required of provider operations. Handling it never removes its receipt. An operation with no error to return stops the task.
+- **Receipts are typed records:** in `std.db`'s format, followed with `receipts.changes(after=)`, with chained anchors, and kept for 24 hours by default under a family retention policy. Store mechanics belong to RFC 165.
