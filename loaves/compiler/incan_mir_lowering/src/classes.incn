@@ -20,6 +20,7 @@ from rust::incan_semantics_core::body_ir import (
 )
 from pub::incan_mir_plan import PlanType, Local, RvalueKind, SourceSpan, EnumDeclaration
 from models import model_place
+from frame import dereferenced_place, place_type
 from native_type_identity import ConstructorIndex
 from ranges import range_value_local
 from layout_types import native_source_type
@@ -267,6 +268,20 @@ def receiver_borrow(
                 local_offset,
             )?
             receiver.local += local_offset
+
+            # ---- Receiver stored as a carried reference field ----
+            if place_type(locals, receiver) == receiver_type:
+                match receiver_type:
+                    PlanType.ModelRef(owner, name) =>
+                        referent = dereferenced_place(receiver, PlanType.Model(owner, name), span)?
+                        return Ok((receiver_type, RvalueKind.Borrow(referent)))
+                    PlanType.ModelMutRef(owner, name) =>
+                        referent = dereferenced_place(receiver, PlanType.Model(owner, name), span)?
+                        return Ok((receiver_type, RvalueKind.MutBorrow(referent)))
+                    PlanType.EnumRef(owner, name) =>
+                        referent = dereferenced_place(receiver, PlanType.Enum(owner, name), span)?
+                        return Ok((receiver_type, RvalueKind.Borrow(referent)))
+                    _ => pass
             match receiver_type:
                 PlanType.ModelRef(_owner, _name) => return Ok((receiver_type, RvalueKind.Borrow(receiver)))
                 PlanType.ModelMutRef(_owner, _name) => return Ok((receiver_type, RvalueKind.MutBorrow(receiver)))

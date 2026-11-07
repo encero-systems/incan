@@ -5,6 +5,7 @@
 #   4
 #   2
 #   3
+#   3
 #   2
 #   3
 #   3
@@ -34,6 +35,10 @@ class ReusableBatch:
 
 class GraphState:
     pub nodes: list[int]
+
+    pub def node_count(self) -> int:
+        """Return the number of nodes visible through this graph state."""
+        return len(self.nodes)
 
 
 class MemoryGraph:
@@ -123,6 +128,7 @@ def replace_after_carrier_use(mut graph: BorrowedMut[MemoryGraph]) -> None:
     reader = graph.read_view()
     selection = relay_selection(reader, 1)
     println(selection.reader.nodes[selected_key(selection)])
+    println(selection.reader.node_count())
     cursor = selection.cursor(1)
     println(cursor.selection.reader.nodes[cursor.selection.key + cursor_offset(cursor)])
 
