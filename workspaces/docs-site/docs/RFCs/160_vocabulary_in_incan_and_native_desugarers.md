@@ -32,7 +32,7 @@ This RFC defines how package-owned vocabulary enters Incan's canonical semantic 
 4. **Desugaring runs out of process.** The compiler sends a module's vocabulary nodes to the desugarer and receives canonical surface representation in return. A failing, crashing or overdue desugarer produces a diagnostic, never a compiler failure.
 5. **Output carries provenance.** Every node a desugarer returns maps back to the input span it was derived from, so diagnostics point at what the author wrote.
 6. **A desugarer is a pure function of its request.** Tooling may reuse a response for the same desugarer unit and the same request, and may keep workers running between requests.
-7. **A desugarer runs only when admitted.** A locked dependency is necessary but not sufficient. The build's provider policy admits a desugarer by its identity, its declared authority and host policy. A desugarer invocation is granted no capabilities, and the build's evidence records the admission decision and which unit lowered which module.
+7. **A desugarer runs only when admitted.** A locked dependency is necessary but not sufficient. The build's provider policy admits a desugarer by its identity, its declared authority and host policy. A desugarer invocation is granted no capabilities, its worker runs under the same operating-system containment as a procedural macro (RFC 119), and the build's evidence records the admission decision and which unit lowered which module.
 8. **There is one execution route.** Desugarers are native programs built by the same compiler as everything else; there is no second target, no WebAssembly runtime and no interpreter.
 
 ## Motivation
@@ -45,9 +45,9 @@ Three things have changed since then.
 
 **A WebAssembly route is a second route.** Keeping it means a second compilation target for Incan code, with its own standard library and runtime support. It also means embedding a WebAssembly engine and code generator in the compiler and the language server. That engine is a large dependency of its own, with its own native build on each host, Windows included, and its own security advisories. Everything else the toolchain runs is a native program built by one compiler. Desugarers are the only exception.
 
-**The sandbox no longer buys what it was chosen for.** RFC 027 chose WebAssembly for portability, isolation and determinism.
+**The WebAssembly sandbox no longer buys what it was chosen for.** RFC 027 chose WebAssembly for portability, isolation and determinism.
 - **Portability:** `loaves.pub` already builds every Loaf for each host target, so one more compiled unit per target is ordinary.
-- **Isolation:** a separate worker isolates crashes and lets the toolchain terminate stuck work. Authority is a different boundary: RFC 104's capabilities must be enforced across the selected provider's operations, including native and interop paths. Published identity establishes which provider is admitted, not permission to bypass those checks. This RFC therefore requires correct capability enforcement without requiring an operating-system sandbox.
+- **Isolation:** a separate worker isolates crashes and lets the toolchain terminate stuck work. Authority is a different boundary: RFC 104's capabilities must be enforced across the selected provider's operations, including native and interop paths. Published identity establishes which provider is admitted, not permission to bypass those checks. Capability checks run inside the worker, though, and native code in the worker can call the operating system without passing through them. This RFC therefore requires both: capability enforcement for what the worker does through Incan and interop, and operating-system containment around the worker process.
 - **Determinism:** reuse of compiled work already relies on compile-time code being a function of its inputs; desugarers fall under the same rule.
 
 A desugarer written in Incan and compiled like any other Incan program removes the second target, the embedded engine, the Cargo dependency and the Rust authoring surface at once. Library authors write their vocabulary in the language their library is written in.
@@ -70,7 +70,6 @@ A desugarer written in Incan and compiled like any other Incan program removes t
 - Changing the vocabulary surface model of RFC 027, RFC 040, RFC 045 or RFC 081: declarations, clauses, activation on import and embedded fragments keep their meaning.
 - Changing RFC 108's extensions, which add typed members and no syntax. Registration is the typed `library_vocab()` function.
 - File-scoped surface activation (a header that selects a surface for a whole file), project-level surface defaults, alternate grammars with Incan semantics, and foreign-language frontends. RFC 162 specifies them; see "Relationship to source surfaces".
-- An operating-system sandbox for desugarers. Provider admission, enforced RFC 104 capabilities, and execution evidence are this RFC's controls; see "Trust and evidence".
 - Loading previously published WebAssembly desugarers.
 - Defining how a consumer selects among competing vocabularies; activation rules are unchanged.
 
@@ -138,7 +137,7 @@ Here `marker()` is an ordinary function the library exports from `src/lib.incn`,
 
 ### In the editor
 
-The language server desugars blocks as the consumer edits them. Workers stay running between requests, and responses to unchanged blocks are reused, so editing a module that uses `query` does not start a process for each change.
+The language server desugars blocks as the consumer edits them. Workers stay running between requests, and responses to unchanged blocks are reused, so editing a module that uses `query` does not start a process for each change. It runs desugarers only for a project whose compile-time code the user trusts (RFC 117). Until then, it reports vocabulary blocks as not yet checked.
 
 ## Reference-level explanation
 
@@ -184,7 +183,7 @@ The language server desugars blocks as the consumer edits them. Workers stay run
 - A desugarer's response must be a function of its vocabulary unit's identity and its request.
 - Tooling may reuse a response for the same unit identity and the same request, and may keep worker processes running across requests.
 - A desugarer must not depend on the environment, the clock, the file system or the network. Governed execution must enforce its empty capability grant under RFC 104 rather than merely declare these accesses unsupported. A permitted native dependency must not introduce an unmediated authority-bearing path around that contract. Clearing the environment alone is not evidence of enforcement.
-- The compiler clears the worker's inherited environment before starting it. This removes ambient environment inputs; it does not provide an operating-system sandbox.
+- The compiler clears the worker's inherited environment and starts it under RFC 119's governed containment: no network, no writes, and reads limited to the worker's own artifact, its locked dependencies and the selected toolchain. If the host cannot enforce that containment, the desugarer is refused.
 
 ### Trust and evidence
 
@@ -195,9 +194,10 @@ The language server desugars blocks as the consumer edits them. Workers stay run
 
   Being a locked dependency is necessary but not sufficient. The compiler must verify the admitted identity against the worker artifact it starts.
 - The default policy admits providers reached through locked dependencies. A host or project policy may restrict admission further, for example to named providers or to providers with published units. The lock and the invocation evidence must record the policy that admitted each provider.
+- Outside an explicit build, run or test request, the language server and eager preparation run an admitted desugarer only when RFC 117's compile-time trust covers its Loaf.
 - A vocabulary unit declares no authority under this RFC. Any authority beyond a pure function of the request, such as declared file inputs, is outside this RFC.
 - A desugarer invocation must run as a governed RFC 104 execution boundary with an empty effective capability grant. A containing build's mode or broader grants must not widen that grant. Any authority-bearing operation a desugarer attempts must be denied before its effect and recorded under RFC 104.
-- Capability enforcement, rather than an operating-system sandbox, is the required authority boundary. Enforcement must cover authority-bearing paths through native dependencies and Rust interop as well as ordinary Incan calls; declaring a capability or admitting a provider is not enforcement by itself. If the selected provider path cannot satisfy that contract, governed execution must be refused with a diagnostic identifying the uncovered boundary. The toolchain must not execute that path under an empty grant while claiming its authority is governed. This RFC does not prescribe the internal enforcement mechanism or claim that the required coverage is already implemented.
+- Two boundaries apply. Operating-system containment of the worker process bounds what native code can reach, because an in-process check cannot stop a direct system call. Capability enforcement is the boundary for the worker's Incan and interop calls, and the source of their receipts. Enforcement must cover authority-bearing paths through native dependencies and Rust interop as well as ordinary Incan calls; declaring a capability or admitting a provider is not enforcement by itself. If the selected provider path cannot satisfy that contract, governed execution must be refused with a diagnostic identifying the uncovered boundary. The toolchain must not execute that path under an empty grant while claiming its authority is governed. This RFC does not prescribe the internal enforcement mechanism or claim that the required coverage is already implemented.
 - Oven must record in the build's evidence, for each module it desugared:
     - the admission decision and the policy that made it;
     - the providing Loaf;
@@ -290,11 +290,11 @@ RFC 160 and RFC 162 exist for RFC 161's single-authority rule. Every surface nor
 3. **Interpret desugarers.** This was rejected because the native route is the only execution route; an interpreter would be a second semantics for Incan.
 4. **Keep the Rust companion crate.** This was rejected because RFC 081 retired Rust desugarer authoring, and the native route has no Cargo build for it.
 5. **Return generated source text.** This was rejected because text loses spans, comments and structure. Diagnostics would then point at generated code, and every provider would have to reproduce Incan's printer exactly.
-6. **Require an operating-system sandbox for vocabulary workers.** Rejected. RFC 104 owns the capability and receipt contract, and this RFC requires that contract to be enforced across the selected provider's authority-bearing paths. A separate process isolates worker failures; it is not the authority boundary. An operating-system sandbox may be a host implementation measure, but is not an additional requirement of this RFC or a replacement for capability enforcement.
+6. **Rely on capability enforcement alone, without operating-system containment** (an earlier revision of this RFC). Rejected. Capability checks run inside the worker, and native code in the worker can call the operating system without passing through them, so complete enforcement across native paths would need the operating system anyway. A separate process isolates worker failures; containment is what bounds its authority.
 
 ## Drawbacks
 
-- Enforcing capabilities through native dependencies and Rust interop requires complete boundary coverage. An uncovered path cannot be admitted for governed execution merely because the provider is locked or trusted by identity; until its required coverage exists, that path is unavailable in governed execution. This is an implementation obligation, not a claim that arbitrary native code is already constrained or that receipts themselves prevent access.
+- Enforcing capabilities through native dependencies and Rust interop requires complete boundary coverage. An uncovered path cannot be admitted for governed execution merely because the provider is locked or trusted by identity; until its required coverage exists, that path is unavailable in governed execution. This is an implementation obligation, not a claim that receipts themselves prevent access. Operating-system containment bounds the worker whatever that coverage is, and a host that cannot enforce it cannot run native desugarers.
 - A vocabulary unit is compiled per host target, and a consumer on a host without a published unit compiles it from source.
 - Starting a worker costs a process launch, which on some hosts includes a system security assessment of a newly built program. Retained workers keep this off the editing path.
 - Any WebAssembly desugarer built for RFC 027 or RFC 081 must be rebuilt.
@@ -306,13 +306,13 @@ RFC 160 and RFC 162 exist for RFC 161's single-authority rule. Every surface nor
 - **Desugar pass**: batched requests to out-of-process workers, response validation, source maps, reuse, and diagnostics; the WebAssembly runtime and its fuel budget are removed.
 - **Build evidence**: provider admission decisions, which vocabulary unit lowered which module, and whether each response was reused.
 - **Registry**: publication of vocabulary units per host target.
-- **LSP / Tooling**: desugaring through retained workers while editing; diagnostics for desugarer failures.
+- **LSP / Tooling**: desugaring through retained, contained workers while editing a trusted project; diagnostics for desugarer failures.
 - **Formatter**: none beyond reading published descriptors.
 
 ## Design Decisions
 
 - Desugaring remains a function of its vocabulary unit identity and its request. Declared external file inputs and their additional authority, schema, dependency, and reuse contracts are outside this RFC. Naming a file in a syntax node or in `module_path` must not grant permission to read it.
 - Keep `[vocab] entry` and the typed `library_vocab() -> VocabRegistration` function. Registration executes at the producer; consumers read its published descriptors. Producer registration uses RFC 104's existing authority and receipt contract, without introducing another grant mechanism or implicit package authority.
-- An operating-system sandbox is not required. Correct capability enforcement under RFC 104 is the authority boundary, including native and interop paths. Process separation remains worker-failure isolation. Unknown enforcement coverage must be diagnosed before governed execution rather than hidden behind an empty capability declaration or an audit claim.
+- Desugarer workers run contained (2026-11-07). The worker process runs under RFC 119's governed containment, because capability checks inside the worker cannot stop native code from calling the operating system directly. RFC 104 capability enforcement still governs the worker's Incan and interop calls and produces their receipts. Unknown enforcement coverage must still be diagnosed before governed execution rather than hidden behind an empty capability declaration or an audit claim. Process separation also isolates worker failures. The language server and eager preparation run desugarers only for trusted code (RFC 117).
 
 - No desugarer-specific timeout, invocation budget, or package timeout declaration is required. Authoring a desugarer in Incan does not introduce an additional timing contract. This does not alter independently configured host policies or RFC 104 capability constraints.
