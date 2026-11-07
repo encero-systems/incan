@@ -12,8 +12,8 @@ from files import write
 
 pub def test_formatting_changes_evidence_not_effective_requests() -> Result[None, str]:
     """Compare complete normalized intent while proving distinct source bytes have distinct evidence digests."""
-    first = b"[project]\x0aname = 'app'\x0aversion = '0.1.0'\x0a[rust-dependencies]\x0aregex = '1'\x0a"
-    second = b"# source provenance changed\x0a[project]\x0aversion='0.1.0'\x0aname='app'\x0a[rust-dependencies]\x0aregex='1'\x0a"
+    first = b"[project]\x0aname = 'app'\x0aversion = '0.1.0'\x0a[dependencies]\x0aregex = { loaf = 'crates-io/regex', version = '1' }\x0a"
+    second = b"# source provenance changed\x0a[project]\x0aversion='0.1.0'\x0aname='app'\x0a[dependencies]\x0aregex={loaf='crates-io/regex',version='1'}\x0a"
     match parse_document(first, "one/loaf.toml"):
         Err(error) => fail(error.message())
         Ok(left) =>
@@ -73,9 +73,9 @@ def refused[T, E](result: Result[T, E]) -> bool:
         Ok(_) => return false
 
 
-pub def test_rust_requirements_preserve_features_and_package_alias() -> None:
-    """Retain Rust alias, package, version, feature flags and explicit target policy as unresolved intent."""
-    source = "[project]\nname='app'\nversion='0.1.0'\n[build]\ntarget='wasm32-wasip1'\nprofile='release'\nrust-edition='2024'\n[rust-dependencies]\nsearch={package='regex', version='1', features=['unicode', 'std', 'std'], default-features=false, optional=true}\n"
+pub def test_loaf_requirements_preserve_rust_activation() -> None:
+    """Retain the Loaf identity, alias, version, feature flags and explicit target policy as unresolved intent."""
+    source = "[project]\nname='app'\nversion='0.1.0'\n[build]\ntarget='wasm32-wasip1'\nprofile='release'\nrust-edition='2024'\n[dependencies]\nsearch={loaf='crates-io/regex', version='1', features=['unicode', 'std', 'std'], default-features=false, optional=true}\n"
     match parse_intent(source, "loaf.toml"):
         Err(error) => fail(error.message())
         Ok(project) =>
@@ -265,7 +265,7 @@ def verify_toolchain_access() -> Result[None, IntakeError]:
 
 
 pub def test_amended_loaf_dependency_entries() -> Result[None, IntakeError]:
-    """Retain scoped aliases, feature policy and every target alternative in authored intent."""
+    """Retain scoped aliases, identity spellings, feature policy and every target alternative in authored intent."""
     source = "\n[project]\nname = \"app\"\nversion = \"0.1.0\"\nlicense = \"Apache-2.0\"\nprivate = true\n[rust]\nname = \"app_lib\"\ntype = \"lib\"\nedition = \"2024\"\n[rust.source]\nroot = \"rust\"\n[dependencies]\nsearch = { loaf = \"crates-io/regex\", version = \"1\", features = [\"std\"], default-features = false, optional = true }\nlibc = [\n  { loaf = \"crates-io/libc\", version = \"0.2\", target = \"aarch64-apple-darwin\" },\n  { loaf = \"crates-io/libc\", version = \"0.2\", target = 'cfg(all(unix, not(target_os = \"macos\")))' }\n]\n"
     project = parse_intent(source, "loaf.toml")?
     assert len(project.rust_inputs) == 3
@@ -277,23 +277,39 @@ pub def test_amended_loaf_dependency_entries() -> Result[None, IntakeError]:
     assert search.features == ["std"]
     assert not search.default_features
     assert search.optional
+    assert not project.rust_build_script
     assert project.rust_inputs[0].target == Some("aarch64-apple-darwin")
+    adopted = parse_intent(
+        "[project]\nname='local_name'\nversion='1.0.0'\n[rust]\nbuild-script=false\n[dependencies]\ncrate={loaf='crates-io/upstream_name',version='1'}\n",
+        "loaf.toml",
+    )?
+    assert adopted.rust_name == "local_name"
+    assert not adopted.rust_build_script
+    assert adopted.rust_inputs[0].loaf == Some("crates-io/upstream_name")
     environment = parse_intent(
         source + "\n[envs.test.dependencies]\nsearch={features=['test_support']}\nserde_json={loaf='crates-io/serde_json', version='1'}\n",
         "loaf.toml",
     )?
     assert environment.rust_inputs == project.rust_inputs
+    long_local = parse_intent(
+        "[project]\nname='a_generated_local_project_name_that_is_longer_than_a_registry_component_limit'\nversion='1.0.0'\n",
+        "loaf.toml",
+    )?
+    assert long_local.rust_name == "a_generated_local_project_name_that_is_longer_than_a_registry_component_limit"
     return Ok(None)
 
 
 pub def test_amended_loaf_refuses_retired_grammar() -> None:
-    """Reject removed Rust keys, dependency kinds, extra roles and noncanonical predicates."""
+    """Reject removed Rust keys, dependency kinds, invalid identities, extra roles and noncanonical predicates."""
     for extra in [
         "[rust]\ncrate-name='app'\n",
         "[rust]\ncrate-type='lib'\n",
         "[dev-dependencies]\nregex='1'\n",
         "[build-dependencies]\nregex='1'\n",
         "[dependencies]\nregex={crate='regex', version='1'}\n",
+        "[dependencies]\nregex={loaf='Acme/widgets', version='1'}\n",
+        "[dependencies]\nregex={loaf='acme/widget_name', version='1'}\n",
+        "[dependencies]\nregex={loaf='acme/widgets/extra', version='1'}\n",
         "[dependencies]\nregex={loaf='crates-io/regex', version='1', target='cfg(all(unix,windows))'}\n",
     ]:
         source = "[project]\nname='app'\nversion='0.1.0'\n" + extra

@@ -5,5 +5,5 @@ version = "0.1.0"
 [project.scripts]
 main = "src/main.incn"
 
-[rust-dependencies]
-messages = { path = "rust/messages" }
+[dependencies]
+messages = { loaf = "messages", path = "rust/messages" }

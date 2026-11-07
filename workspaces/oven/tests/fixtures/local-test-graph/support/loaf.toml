@@ -1,5 +1,5 @@
 [project]
-name='support'
+name='crates-io/support'
 version='1.0.0'
 [rust]
 type='lib'

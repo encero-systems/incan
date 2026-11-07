@@ -3,5 +3,5 @@ name = "issue861_tar_mut_reference"
 version = "0.1.0"
 [project.scripts]
 main = "src/main.incn"
-[rust-dependencies]
-tar = "0.4"
+[dependencies]
+tar = { loaf = "crates-io/tar", version = "0.4" }

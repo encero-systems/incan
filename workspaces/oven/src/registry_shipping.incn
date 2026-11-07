@@ -4,10 +4,11 @@ built from declares. Units an earlier home carried forward, which no Loaf names 
 """
 
 from std.fs import Path
-from std.toml import TomlKind, TomlValue
 from home import standard_packages
 from registry_units import RegistryUnit
-from toml_fields import read_manifest
+from intake import read_manifest_snapshot
+from loaf_identity import crate_name
+from manifest_intent import intent_from_snapshot
 
 
 pub def shipped_entries(units: list[RegistryUnit], checkout: Path) -> Result[set[str], str]:
@@ -93,48 +94,22 @@ def declared_crates(checkout: Path) -> Result[set[str], str]:
 
 
 def manifest_crates(project: Path) -> Result[list[str], str]:
-    """The crates one manifest's dependency tables declare, including each environment's."""
-    manifest = read_manifest(project)?
-    root = manifest.as_table().map_err((error) => error.message())?
+    """The registry crates one admitted project intent declares; a workspace-only manifest declares none."""
+    snapshot = read_manifest_snapshot(project).map_err((error) => error.message())?
+    root = snapshot.parsed.as_table().map_err((error) => error.message())?
+    if "project" not in root:
+        return Ok([])
+    intent = match intent_from_snapshot(snapshot):
+        Err(_) => return Ok([])
+        Ok(admitted) => admitted
     mut crates: list[str] = []
-    for group in ["dependencies", "rust-dependencies"]:
-        if group in root:
-            crates = crates + table_crates(root[group])?
-    if "envs" in root:
-        for environment in root["envs"].as_table().map_err((error) => error.message())?.values():
-            settings = environment.as_table().map_err((error) => error.message())?
-            if "dependencies" in settings:
-                crates = crates + table_crates(settings["dependencies"])?
+    for request in intent.rust_inputs:
+        if request.path is None:
+            if let Some(identity) = request.loaf:
+                crates.append(crate_name(identity))
+    for environment in sorted([name for name in intent.environment_rust_inputs.keys()]):
+        for request in intent.environment_rust_inputs[environment]:
+            if request.path is None:
+                if let Some(identity) = request.loaf:
+                    crates.append(crate_name(identity))
     return Ok(crates)
-
-
-def table_crates(group: TomlValue) -> Result[list[str], str]:
-    """The crate each entry of one dependency table names; a path dependency names none."""
-    mut crates: list[str] = []
-    entries = group.as_table().map_err((error) => error.message())?
-    for alias in entries.keys():
-        if entries[alias].kind() != TomlKind.Table:
-            crates.append(normalized(alias))
-            continue
-        fields = entries[alias].as_table().map_err((error) => error.message())?
-        if "path" in fields:
-            continue
-        if "loaf" in fields:
-            crates.append(crate_name(fields["loaf"].as_str().map_err((error) => error.message())?))
-        elif "package" in fields:
-            crates.append(normalized(fields["package"].as_str().map_err((error) => error.message())?))
-        else:
-            crates.append(normalized(alias))
-    return Ok(crates)
-
-
-def crate_name(loaf: str) -> str:
-    """The package a `crates-io/<package>` Loaf names, with `-` as `_`."""
-    if loaf.startswith("crates-io/"):
-        return normalized(loaf[10:])
-    return normalized(loaf)
-
-
-def normalized(name: str) -> str:
-    """A crate name with `-` as `_`, the spelling registry units and declarations share."""
-    return name.replace("-", "_")

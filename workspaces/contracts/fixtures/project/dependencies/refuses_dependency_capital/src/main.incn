@@ -1,0 +1,13 @@
+# behavior: Oven refuses capitals in a Loaf identity without folding them.
+# cli-commands:
+#   oven build .
+# expect-stdout:
+# expect-stderr-contains:
+#   loaf.toml: ["dependencies", "widget", "loaf"]: invalid
+#   Loaf identity components must start with a lowercase ASCII letter or digit
+# expect-exit: 1
+
+
+def main() -> None:
+    """Remain unbuilt because the manifest is refused at intake."""
+    pass

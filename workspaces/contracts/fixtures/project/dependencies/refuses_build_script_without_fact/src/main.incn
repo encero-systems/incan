@@ -1,0 +1,13 @@
+# behavior: Oven refuses a Rust build script when the exact binding has no recorded build fact.
+# cli-commands:
+#   oven build .
+# expect-stdout:
+# expect-stderr-contains:
+#   loaf.toml: ["rust", "build-script"]: unsupported
+#   refuses_build_script_without_fact requires a recorded build fact for this exact binding
+# expect-exit: 1
+
+
+def main() -> None:
+    """Remain unbuilt because the manifest is refused at intake."""
+    pass

@@ -5,5 +5,5 @@ version = "0.1.0"
 [project.scripts]
 main = "src/main.incn"
 
-[rust-dependencies]
-drop_probe = { path = "rust/drop_probe" }
+[dependencies]
+drop_probe = { loaf = "drop_probe", path = "rust/drop_probe" }

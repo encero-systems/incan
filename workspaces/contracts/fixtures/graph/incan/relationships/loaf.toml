@@ -6,10 +6,8 @@ version = "0.1.0"
 main = "src/main.incn"
 
 [dependencies]
+serde_json = { loaf = "crates-io/serde_json", version = "1.0" }
 checked = { path = "deps/checked" }
-
-[rust-dependencies]
-serde_json = "1.0"
 
 [tool.incan.codegraph]
 sources = ["context"]

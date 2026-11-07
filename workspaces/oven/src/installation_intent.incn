@@ -25,20 +25,12 @@ pub def read_intent(mut reader: Reader) -> Result[ProjectIntent, str]:
         )
     mut requests: list[RustInputRequest] = []
     for _index in range(reader.count(80)?):
-        requests.append(
-            RustInputRequest(
-                alias=reader.text()?,
-                package=reader.text()?,
-                loaf=reader.optional()?,
-                version=reader.text()?,
-                features=reader.texts()?,
-                default_features=reader.flag()?,
-                optional=reader.flag()?,
-                target=reader.optional()?,
-                path=reader.optional()?,
-            ),
-        )
+        requests.append(read_request(reader)?)
     edition = reader.text()?
+    rust_name = reader.text()?
+    rust_type = reader.text()?
+    rust_build_script = reader.flag()?
+    environment_requests = read_environment_requests(reader)?
     features = read_features(reader)?
     return Ok(
         ProjectIntent(
@@ -48,6 +40,10 @@ pub def read_intent(mut reader: Reader) -> Result[ProjectIntent, str]:
             dependencies=dependencies,
             rust_inputs=requests,
             rust_edition=edition,
+            rust_name=rust_name,
+            rust_type=rust_type,
+            rust_build_script=rust_build_script,
+            environment_rust_inputs=environment_requests,
             features=features,
             source_root=reader.optional()?,
             contract_models=reader.texts()?,
@@ -79,6 +75,10 @@ pub def write_intent(buffer: _BytesIO, intent: ProjectIntent) -> Result[None, st
     for request in intent.rust_inputs:
         write_request(buffer, request)?
     put_text(buffer, intent.rust_edition)?
+    put_text(buffer, intent.rust_name)?
+    put_text(buffer, intent.rust_type)?
+    put_flag(buffer, intent.rust_build_script)?
+    write_environment_requests(buffer, intent.environment_rust_inputs)?
     write_features(buffer, intent.features)?
     put_optional(buffer, intent.source_root)?
     put_texts(buffer, intent.contract_models)?
@@ -100,6 +100,52 @@ def write_request(buffer: _BytesIO, request: RustInputRequest) -> Result[None, s
     put_flag(buffer, request.optional)?
     put_optional(buffer, request.target)?
     return put_optional(buffer, request.path)
+
+
+def read_environment_requests(mut reader: Reader) -> Result[Dict[str, list[RustInputRequest]], str]:
+    """Read normalized environment overlays with the same dependency request schema as production intent."""
+    mut environments: Dict[str, list[RustInputRequest]] = {}
+    for _environment in range(reader.count(16)?):
+        name = reader.text()?
+        if name in environments:
+            return Err("installation page has duplicate environments")
+        mut requests: list[RustInputRequest] = []
+        for _request in range(reader.count(80)?):
+            requests.append(read_request(reader)?)
+        environments[name] = requests
+    return Ok(environments)
+
+
+def read_request(mut reader: Reader) -> Result[RustInputRequest, str]:
+    """Read one normalized Rust dependency request from an installation page."""
+    return Ok(
+        RustInputRequest(
+            alias=reader.text()?,
+            package=reader.text()?,
+            loaf=reader.optional()?,
+            version=reader.text()?,
+            features=reader.texts()?,
+            default_features=reader.flag()?,
+            optional=reader.flag()?,
+            target=reader.optional()?,
+            path=reader.optional()?,
+        ),
+    )
+
+
+def write_environment_requests(
+    buffer: _BytesIO,
+    environments: Dict[str, list[RustInputRequest]],
+) -> Result[None, str]:
+    """Write each normalized environment overlay in deterministic name order."""
+    put_number(buffer, len(environments))?
+    for name in sorted([name for name in environments.keys()]):
+        put_text(buffer, name)?
+        requests = environments[name].clone()
+        put_number(buffer, len(requests))?
+        for request in requests:
+            write_request(buffer, request)?
+    return Ok(None)
 
 
 def read_pairs(mut reader: Reader) -> Result[Dict[str, str], str]:
