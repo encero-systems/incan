@@ -1,0 +1,14 @@
+pub enum DbError:
+    Failed(str)
+
+
+pub def fetch() -> Result[int, DbError]:
+    return Err(DbError.Failed("other store"))
+
+
+pub model Envelope[T]:
+    pub value: T
+
+
+pub def envelope() -> Envelope[int]:
+    return Envelope[int](value=8)
