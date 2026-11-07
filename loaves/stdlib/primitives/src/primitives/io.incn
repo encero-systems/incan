@@ -130,6 +130,107 @@ pub class WriteBuffer:
             Err(error) => return Err(_host_error("seek", self.tell(), error))
 
 
+pub model ByteReader:
+    """An independently positioned reader over owned immutable bytes."""
+
+    data: bytes
+    offset: int
+
+    @staticmethod
+    pub def from_bytes(data: bytes) -> Self:
+        """Take ownership of `data` and return a reader positioned at its first byte."""
+        return ByteReader(data=data, offset=0)
+
+    pub def remaining(self) -> int:
+        """Return the number of unread bytes."""
+        return len(self.data) - self.offset
+
+    pub def read_u16_le(mut self) -> Option[u16]:
+        """Read one little-endian `u16`, or return `None` without advancing when truncated."""
+        match self._read_width(2):
+            None => return None
+            Some(raw) =>
+                mut value: u16 = 0u16
+                for index in range(2):
+                    byte: u16 = raw[index].wrapping_resize()
+                    value = value | (byte << (index * 8))
+                return Some(value)
+
+    pub def read_u32_le(mut self) -> Option[u32]:
+        """Read one little-endian `u32`, or return `None` without advancing when truncated."""
+        match self._read_width(4):
+            None => return None
+            Some(raw) =>
+                mut value: u32 = 0u32
+                for index in range(4):
+                    byte: u32 = raw[index].wrapping_resize()
+                    value = value | (byte << (index * 8))
+                return Some(value)
+
+    pub def read_u64_le(mut self) -> Option[u64]:
+        """Read one little-endian `u64`, or return `None` without advancing when truncated."""
+        match self._read_width(8):
+            None => return None
+            Some(raw) =>
+                mut value: u64 = 0u64
+                for index in range(8):
+                    byte: u64 = raw[index].wrapping_resize()
+                    value = value | (byte << (index * 8))
+                return Some(value)
+
+    pub def read_exact(mut self, size: int) -> Result[bytes, IoError]:
+        """Read exactly `size` bytes, returning a typed refusal without advancing for an invalid or truncated range."""
+        if size < 0:
+            return Err(_invalid_input("read_exact", self.offset, "read size must be non-negative"))
+        match self._read_width(size):
+            Some(value) => return Ok(value)
+            None =>
+                return Err(
+                    IoError(
+                        operation="read_exact",
+                        kind="truncated",
+                        detail="owned bytes ended before the requested range",
+                        position=self.offset,
+                    ),
+                )
+
+    pub def read_length_prefixed(mut self, max_length: int) -> Result[bytes, IoError]:
+        """
+        Read a little-endian `u64` length followed by that many bytes, bounded by `max_length`.
+
+        A truncated prefix or payload and a declared limit breach are typed failures. A failed read never indexes past
+        the owned bytes.
+        """
+        if max_length < 0:
+            return Err(_invalid_input("read_length_prefixed", self.offset, "maximum length must be non-negative"))
+        start = self.offset
+        match self.read_u64_le():
+            None => return Err(_byte_read_error("truncated", start, "owned bytes ended inside the length prefix"))
+            Some(encoded) =>
+                maybe_size: Option[int] = encoded.try_resize()
+                match maybe_size:
+                    None =>
+                        self.offset = start
+                        return Err(_byte_read_error("limit_exceeded", start, "encoded length exceeds host limits"))
+                    Some(size) =>
+                        if size > max_length:
+                            self.offset = start
+                            return Err(_byte_read_error("limit_exceeded", start, "encoded length exceeds the declared limit"))
+                        match self._read_width(size):
+                            Some(value) => return Ok(value)
+                            None =>
+                                self.offset = start
+                                return Err(_byte_read_error("truncated", start, "owned bytes ended inside the length-prefixed value"))
+
+    def _read_width(mut self, width: int) -> Option[bytes]:
+        """Return one checked range and advance only when the complete range is present."""
+        if width < 0 or self.offset < 0 or width > self.remaining():
+            return None
+        start = self.offset
+        self.offset += width
+        return Some(self.data[start:self.offset])
+
+
 def _target_usize(target: int, position: int) -> Result[usize, IoError]:
     """Convert a nonnegative truncate target into the host vector size type."""
     converted: Option[usize] = target.try_resize()
@@ -149,6 +250,11 @@ def _target_u64(target: int, position: int) -> Result[u64, IoError]:
 def _invalid_input(operation: str, position: int, detail: str) -> IoError:
     """Return a stable invalid-input error for one buffer operation."""
     return IoError(operation=operation, kind="invalid_input", detail=detail, position=position)
+
+
+def _byte_read_error(kind: str, position: int, detail: str) -> IoError:
+    """Return one typed owned-byte decoding failure."""
+    return IoError(operation="read_length_prefixed", kind=kind, detail=detail, position=position)
 
 
 def _host_error(operation: str, position: int, detail: str) -> IoError:
