@@ -53,7 +53,48 @@ impl Builder<'_> {
         if let Some(closure) = self.closure_local(callee) {
             return self.closure_call(&closure, arguments, span, incoming);
         }
+        if self.uses_ordinary_iteration_access(span) {
+            return self.ordinary_iteration_call(None, arguments, incoming);
+        }
         self.apply_call(None, arguments, span, incoming)
+    }
+
+    /// Whether an iteration-only graph must project this missing or inferred ordinary call without claiming an
+    /// explicit or native parameter contract. Ordinary calls still evaluate all source arguments below.
+    pub(super) fn uses_ordinary_iteration_access(&self, span: Span) -> bool {
+        self.allow_fresh_aggregate_elements
+            && self
+                .checker
+                .type_info
+                .protocols
+                .explicit_input_calls
+                .get(&span)
+                .is_none_or(|call| call.kind == super::super::InputCallKind::Ordinary)
+    }
+
+    /// Project an ordinary call while building the iteration-only ownership profile. Every argument is still
+    /// evaluated in source order and observed as a read; a retained loop item is transferred because the historical
+    /// loop-item contract hands non-cloneable items on to ordinary calls. Selected explicit inputs continue through
+    /// [`Self::apply_call`], where each parameter's canonical graph permission owns the decision.
+    pub(super) fn ordinary_iteration_call(
+        &mut self,
+        receiver: Option<&Spanned<Expr>>,
+        arguments: &[CallArg],
+        mut incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        if let Some(receiver) = receiver {
+            incoming = self.expression(receiver, incoming, false)?;
+        }
+        for argument in arguments {
+            let value = match argument {
+                CallArg::Positional(value)
+                | CallArg::Named(_, value)
+                | CallArg::PositionalUnpack(value)
+                | CallArg::KeywordUnpack(value) => value,
+            };
+            incoming = self.expression(value, incoming, self.is_loop_item_value(value))?;
+        }
+        Ok(incoming)
     }
 
     /// A builtin list method reads or changes its receiver place in place, after evaluating its arguments. An element
