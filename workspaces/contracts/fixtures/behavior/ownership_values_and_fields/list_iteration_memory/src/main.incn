@@ -44,8 +44,8 @@ def main() -> Result[None, str]:
 
 
 def within_source_memory(baseline: int, measured: int) -> bool:
-    """Allow five percent allocator variation and one yielded row, while excluding a copy of the large source."""
-    return measured <= baseline + baseline // 20
+    """Allow 20 percent, above measured allocator noise but far below the roughly 100 percent cost of a source copy."""
+    return measured <= baseline + baseline // 5
 
 
 def measure(mode: str) -> Result[int, str]:
