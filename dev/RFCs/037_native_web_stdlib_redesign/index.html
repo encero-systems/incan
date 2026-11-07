@@ -10159,6 +10159,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#local-servers-output-and-request-size" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Local servers, output and request size
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#middleware-and-lifecycle" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -11001,6 +11012,18 @@
 <h3 id="testing_1">Testing<a class="headerlink" href="#testing_1" title="Permanent link">&para;</a></h3>
 <ol>
 <li><code>app.test_client(session=...)</code> must return an RFC 066 <code>Client</code> using an in-process transport and a memory cookie jar, and must behave as a same-origin browser. <code>session=</code> must be accepted only in a test context.</li>
+</ol>
+<h3 id="local-servers-output-and-request-size">Local servers, output and request size<a class="headerlink" href="#local-servers-output-and-request-size" title="Permanent link">&para;</a></h3>
+<ol>
+<li>A server bound only to loopback addresses must, by default, refuse a request whose <code>Host</code> header names anything other than a loopback name or address with the bound port. A page that rebinds its own domain to <code>127.0.0.1</code> shares the attacker's origin, so <code>Origin</code> and <code>Sec-Fetch-Site</code> alone cannot catch it. An application may accept further hosts only by naming them.</li>
+<li>Interpolation into <code>web.Html</code> is allowed only in data positions: element text, and quoted values of ordinary attributes, each escaped for its position.<ul>
+<li><strong>URL attributes:</strong> an attribute such as <code>href</code>, <code>src</code>, <code>action</code> or <code>formaction</code> also takes only a relative URL, or one whose scheme is <code>http</code>, <code>https</code> or <code>mailto</code>, and refuses any other. Escaping alone does not make a <code>javascript:</code> URL safe.</li>
+<li><strong>Refused positions:</strong> interpolation into a script, a style element, an event-handler attribute, a <code>style</code> attribute, an unquoted attribute, a tag or attribute name, or a comment must be refused. The refusal comes at compile time when the template is static, and before any output otherwise.</li>
+<li><strong>Script data:</strong> data a script needs goes through a JSON data block that <code>std.web</code> serializes and escapes, never into script text.</li>
+<li><strong>Raw markup:</strong> markup that is not to be escaped comes through a distinct raw type. It goes only where element content is allowed, never into a refused position.</li>
+</ul>
+</li>
+<li>Request bodies, header sections and multipart parts must be bounded before they are read, with limits an application can set. A request beyond a limit must be refused without reading the excess.</li>
 </ol>
 <h3 id="middleware-and-lifecycle">Middleware and lifecycle<a class="headerlink" href="#middleware-and-lifecycle" title="Permanent link">&para;</a></h3>
 <p>The platform must support deterministic middleware ordering, short-circuiting, enrichment and error transformation, startup and shutdown hooks, and integration of background tasks and long-lived resources.</p>

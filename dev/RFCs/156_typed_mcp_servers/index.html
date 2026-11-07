@@ -10458,6 +10458,8 @@
 <li><code>std.io</code> must provide <code>stdin()</code> as a <code>BinaryReader</code> with an async form, and <code>stdout()</code>.</li>
 <li><code>server.mount(path, ...)</code> must return a group that serves Streamable HTTP on an RFC 037 <code>App</code>, taking the same limits. Authentication must come from the application's RFC 037 <code>Authenticated</code> types and guards into <code>ToolContext.current().principal</code>, and must not be reimplemented by <code>std.mcp</code>.</li>
 <li><code>mount</code> and its <code>std.web</code> dependency must be separately selectable, so a server that only uses stdio, such as <code>incan mcp</code>, does not carry the web stack.</li>
+<li>A mount on a loopback-bound <code>App</code> keeps RFC 037's <code>Host</code> check. <code>server.mount</code> on an application that listens beyond loopback must be refused at startup unless the group requires an <code>Authenticated</code> principal.</li>
+<li>A Loaf that provides tools must publish a digest over each tool's name, description and input and output schemas in its library metadata. <code>oven.lock</code> must record the digests of the tools a project serves from its dependencies, so a dependency update that rewrites a tool's description or schema shows as a lock change.</li>
 </ol>
 <h3 id="conformance-workloads">Conformance workloads<a class="headerlink" href="#conformance-workloads" title="Permanent link">&para;</a></h3>
 <table>
