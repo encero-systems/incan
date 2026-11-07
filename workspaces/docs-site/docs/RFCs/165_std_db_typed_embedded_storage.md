@@ -405,7 +405,15 @@ Changing a schema or codec requires an explicit migration or an explicitly compa
 
 ### Field identities
 
-A field's identity is the first 6 bytes of the SHA-256 of the UTF-8 bytes of its earliest name, which is the first name in its RFC 085 `renamed_from` when it has one and its own name otherwise. An enum variant's identity follows the same rule. A model's or an enum's own identity follows it from the declaration's earliest qualified name: its package's name, its module path and its own name, joined by dots, as in `crm.customers.Customer`. Two packages or two modules that each declare a `Customer` therefore declare two models with two identities. The compiler derives identities from checked declarations and exposes them through RFC 173, and authors neither write nor assign them.
+A field's identity is the first 6 bytes of the SHA-256 of the UTF-8 bytes of its earliest name, which is the first name in its RFC 085 `renamed_from` when it has one and its own name otherwise. An enum variant's identity follows the same rule. A model's or an enum's own identity follows it from the declaration's earliest qualified name, taken within its package's canonical identity.
+
+- **The written name:** the qualified name is the package's name, its module path and its own name, joined by dots, as in `crm.customers.Customer`.
+- **The package identity:** the canonical identity is the registry the package publishes to, as its RFC 117 registry id (never a hostname, an endpoint or a local alias), together with the package's scoped name. A package that names no registry publishes to `loaves.pub`.
+- **Collisions:** two packages named `crm`, in two registries or under two scopes, that each declare `customers.Customer` declare two models with two identities, as do two modules in one package.
+- **Mirrors:** a mirror serves the same registry identity, so it changes nothing.
+- **Renames and moves:** a package that is renamed or moves to another registry renames its models. Each model keeps its identity by naming its earlier qualified name, with that earlier package identity, in `renamed_from`.
+
+A model identity keeps two models apart. It does not authenticate a record, because anyone can copy an identity into bytes they write (see "Reading untrusted frames"). The compiler derives identities from checked declarations and exposes them through RFC 173, and authors neither write nor assign them.
 
 - Encoded records must identify their models, and reading a record as another model must return a typed failure. A model that moves to another module or package, or takes another name, keeps its identity by naming its earlier qualified name in `renamed_from`. A model whose fields are all optional therefore cannot read an unrelated crumb as a value of all `None`s, including one written by a same-named model elsewhere.
 - Each written shape must list its model's field identities once, in ascending byte order, rather than tagging every value; records sharing that shape may share its metadata. That order keeps declaration order out of the encoding and lets a reader find a field without scanning the list.

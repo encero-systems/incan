@@ -564,7 +564,17 @@ At most one client may control a session's execution at a time, and handover mus
 
 Recorded program output and source text are evidence data, not instructions to the agent client.
 
-Debugger operations are RFC 104 capabilities, separate from the connection that carries them. Read-only inspection is the default. Four operations are each a separate grant: evaluation that calls program code, live code changes, launch and attach. Each grant is bound to a session and a process, recorded in receipts, and never part of an agent's default ceiling. Over HTTP, a session sits behind RFC 037 authentication. Over stdio, its grants come from the user who launched it.
+Debugger operations are RFC 104 capabilities, separate from the connection that carries them. Read-only inspection is the only default, and an operation with no assigned grant is refused. Every operation that changes the process, or what it does next, needs one of these grants:
+
+- **control:** resume, step, pause and detach;
+- **write:** change a variable, a field or memory, such as setting `approved = true`;
+- **evaluate:** evaluation that calls program code;
+- **patch:** live code changes;
+- **launch:** launch and rerun;
+- **attach;**
+- **terminate.**
+
+Each grant is bound to a session and a process, and is never part of an agent's default ceiling. In RFC 104's reporting modes, every use is recorded in a receipt. A permissive run keeps no receipts, as RFC 104 defines, so a session an agent drives runs in a reporting mode. Over HTTP, a session sits behind RFC 037 authentication. Over stdio, its grants come from the user who launched it.
 
 ### Platforms and engines
 

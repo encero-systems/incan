@@ -294,11 +294,11 @@ A capability declaration must include:
 - an optional `scope` schema: a typed set of named scope dimensions the capability accepts, such as `tenant: str` or `path: str`. A grant may constrain zero or more of a capability's declared scope dimensions; a grant referencing a scope key the capability did not declare is a checked error, not a silently ignored key;
 - an optional `requires` list of other capabilities (checked symbol references, typically host capabilities) whose authority this capability's implementation needs;
 - an optional `risks` list naming which risk classes the capability carries, from the standard `Risk` enum:
-  - `Risk.UntrustedInput`: it brings in content from outside the program's trust;
-  - `Risk.PrivateData`: it reads data its principal holds privately;
-  - `Risk.ExternalEffect`: it changes state or sends data out.
+    - `Risk.UntrustedInput`: it brings in content from outside the program's trust;
+    - `Risk.PrivateData`: it reads data its principal holds privately;
+    - `Risk.ExternalEffect`: it changes state or sends data out.
 
-  Host capabilities declare their classes. A package capability carries the classes of the capabilities it `requires`, plus any it declares.
+    Host capabilities declare their classes. A package capability carries the classes of the capabilities it `requires`, plus any it declares.
 
 ```incan
 capability refund:
@@ -309,7 +309,11 @@ capability refund:
     risks = [Risk.ExternalEffect]
 ```
 
-A governed run that serves an agent session, such as an RFC 156 server or an `incan mcp` session, must refuse an effective grant whose capabilities together carry all three risk classes, unless the grant names that combination explicitly. A session that holds all three can be steered by its untrusted input into reading private data and sending it out. The refusal and any explicit allowance must be recorded in receipts.
+A session that holds all three risk classes can be steered by its untrusted input into reading private data and sending it out. The rule against that applies to an agent session as a whole, not to one server. One agent can use a browser server, a server over private records and an email server: each passes alone, and together they hold all three.
+
+The host that coordinates a governed agent session, such as an agent harness or `incan mcp`, must therefore combine the risk classes of every server and tool the session can reach. It must refuse to start or extend the session when the combination carries all three, unless the session's grant names that combination explicitly. A server running without such a host can enforce the rule only for its own grant, and its run report must say so.
+
+Arguments an agent passes to a tool count as untrusted input, whether or not the client is authenticated. A server whose tools read private data and send data out therefore already holds all three. The refusal and any explicit allowance must be recorded in receipts.
 
 RFC 102 semantic inspection must be able to expose capability declarations, their scope schemas, and their `requires` relationships as project facts.
 
