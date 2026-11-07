@@ -37,7 +37,16 @@ from element_borrows import mutable_element_place
 from models import field_step_type
 from tuples import is_tuple_type, tuple_has_owners, owned_carrier
 from builtins import list_call
-from frame import place_type, Builder, temporary, drop_owned, exhaust_loop, external_call, read_place, literal
+from frame import (
+    place_type,
+    Builder,
+    temporary,
+    drop_owned,
+    exhaust_loop,
+    external_call,
+    read_place,
+    literal,
+)
 from collections import collection_arguments, is_owned_collection
 from lists import (
     list_shape,
@@ -56,7 +65,7 @@ from calls import instantiated_external_call
 from formatting import native_format_text
 from operand_borrows import borrow_text_operand
 from static_storage import computed_static_root
-from list_values import list_base_place, list_borrow, value_operand
+from list_values import collection_read_storage, list_base_place, list_borrow, value_operand
 from list_methods import argument_value, call_destination, materialized_receiver, shared_receiver_place
 from hashed_collections import iterable_call
 from sequence_builtins import argument_type
@@ -147,9 +156,16 @@ pub def shared_sequence_receiver(
 ) -> Result[Place, str]:
     """Read frozen snapshots or shared collection receivers, optionally materializing frozen text for membership."""
     match argument_type(builder, arguments, 0, span)?:
-        PlanType.FrozenCollection(_name, _elements) =>
-            value = argument_value(builder, arguments, 0, span)?
-            return frozen_list_snapshot(builder, value, span, text_membership)
+        (PlanType.FrozenCollection(_name, _elements) | PlanType.FrozenCollectionRef(_name, _elements)) =>
+            match arguments[0].as_one():
+                Some(RustOperand.Place(_read)) =>
+                    receiver = shared_receiver_place(builder, arguments, 0, span)?
+                    storage = collection_read_storage(builder, receiver, span)?
+                    return frozen_list_snapshot(builder, read_place(storage, false, span), span, text_membership)
+                Some(_value) =>
+                    value = argument_value(builder, arguments, 0, span)?
+                    return frozen_list_snapshot(builder, value, span, text_membership)
+                None => return Err("unsupported Body IR spread frozen sequence receiver")
         _ => return shared_receiver_place(builder, arguments, 0, span)
 
 
@@ -296,6 +312,10 @@ pub def frozen_list_snapshot_type(ty: PlanType, text_membership: bool = false) -
                 return Ok(PlanType.List(ListLeaf.U8, 2))
             match elements[0]:
                 PlanType.Model(_owner, _name) =>
+                    if name != "FrozenList":
+                        return Err("unsupported Body IR frozen nominal set or dictionary snapshot")
+                    return Ok(PlanType.List(collection_leaf(elements[0])?, 1))
+                PlanType.FrozenCollection(_kind, _arguments) =>
                     if name != "FrozenList":
                         return Err("unsupported Body IR frozen nominal set or dictionary snapshot")
                     return Ok(PlanType.List(collection_leaf(elements[0])?, 1))

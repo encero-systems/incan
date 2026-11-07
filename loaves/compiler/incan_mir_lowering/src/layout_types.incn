@@ -583,6 +583,7 @@ pub def collection_leaf(ty: PlanType) -> Result[ListLeaf, str]:
         PlanType.String => return Ok(ListLeaf.Str)
         PlanType.FrozenStr => return Ok(ListLeaf.FrozenStr)
         PlanType.FrozenBytes => return Ok(ListLeaf.FrozenBytes)
+        PlanType.FrozenCollection(name, elements) => return Ok(ListLeaf.FrozenCollection(name, elements))
         PlanType.U8 => return Ok(ListLeaf.U8)
         PlanType.USize => return Ok(ListLeaf.USize)
         PlanType.Unit => return Ok(ListLeaf.Unit)
