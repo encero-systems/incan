@@ -101,6 +101,7 @@ pub(crate) use ownership_contracts::carried_view_binding;
 pub(crate) use ownership_contracts::projection::{CheckedInputBody, CheckedInputInvocation, CheckedInputSource};
 mod reachability;
 mod receiver_change;
+mod record_identities;
 mod reserved_names;
 mod source_signatures;
 pub use declaration_views::{CheckEnvironmentView, CheckedBindingView, DeclarationView, VisibilityPoint};
