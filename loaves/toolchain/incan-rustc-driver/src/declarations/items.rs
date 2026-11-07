@@ -147,9 +147,9 @@ pub(crate) fn model_module_name(model: &crate::plan::ModelDeclaration) -> String
 }
 
 /// Keep a concrete struct's source name for derives, exposing its unique physical symbol through a type alias.
-/// Ordinary layouts stay at the crate root. Rust's derives operate on a source-named struct in a private namespace
-/// for specialized layouts, and MIR uses the alias's identical underlying ADT.
-/// Structural Display delegates to Debug on that same type and is published with it, including in compiled libraries.
+/// Ordinary layouts stay at the crate root. Procedural derives operate on a source-named struct in a private namespace
+/// for specialized layouts, and MIR uses the alias's identical underlying ADT. Structural Debug and Display are
+/// published on that same type, including in compiled libraries.
 pub(crate) fn model_items(
     model: &crate::plan::ModelDeclaration,
     generator: &ast::attr::AttrIdGenerator,
@@ -159,11 +159,16 @@ pub(crate) fn model_items(
         return vec![library_alias(&model.name, model.public, span)];
     }
     let mut declaration = self::model(model, span);
-    for derive in model
-        .derives
-        .iter()
-        .filter(|derive| derives::from_str(derive) != Some(DeriveId::Display))
-    {
+    let tuple = model.fields.len() == 1 && model.fields[0].name == "0";
+    let structural_debug = !tuple
+        && model
+            .derives
+            .iter()
+            .any(|derive| derives::from_str(derive) == Some(DeriveId::Debug));
+    for derive in model.derives.iter().filter(|derive| {
+        derives::from_str(derive) != Some(DeriveId::Display)
+            && !(structural_debug && derives::from_str(derive) == Some(DeriveId::Debug))
+    }) {
         declaration.attrs.push(derive_attribute(generator, derive, span));
     }
     if !model.checked_deserialize.is_empty() {
@@ -183,15 +188,34 @@ pub(crate) fn model_items(
             )
         });
     if !specialized_model(model) {
-        return std::iter::once(declaration).chain(display).collect();
+        let debug = structural_debug.then(|| {
+            crate::model_debug::implementation(
+                model_source_name(model),
+                model.fields.iter().map(|field| field.name.as_str()),
+                crate::ast_build::path_ty(ast::Path::from_ident(ident(&model.name, span)), span),
+                ast::Generics::default(),
+                span,
+            )
+        });
+        return std::iter::once(declaration).chain(debug).chain(display).collect();
     }
     let namespace = model_module_name(model);
+    let mut contents = thin_vec![declaration];
+    if structural_debug {
+        contents.push(crate::model_debug::implementation(
+            model_source_name(model),
+            model.fields.iter().map(|field| field.name.as_str()),
+            crate::ast_build::path_ty(ast::Path::from_ident(ident(model_source_name(model), span)), span),
+            ast::Generics::default(),
+            span,
+        ));
+    }
     let module = item(
         ast::ItemKind::Mod(
             ast::Safety::Default,
             ident(&namespace, span),
             ast::ModKind::Loaded(
-                thin_vec![declaration],
+                contents,
                 ast::Inline::Yes,
                 ast::ModSpans {
                     inner_span: span,

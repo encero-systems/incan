@@ -2,7 +2,7 @@
 # expect-stdout:
 #   (amount * 2)
 #   (label * x)
-#   Column { sql: "amount", note: "n" }
+#   Column { sql = "amount", note = "n" }
 
 @derive(Debug)
 model Column[T with Display]:

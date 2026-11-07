@@ -49,7 +49,7 @@ def show_private_class_derives() -> None:
     value = _Native(handle=Xxh32.default())
     cloned = value.clone()
     assert value.digest() == cloned.digest()
-    assert f"{_Plain(handle=7):?}" == "_Plain { handle: 7 }"
+    assert f"{_Plain(handle=7):?}" == "_Plain { handle = 7 }"
 
 
 def show_f32_argument() -> None:
