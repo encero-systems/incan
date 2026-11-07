@@ -263,7 +263,7 @@ def intent_from_document(parsed: TomlValue, manifest: str) -> Result[ProjectInte
     mut access = ToolchainAccess()
     if "build" in root:
         build = table(root["build"], manifest, ["build"])?
-        keys = ["target", "profile", "rust-edition", "source-root", "registry-lock"] + access_keys(BUILD_SEPARATOR)
+        keys = ["target", "profile", "rust-edition", "source-root"] + access_keys(BUILD_SEPARATOR)
         allowed(build, keys, manifest, ["build"])?
         access = read_access(build, BUILD_SEPARATOR, manifest, ["build"])?
         if "target" in build:
@@ -274,8 +274,6 @@ def intent_from_document(parsed: TomlValue, manifest: str) -> Result[ProjectInte
             edition = required(build, "rust-edition", manifest, ["build", "rust-edition"])?
         if "source-root" in build:
             source_root = Some(required(build, "source-root", manifest, ["build", "source-root"])?)
-        if "registry-lock" in build:
-            required(build, "registry-lock", manifest, ["build", "registry-lock"])?
     if "rust" in root:
         rust_facet = table(root["rust"], manifest, ["rust"])?
         if "edition" in rust_facet:

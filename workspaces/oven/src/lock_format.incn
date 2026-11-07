@@ -1,0 +1,511 @@
+"""Format 1 of Oven's generated project lock, including its order-free resolved-graph identity."""
+
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.hash import sha256
+from std.toml import TomlValue, parse
+from files import read
+from publication import publish
+from registry_units import RegistryUnit
+
+pub const LOCK_FORMAT: int = 1
+pub const LOCK_NAME: str = "oven.lock"
+pub const DEFAULT_MODE: str = "lowest"
+pub const LOCK_MODES: FrozenList[str] = ["lowest", "lowest-direct", "newest"]
+
+
+@derive(Clone, Eq)
+pub model LockToolchain:
+    """The installed language release and admitted compiler identity that selected toolchain-origin units."""
+
+    pub version: str
+    pub identity: str = ""
+
+
+@derive(Clone, Eq)
+pub model LockDependency:
+    """One exact dependency edge of a locked Loaf."""
+
+    pub key: str
+    pub loaf: str
+    pub version: str
+    pub domain: str = "target"
+    pub target: str = ""
+    # Toolchain entries can share a Loaf and version, so their compiled identity disambiguates the edge.
+    pub entry: str = ""
+
+
+@derive(Clone, Eq)
+pub model LockFeatures:
+    """Requested and selected features for one compilation domain and evaluated target."""
+
+    pub target: str
+    pub domain: str
+    pub requested: list[str] = []
+    pub enabled: list[str] = []
+    # Format 1 reserves evaluated target predicates even though the shipped-unit resolver cannot fill them yet.
+    pub predicates: list[str] = []
+
+
+@derive(Clone, Eq)
+pub model LockLoaf:
+    """One exact root, path, registry or toolchain Loaf in the resolved graph."""
+
+    pub name: str
+    pub version: str
+    pub origin: str
+    pub path: str = ""
+    pub registry: str = ""
+    pub protocol: str = ""
+    pub revision: int = 0
+    pub checksum: str = ""
+    pub source: str = ""
+    pub trust: str = ""
+    pub adopted: bool = false
+    pub entry: str = ""
+    pub dependencies: list[LockDependency] = []
+    pub features: list[LockFeatures] = []
+
+
+@derive(Clone, Eq)
+pub model OvenLock:
+    """The complete generated lock document."""
+
+    pub format: int
+    pub mode: str
+    pub graph: str
+    pub toolchain: LockToolchain
+    pub loaves: list[LockLoaf]
+
+
+pub def lock_path(project: Path) -> Path:
+    """The one generated lock at a root project's boundary."""
+    return project.joinpath(LOCK_NAME)
+
+
+pub def validate_mode(mode: str) -> Result[str, str]:
+    """Admit exactly the three RFC 125 version-selection modes."""
+    if mode not in LOCK_MODES:
+        return Err(f"`--versions` is lowest, lowest-direct or newest, got `{mode}`")
+    return Ok(mode)
+
+
+pub def read_lock(path: Path) -> Result[OvenLock, str]:
+    """Read and validate a format-1 lock, including its complete graph identity."""
+    source = read(path).map_err((reason) => f"{path.0}: {reason}")?
+    document = parse(source).map_err((error) => f"{path.0}: {error.message()}")?
+    root = document.as_table().map_err((error) => f"{path.0}: {error.message()}")?
+    require_keys(root, ["format", "mode", "graph", "toolchain", "loaf"], path.0, "lock")?
+    format = required_int(root, "format", path.0)?
+    if format != LOCK_FORMAT:
+        return Err(f"{path.0}: unsupported lock format {format}; expected {LOCK_FORMAT}")
+    mode = validate_mode(required_text(root, "mode", path.0)?)?
+    toolchain = read_toolchain(required(root, "toolchain", path.0)?, path.0)?
+    mut loaves: list[LockLoaf] = []
+    for value in required(root, "loaf", path.0)?.as_array().map_err((error) => f"{path.0}: {error.message()}")?:
+        loaves.append(read_loaf(value, path.0)?)
+    lock = OvenLock(
+        format=format,
+        mode=mode,
+        graph=required_text(root, "graph", path.0)?,
+        toolchain=toolchain,
+        loaves=loaves,
+    )
+    expected = graph_identity(lock)?
+    if lock.graph != expected:
+        name = first_entry_name(lock)
+        return Err(f"{path.0}: graph differs at Loaf {name}; run `oven lock`")
+    return Ok(lock)
+
+
+def read_toolchain(value: TomlValue, source: str) -> Result[LockToolchain, str]:
+    """Decode the lock's toolchain table without admitting unknown format fields."""
+    table = value.as_table().map_err((error) => f"{source}: {error.message()}")?
+    require_keys(table, ["version", "identity"], source, "toolchain")?
+    return Ok(
+        LockToolchain(
+            version=required_text(table, "version", source)?,
+            identity=optional_text(table, "identity", source)?,
+        ),
+    )
+
+
+def read_loaf(value: TomlValue, source: str) -> Result[LockLoaf, str]:
+    """Decode one Loaf table and every reserved format-1 origin field."""
+    table = value.as_table().map_err((error) => f"{source}: {error.message()}")?
+    require_keys(
+        table,
+        [
+            "name",
+            "version",
+            "origin",
+            "path",
+            "registry",
+            "protocol",
+            "revision",
+            "checksum",
+            "source",
+            "trust",
+            "adopted",
+            "entry",
+            "dependencies",
+            "features",
+        ],
+        source,
+        "loaf",
+    )?
+    mut dependencies: list[LockDependency] = []
+    if let Some(values) = optional_array(table, "dependencies", source)?:
+        for dependency in values:
+            dependencies.append(read_dependency(dependency, source)?)
+    mut features: list[LockFeatures] = []
+    if let Some(values) = optional_array(table, "features", source)?:
+        for selection in values:
+            features.append(read_features(selection, source)?)
+    origin = required_text(table, "origin", source)?
+    if origin not in ["root", "path", "registry", "toolchain"]:
+        return Err(f"{source}: Loaf origin must be root, path, registry or toolchain, got `{origin}`")
+    return Ok(
+        LockLoaf(
+            name=required_text(table, "name", source)?,
+            version=required_text(table, "version", source)?,
+            origin=origin,
+            path=optional_text(table, "path", source)?,
+            registry=optional_text(table, "registry", source)?,
+            protocol=optional_text(table, "protocol", source)?,
+            revision=optional_int(table, "revision", source)?,
+            checksum=optional_text(table, "checksum", source)?,
+            source=optional_text(table, "source", source)?,
+            trust=optional_text(table, "trust", source)?,
+            adopted=optional_bool(table, "adopted", source)?,
+            entry=optional_text(table, "entry", source)?,
+            dependencies=dependencies,
+            features=features,
+        ),
+    )
+
+
+def read_dependency(value: TomlValue, source: str) -> Result[LockDependency, str]:
+    """Decode one edge and refuse fields outside format 1."""
+    table = value.as_table().map_err((error) => f"{source}: {error.message()}")?
+    require_keys(table, ["key", "loaf", "version", "domain", "target", "entry"], source, "dependency")?
+    return Ok(
+        LockDependency(
+            key=required_text(table, "key", source)?,
+            loaf=required_text(table, "loaf", source)?,
+            version=required_text(table, "version", source)?,
+            domain=optional_text(table, "domain", source, "target")?,
+            target=optional_text(table, "target", source)?,
+            entry=optional_text(table, "entry", source)?,
+        ),
+    )
+
+
+def read_features(value: TomlValue, source: str) -> Result[LockFeatures, str]:
+    """Decode one domain's requested and enabled feature closure."""
+    table = value.as_table().map_err((error) => f"{source}: {error.message()}")?
+    require_keys(table, ["target", "domain", "requested", "enabled", "predicates"], source, "features")?
+    return Ok(
+        LockFeatures(
+            target=required_text(table, "target", source)?,
+            domain=required_text(table, "domain", source)?,
+            requested=optional_texts(table, "requested", source)?,
+            enabled=optional_texts(table, "enabled", source)?,
+            predicates=optional_texts(table, "predicates", source)?,
+        ),
+    )
+
+
+def require_keys(table: Dict[str, TomlValue], allowed: list[str], source: str, owner: str) -> Result[None, str]:
+    """Make the versioned format closed so ignored future fields cannot change a build silently."""
+    for key in table.keys():
+        if key not in allowed:
+            return Err(f"{source}: unknown format-{LOCK_FORMAT} {owner} field `{key}`")
+    return Ok(None)
+
+
+def required(table: Dict[str, TomlValue], key: str, source: str) -> Result[TomlValue, str]:
+    """Read one required dynamic TOML member with a lock-specific diagnostic."""
+    if key not in table:
+        return Err(f"{source}: lock is missing `{key}`")
+    return Ok(table[key])
+
+
+def required_text(table: Dict[str, TomlValue], key: str, source: str) -> Result[str, str]:
+    """Read one required string member."""
+    return required(table, key, source)?.as_str().map_err((error) => f"{source}: {error.message()}")
+
+
+def required_int(table: Dict[str, TomlValue], key: str, source: str) -> Result[int, str]:
+    """Read one required integer member."""
+    return required(table, key, source)?.as_int().map_err((error) => f"{source}: {error.message()}")
+
+
+def optional_text(table: Dict[str, TomlValue], key: str, source: str, fallback: str = "") -> Result[str, str]:
+    """Read an optional string member without accepting a malformed present value."""
+    if key not in table:
+        return Ok(fallback)
+    return table[key].as_str().map_err((error) => f"{source}: {error.message()}")
+
+
+def optional_int(table: Dict[str, TomlValue], key: str, source: str) -> Result[int, str]:
+    """Read an optional integer member, defaulting only absence to zero."""
+    if key not in table:
+        return Ok(0)
+    return table[key].as_int().map_err((error) => f"{source}: {error.message()}")
+
+
+def optional_bool(table: Dict[str, TomlValue], key: str, source: str) -> Result[bool, str]:
+    """Read an optional Boolean member, defaulting only absence to false."""
+    if key not in table:
+        return Ok(false)
+    return table[key].as_bool().map_err((error) => f"{source}: {error.message()}")
+
+
+def optional_array(table: Dict[str, TomlValue], key: str, source: str) -> Result[Option[list[TomlValue]], str]:
+    """Read an optional array member while retaining each dynamic table value."""
+    if key not in table:
+        return Ok(None)
+    return Ok(Some(table[key].as_array().map_err((error) => f"{source}: {error.message()}")?))
+
+
+def optional_texts(table: Dict[str, TomlValue], key: str, source: str) -> Result[list[str], str]:
+    """Read an optional array of strings without coercion."""
+    mut result: list[str] = []
+    if let Some(values) = optional_array(table, key, source)?:
+        for value in values:
+            result.append(value.as_str().map_err((error) => f"{source}: {error.message()}")?)
+    return Ok(result)
+
+
+pub def graph_identity(lock: OvenLock) -> Result[str, str]:
+    """Fold the root's semantic closure independently of table and edge order."""
+    mut roots: list[int] = []
+    for index in range(len(lock.loaves)):
+        if lock.loaves[index].origin == "root":
+            roots.append(index)
+    if len(roots) != 1:
+        return Err(f"oven.lock must contain exactly one root Loaf, found {len(roots)}")
+    reached = reachable_entries(roots[0], lock, set())?
+    if len(reached) != len(lock.loaves):
+        return Err(f"oven.lock contains {len(lock.loaves) - len(reached)} Loaf entries outside the root graph")
+    mut visiting: set[str] = set()
+    digest = entry_digest(roots[0], lock, visiting)?
+    return Ok("sha256:" + digest)
+
+
+def reachable_entries(index: int, lock: OvenLock, seen: set[str]) -> Result[set[str], str]:
+    """Require every serialized entry to belong to the root closure and every edge to resolve exactly once."""
+    identity = entry_identity(lock.loaves[index])
+    if identity in seen:
+        return Ok(seen)
+    mut reached = set([value for value in seen])
+    reached.add(identity)
+    for edge in lock.loaves[index].dependencies:
+        child = dependency_index(edge, lock.loaves)?
+        nested = reachable_entries(child, lock, reached)?
+        for value in nested:
+            reached.add(value)
+    return Ok(reached)
+
+
+def entry_digest(index: int, lock: OvenLock, visiting: set[str]) -> Result[str, str]:
+    """Hash one entry after the ordered identities of all entries its exact edges reach."""
+    entry = lock.loaves[index].clone()
+    identity = entry_identity(entry)
+    if identity in visiting:
+        return Err(f"oven.lock dependency cycle reaches {entry.name} {entry.version}")
+    mut active = set([value for value in visiting])
+    active.add(identity)
+    mut fields = entry_fields(entry, lock.toolchain)
+    mut edges: Dict[str, LockDependency] = {}
+    for edge in entry.dependencies:
+        edges[edge_order(edge)] = edge
+    for key in sorted([key for key in edges.keys()]):
+        edge = edges[key].clone()
+        child = dependency_index(edge, lock.loaves)?
+        fields.append(edge_order(edge))
+        fields.append(entry_digest(child, lock, active)?)
+    digest = hexlify(sha256.digest(length_prefixed(fields).encode("utf-8")))
+    return Ok(digest)
+
+
+def entry_fields(entry: LockLoaf, toolchain: LockToolchain) -> list[str]:
+    """The fixed semantic fields of one entry, including feature selection and toolchain identity where relevant."""
+    mut fields = [
+        entry.origin,
+        entry.name,
+        entry.version,
+        entry.path,
+        entry.registry,
+        entry.protocol,
+        str(entry.revision),
+        entry.checksum,
+        entry.source,
+        entry.trust,
+        str(entry.adopted),
+        entry.entry,
+    ]
+    if entry.origin == "toolchain":
+        fields = fields + [toolchain.version, toolchain.identity]
+    mut selected: list[str] = []
+    for features in entry.features:
+        selected.append(
+            length_prefixed(
+                [features.domain, features.target] + sorted(features.requested) + ["|"] + sorted(features.enabled) + [
+                    "|",
+                ] + sorted(features.predicates),
+            ),
+        )
+    return fields + sorted(selected)
+
+
+def dependency_index(edge: LockDependency, entries: list[LockLoaf]) -> Result[int, str]:
+    """Find the one exact entry an edge names, using its compiled entry when the toolchain requires it."""
+    mut matches: list[int] = []
+    for index in range(len(entries)):
+        if entries[index].name != edge.loaf or entries[index].version != edge.version:
+            continue
+        if edge.entry != "" and entries[index].entry != edge.entry:
+            continue
+        if not has_domain(entries[index], edge.domain):
+            continue
+        matches.append(index)
+    if len(matches) != 1:
+        return Err(f"oven.lock edge `{edge.key}` names {edge.loaf} {edge.version} ({edge.domain}) {len(matches)} times")
+    return Ok(matches[0])
+
+
+def has_domain(entry: LockLoaf, domain: str) -> bool:
+    """Whether an entry is selected in an edge's host or target domain."""
+    if len(entry.features) == 0:
+        return domain == "target"
+    return len([features for features in entry.features if features.domain == domain]) > 0
+
+
+def entry_identity(entry: LockLoaf) -> str:
+    """Distinguish coexisting versions, origins and compiled producers without filesystem location."""
+    domains = sorted([length_prefixed([features.domain, features.target]) for features in entry.features])
+    return length_prefixed([entry.name, entry.version, entry.origin, entry.path, entry.entry] + domains)
+
+
+def edge_order(edge: LockDependency) -> str:
+    """The fixed dependency identity ordering RFC 106 requires for an order-free closure fold."""
+    return length_prefixed([edge.key, edge.domain, edge.target, edge.loaf, edge.version, edge.entry])
+
+
+def length_prefixed(values: list[str]) -> str:
+    """Make concatenated semantic fields unambiguous, including non-ASCII UTF-8 values."""
+    return "".join([f"{len(value.encode("utf-8"))}:{value}" for value in values])
+
+
+def first_entry_name(lock: OvenLock) -> str:
+    """Name the canonical first entry when a stored graph digest cannot identify the edited source field."""
+    names = sorted([f"{entry.name}@{entry.version}" for entry in lock.loaves])
+    if len(names) == 0:
+        return "(missing root)"
+    return names[0]
+
+
+pub def recorded_bindings(lock: OvenLock, units: list[RegistryUnit]) -> Result[list[Tuple[str, str]], str]:
+    """Project the exact compiled producers of toolchain-origin entries into RegistryUnits' existing lock slot."""
+    available = [unit.entry for unit in units]
+    mut bindings: list[Tuple[str, str]] = []
+    for entry in lock.loaves:
+        if entry.origin != "toolchain":
+            continue
+        if entry.entry == "" or entry.entry not in available:
+            return Err(f"oven.lock names absent toolchain entry `{entry.entry}` for {entry.name} {entry.version}")
+        for features in entry.features:
+            pair = (features.domain, entry.entry)
+            if pair not in bindings:
+                bindings.append(pair)
+    return Ok(bindings)
+
+
+pub def write_lock(path: Path, lock: OvenLock) -> Result[None, str]:
+    """Publish format 1 atomically with stable field and table ordering."""
+    return publish(path, lock_text(lock)?)
+
+
+pub def lock_text(lock: OvenLock) -> Result[str, str]:
+    """Render the generated file explicitly so empty and nonempty arrays keep one long-lived layout."""
+    if lock.graph != graph_identity(lock)?:
+        return Err("refusing to write an oven.lock with a mismatched graph identity")
+    mut text = "# Generated by Oven. Do not edit.\n"
+    text += f"format = {LOCK_FORMAT}\nmode = {quoted(lock.mode)}\ngraph = {quoted(lock.graph)}\n\n"
+    text += "[toolchain]\n"
+    text += f"version = {quoted(lock.toolchain.version)}\n"
+    if lock.toolchain.identity != "":
+        text += f"identity = {quoted(lock.toolchain.identity)}\n"
+    mut ordered: Dict[str, LockLoaf] = {}
+    for entry in lock.loaves:
+        ordered[entry_identity(entry)] = entry
+    for key in sorted([key for key in ordered.keys()]):
+        text += render_loaf(ordered[key])
+    return Ok(text)
+
+
+def render_loaf(entry: LockLoaf) -> str:
+    """Render one entry and its nested feature tables in format-1 field order."""
+    mut text = "\n[[loaf]]\n"
+    text += f"name = {quoted(entry.name)}\nversion = {quoted(entry.version)}\norigin = {quoted(entry.origin)}\n"
+    for name, value in [("path", entry.path), ("registry", entry.registry), ("protocol", entry.protocol)]:
+        if value != "":
+            text += f"{name} = {quoted(value)}\n"
+    if entry.revision != 0:
+        text += f"revision = {entry.revision}\n"
+    for name, value in [
+        ("checksum", entry.checksum),
+        ("source", entry.source),
+        ("trust", entry.trust),
+        ("entry", entry.entry),
+    ]:
+        if value != "":
+            text += f"{name} = {quoted(value)}\n"
+    if entry.adopted:
+        text += "adopted = true\n"
+    mut dependencies: Dict[str, LockDependency] = {}
+    for dependency in entry.dependencies:
+        dependencies[edge_order(dependency)] = dependency
+    text += "dependencies = ["
+    if len(dependencies) > 0:
+        text += "\n"
+        for key in sorted([key for key in dependencies.keys()]):
+            text += f"  {dependency_text(dependencies[key])},\n"
+    text += "]\n"
+    mut features: Dict[str, LockFeatures] = {}
+    for selection in entry.features:
+        features[length_prefixed([selection.domain, selection.target])] = selection
+    for key in sorted([key for key in features.keys()]):
+        selected = features[key].clone()
+        text += "\n[[loaf.features]]\n"
+        text += f"target = {quoted(selected.target)}\ndomain = {quoted(selected.domain)}\n"
+        text += f"requested = {string_array(sorted(selected.requested))}\n"
+        text += f"enabled = {string_array(sorted(selected.enabled))}\n"
+        text += f"predicates = {string_array(sorted(selected.predicates))}\n"
+    return text
+
+
+def dependency_text(edge: LockDependency) -> str:
+    """Render an inline exact edge without relying on serializer layout decisions."""
+    mut fields = [f"key = {quoted(edge.key)}", f"loaf = {quoted(edge.loaf)}", f"version = {quoted(edge.version)}"]
+    if edge.domain != "target":
+        fields.append(f"domain = {quoted(edge.domain)}")
+    if edge.target != "":
+        fields.append(f"target = {quoted(edge.target)}")
+    if edge.entry != "":
+        fields.append(f"entry = {quoted(edge.entry)}")
+    return "{ " + ", ".join(fields) + " }"
+
+
+def string_array(values: list[str]) -> str:
+    """Render a compact TOML array of generated strings."""
+    return "[" + ", ".join([quoted(value) for value in values]) + "]"
+
+
+def quoted(value: str) -> str:
+    """Quote generated TOML strings without permitting control characters to escape their value."""
+    mut escaped = value.replace("\\", "\\\\").replace("\"", "\\\"")
+    escaped = escaped.replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+    return f"\"{escaped}\""

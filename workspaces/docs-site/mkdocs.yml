@@ -300,6 +300,7 @@ nav:
           - Backend selection & execution receipts: tooling/explanation/backend_selection_receipts.md
       - Reference:
           - CLI reference: tooling/reference/cli_reference.md
+          - Lock file: tooling/reference/lock_file.md
           - Binding inspection schema: tooling/reference/binding_inspection_schema.md
           - Codegraph inspection: tooling/reference/codegraph_inspection.md
           - Agent context CLI and MCP: tooling/reference/agent_context_cli.md
@@ -372,6 +373,7 @@ nav:
           - "DD-0010: Released toolchains for CI and development": design_records/0010_released_toolchains_for_ci_and_development.md
           - "DD-0012: Incremental compilation over a semantic store": design_records/0012_incremental_compilation_over_a_semantic_store.md
           - "DD-0013: The Incan build engine": design_records/0013_the_incan_build_engine.md
+          - "DD-0014: Resolved project lock": design_records/0014_resolved_project_lock.md
       - Whitepapers:
           - Overview: whitepapers/index.md
           - Incan ecosystem north star: whitepapers/incan_ecosystem_north_star.md
