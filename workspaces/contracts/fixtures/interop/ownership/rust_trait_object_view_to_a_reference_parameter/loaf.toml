@@ -5,5 +5,5 @@ version = "0.1.0"
 [project.scripts]
 main = "src/main.incn"
 
-[rust-dependencies]
-tiny_arrow = { path = "rust/tiny_arrow" }
+[dependencies]
+tiny_arrow = { loaf = "tiny_arrow", path = "rust/tiny_arrow" }

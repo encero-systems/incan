@@ -28,7 +28,7 @@ Pass the Loaf directory to compile and run its Rust library and declared binary 
 incan test loaves/kernel/incan_syntax
 ```
 
-Oven adds the root Loaf's `[envs.test.dependencies]` and `[envs.test.rust-dependencies]` to its production dependency closure. A partial dependency override preserves fields it does not specify and adds its requested features. Dependencies retain their production environments. Library and binary unit harnesses and direct `tests/*.rs` integration entries beside the Rust source root run independently. Each Rust test is reported beside tests from `test_*.incn` modules directly under the Loaf's source root and `tests` directory; failure in either language makes the command fail. Pass an Incan source file explicitly to test inline declarations elsewhere. Rust doctests are not selected.
+Oven adds the root Loaf's `[envs.test.dependencies]` entries to its production dependency closure. A partial dependency override preserves fields it does not specify and adds its requested features. Dependencies retain their production environments. Library and binary unit harnesses and direct `tests/*.rs` integration entries beside the Rust source root run independently. Each Rust test is reported beside tests from `test_*.incn` modules directly under the Loaf's source root and `tests` directory; failure in either language makes the command fail. Pass an Incan source file explicitly to test inline declarations elsewhere. Rust doctests are not selected.
 
 ## Run more than one source
 

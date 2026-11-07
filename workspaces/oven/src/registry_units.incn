@@ -263,8 +263,13 @@ def candidate_groups(
             break
     if len(candidates) == 0:
         selected = demand.selection
+        published = [unit for unit in units if unit.loaf == selected.loaf]
+        if len(published) > 0:
+            return Err(
+                f"no compiled registry unit of {selected.loaf} satisfies {selected.requirement} with features {selected.features}",
+            )
         return Err(
-            f"no compiled registry unit of {selected.loaf} satisfies {selected.requirement} with features {selected.features}",
+            f"{selected.loaf} is not published in the compiled registry closure for requirement {selected.requirement} with features {selected.features}",
         )
     candidates = mode_candidates(candidates, mode)?
     preferred = [unit for unit in candidates if (demand.domain, identity(unit)) in installation]

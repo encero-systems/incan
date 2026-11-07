@@ -119,7 +119,7 @@ def complete_native_units(
         key = facet.key()
         if key not in complete:
             return Ok(None)
-        if not Path(complete[key].directory).joinpath(f"{declared.package}.incngraph").is_file():
+        if not Path(complete[key].directory).joinpath(f"{declared.crate_name}.incngraph").is_file():
             return Ok(None)
     return Ok(Some(complete))
 

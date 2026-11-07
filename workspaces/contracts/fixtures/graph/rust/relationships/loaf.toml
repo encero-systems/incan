@@ -3,7 +3,6 @@ name = "rust_relationships"
 version = "0.1.0"
 
 [rust]
-name = "rust_relationships"
 type = "lib"
 edition = "2024"
 

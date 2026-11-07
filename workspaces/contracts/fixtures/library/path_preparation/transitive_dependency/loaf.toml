@@ -6,7 +6,5 @@ version = "0.1.0"
 main = "src/main.incn"
 
 [dependencies]
+native_cost = { loaf = "pricing", path = "deps/pricing" }
 cost = { path = "deps/pricing" }
-
-[rust-dependencies]
-native_cost = { package = "pricing", path = "deps/pricing" }

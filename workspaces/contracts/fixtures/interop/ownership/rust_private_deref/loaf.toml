@@ -5,5 +5,5 @@ version = "0.1.0"
 [project.scripts]
 main = "src/main.incn"
 
-[rust-dependencies]
-wrappers = { path = "rust/wrappers" }
+[dependencies]
+wrappers = { loaf = "wrappers", path = "rust/wrappers" }

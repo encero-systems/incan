@@ -24,8 +24,8 @@ version = "0.1.0"
 [project.scripts]
 main = "main.incn"
 
-[rust-dependencies]
-regex = "1"
+[dependencies]
+regex = { loaf = "crates-io/regex", version = "1" }
 ```
 
 The requirement must match a unit in the installed toolchain closure. It does not download a crate.

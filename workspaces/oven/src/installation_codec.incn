@@ -10,7 +10,7 @@ from frozen_inputs import Document
 from page_values import read_value, write_value
 from payload_types import InstalledPayload, PayloadAdmission
 
-pub const PROFILE: str = "incan.installation-page/4"
+pub const PROFILE: str = "incan.installation-page/5"
 
 
 pub model StandardManifest:

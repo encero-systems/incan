@@ -1,6 +1,6 @@
 # Manage dependencies
 
-Dev.8 builds local Incan dependencies and links Rust dependencies from the installed toolchain's registry closure.
+Dev.8 builds local Loaf dependencies and links registry Loaves from the installed toolchain's compiled closure.
 
 ## Add a local Incan library
 
@@ -30,8 +30,8 @@ Oven prepares the active path libraries before the consumer. Their artifacts liv
 ## Add a Rust requirement
 
 ```toml
-[rust-dependencies]
-regex = "1"
+[dependencies]
+regex = { loaf = "crates-io/regex", version = "1" }
 ```
 
 Use a versionless source import when the manifest declares the dependency:
@@ -40,7 +40,7 @@ Use a versionless source import when the manifest declares the dependency:
 from rust::regex import Regex
 ```
 
-The declared requirement must match the installed registry's available unit, including its features. An absent unit is an explicit error; adding a version does not download source or invoke another package manager. For a single source, inline requirements use `@ "VERSION"` and `with ["FEATURE"]`; they do not provision missing artifacts.
+The dependency key `regex` is the `rust::regex` import name. The `loaf` field is the package identity; any syntactically valid scope is accepted at intake. The declared requirement must match the installed registry's available unit, including its features. An absent unit is an explicit error; adding a version does not download source or invoke another package manager. For a single source, inline requirements use `@ "VERSION"` and `with ["FEATURE"]`; they do not provision missing artifacts.
 
 ## Select optional behavior
 

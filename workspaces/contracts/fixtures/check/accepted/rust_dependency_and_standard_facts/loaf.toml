@@ -6,8 +6,6 @@ version = "0.1.0"
 main = "src/main.incn"
 
 [dependencies]
+json_alias = { loaf = "crates-io/serde_json", version = "1" }
 serde_json = { loaf = "crates-io/serde_json", version = "1" }
 child_alias = { loaf = "child-package", path = "deps/child" }
-
-[rust-dependencies]
-json_alias = { package = "serde_json", version = "1" }

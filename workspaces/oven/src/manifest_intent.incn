@@ -7,6 +7,7 @@ from std.toml import TomlValue, TomlKind
 from std.hash import sha256
 from rust::std::str import from_utf8
 from manifest_errors import IntakeError, IntakeErrorKind
+from loaf_identity import crate_name, validate_loaf_identity, validate_project_identity
 from toolchain_access import BINARY_SEPARATOR, BUILD_SEPARATOR, ToolchainAccess, access_keys, read_access
 from pub::incan_platform.trace import Operation
 from jec import begin, record, text_size
@@ -15,6 +16,7 @@ from jec import begin, record, text_size
 const ROOT_TABLES: FrozenList[str] = [
     "project",
     "dependencies",
+    # Retained only so intake can issue the table's migration-specific refusal.
     "rust-dependencies",
     "build",
     "rust",
@@ -101,6 +103,14 @@ pub model ProjectIntent:
     pub dependencies: list[LocalDependency]
     pub rust_inputs: list[RustInputRequest]
     pub rust_edition: str
+    # The crate name of this project's Rust facet, explicit or derived from the Loaf identity.
+    pub rust_name: str = ""
+    # The Rust facet kind, empty when this project has no Rust facet.
+    pub rust_type: str = ""
+    # Whether the Rust facet declares build-time behavior. Intake admits `false`; `true` needs an exact bound fact.
+    pub rust_build_script: bool = false
+    # Fully normalized Rust-facet dependency slots for each root environment after production overrides are applied.
+    pub environment_rust_inputs: Dict[str, list[RustInputRequest]] = {}
     # The declared package features by name.
     pub features: Dict[str, FeatureDeclaration] = {}
     # The source root `[build] source-root` names, project-relative, when it names one.
@@ -248,6 +258,9 @@ def intent_from_document(parsed: TomlValue, manifest: str) -> Result[ProjectInte
     project = table(root["project"], manifest, ["project"])?
     allowed(project, list(PROJECT_KEYS), manifest, ["project"])?
     name = required(project, "name", manifest, ["project", "name"])?
+    validate_project_identity(name).map_err(
+        (error) => refusal(manifest, ["project", "name"], IntakeErrorKind.Invalid, error),
+    )?
     version = required(project, "version", manifest, ["project", "version"])?
     mut scripts: Dict[str, str] = {}
     if "scripts" in project:
@@ -256,9 +269,12 @@ def intent_from_document(parsed: TomlValue, manifest: str) -> Result[ProjectInte
             scripts[key] = required(values, key, manifest, ["project", "scripts", key])?
     dependencies, rust_inputs = parse_dependencies(root, manifest)?
     features = parse_features(project, dependencies, manifest, rust_inputs)?
-    validate_facets(root, manifest)?
-    validate_environments(root, manifest)?
+    validate_facets(root, manifest, name)?
+    environment_rust_inputs = parse_environment_dependencies(root, rust_inputs, manifest)?
     mut edition = "2024"
+    mut rust_name = crate_name(name)
+    mut rust_type = ""
+    mut rust_build_script = false
     mut source_root: Option[str] = None
     mut access = ToolchainAccess()
     if "build" in root:
@@ -276,6 +292,11 @@ def intent_from_document(parsed: TomlValue, manifest: str) -> Result[ProjectInte
             source_root = Some(required(build, "source-root", manifest, ["build", "source-root"])?)
     if "rust" in root:
         rust_facet = table(root["rust"], manifest, ["rust"])?
+        if "name" in rust_facet:
+            rust_name = required(rust_facet, "name", manifest, ["rust", "name"])?
+        if "type" in rust_facet:
+            rust_type = required(rust_facet, "type", manifest, ["rust", "type"])?
+        rust_build_script = flag(rust_facet, "build-script", false, manifest, ["rust"])?
         if "edition" in rust_facet:
             edition = required(rust_facet, "edition", manifest, ["rust", "edition"])?
     return Ok(
@@ -286,6 +307,10 @@ def intent_from_document(parsed: TomlValue, manifest: str) -> Result[ProjectInte
             dependencies=dependencies,
             rust_inputs=rust_inputs,
             rust_edition=edition,
+            rust_name=rust_name,
+            rust_type=rust_type,
+            rust_build_script=rust_build_script,
+            environment_rust_inputs=environment_rust_inputs,
             features=features,
             source_root=source_root,
             contract_models=parse_contract_models(root, manifest)?,
@@ -303,10 +328,148 @@ def validate_environments(root: Dict[str, TomlValue], manifest: str) -> Result[N
     environments = table(root["envs"], manifest, ["envs"])?
     for name in sorted([name for name in environments.keys()]):
         environment = table(environments[name], manifest, ["envs", name])?
-        allowed(environment, ["dependencies", "rust-dependencies"], manifest, ["envs", name])?
+        if "rust-dependencies" in environment:
+            entries = table(environment["rust-dependencies"], manifest, ["envs", name, "rust-dependencies"])?
+            alias = first_key(entries)
+            replacement = dependency_replacement(
+                alias,
+                entries[alias],
+                manifest,
+                ["envs", name, "rust-dependencies", alias],
+            )?
+            detail = f"use [envs.{name}.dependencies] {replacement}"
+            return Err(
+                refusal(manifest, ["envs", name, "rust-dependencies"], IntakeErrorKind.Unsupported, detail),
+            )
+        allowed(environment, ["dependencies"], manifest, ["envs", name])?
         for group in sorted([group for group in environment.keys()]):
             table(environment[group], manifest, ["envs", name, group])?
     return Ok(None)
+
+
+def parse_environment_dependencies(
+    root: Dict[str, TomlValue],
+    production: list[RustInputRequest],
+    manifest: str,
+) -> Result[Dict[str, list[RustInputRequest]], IntakeError]:
+    """Normalize each root environment's partial dependency overlay against the admitted production graph."""
+    validate_environments(root, manifest)?
+    mut result: Dict[str, list[RustInputRequest]] = {}
+    if "envs" not in root:
+        return Ok(result)
+    environments = table(root["envs"], manifest, ["envs"])?
+    for name in sorted([name for name in environments.keys()]):
+        environment = table(environments[name], manifest, ["envs", name])?
+        mut selected = production.clone()
+        if "dependencies" in environment:
+            entries = table(environment["dependencies"], manifest, ["envs", name, "dependencies"])?
+            for alias in sorted([alias for alias in entries.keys()]):
+                mut found = false
+                for index in range(len(selected)):
+                    if selected[index].alias == alias:
+                        selected[index] = overlay_rust_request(
+                            selected[index],
+                            entries[alias],
+                            manifest,
+                            ["envs", name, "dependencies", alias],
+                        )?
+                        found = true
+                if not found:
+                    entry = table(entries[alias], manifest, ["envs", name, "dependencies", alias])?
+                    if "loaf" in entry:
+                        selected.append(rust_request(alias, entries[alias], manifest, "dependencies")?)
+        result[name] = selected
+    return Ok(result)
+
+
+def overlay_rust_request(
+    base: RustInputRequest,
+    value: TomlValue,
+    manifest: str,
+    field: list[str],
+) -> Result[RustInputRequest, IntakeError]:
+    """Apply explicit environment fields to one normalized production request without inventing omitted values."""
+    entry = table(value, manifest, field)?
+    allowed(
+        entry,
+        ["loaf", "version", "features", "default-features", "optional", "path", "target", "package", "crate"],
+        manifest,
+        field,
+    )?
+    for retired in ["package", "crate"]:
+        if retired in entry:
+            return Err(
+                refusal(
+                    manifest,
+                    field + [retired],
+                    IntakeErrorKind.Unsupported,
+                    f"use `{base.alias}` with its `loaf` identity under this environment's [dependencies] table",
+                ),
+            )
+    mut result = base.clone()
+    if "loaf" in entry:
+        identity = required(entry, "loaf", manifest, field + ["loaf"])?
+        validate_loaf_identity(identity).map_err(
+            (error) => refusal(manifest, field + ["loaf"], IntakeErrorKind.Invalid, error),
+        )?
+        result.loaf = Some(identity)
+        result.package = crate_name(identity)
+    if "version" in entry:
+        result.version = required(entry, "version", manifest, field + ["version"])?
+    if "features" in entry:
+        result.features = unique_strings(result.features + requested_features(entry["features"], manifest, field)?)
+    if "default-features" in entry:
+        result.default_features = request_flag(entry["default-features"], manifest, field)?
+    if "optional" in entry:
+        result.optional = request_flag(entry["optional"], manifest, field)?
+    if "target" in entry:
+        predicate = required(entry, "target", manifest, field + ["target"])?
+        validate_target(predicate).map_err(
+            (error) => refusal(manifest, field + ["target"], IntakeErrorKind.Invalid, error),
+        )?
+        result.target = Some(predicate)
+    if "path" in entry:
+        result.path = Some(required(entry, "path", manifest, field + ["path"])?)
+    return Ok(result)
+
+
+def unique_strings(values: list[str]) -> list[str]:
+    """Return sorted distinct strings for normalized overlay feature requests."""
+    mut result: list[str] = []
+    for value in values:
+        if value not in result:
+            result.append(value)
+    return sorted(result)
+
+
+def first_key(values: Dict[str, TomlValue]) -> str:
+    """Return the first deterministic key of a dependency table already known to be nonempty."""
+    keys = sorted([key for key in values.keys()])
+    if len(keys) == 0:
+        return "dependency"
+    return keys[0]
+
+
+def dependency_replacement(
+    alias: str,
+    value: TomlValue,
+    manifest: str,
+    field: list[str],
+) -> Result[str, IntakeError]:
+    """Render the Loaf dependency form used by a retired-table or retired-key refusal hint."""
+    mut package = alias
+    mut version = "*"
+    if value.kind() == TomlKind.String:
+        version = text(value, manifest, field)?
+    else:
+        entry = table(value, manifest, field)?
+        if "package" in entry:
+            package = text(entry["package"], manifest, field + ["package"])?
+        if "crate" in entry:
+            package = text(entry["crate"], manifest, field + ["crate"])?
+        if "version" in entry:
+            version = text(entry["version"], manifest, field + ["version"])?
+    return Ok(f"{alias} = {{ loaf = \"crates-io/{package}\", version = \"{version}\" }}")
 
 
 def string_list(value: TomlValue, manifest: str, field: list[str]) -> Result[list[str], IntakeError]:
@@ -399,8 +562,11 @@ def check_feature_names(
             detail = f"activates `dep:{alias}`, which is not an optional dependency"
             return Err(refusal(manifest, field, IntakeErrorKind.Invalid, detail))
     for alias in sorted([key for key in declaration.dependency_features.keys()]):
-        if alias not in aliases:
-            detail = f"requests features of `{alias}`, which is not a dependency"
+        mut dependency = alias
+        if dependency.endswith("?"):
+            dependency = dependency[:-1]
+        if dependency not in aliases:
+            detail = f"requests features of `{dependency}`, which is not a dependency"
             return Err(refusal(manifest, field, IntakeErrorKind.Invalid, detail))
     return Ok(None)
 
@@ -543,12 +709,23 @@ def parse_dependencies(
     """Keep local edges and adopted Loaf target alternatives without resolving either."""
     mut dependencies: list[LocalDependency] = []
     mut rust_inputs: list[RustInputRequest] = []
-    for group in ["dependencies", "rust-dependencies"]:
-        if group not in root:
-            continue
+    if "rust-dependencies" in root:
+        entries = table(root["rust-dependencies"], manifest, ["rust-dependencies"])?
+        alias = first_key(entries)
+        replacement = dependency_replacement(alias, entries[alias], manifest, ["rust-dependencies", alias])?
+        return Err(
+            refusal(
+                manifest,
+                ["rust-dependencies"],
+                IntakeErrorKind.Unsupported,
+                f"use [dependencies] {replacement}",
+            ),
+        )
+    if "dependencies" in root:
+        group = "dependencies"
         values = table(root[group], manifest, [group])?
         for alias in sorted([key for key in values.keys()]):
-            value = values[alias]
+            value = values[alias].clone()
             if value.kind() == TomlKind.Array:
                 entries = value
                     .as_array()
@@ -574,9 +751,17 @@ def parse_dependencies(
                             ),
                         )
                     rust_inputs.append(request)
-            elif group == "rust-dependencies":
-                rust_inputs.append(rust_request(alias, value, manifest, group)?)
             else:
+                if value.kind() == TomlKind.String:
+                    replacement = dependency_replacement(alias, value, manifest, [group, alias])?
+                    return Err(
+                        refusal(
+                            manifest,
+                            [group, alias],
+                            IntakeErrorKind.Invalid,
+                            f"dependency must name its Loaf; use {replacement}",
+                        ),
+                    )
                 entry = table(value, manifest, [group, alias])?
                 if "standard" in entry:
                     return Err(
@@ -591,7 +776,17 @@ def parse_dependencies(
                     field = [group, alias]
                     allowed(
                         entry,
-                        ["loaf", "path", "version", "optional", "default-features", "features"],
+                        [
+                            "loaf",
+                            "path",
+                            "version",
+                            "optional",
+                            "default-features",
+                            "features",
+                            "target",
+                            "package",
+                            "crate",
+                        ],
                         manifest,
                         field,
                     )?
@@ -609,16 +804,23 @@ def parse_dependencies(
                             rust_facet="loaf" in entry,
                         ),
                     )
+                    if "loaf" in entry:
+                        rust_inputs.append(rust_request(alias, value, manifest, group)?)
                 else:
                     rust_inputs.append(rust_request(alias, value, manifest, group)?)
     return Ok((dependencies, rust_inputs))
 
 
-def validate_facets(root: Dict[str, TomlValue], manifest: str) -> Result[None, IntakeError]:
+def validate_facets(root: Dict[str, TomlValue], manifest: str, project_name: str) -> Result[None, IntakeError]:
     """Validate authored facet metadata even when local intake does not execute it."""
     if "rust" in root:
         rust_facet = table(root["rust"], manifest, ["rust"])?
-        allowed(rust_facet, ["name", "type", "edition", "source", "bin", "lib"], manifest, ["rust"])?
+        allowed(
+            rust_facet,
+            ["name", "type", "edition", "source", "bin", "lib", "build-script"],
+            manifest,
+            ["rust"],
+        )?
         for key in ["name", "type", "edition"]:
             if key in rust_facet:
                 value = required(rust_facet, key, manifest, ["rust", key])?
@@ -632,6 +834,15 @@ def validate_facets(root: Dict[str, TomlValue], manifest: str) -> Result[None, I
             required(source, "root", manifest, ["rust", "source", "root"])?
         if "bin" in rust_facet:
             validate_binaries(rust_facet["bin"], manifest)?
+        if flag(rust_facet, "build-script", false, manifest, ["rust"])?:
+            return Err(
+                refusal(
+                    manifest,
+                    ["rust", "build-script"],
+                    IntakeErrorKind.Unsupported,
+                    f"{project_name} requires a recorded build fact for this exact binding",
+                ),
+            )
     if "vocab" in root:
         vocab = table(root["vocab"], manifest, ["vocab"])?
         if "crate" in vocab:
@@ -740,66 +951,64 @@ def cfg_predicate(value: str, depth: int) -> Result[str, str]:
 
 def rust_request(alias: str, value: TomlValue, manifest: str, group: str) -> Result[RustInputRequest, IntakeError]:
     """
-    Retain a registry crate requirement and normalize its requested features without selecting a version.
+    Normalize one Rust-facet Loaf request without selecting its version or source.
 
-    1. A bare string is a version requirement.
-    2. A table in `[dependencies]` names a `crates-io/` Loaf; one in `[rust-dependencies]` names a package, or a path.
-    3. A table may restrict the dependency to a target, and states its version, features and flags.
-    4. A requirement needs a version unless it names a path.
+    1. The entry names one syntactically valid Loaf from any registry scope.
+    2. Retired Cargo keys refuse with the adopted Loaf form.
+    3. Target and feature policy remain authored requests until activation.
+    4. A registry request needs a version; a local path is selected by the local graph.
     """
     field = [group, alias]
-    mut package = alias
-    mut loaf: Option[str] = None
+    entry = table(value, manifest, field)?
+    allowed(
+        entry,
+        ["loaf", "version", "features", "default-features", "optional", "path", "target", "package", "crate"],
+        manifest,
+        field,
+    )?
+    for retired in ["package", "crate"]:
+        if retired in entry:
+            package = required(entry, retired, manifest, field + [retired])?
+            mut requirement = "*"
+            if "version" in entry:
+                requirement = required(entry, "version", manifest, field + ["version"])?
+            detail = f"use {alias} = {{ loaf = \"crates-io/{package}\", version = \"{requirement}\" }}"
+            return Err(refusal(manifest, field + [retired], IntakeErrorKind.Unsupported, detail))
+    identity = required(entry, "loaf", manifest, field + ["loaf"])?
+    validate_loaf_identity(identity).map_err(
+        (error) => refusal(manifest, field + ["loaf"], IntakeErrorKind.Invalid, error),
+    )?
     mut version = ""
     mut features: list[str] = []
     mut default_features = true
     mut optional = false
     mut target: Option[str] = None
     mut local_path: Option[str] = None
-    # 1. A bare string states only the version a registry crate must satisfy.
-    if value.kind() == TomlKind.String:
-        version = text(value, manifest, field)?
-    else:
-        # 2. In `[dependencies]` the table names a `crates-io/` Loaf; in `[rust-dependencies]`, a package or a path.
-        entry = table(value, manifest, field)?
-        if group == "dependencies":
-            allowed(entry, ["loaf", "version", "features", "default-features", "optional", "target"], manifest, field)?
-            identity = required(entry, "loaf", manifest, field + ["loaf"])?
-            if not identity.startswith("crates-io/") or identity == "crates-io/":
-                return Err(refusal(manifest, field + ["loaf"], IntakeErrorKind.Invalid, "expected crates-io/<package>"))
-            loaf = Some(identity)
-            package = identity[10:]
-        else:
-            keys = ["version", "package", "features", "default-features", "optional", "path", "target"]
-            allowed(entry, keys, manifest, field)?
-            if "path" in entry:
-                local_path = Some(required(entry, "path", manifest, field + ["path"])?)
-        # 3. The table may restrict the crate to a target, and states its version, features and flags.
-        if "target" in entry:
-            predicate = required(entry, "target", manifest, field + ["target"])?
-            validate_target(predicate).map_err(
-                (error) => refusal(manifest, field + ["target"], IntakeErrorKind.Invalid, error),
-            )?
-            target = Some(predicate)
-
-        if "version" in entry:
-            version = required(entry, "version", manifest, field + ["version"])?
-        if "package" in entry:
-            package = required(entry, "package", manifest, field + ["package"])?
-        if "features" in entry:
-            features = requested_features(entry["features"], manifest, field)?
-        if "default-features" in entry:
-            default_features = request_flag(entry["default-features"], manifest, field)?
-        if "optional" in entry:
-            optional = request_flag(entry["optional"], manifest, field)?
-    # 4. A crate with no path must say which version it needs, since nothing else selects one.
+    # 3. Keep canonical target and feature requests at the intake boundary.
+    if "target" in entry:
+        predicate = required(entry, "target", manifest, field + ["target"])?
+        validate_target(predicate).map_err(
+            (error) => refusal(manifest, field + ["target"], IntakeErrorKind.Invalid, error),
+        )?
+        target = Some(predicate)
+    if "version" in entry:
+        version = required(entry, "version", manifest, field + ["version"])?
+    if "features" in entry:
+        features = requested_features(entry["features"], manifest, field)?
+    if "default-features" in entry:
+        default_features = request_flag(entry["default-features"], manifest, field)?
+    if "optional" in entry:
+        optional = request_flag(entry["optional"], manifest, field)?
+    if "path" in entry:
+        local_path = Some(required(entry, "path", manifest, field + ["path"])?)
+    # 4. Nothing other than a path can identify a source without a version requirement.
     if version == "" and local_path is None:
         return Err(refusal(manifest, field, IntakeErrorKind.Missing, "version requirement is required"))
     return Ok(
         RustInputRequest(
             alias=alias,
-            package=package,
-            loaf=loaf,
+            package=crate_name(identity),
+            loaf=Some(identity),
             version=version,
             features=features,
             default_features=default_features,

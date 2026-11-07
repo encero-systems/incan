@@ -385,7 +385,7 @@ def installed_rust_library(
     key = rust_library_producer_key(facet, directory, arguments, environment, request, toolchain).map_err(
         (error) => f"installed native {declared.crate_name} has no current producer proof: {error}",
     )?
-    graph = directory.joinpath(f"{declared.package}.incngraph")
+    graph = directory.joinpath(f"{declared.crate_name}.incngraph")
     dependencies = directory.joinpath("library.d")
     outputs = [artifact, graph, dependencies]
     stamp = directory.joinpath("library.oven-inputs")
@@ -512,7 +512,7 @@ def retain_rust_library_graph(
     """
     # 1. The caller holds the producer directory lock across validation and graph publication.
     directory = artifact.parent()
-    graph = directory.joinpath(f"{declared.package}.incngraph")
+    graph = directory.joinpath(f"{declared.crate_name}.incngraph")
     graph_stamp = directory.joinpath("library.graph-inputs")
     selected = rust_library_graph_key(native, toolchain.driver)?
     if reusable([graph], graph_stamp, selected)?:
@@ -528,7 +528,7 @@ def retain_rust_library_graph(
         extern_artifacts(arguments),
         toolchain,
     )?
-    pending = directory.joinpath(f"{declared.package}.incngraph.{id()}.checking.pending")
+    pending = directory.joinpath(f"{declared.crate_name}.incngraph.{id()}.checking.pending")
     inspected = ["--rust-codegraph", pending.0, facet.project, "--sysroot", toolchain.sysroot] + graph_arguments(
         materialized_arguments(arguments, native),
     )
@@ -570,7 +570,7 @@ def compile_local_rust_library(
     directory = output.joinpath(f"{declared.crate_name}-{unit}")
     directory.mkdir(true, true).map_err((error) => error.message())?
     dependencies = directory.joinpath("library.d")
-    graph = directory.joinpath(f"{declared.package}.incngraph")
+    graph = directory.joinpath(f"{declared.crate_name}.incngraph")
     context = artifact_context(facet, declared, request.profile)?
     arguments = library_compile_arguments(facet, declared, directory, request, built, search)?
     environment = package_environment(facet.project, declared, declared.crate_name)
@@ -663,7 +663,7 @@ def compile_rust_producer(
     """Compile a Rust library and its checked graph into `directory`, refusing inputs that changed meanwhile."""
     forget_view(directory)?
     dependencies = directory.joinpath("library.d")
-    graph = directory.joinpath(f"{declared.package}.incngraph")
+    graph = directory.joinpath(f"{declared.crate_name}.incngraph")
     context = artifact_context(facet, declared, request.profile)?
     linked = extern_artifacts(arguments)
     discovered = dependency_arguments(arguments, dependencies) + ["--sysroot", toolchain.sysroot]
@@ -671,7 +671,7 @@ def compile_rust_producer(
     observations = compilation_observations(Path(facet.project), dependencies, arguments, linked, toolchain)?
     identified = rust_library_producer_key(facet, directory, arguments, environment, request, toolchain)?
     trace(f"unit {declared.crate_name} rust: compiled identity={identified.digest} (not baked)")
-    pending = directory.joinpath(f"{declared.package}.incngraph.{id()}.pending")
+    pending = directory.joinpath(f"{declared.crate_name}.incngraph.{id()}.pending")
     scratch = incremental_directory(request, facet, "library")
     incremental = rust_incremental_arguments(scratch, arguments)
     graph_arguments = ["--rust-compile-codegraph", pending.0, facet.project, "--sysroot", toolchain.sysroot] + incremental + materialized_arguments(

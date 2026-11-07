@@ -1,73 +1,35 @@
-"""
-Read constrained Rust dependency declarations from an explicitly supplied manifest snapshot.
+"""Project intake's Loaf dependency model into Rust-facet activation slots."""
 
-The caller retains the original source owner. This module does not admit that owner, choose a source/version,
-activate dependencies, discover a workspace or permit build-time effects. The result retains the full document
-for the later unit/configuration producer; a dependency catalog alone cannot produce semantic input evidence.
-"""
-
-# Explicit payload import until foreign None type qualification is fixed (#2010).
-from std.toml import TomlLocation
-from std import toml
-from std.toml import TomlValue, TomlKind
-from manifest_errors import IntakeError, IntakeErrorKind
-from pub::incan_platform.trace import Operation
-from jec import begin, record, text_size
-
-
-@derive(Eq)
-pub enum RustDependencyRole(str):
-    """Original declaration roles; inert build dependencies remain inventory-only source facts."""
-
-    Normal = "normal"
-    Build = "build"
-    Dev = "dev"
-
-
-@derive(Eq)
-pub enum RustGitReference:
-    """Authored Git selectors remain unresolved until the source provider admits an exact revision."""
-
-    Branch(str)
-    Tag(str)
-    Rev(str)
+from manifest_intent import FeatureDeclaration, LocalDependency, ProjectIntent, RustInputRequest
 
 
 @derive(Eq)
 pub enum RustRegistryRequest:
-    """A registry declaration still needs the original Loaf registry policy to name an admitted registry."""
+    """A registry edge whose provider is selected by Oven configuration, not by dependency syntax."""
 
     Default
-    Named(str)
-    Index(str)
 
 
 @derive(Eq)
 pub enum RustDependencySource:
-    """Authored coordinates only; none of these variants authenticates a selected source."""
+    """The two source forms admitted by the Loaf grammar."""
 
     Registry(RustRegistryRequest)
     Path(str, RustRegistryRequest)
-    Git(str, Option[RustGitReference], RustRegistryRequest)
-    Workspace
 
 
 @derive(Eq)
 pub model RustDependencyDeclaration:
-    """
-    One original literal table/alias slot, before inheritance, activation or child selection.
-
-    The finalized producer binds index to the complete definition digest. A target condition remains source text
-    until Incan evaluates it against explicit target facts. Absent flags remain absent so inherited defaults are
-    not guessed here. Path spelling is preserved even when absolute or outside the diagnostic manifest's parent.
-    """
+    """One normalized Loaf dependency slot before feature and target activation."""
 
     pub index: int
     pub field: list[str]
-    pub role: RustDependencyRole
     pub target_condition: Option[str]
     pub alias: str
+    # The Loaf identity, never a crate name or filesystem name.
     pub package: str
+    # Whether the authored edge names and therefore constrains the reached Loaf identity.
+    pub identity_declared: bool = true
     pub version_requirement: Option[str]
     pub features: list[str]
     pub default_features: Option[bool]
@@ -76,341 +38,109 @@ pub model RustDependencyDeclaration:
 
 
 pub model RustDependencyCatalog:
-    """
-    Complete dependency/feature declarations plus the still-unchecked unit/configuration document.
+    """The dependency and feature declarations activation reads from one normalized project intent."""
 
-    Keeping package, targets, build candidates, profiles and other tables is intentional. The later source-facet
-    producer must validate and classify them before constructing checked semantic inputs. This type carries no
-    completeness claim about source files, crate units, inheritance, feature activation or selected dependencies.
-    """
-
-    pub document: TomlValue
     pub dependencies: list[RustDependencyDeclaration]
     pub features: Dict[str, list[str]]
-    # The explicit `[lib] name`, when the package declares one. It is the crate name rustc links this package
-    # under, so a parent's raw edge alias follows it rather than the package name.
+    # The explicit or derived `[rust] name`, when the project has a Rust facet.
     pub library_name: Option[str]
 
 
-def refusal(manifest: str, field: list[str], kind: IntakeErrorKind, detail: str) -> IntakeError:
-    """Use the existing source-located intake error vocabulary for a literal Cargo metadata field."""
-    return IntakeError(kind=kind, manifest=manifest, field=field, location=None, detail=detail)
-
-
-def table(value: TomlValue, manifest: str, field: list[str]) -> Result[Dict[str, TomlValue], IntakeError]:
-    """Require a table without treating malformed or inactive declarations as absent."""
-    return value.as_table().map_err((error) => refusal(manifest, field, IntakeErrorKind.Invalid, error.message()))
-
-
-def text(value: TomlValue, manifest: str, field: list[str]) -> Result[str, IntakeError]:
-    """Read nonempty source text without parsing a version, cfg expression or physical path."""
-    result = value.as_str().map_err((error) => refusal(manifest, field, IntakeErrorKind.Invalid, error.message()))?
-    if result == "":
-        return Err(refusal(manifest, field, IntakeErrorKind.Invalid, "empty declaration value"))
-    return Ok(result)
-
-
-def optional_text(
-    values: Dict[str, TomlValue],
-    key: str,
-    manifest: str,
-    field: list[str],
-) -> Result[Option[str], IntakeError]:
-    """Preserve the difference between omitted source metadata and a present nonempty string."""
-    if key not in values:
-        return Ok(None)
-    return Ok(Some(text(values[key], manifest, field + [key])?))
-
-
-def optional_bool(
-    values: Dict[str, TomlValue],
-    key: str,
-    manifest: str,
-    field: list[str],
-) -> Result[Option[bool], IntakeError]:
-    """Preserve omission until the original inheritance and defaults have been checked."""
-    if key not in values:
-        return Ok(None)
-    value = values[key]
-        .as_bool()
-        .map_err((error) => refusal(manifest, field + [key], IntakeErrorKind.Invalid, error.message()))?
-    return Ok(Some(value))
-
-
-def strings(value: TomlValue, manifest: str, field: list[str]) -> Result[list[str], IntakeError]:
-    """Retain the original sequence of named feature expansions; interpretation belongs to activation."""
-    items = value.as_array().map_err((error) => refusal(manifest, field, IntakeErrorKind.Invalid, error.message()))?
-    mut result: list[str] = []
-    for item in items:
-        result.append(text(item, manifest, field)?)
-    return Ok(result)
-
-
-def allowed(
-    values: Dict[str, TomlValue],
-    keys: list[str],
-    manifest: str,
-    field: list[str],
-) -> Result[None, IntakeError]:
-    """Refuse unsupported meaning in a declaration table instead of losing it in projection."""
-    for key in sorted([item for item in values.keys()]):
-        if key not in keys:
-            return Err(
-                refusal(manifest, field + [key], IntakeErrorKind.Unsupported, "unsupported Rust declaration field"),
-            )
-    return Ok(None)
-
-
-def source_request(
-    values: Dict[str, TomlValue],
-    manifest: str,
-    field: list[str],
-) -> Result[RustDependencySource, IntakeError]:
+pub def dependency_catalog(intent: ProjectIntent) -> RustDependencyCatalog:
     """
-    Preserve source requests, including the registry location attached to a path/Git version requirement.
+    Convert one admitted project intent into activation slots without reading or parsing its manifest again.
 
-    The registry location does not override the authored path or Git request. Selecting a publication form or a
-    source owner is a later producer decision; this reader must not erase an alternate registry declaration.
+    Each request retains its authored alias, Loaf identity, version, feature flags and optional target. The catalog
+    contains no Cargo roles, Git source, workspace inheritance or second dependency grammar.
     """
-    mut selectors: list[str] = []
-    for key in ["path", "git", "workspace"]:
-        if key in values:
-            selectors.append(key)
-    if len(selectors) > 1:
-        return Err(refusal(manifest, field, IntakeErrorKind.Invalid, "conflicting dependency source selectors"))
-    if "registry" in values and "registry-index" in values:
-        return Err(refusal(manifest, field, IntakeErrorKind.Invalid, "conflicting registry selectors"))
-    mut registry = RustRegistryRequest.Default
-    if "registry" in values:
-        registry = RustRegistryRequest.Named(text(values["registry"], manifest, field + ["registry"])?)
-    if "registry-index" in values:
-        registry = RustRegistryRequest.Index(text(values["registry-index"], manifest, field + ["registry-index"])?)
-    mut references: list[str] = []
-    for key in ["branch", "tag", "rev"]:
-        if key in values:
-            references.append(key)
-    if len(references) > 1 or (len(references) > 0 and "git" not in values):
-        return Err(
-            refusal(manifest, field, IntakeErrorKind.Invalid, "Git reference requires one Git source and selector"),
-        )
-    if "workspace" in values:
-        inherited = optional_bool(values, "workspace", manifest, field)?
-        if inherited != Some(true):
-            return Err(refusal(manifest, field + ["workspace"], IntakeErrorKind.Invalid, "workspace must be true"))
-        if "version" in values or "package" in values or "registry" in values or "registry-index" in values:
-            return Err(
-                refusal(manifest, field, IntakeErrorKind.Invalid, "inherited identity cannot be overridden locally"),
-            )
-        if "default-features" in values or "default_features" in values:
-            return Err(
-                refusal(
-                    manifest,
-                    field,
-                    IntakeErrorKind.Unsupported,
-                    "inherited default-feature override needs edition-aware validation",
-                ),
-            )
-        return Ok(RustDependencySource.Workspace)
-    if "path" in values:
-        return Ok(RustDependencySource.Path(text(values["path"], manifest, field + ["path"])?, registry))
-    if "git" in values:
-        url = text(values["git"], manifest, field + ["git"])?
-        mut reference: Option[RustGitReference] = None
-        if "branch" in values:
-            reference = Some(RustGitReference.Branch(text(values["branch"], manifest, field + ["branch"])?))
-        if "tag" in values:
-            reference = Some(RustGitReference.Tag(text(values["tag"], manifest, field + ["tag"])?))
-        if "rev" in values:
-            reference = Some(RustGitReference.Rev(text(values["rev"], manifest, field + ["rev"])?))
-        return Ok(RustDependencySource.Git(url, reference, registry))
-    return Ok(RustDependencySource.Registry(registry))
+    return dependency_catalog_with(intent, intent.rust_inputs)
 
 
-def read_dependency(
-    value: TomlValue,
-    alias: str,
-    index: int,
-    role: RustDependencyRole,
-    target_condition: Option[str],
-    manifest: str,
-    field: list[str],
-) -> Result[RustDependencyDeclaration, IntakeError]:
-    """Read one complete request without turning its coordinates into a selected dependency."""
-    if alias == "":
-        return Err(refusal(manifest, field, IntakeErrorKind.Invalid, "empty dependency alias"))
-    mut package = alias
-    mut version: Option[str] = None
-    mut features: list[str] = []
-    mut default_features: Option[bool] = None
-    mut optional: Option[bool] = None
-    mut source = RustDependencySource.Registry(RustRegistryRequest.Default)
-    if value.kind() == TomlKind.String:
-        version = Some(text(value, manifest, field)?)
-    else:
-        values = table(value, manifest, field)?
-        allowed(
-            values,
-            [
-                "version",
-                "package",
-                "features",
-                "default-features",
-                "default_features",
-                "optional",
-                "path",
-                "git",
-                "branch",
-                "tag",
-                "rev",
-                "registry",
-                "registry-index",
-                "workspace",
-            ],
-            manifest,
-            field,
-        )?
-        source = source_request(values, manifest, field)?
-        if "package" in values:
-            package = text(values["package"], manifest, field + ["package"])?
-        version = optional_text(values, "version", manifest, field)?
-        if "features" in values:
-            declared_features = strings(values["features"], manifest, field + ["features"])?
-            for feature in declared_features:
-                if feature not in features:
-                    features.append(feature)
-            features = sorted(features)
-        if "default-features" in values and "default_features" in values:
-            return Err(refusal(manifest, field, IntakeErrorKind.Invalid, "duplicate default-features spellings"))
-        if "default_features" in values:
-            default_features = optional_bool(values, "default_features", manifest, field)?
-        else:
-            default_features = optional_bool(values, "default-features", manifest, field)?
-        optional = optional_bool(values, "optional", manifest, field)?
-    return Ok(
-        RustDependencyDeclaration(
-            index=index,
-            field=field,
-            role=role,
-            target_condition=target_condition,
-            alias=alias,
-            package=package,
-            version_requirement=version,
-            features=features,
-            default_features=default_features,
-            optional=optional,
-            source=source,
-        ),
-    )
-
-
-def read_groups(
-    values: Dict[str, TomlValue],
-    target_condition: Option[str],
-    manifest: str,
-    prefix: list[str],
-    start: int,
-) -> Result[list[RustDependencyDeclaration], IntakeError]:
-    """Enumerate role tables in fixed order while retaining every original literal field path."""
-    mut result: list[RustDependencyDeclaration] = []
-    if "build-dependencies" in values and "build_dependencies" in values:
-        return Err(refusal(manifest, prefix, IntakeErrorKind.Invalid, "duplicate build-dependencies spellings"))
-    if "dev-dependencies" in values and "dev_dependencies" in values:
-        return Err(refusal(manifest, prefix, IntakeErrorKind.Invalid, "duplicate dev-dependencies spellings"))
-    for name, role in [
-        ("dependencies", RustDependencyRole.Normal),
-        ("build-dependencies", RustDependencyRole.Build),
-        ("build_dependencies", RustDependencyRole.Build),
-        ("dev-dependencies", RustDependencyRole.Dev),
-        ("dev_dependencies", RustDependencyRole.Dev),
-    ]:
-        if name in values:
-            declarations = table(values[name], manifest, prefix + [name])?
-            for alias in sorted([key for key in declarations.keys()]):
-                slot = start + len(result)
-                declaration = read_dependency(
-                    declarations[alias],
-                    alias,
-                    slot,
-                    role,
-                    target_condition,
-                    manifest,
-                    prefix + [name, alias],
-                )?
-                result.append(declaration)
-    return Ok(result)
-
-
-def read_catalog(source: str, manifest: str) -> Result[RustDependencyCatalog, IntakeError]:
-    """Read all dependency/feature tables and retain the rest for the later checked facet producer."""
-    clock = begin()
-    document = toml.parse(source).map_err((error) => refusal(manifest, [], IntakeErrorKind.Invalid, error.message()))?
-    record(Operation.ManifestParse, manifest, clock, text_size(source, clock))
-    root = table(document, manifest, [])?
-    mut dependencies = read_groups(root, None, manifest, [], 0)?
-    if "target" in root:
-        targets = table(root["target"], manifest, ["target"])?
-        for condition in sorted([key for key in targets.keys()]):
-            if condition == "":
-                return Err(refusal(manifest, ["target", condition], IntakeErrorKind.Invalid, "empty target condition"))
-            values = table(targets[condition], manifest, ["target", condition])?
-            allowed(
-                values,
-                ["dependencies", "build-dependencies", "build_dependencies", "dev-dependencies", "dev_dependencies"],
-                manifest,
-                ["target", condition],
-            )?
-            qualified = read_groups(values, Some(condition), manifest, ["target", condition], len(dependencies))?
-            for dependency in qualified:
-                dependencies.append(dependency)
+pub def dependency_catalog_with(
+    intent: ProjectIntent,
+    requests: list[RustInputRequest],
+) -> RustDependencyCatalog:
+    """Project an already normalized environment overlay through the same activation catalog boundary."""
+    mut dependencies: list[RustDependencyDeclaration] = []
+    for dependency in intent.dependencies:
+        if not dependency.rust_facet:
+            dependencies.append(local_declaration(dependency, len(dependencies)))
+    for request in requests:
+        dependencies.append(declaration(request, len(dependencies)))
     mut features: Dict[str, list[str]] = {}
-    if "features" in root:
-        declarations = table(root["features"], manifest, ["features"])?
-        for name in sorted([key for key in declarations.keys()]):
-            if name == "":
-                return Err(refusal(manifest, ["features", name], IntakeErrorKind.Invalid, "empty feature name"))
-            features[name] = strings(declarations[name], manifest, ["features", name])?
+    for name in sorted([name for name in intent.features.keys()]):
+        features[name] = feature_entries(intent.features[name])
     mut library_name: Option[str] = None
-    if "lib" in root:
-        library = table(root["lib"], manifest, ["lib"])?
-        if "name" in library:
-            library_name = Some(text(library["name"], manifest, ["lib", "name"])?)
-    return Ok(
-        RustDependencyCatalog(document=document, dependencies=dependencies, features=features, library_name=library_name),
+    if intent.rust_name != "":
+        library_name = Some(intent.rust_name)
+    return RustDependencyCatalog(dependencies=dependencies, features=features, library_name=library_name)
+
+
+def local_declaration(dependency: LocalDependency, index: int) -> RustDependencyDeclaration:
+    """Project one Incan path edge into activation without inventing a Loaf identity constraint."""
+    return RustDependencyDeclaration(
+        index=index,
+        field=["dependencies", dependency.alias],
+        target_condition=None,
+        alias=dependency.alias,
+        package=dependency.alias,
+        identity_declared=false,
+        version_requirement=None,
+        features=dependency.features,
+        default_features=Some(dependency.default_features),
+        optional=Some(dependency.optional),
+        source=RustDependencySource.Path(dependency.path, RustRegistryRequest.Default),
     )
+
+
+def declaration(request: RustInputRequest, index: int) -> RustDependencyDeclaration:
+    """Project one normalized dependency request into its stable activation slot."""
+    mut identity = ""
+    match request.loaf:
+        Some(loaf) => identity = loaf
+        None => pass
+    mut requirement: Option[str] = None
+    if request.version != "":
+        requirement = Some(request.version)
+    mut source = RustDependencySource.Registry(RustRegistryRequest.Default)
+    if let Some(path) = request.path:
+        source = RustDependencySource.Path(path, RustRegistryRequest.Default)
+    return RustDependencyDeclaration(
+        index=index,
+        field=["dependencies", request.alias],
+        target_condition=request.target,
+        alias=request.alias,
+        package=identity,
+        version_requirement=requirement,
+        features=request.features,
+        default_features=Some(request.default_features),
+        optional=Some(request.optional),
+        source=source,
+    )
+
+
+def feature_entries(declaration: FeatureDeclaration) -> list[str]:
+    """Spell one normalized feature declaration in the activation policy's compact edge grammar."""
+    mut entries = declaration.includes.clone()
+    for alias in declaration.optional_dependencies:
+        entries.append(f"dep:{alias}")
+    for alias in sorted([alias for alias in declaration.dependency_features.keys()]):
+        for feature in declaration.dependency_features[alias]:
+            entries.append(f"{alias}/{feature}")
+    return entries
 
 
 pub def crate_identifier(name: str) -> str:
-    """Spell a package name or dependency key the way rustc names the crate: hyphens become underscores."""
+    """Spell a code-facing Rust crate name with hyphens replaced by underscores."""
     return name.replace("-", "_")
 
 
 pub def extern_crate_name(declaration: RustDependencyDeclaration, child_library_name: Option[str]) -> str:
     """
-    The `--extern` name Cargo hands rustc for one declaration, which is what a raw selected edge alias records.
+    Return the dependency key rustc links, independently of the Loaf identity and child filesystem path.
 
-    A renamed declaration (`alias = { package = "..." }`) is linked under its key. Any other declaration is linked
-    under the child's library target name: its explicit `[lib] name` when it declares one, else its package name.
-    Both spellings are crate identifiers, so hyphens read as underscores. The one Cargo distinction this cannot
-    make is a rename to the package's own name, which a declaration does not record; Cargo would link that under
-    the key while this follows the child's library name, and the two differ only when that library is renamed.
+    `child_library_name` is retained in the call contract because the caller also checks the selected child's Rust
+    facet, but the authored dependency key is always the consumer-facing crate alias in the Loaf grammar.
     """
-    if declaration.package != declaration.alias:
-        return crate_identifier(declaration.alias)
-    match child_library_name:
-        Some(name) => return crate_identifier(name)
-        None => return crate_identifier(declaration.package)
-
-
-pub def read_dependency_catalog(source: str, manifest: str) -> Result[RustDependencyCatalog, IntakeError]:
-    """
-    Read declarations from supplied metadata without establishing a source selection or semantic identity.
-
-    Args:
-        source: One selected source owner's manifest snapshot supplied by the caller, or an explicit test fixture.
-        manifest: Diagnostic provenance only; this function never reads or resolves this path.
-
-    Returns:
-        All original dependency slots and feature expansions plus the complete parsed document. Unit/configuration
-        validation and activation are still required before a source-facet record can enter semantic projection.
-    """
-    return read_catalog(source, manifest).map_err((error) => error.with_source(source))
+    _ = child_library_name
+    return crate_identifier(declaration.alias)

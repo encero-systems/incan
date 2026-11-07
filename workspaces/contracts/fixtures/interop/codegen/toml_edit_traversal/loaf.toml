@@ -3,5 +3,5 @@ name = "toml_edit_traversal"
 version = "0.1.0"
 [project.scripts]
 main = "src/main.incn"
-[rust-dependencies]
-toml_edit = "0.25"
+[dependencies]
+toml_edit = { loaf = "crates-io/toml_edit", version = "0.25" }

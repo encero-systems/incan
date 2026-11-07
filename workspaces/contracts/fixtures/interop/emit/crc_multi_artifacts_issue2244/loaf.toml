@@ -5,8 +5,6 @@ version = "0.1.0"
 [project.scripts]
 main = "src/main.incn"
 
-[rust-dependencies]
-crc-fast = "1"
-
 [dependencies]
+crc-fast = { loaf = "crates-io/crc-fast", version = "1" }
 encoding_rs = { loaf = "crates-io/encoding_rs", version = "0.8", features = [], default-features = true }

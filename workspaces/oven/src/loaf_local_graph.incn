@@ -1,6 +1,5 @@
 """Select local compiler Loaf features and project their registry requests through the shared activation policy."""
 
-from std.toml import TomlValue, TomlKind
 from std.fs import Path
 from std.json import JsonValue
 from rust::std::ops import Index
@@ -9,9 +8,10 @@ from observation import trace
 from rust_source import (
     RustDependencyCatalog,
     RustDependencyDeclaration,
-    RustDependencyRole,
     RustDependencySource,
     RustRegistryRequest,
+    dependency_catalog,
+    dependency_catalog_with,
 )
 from rust_activation import (
     ActivationContext,
@@ -22,9 +22,8 @@ from rust_activation import (
     activate_unit,
     version_matches,
 )
-from intake import ManifestReader
-from manifest_intent import FeatureDeclaration, feature_declaration
-from toml_fields import optional_flag, optional_string, optional_strings, read_manifest, required_string
+from intake import ManifestReader, read_project
+from manifest_intent import ProjectIntent
 from pub::incan_platform.trace import Operation
 from jec import begin, record
 
@@ -62,99 +61,15 @@ pub def unique(values: list[str]) -> list[str]:
     return sorted(result)
 
 
-def declaration(
-    alias: str,
-    value: TomlValue,
-    index: int,
-    group: str = "dependencies",
-) -> Result[RustDependencyDeclaration, str]:
-    """
-    Decode one Loaf edge without reading Cargo declarations or losing its target and optional policy.
-
-    1. A bare string is a version requirement on the Loaf the alias names.
-    2. A table names the path, version, target, features and flags, and may rename the Loaf (`package`, then `loaf`).
-    3. A crate of `[rust-dependencies]` that is not a path is a `crates-io/` Loaf.
-    4. A path edge is a local source; any other is a registry one.
-    """
-    mut package = alias
-    mut version: Option[str] = None
-    mut path: Option[str] = None
-    mut features: list[str] = []
-    mut target: Option[str] = None
-    mut defaults = true
-    mut optional = false
-    # 1. A bare string states only a version, for the Loaf the alias names.
-    if value.kind() == TomlKind.String:
-        version = Some(value.as_str().map_err((error) => error.message())?)
-    else:
-        # 2. A table states the source, target, features and flags, and may rename the Loaf; `loaf` wins over `package`.
-        path = optional_string(value, "path")?
-        version = optional_string(value, "version")?
-        target = optional_string(value, "target")?
-        defaults = optional_flag(value, "default-features", true)?
-        optional = optional_flag(value, "optional", false)?
-        if let Some(selected) = optional_strings(value, "features")?:
-            features = selected
-        if let Some(selected) = optional_string(value, "package")?:
-            package = selected
-        if let Some(selected) = optional_string(value, "loaf")?:
-            package = selected
-    # 3. A Rust crate that is not a local path is a Loaf of the `crates-io` registry.
-    if group == "rust-dependencies" and path is None:
-        package = f"crates-io/{package}"
-    # 4. A path is a local source; anything else is requested from the registry.
-    mut source = RustDependencySource.Registry(RustRegistryRequest.Default)
-    if let Some(relative) = path:
-        source = RustDependencySource.Path(relative, RustRegistryRequest.Default)
-    return Ok(
-        RustDependencyDeclaration(
-            index=index,
-            field=[group, alias],
-            role=RustDependencyRole.Normal,
-            target_condition=target,
-            alias=alias,
-            package=package,
-            version_requirement=version,
-            features=features,
-            default_features=Some(defaults),
-            optional=Some(optional),
-            source=source,
-        ),
-    )
-
-
-pub def catalog(document: TomlValue, environment: str = "") -> Result[RustDependencyCatalog, str]:
-    """
-    Build the existing activation catalog from converted Loaf declarations, including target alternatives.
-
-    1. Decode the edges of `[dependencies]` and `[rust-dependencies]` for both languages.
-    2. Express each declared feature as the entries the activation policy reads.
-    """
-    root = catalog_table(document)?
-    # 1. Every edge is decoded where it is written.
-    mut dependencies: list[RustDependencyDeclaration] = []
-    for group in ["dependencies", "rust-dependencies"]:
-        if group not in root:
-            continue
-        table = catalog_table(root[group])?
-        for alias in sorted([key for key in table.keys()]):
-            value = table[alias]
-            if value.kind() == TomlKind.Array:
-                for alternative in value.as_array().map_err((error) => error.message())?:
-                    dependencies.append(declaration(alias, alternative, len(dependencies), group)?)
-            else:
-                dependencies.append(declaration(alias, value, len(dependencies), group)?)
-    selected_dependencies = environment_dependencies(root, dependencies, environment)?
-    # 2. Each feature is spelled the way the activation policy reads it, whichever way the manifest wrote it.
-    features = environment_features(catalog_features(root)?, dependencies, selected_dependencies)
-    return Ok(
-        RustDependencyCatalog(
-            document=document,
-            dependencies=selected_dependencies,
-            features=features,
-            library_name=None,
-        ),
-    )
+pub def catalog(intent: ProjectIntent, environment: str = "") -> Result[RustDependencyCatalog, str]:
+    """Project the one admitted dependency model into activation; no graph consumer reparses TOML."""
+    if environment != "" and environment in intent.environment_rust_inputs:
+        selected = intent.environment_rust_inputs[environment].clone()
+        base = dependency_catalog(intent)
+        mut effective = dependency_catalog_with(intent, selected)
+        effective.features = environment_features(base.features, base.dependencies, effective.dependencies)
+        return Ok(effective)
+    return Ok(dependency_catalog(intent))
 
 
 def environment_features(
@@ -189,117 +104,9 @@ def environment_features(
     return result
 
 
-def environment_dependencies(
-    root: Dict[str, TomlValue],
-    dependencies: list[RustDependencyDeclaration],
-    environment: str,
-) -> Result[list[RustDependencyDeclaration], str]:
-    """Overlay only the selected root environment, preserving unspecified production dependency fields."""
-    if environment == "" or "envs" not in root:
-        return Ok(dependencies)
-    environments = catalog_table(root["envs"])?
-    if environment not in environments:
-        return Ok(dependencies)
-    selected = catalog_table(environments[environment])?
-    mut result = dependencies
-    for group in ["dependencies", "rust-dependencies"]:
-        if group not in selected:
-            continue
-        overrides = catalog_table(selected[group])?
-        for alias in sorted([name for name in overrides.keys()]):
-            mut replaced = false
-            for index in range(len(result)):
-                if result[index].field == [group, alias]:
-                    result[index] = overlay_dependency(result[index], overrides[alias], group)?
-                    replaced = true
-            if not replaced:
-                result.append(declaration(alias, overrides[alias], len(result), group)?)
-    return Ok(result)
-
-
-def overlay_dependency(
-    base: RustDependencyDeclaration,
-    override: TomlValue,
-    group: str,
-) -> Result[RustDependencyDeclaration, str]:
-    """Apply explicit fields of a partial test dependency without resetting its source, features or defaults."""
-    replacement = declaration(base.alias, override, base.index, group)?
-    if override.kind() == TomlKind.String:
-        mut versioned = base
-        versioned.version_requirement = replacement.version_requirement
-        return Ok(versioned)
-    fields = catalog_table(override)?
-    mut result = base
-    if "loaf" in fields or "package" in fields:
-        result.package = replacement.package
-    if "version" in fields:
-        result.version_requirement = replacement.version_requirement
-    if "path" in fields:
-        result.source = replacement.source
-    if "features" in fields:
-        result.features = unique(base.features + replacement.features)
-    if "default-features" in fields:
-        result.default_features = replacement.default_features
-    if "optional" in fields:
-        result.optional = replacement.optional
-    if "target" in fields:
-        result.target_condition = replacement.target_condition
-    return Ok(result)
-
-
-def catalog_table(value: TomlValue) -> Result[Dict[str, TomlValue], str]:
-    """Read a catalog table through the graph's string error channel."""
-    return value.as_table().map_err((error) => error.message())
-
-
-def catalog_features(root: Dict[str, TomlValue]) -> Result[Dict[str, list[str]], str]:
-    """Dependency-only overlays declare no project features; present tables still require valid shapes."""
-    mut features: Dict[str, list[str]] = {}
-    if "project" not in root:
-        return Ok(features)
-    project = catalog_table(root["project"])?
-    if "features" not in project:
-        return Ok(features)
-    selected = catalog_table(project["features"])?
-    for name in sorted([key for key in selected.keys()]):
-        declared = feature_declaration(selected[name], "loaf.toml", ["project", "features", name]).map_err(
-            (error) => error.message(),
-        )?
-        features[name] = feature_entries(declared)
-    return Ok(features)
-
-
-def is_incan_path_edge(group: str, value: TomlValue) -> Result[bool, str]:
-    """Whether a `[dependencies]` entry is a table with a path and no `loaf`: an edge to an Incan Loaf."""
-    if group != "dependencies" or value.kind() != TomlKind.Table:
-        return Ok(false)
-    entry = value.as_table().map_err((error) => error.message())?
-    return Ok("path" in entry and "loaf" not in entry)
-
-
-def feature_entries(declared: FeatureDeclaration) -> list[str]:
-    """A feature as the activation policy reads it: its includes, `dep:` activations and `alias/feature` requests."""
-    mut entries = declared.includes
-    for alias in declared.optional_dependencies:
-        entries.append(f"dep:{alias}")
-    for alias in sorted([key for key in declared.dependency_features.keys()]):
-        for feature in declared.dependency_features[alias]:
-            entries.append(f"{alias}/{feature}")
-    return entries
-
-
-def incan_optional_aliases(document: TomlValue) -> Result[list[str], str]:
-    """Name optional Incan path edges whose features require explicit dependency activation."""
-    root = catalog_table(document)?
-    if "dependencies" not in root:
-        return Ok([])
-    dependencies = catalog_table(root["dependencies"])?
-    mut aliases: list[str] = []
-    for alias in sorted([name for name in dependencies.keys()]):
-        value = dependencies[alias]
-        if is_incan_path_edge("dependencies", value)? and optional_flag(value, "optional", false)?:
-            aliases.append(alias)
-    return Ok(aliases)
+def intent_optional_aliases(intent: ProjectIntent) -> list[str]:
+    """Name optional Incan path edges directly from the normalized project intent."""
+    return sorted([dependency.alias for dependency in intent.dependencies if dependency.optional])
 
 
 def key(demand: LocalDemand) -> str:
@@ -313,7 +120,7 @@ def add(demands: Dict[str, LocalDemand], demand: LocalDemand) -> Dict[str, Local
     identity = key(demand)
     mut selected = canonical_demand(demand)
     if identity in result:
-        previous = result[identity]
+        previous = result[identity].clone()
         selected = LocalDemand(
             project=demand.project,
             domain=demand.domain,
@@ -355,37 +162,21 @@ def child(
     path = located
         .resolve()
         .map_err((error) => f"{parent.project}: dependency `{declaration.alias}` at {located.0}: {error.message()}")?
-    document = read_manifest(path, reader)?
+    project = read_project(path, reader).map_err((error) => error.message())?
+    intent = project.intent.clone()
     # 2. The Loaf found is the package the edge asked for, so a path that now holds another Loaf is refused.
-    named = names_package(parent, declaration, reader)?
-    if named and required_string(document, "project.name")? != declaration.package:
+    if declaration.identity_declared and intent.name != declaration.package:
         return Err(f"local dependency {declaration.alias} has a different Loaf identity")
     # 3. An edge that states a version accepts only a Loaf of that version.
     if let Some(requirement) = declaration.version_requirement:
-        version = required_string(document, "project.version")?
+        version = intent.version
         if not version_matches(requirement, version, declaration.alias).map_err((error) => error.message())?:
             return Err(f"local dependency {declaration.alias} does not satisfy {requirement}")
     # 4. A procedural macro runs in the compiler, so it is built for the host, whatever the edge's own domain.
-    mut domain = parent.domain
-    if optional_string(document, "rust.type")? == Some("proc-macro"):
+    mut domain = parent.domain.clone()
+    if intent.rust_type == "proc-macro":
         domain = DependencyDomain.Host
     return Ok(LocalDemand(project=path.0, domain=domain, features=features, defaults=defaults))
-
-
-def names_package(
-    parent: LocalDemand,
-    declaration: RustDependencyDeclaration,
-    reader: ManifestReader,
-) -> Result[bool, str]:
-    """
-    Whether the edge's package name must match the Loaf it reaches.
-
-    An edge of `[dependencies]` that an Incan consumer declares by path only, without a `loaf` key, names no package.
-    """
-    if declaration.field[0] != "dependencies":
-        return Ok(true)
-    parent_manifest = read_manifest(Path(parent.project), reader)?
-    return Ok(optional_string(parent_manifest, f"dependencies.{declaration.alias}.loaf")? is not None)
 
 
 def request(
@@ -502,7 +293,7 @@ pub class LocalFacetSession:
         while demands != previous:
             previous = demands
             for identity in sorted([name for name in previous.keys()]):
-                demand = previous[identity]
+                demand = previous[identity].clone()
                 if let Some(position) = selected.get(identity):
                     known = borrowed_selection(self.selections, position)
                     if known.demand == demand:
@@ -523,7 +314,7 @@ pub class LocalFacetSession:
         """Reuse only a structurally equal canonical demand, retaining each distinct feature/default choice once."""
         owner = key(demand)
         first = self.by_owner.get(owner)
-        mut current = first
+        mut current = first.clone()
         while let Some(position) = current:
             known = borrowed_selection(self.selections, position)
             if known.demand == demand:
@@ -587,7 +378,7 @@ def activated(
     demand: LocalDemand,
     configuration: TargetConfiguration,
     reader: ManifestReader,
-) -> Result[Tuple[TomlValue, list[str], list[ActiveEdge]], str]:
+) -> Result[Tuple[ProjectIntent, list[str], list[ActiveEdge]], str]:
     """
     One facet's manifest, catalog, effective features and active edges with the features each requests.
 
@@ -596,8 +387,9 @@ def activated(
     3. Each active slot becomes an edge with the features and defaults it selects.
     """
     # 1. The authored manifest is the only feature and dependency authority.
-    document = read_manifest(Path(demand.project), reader)?
-    inputs = catalog(document, demand.environment)?
+    project = read_project(Path(demand.project), reader).map_err((error) => error.message())?
+    intent = project.intent.clone()
+    inputs = catalog(intent, demand.environment)?
     requested = requested_features(demand, inputs)
     # 2. The slots are activated for the features demanded and for the domain the demand is built in.
     context = ActivationContext(
@@ -608,7 +400,7 @@ def activated(
         requested_features=requested,
         default_features=demand.defaults,
         build_unit_present=false,
-        explicit_optional_aliases=incan_optional_aliases(document)?,
+        explicit_optional_aliases=intent_optional_aliases(intent),
     )
     activation = activate_unit(inputs, context, demand.project).map_err((e) => e.message())?
     # 3. An active slot becomes an edge with the features and defaults it selects; an inactive one is dropped.
@@ -617,9 +409,9 @@ def activated(
         match slot.activation:
             SlotActivation.Inactive(_) => pass
             SlotActivation.Active(features, defaults, _) =>
-                declared = inputs.dependencies[slot.index]
+                declared = inputs.dependencies[slot.index].clone()
                 active.append(ActiveEdge(declaration=declared, features=features, defaults=defaults))
-    return Ok((document, activation.effective_features, active))
+    return Ok((intent, activation.effective_features, active))
 
 
 def requested_features(demand: LocalDemand, manifest: RustDependencyCatalog) -> list[str]:
@@ -643,14 +435,14 @@ def facet_of(
     3. A registry edge becomes a request of the resolver's grammar.
     """
     # 1. Only the edges the demanded features activate take part in the facet.
-    document, features, active = activated(demand, configuration, reader)?
+    intent, features, active = activated(demand, configuration, reader)?
     mut local: list[LocalEdge] = []
     mut children: list[LocalDemand] = []
     mut registry: list[JsonValue] = []
     mut aliases: list[str] = []
     for active_edge in active:
-        edge = active_edge.declaration
-        edge_features = active_edge.features
+        edge = active_edge.declaration.clone()
+        edge_features = active_edge.features.clone()
         defaults = active_edge.defaults
         # 2 and 3. A path edge reaches a local facet that becomes a demand; a registry edge becomes a resolver request.
         match edge.source:
@@ -672,14 +464,7 @@ def facet_of(
         local=local,
         registry=registry,
         registry_aliases=aliases,
-        package=optional_text(document, "project.name")?,
-        version=optional_text(document, "project.version")?,
+        package=intent.name,
+        version=intent.version,
     )
     return Ok((facet, children))
-
-
-def optional_text(document: TomlValue, key: str) -> Result[str, str]:
-    """Read an optional manifest string without a panic-shaped fallback."""
-    match optional_string(document, key)?:
-        Some(value) => return Ok(value)
-        None => return Ok("")

@@ -243,7 +243,7 @@ pub fn rust_derive_invalid_arg(span: Span) -> CompileError {
 /// Report a Rust derive name that cannot be resolved to a built-in or imported derive macro.
 pub fn rust_derive_unresolved(name: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("Rust derive '{name}' is not resolved"), span)
-        .with_hint("Import third-party derives through rust:: imports or declare the crate in [rust-dependencies]")
+        .with_hint("Import third-party derives through rust:: imports or declare its Loaf under [dependencies]")
 }
 
 /// Report a Rust derive that would generate the same impl as an explicit `with` adoption.
