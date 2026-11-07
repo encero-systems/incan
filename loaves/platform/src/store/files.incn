@@ -2,7 +2,9 @@
 
 from rust::std::process import id, exit as process_exit
 from rust::std::string import String as RustString
+from std.primitives import sha256
 from std.primitives.environ import read as read_environment
+from std.primitives.fs import open_read, read_chunk
 from crate.durability import sync_ordered
 from crate.trace import Clock, Operation, WorkObserver
 from crate.store.index import IndexError
@@ -152,3 +154,17 @@ pub def sync_directory(path: Path) -> Result[None, StoreError]:
     result = sync_ordered(path.0).map_err((error) => failure("io", path.0, error))
     record_work(Operation.StoreDirectorySync, path.0, clock)
     return result
+
+
+pub def file_digest(path: Path, algorithm: str) -> Result[bytes, StoreIoError]:
+    """Hash a file in bounded chunks; the store format currently admits only SHA-256."""
+    if algorithm != "sha256":
+        return Err(StoreIoError(path=path.0, detail=f"unsupported store digest algorithm {algorithm}"))
+    file = open_read(path.primitive()).map_err((detail) => StoreIoError(path=path.0, detail=detail))?
+    mut hasher = sha256.new()
+    loop:
+        chunk = read_chunk(file, 65536).map_err((detail) => StoreIoError(path=path.0, detail=detail))?
+        if len(chunk) == 0:
+            break
+        hasher.update(chunk)
+    return Ok(hasher.finalize_bytes())
