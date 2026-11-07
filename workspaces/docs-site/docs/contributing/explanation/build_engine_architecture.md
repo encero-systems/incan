@@ -516,7 +516,7 @@ The platform is one Loaf, `incan_platform` in `loaves/platform`, between foundat
 | Durable I/O and publication ordering | Platform durable-I/O module | Store publication syncs through the platform boundary | Sync file, sync directory, atomic replace, persistent locks | Store policy uses the platform implementation; Oven has no second store module |
 | IPC and peer identity | Platform IPC module | Reused in part: endpoint and pooling in `workspaces/oven/src/owner_endpoint.incn`, `compiler_worker.incn` (#2483) | Bounded framed transport, peer credentials, credits | Two protocols in the reused code (owner and compiler worker); `incan.engine/1` and `incan.compiler-worker/1` stay distinct by design, framing has one home |
 | Process control and groups | Platform process module | To be built | Spawn, process group, birth evidence, cancel with grace | — |
-| Resource probes | Platform probes module | To be built | CPU limit, effective memory, footprint, observer coverage | — |
+| Resource probes | `loaves/platform/src/probes.incn` and the platform's sanctioned native facet | Footprint and the user process table are implemented; CPU limit, effective memory and observer coverage remain | Current and lifetime process footprint, parent identity and user process table | Linux currently reports the worker's resident-memory approximation and refuses the process table; W2 owns parity |
 | Tracing | Platform tracing module | Reused in part: `workspaces/oven/src/jec.incn`, work spans (`6a70e9f94`) | Spans, counters, separate channel | **Four channels in the reused code**: `jec`, `OVEN_TRACE`, `INCAN_TRACE_DIR`, `INCAN_NATIVE_TIMING`; one home in E1, the rest become adapters |
 
 ### Compiler record service

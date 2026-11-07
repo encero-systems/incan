@@ -11,6 +11,7 @@
 | `ipc` | Bounded, length-framed transport over Unix sockets, with every frame length checked before its buffer is allocated; per-direction data credits; OS peer identity; listeners, liveness probes, fresh session identities, and a connection's descriptor lent to native code that only observes it. |
 | `capacity` | Filesystem capacity through `available_bytes(path: str) -> Result[int, str]`: the bytes an unprivileged writer can still allocate on the filesystem holding a path, in its fundamental block size. |
 | `durability` | Ordinary filesystem synchronization through `sync_ordered(path: str) -> Result[None, str]`, for a regular file or directory. Publishers flush the ordered graph before selecting it and the selection before acknowledging it; ordinary synchronization alone is not a drive-cache flush. |
+| `probes` | Current and lifetime process footprint readings plus the current user's process table and parent identities. On macOS, footprint is the kernel's memory-pressure charge; Linux retains the worker's resident-memory approximation until its separate parity work. |
 
 ## Contract
 
