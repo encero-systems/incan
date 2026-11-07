@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::TypeChecker;
 use super::derive_requirements::DeriveSupport;
-use crate::ast::{Type, TypeParam};
+use crate::ast::{Receiver, Type, TypeParam};
 use crate::diagnostics::errors::{self, CallableMarkerRefusal, GenericBoundTarget};
 use crate::resolved_type_subst::substitute_resolved_type;
 use crate::symbols::{ResolvedType, SymbolKind, TypeBoundInfo, TypeInfo, resolve_type};
@@ -21,6 +21,7 @@ use incan_lang::lang::trait_capabilities::{
 use incan_lang::lang::traits::{self as builtin_traits, TraitId};
 use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_lang::lang::types::numerics;
+use incan_lang::lang::types::ownership::OwnershipMode;
 use incan_semantics_core::canonical_module_identity;
 
 mod explicit_bounds;
