@@ -242,6 +242,9 @@ pub(super) fn api_trait(
             .map(|(name, ty)| FieldExport {
                 name: name.clone(),
                 canonical: None,
+                record_identity: String::new(),
+                record_canonical: true,
+                renamed_from: Vec::new(),
                 ty: type_ref_from_resolved(ty),
                 surface_type_name: Some(ty.to_string()),
                 visibility: crate::library_manifest::MemberVisibilityExport::Public,

@@ -353,6 +353,9 @@ impl TypeChecker {
                 }
                 fields.push(type_info::ClassFieldLayoutInfo {
                     name: name.clone(),
+                    record_identity: field.record_identity.clone(),
+                    record_canonical: field.record_canonical,
+                    renamed_from: field.renamed_from.clone(),
                     ty: canonical_ty,
                     surface_type_name: field.surface_type_name.clone(),
                     visibility: field.visibility,
