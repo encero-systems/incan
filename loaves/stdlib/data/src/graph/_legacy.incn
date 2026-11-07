@@ -1,0 +1,567 @@
+"""RFC 047 graph containers backed by RFC 166's indexed memory store."""
+
+from crate.graph._ids import EdgeId, GraphError, NodeId, contains_node_id, duplicate_edge, unknown_node
+from crate.graph._store import _GraphStore
+
+
+pub model DiGraph[T]:
+    """Directed graph with at most one active edge for each ordered node pair."""
+
+    next_node_id [made_private { since="0.6", message="Graph allocation state is private", replacement=DiGraph.active_node_ids }]: int = 0
+    next_edge_id [made_private { since="0.6", message="Graph allocation state is private", replacement=DiGraph.active_edge_ids }]: int = 0
+    nodes [made_private { since="0.6", message="Graph storage is private", replacement=DiGraph.active_node_ids }]: list[NodeId] = []
+    edges [made_private { since="0.6", message="Graph storage is private", replacement=DiGraph.active_edge_ids }]: list[EdgeId] = []
+    store: _GraphStore[T] = _GraphStore[T]()
+
+    @staticmethod
+    def __incan_new() -> Self:
+        """Create an empty directed graph."""
+        return DiGraph(next_node_id=0, next_edge_id=0, nodes=[], edges=[], store=_GraphStore[T]())
+
+    pub def add_node(mut self, payload: T) -> NodeId:
+        """Add a node and return its id."""
+        return self.store.add_node(payload)
+
+    pub def remove_node(mut self, node: NodeId) -> Result[None, GraphError]:
+        """Remove `node` and every incident edge."""
+        return self.store.remove_node(node)
+
+    pub def contains_node(self, node: NodeId) -> bool:
+        """Return whether `node` is live."""
+        return self.store.contains_node(node)
+
+    pub def node_payload(self, node: NodeId) -> Result[T, GraphError]:
+        """Return the payload for `node`."""
+        return self.store.node_payload(node)
+
+    pub def add_edge(mut self, from_: NodeId, to: NodeId) -> Result[None, GraphError]:
+        """Add `from_ -> to`, refusing a duplicate."""
+        match self.insert_edge(from_, to, false):
+            Ok(_) => return Ok(None)
+            Err(error) => return Err(error)
+
+    pub def remove_edge(mut self, from_: NodeId, to: NodeId) -> Result[None, GraphError]:
+        """Remove `from_ -> to`."""
+        return self.store.remove_pair(from_, to)
+
+    pub def contains_edge(self, from_: NodeId, to: NodeId) -> bool:
+        """Return whether `from_ -> to` exists."""
+        return self.store.contains_pair(from_, to)
+
+    pub def successors(self, node: NodeId) -> Result[list[NodeId], GraphError]:
+        """Return outgoing neighbors in ascending `NodeId` order."""
+        return self.store.successors(node)
+
+    pub def predecessors(self, node: NodeId) -> Result[list[NodeId], GraphError]:
+        """Return incoming neighbors in ascending `NodeId` order."""
+        return self.store.predecessors(node)
+
+    pub def roots(self) -> list[NodeId]:
+        """Return live nodes with no incoming edges."""
+        mut found: list[NodeId] = []
+        for node in self.active_node_ids():
+            match self.predecessors(node):
+                Ok(nodes) =>
+                    if len(nodes) == 0:
+                        found.append(node)
+                Err(_) => pass
+        return found
+
+    pub def sinks(self) -> list[NodeId]:
+        """Return live nodes with no outgoing edges."""
+        mut found: list[NodeId] = []
+        for node in self.active_node_ids():
+            match self.successors(node):
+                Ok(nodes) =>
+                    if len(nodes) == 0:
+                        found.append(node)
+                Err(_) => pass
+        return found
+
+    pub def bfs_nodes(self, start: NodeId) -> Result[list[NodeId], GraphError]:
+        """Return nodes reachable from `start` in breadth-first order."""
+        if not self.contains_node(start):
+            return Err(unknown_node(start))
+        mut order: list[NodeId] = []
+        mut queue: list[NodeId] = [start]
+        mut cursor = 0
+        while cursor < len(queue):
+            node = queue[cursor]
+            cursor += 1
+            if contains_node_id(order, node):
+                continue
+            order.append(node)
+            match self.successors(node):
+                Ok(nodes) =>
+                    for successor in nodes:
+                        if not contains_node_id(order, successor) and not contains_node_id(queue, successor):
+                            queue.append(successor)
+                Err(error) => return Err(error)
+        return Ok(order)
+
+    pub def dfs_preorder_nodes(self, start: NodeId) -> Result[list[NodeId], GraphError]:
+        """Return nodes reachable from `start` in depth-first preorder."""
+        if not self.contains_node(start):
+            return Err(unknown_node(start))
+        mut order: list[NodeId] = []
+        mut stack: list[NodeId] = [start]
+        while len(stack) > 0:
+            node = stack.pop()
+            if contains_node_id(order, node):
+                continue
+            order.append(node)
+            match self.successors(node):
+                Ok(nodes) =>
+                    mut index = len(nodes) - 1
+                    while index >= 0:
+                        successor = nodes[index]
+                        if not contains_node_id(order, successor):
+                            stack.append(successor)
+                        index -= 1
+                Err(error) => return Err(error)
+        return Ok(order)
+
+    pub def topological_order(self) -> Result[list[NodeId], GraphError]:
+        """Return the repeated in-order-pass topological order, or an error for a cycle."""
+        active = self.active_node_ids()
+        mut indegrees: list[int] = []
+        if len(active) > 0:
+            for _ in range(active[len(active) - 1].to_int() + 1):
+                indegrees.append(0)
+        for node in active:
+            match self.predecessors(node):
+                Ok(nodes) => indegrees[node.to_int()] = len(nodes)
+                Err(error) => return Err(error)
+        stride = len(indegrees)
+        mut order: list[NodeId] = []
+        mut ready: list[int] = []
+        for node in active:
+            if indegrees[node.to_int()] == 0:
+                ready_push(ready, node.to_int())
+        while len(ready) > 0:
+            priority = ready_pop(ready)
+            index = priority % stride
+            pass_index = priority // stride
+            node = NodeId(index)
+            order.append(node)
+            match self.successors(node):
+                Ok(nodes) =>
+                    for successor in nodes:
+                        successor_index = successor.to_int()
+                        indegrees[successor_index] -= 1
+                        if indegrees[successor_index] == 0:
+                            mut successor_pass = pass_index
+                            if successor_index <= index:
+                                successor_pass += 1
+                            ready_push(ready, successor_pass * stride + successor_index)
+                Err(error) => return Err(error)
+        if len(order) == len(active):
+            return Ok(order)
+        return Err(GraphError(detail="graph contains a cycle"))
+
+    pub def active_node_ids(self) -> list[NodeId]:
+        """Return live node ids in allocation order."""
+        return self.store.active_node_ids()
+
+    pub def active_edge_ids(self) -> list[EdgeId]:
+        """Return live edge ids in allocation order."""
+        return self.store.active_edge_ids()
+
+    pub def adjacency_physical_count(self, node: NodeId) -> Result[int, GraphError]:
+        """Return the number of physical outgoing adjacency entries."""
+        return self.store.adjacency_physical_count(node)
+
+    pub def adjacency_live_count(self, node: NodeId) -> Result[int, GraphError]:
+        """Return the number of live outgoing adjacency entries."""
+        return self.store.adjacency_live_count(node)
+
+    pub def adjacency_tombstone_count(self, node: NodeId) -> Result[int, GraphError]:
+        """Return the number of tombstoned outgoing adjacency entries."""
+        return self.store.adjacency_tombstone_count(node)
+
+    @made_private(since="0.6", message="Use add_edge; parallel insertion belongs to MultiDiGraph", replacement=DiGraph.add_edge)
+    def insert_edge(mut self, from_: NodeId, to: NodeId, allow_parallel: bool) -> Result[EdgeId, GraphError]:
+        """Insert an edge through the sealed store."""
+        return self.store.insert_edge(from_, to, allow_parallel)
+
+    @made_private(since="0.6", message="Physical node slots are private", replacement=DiGraph.contains_node)
+    def node_index(self, node: NodeId) -> int:
+        """Return the private live node slot."""
+        return self.store.node_index(node)
+
+    @made_private(since="0.6", message="Physical edge slots are private", replacement=DiGraph.active_edge_ids)
+    def edge_index(self, edge: EdgeId) -> int:
+        """Return the private live edge slot."""
+        return self.store.edge_index(edge)
+
+
+pub model Dag[T]:
+    """Directed acyclic graph that rejects cycle-creating edge insertions."""
+
+    graph [made_private { since="0.6", message="The DAG store is private; use DAG operations", replacement=Dag.contains_edge }]: _GraphStore[T] = _GraphStore[T]()
+
+    @staticmethod
+    def __incan_new() -> Self:
+        """Create an empty DAG."""
+        return Dag(graph=_GraphStore[T]())
+
+    pub def add_node(mut self, payload: T) -> NodeId:
+        """Add a node and return its id."""
+        return self.graph.add_node(payload)
+
+    pub def remove_node(mut self, node: NodeId) -> Result[None, GraphError]:
+        """Remove a node and every incident edge."""
+        return self.graph.remove_node(node)
+
+    pub def contains_node(self, node: NodeId) -> bool:
+        """Return whether `node` is live."""
+        return self.graph.contains_node(node)
+
+    pub def node_payload(self, node: NodeId) -> Result[T, GraphError]:
+        """Return the payload for `node`."""
+        return self.graph.node_payload(node)
+
+    pub def add_edge(mut self, from_: NodeId, to: NodeId) -> Result[None, GraphError]:
+        """Add `from_ -> to`, rejecting duplicates and cycle-creating edges."""
+        if not self.graph.contains_node(from_):
+            return Err(unknown_node(from_))
+        if not self.graph.contains_node(to):
+            return Err(unknown_node(to))
+        if self.graph.contains_pair(from_, to):
+            return Err(duplicate_edge(from_, to))
+        if self.can_reach(to, from_):
+            return Err(GraphError(detail=f"graph edge would create a cycle: {from_.to_int()} -> {to.to_int()}"))
+        match self.graph.insert_edge(from_, to, false):
+            Ok(_) => return Ok(None)
+            Err(error) => return Err(error)
+
+    pub def remove_edge(mut self, from_: NodeId, to: NodeId) -> Result[None, GraphError]:
+        """Remove `from_ -> to`."""
+        return self.graph.remove_pair(from_, to)
+
+    pub def contains_edge(self, from_: NodeId, to: NodeId) -> bool:
+        """Return whether `from_ -> to` exists."""
+        return self.graph.contains_pair(from_, to)
+
+    pub def successors(self, node: NodeId) -> Result[list[NodeId], GraphError]:
+        """Return outgoing neighbors in ascending `NodeId` order."""
+        return self.graph.successors(node)
+
+    pub def predecessors(self, node: NodeId) -> Result[list[NodeId], GraphError]:
+        """Return incoming neighbors in ascending `NodeId` order."""
+        return self.graph.predecessors(node)
+
+    pub def roots(self) -> list[NodeId]:
+        """Return live nodes with no incoming edges."""
+        mut found: list[NodeId] = []
+        for node in self.active_node_ids():
+            match self.predecessors(node):
+                Ok(nodes) =>
+                    if len(nodes) == 0:
+                        found.append(node)
+                Err(_) => pass
+        return found
+
+    pub def sinks(self) -> list[NodeId]:
+        """Return live nodes with no outgoing edges."""
+        mut found: list[NodeId] = []
+        for node in self.active_node_ids():
+            match self.successors(node):
+                Ok(nodes) =>
+                    if len(nodes) == 0:
+                        found.append(node)
+                Err(_) => pass
+        return found
+
+    pub def bfs_nodes(self, start: NodeId) -> Result[list[NodeId], GraphError]:
+        """Return nodes reachable from `start` in breadth-first order."""
+        if not self.contains_node(start):
+            return Err(unknown_node(start))
+        mut order: list[NodeId] = []
+        mut queue: list[NodeId] = [start]
+        mut cursor = 0
+        while cursor < len(queue):
+            node = queue[cursor]
+            cursor += 1
+            if contains_node_id(order, node):
+                continue
+            order.append(node)
+            match self.successors(node):
+                Ok(nodes) =>
+                    for successor in nodes:
+                        if not contains_node_id(order, successor) and not contains_node_id(queue, successor):
+                            queue.append(successor)
+                Err(error) => return Err(error)
+        return Ok(order)
+
+    pub def dfs_preorder_nodes(self, start: NodeId) -> Result[list[NodeId], GraphError]:
+        """Return nodes reachable from `start` in depth-first preorder."""
+        if not self.contains_node(start):
+            return Err(unknown_node(start))
+        mut order: list[NodeId] = []
+        mut stack: list[NodeId] = [start]
+        while len(stack) > 0:
+            node = stack.pop()
+            if contains_node_id(order, node):
+                continue
+            order.append(node)
+            match self.successors(node):
+                Ok(nodes) =>
+                    mut index = len(nodes) - 1
+                    while index >= 0:
+                        successor = nodes[index]
+                        if not contains_node_id(order, successor):
+                            stack.append(successor)
+                        index -= 1
+                Err(error) => return Err(error)
+        return Ok(order)
+
+    pub def topological_order(self) -> list[NodeId]:
+        """Return the DAG's repeated in-order-pass topological order."""
+        active = self.active_node_ids()
+        mut indegrees: list[int] = []
+        if len(active) > 0:
+            for _ in range(active[len(active) - 1].to_int() + 1):
+                indegrees.append(0)
+        for node in active:
+            match self.predecessors(node):
+                Ok(nodes) => indegrees[node.to_int()] = len(nodes)
+                Err(_) => return []
+        stride = len(indegrees)
+        mut order: list[NodeId] = []
+        mut ready: list[int] = []
+        for node in active:
+            if indegrees[node.to_int()] == 0:
+                ready_push(ready, node.to_int())
+        while len(ready) > 0:
+            priority = ready_pop(ready)
+            index = priority % stride
+            pass_index = priority // stride
+            node = NodeId(index)
+            order.append(node)
+            match self.successors(node):
+                Ok(nodes) =>
+                    for successor in nodes:
+                        successor_index = successor.to_int()
+                        indegrees[successor_index] -= 1
+                        if indegrees[successor_index] == 0:
+                            mut successor_pass = pass_index
+                            if successor_index <= index:
+                                successor_pass += 1
+                            ready_push(ready, successor_pass * stride + successor_index)
+                Err(_) => return []
+        return order
+
+    pub def can_reach(self, start: NodeId, target: NodeId) -> bool:
+        """Return whether `target` is reachable from `start`."""
+        match self.bfs_nodes(start):
+            Ok(nodes) => return contains_node_id(nodes, target)
+            Err(_) => return false
+
+    pub def active_node_ids(self) -> list[NodeId]:
+        """Return live node ids in allocation order."""
+        return self.graph.active_node_ids()
+
+    pub def active_edge_ids(self) -> list[EdgeId]:
+        """Return live edge ids in allocation order."""
+        return self.graph.active_edge_ids()
+
+
+pub model MultiDiGraph[T]:
+    """Directed multigraph whose edge insertions return stable `EdgeId` handles."""
+
+    graph [made_private { since="0.6", message="The multigraph store is private; use multigraph operations", replacement=MultiDiGraph.active_edge_ids }]: _GraphStore[T] = _GraphStore[T]()
+
+    @staticmethod
+    def __incan_new() -> Self:
+        """Create an empty multigraph."""
+        return MultiDiGraph(graph=_GraphStore[T]())
+
+    pub def add_node(mut self, payload: T) -> NodeId:
+        """Add a node and return its id."""
+        return self.graph.add_node(payload)
+
+    pub def remove_node(mut self, node: NodeId) -> Result[None, GraphError]:
+        """Remove a node and every incident edge."""
+        return self.graph.remove_node(node)
+
+    pub def contains_node(self, node: NodeId) -> bool:
+        """Return whether `node` is live."""
+        return self.graph.contains_node(node)
+
+    pub def node_payload(self, node: NodeId) -> Result[T, GraphError]:
+        """Return the payload for `node`."""
+        return self.graph.node_payload(node)
+
+    pub def add_edge(mut self, from_: NodeId, to: NodeId) -> Result[EdgeId, GraphError]:
+        """Add a directed edge and return its id."""
+        return self.graph.insert_edge(from_, to, true)
+
+    pub def remove_edge(mut self, edge: EdgeId) -> Result[None, GraphError]:
+        """Remove the edge identified by `edge`."""
+        return self.graph.remove_edge(edge)
+
+    pub def contains_edge(self, edge: EdgeId) -> bool:
+        """Return whether `edge` is live."""
+        return self.graph.contains_edge(edge)
+
+    pub def edges_between(self, from_: NodeId, to: NodeId) -> Result[list[EdgeId], GraphError]:
+        """Return matching live edges in insertion order."""
+        return self.graph.edges_between(from_, to)
+
+    pub def edge_endpoints(self, edge: EdgeId) -> Result[Tuple[NodeId, NodeId], GraphError]:
+        """Return the endpoints of `edge`."""
+        return self.graph.edge_endpoints(edge)
+
+    pub def successors(self, node: NodeId) -> Result[list[NodeId], GraphError]:
+        """Return distinct outgoing neighbors in ascending `NodeId` order."""
+        return self.graph.successors(node)
+
+    pub def predecessors(self, node: NodeId) -> Result[list[NodeId], GraphError]:
+        """Return distinct incoming neighbors in ascending `NodeId` order."""
+        return self.graph.predecessors(node)
+
+    pub def roots(self) -> list[NodeId]:
+        """Return live nodes with no incoming edges."""
+        mut found: list[NodeId] = []
+        for node in self.active_node_ids():
+            match self.predecessors(node):
+                Ok(nodes) =>
+                    if len(nodes) == 0:
+                        found.append(node)
+                Err(_) => pass
+        return found
+
+    pub def sinks(self) -> list[NodeId]:
+        """Return live nodes with no outgoing edges."""
+        mut found: list[NodeId] = []
+        for node in self.active_node_ids():
+            match self.successors(node):
+                Ok(nodes) =>
+                    if len(nodes) == 0:
+                        found.append(node)
+                Err(_) => pass
+        return found
+
+    pub def bfs_nodes(self, start: NodeId) -> Result[list[NodeId], GraphError]:
+        """Return nodes reachable from `start` in breadth-first order."""
+        if not self.contains_node(start):
+            return Err(unknown_node(start))
+        mut order: list[NodeId] = []
+        mut queue: list[NodeId] = [start]
+        mut cursor = 0
+        while cursor < len(queue):
+            node = queue[cursor]
+            cursor += 1
+            if contains_node_id(order, node):
+                continue
+            order.append(node)
+            match self.successors(node):
+                Ok(nodes) =>
+                    for successor in nodes:
+                        if not contains_node_id(order, successor) and not contains_node_id(queue, successor):
+                            queue.append(successor)
+                Err(error) => return Err(error)
+        return Ok(order)
+
+    pub def dfs_preorder_nodes(self, start: NodeId) -> Result[list[NodeId], GraphError]:
+        """Return nodes reachable from `start` in depth-first preorder."""
+        if not self.contains_node(start):
+            return Err(unknown_node(start))
+        mut order: list[NodeId] = []
+        mut stack: list[NodeId] = [start]
+        while len(stack) > 0:
+            node = stack.pop()
+            if contains_node_id(order, node):
+                continue
+            order.append(node)
+            match self.successors(node):
+                Ok(nodes) =>
+                    mut index = len(nodes) - 1
+                    while index >= 0:
+                        successor = nodes[index]
+                        if not contains_node_id(order, successor):
+                            stack.append(successor)
+                        index -= 1
+                Err(error) => return Err(error)
+        return Ok(order)
+
+    pub def topological_order(self) -> Result[list[NodeId], GraphError]:
+        """Return a topological order, or an error when a cycle exists."""
+        active = self.active_node_ids()
+        mut indegrees: list[int] = []
+        if len(active) > 0:
+            for _ in range(active[len(active) - 1].to_int() + 1):
+                indegrees.append(0)
+        for node in active:
+            match self.predecessors(node):
+                Ok(nodes) => indegrees[node.to_int()] = len(nodes)
+                Err(error) => return Err(error)
+        stride = len(indegrees)
+        mut order: list[NodeId] = []
+        mut ready: list[int] = []
+        for node in active:
+            if indegrees[node.to_int()] == 0:
+                ready_push(ready, node.to_int())
+        while len(ready) > 0:
+            priority = ready_pop(ready)
+            index = priority % stride
+            pass_index = priority // stride
+            node = NodeId(index)
+            order.append(node)
+            match self.successors(node):
+                Ok(nodes) =>
+                    for successor in nodes:
+                        successor_index = successor.to_int()
+                        indegrees[successor_index] -= 1
+                        if indegrees[successor_index] == 0:
+                            mut successor_pass = pass_index
+                            if successor_index <= index:
+                                successor_pass += 1
+                            ready_push(ready, successor_pass * stride + successor_index)
+                Err(error) => return Err(error)
+        if len(order) == len(active):
+            return Ok(order)
+        return Err(GraphError(detail="graph contains a cycle"))
+
+    pub def active_node_ids(self) -> list[NodeId]:
+        """Return live node ids in allocation order."""
+        return self.graph.active_node_ids()
+
+    pub def active_edge_ids(self) -> list[EdgeId]:
+        """Return live edge ids in allocation order."""
+        return self.graph.active_edge_ids()
+
+
+def ready_push(mut ready: list[int], priority: int) -> None:
+    """Insert one encoded `(pass, node index)` priority into a binary min-heap."""
+    ready.append(priority)
+    mut index = len(ready) - 1
+    while index > 0:
+        parent = (index - 1) // 2
+        if ready[parent] <= ready[index]:
+            return
+        ready.swap(parent, index)
+        index = parent
+
+
+def ready_pop(mut ready: list[int]) -> int:
+    """Remove the least encoded `(pass, node index)` priority from a non-empty heap."""
+    first = ready[0]
+    last = ready.pop()
+    if len(ready) == 0:
+        return first
+    ready[0] = last
+    mut index = 0
+    while true:
+        left = index * 2 + 1
+        if left >= len(ready):
+            return first
+        right = left + 1
+        mut child = left
+        if right < len(ready) and ready[right] < ready[left]:
+            child = right
+        if ready[index] <= ready[child]:
+            return first
+        ready.swap(index, child)
+        index = child
