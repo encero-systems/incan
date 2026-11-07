@@ -64,6 +64,7 @@ Construct a directed acyclic graph with `Dag[T]()`.
 | `g.node_payload(node)` | `Result[T, GraphError]` | Return the payload stored for `node`. |
 | `g.add_edge(from_, to)` | `Result[None, GraphError]` | Add `from_ -> to`, rejecting duplicates and cycle-creating edges. |
 | `g.remove_edge(from_, to)` | `Result[None, GraphError]` | Remove the directed edge `from_ -> to`. |
+| `g.contains_edge(from_, to)` | `bool` | Return whether the directed edge `from_ -> to` exists. |
 | `g.successors(node)` | `Result[list[NodeId], GraphError]` | Return outgoing neighbors for `node`. |
 | `g.predecessors(node)` | `Result[list[NodeId], GraphError]` | Return incoming neighbors for `node`. |
 | `g.roots()` | `list[NodeId]` | Return active nodes with no incoming edges. |
