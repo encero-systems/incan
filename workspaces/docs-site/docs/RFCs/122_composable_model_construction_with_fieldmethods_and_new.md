@@ -13,6 +13,7 @@
     - RFC 094 (context-manager entry and guaranteed scope exit)
     - RFC 097 (Rust-hosted Incan caller)
     - RFC 109 (receiver chain combinators)
+    - RFC 173 (walking and reconstructing typed values)
 - **Issue:** [#1295](https://github.com/encero-systems/incan/issues/1295)
 - **RFC PR:** —
 - **Written against:** v0.6
@@ -647,15 +648,9 @@ Adding an authored fieldmethod may therefore change how future constructions of 
 
 ### Deserialization and adapters
 
-Decoding a stored model field is a construction path and must not bypass its authored field-backed fieldmethod. A schema adapter must construct a model in this order:
+Reconstructing an existing stored model uses RFC 173's model-owned `__reconstruct__` protocol. It restores stored fields, including private fields, and enforces applicable final field and whole-model validation without replaying field-backed normalization or computed fieldmethods. A virtual construction input such as `hours` is not stored; only its target `minutes` appears in the stored shape. Codecs must not infer virtual construction inputs from stored values.
 
-1. Resolve each present wire alias to its canonical stored-field identity.
-2. Seed omitted dependency-free defaults directly without invoking their fieldmethods, and register omitted dependency-bearing factories under RFC 085's checked resolution contract.
-3. Route every present decoded stored value through that field's authored or synthesized field-backed fieldmethod in canonical field order.
-4. Run computed fieldmethods only when the adapter explicitly maps a wire input to that virtual construction input. Dependency-bearing factories resolve when their effective normalized inputs are available, before any consumer reads their target fields; they must not force a silent reordering of authored fieldmethods.
-5. Complete the target model's canonical finalization, enforcing registered checks on final normalized field values and the model contract without exposing a partially validated instance. Retain checks and normalization obligations from RFC 087 from-composed sources; source obligations must not disappear behind a synthesized target fieldmethod. Legacy whole-model validation still participates through its supported finalization contract.
-
-Computed fieldmethods are not wire fields merely because they are constructor keywords. An adapter may deliberately expose one, but the mapping must be explicit and must preserve its canonical fieldmethod identity and declared input type. Whether a private stored field participates in a wire schema remains governed by the model's existing derive, schema, and adapter rules; fieldmethod visibility neither includes nor excludes that field from serialization.
+An adapter deliberately accepting fresh construction inputs follows a different, explicit contract: resolve its input names to checked constructor-input identities, apply the ordinary construction plan and defaults, and run final validation. Such an adapter may expose a virtual construction input only through an explicit mapping. It must not be substituted implicitly for stored-state reconstruction. The model's ordinary field visibility remains unchanged; model-owned walking and reconstruction expose its complete stored data under RFC 173, with secret protections independent of field privacy.
 
 ### Foreign and generated-Rust construction
 
@@ -1156,7 +1151,7 @@ A model that declares both a stored field named `new` and an associated `.new` c
 - The same spelling denotes a field on completed values and a fieldmethod inside construction contexts, increasing the importance of precise contextual diagnostics and tooling.
 - Model declaration order becomes semantically significant for fieldmethods that read or bind overlapping fields, so moving a field or computed fieldmethod may be an API-significant behavioral change.
 - Fluent chains look method-like even though they collect declarative inputs and do not promise caller-ordered fieldmethod execution.
-- Routing every construction path through authored fieldmethods makes those hooks powerful and API-significant; apparently local normalization changes can affect all callers.
+- Routing fresh construction inputs through authored fieldmethods makes those hooks powerful and API-significant; apparently local normalization changes can affect all callers.
 - Keeping captured local argument evaluation separate from eventual fieldmethod execution requires the construction plan to preserve both values and source provenance.
 - The word `new` can imply allocation or identity in other languages even though Incan models are values and this RFC promises neither.
 - Prefix `new` and postfix `()` are two spellings of immediate fluent finalization, and postfix completion cannot expose the construction-only member surface as early as a prefix marker in a left-to-right editor.
@@ -1166,7 +1161,7 @@ A model that declares both a stored field named `new` and an associated `.new` c
 
 ## Implementation architecture
 
-This section is non-normative. A coherent implementation should represent marked fluent construction, declaration-context unmarked model partials, postfix finalization, RFC 084 model-constructor partials, direct constructor arguments, deserialization inputs, and supported foreign construction as one typed construction-plan abstraction. The plan should preserve the target model's canonical identity, captured argument values, effective fieldmethod inputs, capture provenance, replacement provenance, model-defined execution slots, fieldmethod and field identities, projected callable signature, and canonical finalizer.
+This section is non-normative. A coherent implementation should represent marked fluent construction, declaration-context unmarked model partials, postfix finalization, RFC 084 model-constructor partials, direct constructor arguments, adapters explicitly accepting fresh construction inputs, and supported foreign construction as one typed construction-plan abstraction. Stored-state reconstruction follows RFC 173 instead, sharing final validation without replaying fieldmethods. The plan should preserve the target model's canonical identity, captured argument values, effective fieldmethod inputs, capture provenance, replacement provenance, model-defined execution slots, fieldmethod and field identities, projected callable signature, and canonical finalizer.
 
 Fieldmethod resolution should occur in the compiler frontend against canonical model and fieldmethod identity, with canonical field identity attached to field-backed methods. Lowering should consume resolved construction-plan operations rather than rediscovering fieldmethods from source names. The final backend representation may use a generated wrapper, builder-like temporary, or direct constructor expansion, provided it evaluates captured expressions exactly once, invokes only effective fieldmethods, constructs the model exactly once, and preserves the canonical validation result.
 

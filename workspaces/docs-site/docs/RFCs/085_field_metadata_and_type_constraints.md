@@ -22,6 +22,7 @@
     - RFC 165 (typed embedded storage, whose field identities derive from the earliest name)
     - RFC 142 (shared failure-policy vocabulary)
     - RFC 143 (cloning with field overrides)
+    - RFC 173 (walking and reconstructing typed values)
 - **Issue:** [#472](https://github.com/encero-systems/incan/issues/472)
 - **RFC PR:** —
 - **Written against:** v0.3
@@ -269,13 +270,14 @@ variant_decl = IDENT field_meta? variant_payload? variant_value? ;
 
 ### Rename continuity
 
-`renamed_from` must accept an earlier name, a list of earlier names, or a nested block under RFC 096, on a field or an enum variant. The block must contain `name`, a string or list of strings, and may contain RFC 150's shared lifecycle facts, `since`, `retire_in`, `message`, `by` and `issue`, each at most once and using the same descriptor as `deprecated`. `by` and `issue` are unverified descriptive text and grant nothing.
+`renamed_from` must accept an earlier name, a list of earlier names, or a nested block under RFC 096, on a field, an enum variant, or a model or enum declaration. The block must contain `name`, a string or list of strings, and may contain RFC 150's shared lifecycle facts, `since`, `retire_in`, `message`, `by` and `issue`, each at most once and using the same descriptor as `deprecated`. `by` and `issue` are unverified descriptive text and grant nothing.
 
 - The field or variant must keep its stable anchor across a declared rename. Without `renamed_from`, a rename is a new source identity.
 - A list of earlier names must be in the order the names were used, earliest first.
 - An earlier name that still exists on the same model or enum must be refused, and so must one name claimed twice.
+- On a declaration, `renamed_from` follows the name and any type parameters, as in `model Invoice [renamed_from="Bill"]:`. A bare earlier name means the same module, and a declaration that moved names its earlier qualified name, as in `model Invoice [renamed_from="billing.invoices.Bill"]:`. An earlier name still declared in the same package must be refused. The declaration keeps the identity RFC 165 derives from its earliest qualified name.
 - `retire_in` must not change behavior. Once the package's version reaches it, a lint must suggest removing the lifecycle facts and must keep the earlier name, because RFC 165 derives the field's identity from it.
-- Checked metadata must preserve every rename fact, so that API diffs, generated documentation, RFC 106's graph and RFC 165's stored records can use them.
+- Checked metadata must preserve every rename fact, so that API diffs, generated documentation, RFC 106's graph and RFC 165's stored records can use them. RFC 173 exposes the same checked field, variant and declaration rename facts through its public shape carriers; codecs must not inspect compiler-private records to obtain them.
 - A rename must not change a wire name or make a decoder accept the old one. Wire names follow `alias` and `as`.
 
 ### Safe metadata values
