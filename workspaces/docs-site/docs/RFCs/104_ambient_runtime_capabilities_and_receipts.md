@@ -233,7 +233,7 @@ A package, action, function, descriptor, or runtime operation may request capabi
 
 When an operation requiring a capability is invoked in governed mode and the capability is not granted, the operation must fail before performing the authority-bearing behavior. The diagnostic must identify the required capability and should include the source span, import/module/function path, and a suggested grant spelling when available.
 
-A host may also supply a capability ceiling: a maximum grant set sourced from outside the invocation itself, such as a policy file a harness writes before starting an agent or CI job. The effective grant for any invocation must be the intersection of its ceiling, if one is supplied, and whatever it requests via `--allow` or a typed action's declared caps -- never their union. An invocation cannot widen its own authority by requesting more than its ceiling allows; it can only receive less. This applies uniformly to host and package capabilities alike. The exact mechanism for supplying a ceiling is illustrative, not normative; what is normative is that a ceiling source exists, is distinct from per-invocation requests, and is enforced as an intersection. Whether that source is itself protected from tampering by the process it bounds is an operating-system/sandbox concern this RFC does not define -- see Non-Goals.
+A host may also supply a capability ceiling: a maximum grant set sourced from outside the invocation itself, such as a policy file a harness writes before starting an agent or CI job. The effective grant for any invocation must be the intersection of its ceiling, if one is supplied, and whatever it requests via `--allow` or a typed action's declared caps -- never their union. An invocation cannot widen its own authority by requesting more than its ceiling allows; it can only receive less. This applies uniformly to host and package capabilities alike. The exact mechanism for supplying a ceiling is illustrative, not normative; what is normative is that a ceiling source exists, is distinct from per-invocation requests, and is enforced as an intersection. A governed run's effective grant must also bind code that capability checks cannot see, such as Rust facets, C calls and child processes. The host enforces it there through operating-system containment generated from the effective grant, which the process it bounds cannot lift. If the host cannot enforce that containment, the governed run is refused rather than weakened.
 
 ### Runtime modes
 
@@ -292,7 +292,13 @@ A capability declaration must include:
 
 - a human-readable description;
 - an optional `scope` schema: a typed set of named scope dimensions the capability accepts, such as `tenant: str` or `path: str`. A grant may constrain zero or more of a capability's declared scope dimensions; a grant referencing a scope key the capability did not declare is a checked error, not a silently ignored key;
-- an optional `requires` list of other capabilities (checked symbol references, typically host capabilities) whose authority this capability's implementation needs.
+- an optional `requires` list of other capabilities (checked symbol references, typically host capabilities) whose authority this capability's implementation needs;
+- an optional `risks` list naming which risk classes the capability carries, from the standard `Risk` enum:
+  - `Risk.UntrustedInput`: it brings in content from outside the program's trust;
+  - `Risk.PrivateData`: it reads data its principal holds privately;
+  - `Risk.ExternalEffect`: it changes state or sends data out.
+
+  Host capabilities declare their classes. A package capability carries the classes of the capabilities it `requires`, plus any it declares.
 
 ```incan
 capability refund:
@@ -300,7 +306,10 @@ capability refund:
     scope:
         tenant: str
     requires = [host.http.request]
+    risks = [Risk.ExternalEffect]
 ```
+
+A governed run that serves an agent session, such as an RFC 156 server or an `incan mcp` session, must refuse an effective grant whose capabilities together carry all three risk classes, unless the grant names that combination explicitly. A session that holds all three can be steered by its untrusted input into reading private data and sending it out. The refusal and any explicit allowance must be recorded in receipts.
 
 RFC 102 semantic inspection must be able to expose capability declarations, their scope schemas, and their `requires` relationships as project facts.
 

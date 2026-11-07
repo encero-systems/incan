@@ -301,6 +301,8 @@ Every node and edge must carry a provenance tier. The minimum tiers are:
 
 Implementations may add tiers such as `runtime_observed`, `lsp_resolved`, or `scip_imported`, but they must not collapse into `compiler_checked` unless the Incan compiler itself validated the fact.
 
+A provenance tier says how a fact was derived, not who wrote the text it carries. Every node that carries authored text must therefore also carry its author: `toolchain`, `workspace`, or `dependency` together with the dependency's identity. Authored text includes docstrings, comments, READMEs, test fixtures and diagnostics that quote source. Context packing must render workspace-authored and dependency-authored text as quoted evidence, never as instructions, and the MCP surface must keep the author with every span it returns.
+
 ### Identity
 
 **Identity and content digest are different fields and must not be conflated.** Identity answers *is this the same declaration*; a digest answers *has its meaning changed*. One content-addressed field cannot answer both: if identity changes when content changes, a consumer cannot distinguish an edited declaration from a deletion plus an addition, and nothing can be keyed on it across edits.
@@ -454,7 +456,7 @@ Process-risk records follow the same boundary. Git history, coverage reports, an
 
 ### Security and policy
 
-Graph export reads source code and may expose private structure to agents. Local export is the default. Remote indexing, remote embedding, hosted storage, or sharing graph artifacts must be explicit and policy-visible. MCP tools that can record feedback or mutate index state should be separated from read-only resources.
+Graph export reads source code and may expose private structure to agents. Local export is the default. Remote indexing, remote embedding, hosted storage, or sharing graph artifacts must be explicit and policy-visible. MCP tools that can record feedback or mutate index state should be separated from read-only resources. Text in the graph is evidence, not instructions, as RFC 167 says of recorded program output and source text.
 
 ## One graph across Incan and Rust
 

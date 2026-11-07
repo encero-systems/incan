@@ -564,6 +564,8 @@ At most one client may control a session's execution at a time, and handover mus
 
 Recorded program output and source text are evidence data, not instructions to the agent client.
 
+Debugger operations are RFC 104 capabilities, separate from the connection that carries them. Read-only inspection is the default. Four operations are each a separate grant: evaluation that calls program code, live code changes, launch and attach. Each grant is bound to a session and a process, recorded in receipts, and never part of an agent's default ceiling. Over HTTP, a session sits behind RFC 037 authentication. Over stdio, its grants come from the user who launched it.
+
 ### Platforms and engines
 
 The suite must support Linux, macOS and Windows with one contract. The debugger engine provides process control, breakpoints, memory access and unwinding; the session, presentation, evaluation, provenance and agent contracts belong to the suite and must not change with the platform or the engine. The capability report must name the engine in use.

@@ -308,6 +308,8 @@ In stdio mode the AI client starts your program and reads its messages from stan
 37. `std.io` must provide `stdin()` as a `BinaryReader` with an async form, and `stdout()`.
 38. `server.mount(path, ...)` must return a group that serves Streamable HTTP on an RFC 037 `App`, taking the same limits. Authentication must come from the application's RFC 037 `Authenticated` types and guards into `ToolContext.current().principal`, and must not be reimplemented by `std.mcp`.
 39. `mount` and its `std.web` dependency must be separately selectable, so a server that only uses stdio, such as `incan mcp`, does not carry the web stack.
+40. A mount on a loopback-bound `App` keeps RFC 037's `Host` check. `server.mount` on an application that listens beyond loopback must be refused at startup unless the group requires an `Authenticated` principal.
+41. A Loaf that provides tools must publish a digest over each tool's name, description and input and output schemas in its library metadata. `oven.lock` must record the digests of the tools a project serves from its dependencies, so a dependency update that rewrites a tool's description or schema shows as a lock change.
 
 ### Conformance workloads
 
