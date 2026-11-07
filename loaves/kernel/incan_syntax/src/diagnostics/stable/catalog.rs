@@ -695,11 +695,39 @@ pub(super) const EXPLICIT_OWNERSHIP_CONFLICT: DiagnosticCatalogEntry = Diagnosti
     docs_url: None,
 };
 
+pub(super) const STORE_RESERVED_MODEL_FIELD: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0127",
+    title: "Model field uses the store-reserved prefix",
+    severity: "error",
+    phase: "typecheck",
+    summary: "A model field starts with `___`, which typed record stores reserve for record facts.",
+    explanation: "RFC 165 reserves every model-field spelling that starts with three underscores. The rule applies to every model, whether or not it is currently stored, so authored data can never collide with a store-owned fact during inspection or export. The closed store-owned set is `___id`, `___revision`, `___model_hash`, `___canonical_hash`, and `___object_hash`; any other imported `___` fact is refused rather than treated as an unknown field.",
+    examples: &["model Page:\n    ___id: int"],
+    common_causes: &["A field was named to look private or to mirror a store inspection record."],
+    fixes: &["Rename the model field so it does not start with three underscores."],
+    docs_url: None,
+};
+
+pub(super) const RECORD_MEMBER_IDENTITY_COLLISION: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0128",
+    title: "Record member identities collide",
+    severity: "error",
+    phase: "typecheck",
+    summary: "Two fields in one model, or two variants in one enum, have the same compiler-derived record identity.",
+    explanation: "RFC 165 derives a field or enum variant identity from the configured leading bytes of the SHA-256 digest of its earliest UTF-8 name. The identity needs to be unique only inside its model or enum. When two members collide, the diagnostic labels both declarations; authors do not assign an identity directly.",
+    examples: &["model CollidingFields:\n    fieldbbea15ef9eff: int\n    field3d4624c2d3a2: int"],
+    common_causes: &["Two distinct member names happen to share the same shortened SHA-256 identity."],
+    fixes: &["Rename the newer field or variant so the compiler derives a different identity."],
+    docs_url: None,
+};
+
 pub(super) const CATALOG: &[DiagnosticCatalogEntry] = &[
     OWNERSHIP_BOUNDARY_UNPROVABLE,
     RESULT_SOURCE_INVALID,
     PLACE_BINDING_MIGRATION,
     EXPLICIT_OWNERSHIP_CONFLICT,
+    STORE_RESERVED_MODEL_FIELD,
+    RECORD_MEMBER_IDENTITY_COLLISION,
     PARSER_SYNTAX,
     TYPECHECK,
     UNREACHABLE_CODE,

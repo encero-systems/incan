@@ -1,0 +1,5 @@
+# behavior: model fields whose names start with the store-reserved triple-underscore prefix are refused
+# expect-diagnostic: INCAN-T0127
+
+model StoredFacts:
+    ___id: int
