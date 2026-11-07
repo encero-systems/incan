@@ -223,7 +223,7 @@ pub trait Reconstruct with Walk:
 - `Walk` and `Reconstruct` must be automatic derives of `model`, `enum` and `newtype`, holding for a declaration when every field, payload or underlying type has them. They hold for a generic declaration at each instantiation whose type arguments do.
 - `bool`, every integer and float type, `decimal`, `str`, `bytes`, `None`, `Option`, `Result`, `list`, `dict`, `set`, tuples, union types and their frozen forms must have them when their element types do.
 - A `class`, a callable, a `rust::` type and a live runtime resource must not have them unless the type's author writes them. `SecretStr` and `SecretBytes` must not have them at all, so every format refuses a value holding one by the same rule (RFC 103).
-- A declaration without the members must not be refused for that. A use is refused: a call, or a bound through a type parameter. The diagnostic must name the field path, show the field's declaration as a second location, and say that the type can write the members.
+- A declaration without the members must not be refused for that. A use is refused: a call, or a bound through a type parameter. The diagnostic must name the field path and show the field's declaration as a second location. For an author-extensible type it must explain that the type can supply the members; for `SecretStr` or `SecretBytes` it must explain the non-disclosure restriction rather than suggest implementing a forbidden protocol.
 - A program that reaches none of these members must compile and run as if they did not exist.
 
 ### What the compiler fills
@@ -237,7 +237,7 @@ pub trait Reconstruct with Walk:
 - A model validation failure must reach the caller through `source.invalid(error)`, which keeps the original `ValidationError`. A newtype restores its underlying stored value and enforces its constraints. Neither path may expose invalid final state.
 - A supplied stored value must not be overwritten by a changed default. Missing-value handling follows the bullets above and the format's own compatibility rules, such as RFC 165's *What fits a field*; it must not guess constructor inputs from stored values.
 - Virtual construction inputs are not stored fields and must not appear in the stored shape. A codec must diagnose or handle them under its explicit unknown-field policy, never invoke a same-named fieldmethod. Schema migrations must be explicit; reconstruction must not normalize an incompatible stored value into acceptance.
-- A codec's own canonical representation rules, such as RFC 165's codec profiles, remain separate from model input normalization. Reconstruction does not disable the codec's documented representation rules.
+- A format's canonical value rules and encoding rules, such as RFC 165's distinct hash profiles and codec profiles, remain separate from model input normalization. Reconstruction does not disable the codec's documented representation rules.
 - Error collection follows the source's explicit policy and the active validation policy. `source.collects()` selects whether independently decodable fields continue after a field failure. The source retains each located decode failure once, including a missing-field failure it creates, and `source.collected()` returns the resulting error when failures exist. The generated reconstruction retains availability separately from values: a failed field is not an absent optional field. It runs only validation checks whose required restored values are available, merges their original failures through `source.invalid(error)`, and never returns a partial instance. A structurally unrecoverable source stops with honest coverage. RFC 146's default CollectAll and explicitly selected FailFast must not be reset at this boundary.
 
 ### Visibility
@@ -282,6 +282,7 @@ A walker sees kinds of value, and each kind has its members. A source answers wi
 | `name` | `FrozenStr` | The type's name, for diagnostics |
 | `identity` | `FrozenBytes` | The model's or enum's identity under RFC 165, distinct from its structural model hash; empty for other types |
 | `renamed_from` | `FrozenList[FrozenStr]` | The declaration's earlier names under RFC 085, earliest first, empty when it has none |
+| `renamed_from_lifecycle` | `Option[LifecycleInfo]` | The declaration rename block's optional lifecycle facts under RFC 085, using the same carrier as fields and variants |
 | `spelling` | `FrozenStr` | The type's canonical spelling, with nested models and enums folded in, under *Record hashes* in RFC 165 |
 | `fields` | `FrozenList[FieldInfo]` | Every stored field, in ascending identity order |
 | `variants` | `FrozenList[VariantInfo]` | An enum's variants, in ascending identity order |
@@ -340,7 +341,7 @@ The kinds in `Walker[E]` become a public contract, and adding one means a walker
 
 - **Artifact or metadata:** `T.__shape__()` is ordinary reachable data, and the same facts are in checked metadata.
 - **Inspection command:** `incan check --format json` reports the refusals. An editor hover over a filled member shows its signature.
-- **Diagnostics:** a refused use names the field path, shows the field's declaration and says the type can write the members.
+- **Diagnostics:** a refused use names the field path and shows the field's declaration. It distinguishes a missing author-supplied protocol from a secret type that must never supply one.
 - **Provenance:** a filled member is anchored at the declaration it was filled from.
 - **Not implicit:** nothing runs unless a call or a bound reaches it, and a filled body is what the guide shows. No format is known to the compiler.
 
@@ -354,7 +355,8 @@ The kinds in `Walker[E]` become a public contract, and adding one means a walker
 | Collecting | Preserve active CollectAll and FailFast policies, retain each independent located failure once, distinguish unavailable from absent fields, report blocked validation, and never return a partial model. |
 | Optional layers | Round trip `None`, `Some(None)` and `Some(Some(7))` through `Option[Option[int]]`; separately exercise a missing field. No failed decode becomes `None`. |
 | Evolution and containers | Preserve renamed field identities and reordered fields; enforce Crumb's absent-value rules. Round trip nested payload enums, lists, tuples, dicts and newtypes; refuse invalid variants, lengths and out-of-range values with their paths. |
-| Refusal | A field with no members is refused at a call and through a bound, naming the path, in nested, optional and collection positions. |
+| Refusal | A field with no members is refused at a call and through a bound, naming the path, in nested, optional and collection positions. A secret type is refused without suggesting a handwritten protocol; an ordinary unsupported class may supply one. |
+| Rename metadata | Field, variant and model/enum declaration rename histories and their lifecycle blocks survive a package boundary and remain available through the public shape carriers. A bare declaration rename resolves in its owning module; a qualified rename retains the earlier identity after a move. |
 | Visibility | A public model with private fields round trips outside its defining context without an explicit derive; ordinary caller initialization and assignment of those fields remain rejected. A private stored value survives a later change to its declaration default. |
 | By hand | A class with written members works through the same bounds as a model, and a model that writes `__walk__` without `__shape__` is refused. |
 | Cost | A program that reaches no member compiles the same amount of code as one that declares no such members. |
