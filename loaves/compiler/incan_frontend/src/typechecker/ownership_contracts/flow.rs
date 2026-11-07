@@ -49,7 +49,7 @@ impl Place {
     }
 
     /// Conservatively overlap roots and dynamic elements, distinguishing only proven sibling fields.
-    fn overlaps(&self, other: &Self) -> bool {
+    pub(super) fn overlaps(&self, other: &Self) -> bool {
         self.root == other.root
             && self
                 .projection
@@ -163,6 +163,16 @@ pub(in crate::typechecker) struct OwnedInitialization {
     pub access_node: Option<usize>,
 }
 
+/// One in-place dictionary lookup and the shared entry loans carried by its pattern bindings.
+///
+/// An empty loan set represents a wildcard-only match. The lookup is read-only when every retained loan remains an
+/// observation and no other access touches the source dictionary while one of those loans is live.
+#[derive(Debug, Clone)]
+pub(in crate::typechecker) struct DictionaryLookup {
+    pub source: Place,
+    pub loans: Vec<LoanId>,
+}
+
 /// Stored initializer events belong to one explicit destination and must read/move its exact source within the
 /// initializer's expansion-bearing range. This validates retained links; it never discovers them by searching spans.
 fn validate_owned_initializations(graph: &Graph) -> Result<(), InvalidGraph> {
@@ -220,6 +230,8 @@ pub(in crate::typechecker) struct Graph {
     /// Loans created by direct stored-place iteration. Diagnostic projection consumes this authenticated source fact
     /// rather than rediscovering loop structure by walking the completed control-flow graph.
     pub direct_iteration_loans: BTreeSet<LoanId>,
+    /// Optional `Dict.get` calls whose match bindings borrow the stored entry in place.
+    pub dictionary_lookups: BTreeMap<HirSourceSpan, DictionaryLookup>,
     /// Explicit local declarations retain their selected loan independently of display spelling.
     pub local_loans: BTreeMap<CanonicalSymbolId, LoanId>,
     /// Owned locals whose values keep one or more checked source loans alive through their last value use.

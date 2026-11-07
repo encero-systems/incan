@@ -282,10 +282,20 @@ impl Builder<'_> {
     /// A statement `if` evaluates each condition on the path where the previous ones were false, and its branches,
     /// including an absent `else`, join after it. Each branch starts from the carriers as that path left them.
     pub(super) fn if_statement(&mut self, branch: &IfStmt, incoming: Vec<usize>) -> Result<Vec<usize>, Unavailable> {
-        let mut remaining = self.condition(&branch.condition, incoming)?;
+        let (then_input, mut remaining, dictionary_bindings) = match &branch.condition {
+            Condition::Let { pattern, value } => match self.dictionary_condition(pattern, value, incoming.clone())? {
+                Some((matched, unmatched, bindings)) => (matched, unmatched, bindings),
+                None => (self.condition(&branch.condition, incoming)?, Vec::new(), Vec::new()),
+            },
+            Condition::Expr(_) => {
+                let evaluated = self.condition(&branch.condition, incoming)?;
+                (evaluated.clone(), evaluated, Vec::new())
+            }
+        };
         let mut fallthrough = self.carrier_state();
         let mut ends = Vec::new();
-        let mut outgoing = self.block(&branch.then_body, remaining.clone())?;
+        let mut outgoing = self.block(&branch.then_body, then_input)?;
+        self.leave_dictionary_bindings(&dictionary_bindings);
         if !outgoing.is_empty() {
             ends.push(self.carrier_state());
         }

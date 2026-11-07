@@ -170,8 +170,7 @@ impl TypeChecker {
             }
         }
         self.check_match_exhaustiveness(&subject_ty, arms, _span);
-        self.note_dict_lookup_match(subject, arms);
-
+        self.note_dictionary_pattern_lookup(subject);
         let arm_destination = expected
             .map(|expected| self.expand_type_aliases(expected.clone()))
             .filter(|expected| {

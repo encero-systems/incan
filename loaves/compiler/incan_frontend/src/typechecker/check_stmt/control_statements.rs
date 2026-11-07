@@ -61,7 +61,7 @@ impl TypeChecker {
                 let _ = self.pop_loop_context();
                 self.exit_pattern_views(views);
                 self.symbols.exit_scope();
-                self.note_dict_lookup_let(value, pattern, &while_stmt.body);
+                self.note_dictionary_pattern_lookup(value);
             }
         }
     }
@@ -347,7 +347,7 @@ impl TypeChecker {
                 self.check_statement_block(body);
                 self.exit_pattern_views(views);
                 self.symbols.exit_scope();
-                self.note_dict_lookup_let(value, pattern, body);
+                self.note_dictionary_pattern_lookup(value);
                 None
             }
         }

@@ -124,6 +124,9 @@ impl Builder<'_> {
         arms: &[Spanned<MatchArm>],
         incoming: Vec<usize>,
     ) -> Result<Vec<usize>, Unavailable> {
+        if let Some(outgoing) = self.dictionary_match(scrutinee, arms, incoming.clone())? {
+            return Ok(outgoing);
+        }
         let mut native = None;
         let (evaluated, view) = if let Some(relation) = self.call_relation(scrutinee)?
             && let Some(payload) = relation.carried
