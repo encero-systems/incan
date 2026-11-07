@@ -395,9 +395,9 @@ Changing a schema or codec requires an explicit migration or an explicitly compa
 
 ### Field identities
 
-A field's identity is the first 6 bytes of the SHA-256 of the UTF-8 bytes of its earliest name, which is the first name in its RFC 085 `renamed_from` when it has one and its own name otherwise. An enum variant's identity follows the same rule, and so does a model's or an enum's own identity, from the earliest name of the declaration. The compiler derives identities from checked declarations and exposes them through RFC 173, and authors neither write nor assign them.
+A field's identity is the first 6 bytes of the SHA-256 of the UTF-8 bytes of its earliest name, which is the first name in its RFC 085 `renamed_from` when it has one and its own name otherwise. An enum variant's identity follows the same rule. A model's or an enum's own identity follows it from the declaration's earliest qualified name: its package's name, its module path and its own name, joined by dots, as in `crm.customers.Customer`. Two packages or two modules that each declare a `Customer` therefore declare two models with two identities. The compiler derives identities from checked declarations and exposes them through RFC 173, and authors neither write nor assign them.
 
-- A frame must name the identity of each model it holds, and a reader given a frame for another model must return a typed failure. A model's path is not part of its identity, so moving a model between modules changes nothing, and a renamed model keeps its identity through `renamed_from`. A model whose fields are all optional therefore cannot read an unrelated crumb as a value of all `None`s.
+- A frame must name the identity of each model it holds, and a reader given a frame for another model must return a typed failure. A model that moves to another module or package, or takes another name, keeps its identity by naming its earlier qualified name in `renamed_from`. A model whose fields are all optional therefore cannot read an unrelated crumb as a value of all `None`s, including one written by a same-named model elsewhere.
 - A frame must list the identities of each model's fields once, in ascending byte order, rather than tagging every value. That order keeps declaration order out of the encoding and lets a reader find a field without scanning the list.
 - A reader must match values to fields by identity, never by name or declared position. Renaming a field under RFC 085 or reordering fields must therefore neither misread existing data nor change a value's canonical representation.
 - Two fields of one model, or two variants of one enum, with the same identity must produce a declaration error naming both. The author resolves it by naming the newer one differently. Across a model's revisions, a matching identity means the same earliest name, so a reader needs no name to confirm it.
@@ -410,9 +410,11 @@ A field's identity is the first 6 bytes of the SHA-256 of the UTF-8 bytes of its
 A frame must say once per field what type its values were written as, in enough detail to skip a value and to refuse a misfit with nothing but the frame. A written value fits a declared type when every value of the written type is exactly one value of the declared type with the same canonical representation, so reading never moves a hash:
 
 - the same type, with an alias read as its target and a newtype as the type it holds;
-- `T` into `Option[T]`;
+- a type that is not an `Option` into `Option[U]` when it fits `U`;
 - a narrower integer into a wider one that holds all its values, and `f32` into `f64`;
 - a list, set, dict, tuple or `Option` whose element types fit, element by element.
+
+An optional written type keeps its layers: it fits an `Option` only through the last rule, matching optional layers from the outside in before any layer is added. An `Option[int]` read as `Option[Option[int]]` therefore keeps `None` as the outer `None`, and `Some(5)` reads as `Some(Some(5))`.
 
 Nothing else fits: `int` does not read as `float`, `str` does not read as `int`, `Option[T]` does not read as `T`, and `i64` does not read as `i32`. A misfit must return a typed failure naming the field. It must not be skipped or read as absent, because the value is there.
 
@@ -687,6 +689,7 @@ A hash profile is a long-lived commitment, because a changed rule needs a new pr
 - **Field identity and equality:** field-scoped hashes locate candidates; typed equality confirms matches. Logical records remain distinct even when contents share storage.
 - **Field identities in encoded values:** the first 6 bytes of the SHA-256 of a field's earliest name, listed once per frame in ascending byte order. An identity only has to be unique within one model's history, not globally. A collision within one declaration is a declaration error, but a collision across revisions is invisible to any one declaration, so the width has to make it negligible on its own: a model that has ever had 1,000 field names has about a 1 in 560 million chance of one, where 4 bytes would have about a 1 in 8,600 chance. Eight bytes would buy odds no model needs for two more bytes per field in each frame. Crafting a collision takes control of both revisions of the model, whose author can already write anything into it.
 - **Frames say what they hold:** a frame names its model and, once per field, the type it wrote, so a standalone crumb can be refused or skipped through with no lookup.
+- **Model identities are qualified:** a field only has to differ from the other fields of its model, but a model has to differ from every other model a reader might meet, so its identity comes from its earliest qualified name. Short names would give two `Customer` models in different packages one identity by construction, and an all-optional one would read the other's crumbs. The cost is that moving a model takes a `renamed_from`.
 - **What fits a field:** a read never moves a hash, so only a change of type that keeps every value's canonical representation fits. A misfit is a typed failure, never a skip.
 - **No schema version:** a family binds a model hash, and the field identities decide compatibility. A new meaning takes a new name, as it does for a field.
 - **Memory capacity:** a memory store has no total size to run out of. Records and requests have bounds, and exceeding one is a typed failure. An allocation failure stays what it is everywhere in the runtime, an abort, and nothing here claims otherwise.
