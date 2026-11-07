@@ -11,7 +11,7 @@ use incan_driver::diagnostics::CliDiagnosticFailure;
 use incan_driver::loaf_publication::{PublicationFacts, publish_native_unions, write_loaf};
 use incan_driver::modules::{collect_library_modules_detailed_with_session, collect_modules_detailed_with_session};
 use incan_driver::session::{CompilationAnalysis, CompilationSession, RustFactsSetup};
-use incan_driver::unit::{UnitDescription, UnitKind};
+use incan_driver::unit::{UnitDescription, UnitKind, UnitLoaf};
 use incan_frontend::ast::{DecoratorArg, DecoratorArgValue, Expr, Literal};
 use incan_frontend::library_manifest::LibraryManifest;
 use incan_frontend::loaf_index::{LoafIndex, LoafNativeClosure};
@@ -136,6 +136,54 @@ struct CheckedProgram {
     tests: Vec<crate::test_unit::CollectedTest>,
 }
 
+const CORE_SOURCE_PACKAGE: &str = "incan_stdlib_core";
+const PRIMITIVE_SOURCE_PACKAGE: &str = "incan_stdlib_primitives";
+
+/// Select the package that owns standard trait declarations from the checked source closure.
+///
+/// The bridge generation still reaches core while checking parent-tree declarations. After core is removed, the
+/// checked closure reaches primitives even though the installed bridge toolchain can still carry a core native
+/// artifact. Native extern availability therefore cannot decide source identity.
+fn standard_trait_source_package(program: &CheckedProgram) -> &'static str {
+    if program.dependencies.package == CORE_SOURCE_PACKAGE || program.reached_loaves.contains_key(CORE_SOURCE_PACKAGE) {
+        CORE_SOURCE_PACKAGE
+    } else {
+        PRIMITIVE_SOURCE_PACKAGE
+    }
+}
+
+/// Retain the installed core Loaf while a bridge compiler checks an executable graph that has already removed core.
+///
+/// The transitional native core artifact identifies the exact installed toolchain generation. Its sibling Loaf is
+/// admitted only when the unit omitted core and that complete publication exists; ordinary parent-tree units already
+/// name core and take no compatibility path. Library units select declarations from their source Loaf graph so a
+/// compatibility native closure cannot compete with a declaration that has moved into primitives.
+fn retain_bridge_core_loaf(unit: &mut UnitDescription) {
+    if unit.kind == UnitKind::Library || unit.loaves.iter().any(|loaf| loaf.name == CORE_SOURCE_PACKAGE) {
+        return;
+    }
+    let Some(native_core) = unit.externs.iter().find(|native| native.name == "incan_std_core") else {
+        return;
+    };
+    let Some(toolchain) = native_core.path.parent().and_then(Path::parent).and_then(Path::parent) else {
+        return;
+    };
+    let directory = toolchain.join("loaves").join(CORE_SOURCE_PACKAGE).join(&unit.profile);
+    let manifest = directory.join(format!("{CORE_SOURCE_PACKAGE}.incnlib"));
+    let bodies = directory.join(format!("{CORE_SOURCE_PACKAGE}.incnbody"));
+    if !manifest.is_file() || !bodies.is_file() {
+        return;
+    }
+    unit.loaves.push(UnitLoaf {
+        key: CORE_SOURCE_PACKAGE.to_owned(),
+        name: CORE_SOURCE_PACKAGE.to_owned(),
+        dir: directory,
+        standard: true,
+        toolchain_provided: true,
+        source_root: None,
+    });
+}
+
 /// Exact caller-declared native libraries and their dependency search directories.
 pub(crate) struct Dependencies {
     /// The native libraries the unit links, as `--extern CRATE=RLIB` pairs.
@@ -238,6 +286,7 @@ pub fn dependency_report(arguments: &[String]) -> Result<(), Box<dyn std::error:
     if dependencies.library {
         unit.kind = UnitKind::Library;
     }
+    retain_bridge_core_loaf(&mut unit);
     let (kind, source, project_root) = (unit.kind, unit.source.clone(), unit.project_root.clone());
     let overflow_checks = unit.profile != "release";
     let rust = dependencies.rust_facts(&unit, Path::new(sysroot));
@@ -332,6 +381,7 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
     // ---- Checked source and Incan plan ----
     let mut timing = crate::native_timing::Timing::requested();
     let mut unit = UnitDescription::read(Path::new(&arguments[0])).map_err(|error| error.message)?;
+    retain_bridge_core_loaf(&mut unit);
     timing.mark("unit_descriptor");
     let source_path = unit.source.clone();
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::compile_unit", input = %source_path.display()).entered();
@@ -370,6 +420,7 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
         &mut published_unions,
     )?;
     let tests = crate::test_unit::report(&program.tests, &plan.tests)?;
+    let source_package = standard_trait_source_package(&program);
 
     // ---- Exact native dependencies, including checked Loaf implementation layouts ----
     let native_externs =
@@ -386,6 +437,7 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
         dependencies.shared_native.as_deref(),
         kind,
         overflow_checks,
+        source_package,
         program.manifest.as_ref(),
     )
     .map_err(|error| {

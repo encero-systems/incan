@@ -1,7 +1,7 @@
 """Aggregate extraction for a constructor with exactly one supplied checked field."""
 
 from std.derives.string import Display
-from rust::incan_std_core::validation import ValidationErrorsBuilder
+from rust::incan_std_primitives::validation import ValidationErrorsBuilder
 from rust::incan_std_primitives::errors import raise
 
 

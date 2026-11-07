@@ -213,7 +213,7 @@ pub def emit_field_metadata(
         None => return Err("unsupported Body IR field metadata declaration")
         Some(_fields) => pass
     for info in range(len(builder.nominals)):
-        if builder.nominals[info].native_item != "incan_std_core::reflection::FieldInfo":
+        if builder.nominals[info].native_item != "incan_std_primitives::reflection::FieldInfo":
             continue
         ty = PlanType.FrozenCollection("FrozenList", [PlanType.Model(info, str(builder.nominals[info].name))])
         mut output = temporary(builder, ty, span)

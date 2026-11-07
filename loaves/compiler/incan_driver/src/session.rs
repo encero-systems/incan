@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use incan_lang::lang::standard_packages::{StandardPackageNamespacePolicy, standard_package_namespace_policy};
+use incan_lang::lang::standard_packages::{StandardPackageNamespacePolicy, standard_package_source_policy};
 use incan_lang::lang::stdlib;
 
 use crate::diagnostics::CliDiagnosticFailure;
@@ -146,7 +146,9 @@ impl CompilationSession {
             }
             deferred.push((key.clone(), loaf.name.clone(), loaf.dir.clone(), loaf.standard));
         }
-        let loaves = LoafIndex::deferred(deferred).map_err(|error| CliError::failure(error.to_string()))?;
+        let reaches_native_core = unit.externs.iter().any(|native| native.name == "incan_std_core");
+        let loaves =
+            LoafIndex::deferred(deferred, reaches_native_core).map_err(|error| CliError::failure(error.to_string()))?;
         let loaves = Arc::new(loaves);
         // The implicit prelude also owns the linked string-conversion and entry-initialization contracts.
         let _ = loaves.owner_of(&[stdlib::STDLIB_ROOT.to_owned(), "prelude".to_owned()]);
@@ -169,7 +171,7 @@ impl CompilationSession {
             library_imported_vocab,
             library_imported_dsl_surfaces,
             loaves,
-            own_standard_package: standard_package_namespace_policy(&unit.package),
+            own_standard_package: standard_package_source_policy(&unit.package),
             active_features: unit.active_features.clone(),
             declared_features: unit.declared_features.clone(),
             contract_model_bundles,

@@ -152,7 +152,8 @@ fn is_callable_hook(target: &bir::MethodTarget) -> bool {
     match &identity.origin {
         SymbolOrigin::Module(path) => path.iter().map(String::as_str).eq(["std", "traits", "callable"]),
         SymbolOrigin::Package { library, module_path } => {
-            library == "incan_stdlib_core" && module_path.iter().map(String::as_str).eq(["traits", "callable"])
+            matches!(library.as_str(), "incan_stdlib_core" | "incan_stdlib_primitives")
+                && module_path.iter().map(String::as_str).eq(["traits", "callable"])
         }
         _ => false,
     }

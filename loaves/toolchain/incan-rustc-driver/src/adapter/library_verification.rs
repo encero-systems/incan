@@ -48,14 +48,18 @@ pub(super) fn add_source_backed_declarations(
 }
 
 /// Keep the declaration order of compiler-owned adapters while propagating their typed preflight refusals.
-pub(super) fn native_bridge_items(plan: &Plan, span: rustc_span::Span) -> Result<Vec<Box<ast::Item>>, PlanError> {
-    let mut items = crate::shared_callables::items(plan, span);
+pub(super) fn native_bridge_items(
+    plan: &Plan,
+    source_package: &str,
+    span: rustc_span::Span,
+) -> Result<Vec<Box<ast::Item>>, PlanError> {
+    let mut items = crate::shared_callables::items(plan, source_package, span);
     items.extend(crate::panic_hooks::items(plan, span)?);
     items.extend(crate::field_metadata::items(plan, span)?);
     items.extend(crate::comparison_bridges::items(plan, span)?);
-    items.extend(crate::fallible_bridges::items(plan, span)?);
-    items.extend(crate::fallible_bridges::ordinary_items(plan, span)?);
-    items.extend(crate::callable_bridges::items(plan, span)?);
+    items.extend(crate::fallible_bridges::items(plan, source_package, span)?);
+    items.extend(crate::fallible_bridges::ordinary_items(plan, source_package, span)?);
+    items.extend(crate::callable_bridges::items(plan, source_package, span)?);
     items.extend(crate::native_trait_bridges::items(plan, span)?);
     Ok(items)
 }

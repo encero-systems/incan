@@ -514,7 +514,7 @@ impl TypeChecker {
         }
         // A project's own transitively-reachable type wins over a stdlib stub of the same name. Both are fallbacks
         // for a name the current module does not declare, but only one of them is a type this program actually
-        // built: a user class called `Registry` resolved to `incan_stdlib_core`'s `Registry` and reported its own
+        // built: a user class called `Registry` resolved to the primitive package's `Registry` and reported its own
         // `pub` field private, because the stub was consulted first.
         //
         // Requiring a single entry is what makes that safe for a bare name, where two dependencies may each export a

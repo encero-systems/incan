@@ -64,7 +64,7 @@ pub fn validate(function: &Function) -> Result<(), PlanError> {
 }
 
 /// Inject each signature's carrier and its exact SDK callable and native Clone implementations once.
-pub fn items(plan: &Plan, span: Span) -> Vec<Box<ast::Item>> {
+pub fn items(plan: &Plan, source_package: &str, span: Span) -> Vec<Box<ast::Item>> {
     let mut seen = BTreeSet::new();
     let mut result = Vec::new();
     for function in &plan.functions {
@@ -76,7 +76,7 @@ pub fn items(plan: &Plan, span: Span) -> Vec<Box<ast::Item>> {
         }
         result.push(carrier(signature, span));
         result.push(clone_impl(signature, span));
-        result.push(callable_impl(signature, span));
+        result.push(callable_impl(signature, source_package, span));
     }
     result
 }
@@ -165,8 +165,8 @@ fn clone_impl(signature: &[PlanType], span: Span) -> Box<ast::Item> {
 
 /// Forward the SDK's nominal Callable1 slot to the existing boxed callback; rustc performs Rc and Box
 /// autodereferencing.
-fn callable_impl(signature: &[PlanType], span: Span) -> Box<ast::Item> {
-    let mut path = global_path(&["incan_stdlib_core", "traits", "callable", "Callable1"], span);
+fn callable_impl(signature: &[PlanType], source_package: &str, span: Span) -> Box<ast::Item> {
+    let mut path = global_path(&[source_package, "traits", "callable", "Callable1"], span);
     type_arguments(
         &mut path,
         signature.iter().map(|ty| crate::declarations::ty(ty, span)).collect(),

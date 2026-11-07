@@ -19,7 +19,16 @@ fn sdk_native_carrier_key_preserves_source_identity() -> Result<(), String> {
     assert!(!key.contains("::"));
     assert_eq!(
         super::native_nominal_item(&sdk).as_deref(),
-        Some("incan_std_core::reflection::FieldInfo")
+        Some("incan_std_primitives::reflection::FieldInfo")
+    );
+    let mut primitive = sdk.clone();
+    primitive.origin = crate::SymbolOrigin::Package {
+        library: "incan_stdlib_primitives".into(),
+        module_path: vec!["reflection".into()],
+    };
+    assert_eq!(
+        super::native_nominal_item(&primitive).as_deref(),
+        Some("incan_std_primitives::reflection::FieldInfo")
     );
     let mut local = sdk.clone();
     local.origin = crate::SymbolOrigin::Package {

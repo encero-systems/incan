@@ -36,3 +36,4 @@ byteorder = { loaf = "crates-io/byteorder", version = "1" }
 encoding_rs = { loaf = "crates-io/encoding_rs", version = "0.8" }
 incan_derive = { loaf = "incan_derive", path = "../../stdlib/derive/incan_derive" }
 incan_std_core = { loaf = "incan_std_core", path = "../../stdlib/core" }
+incan_std_primitives = { loaf = "incan_stdlib_primitives", path = "../../stdlib/primitives" }

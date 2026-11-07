@@ -174,7 +174,7 @@ pub def retain_factory_callable_storage(
                         carrier = models[owner]
                         if (
                             carrier.name != name
-                            or carrier.library_item != "incan_stdlib_core::derives::collection::MapErrFallibleIterator"
+                            or not is_map_err_carrier(carrier.library_item)
                         ):
                             return Err("unsupported Body IR fallible error-map return identity")
                         if carrier.library_type_arguments != external.type_arguments:
@@ -242,7 +242,7 @@ def retain_shared_factory_poll(
 ) -> Result[None, str]:
     """Forward the exact published error-map poll to its linked SDK implementation with the proven callback storage."""
     declaration = borrowed_at(module.nominal_declarations, owner)
-    if library_item(declaration) != "incan_stdlib_core::derives::collection::MapErrFallibleIterator":
+    if not is_map_err_carrier(library_item(declaration)):
         return Err("unsupported Body IR shared factory poll owner")
     mut found = false
     for body_position in range(len(module.bodies)):
@@ -307,6 +307,11 @@ def retain_shared_factory_poll(
     if not found:
         return Err("unsupported Body IR missing authenticated shared factory poll")
     return Ok(None)
+
+
+def is_map_err_carrier(item: str) -> bool:
+    """Accept the bridge generation and its primitive-owned successor without weakening the declaration path."""
+    return item == "incan_stdlib_core::derives::collection::MapErrFallibleIterator" or item == "incan_stdlib_primitives::derives::collection::MapErrFallibleIterator"
 
 
 def retain_factory_call_arguments(
