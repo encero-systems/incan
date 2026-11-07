@@ -7,7 +7,7 @@
 //! and implement native reflection traits for compiler-emitted nominal types. Incan owns the public `std.reflection`
 //! declaration; these types carry that checked contract across the native ABI.
 
-use crate::frozen::{FrozenDict, FrozenList, FrozenStr};
+use crate::frozen::{FrozenBytes, FrozenDict, FrozenList, FrozenStr};
 use std::marker::PhantomData;
 
 /// Provides reflection information about a type's fields.
@@ -128,6 +128,12 @@ impl_primitive_type_class_name!(f32 => "f32");
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FieldInfo {
     pub name: FrozenStr,
+    /// Six-byte compiler identity derived from the field's earliest declared name.
+    pub identity: FrozenBytes,
+    /// Whether the field participates in its model's canonical stored hash.
+    pub canonical: bool,
+    /// Earlier declared names in chronological order, earliest first.
+    pub renamed_from: FrozenList<FrozenStr>,
     pub alias: Option<FrozenStr>,
     pub description: Option<FrozenStr>,
     pub wire_name: FrozenStr,

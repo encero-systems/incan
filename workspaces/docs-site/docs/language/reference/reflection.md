@@ -136,20 +136,23 @@ Callable aliases and public reexports preserve the complete overload set and its
 
 Each `FieldInfo` record contains:
 
-| Field         | Type                              | Description                                                   |
-| ------------- | --------------------------------- | ------------------------------------------------------------- |
-| `name`        | `FrozenStr`                       | Canonical Incan field identifier                              |
-| `alias`       | `Option[FrozenStr]`               | Wire name, if set via `[alias="..."]`                         |
-| `description` | `Option[FrozenStr]`               | Documentation string, if set via `[description="..."]`        |
-| `wire_name`   | `FrozenStr`                       | Effective wire name (alias if present, else canonical name)   |
-| `type_name`   | `FrozenStr`                       | Incan type display (e.g. `"str"`, `"int"`, `"Option[str]"`)   |
-| `has_default` | `bool`                            | Whether the field has a default value                         |
-| `extra`       | `FrozenDict[FrozenStr, FrozenStr]`| Empty metadata dictionary |
+| Field | Type | Description |
+| --- | --- | --- |
+| `name` | `FrozenStr` | Current declared Incan field identifier |
+| `identity` | `FrozenBytes` | Six-byte compiler-derived identity from the earliest declared name |
+| `canonical` | `bool` | Whether the field participates in the canonical stored hash; `true` when absent |
+| `renamed_from` | `FrozenList[FrozenStr]` | Earlier declared names in chronological order, earliest first |
+| `alias` | `Option[FrozenStr]` | Wire name, if set via `[alias="..."]` |
+| `description` | `Option[FrozenStr]` | Documentation string, if set via `[description="..."]` |
+| `wire_name` | `FrozenStr` | Effective wire name (alias if present, else declared name) |
+| `type_name` | `FrozenStr` | Incan type display (e.g. `"str"`, `"int"`, `"Option[str]"`) |
+| `has_default` | `bool` | Whether the field has a default value |
+| `extra` | `FrozenDict[FrozenStr, FrozenStr]` | Empty metadata dictionary |
 
 Notes:
 
 - Field metadata like `[alias="..."]` and `[description="..."]` is **model-only**.
-- For a `class`, `FieldInfo.alias` and `FieldInfo.description` are always `None` and `FieldInfo.wire_name == FieldInfo.name`.
+- For a `class`, `FieldInfo.alias` and `FieldInfo.description` are always `None`, `FieldInfo.wire_name == FieldInfo.name`, `FieldInfo.canonical` is `true`, and `FieldInfo.renamed_from` is empty.
 - Fields without `pub` on a public model, and private class fields, are excluded from runtime `__fields__()`, `__field_value__()`, and `__field_items__()` results.
 - Inherited fields retain the declaring package's Incan `type_name` spelling.
 - Calling `obj.__fields__()` and inspecting its records requires no `FieldInfo` import. An explicit `FieldInfo` type annotation requires the corresponding import.
