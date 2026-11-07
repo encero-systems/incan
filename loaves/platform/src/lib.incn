@@ -13,3 +13,4 @@ import store.index
 import store.path
 import store.payloads
 import store.repair
+import probes

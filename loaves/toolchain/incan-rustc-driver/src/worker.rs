@@ -6,8 +6,9 @@
 //!
 //! Bootstrap boundary (DD-0013, "Language and platform boundary", adaptation 3): besides the entry itself, the Rust
 //! kept here is what dev.8 Incan cannot express. Redirecting the process console for one activation (`console`) and
-//! reading the physical footprint or returning freed heap need FFI that Incan refuses as unsafe; they move to the
-//! core's resource probes. The caller watch is a thread that observes the caller's socket while the compiler runs:
+//! returning freed heap needs FFI that Incan refuses as unsafe. Footprint readings live in the platform resource
+//! probe; heap pressure relief remains here until the platform's allocator-control boundary exists. The caller watch
+//! is a thread that observes the caller's socket while the compiler runs:
 //! dev.8 Incan cannot hand a socket to a thread, because a closure for `std::thread::spawn` cannot own a value without
 //! a native `Clone`, and shared carriers (`Arc`, channels, the platform's `Connection`) lack retained `Send` evidence.
 //! What a departed caller means is the host's decision (`incan_worker_host::abandon`).
@@ -85,46 +86,10 @@ fn run(command: &WorkerCommand, arguments: &[String]) -> Result<i32, Box<dyn std
 
 /// The process's physical footprint in bytes, or -1 when it cannot be read.
 fn footprint() -> i64 {
-    physical_footprint()
+    incan_platform::current_process_footprint()
         .ok()
         .and_then(|bytes| i64::try_from(bytes).ok())
         .unwrap_or(-1)
-}
-
-/// The process's current physical footprint in bytes, the measure macOS accounts memory pressure by. Clean pages of
-/// mapped files are not the worker's to give back and are not counted.
-#[cfg(target_os = "macos")]
-fn physical_footprint() -> std::io::Result<u64> {
-    let pid = libc::c_int::try_from(std::process::id()).map_err(std::io::Error::other)?;
-    // SAFETY: `rusage_info_v4` holds only integers, so the zeroed value is valid.
-    let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
-    let buffer = (&raw mut info).cast::<libc::rusage_info_t>();
-    // SAFETY: `buffer` addresses a writable `rusage_info_v4`, the record the V4 flavor fills, for this call only.
-    if unsafe { libc::proc_pid_rusage(pid, libc::RUSAGE_INFO_V4, buffer) } != 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    Ok(info.ri_phys_footprint)
-}
-
-/// The process's current resident memory in bytes: its resident pages in `/proc/self/statm` times the page size.
-#[cfg(target_os = "linux")]
-fn physical_footprint() -> std::io::Result<u64> {
-    let statm = std::fs::read_to_string("/proc/self/statm")?;
-    let pages: u64 = statm
-        .split_whitespace()
-        .nth(1)
-        .ok_or_else(|| std::io::Error::other("/proc/self/statm has no resident field"))?
-        .parse()
-        .map_err(std::io::Error::other)?;
-    // SAFETY: `sysconf` reads a configuration value and has no preconditions.
-    let page = u64::try_from(unsafe { libc::sysconf(libc::_SC_PAGESIZE) }).map_err(std::io::Error::other)?;
-    Ok(pages.saturating_mul(page))
-}
-
-/// No footprint reading on other systems, so the host never retires a worker there for its footprint.
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn physical_footprint() -> std::io::Result<u64> {
-    Err(std::io::Error::other("no physical footprint reading on this system"))
 }
 
 #[cfg(target_os = "macos")]

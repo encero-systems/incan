@@ -1,12 +1,9 @@
 """Build, verify, pack, and optionally prove one source toolchain generation without publishing it."""
 
 from rust::std::env::consts import ARCH, OS
-from rust::std::io import Cursor
 from rust::std::process import Command, exit
 from rust::std::string import String as RustString
 from rust::std::time import Instant
-from rust::tar @ "0.4" import Archive
-from std.compression.gzip import decompress as decompress_gzip
 from std.environ import args, get_or
 from std.fs import Path
 from std.json import JsonValue
@@ -94,15 +91,16 @@ def main() -> None:
 
 pub def release(options: ReleaseOptions) -> Result[Path, str]:
     """
-    Produce one host release in seven directed phases.
+    Produce one host release in eight directed phases.
 
     1. Materialize the selected committed source and a seed-bound candidate home.
     2. Build the source support closure without an installed runtime provider.
     3. Build and select the candidate compiler, runtime, and standard Loaves.
     4. Build and pack the shipped Oven and language server plus the contract runner.
-    5. Compare the candidate census with the seed census and committed PASS baseline.
-    6. Install the bundle into a second home and repeat installed verification.
-    7. When requested, rebuild DD-0010's six named artifacts and require byte identity.
+    5. Measure cold project, standard-package, contract-runner and floor builds without gating their footprint yet.
+    6. Compare the candidate census with the seed census and committed PASS baseline.
+    7. Install the bundle into a second home and repeat installed verification.
+    8. When requested, rebuild DD-0010's six named artifacts and require byte identity.
     """
     run = prepare_release(options)?
 
@@ -124,18 +122,22 @@ pub def release(options: ReleaseOptions) -> Result[Path, str]:
     phase(run, "bundle")?
     candidate = build_bundle(run, candidate)?
 
-    # 5. Direct outcomes may repair seed failures but may not lose its cases, PASS keys, or committed baseline.
+    # 5. The first checked-in measurement records the budget evidence before a later stage makes it a gate.
+    phase(run, "memory-budget")?
+    measure_memory(run, candidate)?
+
+    # 6. Direct outcomes may repair seed failures but may not lose its cases, PASS keys, or committed baseline.
     phase(run, "direct-verification")?
     reference = reference_census(run)?
     direct = direct_census(run, candidate)?
     compare_reference(run, reference, direct)?
 
-    # 6. A fresh home, source path, and Rust sysroot prove the packed toolchain rather than the build tree.
+    # 7. A fresh home, source path, and Rust sysroot prove the packed toolchain rather than the build tree.
     phase(run, "installed-verification")?
     installed = installed_verification(run, candidate)?
     compare_installed(run, direct, installed)?
 
-    # 7. Fixed-point work is an explicit release gate because it intentionally doubles native production.
+    # 8. Fixed-point work is an explicit release gate because it intentionally doubles native production.
     if run.options.prove_fixed_point:
         phase(run, "fixed-point")?
         prove_fixed_point(candidate.context)?
@@ -334,6 +336,28 @@ def build_bundle(run: ReleaseRun, candidate: Candidate) -> Result[Candidate, str
         ),
     )?
     return Ok(Candidate(context=context, oven=bundle_oven, lsp=bundle_lsp, runner=runner))
+
+
+def measure_memory(run: ReleaseRun, candidate: Candidate) -> Result[None, str]:
+    """Run three cold process-tree measurements through the packed candidate and retain `memory.tsv`."""
+    return require_release_step(
+        run,
+        release_step(
+            run,
+            "memory-budget",
+            candidate.oven.0,
+            [
+                "run",
+                run.paths.source.joinpath("scripts/memory_budget.incn").0,
+                "--",
+                candidate.oven.0,
+                run.paths.output.0,
+            ],
+            run.paths.source,
+            build_environment(run, run.paths.home, candidate.oven),
+            40,
+        ),
+    )
 
 
 def reference_census(run: ReleaseRun) -> Result[Path, str]:
@@ -643,11 +667,23 @@ def fetch_c_toolchain(run: ReleaseRun) -> Result[Path, str]:
         return Err("pinned Clang artifact must contain one .tar.gz layer")
     unpacked = run.paths.output.joinpath("c-toolchain-unpacked")
     unpacked.mkdir(true, true).map_err((error) => error.message())?
-    bytes = decompress_gzip(archives[0].read_bytes().map_err((error) => error.message())?).map_err(
-        (error) => error.message(),
+    require_release_step(
+        run,
+        release_step(
+            run,
+            "c-toolchain-unpack",
+            run.seed_oven.0,
+            [
+                "run",
+                run.paths.source.joinpath("scripts/archive_unpack/src/main.incn").0,
+                "--",
+                archives[0].0,
+                unpacked.0,
+            ],
+            run.paths.source,
+            build_environment(run, run.seed_home, run.seed_oven),
+        ),
     )?
-    mut archive = Archive.new(Cursor.new(bytes))
-    archive.unpack(unpacked.0).map_err((error) => error.to_string())?
     roots = [path for path in unpacked.iterdir().map_err((error) => error.message())? if path.is_dir()]
     if len(roots) != 1 or not roots[0].joinpath("bin/clang").is_file():
         return Err("pinned Clang archive has an unexpected root")
