@@ -212,18 +212,9 @@ impl CheckedInputBody<'_> {
                     .get(local)
                     .ok_or("owned local has no checked initializer")?;
                 let retained = self.owned_local(local, initializer.initializer)?;
-                let copy = crate::typechecker::semantic_type_from_resolved(retained.value_type)
-                    .abi_v0_facts()
-                    .ownership
-                    .is_trivially_copy();
-                if initializer.source.is_some()
-                    && copy
-                        != self
-                            .facts
-                            .checked_input_copy_value(self.canonical_owner(), retained.value_type)?
-                {
-                    return Err("checked Copy semantics require a compatible native input carrier");
-                }
+                let copy = self
+                    .facts
+                    .checked_input_copy_value(self.canonical_owner(), retained.value_type)?;
                 if !copy
                     && initializer
                         .source
@@ -291,19 +282,12 @@ impl CheckedInputBody<'_> {
                     .parameters
                     .get(argument.slot)
                     .ok_or("missing explicit call parameter")?;
-                let copy = crate::typechecker::semantic_type_from_resolved(&parameter.ty)
-                    .abi_v0_facts()
-                    .ownership
-                    .is_trivially_copy();
-                if argument.source.is_some()
-                    && matches!(argument.access, IncanInputAccess::Owned | IncanInputAccess::Inferred)
-                    && copy
-                        != self
-                            .facts
-                            .checked_input_copy_value(self.canonical_owner(), &parameter.ty)?
-                {
-                    return Err("checked Copy semantics require a compatible native input carrier");
-                }
+                let copy = if matches!(argument.access, IncanInputAccess::Owned | IncanInputAccess::Inferred) {
+                    self.facts
+                        .checked_input_copy_value(self.canonical_owner(), &parameter.ty)?
+                } else {
+                    false
+                };
                 // A closure local passed to a parameter its callee only calls lends its callable object for the call.
                 if argument.access == IncanInputAccess::Inferred
                     && !copy
