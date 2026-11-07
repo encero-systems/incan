@@ -311,6 +311,22 @@ model Account:
 }
 
 #[test]
+fn duplicate_rename_and_canonical_metadata_keys_are_refused() {
+    for (metadata, key) in [
+        ("renamed_from=\"email\", renamed_from=[\"address\"]", "renamed_from"),
+        ("canonical=true, canonical=false", "canonical"),
+    ] {
+        let source = format!("model Account:\n  value [{metadata}]: str\n");
+        let errors = parse_str_err(&source, "expected a duplicate field metadata key");
+        assert!(
+            errors[0].message.contains(&format!("Duplicate '{key}'")),
+            "Unexpected error: {}",
+            errors[0].message
+        );
+    }
+}
+
+#[test]
 fn test_parse_unknown_metadata_key_error() {
     // RFC 021: Any other keys are compile-time errors
     let source = r#"
@@ -329,20 +345,33 @@ model Account:
 
 #[test]
 fn test_parse_non_string_metadata_value_error() {
-    // RFC 021: Values must be string literals
-    let source = r#"
-model Account:
-  type_ [alias=123]: str
-"#;
-    let Err(err) = parse_str(source) else {
-        panic!("Expected non-string metadata value error");
-    };
-    // Parser should fail because it expects a string literal
-    assert!(
-        err[0].message.contains("string") || err[0].message.contains("Expected"),
-        "Unexpected error: {}",
-        err[0].message
-    );
+    let cases = [
+        ("alias=123", "alias", "string literal"),
+        ("description=true", "description", "string literal"),
+        ("renamed_from=true", "renamed_from", "list of string literals"),
+        ("renamed_from=[1]", "renamed_from", "list of string literals"),
+        ("canonical=\"false\"", "canonical", "boolean literal"),
+        ("canonical=0", "canonical", "boolean literal"),
+    ];
+    for (metadata, key, expected) in cases {
+        let source = format!("model Account:\n  type_ [{metadata}]: str\n");
+        let errors = parse_str_err(&source, "expected an invalid field metadata value");
+        assert!(
+            errors[0].message.contains(key),
+            "Unexpected error: {}",
+            errors[0].message
+        );
+        assert!(
+            errors[0].message.contains(expected),
+            "Unexpected error: {}",
+            errors[0].message
+        );
+        assert!(
+            errors[0].message.contains("type_"),
+            "Unexpected error: {}",
+            errors[0].message
+        );
+    }
 }
 
 #[test]

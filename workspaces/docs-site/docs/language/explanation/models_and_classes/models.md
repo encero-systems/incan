@@ -112,6 +112,16 @@ Models support per-field metadata for schema/wire formats:
 - `description="..."`: documentation string
 - **sugar**: `name as "wire"` is equivalent to `name [alias="wire"]`
 
+Fields can also retain rename continuity without changing their current source or wire spelling. `renamed_from` lists earlier declared names in chronological order, and `canonical=false` records that a field does not participate in a canonical stored hash:
+
+```incan
+model Customer:
+    email_address [renamed_from="email"] as "email": str
+    display_name [renamed_from=["name", "full_name"], canonical=false]: str
+```
+
+The earlier names are history, not additional constructor or decoder keys. See the [field metadata reference](../../reference/field_metadata.md) for the complete key and refusal contract.
+
 ```incan
 from std.serde import json
 

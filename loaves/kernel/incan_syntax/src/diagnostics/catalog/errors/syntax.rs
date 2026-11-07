@@ -325,6 +325,12 @@ pub fn duplicate_field_metadata_key(key: &str, span: Span) -> CompileError {
     CompileError::syntax(format!("Duplicate '{}' metadata key", key), span)
 }
 
+/// Report a safe metadata value whose shape does not match its compiler-known key.
+pub fn invalid_field_metadata_value(key: &str, expected: &str, field: &str, span: Span) -> CompileError {
+    CompileError::syntax(format!("Field metadata '{key}' on '{field}' expects {expected}"), span)
+        .with_hint(format!("Write {expected} for '{key}'"))
+}
+
 pub fn field_alias_as_conflict(span: Span) -> CompileError {
     CompileError::syntax("Cannot combine 'alias=\"...\"' with 'as \"...\"'".to_string(), span)
 }

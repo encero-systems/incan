@@ -20,7 +20,7 @@ use crate::ast::*;
 use crate::diagnostics::{CompileError, errors};
 use crate::lexer::{FStringPart as LexFStringPart, Token, TokenKind};
 use incan_lang::lang::conventions::validate_package_feature_identifier;
-use incan_lang::lang::field_metadata::{self, FieldMetadataKey};
+use incan_lang::lang::field_metadata::{self, FieldMetadataKey, FieldMetadataValueKind};
 use incan_lang::lang::keywords::{KeywordId, KeywordSurfaceKind};
 use incan_lang::lang::operators::OperatorId;
 use incan_lang::lang::punctuation::PunctuationId;

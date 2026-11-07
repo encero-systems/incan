@@ -1,0 +1,30 @@
+# behavior: rename history refuses names still declared on the model, duplicate claims, empty or invalid names, class-field metadata and construction through an earlier name (#2519)
+# expect-diagnostic: INCAN-T0130
+# expect-diagnostic: INCAN-T0131
+# expect-diagnostic: INCAN-T0001
+
+model ExistingNames:
+    email: str
+    email_address [renamed_from="email"]: str
+    own_name [renamed_from="own_name"]: str
+
+
+model DuplicateClaims:
+    primary_email [renamed_from="old_email"]: str
+    billing_email [renamed_from="old_email"]: str
+    contact_email [renamed_from=["contact", "contact"]]: str
+
+
+model InvalidHistory:
+    empty_string [renamed_from=""]: str
+    empty_list [renamed_from=[]]: str
+    punctuation [renamed_from="old-name"]: str
+
+
+class LiveObject:
+    renamed [renamed_from="old"]: str
+    excluded [canonical=false]: str
+
+
+def construct_with_old_name() -> None:
+    _ = ExistingNames(email="a", email_address="b", own_name="c", old_email="d")

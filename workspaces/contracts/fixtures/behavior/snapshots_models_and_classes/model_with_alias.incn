@@ -32,6 +32,9 @@ model Account:
     one [alias="1", description="Numeric key example"]: int
     # whitespace in alias
     two [alias="t w o", description="whitespace key example"]: int
+    # rename continuity and canonical participation do not change construction or field access
+    email_address [renamed_from="email", canonical=false]: str = ""
+    display_name [renamed_from=["name", "full_name"], canonical=true] as "displayName": str = ""
 
 
 def main() -> None:

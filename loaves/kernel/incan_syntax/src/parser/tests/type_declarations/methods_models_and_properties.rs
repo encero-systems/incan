@@ -290,20 +290,38 @@ enum Color:
 fn test_parse_model_field_metadata() -> Result<(), Vec<CompileError>> {
     let source = r#"
 model Account:
-  type_ [alias="type", description="Account tier"]: str
-  balance [description="Balance in cents"]: int
+  type_ [alias="type", description="Account tier", renamed_from="kind", canonical=false]: str
+  balance [description="Balance in cents", renamed_from=["amount", "cents"], canonical=true] as "balanceCents": int
 "#;
     let program = parse_str(source)?;
-    let model = match &program.declarations[0].node {
-        Declaration::Model(m) => m,
-        _ => panic!("Expected model"),
-    };
+    let model = require_model_decl(&program.declarations[0])?;
     let type_field = &model.fields[0].node;
     assert_eq!(type_field.metadata.alias.as_deref(), Some("type"));
     assert_eq!(type_field.metadata.description.as_deref(), Some("Account tier"));
+    assert_eq!(type_field.metadata.renamed_from.len(), 1);
+    assert_eq!(type_field.metadata.renamed_from[0].node, "kind");
+    assert!(!type_field.metadata.renamed_from_was_list);
+    assert_eq!(
+        type_field.metadata.canonical.as_ref().map(|value| value.node),
+        Some(false)
+    );
     let balance_field = &model.fields[1].node;
-    assert_eq!(balance_field.metadata.alias, None);
+    assert_eq!(balance_field.metadata.alias.as_deref(), Some("balanceCents"));
     assert_eq!(balance_field.metadata.description.as_deref(), Some("Balance in cents"));
+    assert_eq!(
+        balance_field
+            .metadata
+            .renamed_from
+            .iter()
+            .map(|value| value.node.as_str())
+            .collect::<Vec<_>>(),
+        vec!["amount", "cents"]
+    );
+    assert!(balance_field.metadata.renamed_from_was_list);
+    assert_eq!(
+        balance_field.metadata.canonical.as_ref().map(|value| value.node),
+        Some(true)
+    );
     Ok(())
 }
 
