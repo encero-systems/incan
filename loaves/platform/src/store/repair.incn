@@ -1,6 +1,6 @@
 """Explicit repair of a segment store: restore a damaged selection, quarantine damage and re-admit verified payloads."""
 
-from std.primitives import hexlify
+from std.primitives.hex import hexlify
 from crate.store import (
     PreparedPayload,
     Snapshot,
@@ -14,7 +14,16 @@ from crate.store import (
     snapshot,
     sync_durable,
 )
-from crate.store.files import StoreError, failure, file_digest, index_failure, io_failure, place_synced, sync_directory, sync_file
+from crate.store.files import (
+    StoreError,
+    failure,
+    file_digest,
+    index_failure,
+    io_failure,
+    place_synced,
+    sync_directory,
+    sync_file,
+)
 from crate.store.index import entries as index_entries, find as index_find
 from crate.store.path import StorePath as Path
 from crate.store.payloads import payload_intact, payload_path, put_payload
@@ -35,7 +44,7 @@ pub def repair_current(committed: Snapshot) -> Result[Snapshot, StoreError]:
     # 1. The caller's retained root is authority; generation order never chooses a candidate.
     root = committed.root
     if committed.generation == 0 or committed.digest == "":
-        return Err(failure("conflict", root.0, "repair requires a previously committed root"))
+        return Err(failure("conflict", root.value, "repair requires a previously committed root"))
     held = root
         .joinpath("locks")
         .joinpath("publication")
@@ -86,7 +95,7 @@ pub def quarantine_record(view: Snapshot, key: str, codec_damage: bool = false) 
                 source.store_copy(target, true, true).map_err((error) => io_failure(target, error))?
             else:
                 target
-                    .store_write_bytes(f"missing {source.0}\n".encode("utf-8"))
+                    .store_write_bytes(f"missing {source.value}\n".encode("utf-8"))
                     .map_err((error) => io_failure(target, error))?
             sync_file(target)?
             sync_directory(target.parent())?
@@ -137,12 +146,12 @@ pub def readmit_payload(root: Path, source: Path, expected: str) -> Result[Prepa
     2. Quarantine damage, then admit through the ordinary payload installer.
     """
     # 1. A proposed replacement cannot authorize its own new identity.
-    actual = hexlify(file_digest(source, "sha256").map_err((error) => failure("io", source.0, error.message()))?)
+    actual = hexlify(file_digest(source, "sha256").map_err((error) => failure("io", source.value, error.message()))?)
     if actual != expected:
-        return Err(failure("integrity", source.0, "replacement differs from the committed payload digest"))
+        return Err(failure("integrity", source.value, "replacement differs from the committed payload digest"))
     # 2. The ordinary installer retains the same canonical identity without an in-place edit.
     quarantine_payload(root, expected)?
     prepared = put_payload(root, source)?
     if prepared.digest != expected:
-        return Err(failure("integrity", source.0, "replacement changed during re-admission"))
+        return Err(failure("integrity", source.value, "replacement changed during re-admission"))
     return Ok(prepared)

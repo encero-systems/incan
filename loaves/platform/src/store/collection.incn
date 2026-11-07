@@ -96,7 +96,7 @@ pub def collect_records(
             return Ok(result)
         for selected in pending:
             mark_snapshot(marked, selected, references)?
-    return Err(failure("busy", root.0, "collection deferred because new snapshot leases kept arriving"))
+    return Err(failure("busy", root.value, "collection deferred because new snapshot leases kept arriving"))
 
 
 def collect_handshake(root: Path, latest: Snapshot, mut marked: Marked) -> Result[list[Snapshot], StoreError]:
@@ -122,7 +122,7 @@ def live_snapshots(root: Path, mut marked: Marked) -> Result[list[Snapshot], Sto
     for path in leases.store_children().map_err((error) => io_failure(leases, error))?:
         name = path.name()
         if not name.startswith(".") or not name.endswith(".incan.lock"):
-            return Err(failure("integrity", path.0, "unexpected lease entry"))
+            return Err(failure("integrity", path.value, "unexpected lease entry"))
         token = name[1:len(name) - 11]
         if token in marked.roots:
             continue
@@ -132,16 +132,16 @@ def live_snapshots(root: Path, mut marked: Marked) -> Result[list[Snapshot], Sto
             continue
         fields = token.split("-")
         if len(fields) != 3 or len(fields[2]) != 64:
-            return Err(failure("integrity", path.0, "malformed live lease descriptor"))
+            return Err(failure("integrity", path.value, "malformed live lease descriptor"))
         match natural(fields[0]):
-            None => return Err(failure("integrity", path.0, "malformed lease generation"))
+            None => return Err(failure("integrity", path.value, "malformed lease generation"))
             Some(generation) =>
                 if generation == 0:
                     if fields[1] != "":
-                        return Err(failure("integrity", path.0, "empty snapshot lease names a manifest"))
+                        return Err(failure("integrity", path.value, "empty snapshot lease names a manifest"))
                     continue
                 if len(fields[1]) != 64:
-                    return Err(failure("integrity", path.0, "malformed lease manifest digest"))
+                    return Err(failure("integrity", path.value, "malformed lease manifest digest"))
                 manifest = read_manifest(root, generation, fields[1], HOME_VIEW)?
                 mut found = false
                 for entry in manifest.views:
@@ -152,7 +152,7 @@ def live_snapshots(root: Path, mut marked: Marked) -> Result[list[Snapshot], Sto
                 if not found:
                     # An empty view is valid, but has no lazy pages or frames to protect.
                     marked.roots.add(token)
-                    marked.files.add(manifest_path(root, generation, fields[1]).0)
+                    marked.files.add(manifest_path(root, generation, fields[1]).value)
     return Ok(pending)
 
 
@@ -166,7 +166,7 @@ def mark_snapshot(
     if token in marked.roots:
         return Ok(None)
     marked.roots.add(token)
-    marked.files.add(manifest_path(view.root, view.generation, view.digest).0)
+    marked.files.add(manifest_path(view.root, view.generation, view.digest).value)
     mut pending: list[str] = [view.index]
     mut index = 0
     while index < len(pending):
@@ -176,7 +176,7 @@ def mark_snapshot(
             continue
         page = read_page(view.root, name).map_err(index_failure)?
         marked.pages.add(name)
-        marked.files.add(page_path(view.root, name).0)
+        marked.files.add(page_path(view.root, name).value)
         for entry in page.entries:
             if page.level > 0:
                 pending.append(entry.child)
@@ -193,7 +193,7 @@ def mark_snapshot(
                                     marked.payloads.add(digest)
                             _ => pass
                         marked.segments.add(location.segment)
-                        marked.files.add(view.root.joinpath(f"segments/{location.segment}.seg").0)
+                        marked.files.add(view.root.joinpath(f"segments/{location.segment}.seg").value)
     return Ok(None)
 
 
@@ -205,7 +205,7 @@ def sweep_layouts(root: Path, marked: Marked) -> Result[Reclaimed, StoreError]:
         if not directory.is_dir():
             continue
         for path in directory.store_children().map_err((error) => io_failure(directory, error))?:
-            if path.0 in marked.files:
+            if path.value in marked.files:
                 continue
             mut suffix = ".seg"
             if name == "indexes":

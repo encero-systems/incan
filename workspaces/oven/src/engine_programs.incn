@@ -2,7 +2,7 @@
 
 from std.fs import Path
 from std.environ import get_or
-from std.fs.locking import FileLock
+from std.primitives.locking import LockGuard
 from rust::std::rc import Rc
 from engine_capture import BuildEpoch, InputRole
 from std.json import JsonValue, parse
@@ -57,7 +57,7 @@ pub model ProgramOutcome:
     pub console: str = ""
     pub epoch_reads: int = 0
     pub transaction: Option[Transaction] = None
-    pub claim: Option[Rc[FileLock]] = None
+    pub claim: Option[Rc[LockGuard]] = None
 
 
 pub model NativeSelection:

@@ -13,8 +13,9 @@ name. Entries are sorted by key, and an inner entry's key is the smallest key be
 
 from rust::std::process import id
 from rust::std::string import String as RustString
-from std.primitives import hexlify, sha256
-from std.primitives.fs.mapping import MappedView
+from std.primitives.hash import sha256
+from std.primitives.hex import hexlify
+from std.primitives.views import MappedView
 from crate.store.bytes import append_bytes, append_u64
 from crate.store.path import StorePath as Path
 
@@ -169,13 +170,13 @@ def mapped_page(path: Path, name: str) -> Result[Layout, IndexError]:
 
     Index pages are content-named and never rewritten in place, so their inodes stay unchanged while mapped.
     """
-    mapped = path.store_map_read().map_err((error) => IndexError(object=path.0, detail=error.message()))?
+    mapped = path.store_map_read().map_err((error) => IndexError(object=path.value, detail=error.message()))?
     match mapped.view(0, mapped.len()):
         None => return Err(malformed(path, "the mapping has no whole view"))
         Some(view) =>
             pages_read["pages"] = pages_read.get("pages", 0) + 1
             if hexlify(view_digest(view)) != name:
-                return Err(IndexError(object=path.0, detail="index page does not match its name"))
+                return Err(IndexError(object=path.value, detail="index page does not match its name"))
             return layout(view).map_err((detail) => malformed(path, detail))
 
 
@@ -260,7 +261,7 @@ def scalar(view: MappedView, offset: int) -> Result[int, str]:
 
 def malformed(path: Path, detail: str) -> IndexError:
     """A page whose contents do not decode, named."""
-    return IndexError(object=path.0, detail=f"malformed index page: {detail}")
+    return IndexError(object=path.value, detail=f"malformed index page: {detail}")
 
 
 # ---- Writes ----
@@ -424,10 +425,10 @@ def write_page(staged: Path, page: Page) -> Result[str, IndexError]:
     target = staged.joinpath(f"{name}.page")
     if target.is_file():
         return Ok(name)
-    staged.store_mkdir(true, true).map_err((error) => IndexError(object=staged.0, detail=error.message()))?
-    temporary = Path(f"{target.0}.{id()}.tmp")
-    temporary.store_write_bytes(data).map_err((error) => IndexError(object=temporary.0, detail=error.message()))?
-    temporary.store_replace(target).map_err((error) => IndexError(object=target.0, detail=error.message()))?
+    staged.store_mkdir(true, true).map_err((error) => IndexError(object=staged.value, detail=error.message()))?
+    temporary = target.at(f"{target.value}.{id()}.tmp")
+    temporary.store_write_bytes(data).map_err((error) => IndexError(object=temporary.value, detail=error.message()))?
+    temporary.store_replace(target).map_err((error) => IndexError(object=target.value, detail=error.message()))?
     return Ok(name)
 
 

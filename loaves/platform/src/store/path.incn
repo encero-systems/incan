@@ -1,109 +1,172 @@
-"""Store-private path and filesystem operations below the application-facing `std.fs` facade."""
+"""Placement-neutral paths used by the shared segment-store engine."""
 
-from std.primitives import decode_utf8
-from std.primitives.fs.locking import (
-    FileLock,
-    exclusive as lock_exclusive,
-    shared as lock_shared,
-    try_exclusive as try_lock_exclusive,
-)
-from std.primitives.fs.mapping import MappedFile, map_read
-from std.primitives.fs.path import PrimitivePath
+from rust::std::cell import RefCell
+from rust::std::rc import Rc
+from rust::std::string import String as RustString
+from std.primitives.locking import LockGuard
+from std.primitives.views import MappedFile
+
+
+pub class StoreContext:
+    """Shared placement state carried explicitly by every path instead of hidden in a captured callback."""
+
+    pub files: dict[str, MappedFile]
+    pub directories: set[str]
+    pub leases: dict[str, LockGuard]
+
+
+pub type StoreContextRef = Rc[RefCell[StoreContext]]
+
+
+pub def store_context() -> StoreContextRef:
+    """Create an empty shared context; disk placements retain it only to keep one operation signature."""
+    return Rc.new(RefCell.new(StoreContext(files={}, directories=set([""]), leases={})))
 
 
 pub model StoreIoError:
-    """One store filesystem failure with its operation, path and host detail preserved."""
+    """One placement failure with its operation, object and detail preserved."""
 
     pub path: str
     pub detail: str
     pub operation: str = "store io"
 
     pub def message(self) -> str:
-        """Return an actionable diagnostic naming the failed operation and path."""
+        """Return an actionable diagnostic naming the failed operation and object."""
         return f"{self.operation} {self.path}: {self.detail}"
 
 
 pub model StorePathStat:
-    """The file length observed by one successful metadata read."""
+    """The object length observed by one successful metadata read."""
 
     pub length: int
 
     pub def store_size(self) -> Result[int, StoreIoError]:
-        """Return the observed file length."""
+        """Return the observed object length."""
         return Ok(self.length)
 
 
-@derive(Clone)
-pub type StorePath = newtype str:
-    """A store-private filesystem path with only the substrate operations it requires."""
+pub model StorePathOps:
+    """The complete placement seam used by store paths and no higher-level store policy."""
 
-    pub def primitive(self) -> PrimitivePath:
-        """Project this path into the foundational filesystem resource contract."""
-        return PrimitivePath(value=self.0)
+    pub join: (StoreContextRef, str, str) -> str
+    pub parent: (StoreContextRef, str) -> str
+    pub name: (StoreContextRef, str) -> str
+    pub exists: (StoreContextRef, str) -> bool
+    pub is_file: (StoreContextRef, str) -> bool
+    pub is_directory: (StoreContextRef, str) -> bool
+    pub is_symlink: (StoreContextRef, str) -> bool
+    pub create_directory: (StoreContextRef, str, bool, bool) -> Result[None, str]
+    pub read_all: (StoreContextRef, str) -> Result[bytes, str]
+    pub write_all: (StoreContextRef, str, bytes) -> Result[None, str]
+    pub children: (StoreContextRef, str) -> Result[list[str], str]
+    pub length: (StoreContextRef, str) -> Result[int, str]
+    pub copy: (StoreContextRef, str, str) -> Result[None, str]
+    pub set_readonly: (StoreContextRef, str, bool) -> Result[None, str]
+    pub remove: (StoreContextRef, str) -> Result[None, str]
+    pub remove_tree: (StoreContextRef, str) -> Result[None, str]
+    pub replace: (StoreContextRef, str, str) -> Result[None, str]
+    pub sync: (StoreContextRef, str) -> Result[None, str]
+    pub sync_ordered: (StoreContextRef, str) -> Result[None, str]
+    pub map_read: (StoreContextRef, str) -> Result[MappedFile, str]
+    pub lock_shared: (StoreContextRef, str) -> Result[LockGuard, str]
+    pub lock_exclusive: (StoreContextRef, str) -> Result[LockGuard, str]
+    pub try_lock_exclusive: (StoreContextRef, str) -> Result[Option[LockGuard], str]
+    pub digest: (StoreContextRef, str, str) -> Result[bytes, str]
+
+
+@derive(Clone)
+pub model StorePath:
+    """
+    One logical store object selected through a placement.
+
+    The shared store engine carries this value without importing a filesystem or a memory implementation. Child paths
+    retain the same operations and placement identity.
+    """
+
+    pub value: str
+    pub placement: str
+    operations: StorePathOps
+    context: StoreContextRef
+
+    @staticmethod
+    pub def create(value: str, placement: str, operations: StorePathOps, context: StoreContextRef) -> StorePath:
+        """Create a path for one placement implementation."""
+        return StorePath(value=value, placement=placement, operations=operations, context=context)
+
+    pub def at(self, value: str) -> StorePath:
+        """Return another logical object in the same placement."""
+        return StorePath.create(value, self.placement, self.operations, self.context.clone())
 
     pub def joinpath(self, segment: str) -> StorePath:
-        """Return a lexical child without querying the filesystem."""
-        return StorePath(self.primitive().join(segment).value)
+        """Return a lexical child without querying the placement."""
+        join = self.operations.join
+        return self.at(join(self.context.clone(), self.value, segment))
 
     pub def parent(self) -> StorePath:
-        """Return the lexical parent, or `.` when none is present."""
-        return StorePath(self.primitive().parent().value)
+        """Return the lexical parent selected by the placement."""
+        parent = self.operations.parent
+        return self.at(parent(self.context.clone(), self.value))
 
     pub def name(self) -> str:
-        """Return the final path component, or an empty string when absent."""
-        return self.primitive().name()
+        """Return the final logical path component."""
+        name = self.operations.name
+        return name(self.context.clone(), self.value)
 
     pub def exists(self) -> bool:
-        """Return whether the path currently resolves to an entry."""
-        return self.primitive().exists()
+        """Return whether the placement currently contains this object."""
+        exists = self.operations.exists
+        return exists(self.context.clone(), self.value)
 
     pub def is_file(self) -> bool:
-        """Return whether the path currently resolves to a regular file."""
-        return self.primitive().is_file()
+        """Return whether this path selects an immutable or mutable byte object."""
+        is_file = self.operations.is_file
+        return is_file(self.context.clone(), self.value)
 
     pub def is_dir(self) -> bool:
-        """Return whether the path currently resolves to a directory."""
-        return self.primitive().is_directory()
+        """Return whether this path selects a placement directory."""
+        is_directory = self.operations.is_directory
+        return is_directory(self.context.clone(), self.value)
 
     pub def is_symlink(self) -> bool:
-        """Return whether the path itself is a symbolic link."""
-        return self.primitive().is_symlink()
+        """Return whether this path itself is a symbolic link."""
+        is_symlink = self.operations.is_symlink
+        return is_symlink(self.context.clone(), self.value)
 
     pub def store_mkdir(self, parents: bool, exist_ok: bool) -> Result[None, StoreIoError]:
-        """Create this directory with the requested parent and existing-directory behavior."""
-        return self.primitive().create_directory(parents, exist_ok).map_err((detail) => _io_error(self, detail))
+        """Create this placement directory with the requested parent behavior."""
+        create_directory = self.operations.create_directory
+        return create_directory(self.context.clone(), self.value, parents, exist_ok).map_err(
+            (detail) => self.io_error(detail),
+        )
 
     pub def store_read_bytes(self) -> Result[bytes, StoreIoError]:
-        """Read this complete store metadata file as owned bytes."""
-        return self.primitive().read_all().map_err((detail) => _io_error(self, detail))
+        """Read this complete placement object as owned bytes."""
+        read_all = self.operations.read_all
+        return read_all(self.context.clone(), self.value).map_err((detail) => self.io_error(detail))
 
     pub def store_write_bytes(self, data: bytes) -> Result[None, StoreIoError]:
-        """Replace this file with the supplied complete bytes."""
-        return self.primitive().write_all(data).map_err((detail) => _io_error(self, detail))
+        """Replace this object with the supplied complete bytes."""
+        write_all = self.operations.write_all
+        return write_all(self.context.clone(), self.value, data).map_err((detail) => self.io_error(detail))
 
     pub def store_read_text(self, encoding: str, errors: str) -> Result[str, StoreIoError]:
         """Read strict UTF-8 store metadata; no other codec or error policy is accepted."""
         if encoding != "utf-8" or errors != "strict":
-            return Err(_io_error(self, "store metadata requires strict UTF-8"))
-        decoded, text = decode_utf8(self.store_read_bytes()?, false)
-        if decoded:
-            return Ok(text)
-        return Err(_io_error(self, text))
+            return Err(self.io_error("store metadata requires strict UTF-8"))
+        return _decode(self, self.store_read_bytes()?)
 
     pub def store_children(self) -> Result[list[StorePath], StoreIoError]:
-        """Return direct children in host iteration order."""
-        mut paths: list[StorePath] = []
-        for child in self.primitive().children().map_err((detail) => _io_error(self, detail))?:
-            paths.append(StorePath(child.value))
-        return Ok(paths)
+        """Return direct child objects in placement iteration order."""
+        children = self.operations.children
+        paths = children(self.context.clone(), self.value).map_err((detail) => self.io_error(detail))?
+        return Ok([self.at(path) for path in paths])
 
     pub def store_stat(self) -> Result[StorePathStat, StoreIoError]:
-        """Read file metadata and retain only the length the substrate consumes."""
-        return self
-            .primitive()
-            .length()
+        """Read object metadata and retain only the length the substrate consumes."""
+        length = self.operations.length
+        return length(self.context.clone(), self.value)
             .map((length) => StorePathStat(length=length))
-            .map_err((detail) => _io_error(self, detail))
+            .map_err((detail) => self.io_error(detail))
 
     pub def store_copy(
         self,
@@ -111,52 +174,82 @@ pub type StorePath = newtype str:
         _follow_symlinks: bool,
         _preserve_metadata: bool,
     ) -> Result[StorePath, StoreIoError]:
-        """Copy a store payload file to an explicit staging path."""
-        self.primitive().copy_to(target.primitive()).map_err((detail) => _io_error(target, detail))?
+        """Copy one placement object to an explicit path in the same placement."""
+        self.same_placement(target)?
+        copy = self.operations.copy
+        copy(self.context.clone(), self.value, target.value).map_err((detail) => target.io_error(detail))?
         return Ok(target)
 
     pub def store_chmod(self, readonly: bool) -> Result[None, StoreIoError]:
-        """Set the host read-only bit used by canonical payload files."""
-        return self.primitive().set_readonly(readonly).map_err((detail) => _io_error(self, detail))
+        """Set the placement's read-only state when it has one."""
+        set_readonly = self.operations.set_readonly
+        return set_readonly(self.context.clone(), self.value, readonly).map_err((detail) => self.io_error(detail))
 
     pub def store_unlink(self) -> Result[None, StoreIoError]:
-        """Remove one file or symbolic link."""
-        return self.primitive().remove().map_err((detail) => _io_error(self, detail))
+        """Remove one placement object or symbolic link."""
+        remove = self.operations.remove
+        return remove(self.context.clone(), self.value).map_err((detail) => self.io_error(detail))
 
     pub def store_remove_tree(self) -> Result[None, StoreIoError]:
-        """Remove one staging directory tree without following a symlink root."""
-        if self.is_symlink():
-            return Err(_io_error(self, "remove_tree refuses to follow symbolic links"))
-        return self.primitive().remove_directory_tree().map_err((detail) => _io_error(self, detail))
+        """Remove one staging tree without following a symbolic-link root."""
+        remove_tree = self.operations.remove_tree
+        return remove_tree(self.context.clone(), self.value).map_err((detail) => self.io_error(detail))
 
     pub def store_replace(self, target: StorePath) -> Result[StorePath, StoreIoError]:
-        """Atomically replace a non-directory target on the same filesystem."""
-        if self.is_dir() or (target.exists() and target.is_dir() and not target.is_symlink()):
-            return Err(_io_error(target, "replace requires a non-directory target"))
-        self.primitive().replace(target.primitive()).map_err((detail) => _io_error(target, detail))?
+        """Atomically replace a non-directory target inside this placement."""
+        self.same_placement(target)?
+        replace = self.operations.replace
+        replace(self.context.clone(), self.value, target.value).map_err((detail) => target.io_error(detail))?
         return Ok(target)
 
     pub def store_sync(self) -> Result[None, StoreIoError]:
-        """Synchronize this file's complete contents and metadata through the host filesystem."""
-        return self.primitive().sync_all().map_err((detail) => _io_error(self, detail))
+        """Synchronize this object through the placement's strongest ordinary barrier."""
+        sync = self.operations.sync
+        return sync(self.context.clone(), self.value).map_err((detail) => self.io_error(detail))
+
+    pub def store_sync_ordered(self) -> Result[None, StoreIoError]:
+        """Apply the placement's qualified publication-order barrier."""
+        sync_ordered = self.operations.sync_ordered
+        return sync_ordered(self.context.clone(), self.value).map_err((detail) => self.io_error(detail))
 
     pub def store_map_read(self) -> Result[MappedFile, StoreIoError]:
-        """Map this immutable file through the foundational owner-anchored mapping contract."""
-        return map_read(self.primitive()).map_err((detail) => _io_error(self, detail))
+        """Anchor this immutable object behind the shared bounded-view contract."""
+        map_read = self.operations.map_read
+        return map_read(self.context.clone(), self.value).map_err((detail) => self.io_error(detail))
 
-    pub def store_lock_shared(self) -> Result[FileLock, StoreIoError]:
-        """Acquire a blocking shared advisory lock for this stable lock path."""
-        return lock_shared(self.primitive()).map_err((detail) => _io_error(self, detail))
+    pub def store_lock_shared(self) -> Result[LockGuard, StoreIoError]:
+        """Acquire the placement's shared lease guard."""
+        lock_shared = self.operations.lock_shared
+        return lock_shared(self.context.clone(), self.value).map_err((detail) => self.io_error(detail))
 
-    pub def store_lock_exclusive(self) -> Result[FileLock, StoreIoError]:
-        """Acquire a blocking exclusive advisory lock for this stable lock path."""
-        return lock_exclusive(self.primitive()).map_err((detail) => _io_error(self, detail))
+    pub def store_lock_exclusive(self) -> Result[LockGuard, StoreIoError]:
+        """Acquire the placement's exclusive publication or claim guard."""
+        lock_exclusive = self.operations.lock_exclusive
+        return lock_exclusive(self.context.clone(), self.value).map_err((detail) => self.io_error(detail))
 
-    pub def store_try_lock_exclusive(self) -> Result[Option[FileLock], StoreIoError]:
-        """Try to acquire an exclusive advisory lock without blocking."""
-        return try_lock_exclusive(self.primitive()).map_err((detail) => _io_error(self, detail))
+    pub def store_try_lock_exclusive(self) -> Result[Option[LockGuard], StoreIoError]:
+        """Try to acquire the placement's exclusive guard without blocking."""
+        try_lock_exclusive = self.operations.try_lock_exclusive
+        return try_lock_exclusive(self.context.clone(), self.value).map_err((detail) => self.io_error(detail))
+
+    pub def store_digest(self, algorithm: str) -> Result[bytes, StoreIoError]:
+        """Hash this object using the placement's bounded read implementation."""
+        digest = self.operations.digest
+        return digest(self.context.clone(), self.value, algorithm).map_err((detail) => self.io_error(detail))
+
+    def same_placement(self, other: StorePath) -> Result[None, StoreIoError]:
+        """Refuse an operation that would move data across placement identities implicitly."""
+        if self.placement != other.placement:
+            return Err(self.io_error("store operation crosses placements"))
+        return Ok(None)
+
+    def io_error(self, detail: str) -> StoreIoError:
+        """Attach a placement failure to this logical object."""
+        return StoreIoError(path=self.value, detail=detail)
 
 
-def _io_error(path: StorePath, detail: str) -> StoreIoError:
-    """Attach a host failure to the path on which the substrate operated."""
-    return StoreIoError(path=path.0, detail=detail)
+def _decode(path: StorePath, data: bytes) -> Result[str, StoreIoError]:
+    """Decode one metadata object as strict UTF-8."""
+    match RustString.from_utf8(data):
+        Ok(text) => return Ok(str(text))
+        Err(error) => return Err(StoreIoError(path=path.value, detail=error.to_string()))

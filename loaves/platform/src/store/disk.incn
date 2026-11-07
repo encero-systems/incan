@@ -1,0 +1,194 @@
+"""Disk placement for the shared segment-store engine."""
+
+from std.primitives.hash import sha256
+from std.primitives.locking import LockGuard
+from std.primitives.fs import MappedFile, Path, exclusive, map_read, try_exclusive, shared
+from std.primitives.fs import open_read, read_chunk
+from crate.durability import sync_ordered
+from crate.store.path import StoreContextRef, StorePath, StorePathOps, store_context
+
+
+pub def root(value: str) -> StorePath:
+    """Select a disk store rooted at `value` without touching it."""
+    return StorePath.create(value, "disk", _operations(), store_context())
+
+
+def _operations() -> StorePathOps:
+    """Bind every placement operation once for one disk root."""
+    return StorePathOps(
+        join=_join,
+        parent=_parent,
+        name=_name,
+        exists=_exists,
+        is_file=_is_file,
+        is_directory=_is_directory,
+        is_symlink=_is_symlink,
+        create_directory=_create_directory,
+        read_all=_read_all,
+        write_all=_write_all,
+        children=_children,
+        length=_length,
+        copy=_copy,
+        set_readonly=_set_readonly,
+        remove=_remove,
+        remove_tree=_remove_tree,
+        replace=_replace,
+        sync=_sync,
+        sync_ordered=_sync_ordered,
+        map_read=_map_read,
+        lock_shared=_lock_shared,
+        lock_exclusive=_lock_exclusive,
+        try_lock_exclusive=_try_lock_exclusive,
+        digest=_digest,
+    )
+
+
+def _path(value: str) -> Path:
+    """Project one placement object into the foundational disk-path contract."""
+    return Path(value=value)
+
+
+def _join(_context: StoreContextRef, path: str, segment: str) -> str:
+    """Return one lexical disk child."""
+    return _path(path).join(segment).value
+
+
+def _parent(_context: StoreContextRef, path: str) -> str:
+    """Return one lexical disk parent."""
+    return _path(path).parent().value
+
+
+def _name(_context: StoreContextRef, path: str) -> str:
+    """Return one disk path's final component."""
+    return _path(path).name()
+
+
+def _exists(_context: StoreContextRef, path: str) -> bool:
+    """Return whether a disk entry exists."""
+    return _path(path).exists()
+
+
+def _is_file(_context: StoreContextRef, path: str) -> bool:
+    """Return whether a disk entry is a regular file."""
+    return _path(path).is_file()
+
+
+def _is_directory(_context: StoreContextRef, path: str) -> bool:
+    """Return whether a disk entry is a directory."""
+    return _path(path).is_directory()
+
+
+def _is_symlink(_context: StoreContextRef, path: str) -> bool:
+    """Return whether a disk entry itself is a symbolic link."""
+    return _path(path).is_symlink()
+
+
+def _create_directory(_context: StoreContextRef, path: str, parents: bool, exist_ok: bool) -> Result[None, str]:
+    """Create one disk directory."""
+    return _path(path).create_directory(parents, exist_ok)
+
+
+def _read_all(_context: StoreContextRef, path: str) -> Result[bytes, str]:
+    """Read one complete disk file."""
+    return _path(path).read_all()
+
+
+def _write_all(_context: StoreContextRef, path: str, data: bytes) -> Result[None, str]:
+    """Replace one complete disk file."""
+    return _path(path).write_all(data)
+
+
+def _children(_context: StoreContextRef, path: str) -> Result[list[str], str]:
+    """Return direct disk children in host iteration order."""
+    match _path(path).children():
+        Err(error) => return Err(error)
+        Ok(children) =>
+            mut values: list[str] = []
+            for child in children:
+                values.append(child.value)
+            return Ok(values)
+
+
+def _length(_context: StoreContextRef, path: str) -> Result[int, str]:
+    """Return one disk file's length."""
+    return _path(path).length()
+
+
+def _copy(_context: StoreContextRef, source: str, target: str) -> Result[None, str]:
+    """Copy one disk file to another disk path."""
+    _ = _path(source).copy_to(_path(target))?
+    return Ok(None)
+
+
+def _set_readonly(_context: StoreContextRef, path: str, readonly: bool) -> Result[None, str]:
+    """Set one disk entry's read-only bit."""
+    return _path(path).set_readonly(readonly)
+
+
+def _remove(_context: StoreContextRef, path: str) -> Result[None, str]:
+    """Remove one disk file or symbolic link."""
+    return _path(path).remove()
+
+
+def _remove_tree(_context: StoreContextRef, path: str) -> Result[None, str]:
+    """Remove one disk directory tree without following a symbolic-link root."""
+    if _path(path).is_symlink():
+        return Err("remove_tree refuses to follow symbolic links")
+    return _path(path).remove_directory_tree()
+
+
+def _replace(_context: StoreContextRef, source: str, target: str) -> Result[None, str]:
+    """Atomically replace a non-directory disk target."""
+    if (
+        _path(source).is_directory()
+        or (_path(target).exists() and _path(target).is_directory() and not _path(target).is_symlink())
+    ):
+        return Err("replace requires a non-directory target")
+    return _path(source).replace(_path(target))
+
+
+def _sync(_context: StoreContextRef, path: str) -> Result[None, str]:
+    """Synchronize one disk entry's data and metadata."""
+    return _path(path).sync_all()
+
+
+def _sync_ordered(_context: StoreContextRef, path: str) -> Result[None, str]:
+    """Apply the qualified disk publication barrier."""
+    return sync_ordered(path)
+
+
+def _map_read(_context: StoreContextRef, path: str) -> Result[MappedFile, str]:
+    """Map one immutable disk file."""
+    return map_read(_path(path))
+
+
+def _lock_shared(_context: StoreContextRef, path: str) -> Result[LockGuard, str]:
+    """Acquire a shared operating-system lock guard."""
+    return shared(_path(path)).map((guard) => guard.placement_guard())
+
+
+def _lock_exclusive(_context: StoreContextRef, path: str) -> Result[LockGuard, str]:
+    """Acquire an exclusive operating-system lock guard."""
+    return exclusive(_path(path)).map((guard) => guard.placement_guard())
+
+
+def _try_lock_exclusive(_context: StoreContextRef, path: str) -> Result[Option[LockGuard], str]:
+    """Try to acquire an exclusive operating-system lock guard."""
+    match try_exclusive(_path(path)):
+        Err(error) => return Err(error)
+        Ok(None) => return Ok(None)
+        Ok(Some(guard)) => return Ok(Some(guard.placement_guard()))
+
+
+def _digest(_context: StoreContextRef, path: str, algorithm: str) -> Result[bytes, str]:
+    """Hash a disk file in bounded chunks using the format's admitted algorithm."""
+    if algorithm != "sha256":
+        return Err(f"unsupported store digest algorithm {algorithm}")
+    file = open_read(_path(path))?
+    mut hasher = sha256.new()
+    loop:
+        chunk = read_chunk(file, 65536)?
+        if len(chunk) == 0:
+            break
+        hasher.update(chunk)
+    return Ok(hasher.finalize_bytes())

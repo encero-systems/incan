@@ -7,7 +7,7 @@ yet views that unit's evidence first, keys the unit from it, and finds the unit 
 """
 
 from std.fs import Path
-from std.fs.locking import FileLock
+from std.primitives.locking import LockGuard
 from bakery import bakery, claim, find, lookup, prior_size, reached, seal, staging, view_directory
 from bakery_records import Fact
 from bakery_roots import register_root
@@ -27,7 +27,7 @@ pub def rust_claim(name: str) -> Result[str, str]:
     return fingerprint(["rust-unit-name", name])
 
 
-pub def claim_rust(store: Path, name: str) -> Result[FileLock, str]:
+pub def claim_rust(store: Path, name: str) -> Result[LockGuard, str]:
     """Claim the bakes of one Rust unit name; its identity is known only after its dependency evidence is."""
     return claim(store, rust_claim(name)?)
 

@@ -16,7 +16,7 @@ from rust::std::os::unix::process import CommandExt, ExitStatusExt
 from trace_adapter import flush as flush_trace
 from rust::std::process import Command
 from std.fs import Path
-from std.fs.locking import FileLock
+from std.primitives.locking import LockGuard
 from rust::std::rc import Rc
 from pub::incan_platform.store import Transaction
 from bakery import (
@@ -107,7 +107,7 @@ pub model Made:
     # held until the caller commits.
     pub fact: Option[Fact] = None
     pub transaction: Option[Transaction] = None
-    pub claim: Option[Rc[FileLock]] = None
+    pub claim: Option[Rc[LockGuard]] = None
 
 
 pub def compile_unit(

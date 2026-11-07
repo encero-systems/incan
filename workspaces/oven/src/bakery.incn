@@ -27,7 +27,7 @@ from std.encoding.hex import hexlify
 from std.environ import get_or
 from std.hash import file_digest
 from std.fs import Path
-from std.fs.locking import FileLock
+from std.primitives.locking import LockGuard
 from std.json import JsonValue
 from files import json_text, make_directory, read_json
 from home_paths import home
@@ -148,7 +148,7 @@ def payload_current(store: Path, file: FactFile) -> bool:
     return true
 
 
-pub def claim(store: Path, identity: str) -> Result[FileLock, str]:
+pub def claim(store: Path, identity: str) -> Result[LockGuard, str]:
     """Claim `identity` for baking; see `claim_unit`."""
     clock = begin_work()
     held = claim_unit(store, identity)
@@ -156,7 +156,7 @@ pub def claim(store: Path, identity: str) -> Result[FileLock, str]:
     return held
 
 
-def claim_unit(store: Path, identity: str) -> Result[FileLock, str]:
+def claim_unit(store: Path, identity: str) -> Result[LockGuard, str]:
     """
     Claim `identity` for baking; waits while another baker holds it. The claim lasts as long as the lock.
 

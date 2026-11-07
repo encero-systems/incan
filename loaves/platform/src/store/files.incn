@@ -1,12 +1,9 @@
-"""The segment store's failures, its work observation, and the synced file operations every store module uses."""
+"""The segment store's failures, work observation and ordered object operations."""
 
 from rust::std::process import id, exit as process_exit
 from rust::std::string import String as RustString
-from std.primitives import sha256
 from std.primitives.environ import read as read_environment
-from std.primitives.fs import open_read, read_chunk
-from crate.durability import sync_ordered
-from crate.trace import Clock, Operation, WorkObserver
+from crate.trace.schema import Clock, Operation, WorkObserver
 from crate.store.index import IndexError
 from crate.store.path import StoreIoError, StorePath as Path
 
@@ -52,7 +49,7 @@ pub def failure(kind: str, object: str, detail: str) -> StoreError:
 
 pub def io_failure(object: Path, error: StoreIoError) -> StoreError:
     """An I/O error on one path."""
-    return failure("io", object.0, error.message())
+    return failure("io", object.value, error.message())
 
 
 pub def index_failure(error: IndexError) -> StoreError:
@@ -103,27 +100,27 @@ pub def ensure_directory(path: Path) -> Result[None, StoreError]:
 
 
 pub def sync_file(path: Path) -> Result[None, StoreError]:
-    """Order one staged file's contents; the publication barriers perform the full durable drive flush."""
+    """Order one staged object's contents through its placement."""
     clock = begin_work()
-    result = sync_ordered(path.0).map_err((error) => failure("io", path.0, error))
-    record_work(Operation.StoreFileSync, path.0, clock)
+    result = path.store_sync_ordered().map_err((error) => failure("io", path.value, error.message()))
+    record_work(Operation.StoreFileSync, path.value, clock)
     return result
 
 
 pub def place_synced(target: Path, data: bytes) -> Result[None, StoreError]:
-    """Write a complete file beside its destination, synchronize it, then atomically publish its name."""
+    """Write a complete object beside its destination, synchronize it, then atomically publish its name."""
     ensure_directory(target.parent())?
-    temporary = Path(f"{target.0}.{id()}.tmp")
+    temporary = target.at(f"{target.value}.{id()}.tmp")
     writing = begin_work()
     temporary.store_write_bytes(data).map_err((error) => io_failure(temporary, error))?
-    record_work(Operation.StoreFileWrite, target.0, writing)
+    record_work(Operation.StoreFileWrite, target.value, writing)
     boundary = publication_kind(target)
     publication_boundary(f"{boundary}-written")
     sync_file(temporary)?
     publication_boundary(f"{boundary}-synced")
     renaming = begin_work()
     temporary.store_replace(target).map_err((error) => io_failure(target, error))?
-    record_work(Operation.StoreFileRename, target.0, renaming)
+    record_work(Operation.StoreFileRename, target.value, renaming)
     publication_boundary(f"{boundary}-replaced")
     return Ok(None)
 
@@ -149,22 +146,13 @@ pub def publication_boundary(name: str) -> None:
 
 
 pub def sync_directory(path: Path) -> Result[None, StoreError]:
-    """Synchronize directory entries, measuring OS durability separately from record encoding and locks."""
+    """Order directory entries through the placement, separately from record encoding and locks."""
     clock = begin_work()
-    result = sync_ordered(path.0).map_err((error) => failure("io", path.0, error))
-    record_work(Operation.StoreDirectorySync, path.0, clock)
+    result = path.store_sync_ordered().map_err((error) => failure("io", path.value, error.message()))
+    record_work(Operation.StoreDirectorySync, path.value, clock)
     return result
 
 
 pub def file_digest(path: Path, algorithm: str) -> Result[bytes, StoreIoError]:
-    """Hash a file in bounded chunks; the store format currently admits only SHA-256."""
-    if algorithm != "sha256":
-        return Err(StoreIoError(path=path.0, detail=f"unsupported store digest algorithm {algorithm}"))
-    file = open_read(path.primitive()).map_err((detail) => StoreIoError(path=path.0, detail=detail))?
-    mut hasher = sha256.new()
-    loop:
-        chunk = read_chunk(file, 65536).map_err((detail) => StoreIoError(path=path.0, detail=detail))?
-        if len(chunk) == 0:
-            break
-        hasher.update(chunk)
-    return Ok(hasher.finalize_bytes())
+    """Hash an object through its placement; disk keeps bounded reads and memory hashes its anchored view."""
+    return path.store_digest(algorithm)
