@@ -424,6 +424,8 @@ pub model LocalEdge:
     pub alias: str
     pub project: str
     pub domain: DependencyDomain
+    # The authored location is retained for the root lock; compilation continues to use the resolved project.
+    pub path: str = ""
 
     pub def key(self) -> str:
         """The key of the facet this edge reaches, as `LocalFacet.key` gives it."""
@@ -436,6 +438,8 @@ pub model LocalFacet:
     pub project: str
     pub domain: DependencyDomain
     pub features: list[str]
+    # The explicit incoming feature request remains distinct from its selected closure in oven.lock.
+    pub requested: list[str] = []
     # Active path edges to other local facets.
     pub local: list[LocalEdge]
     # Active registry edges, each as a root request of the resolver's grammar.
@@ -475,7 +479,11 @@ pub class LocalFacetSession:
     selections: list[FacetSelection] = []
     by_owner: Dict[str, int] = {}
 
-    pub def facets(mut self, root: LocalDemand, additional_roots: list[LocalDemand] = []) -> Result[list[LocalFacet], str]:
+    pub def facets(
+        mut self,
+        root: LocalDemand,
+        additional_roots: list[LocalDemand] = [],
+    ) -> Result[list[LocalFacet], str]:
         """
         Select an explicit root set without inheriting a previous invocation's feature demands.
 
@@ -646,9 +654,11 @@ def facet_of(
         defaults = active_edge.defaults
         # 2 and 3. A path edge reaches a local facet that becomes a demand; a registry edge becomes a resolver request.
         match edge.source:
-            RustDependencySource.Path(_, _) =>
+            RustDependencySource.Path(relative, _) =>
                 selected = child(demand, edge, edge_features, defaults, substitutes, reader)?
-                local.append(LocalEdge(alias=edge.alias, project=selected.project, domain=selected.domain))
+                local.append(
+                    LocalEdge(alias=edge.alias, project=selected.project, domain=selected.domain, path=relative),
+                )
                 children.append(selected)
             RustDependencySource.Registry(_) =>
                 registry.append(request(edge, edge_features, defaults, edge.alias)?)
@@ -658,10 +668,18 @@ def facet_of(
         project=demand.project,
         domain=demand.domain,
         features=features,
+        requested=demand.features,
         local=local,
         registry=registry,
         registry_aliases=aliases,
-        package=optional_string(document, "project.name")?.unwrap_or(""),
-        version=optional_string(document, "project.version")?.unwrap_or(""),
+        package=optional_text(document, "project.name")?,
+        version=optional_text(document, "project.version")?,
     )
     return Ok((facet, children))
+
+
+def optional_text(document: TomlValue, key: str) -> Result[str, str]:
+    """Read an optional manifest string without a panic-shaped fallback."""
+    match optional_string(document, key)?:
+        Some(value) => return Ok(value)
+        None => return Ok("")
