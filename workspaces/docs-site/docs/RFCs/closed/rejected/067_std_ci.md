@@ -1,6 +1,6 @@
 # RFC 067: `std.ci` — deterministic CI and automation scripting primitives
 
-- **Status:** Draft
+- **Status:** Rejected
 - **Created:** 2026-04-16
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -13,6 +13,9 @@
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** —
+
+!!! note "Retired on 2026-11-06"
+    The original proposal below is retained for review history. Testing the design against Incan's release Step and Oven test launcher established two portable requirements for RFC 063: redirect both output streams to one open log, and report what happened to a direct child during deadline cleanup. Release qualification and Oven own their execution and scheduling policies. Provider-specific annotations, output protocols, and publishing integrations belong in optional Loaves.
 
 ## Summary
 

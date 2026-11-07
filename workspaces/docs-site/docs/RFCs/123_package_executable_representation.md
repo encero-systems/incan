@@ -4,7 +4,7 @@
 - **Created:** 2026-09-05
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
-    - RFC 125 (`incan.pub` Loaf registry and baked asset distribution; supersedes RFC 034)
+    - RFC 125 (`loaves.pub` Loaf registry and baked asset distribution; supersedes RFC 034)
     - RFC 106 (compiler-backed agent context graph)
     - RFC 118 (Oven API and operational core)
     - RFC 120 (canonical source symbol identity)
@@ -13,7 +13,7 @@
     - #1260 (package and local-module import execution)
     - #1261 (facade identity on the replacement route)
 - **Issue:** [#1339](https://github.com/encero-systems/incan/issues/1339)
-- **RFC PR:** —
+- **RFC PR:** [#1426](https://github.com/encero-systems/incan/pull/1426)
 - **Written against:** v0.6
 - **Shipped in:** —
 

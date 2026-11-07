@@ -1,20 +1,19 @@
 # RFC 076: project mutation policy and recovery
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-04-26
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
     - RFC 015 (hatch-like tooling and project lifecycle CLI)
     - RFC 020 (Cargo offline and locked policy)
-    - RFC 034 (`incan.pub` package registry)
     - RFC 074 (template rendering and boilerplate provenance)
-    - RFC 075 (starter profiles and capability packs)
+    - RFC 075 (starter profiles and mixes)
     - RFC 117 (`loaf.toml` and Oven's language-neutral project model)
     - RFC 118 (Incan and Oven command-line surfaces)
+    - RFC 125 (`loaves.pub` registry and advisories)
 - **Issue:** https://github.com/encero-systems/incan/issues/404
 - **RFC PR:** —
 - **Written against:** ~~v0.3~~ v0.5
-- **Target scope:** v0.6, slice 7 (Oven CLI delivery, #1142); brought into scope 2026-09-10. Table root is `[policy]` per RFC 117.
 - **Shipped in:** —
 
 ## Summary
@@ -38,7 +37,7 @@ RFC 074 and RFC 075 make Incan project generation and evolution more powerful by
 
 The missing layer is receiver-side governance. A project may want to allow built-in templates, require immutable pins for git-backed templates, block public catalog sources for internal projects, require review for CI or script changes, permit low-risk docs scaffolding with local confirmation, or quarantine a capability when its source is later yanked. Those choices should be represented as policy instead of scattered across ad-hoc command flags and editor integrations.
 
-This RFC intentionally stays above hosting and registry transport. It captures the policy and recovery contract that local CLI tooling, IDE integrations, registries, private catalogs, and future automation can share.
+This RFC intentionally stays above hosting and registry transport. It captures the policy and recovery contract that local CLI tooling, IDE integrations, registries, private catalogs, and automation can share.
 
 ## Goals
 
@@ -47,18 +46,18 @@ This RFC intentionally stays above hosting and registry transport. It captures t
 - Define a risk-category vocabulary that can distinguish source changes, dependency changes, scripts, CI/configuration, env definitions, generated-file ownership changes, and agent guidance.
 - Require policy decisions to evaluate rendered receiver-side mutation plans, not only descriptor or template-source diffs.
 - Define approval semantics at a high level so local confirmation, explicit CLI flags, code-review approval, and automation-produced proposals are not conflated.
-- Define status and recovery behavior for yanked, revoked, vulnerable, suspicious, unknown, or source-switched templates and capabilities.
+- Define status and recovery behavior for yanked, revoked, vulnerable, suspicious, unknown, or source-switched templates and mixes.
 - Ensure policy and recovery surfaces are machine-readable so CLI, LSP, IDE, docs tooling, and agents can consume the same decision data.
-- Leave room for `incan.pub`, private catalogs, and organization tooling to provide advisory and trust metadata without letting remote services mutate projects directly.
+- Leave room for `loaves.pub`, private catalogs, and organization tooling to provide advisory and trust metadata without letting remote services mutate projects directly.
 
 ## Non-Goals
 
 - Defining public registry transport, catalog hosting, identity-provider integration, billing, tenancy, or administration.
-- Defining a full code-review system or replacing GitHub, GitLab, Gerrit, local review, or future project-specific review tools.
+- Defining a full code-review system or replacing GitHub, GitLab, Gerrit, local review, or project-specific review tools.
 - Defining exact CLI flag spelling for every policy operation.
-- Automatically rolling back source code after a bad template or capability is discovered.
+- Automatically rolling back source code after a bad template or mix is discovered.
 - Providing malware scanning, formal verification, or proof that rendered code is safe.
-- Reopening RFC 074 template syntax or RFC 075 starter/capability descriptor semantics.
+- Reopening RFC 074 template syntax or RFC 075 starter/mix descriptor semantics.
 - Making policy mandatory for simple local projects that only use built-in templates and no automated refresh.
 
 ## Guide-level explanation
@@ -68,37 +67,50 @@ This RFC intentionally stays above hosting and registry transport. It captures t
 A project can define a policy that describes which mutation sources are allowed and which categories require review:
 
 ```toml
-[policy.sources]
-builtin = "allow"
-local = "warn"
-git = "require-immutable-pin"
-public-catalog = "require-review"
-private-catalog = "allow"
+[policy]
+default = "require-approval"
 
 [policy.risk]
-source = "require-review"
-dependency = "require-review"
-script = "require-review"
-ci = "require-review"
-env = "require-review"
-agent-guidance = "require-review"
+source = "require-approval"
+dependency = "require-approval"
+script = "require-approval"
+ci = "require-approval"
+env = "require-approval"
+agent-guidance = "require-approval"
 docs = "allow"
+
+[[policy.sources]]
+kind = "builtin"
+outcome = "allow"
+
+[[policy.sources]]
+kind = "local"
+outcome = "warn"
+
+[[policy.sources]]
+kind = "git"
+pin = "immutable"
+outcome = "require-approval"
+
+[[policy.sources]]
+registry = "internal"
+outcome = "allow"
 ```
 
-The exact policy encoding is not normative in this Draft. The contract is that policy is evaluated by the receiver's lifecycle tooling against the mutation plan that would actually change the project.
+Policy is evaluated by the receiver's lifecycle tooling against the mutation plan that would actually change the project.
 
 ### Policy check before mutation
 
 When a user previews a capability, policy evaluation appears alongside the mutation plan:
 
 ```text
-oven capability add cli --dry-run
+oven mix add cli --dry-run
 ```
 
 Example output:
 
 ```text
-Capability: cli
+Mix: cli
 Source: public-catalog:app-cli@0.3.1
 Policy: requires review
 
@@ -123,34 +135,34 @@ The important behavior is not the exact wording. The important behavior is that 
 Automation may detect that a template or capability source has a newer compatible version or a known advisory:
 
 ```text
-oven mutation propose --stale --security
+oven audit --format json
 ```
 
-A valid implementation may choose a different command name, but the behavior should be review-first. Automation creates a patch-sized proposal containing source identity changes, integrity or advisory changes, rendered receiver-side diffs, and policy outcomes. It does not merge, approve, or apply the proposal by itself when policy requires review.
+There is no separate proposal command: automation reads the machine-readable plan that `audit`, `status`, `diff`, and dry-run `update` already produce, and the behavior is review-first. From that plan, automation creates a patch-sized proposal containing source identity changes, integrity or advisory changes, rendered receiver-side diffs, and policy outcomes. It does not merge, approve, or apply the proposal by itself when policy requires review.
 
 For capability version updates, automation should follow the same shape a user would run manually:
 
 ```text
-oven capability status cli
-oven capability diff cli --to 1.6.0
-oven capability update cli --to 1.6.0 --dry-run
+oven mix status cli
+oven mix diff cli --to 1.6.0
+oven mix update cli --to 1.6.0 --dry-run
 ```
 
 Automation may package that dry-run output as a pull-request-sized patch or review artifact, but it must not turn a detected `1.3.0 -> 1.6.0` opportunity into an unattended write unless receiver policy explicitly allows that class of mutation. Even then, source identity changes, newly introduced scripts, CI/workflow edits, env changes, executable source changes, dependency upgrades, generated-file ownership changes, and agent guidance changes remain policy-visible events.
 
 ### Recovery after an unsafe source
 
-If a previously applied template or capability is later yanked, revoked, or marked unsafe, status should show a receiver-actionable state:
+If a previously applied template or capability is later yanked, revoked, or marked unsafe, a build keeps working and warns, and new changes from that source are blocked. `oven audit` shows a receiver-actionable state, and exits non-zero so a CI job can fail on it:
 
 ```text
-oven mutation status
+oven audit
 ```
 
 Example output:
 
 ```text
 origin                         state       reason
-capability:cli                 revoked     publisher revoked descriptor app-cli@0.3.1
+mix:cli                 revoked     publisher revoked descriptor app-cli@0.3.1
 template:src/main.incn         affected    rendered from revoked descriptor
 
 Recovery options:
@@ -181,7 +193,7 @@ Policy must not rely only on provider-side descriptor diffs or template-source d
 
 ### Risk categories
 
-Mutation plans should classify changes into risk categories. V1 should include at least:
+Mutation plans should classify changes into risk categories, including at least:
 
 - `source`: executable or imported source files
 - `test`: generated test files
@@ -192,6 +204,7 @@ Mutation plans should classify changes into risk categories. V1 should include a
 - `config`: formatter, linter, editor, build, package, or tool configuration
 - `ownership`: generated-file ownership or provenance policy changes
 - `agent-guidance`: agent skills, workflows, instruction references, or safety labels
+- `ai-asset`: a model, prompt, dataset or eval declared under RFC 080
 - `docs`: documentation-only files
 - `asset`: non-rendered copied files
 
@@ -252,13 +265,22 @@ Recovery actions must be proposed as mutation plans. Recovery may include pinnin
 
 Recovery tooling must be conservative when files have user edits. If the current receiver-side file differs from recorded rendered output, recovery must avoid silent overwrite and should present a conflict or merge plan.
 
+### Builds and auditing
+
+A source's state must never fail a build. This matches how Cargo treats a yanked crate or a security advisory: a build is about whether the code compiles, an advisory must not stop an urgent release, and a locked or offline build must give the same result every time.
+
+- `plan`, `build`, `test`, and `check` must warn when the project contains output from a `yanked`, `revoked`, `vulnerable`, `source-mismatch`, or `quarantined` source, naming the source and the affected origin. Locked and offline builds under RFC 020 must otherwise be unchanged.
+- A new mutation from a `revoked`, `vulnerable`, or `quarantined` source must be blocked, and a new resolution must not select a `yanked` source.
+- `oven audit` must be the explicit check. It must report package dependencies under RFC 125's advisories, the recorded template and mix origins, and RFC 080 assets together, and must support `--format json`.
+- `oven audit` must exit non-zero for `revoked`, `vulnerable`, `source-mismatch`, and `quarantined`. It must report `yanked`, `stale`, `superseded`, and `unknown` as warnings, and `--deny <state>` must make any of them fail. A project or organization that wants a bad source to stop its pipeline runs `oven audit` in CI.
+
 ### Policy storage and precedence
 
 Project-local policy lives in the typed `[policy]` table of `loaf.toml` (RFC 117). Organization policy lives in Oven-controlled organization configuration, the same place RFC 117 keeps registry registrations and trust, and may additionally be supplied as signed policy events by a registered registry (RFC 125). A local developer profile may only add restrictions. Audit facts live in receipts, never in `loaf.toml`.
 
 Implementations must make the effective policy explainable. When policy blocks or gates a mutation, diagnostics should show which policy source caused the decision when that information is available.
 
-If multiple policies apply, the more restrictive decision should win unless a later RFC defines an explicit precedence model. Policy must not become weaker merely because a less restrictive local setting exists.
+If multiple policies apply, the more restrictive decision should win. Policy must not become weaker merely because a less restrictive local setting exists.
 
 ### Audit and provenance
 
@@ -307,7 +329,7 @@ Rejected because integrity only says what source was selected. It does not answe
 
 ### Let automation apply safe updates automatically
 
-Rejected for v1 because "safe" depends on receiver policy, project context, and rendered diffs. Automation may propose updates, but applying them unattended should be an explicit policy decision outside the default model.
+Rejected because "safe" depends on receiver policy, project context, and rendered diffs. Automation may propose updates, but applying them unattended should be an explicit policy decision outside the default model.
 
 ### Treat recovery as automatic rollback
 
@@ -316,7 +338,7 @@ Rejected because generated files may have been edited by users and because recov
 ## Drawbacks
 
 - Policy adds another concept to project lifecycle tooling.
-- Strict receiver-side approval may make template and capability refresh slower than dependency updates.
+- Strict receiver-side approval may make template and mix refresh slower than dependency updates.
 - Machine-readable policy and risk output increases CLI and tooling surface area.
 - Conservative defaults may block legitimate updates until users understand source pins, trust tiers, and approval settings.
 - Recovery workflows can only be as precise as the recorded provenance and rendered hashes allow.
@@ -329,25 +351,21 @@ The same policy result should power terminal diagnostics, machine-readable JSON,
 
 ## Layers affected
 
-- **Manifest schema / configuration validation:** project tooling needs a place to describe project-local policy and record policy-related audit metadata, whether in a typed `loaf.toml` policy table or an explicit tool-owned policy state artifact. `oven.lock` is not a general policy store.
-- **CLI / tooling:** lifecycle commands must evaluate policy before applying template, starter, capability, update, reset, refresh, or recovery mutations.
+- **Manifest schema / configuration validation:** project-local policy is the typed `[policy]` table of `loaf.toml`, and audit facts are receipt facts. `oven.lock` is not a general policy store.
+- **CLI / tooling:** lifecycle commands must evaluate policy before applying template, starter, mix, update, reset, refresh, or recovery mutations, and `oven audit` is the explicit check.
 - **LSP / IDE tooling:** editor-facing tools should surface policy outcomes, blocked mutation reasons, review requirements, and recovery actions from machine-readable lifecycle output.
 - **Package and catalog integration:** registries and catalogs may provide source identity, integrity, yanking, revocation, advisory, compatibility, and trust-tier metadata that policy can consume.
 - **Agentic tooling:** agents may consume policy output and propose patches, but policy must not allow them to approve their own receiver-side mutations.
 - **Documentation:** user docs must explain the difference between provenance, policy, approval, quarantine, recovery, and receiver-owned mutation review.
 
-## Design decisions
-
-Resolved 2026-09-10 when this RFC was brought into the v0.6 scope.
+## Design Decisions
 
 - **Storage.** Project-local policy is the typed `[policy]` table in `loaf.toml`; organization policy is Oven-controlled organization configuration (RFC 117), optionally fed by signed registry events (RFC 125); a developer profile may only tighten. Audit facts (outcome, policy id, approval kind, approver, source identity and integrity state, plan hash) are receipt facts and never live in the manifest.
-- **Minimum v1 syntax.** `[policy]` carries a `default` outcome, one outcome per standard risk category (`[policy.risk]`), and an ordered list of source rules (`[[policy.sources]]`) each naming a source kind or registry identity, an optional trust tier, and an outcome. Nothing else is required for v1; the schema is additive.
-- **Standard risk categories.** The eleven categories in the reference section are standardized. Extension categories use an `x-` prefix, must appear in machine-readable output, and default to `require-approval`.
-- **Reviewer and owner requirements.** v1 distinguishes two approval kinds, `local-confirmation` and `independent-approval`, and records the approving identity in the receipt as an opaque stable identifier. It does not implement reviewer assignment or ownership rules; those are interpreted by external review systems and, later, by registry organization events under RFC 125.
+- **Minimum syntax.** `[policy]` carries a `default` outcome, one outcome per standard risk category (`[policy.risk]`), and an ordered list of source rules (`[[policy.sources]]`) each naming a source kind or registry identity, an optional trust tier and pin form, and an outcome. Nothing else is required; the schema is additive.
+- **Standard risk categories.** The twelve categories in the reference section are standardized. Extension categories use an `x-` prefix, must appear in machine-readable output, and default to `require-approval`.
+- **Reviewer and owner requirements.** Policy distinguishes two approval kinds, `local-confirmation` and `independent-approval`, and records the approving identity in the receipt as an opaque stable identifier. It does not implement reviewer assignment or ownership rules; those are interpreted by external review systems and by registry organization events under RFC 125.
 - **Organization-level policy discovery.** Through Oven-controlled organization configuration only, with signed registry policy events as an optional source. The most restrictive applicable decision wins. No hosted product semantics are defined here.
-- **Quarantine scope.** A quarantined source blocks future mutation from that source and makes `plan`, `build`, `test`, and `check` emit a warning naming the quarantined provenance; it never fails a build on its own, and locked or offline builds (RFC 020) continue unchanged. This chooses build continuity over policy strictness for v0.6; a blocking quarantine outcome is a candidate for a later revision as Incan and Oven approach v1.0.
-- **Recovery actions in v1.** Status reporting, a revert proposal for unchanged managed files, a pin-or-replace proposal for the source, and quarantine marking. Every recovery action is a mutation plan subject to this policy; none is auto-applied.
-- **Automated proposal creation.** v1 defines only the output contract: the machine-readable mutation plan that `status`, `diff`, and dry-run `update` already produce. No separate proposal command; automation and typed actions (RFC 078) consume that contract.
+- **Builds warn, and `oven audit` is the check,** as with Cargo and security advisories. A quarantined, revoked or vulnerable source blocks future mutation from that source and makes `plan`, `build`, `test`, and `check` warn. It never fails a build on its own, and locked or offline builds (RFC 020) continue unchanged. `oven audit` exits non-zero for those states, so a project that wants a bad source to stop its pipeline runs it in CI. There is no setting that makes a build fail.
+- **Recovery actions.** Status reporting, a revert proposal for unchanged managed files, a pin-or-replace proposal for the source, and quarantine marking. Every recovery action is a mutation plan subject to this policy; none is auto-applied.
+- **Automated proposal creation.** This RFC defines only the output contract: the machine-readable mutation plan that `audit`, `status`, `diff`, and dry-run `update` already produce. No separate proposal command; automation and typed actions (RFC 078) consume that contract.
 - **Audit metadata.** Outcome, policy id, risk categories, approval kind, approver as an opaque identifier, source identity and integrity state, rendered plan hash, and timestamp. No file contents, no reviewer prose, no personal names or addresses; redaction follows RFC 104's markers.
-
-Amendments made at the same time: the table root is `[policy]` (RFC 117), not `[oven.policy]`; RFC 034 references now mean RFC 125.

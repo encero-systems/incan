@@ -1,9 +1,10 @@
 # RFC 129: Shared or copied bindings and the `mut` parameter contract
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-09-26
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
+    - RFC 164 (proposed explicit ownership and borrowing contracts)
     - RFC 006 (Python-style generators)
     - RFC 016 (`loop` and `break <value>`)
     - RFC 023 (compilable stdlib; §6 implicit ownership and borrowing)
@@ -20,7 +21,7 @@
 
 ## Summary
 
-This RFC specifies the `mut` parameter contract and chooses inferred borrowing for writable local aliases: `mut items = cart.items` borrows the existing field, `items = replacement` writes through that borrow, and `mut items = cart.items.clone()` creates a separate local value. Explicit declarations introduce bindings; assignment uses the binding already resolved. Shadowing that name resolution can disambiguate produces a warning, while ambiguous names and conflicting access produce errors. Duckborrowing must preserve these meanings and must never silently clone an alias to make a borrow conflict compile. Python and Scala provide prior art for naming and mutation, while Incan stays Rust-like in borrowing and lifetime safety, consistent with its dual surface with Rust. Bare and explicit-`let` declarations from places borrow read-only; writable access requires `mut`, including for scalar places. Explicit cloning creates independent owned contents. Storage owns its elements, caller-visible parameter assignment writes through, and duckborrowing handles safe value transfer and lifetime planning. The RFC remains Draft for review, not because these contracts are undecided.
+This RFC specifies the `mut` parameter contract and chooses inferred borrowing for writable local aliases: `mut items = cart.items` borrows the existing field, `items = replacement` writes through that borrow, and `mut items = cart.items.clone()` creates a separate local value. Explicit declarations introduce bindings; assignment uses the binding already resolved. Shadowing that name resolution can disambiguate produces a warning, while ambiguous names and conflicting access produce errors. Duckborrowing must preserve these meanings and must never silently clone an alias to make a borrow conflict compile. Python and Scala provide prior art for naming and mutation, while Incan stays Rust-like in borrowing and lifetime safety, consistent with its dual surface with Rust. Bare and explicit-`let` declarations from places borrow read-only; writable access requires `mut`, including for scalar places. Explicit cloning creates independent owned contents. Storage owns its elements, caller-visible parameter assignment writes through, and duckborrowing handles safe value transfer and lifetime planning.
 
 ## Core model
 
@@ -41,7 +42,7 @@ A method often introduces a local name for a field so that subsequent operations
 
 ### The generated representation must not choose the meaning
 
-The aliasing defects tracked by #1773 and #1814 exposed spelling-dependent behavior for caller-visible parameters: an unannotated binding could inherit a reference, while an annotated binding or a reassignment could produce an owned copy. Mutation analysis could then miss changes, or a later parameter use could fail in generated code after checking succeeded. These are implementation defects, not a language contract. The transitional refusals in that work contain the affected parameter forms until a replacement contract is implemented.
+The aliasing defects tracked by #1773 and #1814 exposed spelling-dependent behavior for caller-visible parameters: an unannotated binding could inherit a reference, while an annotated binding or a reassignment could produce an owned copy. Mutation analysis could then miss changes, or a later parameter use could fail in generated code after checking succeeded. These are implementation defects, not a language contract.
 
 RFC 023 §6 requires that ownership decisions preserve user-visible behavior. This RFC keeps that invariant: sharing is part of the source meaning, and a representation choice may not erase it.
 
@@ -326,7 +327,7 @@ A chained assignment must evaluate its right-hand-side expression once and assig
 3. Proven disjoint field access may be accepted. Collection operations that can invalidate an element borrow must be refused while it remains needed. Unknown overlap or lifetime safety must not be accepted by guessing or silently cloning.
 4. After the last dependent use, the borrow may end before the lexical scope ends. Legal access after that point must not be rejected solely because the alias declaration is still in scope.
 5. A conflict diagnostic must identify the borrow declaration, conflicting operation, and later use or capture that keeps the borrow active. Hints may suggest completing the alias's work first or explicitly cloning when independence is intended; they must not describe cloning as behavior-preserving in all cases.
-6. The checker must report these errors as Incan diagnostics. A program accepted under the completed rules must not defer an alias-induced invalidation or overlap failure to the host compiler.
+6. The checker must report these errors as Incan diagnostics. A program accepted under these rules must not defer an alias-induced invalidation or overlap failure to the host compiler.
 
 ### Storage and ownership-planning boundaries
 
@@ -385,6 +386,10 @@ Incan stays Rust-like in borrowing, exclusive access, and lifetime safety. Pytho
 
 **Explicit cloning must have an honest contract.** Rust's [Clone contract](https://doc.rust-lang.org/std/clone/trait.Clone.html) shows why copying a wrapper does not necessarily make all reachable state independent. Incan explicitly requires an independent clone here: its mutable interior must not remain borrowed from or shared with the source. An imported clone operation that only duplicates a shared handle cannot silently satisfy that contract. This is a deliberate semantic requirement, not an assumption that Rust's method name guarantees it.
 
+### Relationship to RFC 164
+
+RFC 164 separately proposes optional explicit ownership modes and result-source relationships. This RFC remains the authority for ordinary inferred bindings and its `mut` contract. Bare `T` annotations continue to follow the rules here; the proposed `Owned[T]` form would be an explicit transfer request, not an ordinary annotation or an implicit copy. RFC 164 owns that extension and its interaction with writable parameters, and preserves the settled defaults here. Its `Reference[T] from source` form describes returned exclusive access, including fluent chains and static field projections; retained writable references still require `mut`. Its explicit `BorrowedMut[T]` contract must not be treated as synonymous with every ordinary `mut T` parameter, because scalar and imported-type behavior remains distinct.
+
 ### Relationship to RFC 023
 
 The invariant that ownership decisions must not change user-visible behavior remains in force. This RFC narrows the clone fallback: it cannot apply to source-level writable aliases when a clone would change sharing. Such cases must produce a borrow diagnostic. For owned values, the planner retains its freedom to choose an equivalent representation.
@@ -392,8 +397,6 @@ The invariant that ownership decisions must not change user-visible behavior rem
 For this contract, RFC 023's blanket no-borrows-across-`await` policy is replaced by checked suspension safety: a borrow may cross suspension only when its lifetime, exclusivity, and required task-safety properties hold. A failure to prove those properties requires a diagnostic, not a clone that changes sharing. The ownership planner must establish the proof; no additional borrowing syntax is introduced. Closed RFCs remain unchanged, with this supersession recorded here.
 
 ### Transition and migration
-
-The transitional refusals tracked by #1773 and #1814 protect the affected caller-visible-parameter forms while the replacement contract is incomplete. Draft promotion alone must not remove those checks: they must be replaced only when equivalent source diagnostics and the selected semantics are implemented and verified.
 
 The transition is not a compatibility guarantee for ordinary locals. Code that currently copies `mut other = original` can change meaning when that declaration becomes a writable borrow. Existing code may also become invalid because it overlaps accesses. Adoption requires a warning release identifying affected declarations before their meaning changes, with explicit cloning for independent values and direct mutation or a checked borrow for shared access. A warning cannot make an actual borrow conflict safe in the new semantics.
 
@@ -414,7 +417,7 @@ The blanket whole-parameter rebinding refusal is replaced by write-through assig
 - Borrow conflicts become source-level errors even without reference syntax. The checker and diagnostics must explain them in terms of the user's names and operations.
 - Correct last-use and overlap analysis must follow branches, loops, projections, and closures; per-block read counts are insufficient.
 - Same-scope shadowing can hide a useful alias, even when deterministic. The warning must identify both declarations without warning on ordinary qualified-field aliases.
-- Migration changes existing copy behavior and needs advance diagnostics. The transitional parameter checks do not eliminate this cost.
+- Migration changes existing copy behavior and needs advance diagnostics.
 - Ownership planning must handle storage, returns, mixed branch results, and suspension consistently. Proving those cases is substantial compiler work; it is not an unresolved choice of source semantics.
 
 ## Implementation architecture
@@ -432,8 +435,8 @@ A writable alias can lower to a checked reborrow; assignment through it lowers t
 - **Ownership planning / Emission:** checked borrowing and lifetime-aware representation choices that preserve sharing; no conflict repair by cloning.
 - **Diagnostics catalog:** stable codes and `incan explain` entries for shadowing, ambiguity, permission failures, and borrow conflicts alongside the parameter diagnostics.
 - **LSP / Tooling:** hover and definition navigation distinguishing an owned local from a borrowed place; diagnostics connecting declarations, conflicting access, and later uses.
-- **Stdlib:** proposed `clear()` operations and the eventual resolved cloning guarantees.
-- **Docs:** binding and scope rules, mutation and parameter contracts, migration examples, and release notes when implemented.
+- **Stdlib:** proposed `clear()` operations and the resolved cloning guarantees.
+- **Docs:** binding and scope rules, mutation and parameter contracts, migration examples, and release notes.
 
 ## Acceptance criteria
 
@@ -473,4 +476,3 @@ The completed design and implementation must demonstrate:
 - **Storage owns its elements.** Inserting a value is not a declaration of a local alias. Duckborrowing plans safe transfers without changing observable ownership or sharing.
 - **Caller-visible parameter assignment writes through.** Whole-value replacement follows the same borrowed-target rule as local writable aliases, subject to conflict checks.
 - **Returns, branch joins, suspension, and escape are ownership-planning obligations.** Existing syntax remains valid; the planner must prove safe ownership and lifetimes or report an actual conflict. These are not new binding-design questions.
-- **The RFC remains Draft for review.** No unresolved language choice is recorded by this revision; implementation planning and lifecycle promotion are separate work.

@@ -71,36 +71,7 @@ gh issue comment <NNN> --repo dannys-code-corner/incan --body \
 
 When an implementation PR exists, record its link in `RFC PR` and retain other implementation PR links. If work has started without an implementation PR, leave `RFC PR` as `—` until one is opened. Never use a proposal or documentation-only PR for this field.
 
-After the `## Layers affected` section, add two new sections: `## Implementation Plan` and `## Progress Checklist`.
-
-**`## Implementation Plan`** — concrete phases, not internal file paths. Model after the RFC's "Layers affected" section, but task-oriented. Example shape:
-
-```markdown
-## Implementation Plan
-
-### Phase 1: Parser + AST
-
-- Add syntax support for `<new construct>` in the lexer and parser.
-- Extend the AST to represent `<new construct>` as a typed node.
-- Add formatter support for the new syntax.
-
-### Phase 2: Typechecker
-
-- Validate `<new construct>` at declaration sites.
-- Resolve references in expression positions.
-- Emit span-precise diagnostics for invalid usage.
-
-### Phase 3: Lowering + Emission
-
-- Lower `<new construct>` to the IR representation.
-- Emit correct Rust code for all cases.
-
-### Phase 4: Stdlib + Tests
-
-- Add stdlib declarations (if applicable).
-- Add parser, typechecker, codegen snapshot, and integration tests.
-- Update docs.
-```
+After the `## Layers affected` section, add a `## Progress Checklist` section. An RFC describes the end state, so a delivery plan with phases belongs on the GitHub issue, not in the RFC.
 
 **`## Progress Checklist`** — fine-grained `- [ ]` items, grouped by area. These will be ticked as PRs land. Example shape:
 
@@ -155,13 +126,13 @@ After the `## Layers affected` section, add two new sections: `## Implementation
 
 ### GitHub actions
 
-Post the implementation plan to the GitHub issue so contributors can track it there too:
+Post the implementation plan to the GitHub issue, where delivery is tracked:
 
 ```bash
 gh issue comment <NNN> --repo dannys-code-corner/incan --body \
-  "RFC has moved to **In Progress**. Implementation plan added to the RFC document and pasted below for reference.
+  "RFC has moved to **In Progress**. Implementation plan below; the RFC carries the progress checklist.
 
-<paste the Implementation Plan + Checklist content here>"
+<the implementation plan and checklist>"
 ```
 
 ---
@@ -211,5 +182,5 @@ Add an entry to `workspaces/docs-site/docs/release_notes/<vX_Y>.md` following th
 | From | To | Key file change | Key GitHub action |
 | ------------- | ------------- | ------------------------------------------------- | ------------------------------------------- |
 | `Draft` | `Planned` | **Planned+ rule** (**File changes** above); update Status | Relabel `RFC` → `feature` |
-| `Planned` | `In Progress` | Add Implementation Plan + Progress Checklist; update Status | Post plan as issue comment |
+| `Planned` | `In Progress` | Add Progress Checklist; update Status | Post plan as issue comment |
 | `In Progress` | `Implemented` | Update Status; fill release field; move file to `closed/implemented/`; optionally rename checklist to log | Ensure PR closes issue; optional traceability comment |

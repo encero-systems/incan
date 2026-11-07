@@ -14,14 +14,14 @@
 
 ## Summary
 
-Introduce **value enums** — enums whose variants carry an associated primitive value (`str` or `int`). This gives Incan a Python `StrEnum`/`IntEnum`-equivalent: enums that are more than labels but less than full ADTs. Value enums auto-generate `value()`, `from_value()`, string display, and parsing support, enabling clean string/integer lookups, serialization round-tripping, and future environment-variable resolution hooks.
+Introduce **value enums** — enums whose variants carry an associated primitive value (`str` or `int`). This gives Incan a Python `StrEnum`/`IntEnum`-equivalent: enums that are more than labels but less than full ADTs. Value enums auto-generate `value()`, `from_value()`, string display, and parsing support, enabling clean string/integer lookups, serialization round-tripping, and RFC 033 environment-variable resolution hooks.
 
 ## Goals
 
 - Allow enum declarations to bind each variant to an explicit primitive `str` or `int` value.
 - Provide a standard lookup surface for converting value-domain inputs into typed enum variants.
 - Preserve existing regular enum and ADT behavior for declarations without a value type specifier.
-- Make value enums usable by serialization, parsing, display, and future `ctx` axis resolution without requiring hand-written match helpers.
+- Make value enums usable by serialization, parsing, display, and `ctx` axis resolution without requiring hand-written match helpers.
 - Keep the feature explicit and predictable: no inferred values, no enum-as-primitive subtyping, and no custom value types.
 
 ## Non-Goals
@@ -84,7 +84,7 @@ ctx AppConfig:
             database_url = "postgres://prod/app"
 ```
 
-When `Env` is resolved from an environment variable (`APP_ENV=production`), the runtime needs to map the string `"production"` to `Env.Prod`. With value enums, that future resolver has a standard lookup table:
+When `Env` is resolved from an environment variable (`APP_ENV=production`), the runtime needs to map the string `"production"` to `Env.Prod`. With value enums, that resolver has a standard lookup table:
 
 ```incan
 enum Env(str):
@@ -226,8 +226,8 @@ Where `<value_type>` is either `str` or `int`.
 - `value()` returns the value type: `self.value() -> str` for `StrEnum`, `self.value() -> int` for `IntEnum`.
 - `from_value()` is a static method: `Env.from_value(s: str) -> Option[Env]` / `HttpStatus.from_value(n: int) -> Option[HttpStatus]`.
 - Value enums participate in pattern matching exactly like regular unit-variant enums.
-- Value enums can have methods (per RFC 050, once implemented).
-- Value enums can adopt traits (per RFC 050, once implemented).
+- Value enums can have methods (per RFC 050).
+- Value enums can adopt traits (per RFC 050).
 
 ### Auto-generated surface
 
@@ -250,7 +250,7 @@ The associated value is the enum's canonical external representation anywhere a 
 - String display emits the **value**, not the variant name (`"production"` not `"Prod"`).
 - Serialization emits the **value**, not the variant name.
 - Deserialization matches on the **value** (`"production"` → `Env.Prod`).
-- Future configuration and environment resolution hooks should use the same value table when resolving value enum inputs.
+- Configuration and environment resolution hooks should use the same value table when resolving value enum inputs.
 - Language-level parsing surfaces use the same value table and failure semantics as `from_value()`, adapted to the parsing API's result type.
 
 Backends may realize this through generated display/parsing helpers, per-variant serialization metadata, or equivalent hooks. The emitted code shape is implementation detail; the language-level contract is that all external representations of a value enum converge on the associated value.
@@ -292,7 +292,7 @@ enum Env(str) with Display:
 
 **Pattern matching**: Value enums match by variant, not by value. `case Env.Dev:` matches the variant, regardless of the associated value. To match on the raw value, use `match env_string: case "production": ...`.
 
-**Traits (RFC 050)**: Once enum methods and trait adoption land, value enums can have additional methods. The auto-generated `value()`, `from_value()`, and `message()` methods are reserved by value enums and cannot be redefined by user code.
+**Traits (RFC 050)**: With enum methods and trait adoption, value enums can have additional methods. The auto-generated `value()`, `from_value()`, and `message()` methods are reserved by value enums and cannot be redefined by user code.
 
 **Serialization**: Value enums serialize and deserialize using their associated values rather than their variant names.
 
@@ -336,7 +336,7 @@ strenum Env:
     Dev = "development"
 ```
 
-Rejected: proliferates keywords. The `enum Name(type):` syntax is more composable and extensible (e.g., future `enum Foo(float):` if needed).
+Rejected: proliferates keywords. The `enum Name(type):` syntax is more composable and extensible.
 
 ### Make enums subtypes of their value type
 
@@ -368,27 +368,27 @@ Rejected: breaks Incan's type safety philosophy. A `str` and an `Env` should not
 
 ## Implementation Plan
 
-### Phase 1: Parser, AST, and formatter
+### Parser, AST, and formatter
 
 - Extend enum declaration parsing so `enum Name(str):` and `enum Name(int):` are accepted while regular `enum Name:` and payload-bearing ADT variants continue to behave as before.
 - Preserve the optional value type specifier and each per-variant literal assignment in the AST.
 - Keep invalid ordinary enum assignments rejected, and emit clear diagnostics for value enum syntax mistakes such as missing values, wrong literal kinds, unsupported value types, and payload-bearing value variants.
 - Update formatter behavior so value enum declarations round-trip stably without rewriting regular enum declarations.
 
-### Phase 2: Typechecker and generated surface
+### Typechecker and generated surface
 
 - Validate value enum declarations after symbols are collected: allowed value type, required values, value literal type compatibility, duplicate raw values, no payload fields, and no user-defined/generated method name conflicts.
 - Register the generated `value()` and `from_value()` method surface so normal member lookup and call checking can typecheck value enum usage.
 - Preserve existing `message()` behavior as variant-name access and keep value enums distinct from their raw `str` / `int` value types.
 
-### Phase 3: Lowering, emission, and external representation
+### Lowering, emission, and external representation
 
 - Lower value enum metadata into the IR representation used by enum emission.
 - Emit generated helpers for value lookup and reverse lookup, including `value()` and `from_value()`.
-- Preserve the canonical external representation for display, parsing, serialization, and deserialization hooks supported by the backend. Configuration and environment resolution remain future integration work.
+- Preserve the canonical external representation for display, parsing, serialization, and deserialization hooks supported by the backend. Configuration and environment resolution belong to RFC 033.
 - Keep emitted code shape backend-owned while preserving the language-level contract defined by this RFC.
 
-### Phase 4: Tests, docs, and release integration
+### Tests, docs, and release integration
 
 - Add parser, formatter, typechecker, lowering/emission, and codegen snapshot coverage for valid and invalid value enums.
 - Add end-to-end tests that exercise value lookup in expression positions, not only declarations.
@@ -434,7 +434,7 @@ Rejected: breaks Incan's type safety philosophy. A `str` and an `Env` should not
 - [x] Surface value-enum backing metadata in LSP/completion/hover details.
 - [x] Update authored user-facing docs for value enum syntax and behavior.
 - [x] Add release notes for RFC 032 implementation.
-- [x] Bump active dev version to `0.3.0-dev.23`.
+- [x] Bump the active development version.
 
 ### Verification
 
@@ -457,6 +457,6 @@ Rejected: breaks Incan's type safety philosophy. A `str` and an `Env` should not
 
 5. **The associated value is the canonical external representation.** Display, parsing, serialization, deserialization, and configuration/environment resolution must use the associated value rather than the variant name whenever a value enum crosses a data boundary.
 
-6. **Value enums do not expose `from_name()`.** Name-to-variant lookup is reflection/introspection behavior, not value-domain lookup. If Incan later gains general enum reflection, name lookup belongs there rather than in value enums.
+6. **Value enums do not expose `from_name()`.** Name-to-variant lookup is reflection/introspection behavior, not value-domain lookup. Name lookup belongs to general enum reflection rather than to value enums.
 
 7. **RFC 050 `with` clauses follow the value type specifier.** The combined spelling is `enum Env(str) with TraitName:` rather than placing `with` before `(str)` or using a separate value-enum declaration form.

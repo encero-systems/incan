@@ -16,14 +16,14 @@
     - RFC 093 (`std.telemetry` observability)
     - RFC 102 (semantic layer inspection surface)
     - RFC 104 (ambient runtime capabilities and receipts)
-- **Issue:** https://github.com/encero-systems/incan/issues/661
+- **Issue:** <https://github.com/encero-systems/incan/issues/661>
 - **RFC PR:** -
 - **Written against:** v0.3
 - **Shipped in:** —
 
 ## Summary
 
-This RFC proposes `std.secrets` as Incan's standard library home for secret value wrappers, beginning with `SecretStr` and `SecretBytes`. Secret values are ordinary typed values that can flow through config, CLI, environment, HTTP, logging, telemetry, workflow actions, and generated reports without revealing their plaintext through unauthorized display, debug, structured logs, diagnostics, default serialization, or inspection surfaces. The goal is not to pretend secrets become impossible to copy or exfiltrate inside a compromised process; the goal is to make plaintext exposure deny-by-default, keep raw access scoped and intentional, and allow stronger protected storage such as encrypted idle memory where the backend can provide it.
+This RFC proposes `std.secrets` as Incan's standard library home for the secret value wrappers `SecretStr` and `SecretBytes`. Secret values are ordinary typed values that can flow through config, CLI, environment, HTTP, logging, telemetry, workflow actions, and generated reports without revealing their plaintext through unauthorized display, debug, structured logs, diagnostics, default serialization, or inspection surfaces. The goal is not to pretend secrets become impossible to copy or exfiltrate inside a compromised process; the goal is to make plaintext exposure deny-by-default, keep raw access scoped and intentional, and allow stronger protected storage such as encrypted idle memory where the backend can provide it.
 
 ## Core model
 
@@ -32,7 +32,7 @@ This RFC proposes `std.secrets` as Incan's standard library home for secret valu
 3. **Reveal is scoped and intentional:** APIs that need raw bytes or strings should consume `SecretStr` or `SecretBytes` directly, or require an intentionally named scoped reveal operation that tooling can recognize.
 4. **Protected idle storage is capability-reported:** every target provides redaction, scoped reveal, and zeroizable owned storage; targets may claim protected idle storage only when they satisfy the stronger key and authenticated-encryption contract.
 5. **Memory guarantees are honest:** protected idle storage and zeroization reduce exposure, but the public contract must not promise that every intermediate copy made by encoders, transport backends, operating systems, foreign APIs, crash handlers, or the process itself is erased.
-6. **Specific types come first:** `SecretStr` and `SecretBytes` are the initial stable surface. A generic `Secret[T]` may come later if it does not weaken the concrete-string and concrete-bytes contracts.
+6. **Specific types are the surface:** `SecretStr` and `SecretBytes` are the stable surface. A generic `Secret[T]` is admissible only if it does not weaken the concrete-string and concrete-bytes contracts.
 7. **Tooling preserves sensitivity metadata:** CLI, LSP, semantic inspection, workflow action output, generated docs, and reports should know that a value exists and what type it has without seeing the raw payload.
 
 ## Motivation
@@ -54,7 +54,7 @@ This RFC also closes a design gap left deliberately open by RFC 017. Validated n
 - Let stdlib consumers such as `std.http`, `std.environ`, typed CLI surfaces, `ctx`, workflow actions, logging, and telemetry accept or preserve secret values without converting them to plain `str` or `bytes`.
 - Define a conservative serialization contract that prevents accidental JSON, TOML, YAML, CLI, or report emission of raw secret contents.
 - Define honest memory-handling expectations, including scoped plaintext lifetimes and required non-elidable zeroization attempts for wrapper-owned storage and reveal buffers.
-- Leave room for future secret providers, vault integrations, redaction policies, and generic secret wrappers without blocking the concrete `SecretStr` and `SecretBytes` surface.
+- Leave room for secret providers, vault integrations, redaction policies, and generic secret wrappers outside this RFC without weakening the concrete `SecretStr` and `SecretBytes` contracts.
 
 ## Non-Goals
 
@@ -64,9 +64,9 @@ This RFC also closes a design gap left deliberately open by RFC 017. Validated n
 - This RFC does not guarantee that all process memory, operating-system buffers, network buffers, allocator copies, panic payloads, crash dumps, foreign library copies, or compiler temporaries are erased.
 - This RFC does not claim that encrypted idle storage protects against arbitrary code execution inside the same process; any implementation must still hold or derive decryption material somewhere.
 - This RFC does not make secrets safe to expose to untrusted code.
-- This RFC does not define random secret generation; a future `std.random` or expanded `std.secrets` surface may do that separately.
+- This RFC does not define random secret generation.
 - This RFC does not define identity protocols such as SAML, OAuth, OIDC, JWT validation, service-account exchange, or single sign-on workflows.
-- This RFC does not standardize every sensitive-data class such as PII, payment data, access tokens, API keys, passwords, and private keys as distinct semantic categories in the initial surface.
+- This RFC does not standardize every sensitive-data class such as PII, payment data, access tokens, API keys, passwords, and private keys as distinct semantic categories.
 - This RFC does not replace access control, capability checks, sandboxing, policy approval, or runtime permission boundaries.
 
 ## Guide-level explanation
@@ -111,7 +111,7 @@ key: SecretBytes = secret_bytes("SIGNING_KEY")?
 signature = key.with_exposed_bytes(sign_with_key)?
 ```
 
-`with_exposed_bytes` is the only public raw-bytes reveal shape in this RFC. Its callback receives a read-only, non-escaping view that is valid only for the callback invocation. `SecretStr` provides the corresponding `with_exposed_str` operation. Code review, search, LSP, and future policy or audit tooling can therefore identify every user-authored raw-secret exposure site by name without normalizing an unscoped getter as ordinary value access. Because RFC 089 exposes only Unicode environment values, this example's `SecretBytes` contains the UTF-8 encoding of `SIGNING_KEY`, not raw non-Unicode host bytes.
+`with_exposed_bytes` is the only public raw-bytes reveal shape in this RFC. Its callback receives a read-only, non-escaping view that is valid only for the callback invocation. `SecretStr` provides the corresponding `with_exposed_str` operation. Code review, search, LSP, and policy or audit tooling can therefore identify every user-authored raw-secret exposure site by name without normalizing an unscoped getter as ordinary value access. Because RFC 089 exposes only Unicode environment values, this example's `SecretBytes` contains the UTF-8 encoding of `SIGNING_KEY`, not raw non-Unicode host bytes.
 
 Secret values should also compose with typed configuration and CLIs:
 
@@ -129,7 +129,7 @@ An inspection view can show that `api_token` exists, is required, and has type `
 
 ### Module surface
 
-`std.secrets` must expose `SecretStr`, `SecretBytes`, `SecretError`, `SecretErrorKind`, `SecretSourceKind`, `SecretStorageProtection`, `RedactedSecret`, and `redacted`.
+`std.secrets` must expose `SecretStr`, `SecretBytes`, `SecretError`, `SecretErrorKind`, `SecretSourceKind`, `SecretStorageProtection`, `RedactedSecret`, `redacted`, and `random_token`.
 
 ```incan
 from std.serde.json import Serialize
@@ -171,6 +171,9 @@ pub model SecretError with Error:
 
 
 pub def redacted(secret: SecretStr | SecretBytes) -> RedactedSecret: ...
+
+
+pub def random_token(bytes: int = 32) -> Result[SecretStr, SecretError]: ...
 ```
 
 This is a normative source-signature sketch for prospective APIs, not a claim that the pre-implementation compiler can check the block as a standalone module. It uses current Incan union, value-enum, public-model, field-alias, trait-adoption, and function-signature spelling; `...` omits implementation bodies, while `SecretStr` and `SecretBytes` are specified below.
@@ -178,6 +181,8 @@ This is a normative source-signature sketch for prospective APIs, not a claim th
 `RedactedSecret` is an intentionally public, forgeable, non-secret serialization marker. Direct construction carries no security or trust authority: constructing a marker never makes a plain value secret, and consumers must derive sensitivity from the checked secret type or another authoritative policy source rather than trusting marker claims. `redacted` produces the canonical marker by setting `sensitive=True`, `redacted=True`, and `type_` to exactly `"SecretStr"` or `"SecretBytes"`. Ordinary serialization uses the field alias and therefore emits exactly `{"sensitive": true, "redacted": true, "type": "SecretStr"}` or the corresponding `SecretBytes` object. The adapter contains no provenance, storage mode, payload slot, or payload-derived value.
 
 `SecretError` is the only public operation error for secret storage and payload access. `message()` must return a stable redacted explanation selected only from `kind`; it must not expose payload, length, invalid UTF-8 position, cryptographic algorithm detail, nonce, key epoch, source identifier, or another payload-derived fact. `InvalidUtf8` reports failed UTF-8 validation, `IntegrityFailure` reports the first authenticated-storage verification failure, `Poisoned` reports later access to a value whose integrity has already failed, and `StorageUnavailable` reports inability to establish or maintain the selected storage contract.
+
+`random_token` must return a URL-safe token built from that many secure random bytes, for values such as invite codes, API tokens and reset links. It requires RFC 104's `host.random`, and its source kind must be `SecretSourceKind.Generated`.
 
 `SecretStr` must represent owned UTF-8 secret text. `SecretBytes` must represent owned binary secret material.
 
@@ -210,7 +215,7 @@ This model is valid. An ordinary serializer rejects `credentials` because it wou
 
 `std.environ` must provide `secret_str(name) -> Result[SecretStr, EnvironError | SecretError]` and `secret_bytes(name) -> Result[SecretBytes, EnvironError | SecretError]` so callers do not need to load an environment variable as a plain value and then wrap it manually. Both assign `SecretSourceKind.Environment`; their error values must not echo the environment value. Both follow RFC 089's Unicode environment boundary: `secret_str` reads the same Unicode value as `get`, and `secret_bytes` UTF-8-encodes that Unicode value directly into secret storage. `secret_bytes` does not expose raw non-Unicode platform environment bytes and must still return `EnvironError` with kind `EnvironErrorKind.NotUnicode` when RFC 089 cannot represent the host value as Unicode. Host lookup and encoding may require transient runtime or operating-system buffers; implementations must keep wrapper-owned scratch within the ingress scope and zeroize it on supported cleanup paths, but this RFC does not claim control over host-owned copies.
 
-Every secret value must carry a non-payload provenance category. `SecretSourceKind` must distinguish `Environment`, `Cli`, `Config`, `Provider`, `Generated`, `Derived`, and `Unknown`. Trusted constructors such as environment and CLI accessors must assign their category; explicit wrapping uses `SecretSourceKind.Unknown`; conversions preserve provenance; and an operation that combines or transforms secret material uses `SecretSourceKind.Derived`. The initial contract stores no source name, environment-variable name, provider path, or other source identifier because those identifiers can themselves be sensitive.
+Every secret value must carry a non-payload provenance category. `SecretSourceKind` must distinguish `Environment`, `Cli`, `Config`, `Provider`, `Generated`, `Derived`, and `Unknown`. Trusted constructors such as environment and CLI accessors must assign their category; explicit wrapping uses `SecretSourceKind.Unknown`; conversions preserve provenance; and an operation that combines or transforms secret material uses `SecretSourceKind.Derived`. The contract stores no source name, environment-variable name, provider path, or other source identifier because those identifiers can themselves be sensitive.
 
 ### Display and debug behavior
 
@@ -223,6 +228,8 @@ String interpolation and formatting protocols must use the redacted representati
 ### Plaintext leakage boundary
 
 The normative security boundary for this RFC is Incan-owned plaintext emission. `SecretStr` and `SecretBytes` must not reveal raw contents through Incan-owned display, debug, panic formatting, assertion messages, diagnostics, structured logs, telemetry attributes, semantic inspection, generated reports, CLI help, CLI echo, default serialization, or action metadata.
+
+Preventing secret disclosure is an Incan-wide invariant, not a per-library preference or an optional diagnostic setting. Input handling must uphold it before a secret wrapper has been constructed, including when parsing, decoding, validation, or a trusted boundary fails. Incan-owned diagnostic capture and emission must preserve checked sensitivity information and must not introduce ordinary plaintext copies solely for diagnostics. Source excerpts, upstream messages, paths, and other diagnostic metadata must not bypass the invariant. Where an input surface cannot establish that an excerpt or detail is safe to expose, it must omit or redact it rather than emit potentially secret material. Verbose output, stack traces, inspection, and audit export do not grant reveal authority. RFC 131 and RFC 146 apply this invariant to error diagnostics and typed decoding respectively.
 
 This boundary also applies to nested structures. A model, list, dict, result, error, request, response, action input, or telemetry event containing a secret value must preserve redaction when formatted or serialized through Incan-owned mechanisms.
 
@@ -265,9 +272,9 @@ The callback parameter is written as ordinary `str` or `bytes` in Incan source, 
 
 Reveal callbacks must be synchronous. They must not return an awaitable or generator, suspend, or transfer execution to another task while the borrowed plaintext view is live. Async, streaming, and background stdlib operations must accept the secret wrapper directly and own any shorter internal reveal at their final trusted boundary.
 
-This RFC defines no public owned-plaintext extraction operation and no public reveal guard. Adding either is a security-surface expansion that requires a follow-up RFC. A caller that intentionally needs an owned plaintext copy must create it inside the callback; that allocation is ordinary plaintext outside the wrapper's zeroization guarantee and must remain conspicuous at the reveal site.
+This RFC defines no public owned-plaintext extraction operation and no public reveal guard; either would be a security-surface expansion outside this design. A caller that intentionally needs an owned plaintext copy must create it inside the callback; that allocation is ordinary plaintext outside the wrapper's zeroization guarantee and must remain conspicuous at the reveal site.
 
-Tooling must treat direct calls to both methods as explicit reveal sites. This requirement is independent of any capability framework: the source operation remains named, searchable, and policy-visible even in an ungoverned runtime. Future governance integration is specified conditionally below; this RFC neither reserves a capability identifier nor defines a receipt schema.
+Tooling must treat direct calls to both methods as explicit reveal sites. This requirement is independent of any capability framework: the source operation remains named, searchable, and policy-visible even in an ungoverned runtime. Governance integration is specified conditionally below; this RFC neither reserves a capability identifier nor defines a receipt schema.
 
 APIs that genuinely need raw material should prefer accepting `SecretStr` or `SecretBytes` directly instead of forcing user code to reveal the secret first.
 
@@ -287,7 +294,7 @@ Diagnostic serialization, generated reports, semantic inspection, logs, telemetr
 
 Both types must provide `constant_time_eq(other: Self) -> Result[bool, SecretError]`. The helper must compare the complete operands without early exit, and its control flow and memory access must not depend on matching prefixes or payload-byte values. Any plaintext scratch storage used for comparison follows the same scoped zeroization contract as explicit reveal. Execution time may depend on the longer operand length, so the API does not promise to hide length or eliminate operating-system, hardware, compiler, or same-process side channels. Cross-type comparison is unavailable; callers must perform an explicit checked conversion first. An integrity or poison error returns no comparison result.
 
-Adding ordinary equality, ordering, hashing, or a differently scoped comparison helper requires a follow-up RFC.
+Ordinary equality, ordering, hashing, and differently scoped comparison helpers are not part of this design.
 
 ### Cloning and copying
 
@@ -343,19 +350,19 @@ Checked model and parameter metadata must infer `sensitive=true` plus `secret_ty
 
 ### Generic secret wrappers
 
-This RFC does not expose `Secret[T]`. A follow-up RFC may add a generic wrapper only around a sealed secret-material protocol whose implementation supplies a mutable zeroizable owned representation, a read-only non-escaping reveal view, type-owned redaction and sensitivity metadata, an explicit content-independent comparison contract where comparison is meaningful, and no ordinary data serialization. User-defined implementations must not be able to claim that protocol without proving those invariants through compiler- or runtime-owned machinery. `SecretStr` and `SecretBytes` remain stable concrete types even if a generic wrapper is added later.
+This RFC does not expose `Secret[T]`. A generic wrapper is admissible only around a sealed secret-material protocol whose implementation supplies a mutable zeroizable owned representation, a read-only non-escaping reveal view, type-owned redaction and sensitivity metadata, an explicit content-independent comparison contract where comparison is meaningful, and no ordinary data serialization. User-defined implementations must not be able to claim that protocol without proving those invariants through compiler- or runtime-owned machinery. `SecretStr` and `SecretBytes` remain stable concrete types alongside any generic wrapper.
 
 ### Capability, sandbox, and policy behavior
 
-User-authored `with_exposed_str` and `with_exposed_bytes` calls are explicit reveal operations regardless of whether the runtime is governed. RFC 103 does not depend on Draft RFC 104, reserve a reveal capability identifier, or define a receipt schema. A future governed-runtime RFC may gate these stable reveal sites. If it does, authorization must complete before decryption or plaintext buffer creation, and any audit record must remain redacted: it may describe the operation, source span when available, secret type, policy-permitted provenance category, storage-protection mode, and outcome, but never payload, length, source identifier, or payload-derived material. The future governance RFC owns the capability identity, receipt schema, and decision whether trusted internal reveal receives separate audit representation.
+User-authored `with_exposed_str` and `with_exposed_bytes` calls are explicit reveal operations regardless of whether the runtime is governed. RFC 103 does not depend on RFC 104, reserve a reveal capability identifier, or define a receipt schema. A governed runtime may gate these stable reveal sites. If it does, authorization must complete before decryption or plaintext buffer creation, and any audit record must remain redacted: it may describe the operation, source span when available, secret type, policy-permitted provenance category, storage-protection mode, and outcome, but never payload, length, source identifier, or payload-derived material. The capability identity, receipt schema, and decision whether trusted internal reveal receives separate audit representation belong to the governance design, not this RFC.
 
-Trusted stdlib APIs that accept a secret directly do not grant general reveal authority. They may expose plaintext only inside their narrow boundary operation, and they must preserve the scoped cleanup and error behavior defined here whether or not governance exists. A future sandbox may deny explicit reveal while still allowing a narrower trusted operation such as an approved HTTP request. Policy approval never changes the redaction or serialization behavior of the secret value itself.
+Trusted stdlib APIs that accept a secret directly do not grant general reveal authority. They may expose plaintext only inside their narrow boundary operation, and they must preserve the scoped cleanup and error behavior defined here whether or not governance exists. A sandbox may deny explicit reveal while still allowing a narrower trusted operation such as an approved HTTP request. Policy approval never changes the redaction or serialization behavior of the secret value itself.
 
 ### Higher-level identity protocols
 
 Identity and federation protocols such as SAML, OAuth, OIDC, JWT validation, service-account exchange, and single sign-on workflows should be built above `std.secrets`, not inside it. Those protocols have their own security models: XML or JSON token formats, signatures, certificates, issuer and audience validation, replay windows, metadata discovery, clock skew, session state, and provider-specific policy.
 
-`std.secrets` should provide the primitive secret value contract those packages consume. A future identity or platform library may store private keys, bearer tokens, client secrets, SAML assertions, or signed credentials in `SecretStr` or `SecretBytes`, and may use scoped reveal internally when validating or transmitting them. That does not make `std.secrets` responsible for the protocol semantics.
+`std.secrets` should provide the primitive secret value contract those packages consume. An identity or platform library may store private keys, bearer tokens, client secrets, SAML assertions, or signed credentials in `SecretStr` or `SecretBytes`, and may use scoped reveal internally when validating or transmitting them. That does not make `std.secrets` responsible for the protocol semantics.
 
 ## Design details
 
@@ -372,7 +379,7 @@ Implicit downcast from `SecretStr` to `str` and from `SecretBytes` to `bytes` mu
 ### Interaction with existing features
 
 - **RFC 017 (validated newtypes)**: secret values may use newtype-like machinery internally, but their display, debug, serialization, and memory expectations are a separate contract.
-- **RFC 033 (`ctx`)**: typed configuration can declare secret fields and source them from environment or future secret providers without exposing raw values in inspection.
+- **RFC 033 (`ctx`)**: typed configuration can declare secret fields and source them from environment or secret providers without exposing raw values in inspection.
 - **RFC 066 (`std.http`)**: HTTP auth helpers and headers should accept secret values and preserve redaction through request diagnostics, retries, telemetry, and workflow output.
 - **RFC 070 (`Result` combinators)**: secret reveal reuses the source-level `Callable[...]` and compiler-owned borrowed callback adaptation model, then adds a reveal-specific non-escape rule and synchronous-scope restriction.
 - **RFC 072 (`std.logging`)**: structured logging should redact secret-typed fields by default.
@@ -382,30 +389,30 @@ Implicit downcast from `SecretStr` to `str` and from `SecretBytes` to `bytes` mu
 - **RFC 090 (typed CLI framework)**: CLI options can use `SecretStr` and `SecretBytes` as declared types.
 - **RFC 093 (`std.telemetry`)**: telemetry attributes and events must redact secret-typed values.
 - **RFC 102 (semantic layer inspection surface)**: semantic inspection should represent secret facts as redacted facts with stable type and source metadata.
-- **RFC 104 (ambient capabilities and receipts)**: RFC 104 remains Draft, so RFC 103 has no normative capability-ID or receipt-schema dependency. A future governance RFC may gate the stable reveal sites before plaintext creation while preserving this RFC's redaction, cleanup, and trusted-boundary rules.
+- **RFC 104 (ambient capabilities and receipts)**: RFC 103 has no normative capability-ID or receipt-schema dependency on RFC 104. Governance may gate the stable reveal sites before plaintext creation while preserving this RFC's redaction, cleanup, and trusted-boundary rules.
 
 ### Compatibility / migration
 
-This feature is additive. Existing code that stores tokens in plain strings remains valid, but docs and examples should prefer `SecretStr` and `SecretBytes` at configuration, CLI, environment, HTTP, and action boundaries once the types exist.
+This feature is additive. Existing code that stores tokens in plain strings remains valid, but docs and examples should prefer `SecretStr` and `SecretBytes` at configuration, CLI, environment, HTTP, and action boundaries.
 
 Migration helpers may wrap existing `str` or `bytes` values explicitly. Such helpers should not hide the fact that code still created a plain value before wrapping it.
 
 ## Alternatives considered
 
 - **Plain `newtype str` and `newtype bytes` only**
-  - Rejected because newtypes alone do not define formatting, debug, serialization, logging, telemetry, equality, cloning, and memory behavior.
+    - Rejected because newtypes alone do not define formatting, debug, serialization, logging, telemetry, equality, cloning, and memory behavior.
 - **Logging-only redaction**
-  - Rejected because secrets leak through more than logs: debug strings, exception messages, assertions, generated reports, telemetry, HTTP diagnostics, CLI echo, and semantic inspection all matter.
+    - Rejected because secrets leak through more than logs: debug strings, exception messages, assertions, generated reports, telemetry, HTTP diagnostics, CLI echo, and semantic inspection all matter.
 - **HTTP-only secret headers**
-  - Rejected because the same token often starts in environment or CLI config, flows through `ctx`, enters an HTTP client, appears in telemetry, and may be referenced by typed actions.
-- **One generic `Secret[T]` as the first surface**
-  - Rejected for the initial version because strings and bytes have distinct encoding, display, comparison, and memory concerns. A generic wrapper may still be useful later.
+    - Rejected because the same token often starts in environment or CLI config, flows through `ctx`, enters an HTTP client, appears in telemetry, and may be referenced by typed actions.
+- **One generic `Secret[T]` instead of concrete types**
+    - Rejected because strings and bytes have distinct encoding, display, comparison, and memory concerns.
 - **Always serialize redacted placeholders**
-  - Rejected for data serialization because silently writing `<redacted>` into JSON payloads, config files, or generated artifacts can create corrupt data and hide bugs.
+    - Rejected for data serialization because silently writing `<redacted>` into JSON payloads, config files, or generated artifacts can create corrupt data and hide bugs.
 - **Unscoped raw getters**
-  - Rejected because a method that returns an ordinary `str` or `bytes` as the primary reveal path makes it too easy to store, log, serialize, or return plaintext accidentally.
+    - Rejected because a method that returns an ordinary `str` or `bytes` as the primary reveal path makes it too easy to store, log, serialize, or return plaintext accidentally.
 - **Always require manual reveal before wire use**
-  - Rejected because it pushes raw exposure into user code and makes the safe path noisier than the risky path.
+    - Rejected because it pushes raw exposure into user code and makes the safe path noisier than the risky path.
 
 ## Drawbacks
 
@@ -442,9 +449,9 @@ Migration helpers may wrap existing `str` or `bytes` values explicitly. Such hel
 - Standardize display as `<secret>` and debug as `SecretStr(<secret>)` or `SecretBytes(<secret>)`. Type-aware structured observation uses a non-payload sensitivity marker rather than a general serializer.
 - Make `RedactedSecret` a public, forgeable marker with no trust authority; checked secret types and policy metadata, not marker claims, remain the sensitivity authority.
 - Make ordinary data serialization fail for either secret type, including when nested. `std.secrets.redacted(...)` is the explicit stable marker adapter; trusted wire boundaries may accept secret types directly or nested in typed models and own the scoped serialization internally, while user-authored persistence or reusable serialization requires a visible scoped reveal.
-- Keep `SecretStr` and `SecretBytes` as the complete concrete surface in this RFC. Any future `Secret[T]` requires a sealed secret-material protocol that preserves zeroization, scoped reveal, redaction, comparison, and serialization invariants.
-- Carry an initial non-payload provenance category distinguishing environment, CLI, config, provider, generated, derived, and unknown sources. Do not retain source identifiers by default.
+- Keep `SecretStr` and `SecretBytes` as the complete concrete surface in this RFC. Any `Secret[T]` requires a sealed secret-material protocol that preserves zeroization, scoped reveal, redaction, comparison, and serialization invariants.
+- Carry a non-payload provenance category distinguishing environment, CLI, config, provider, generated, derived, and unknown sources. Do not retain source identifiers by default.
 - Align environment ingress with RFC 089: `secret_bytes` is UTF-8 encoding of the Unicode environment value, not a raw platform-byte escape hatch, and ingress remains fallible for both environment and secret-storage errors.
 - Guarantee reveal-buffer cleanup on normal, error, and unwind-capable exits only; panic-abort, process kill, power loss, non-unwinding cancellation, and other abrupt termination remain outside the destruction boundary.
-- Keep governance integration future-coordinated. Reveal sites are stable tooling facts, but RFC 103 reserves no capability identifier or receipt schema; any future authorization occurs before plaintext creation and never disables redaction.
+- Keep governance integration outside this RFC. Reveal sites are stable tooling facts, but RFC 103 reserves no capability identifier or receipt schema; any authorization occurs before plaintext creation and never disables redaction.
 - Derive checked field and parameter sensitivity metadata from the secret type. An explicit marker can influence ingress or external schema projection but cannot substitute for the runtime guarantees of `SecretStr` or `SecretBytes`.
