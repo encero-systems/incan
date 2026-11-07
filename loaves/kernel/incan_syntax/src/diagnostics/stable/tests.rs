@@ -333,6 +333,31 @@ fn reserved_compiler_name_refusal_uses_its_own_stable_code() -> Result<(), Box<d
     Ok(())
 }
 
+/// Typed record declaration refusals retain their own explainable codes and label both sides of a collision.
+#[test]
+fn record_declaration_refusals_use_their_stable_codes() -> Result<(), Box<dyn std::error::Error>> {
+    let reserved = errors::store_reserved_model_field("___id", Span::default());
+    let collision = errors::record_member_identity_collision(
+        "model",
+        "CollidingFields",
+        "field",
+        "fieldbbea15ef9eff",
+        Span::new(10, 20),
+        "field3d4624c2d3a2",
+        Span::new(30, 40),
+        "38dd14b42a9a",
+    );
+
+    assert_eq!(code_for_error(&reserved, DiagnosticPhase::Typecheck), "INCAN-T0127");
+    assert_eq!(code_for_error(&collision, DiagnosticPhase::Typecheck), "INCAN-T0128");
+    let reserved_entry = explain("INCAN-T0127").ok_or("INCAN-T0127 must have a catalog explanation")?;
+    let collision_entry = explain("INCAN-T0128").ok_or("INCAN-T0128 must have a catalog explanation")?;
+    assert_eq!(reserved_entry.severity, "error");
+    assert_eq!(collision_entry.severity, "error");
+    assert_eq!(collision.related_spans().len(), 1);
+    Ok(())
+}
+
 #[test]
 fn kept_dict_lookup_refusal_uses_its_stable_code_followups_a() -> Result<(), Box<dyn std::error::Error>> {
     let refusal = errors::kept_dict_lookup_value_cannot_be_copied("JoinHandle[int]", Span::default());

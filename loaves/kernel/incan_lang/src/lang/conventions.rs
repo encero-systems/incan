@@ -28,6 +28,26 @@ pub const NONE_TYPE_NAME: &str = "None";
 /// spelled the same way could collide with a generated one in the build.
 pub const RESERVED_COMPILER_NAME_PREFIX: &str = "__incan_";
 
+/// Prefix reserved for facts attached by typed record stores (RFC 165).
+///
+/// The type checker refuses this prefix on every model field, including models that do not derive a storage trait,
+/// so a later store inspection or export can never confuse authored data with a store-owned fact.
+pub const STORE_RESERVED_NAME_PREFIX: &str = "___";
+
+/// Closed set of store-owned record fact names (RFC 165).
+pub const STORE_RESERVED_FIELD_NAMES: &[&str] = &[
+    "___id",
+    "___revision",
+    "___model_hash",
+    "___canonical_hash",
+    "___object_hash",
+];
+
+/// Number of leading SHA-256 bytes in an RFC 165 field or enum-variant identity.
+///
+/// Keep the width centralized: widening it is a format decision and every compiler consumer must move together.
+pub const RECORD_MEMBER_IDENTITY_BYTES: usize = 6;
+
 /// Static method the compiler reads as a type's source-defined constructor hook.
 ///
 /// `Type(args)` on a type that declares it calls the hook instead of building the fields. It is the one source
