@@ -412,17 +412,11 @@ impl Builder<'_> {
     /// shared-borrowed through every poll, while an iterator result reuses the loans retained by that result.
     pub(super) fn for_header(
         &mut self,
-        pattern: &Spanned<crate::ast::Pattern>,
+        _pattern: &Spanned<crate::ast::Pattern>,
         iter: &Spanned<Expr>,
         span: Span,
         incoming: Vec<usize>,
     ) -> Result<(usize, Vec<usize>), Unavailable> {
-        let crate::ast::Pattern::Binding(name) = &pattern.node else {
-            return Err(Unavailable {
-                span: pattern.span,
-                reason: "loop pattern needs checked binding access".into(),
-            });
-        };
         if self.checker.type_info.protocols.iterations.contains_key(&iter.span)
             || self.checker.type_info.protocols.iterations.contains_key(&span)
         {
@@ -431,18 +425,10 @@ impl Builder<'_> {
                 reason: "protocol iteration needs checked callable access facts".into(),
             });
         }
-        let item = self
-            .checker
-            .type_info
-            .resolved_write_identity(pattern.span, name)
-            .cloned()
-            .ok_or(Unavailable {
-                span: pattern.span,
-                reason: "missing checked loop item".into(),
-            })?;
+        let candidate = self.checker.loop_item_candidates.get(&iter.span).cloned();
         let takes_items = self.checker.type_info.for_loop_takes_items(iter.span);
         let iterable = if takes_items { None } else { self.optional_place(iter)? };
-        let retained = if takes_items {
+        let retained = if takes_items || self.uses_ordinary_iteration_access(iter.span) {
             None
         } else {
             self.retained_result(iter, incoming.clone(), false)?
@@ -461,15 +447,16 @@ impl Builder<'_> {
             }
             None => None,
         };
-        let header = self.event(evaluated, Event::Nothing, span)[0];
+        let transfer = self.event(evaluated, Event::Nothing, iter.span)[0];
+        let header = self.event(vec![transfer], Event::Nothing, span)[0];
         // The poll reads the iterable through its loan; exhaustion leaves the loop from here.
-        let mut poll = match iteration {
+        let mut poll = match &iteration {
             Some((loan, place)) => self.event(
                 vec![header],
                 Event::Access {
-                    place,
+                    place: place.clone(),
                     access: Access::Read,
-                    through: Some(loan),
+                    through: Some(*loan),
                 },
                 iter.span,
             ),
@@ -497,8 +484,48 @@ impl Builder<'_> {
                 );
             }
         }
-        // Each poll declares the item afresh, as an initializer does: its root is registered, with no write event.
-        self.root(&item, pattern.span)?;
+        if let Some(candidate) = candidate {
+            let item_roots = candidate.items.clone();
+            for item in &candidate.items {
+                let root = Root::Binding(item.clone());
+                // The loop scope has closed before the callable graph is projected, so its ephemeral item bindings
+                // are no longer in the symbol table's local inventory. The header creates each item as a fresh,
+                // transferable owner; register that permission from the retained checked identity.
+                self.graph.permissions.insert(
+                    root.clone(),
+                    Permission {
+                        exclusive: false,
+                        // The source binding remains immutable to authored assignments; the graph needs write
+                        // permission only for the loop header's producer-owned replacement on every poll.
+                        writable: true,
+                        transferable: true,
+                    },
+                );
+                self.constrained.insert(root);
+            }
+            let transfer = iteration.map(|(loan, _)| super::super::loop_items::TransferNodes {
+                loan,
+                transfer,
+                poll: poll[0],
+            });
+            self.graph
+                .item_taking_loops
+                .insert(iter.span, super::super::loop_items::GraphLoop { candidate, transfer });
+            for item in item_roots {
+                poll = self.event(
+                    poll,
+                    Event::Access {
+                        place: Place {
+                            root: Root::Binding(item),
+                            projection: Vec::new(),
+                        },
+                        access: Access::Replace,
+                        through: None,
+                    },
+                    span,
+                );
+            }
+        }
         Ok((header, poll))
     }
 
@@ -678,6 +705,18 @@ impl Builder<'_> {
                     })?
                     .breaks
                     .extend(incoming);
+                Ok(Vec::new())
+            }
+            Statement::Break(Some(value)) => {
+                let outgoing = self.expression(value, incoming, true)?;
+                self.loops
+                    .last_mut()
+                    .ok_or(Unavailable {
+                        span: statement.span,
+                        reason: "break without loop".into(),
+                    })?
+                    .breaks
+                    .extend(outgoing);
                 Ok(Vec::new())
             }
             Statement::Continue => {

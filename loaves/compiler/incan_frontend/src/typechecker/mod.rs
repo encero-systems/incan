@@ -57,6 +57,7 @@ mod check_stmt;
 mod checked_facts;
 mod collect;
 mod collection_annotations;
+mod comprehension_sources;
 mod const_eval;
 mod construction;
 mod control_contexts;
@@ -68,7 +69,6 @@ mod dependency_registry;
 mod derive_contract;
 mod derive_requirements;
 mod diagnostic_values;
-mod for_item_taking;
 mod hash_key_inference;
 mod helpers;
 mod json_member_requirements;
@@ -196,11 +196,6 @@ pub struct LoopContext {
     pub expected_break_ty: Option<ResolvedType>,
     /// Types observed from `break` statements that contribute to the loop result.
     pub break_types: Vec<(ResolvedType, Span)>,
-    /// Symbol-table scope of the loop body: a binding held by an outer scope outlives each pass of the loop.
-    pub scope: usize,
-    /// How many statement blocks surround the loop; its body is the next one, so an assignment in a block deeper than
-    /// this runs in every pass of the loop that reaches it.
-    pub block_depth: usize,
     /// The loop's original-source range and expansion context; exits compare this complete identity.
     pub span: Span,
     /// Canonical graph place borrowed by direct list iteration, retained only to activate that body's graph once an
@@ -537,6 +532,13 @@ pub struct TypeChecker {
     /// Callable bodies containing an optional dictionary lookup whose matched payload may borrow its stored entry.
     /// The marker only activates canonical graph construction and is consumed when that body is finalized.
     dictionary_lookup_bodies: HashSet<CanonicalSymbolId>,
+    /// Callable bodies containing a loop whose non-copyable item may be transferred by the body. The marker only
+    /// activates canonical graph construction; the graph decides whether the transfer actually occurs.
+    loop_item_bodies: HashSet<CanonicalSymbolId>,
+    /// Candidate loop-item transfers retained until the active callable's ownership graph is built.
+    loop_item_candidates: std::collections::BTreeMap<Span, ownership_contracts::loop_items::Candidate>,
+    /// Active loop-item roots, used only to retain the lexical parent relation of nested candidate loops.
+    active_loop_items: std::collections::BTreeMap<CanonicalSymbolId, Span>,
     /// Nested producer diagnostic intervals used only while capturing independently owned outputs.
     diagnostic_owner_ranges: Vec<(std::ops::Range<usize>, std::ops::Range<usize>)>,
     /// Symbol table populated during the first pass.
@@ -584,8 +586,8 @@ pub struct TypeChecker {
     scoped_c_string_view_bindings: HashMap<crate::ast::Span, usize>,
     /// Resource bindings transferred to an owning C ABI parameter in the current local checking flow.
     pub transferred_c_resource_bindings: HashMap<String, Span>,
-    /// Lists whose items a `for` loop of the current body takes, and that body's `for` pattern bindings (#1844).
-    for_item_taking: for_item_taking::ForItemTaking,
+    /// Direct collection comprehensions waiting for the complete body's later-read facts (#1983).
+    comprehension_sources: comprehension_sources::ComprehensionSources,
     /// Closures that capture local values, and the parameters and returns of this module that hold them (#1561).
     capturing_callables: capturing_callables::CapturingCallables,
     /// The standard package the program being checked is, when it is one; its `std.*` roots are its own modules.

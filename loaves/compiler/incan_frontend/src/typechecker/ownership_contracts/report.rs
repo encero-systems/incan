@@ -18,6 +18,18 @@ pub(super) fn conflicts(graph: &Graph, analysis: &Analysis, facts: &TypeCheckInf
         if super::dictionary::owns_conflict(graph, analysis, conflict) {
             continue;
         }
+        if let Some(error) = super::loop_items::conflict(graph, conflict) {
+            projected.push(ProjectedConflict {
+                error,
+                priority: 0,
+                builtin: None,
+            });
+            if !explicit_flow_required(graph, facts) {
+                continue;
+            }
+        } else if super::loop_items::owns_conflict(graph, conflict) && !explicit_flow_required(graph, facts) {
+            continue;
+        }
         let operation = &graph.nodes[conflict.node];
         if let Some(error) = super::iteration::conflict(graph, facts, conflict) {
             projected.push(ProjectedConflict {

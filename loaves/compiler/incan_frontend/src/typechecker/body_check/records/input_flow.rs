@@ -417,6 +417,8 @@ impl Reader<'_> {
             permissions: self.ordered_map(Self::root, Self::permission)?,
             loans: self.list(Self::loan)?,
             direct_iteration_loans: BTreeSet::new(),
+            item_taking_loops: BTreeMap::new(),
+            taking_moves: BTreeMap::new(),
             dictionary_lookups: BTreeMap::new(),
             local_loans: self.ordered_map(Self::identity, |reader| Ok(LoanId(reader.number()?)))?,
             dependent_locals: self.ordered_map(Self::identity, Self::loan_ids)?,
