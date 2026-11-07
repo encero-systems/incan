@@ -10180,6 +10180,7 @@
 <li>RFC 165 (typed embedded storage, whose field identities derive from the earliest name)</li>
 <li>RFC 142 (shared failure-policy vocabulary)</li>
 <li>RFC 143 (cloning with field overrides)</li>
+<li>RFC 173 (walking and reconstructing typed values)</li>
 </ul>
 </li>
 <li><strong>Issue:</strong> <a href="https://github.com/encero-systems/incan/issues/472">#472</a></li>
@@ -10364,13 +10365,14 @@ metadata_key = IDENT (&quot;.&quot; IDENT)* ;
 <li><code>T.__doc__()</code> on a model, class or enum must return an <code>Option[DocInfo]</code>, RFC 128's parsed form of a docstring, so that a library reads a type's documentation the same way it reads a function's.</li>
 </ul>
 <h3 id="rename-continuity">Rename continuity<a class="headerlink" href="#rename-continuity" title="Permanent link">&para;</a></h3>
-<p><code>renamed_from</code> must accept an earlier name, a list of earlier names, or a nested block under RFC 096, on a field or an enum variant. The block must contain <code>name</code>, a string or list of strings, and may contain RFC 150's shared lifecycle facts, <code>since</code>, <code>retire_in</code>, <code>message</code>, <code>by</code> and <code>issue</code>, each at most once and using the same descriptor as <code>deprecated</code>. <code>by</code> and <code>issue</code> are unverified descriptive text and grant nothing.</p>
+<p><code>renamed_from</code> must accept an earlier name, a list of earlier names, or a nested block under RFC 096, on a field, an enum variant, or a model or enum declaration. The block must contain <code>name</code>, a string or list of strings, and may contain RFC 150's shared lifecycle facts, <code>since</code>, <code>retire_in</code>, <code>message</code>, <code>by</code> and <code>issue</code>, each at most once and using the same descriptor as <code>deprecated</code>. <code>by</code> and <code>issue</code> are unverified descriptive text and grant nothing.</p>
 <ul>
 <li>The field or variant must keep its stable anchor across a declared rename. Without <code>renamed_from</code>, a rename is a new source identity.</li>
 <li>A list of earlier names must be in the order the names were used, earliest first.</li>
 <li>An earlier name that still exists on the same model or enum must be refused, and so must one name claimed twice.</li>
+<li>On a declaration, <code>renamed_from</code> follows the name and any type parameters, as in <code>model Invoice [renamed_from="Bill"]:</code>. A bare earlier name means the same module, and a declaration that moved names its earlier qualified name, as in <code>model Invoice [renamed_from="billing.invoices.Bill"]:</code>. An earlier name still declared in the same package must be refused. The declaration keeps the identity RFC 165 derives from its earliest qualified name.</li>
 <li><code>retire_in</code> must not change behavior. Once the package's version reaches it, a lint must suggest removing the lifecycle facts and must keep the earlier name, because RFC 165 derives the field's identity from it.</li>
-<li>Checked metadata must preserve every rename fact, so that API diffs, generated documentation, RFC 106's graph and RFC 165's stored records can use them.</li>
+<li>Checked metadata must preserve every rename fact, so that API diffs, generated documentation, RFC 106's graph and RFC 165's stored records can use them. RFC 173 exposes the same checked field, variant and declaration rename facts through its public shape carriers; codecs must not inspect compiler-private records to obtain them.</li>
 <li>A rename must not change a wire name or make a decoder accept the old one. Wire names follow <code>alias</code> and <code>as</code>.</li>
 </ul>
 <h3 id="safe-metadata-values">Safe metadata values<a class="headerlink" href="#safe-metadata-values" title="Permanent link">&para;</a></h3>
