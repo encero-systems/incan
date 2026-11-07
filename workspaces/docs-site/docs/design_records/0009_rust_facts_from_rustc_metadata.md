@@ -28,7 +28,7 @@ The checker needs Rust facts for `rust::` imports: types, generics, methods, fie
 2. **ABI caches are the primary source.**
    - **Contents:** an ABI cache holds the facts of every public item of one or more compiled Rust crates, plus restricted type and trait dependencies needed to interpret that API. Restricted facts support compiler-selected calls and adjustments but never make a private path importable or source-nameable.
    - **Who writes them:** the same extractor, run as `incan-rustc-driver --rust-abi`, when a crate is compiled or a toolchain is installed.
-   - **Coverage:** the toolchain ships the cache of `std`, `core` and `alloc`. A compiled Rust unit carries its own cache, from incan.pub's bake or Oven's build.
+   - **Coverage:** the toolchain ships the cache of `std`, `core` and `alloc`. A compiled Rust unit carries its own cache, from loaves.pub's bake or Oven's build.
    - **How they reach the compiler:** Oven passes the caches with the unit's native closure (`--rust-abi`).
 3. **Check-time extraction is the fallback.** Lookup is ordered: the Loaf's shipped ABI, caches, then the same extractor over the unit's crates; covered paths are never re-extracted. For a crate the unit declares, private indexed Loaf facts yield to the unit's own caches and extraction; explicit dependency reexports retain their declared ABI. Selected public layouts include transitive records through Options and collections, while method-signature expansion is independently bounded.
    Bounded fallback results may be retained in the same indexed layout for the exact request and native generation, including absent paths; they remain separate from shipped complete-crate caches and grant no crate-wide coverage.
@@ -44,7 +44,7 @@ The checker needs Rust facts for `rust::` imports: types, generics, methods, fie
 
 - Checking `rust::` imports needs neither rust-analyzer nor Cargo. Every fact matches the crate rustc links.
 - Indexed caches avoid decoding unused items; fallback extraction adds work only for uncovered paths.
-- Registry Loaves gain an ABI cache asset beside each compiled unit. incan.pub's existing `[[rust.facts]]` remain build facts (cfg and features).
+- Registry Loaves gain an ABI cache asset beside each compiled unit. loaves.pub's existing `[[rust.facts]]` remain build facts (cfg and features).
 
 ## Non-goals
 

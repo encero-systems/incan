@@ -51,7 +51,7 @@ Oven's decisions and the actions they lead to run in one program, so they share 
 
 A toolchain cannot build Oven and the compiler before one of its own exists. Until then, a frozen bootstrap builder compiles them: a compiler from before the direct native route, kept in its own private build environment. [DD-0010](0010_released_toolchains_for_ci_and_development.md) replaces it with an installed released toolchain.
 
-During bootstrap, `incan.toolchain/1` names the prepared registry catalog in `registry_units` and may name the standard producer's exact closure in `registry_lock`. These are explicit stand-ins for incan.pub's baked Loaves until Oven fetches them. Oven selects one coherent compiled closure for the active manifest requirements, honoring recorded producer entries and refusing an undecided ambiguity, builds local Rust facets through its existing unit compiler, and writes exact `externs`, `search`, and `rust_abi` inputs into `incan.unit/1`. Checking and compilation consume these same fields; a search directory never substitutes for a named artifact. Published Loaf native bindings remain ownership evidence when a source graph replaces an ambient alias. The directories of a toolchain generation, its own and its registry's, are named once by a content-addressed search index rather than listed in every description and native closure. Temporary bootstrap helpers stay outside the repository and retire with self-hosting.
+During bootstrap, `incan.toolchain/1` names the prepared registry catalog in `registry_units` and may name the standard producer's exact closure in `registry_lock`. These are explicit stand-ins for loaves.pub's baked Loaves until Oven fetches them. Oven selects one coherent compiled closure for the active manifest requirements, honoring recorded producer entries and refusing an undecided ambiguity, builds local Rust facets through its existing unit compiler, and writes exact `externs`, `search`, and `rust_abi` inputs into `incan.unit/1`. Checking and compilation consume these same fields; a search directory never substitutes for a named artifact. Published Loaf native bindings remain ownership evidence when a source graph replaces an ambient alias. The directories of a toolchain generation, its own and its registry's, are named once by a content-addressed search index rather than listed in every description and native closure. Temporary bootstrap helpers stay outside the repository and retire with self-hosting.
 
 ## Consequences
 
@@ -62,7 +62,7 @@ During bootstrap, `incan.toolchain/1` names the prepared registry catalog in `re
 ## Non-goals
 
 - The format of the store and of the unit description beyond what this record names.
-- Remote Loaf fetching and version solving, which incan.pub and the lock own (DD-0007).
+- Remote Loaf fetching and version solving, which loaves.pub and the lock own (DD-0007).
 
 ## Revisit condition
 
