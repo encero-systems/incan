@@ -230,6 +230,10 @@ pub(in crate::typechecker) struct Graph {
     /// Loans created by direct stored-place iteration. Diagnostic projection consumes this authenticated source fact
     /// rather than rediscovering loop structure by walking the completed control-flow graph.
     pub direct_iteration_loans: BTreeSet<LoanId>,
+    /// Candidate non-copyable loop items and their dormant direct-list transfer nodes.
+    pub item_taking_loops: BTreeMap<HirSourceSpan, super::loop_items::GraphLoop>,
+    /// List moves materialized from item transfers, keyed by their graph node for T0119 projection.
+    pub taking_moves: BTreeMap<usize, super::loop_items::TakingMove>,
     /// Optional `Dict.get` calls whose match bindings borrow the stored entry in place.
     pub dictionary_lookups: BTreeMap<HirSourceSpan, DictionaryLookup>,
     /// Explicit local declarations retain their selected loan independently of display spelling.

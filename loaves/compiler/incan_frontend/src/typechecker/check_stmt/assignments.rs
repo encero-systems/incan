@@ -128,7 +128,6 @@ impl TypeChecker {
             }
             self.consumed_iterator_bindings.remove(&assign.name);
             self.transferred_c_resource_bindings.remove(&assign.name);
-            self.note_list_reassignment(&assign.name, span);
             self.mark_open_rust_generic_binding_read(&assign.name, assign.name_span);
             return;
         }
@@ -471,7 +470,6 @@ impl TypeChecker {
                 }
                 self.consumed_iterator_bindings.remove(name);
                 self.transferred_c_resource_bindings.remove(name);
-                self.note_list_reassignment(name, target_span);
                 self.mark_open_rust_generic_binding_read(name, target_span);
                 return;
             }

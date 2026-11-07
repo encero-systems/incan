@@ -109,7 +109,6 @@ impl TypeChecker {
                 self.infer_iterator_element_type_from_expr(&for_stmt.iter, &iter_ty)
             }
         };
-        let owns_items = self.plan_for_item_taking(for_stmt, &elem_ty);
         let loop_view_param = self.loop_view_param(&for_stmt.iter);
         let derived_views = if loop_view_param.is_none() {
             self.read_only_derived_loop_views(&for_stmt.iter, &for_stmt.pattern.node)
@@ -124,13 +123,14 @@ impl TypeChecker {
         self.record_expr_type(for_stmt.pattern.span, elem_ty.clone());
         self.define_for_pattern_bindings(&for_stmt.pattern, &elem_ty);
         self.retain_body_ir_iteration_binding(&for_stmt.pattern, &for_stmt.iter);
-        self.remember_for_pattern_bindings(&for_stmt.pattern.node, owns_items);
+        let loop_items = self.prepare_loop_item_candidate(for_stmt, &elem_ty, span);
         self.push_loop_context(LoopContextKind::Statement, None, span);
-        self.note_borrowed_iteration_loop(&for_stmt.iter, owns_items);
+        self.note_borrowed_iteration_loop(&for_stmt.iter);
         let loop_body = self.enter_for_loop_body(&for_stmt.pattern.node, loop_view_param, derived_views);
 
         self.check_statement_block(&for_stmt.body);
         self.exit_for_loop_body(loop_body);
+        self.leave_loop_item_candidate(loop_items);
         let _ = self.pop_loop_context();
         self.symbols.exit_scope();
     }
@@ -190,7 +190,6 @@ impl TypeChecker {
     /// provided expression to surface any nested errors. The exit is recorded, since it can skip the statements after
     /// it in the loop it leaves.
     pub(super) fn check_break_stmt(&mut self, value: Option<&Spanned<Expr>>, span: Span) {
-        self.note_loop_exit(span);
         let Some((loop_kind, expected_break_ty)) = self
             .loop_stack
             .last()
@@ -232,7 +231,6 @@ impl TypeChecker {
     /// Validate that `continue` appears inside some active loop context, and record the exit, which can skip the
     /// statements after it in that loop.
     pub(super) fn check_continue_stmt(&mut self, span: Span) {
-        self.note_loop_exit(span);
         if self.loop_stack.is_empty() {
             self.errors.push(errors::continue_outside_loop(span));
         }

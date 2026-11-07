@@ -396,7 +396,6 @@ impl TypeChecker {
         };
 
         self.report_unreachable_after_return(stmts);
-        self.enter_item_taking_block();
         for stmt in prefix {
             self.check_statement(stmt);
         }
@@ -408,7 +407,6 @@ impl TypeChecker {
                 ResolvedType::Unit
             }
         };
-        self.exit_item_taking_block();
         arm_ty
     }
 

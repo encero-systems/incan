@@ -94,12 +94,10 @@ impl TypeChecker {
         let enclosing_block = self.statement_blocks.current;
         self.statement_blocks.serial += 1;
         self.statement_blocks.current = self.statement_blocks.serial;
-        self.enter_item_taking_block();
         self.report_unreachable_after_return(body);
         for stmt in body {
             self.check_statement(stmt);
         }
-        self.exit_item_taking_block();
         self.reject_unread_open_rust_generic_bindings_of_block(self.statement_blocks.current);
         self.statement_blocks.current = enclosing_block;
     }
