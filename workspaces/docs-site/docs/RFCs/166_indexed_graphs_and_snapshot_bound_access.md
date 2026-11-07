@@ -10,6 +10,7 @@
     - RFC 101 (ordinal maps)
     - RFC 106 (compiler-backed context graphs)
     - RFC 115 (fallible iteration)
+    - RFC 150 (deprecation diagnostics; `made_private` for the sealed fields)
     - RFC 161 (semantic core IR)
     - RFC 165 (typed embedded storage)
     - RFC 169 (typed record sets and record streams)
@@ -222,9 +223,9 @@ The source representation of a container is not its semantic identity. Implement
 
 Existing graph-local `NodeId` and `EdgeId` handles do not become globally unique or durable. `to_int()` remains a representation for diagnostics or caller-managed interchange, not a credential, persistent record identity or safe cross-graph key. A new read protocol must carry scope separately when adapting such handles.
 
-The new in-memory read surface uses `ScopedNodeId` and `ScopedEdgeId`, combining graph-instance identity with the existing local handle. Standard adapters must validate that identity before lookup. Bare legacy ids remain accepted by legacy container methods only; readers issue scoped keys for their own nodes and edges and must not offer an unchecked integer-to-scoped-key cast. An adapter cannot recover provenance that a legacy bare integer never carried and must not claim otherwise. Persistent adapters use typed record keys instead, not these scoped in-memory handles.
+The new in-memory read surface uses `ScopedNodeId` and `ScopedEdgeId`, combining graph-instance identity with the existing local handle. Standard adapters must validate that identity before lookup. Bare legacy ids remain accepted by legacy container methods only; readers issue scoped keys for their own nodes and edges and must not offer an unchecked integer-to-scoped-key cast. An adapter cannot recover provenance that a legacy bare integer never carried and must not claim otherwise. A legacy container may offer a checked conversion from one of its own bare ids to a scoped key, so that code holding legacy ids can reach the bounded readers. The conversion checks only that the node or edge is live in that container, trusts the caller about where the id came from exactly as the container's other legacy methods do, and must document that it establishes nothing more. A reader never accepts a bare id. Persistent adapters use typed record keys instead, not these scoped in-memory handles.
 
-With indexed containers, raw structural fields (`nodes`, `edges`, and identity counters) become private. This is an explicit source compatibility change; the implementation must ship migration documentation and a diagnostic at each former public-field access, explaining the supported operation or reader that replaces it. Existing constructor and method behavior remains governed by RFC 047. The migration must not return a copied list under the old field name or silently ignore direct edits.
+With indexed containers, raw structural fields (`nodes`, `edges`, and identity counters) become private. This is an explicit source compatibility change; the implementation must ship migration documentation and a diagnostic at each former public-field access, explaining the supported operation or reader that replaces it. Each member made private carries RFC 150's `made_private` facts, so the visibility refusal at a former public access is that diagnostic and names the replacement. Existing constructor and method behavior remains governed by RFC 047. The migration must not return a copied list under the old field name or silently ignore direct edits.
 
 Graph-owned mutations must pass through supported operations, including payload replacement when indexes depend on the changed fields. This does not require all application models to be frozen. An independently reconstructed or copied model can be edited normally; editing it alone does not publish a change to the graph. No exposed alias may change structural or indexed state behind the maintained indexes.
 
