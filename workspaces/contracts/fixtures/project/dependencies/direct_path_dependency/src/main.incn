@@ -2,7 +2,7 @@
 # expect-dependencies:
 #   helper helper
 # expect-std-packages:
-#   incan_stdlib_core
+#   incan_stdlib_primitives
 
 from pub::helper import helper_value
 

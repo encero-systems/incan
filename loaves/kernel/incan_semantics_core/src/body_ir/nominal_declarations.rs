@@ -228,7 +228,7 @@ pub fn native_nominal_item(identity: &CanonicalSymbolId) -> Option<String> {
     let crate::SymbolOrigin::Package { library, module_path } = &identity.origin else {
         return None;
     };
-    (matches!(library.as_str(), "incan_stdlib_core" | "incan_stdlib_primitives")
+    (library == "incan_stdlib_primitives"
         && module_path == &["reflection".to_owned()]
         && identity.declaration_name == "FieldInfo"
         && identity.kind == crate::SemanticSourceTargetKind::Class)

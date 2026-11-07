@@ -12,22 +12,13 @@ fn sdk_native_carrier_key_preserves_source_identity() -> Result<(), String> {
         crate::HirSourceSpan::new(52, 423),
     );
     sdk.origin = crate::SymbolOrigin::Package {
-        library: "incan_stdlib_core".into(),
+        library: "incan_stdlib_primitives".into(),
         module_path: vec!["reflection".into()],
     };
     let key = super::nominal_carrier_key(&sdk).ok_or("missing SDK source carrier")?;
     assert!(!key.contains("::"));
     assert_eq!(
         super::native_nominal_item(&sdk).as_deref(),
-        Some("incan_std_primitives::reflection::FieldInfo")
-    );
-    let mut primitive = sdk.clone();
-    primitive.origin = crate::SymbolOrigin::Package {
-        library: "incan_stdlib_primitives".into(),
-        module_path: vec!["reflection".into()],
-    };
-    assert_eq!(
-        super::native_nominal_item(&primitive).as_deref(),
         Some("incan_std_primitives::reflection::FieldInfo")
     );
     let mut local = sdk.clone();

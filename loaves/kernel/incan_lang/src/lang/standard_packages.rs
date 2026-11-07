@@ -41,29 +41,3 @@ pub fn standard_package_namespace_policy(name: &str) -> Option<&'static Standard
         .iter()
         .find(|policy| policy.package_name == name)
 }
-
-static PRIMITIVES_SOURCE_BRIDGE_POLICY: LazyLock<StandardPackageNamespacePolicy> = LazyLock::new(|| {
-    let mut namespace_roots = Vec::new();
-    if let Some(policy) = standard_package_namespace_policy("incan_stdlib_primitives") {
-        namespace_roots.extend_from_slice(&policy.namespace_roots);
-    }
-    if let Some(policy) = standard_package_namespace_policy("incan_stdlib_core") {
-        namespace_roots.extend_from_slice(&policy.namespace_roots);
-    }
-    StandardPackageNamespacePolicy {
-        package_name: "incan_stdlib_primitives",
-        namespace_roots,
-    }
-});
-
-/// Look up the transition policy for a package's source publication and compiled Loaf namespace.
-///
-/// The bridge compiler admits the destination primitive package for the roots whose source moves in the next step.
-/// Compiled consumers select this wider destination policy only after their native closure stops linking core, so the
-/// destination Loaf can answer the moved roots without changing old-floor units.
-pub fn standard_package_source_policy(name: &str) -> Option<&'static StandardPackageNamespacePolicy> {
-    if name == "incan_stdlib_primitives" {
-        return Some(&PRIMITIVES_SOURCE_BRIDGE_POLICY);
-    }
-    standard_package_namespace_policy(name)
-}

@@ -64,8 +64,6 @@ struct Callbacks<'manifest> {
     development: bool,
     loaded: Vec<(PathBuf, String)>,
     timing: crate::native_timing::Timing,
-    /// Source package that owns the transitional standard trait declarations in this compilation.
-    source_package: &'static str,
     /// A program has no consumers of its item paths, so its callables may live in per-file modules. A library's paths
     /// are published, and a test harness selects each test by its module path.
     partition: bool,
@@ -83,8 +81,6 @@ struct Callbacks<'manifest> {
 /// ordinary builds and release compilation do not select that policy.
 /// `overflow_checks` is the unit profile's integer overflow policy, the one the lowering already applied to the plan;
 /// rustc applies the same policy to the arithmetic it compiles from Rust crates, such as inlined standard library code.
-/// `source_package` is the checked closure's owner of transitional standard trait declarations; installed native
-/// artifacts do not decide that source identity.
 pub fn compile(
     plan: Plan,
     crate_name: &str,
@@ -97,7 +93,6 @@ pub fn compile(
     shared_store: Option<&Path>,
     kind: UnitKind,
     overflow_checks: bool,
-    source_package: &'static str,
     manifest: Option<&incan_frontend::library_manifest::LibraryManifest>,
 ) -> Result<(), DriverError> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::native_compile", input = %output.display(), functions = plan.functions.len()).entered();
@@ -175,7 +170,6 @@ pub fn compile(
         development: shared_store.is_some(),
         loaded: Vec::new(),
         timing,
-        source_package,
         partition: kind == UnitKind::Program,
     };
     let capture = crate::native_timing::Capture::begin();

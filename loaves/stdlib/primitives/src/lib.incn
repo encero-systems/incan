@@ -1,5 +1,11 @@
-"""Low-level standard primitives shared by standard packages and platform code."""
+"""Foundational standard declarations and native primitives shared by compiler, platform, and library code."""
 
+import derives.collection
+import derives.comparison
+import derives.copying
+import derives.string
+import features
+import prelude
 import primitives
 import primitives._logging
 import primitives._telemetry
@@ -39,6 +45,17 @@ import primitives.vocab._syntax
 import primitives.vocab._versions
 import primitives.vocab.scoped
 import primitives.vocab.transport
+import reflection
+import registry
+import result
+import runtime.host
+import this
+import traits.callable
+import traits.convert
+import traits.error
+import traits.indexing
+import traits.ops
+import traits.prelude as traits_prelude
 pub from primitives.async import Fn, FnMut, FnOnce, Send, Static, Sync
 pub from primitives.io import Endian, IoError, WriteBuffer
 pub from primitives.native_strings import nul_terminated_utf8

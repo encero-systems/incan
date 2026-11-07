@@ -7,7 +7,7 @@ inspection code.
 
 from std import toml
 from std.toml import TomlLocation
-from std.traits.error import Error
+from std.primitives.errors import Error
 
 
 pub enum IntakeErrorKind(str):

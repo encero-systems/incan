@@ -1,0 +1,12 @@
+"""
+The Zen of Incan
+
+This module prints the Zen of Incan when imported.
+The actual content is defined in `stdlib/zen.txt`, the single source of truth.
+
+Usage:
+    import this
+"""
+
+# This file is for documentation only.
+# The actual Zen text is embedded from `stdlib/zen.txt` at compiler build time.

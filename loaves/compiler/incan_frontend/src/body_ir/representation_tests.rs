@@ -895,11 +895,11 @@ fn checked_metadata_seed(source: &str) -> Result<(TypeCheckInfo, bir::BodyIrModu
     use crate::loaf_index::LoafIndex;
     use std::sync::Arc;
 
-    let sdk = include_str!("../../../../stdlib/core/src/reflection.incn");
+    let sdk = include_str!("../../../../stdlib/primitives/src/reflection.incn");
     let tokens = crate::lexer::lex(sdk).map_err(|errors| format!("{errors:?}"))?;
     let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
     let mut declaring = TypeChecker::new();
-    declaring.set_current_package_identity(Some("incan_stdlib_core".into()));
+    declaring.set_current_package_identity(Some("incan_stdlib_primitives".into()));
     declaring.set_current_module_path(Some(vec!["reflection".into()]));
     declaring
         .check_program(&program)
@@ -913,19 +913,19 @@ fn checked_metadata_seed(source: &str) -> Result<(TypeCheckInfo, bir::BodyIrModu
         public_namespaces: Vec::new(),
     };
     materialize_checked_api_public_namespaces(&mut api)?;
-    let mut manifest = LibraryManifest::new("incan_stdlib_core", "0.6.0");
+    let mut manifest = LibraryManifest::new("incan_stdlib_primitives", "0.6.0");
     manifest.contract_metadata.identity_graph.extend_checked_api_exports(
-        "incan_stdlib_core",
+        "incan_stdlib_primitives",
         &api,
         &[(module_path, exports)],
     )?;
     manifest.contract_metadata.api = Some(api);
     let directory = tempfile::tempdir()?;
     std::fs::write(
-        directory.path().join("incan_stdlib_core.incnlib"),
+        directory.path().join("incan_stdlib_primitives.incnlib"),
         manifest.to_json_string()?,
     )?;
-    let entry = LoafIndex::standard("incan_stdlib_core", directory.path())?;
+    let entry = LoafIndex::standard("incan_stdlib_primitives", directory.path())?;
     let mut checker = TypeChecker::new();
     checker.set_current_package_identity(Some("metadata".into()));
     checker.set_current_module_path(Some(Vec::new()));

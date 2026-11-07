@@ -1,7 +1,7 @@
 # Incan feature inventory
 
 !!! warning "Generated file"
-    Do not edit this page by hand. Update `loaves/stdlib/core/src/features.incn` and regenerate it.
+    Do not edit this page by hand. Update `loaves/stdlib/primitives/src/features.incn` and regenerate it.
 
     Regenerate with: `incan run scripts/generate_feature_inventory.incn`
 
