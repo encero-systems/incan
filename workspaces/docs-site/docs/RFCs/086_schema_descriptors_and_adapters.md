@@ -1,6 +1,6 @@
 # RFC 086: Schema descriptors and adapters
 
-- **Status:** Draft
+- **Status:** Deferred
 - **Created:** 2026-04-29
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -17,9 +17,9 @@
 - **Written against:** v0.3
 - **Shipped in:** —
 
-!!! warning "Not ready for implementation"
+!!! note "Deferred pending practical experience"
 
-    This proposal is not ready for implementation. It needs practical experience with model construction, validation, declaration metadata, and structured reflection. Implementation remains unscheduled. The earlier design below is retained for investigation, not as an accepted implementation contract.
+    Revisit this proposal after projects have used model construction, validation, declaration metadata, and structured reflection on real integrations. No implementation release is scheduled. The earlier design below is retained for investigation, not as an accepted implementation contract.
 
     Review explored field-first metadata with ordinary indented schema declarations, checked dotted field selectors, profile-specific validators and factories, and whole-record decoding for ordered source data. These explorations did not establish a stable boundary between schemas, canonical model construction, format adapters, and query or ingestion libraries. No callable-schema mapping engine or decoder-hook protocol was accepted for implementation.
 

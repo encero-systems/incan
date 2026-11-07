@@ -13,7 +13,7 @@
     - #1260 (package and local-module import execution)
     - #1261 (facade identity on the replacement route)
 - **Issue:** [#1339](https://github.com/encero-systems/incan/issues/1339)
-- **RFC PR:** —
+- **RFC PR:** [#1426](https://github.com/encero-systems/incan/pull/1426)
 - **Written against:** v0.6
 - **Shipped in:** —
 

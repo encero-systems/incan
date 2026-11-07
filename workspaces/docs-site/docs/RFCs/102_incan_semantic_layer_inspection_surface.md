@@ -23,13 +23,13 @@
 - **Issue:** https://github.com/encero-systems/incan/issues/666
 - **RFC PR:** —
 - **Written against:** v0.3
-- **Shipped in:** 0.4 baseline
+- **Shipped in:** —
 
 ## Summary
 
 This RFC defines the Incan Semantic Layer Inspection Surface: a local, versioned, machine-readable project model that joins checked source facts, project lifecycle facts, actions, capabilities, policy outcomes, provenance, artifacts, schema descriptors, AI assets, evals, and agent guidance into one inspectable contract for CLI, LSP, CI, docs tooling, registries, and agents. The goal is not to replace the subsystem RFCs that own those facts; the goal is to make their outputs converge into one semantic layer so tools do not scrape source files, generated Rust, manifests, README conventions, or unrelated command output to understand an Incan project.
 
-The baseline surfaces are `incan check --format json`, `incan build --report json`, `incan inspect rust --format json`, and `incan inspect codegraph --format jsonl`. Those commands are deliberately focused rather than a full semantic package. They establish versioned JSON contracts, shared project/source identity expectations, explicit diagnostics, generated artifact breadcrumbs, and degraded-state graph output that join into the broader model described here.
+The 0.4 baseline shipped `incan check --format json`, `incan build --report json`, `incan inspect rust --format json`, and `incan inspect codegraph --format jsonl`. Those commands are deliberately focused rather than a full semantic package. They establish versioned JSON contracts, shared project/source identity expectations, explicit diagnostics, generated artifact breadcrumbs, and degraded-state graph output that join into the broader model described here.
 
 ## Core model
 

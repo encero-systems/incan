@@ -52,6 +52,7 @@ Write an RFC when the *user-facing meaning* of the language changes, for example
 
 ## After acceptance
 
+- When implementation starts, track the delivery plan on the owning issue and add a progress checklist to the RFC. Older In Progress RFCs may retain an inline plan.
 - If implemented: move the RFC to `workspaces/docs-site/docs/RFCs/closed/implemented/`.
 - If deferred: keep it in place but update the status to `Deferred` and summarize why.
 

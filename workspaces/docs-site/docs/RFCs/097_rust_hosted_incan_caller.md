@@ -22,7 +22,8 @@
     - #652 (v0.6 replacement-backend cutover)
     - #656 (Rust-facing ABI and Incan package compatibility direction)
     - #975 (Oven: Cargo-free Incan/Rust toolchain)
-- **Issue:** https://github.com/encero-systems/incan/issues/569
+    - [#569](https://github.com/encero-systems/incan/issues/569) (original Rust-hosted caller proposal)
+- **Issue:** [#1486](https://github.com/encero-systems/incan/issues/1486)
 - **RFC PR:** —
 - **Written against:** ~~v0.3~~ v0.5
 - **Shipped in:** —

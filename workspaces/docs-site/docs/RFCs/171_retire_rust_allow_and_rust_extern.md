@@ -1,6 +1,6 @@
 # RFC 171: Retire `@rust.allow`, `@rust.extern` and `rust.module`
 
-- **Status:** Planned
+- **Status:** In Progress
 - **Created:** 2026-11-05
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -14,7 +14,7 @@
     - RFC 125 (Loaf registry and baked asset distribution)
     - RFC 127 (Incan lint catalog)
 - **Issue:** https://github.com/encero-systems/incan/issues/2682
-- **RFC PR:** —
+- **RFC PR:** [#2688](https://github.com/encero-systems/incan/pull/2688)
 - **Written against:** v0.6
 - **Shipped in:** —
 
@@ -148,6 +148,12 @@ This breaks source that uses any of the three forms. Incan has not reached 1.0, 
 - **Stdlib / Runtime**: replace existing uses with `rust::` imports or wrappers, and declare test markers with `@marker`.
 - **Test runner**: read marker semantics through checked metadata.
 - **Docs / Tooling**: decorator reference, generated feature inventory, LSP completion.
+
+## Progress Checklist
+
+- [x] Retire the three Rust interop forms and diagnose their replacements. Direct Rust imports and checked test markers are covered by the implementation on `0.6.0-dev.9` ([#2688](https://github.com/encero-systems/incan/pull/2688)).
+- [x] Verify the supported compiler and installed toolchain paths. The implementation PR records its contract census, Oven tests and Rust facet suite results.
+- [ ] Record the release containing these changes when it ships.
 
 ## Design Decisions
 

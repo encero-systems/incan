@@ -1,6 +1,6 @@
 # RFC 172: Async syntax without an import
 
-- **Status:** Planned
+- **Status:** In Progress
 - **Created:** 2026-11-05
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -9,7 +9,7 @@
     - RFC 142 (async consumers and structured concurrency)
     - RFC 168 (`std.primitives`)
 - **Issue:** https://github.com/encero-systems/incan/issues/2683
-- **RFC PR:** —
+- **RFC PR:** [#2685](https://github.com/encero-systems/incan/pull/2685)
 - **Written against:** v0.6
 - **Shipped in:** —
 
@@ -107,6 +107,12 @@ Whether the syntax needs a library is now separate from where the library lives,
 - **Stdlib / Runtime**: runtime selection follows checked async use.
 - **Formatter**: no new syntax.
 - **LSP / Tooling**: completion offers the keywords in every module.
+
+## Progress Checklist
+
+- [x] Reserve `async` and `await` independently of imports and support `race for` without an activation import. The implementation is on `0.6.0-dev.9` ([#2685](https://github.com/encero-systems/incan/pull/2685)).
+- [x] Verify reserved names, module access and existing programs. The implementation PR records its contract census, reserved-name refusal fixtures and example runs.
+- [ ] Record the release containing these changes when it ships.
 
 ## Design Decisions
 

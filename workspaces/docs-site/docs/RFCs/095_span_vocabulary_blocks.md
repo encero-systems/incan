@@ -314,7 +314,7 @@ Status must follow the RFC 094 `ScopeExit`:
 
 - `Success`, `Return` with a successful value, `Break`, and `Continue` must leave the status unset unless the user set it.
 - `Error`, including an explicit return whose evaluated `Result` is `Err`, must set the status to error and record the failure.
-- `Panic` must set the status to error and record the panic as an exception event.
+- `Panic` must set the status to error. Record the exception event once at the panic’s origin; an enclosing span unwound by that panic refers to the same failure under RFC 093.
 - `Cancelled` must leave the status unset and record a `cancelled` event, because cancellation is not an application failure under RFC 142.
 
 Ending a span must never fail. A provider or exporter failure must be reported through telemetry diagnostics and must never enter the program's control flow or replace the suite's outcome.

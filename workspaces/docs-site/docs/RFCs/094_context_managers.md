@@ -234,10 +234,13 @@ Both exits must report failure to cleanup. A transaction-like manager must not r
 Vocabulary blocks may use the same mechanism while exposing domain syntax:
 
 ```incan
-import std.telemetry.vocab
+import std.telemetry
 
-span "checkout.charge", attributes={"order.id": order.id}:
-    receipt = charge(order)?
+def take_one(remaining: int) -> Result[int, str]:
+    span "reserve":
+        if remaining < 1:
+            return Err("quota exhausted")
+        return Ok(remaining - 1)
 ```
 
 The `span` block is not defined here, but the important contract is that a vocabulary desugarer can target a context manager and receive the same cleanup guarantee as `with`.

@@ -29,7 +29,7 @@ Recursive Incan code gets the stack it needs. The compiler knows which calls can
 1. **Recursion is ordinary:** any function may call itself or take part in mutual recursion, with no annotation.
 2. **The stack grows on demand:** at every call that can recurse, the compiler checks the remaining stack and, when it is low, continues on a new heap segment that is released on return.
 3. **Each task has a stack budget:** exhausting it is a panic with a report of the recursion cycle, never a crash of the whole process.
-4. **Untrusted input has typed limits:** every standard parser of external data, from JSON and XML to regular expressions and IncQL queries, has a `max_depth` limit, 128 by default, reports exceeding it as a typed error, and lifts it only on explicit request.
+4. **Untrusted input has typed limits:** every standard parser of external data, from JSON and XML to regular expressions and query inputs, has a `max_depth` limit and reports excess nesting as a typed error. The default is 128 unless the format specifies its own limit. Only an explicit request lifts it.
 5. **Libraries declare their own limits:** `@max_recursion_depth` gives any recursive function a depth limit that returns a typed error or panics, the same mechanism the standard parsers use.
 
 ## Motivation
@@ -108,8 +108,8 @@ The panic follows RFC 094, so open `with` blocks still exit. Inside an RFC 142 t
 A service decoding client input never needs a million levels of nesting:
 
 ```incan
-async def create_order(request: Request) -> Response:
-    match Order.from_json(request.text()?):
+def create_order(body: str) -> Response:
+    match Order.from_json(body):
         Ok(order) => return Response.created(save(order))
         Err(JsonError.TooDeep(path, max_depth)) =>
             return Response.bad_request(f"nesting deeper than {max_depth} at {path}")

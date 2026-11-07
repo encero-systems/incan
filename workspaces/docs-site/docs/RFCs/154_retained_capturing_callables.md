@@ -18,7 +18,8 @@
     - RFC 143 (explicit cloning)
     - RFC 153 (async closures)
     - RFC 164 (explicit ownership and borrowing)
-- **Issue:** [#1985](https://github.com/encero-systems/incan/issues/1985)
+    - [#1985](https://github.com/encero-systems/incan/issues/1985) (originating lazy iterator adapter case)
+- **Issue:** [#1987](https://github.com/encero-systems/incan/issues/1987)
 - **RFC PR:** —
 - **Written against:** v0.6
 - **Shipped in:** —
