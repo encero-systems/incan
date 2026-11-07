@@ -13,6 +13,9 @@
 #   255 0 0
 #   0
 #   2
+#   2
+#   2
+#   2
 
 """A bytes literal is passed to a bytes parameter (parity corpus case 15)."""
 
@@ -21,12 +24,25 @@ from std.io import BytesIO
 const RAW: FrozenBytes = b"\x00\xff"
 const EMPTY: bytes = b""
 const ID: bytes = b"id"
+const NAME: str = "ok"
 
 
 model Packet:
     """Keep byte storage behind an ordinary source field."""
 
     data: bytes
+
+
+class Envelope:
+    """Keep byte storage behind an ordinary class field."""
+
+    pub data: bytes
+
+
+model NamedPacket:
+    """Keep owned text behind the analogous model boundary."""
+
+    name: str
 
 
 def byte_at(payload: bytes, index: int) -> u8:
@@ -67,3 +83,7 @@ def main() -> None:
     println(f"{other.data[-1]} {len(copied.data)} {RAW[0]}")
     println(len(Packet(data=EMPTY).data))
     println(len(Packet(data=ID).data))
+    println(len(Envelope(data=ID).data))
+    payloads: list[bytes] = [ID]
+    println(len(payloads[0]))
+    println(len(NamedPacket(name=NAME).name))
