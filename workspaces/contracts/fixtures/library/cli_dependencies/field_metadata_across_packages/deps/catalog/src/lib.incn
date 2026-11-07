@@ -1,0 +1,10 @@
+pub model Account:
+    pub type_ [alias="type", description="Account type"]: str
+    pub balance [description="Balance in cents"]: int = 0
+    pub external_id as "externalId": str
+    hidden: str = "x"
+
+
+pub def local_fields() -> list[str]:
+    """Describe the public fields from inside the provider."""
+    return [f"{info.name}:{info.wire_name}" for info in Account.__fields__()]
