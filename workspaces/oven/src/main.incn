@@ -25,6 +25,7 @@ from rust_build import RustBuild
 from rust_registry import read_registry_units
 from rust_manifest import rust_facet
 from rust_testing import build_rust_tests
+from project_lock import ensure_project_lock, lock_project, parse_lock_command
 from toolchain import load_toolchain, rust_compiler
 from formatting import format_paths, parse_arguments as format_options
 from testing import run_collected, run_tests, run_rust_harness, test_sources
@@ -58,6 +59,7 @@ pub model Options:
     pub argv0: Option[str] = None
     pub feature_options: bool = false
     pub engine_report: bool = false
+    pub locked: bool = false
     # One CLI preparation owns its source readings, including its provider callbacks.
     pub manifests: ManifestReader = ManifestReader()
 
@@ -113,7 +115,7 @@ def dispatch(command: str, rest: list[str]) -> None:
         require_no_arguments(command, rest)
         println(version_text(invoked()))
         return
-    if command in ["run", "check", "test", "build", "describe-unit", "fmt", "inspect"]:
+    if command in ["run", "check", "test", "build", "describe-unit", "fmt", "inspect", "lock"]:
         begin_installation_command()
     if command == "--internal-engine":
         match serve_engine(rest):
@@ -122,6 +124,9 @@ def dispatch(command: str, rest: list[str]) -> None:
         return
     if command == "explain":
         explain(rest)
+        return
+    if command == "lock":
+        lock(rest)
         return
     match select_engine(get_or("INCAN_ENGINE", "legacy")):
         Err(reason) => fail(f"{invoked()} {command}: engine refusal {refusal_code(reason.kind)}: {reason.detail}", 2)
@@ -218,6 +223,16 @@ def explain(arguments: list[str]) -> None:
         Ok(toolchain) => finish("explain", run_compiler(toolchain, ["--explain", arguments[0]]))
 
 
+def lock(arguments: list[str]) -> None:
+    """Resolve and report the root project's generated lock."""
+    match parse_lock_command(arguments):
+        Err(reason) => syntax_error("lock", reason)
+        Ok(command) =>
+            match lock_project(command):
+                Err(reason) => fail(f"oven lock: {reason}", 1)
+                Ok(result) => println(f"locked {result.name} {result.version} ({result.mode})")
+
+
 def syntax_error(command: str, reason: str) -> None:
     """Report a command parser's refusal using the CLI syntax status and common help pointer."""
     fail(f"{invoked()} {command}: {reason}", 2)
@@ -258,6 +273,8 @@ def parse_options(arguments: list[str]) -> Result[Options, str]:
             continue
         if argument == "--engine-report":
             options.engine_report = true
+        elif argument == "--locked":
+            options.locked = true
         elif argument == "--no-default-features":
             options.feature_options = true
             options.request.default_features = false
@@ -296,6 +313,7 @@ def records_command(command: str, arguments: list[str]) -> None:
                 )
             if command == "build" and (len(passed) > 0 or options.argv0 is not None):
                 syntax_error(command, "program arguments and --argv0 require run")
+            prepared_lock(command, options)
             finish(
                 command,
                 execute_records(
@@ -334,7 +352,10 @@ def run(arguments: list[str]) -> None:
     own, passed = program_arguments(arguments)
     match parse_options(own):
         Err(reason) => syntax_error("run", reason)
-        Ok(options) => finish("run", ran(validated("run", options), passed))
+        Ok(options) =>
+            selected = validated("run", options)
+            prepared_lock("run", selected)
+            finish("run", ran(selected, passed))
 
 
 def program_arguments(arguments: list[str]) -> tuple[list[str], list[str]]:
@@ -350,6 +371,20 @@ def program_arguments(arguments: list[str]) -> tuple[list[str], list[str]]:
         else:
             own.append(argument)
     return (own, passed)
+
+
+def prepared_lock(command: str, options: Options) -> None:
+    """Reconcile a mutating project command's root lock before resident or in-process preparation begins."""
+    match ensure_project_lock(
+        Path(options.path),
+        options.profile,
+        options.request,
+        options.substitutes,
+        options.manifests,
+        options.locked,
+    ):
+        Err(reason) => fail(f"{invoked()} {command}: {reason}", 1)
+        Ok(_) => return
 
 
 def ran(options: Options, passed: list[str]) -> Result[i32, str]:
@@ -382,7 +417,10 @@ def ran(options: Options, passed: list[str]) -> Result[i32, str]:
     if made.code != 0:
         return Ok(made.code)
     # 3. The process becomes the program, so its exit status is the run's; it keeps the view's name as its own.
-    return run_program(made.launch, passed, Some(options.argv0.unwrap_or(binary.0)))
+    mut argv0 = binary.0
+    if let Some(selected) = options.argv0:
+        argv0 = selected
+    return run_program(made.launch, passed, Some(argv0))
 
 
 def via_owner(command: str, options: Options, entry: Path) -> Option[Reply]:
@@ -397,7 +435,10 @@ def test(arguments: list[str]) -> None:
     """Compile one collected test unit and report each test's observed outcome."""
     match parse_options(arguments):
         Err(reason) => syntax_error("test", reason)
-        Ok(options) => finish("test", tested(validated("test", options)))
+        Ok(options) =>
+            selected = validated("test", options)
+            prepared_lock("test", selected)
+            finish("test", tested(selected))
 
 
 def tested(options: Options) -> Result[i32, str]:
@@ -527,6 +568,8 @@ def require_command_options(command: str, options: Options) -> Result[None, str]
     """Each command admits only options it applies, and feature selection requires an owning project."""
     if options.engine_report:
         return Err("--engine-report requires INCAN_ENGINE=records run or build")
+    if options.locked and command not in ["run", "build", "test"]:
+        return Err("--locked requires run, build or test")
     if options.argv0 != None and command != "run":
         return Err("--argv0 requires run")
     if len(options.program_entries) > 0 and command not in ["run", "build"]:
@@ -582,7 +625,10 @@ def build(arguments: list[str]) -> None:
     """Compile an Incan source unit or a Rust project against the installed toolchain's registry units."""
     match parse_options(arguments):
         Err(reason) => syntax_error("build", reason)
-        Ok(options) => build_selected(validated("build", options))
+        Ok(options) =>
+            selected = validated("build", options)
+            prepared_lock("build", selected)
+            build_selected(selected)
 
 
 def build_selected(options: Options) -> None:

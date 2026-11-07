@@ -78,7 +78,7 @@ def main() -> None:
 incan run consumer/src/main.incn
 ```
 
-The program prints `158`. Oven prepares the producer from the declared path before compiling the consumer. The dependency alias `pricing` determines the import namespace. No workspace root, lock command or explicit bake is required.
+The program prints `158`. Oven prepares the producer from the declared path before compiling the consumer. The dependency alias `pricing` determines the import namespace. The run writes `consumer/oven.lock` silently; that root lock records the relative producer path and exact graph. No workspace root or explicit bake is required.
 
 <section class="inc-learning-panel inc-learning-panel--complete" data-label="Complete" markdown="1">
 

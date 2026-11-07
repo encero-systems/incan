@@ -1,0 +1,410 @@
+"""Resolve, compare and atomically publish the one oven.lock owned by a root project."""
+
+from std.fs import Path
+from features import FeatureRequest
+from home_paths import TOOLCHAIN
+from intake import ManifestReader
+from loaf_local_graph import LocalDemand, LocalFacet, local_facets, unique
+from lock_format import (
+    DEFAULT_MODE,
+    LockDependency,
+    LockFeatures,
+    LockLoaf,
+    LockToolchain,
+    OvenLock,
+    graph_identity,
+    lock_path,
+    read_lock,
+    validate_mode,
+    write_lock,
+)
+from observation import trace
+from registry_units import RegistryDemand, RegistryUnit, RegistryUnits
+from rust_activation import DependencyDomain
+from semver_req import parse_requirement, parse_version, requirement_matches
+from rust_registry import read_registry_units, registry_selection, resolve_registry
+from rust_target import target_configuration
+from toolchain import load_toolchain, rust_compiler
+from unit import project_root_of
+from unit_freshness import compiler_fingerprint
+
+
+pub model LockResult:
+    """The root identity and mode of a resolved lock, and whether this command published it."""
+
+    pub name: str
+    pub version: str
+    pub mode: str
+    pub changed: bool
+
+
+pub model LockCommand:
+    """The path and optional version mode accepted by `oven lock`."""
+
+    pub path: str
+    pub mode: str = ""
+
+
+pub def parse_lock_command(arguments: list[str]) -> Result[LockCommand, str]:
+    """Parse `oven lock [--versions MODE] PATH`, defaulting PATH to the current directory."""
+    mut command = LockCommand(path=".")
+    mut path_seen = false
+    mut index = 0
+    while index < len(arguments):
+        argument = str(arguments[index])
+        if argument == "--versions":
+            if index + 1 >= len(arguments):
+                return Err("`--versions` needs a value")
+            command.mode = validate_mode(arguments[index + 1])?
+            index += 2
+            continue
+        if argument.startswith("-"):
+            return Err(f"unknown option `{argument}`")
+        if path_seen:
+            return Err(f"one PATH is locked at a time; `{argument}` is a second")
+        command.path = argument
+        path_seen = true
+        index += 1
+    return Ok(command)
+
+
+pub def lock_project(command: LockCommand) -> Result[LockResult, str]:
+    """Resolve and publish the explicit root project, reporting its selected sticky mode."""
+    match root_project(Path(command.path))?:
+        None => return Err(f"{command.path}: no root loaf.toml")
+        Some(root) => return reconcile(root, "debug", FeatureRequest(), {}, ManifestReader(), command.mode, false, true)
+
+
+pub def ensure_project_lock(
+    path: Path,
+    profile: str,
+    request: FeatureRequest,
+    substitutes: Dict[str, str],
+    reader: ManifestReader,
+    locked: bool,
+) -> Result[None, str]:
+    """Refresh a run, build or test root's lock silently, or prove `--locked` needs no change."""
+    match root_project(path)?:
+        None => return Ok(None)
+        Some(root) =>
+            _ = reconcile(root, profile, request, substitutes, reader, "", locked, true)?
+            return Ok(None)
+
+
+def root_project(path: Path) -> Result[Option[Path], str]:
+    """Resolve only the command's root project; dependency roots are never consulted for their own locks."""
+    if path.is_dir() and path.joinpath("loaf.toml").is_file():
+        return Ok(Some(path.resolve().map_err((error) => error.message())?))
+    match project_root_of(path):
+        None => return Ok(None)
+        Some(root) => return Ok(Some(root.resolve().map_err((error) => error.message())?))
+
+
+def reconcile(
+    root: Path,
+    profile: str,
+    request: FeatureRequest,
+    substitutes: Dict[str, str],
+    reader: ManifestReader,
+    requested_mode: str,
+    locked: bool,
+    write: bool,
+) -> Result[LockResult, str]:
+    """
+    Resolve today's local and shipped-unit graph, retain valid pins, then compare or publish the generated lock.
+
+    1. Read and authenticate an existing lock before it can constrain selection.
+    2. Choose the explicit, sticky or default mode, resetting to the default after a toolchain change.
+    3. Resolve with valid existing producer pins and construct the complete format-1 graph.
+    4. Refuse a locked change, or publish a changed lock without changing command output.
+    """
+    path = lock_path(root)
+    mut existing: Option[OvenLock] = None
+    if path.is_file():
+        existing = Some(read_lock(path)?)
+    if locked and existing is None:
+        return Err(f"{path.0} is missing; run `oven lock`")
+    toolchain = load_toolchain()?
+    identity = compiler_fingerprint(toolchain)?
+    if locked:
+        if let Some(known) = existing:
+            if known.toolchain.version != TOOLCHAIN or known.toolchain.identity != identity:
+                return Err(
+                    f"{path.0} records toolchain {known.toolchain.version} ({known.toolchain.identity}), not {TOOLCHAIN} ({identity}); run `oven lock`",
+                )
+    mode = selected_mode(existing, requested_mode, identity)
+    rustc = rust_compiler(toolchain)
+    configuration = target_configuration(rustc)?
+    demand = LocalDemand(
+        project=root.0,
+        domain=DependencyDomain.Target,
+        features=request.features,
+        defaults=request.default_features,
+        all_features=request.all_features,
+    )
+    facets = local_facets(demand, configuration, substitutes, reader)?
+    mut registry = read_registry_units(Path(toolchain.registry_units), root.0, reader, false)?
+    registry.resolution_mode = mode
+    if let Some(known) = existing:
+        if keeps_existing(known, requested_mode, mode):
+            registry.recorded_bindings = retained_bindings(known, facets, registry.units)?
+    selected = resolve_registry(registry, facets, profile)?
+    generated = resolved_lock(root, mode, identity, configuration.triple, facets, selected)?
+    root_entry = root_loaf(generated)?
+    changed = existing is None or not same_resolution(existing, generated)
+    if locked and changed:
+        return Err(f"{path.0} would change at {difference(existing, generated)}; run `oven lock`")
+    if write and changed:
+        write_lock(path, generated)?
+        trace(f"lock refreshed {path.0} graph={generated.graph}")
+    return Ok(LockResult(name=root_entry.name, version=root_entry.version, mode=mode, changed=changed))
+
+
+def selected_mode(existing: Option[OvenLock], requested: str, identity: str) -> str:
+    """Use an explicit mode, otherwise keep a same-toolchain lock's mode or take the default."""
+    if requested != "":
+        return requested
+    if let Some(known) = existing:
+        if known.toolchain.version == TOOLCHAIN and known.toolchain.identity == identity:
+            return known.mode
+    return DEFAULT_MODE
+
+
+def keeps_existing(existing: OvenLock, requested: str, mode: str) -> bool:
+    """Retain still-valid producers unless an explicit mode change requests another selection."""
+    return requested == "" or existing.mode == mode
+
+
+def retained_bindings(
+    lock: OvenLock,
+    facets: list[LocalFacet],
+    units: list[RegistryUnit],
+) -> Result[list[Tuple[str, str]], str]:
+    """Keep each prior root producer that exists and still satisfies the current requirement and feature demand."""
+    available = [unit.entry for unit in units]
+    mut bindings: list[Tuple[str, str]] = []
+    for facet in facets:
+        for request in facet.registry:
+            selection = registry_selection(request)?
+            for entry in lock.loaves:
+                if entry.origin != "toolchain" or entry.name != selection.loaf or entry.entry not in available:
+                    continue
+                if (
+                    not requirement_matches(parse_requirement(selection.requirement)?, parse_version(entry.version)?)
+                    or not locked_features_cover(entry, facet.domain.value(), selection.features)
+                ):
+                    continue
+                binding = (facet.domain.value(), entry.entry)
+                if binding not in bindings:
+                    bindings.append(binding)
+    return Ok(bindings)
+
+
+def locked_features_cover(entry: LockLoaf, domain: str, requested: list[str]) -> bool:
+    """Whether one prior compiled entry's recorded domain contains every currently requested feature."""
+    for features in entry.features:
+        if features.domain == domain and len([name for name in requested if name not in features.enabled]) == 0:
+            return true
+    return false
+
+
+def resolved_lock(
+    root: Path,
+    mode: str,
+    identity: str,
+    target: str,
+    facets: list[LocalFacet],
+    registry: RegistryUnits,
+) -> Result[OvenLock, str]:
+    """Project the selected local and compiled registry graph into format 1, then seal its semantic identity."""
+    mut loaves: list[LockLoaf] = []
+    for facet in facets:
+        loaves.append(local_entry(root, facet, facets, registry, target)?)
+    for unit in registry.units:
+        loaves.append(toolchain_entry(unit, registry.units, facets, registry.bindings, target)?)
+    mut lock = OvenLock(
+        format=1,
+        mode=mode,
+        graph="",
+        toolchain=LockToolchain(version=TOOLCHAIN, identity=identity),
+        loaves=loaves,
+    )
+    lock.graph = graph_identity(lock)?
+    return Ok(lock)
+
+
+def local_entry(
+    root: Path,
+    facet: LocalFacet,
+    facets: list[LocalFacet],
+    registry: RegistryUnits,
+    target: str,
+) -> Result[LockLoaf, str]:
+    """Record one root or path facet with every active local and registry edge."""
+    mut dependencies: list[LockDependency] = []
+    for edge in facet.local:
+        child = facet_for(edge.project, edge.domain, facets)?
+        dependencies.append(
+            LockDependency(key=edge.alias, loaf=child.package, version=child.version, domain=edge.domain.value()),
+        )
+    for index in range(len(facet.registry)):
+        selection = registry_selection(facet.registry[index])?
+        demand = RegistryDemand(selection=selection, domain=facet.domain.value())
+        if demand.key() not in registry.bindings:
+            return Err(f"locked registry selection is absent for {selection.loaf}")
+        unit = unit_for(registry.bindings[demand.key()], registry.units)?
+        dependencies.append(
+            LockDependency(
+                key=facet.registry_aliases[index],
+                loaf=unit.loaf,
+                version=unit.version,
+                domain=facet.domain.value(),
+                entry=unit.entry,
+            ),
+        )
+    mut origin = "path"
+    mut path = relative_path(root, Path(facet.project))
+    if facet.project == root.0:
+        origin = "root"
+        path = ""
+    return Ok(
+        LockLoaf(
+            name=facet.package,
+            version=facet.version,
+            origin=origin,
+            path=path,
+            dependencies=dependencies,
+            features=[
+                LockFeatures(
+                    target=target,
+                    domain=facet.domain.value(),
+                    requested=facet.requested,
+                    enabled=facet.features,
+                ),
+            ],
+        ),
+    )
+
+
+def toolchain_entry(
+    unit: RegistryUnit,
+    units: list[RegistryUnit],
+    facets: list[LocalFacet],
+    bindings: Dict[str, str],
+    target: str,
+) -> Result[LockLoaf, str]:
+    """Record one selected shipped unit and its exact producer dependency entries."""
+    mut dependencies: list[LockDependency] = []
+    for dependency in unit.dependencies:
+        child = unit_for(dependency, units)?
+        dependencies.append(
+            LockDependency(
+                key=dependency_key(child),
+                loaf=child.loaf,
+                version=child.version,
+                domain=dependency_domain(unit, child),
+                entry=child.entry,
+            ),
+        )
+    return Ok(
+        LockLoaf(
+            name=unit.loaf,
+            version=unit.version,
+            origin="toolchain",
+            entry=unit.entry,
+            dependencies=dependencies,
+            features=[
+                LockFeatures(
+                    target=target,
+                    domain=unit.domain,
+                    requested=registry_requests(unit.entry, facets, bindings)?,
+                    enabled=unit.features,
+                ),
+            ],
+        ),
+    )
+
+
+def dependency_domain(parent: RegistryUnit, child: RegistryUnit) -> str:
+    """Select the host domain only for a procedural-macro edge; every other edge follows its producer."""
+    if child.kind == "proc-macro":
+        return "host"
+    return parent.domain
+
+
+def registry_requests(entry: str, facets: list[LocalFacet], bindings: Dict[str, str]) -> Result[list[str], str]:
+    """Union explicit feature requests whose root binding selected one compiled entry."""
+    mut requested: list[str] = []
+    for facet in facets:
+        for value in facet.registry:
+            selection = registry_selection(value)?
+            demand = RegistryDemand(selection=selection, domain=facet.domain.value())
+            if demand.key() in bindings and bindings[demand.key()] == entry:
+                requested = unique(requested + selection.features)
+    return Ok(requested)
+
+
+def facet_for(project: str, domain: DependencyDomain, facets: list[LocalFacet]) -> Result[LocalFacet, str]:
+    """Find the exact local facet an active edge reaches."""
+    for facet in facets:
+        if facet.project == project and facet.domain == domain:
+            return Ok(facet)
+    return Err(f"locked local facet is absent: {project}@{domain.value()}")
+
+
+def unit_for(entry: str, units: list[RegistryUnit]) -> Result[RegistryUnit, str]:
+    """Find one selected compiled unit by its producer entry."""
+    for unit in units:
+        if unit.entry == entry:
+            return Ok(unit)
+    return Err(f"locked toolchain entry is absent: {entry}")
+
+
+def dependency_key(unit: RegistryUnit) -> str:
+    """Give a transitive compiled edge its published crate name, or its Loaf's final segment."""
+    if unit.name != "":
+        return unit.name
+    return unit.loaf.split("/")[-1].replace("-", "_")
+
+
+def relative_path(root: Path, selected: Path) -> str:
+    """Spell a local Loaf relative to the lock directory without retaining an absolute checkout path."""
+    base = root.0.split("/")
+    target = selected.0.split("/")
+    mut common = 0
+    while common < len(base) and common < len(target) and base[common] == target[common]:
+        common += 1
+    parts = [".." for _ in range(len(base) - common)] + target[common:]
+    if len(parts) == 0:
+        return "."
+    return "/".join(parts)
+
+
+def root_loaf(lock: OvenLock) -> Result[LockLoaf, str]:
+    """Return the lock's single root entry after graph validation established that invariant."""
+    for entry in lock.loaves:
+        if entry.origin == "root":
+            return Ok(entry)
+    return Err("resolved lock has no root Loaf")
+
+
+def same_resolution(existing: Option[OvenLock], generated: OvenLock) -> bool:
+    """Compare semantic graph, mode and format independently of generated table order."""
+    if let Some(known) = existing:
+        return known.format == generated.format and known.mode == generated.mode and known.graph == generated.graph
+    return false
+
+
+def difference(existing: Option[OvenLock], generated: OvenLock) -> str:
+    """Name the first user-actionable lock dimension that changed."""
+    if let Some(known) = existing:
+        if known.toolchain != generated.toolchain:
+            return f"toolchain {known.toolchain.version} -> {generated.toolchain.version}"
+        if known.mode != generated.mode:
+            return f"version mode {known.mode} -> {generated.mode}"
+        known_root = root_loaf(known)
+        generated_root = root_loaf(generated)
+        if known_root != generated_root:
+            return "the root Loaf or one of its dependency edges"
+        return "the resolved dependency graph"
+    return "the missing lock"

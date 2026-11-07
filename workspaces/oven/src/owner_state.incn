@@ -24,7 +24,6 @@ from observation import SETTLE_SECONDS, Ledger, load_ledger, now_seconds, trace_
 from pub::incan_platform.trace import Operation
 from jec import begin, record
 from owner_protocol import Reply, Request, prepares_executable
-from rust_registry import registry_record_path
 from rust_manifest import rust_facet
 from testing import tests_binary
 from toolchain import Toolchain, load_toolchain, toolchain_file
@@ -302,7 +301,7 @@ def guard_paths(unit: UnitDescription) -> Result[list[str], str]:
     The files a prepared unit depends on.
 
     1. The manifests of its project graph.
-    2. Its lock and any explicit registry producer record.
+    2. Its generated lock.
     3. The standard library directory with its packages' manifests.
     4. The libraries of the standard providers and compiler facades it links.
     """
@@ -313,11 +312,8 @@ def guard_paths(unit: UnitDescription) -> Result[list[str], str]:
         graph = intake(root, unit.manifests).map_err((error) => error.message())?
         for project in graph.projects:
             paths.append(Path(project.root).joinpath("loaf.toml").0)
-    # 2. So does a change of the lock or its explicit producer selection.
+    # 2. So does a change of the lock that owns the project's exact producer selection.
     paths.append(root.joinpath("oven.lock").0)
-    registry_lock = registry_record_path(root.0, unit.manifests)?
-    if registry_lock != "":
-        paths.append(registry_lock)
     # 3. So does a change to the set of standard packages, or to the manifest of any of them.
     paths.append(standard_library_dir()?.0)
     for package in standard_packages(unit.manifests)?:

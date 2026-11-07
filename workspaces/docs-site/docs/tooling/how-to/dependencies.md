@@ -46,16 +46,23 @@ The declared requirement must match the installed registry's available unit, inc
 
 Use `optional = true` on an edge and activate it from a package feature with `dep:ALIAS`. Dependency feature requests use `ALIAS/FEATURE`. See [Select package features](sdk_components_and_package_features.md).
 
-## Select a recorded producer closure
+## Lock the selected graph
 
-When a registry catalog contains several coherent builds that satisfy your requirements, point the project at its producer's recorded closure:
+Generate the root project's selected dependency graph:
 
-```toml
-[build]
-registry-lock = "closure.json"
+```bash
+oven lock .
 ```
 
-Use the record exported by that producer. Its exact entry identities must already exist in the installed catalog; the path does not provision artifacts. Oven holds the selected bindings for the entire graph. Without a project record, an installed standard-producer record supplies its selection; otherwise an ambiguous choice is refused by name.
+The generated `oven.lock` records exact path and compiled-unit edges. Commit it with the manifest. To choose another version-selection mode, run `oven lock --versions newest .` or `oven lock --versions lowest-direct .`; later lock commands keep that mode.
+
+Require an unchanged committed graph in a build:
+
+```bash
+oven build --locked .
+```
+
+A missing or stale lock is refused and names `oven lock`. Ordinary run, build and test commands create or refresh the root lock silently.
 
 ## Inspect the selection
 
@@ -63,6 +70,6 @@ Use the record exported by that producer. Its exact entry identities must alread
 oven describe-unit src/main.incn
 ```
 
-The unit description lists active features, Loaves, Rust crates and native artifacts. Keep authored manifests and source under version control. Dev.8 has no `incan lock` command or lock-policy flags.
+The unit description lists active features, Loaves, Rust crates and native artifacts. `incan lock` remains an unknown command.
 
 The [manifest reference](../reference/project_configuration.md) lists accepted fields and defaults.
