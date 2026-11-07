@@ -14,7 +14,7 @@ from std.fs import Path
 from std.json import JsonValue
 from codegen import remap_arguments, rust_incremental_arguments, rust_metadata
 from files import json_text, parse_json, read
-from home import dependency_artifact_dir
+from home import dependency_artifact_dir, standard_artifact_dir, standard_packages
 from json_fields import field, required_items, required_text, strings
 from intake import library_source, ManifestReader
 from native_closure_input import NativeClosureInput
@@ -101,6 +101,7 @@ def build_prepared_rust(request: RustBuild) -> Result[list[str], str]:
     validate_incan_packages(facets, root.0, request.manifests)?
     # A source build that would mix native generations is refused before any unit compiles.
     require_installed_sources(facets, request)?
+    require_coherent_installed_generation(facets, request)?
     output = rust_output(root, request.profile)
     # 2. A unit that fails blocks only the units that link it, so every other unit is still attempted.
     mut built: Dict[str, BuiltUnit] = {}
@@ -140,6 +141,70 @@ def blocking_unit(facet: LocalFacet, failed: Dict[str, str]) -> str:
         if edge.key() in failed:
             return failed[edge.key()]
     return ""
+
+
+def require_coherent_installed_generation(facets: list[LocalFacet], request: RustBuild) -> Result[None, str]:
+    """
+    Validate a standard-package rebuild's installed Rust producers before any local unit compiles.
+
+    The ordinary per-unit guard remains authoritative. This preflight invokes that same complete proof for the whole
+    installed generation first, carrying each verified artifact into its dependents' exact extern arguments. It is
+    limited to selected standard-package roots: ordinary tool and application graphs may reach internal installed
+    producers whose support dependencies are deliberately not published as a reusable generation. A local producer
+    absent from the standard installation is allowed unless an installed producer links it; that combination cannot
+    be completed without mixing native generations and is refused before compilation.
+    """
+    root = Path(request.project).resolve().map_err((error) => error.message())?
+    standard_roots = [package.root for package in standard_packages(request.manifests)?]
+    if root.0 not in standard_roots:
+        return Ok(None)
+    mut verified: Dict[str, BuiltUnit] = {}
+    mut unavailable: Dict[str, str] = {}
+    mut search: list[str] = []
+    for facet in facets:
+        declared = rust_facet(facet.project, false, request.manifests)?
+        source = library_source(Path(facet.project), request.manifests)?
+        if declared.kind == "" and not source.is_file():
+            continue
+        provider = facet.project != root.0 and source.is_file()
+        if declared.kind != "" and declared.crate_name not in request.installed:
+            unavailable[facet.key()] = declared.crate_name
+            continue
+        blocker = blocking_unit(facet, unavailable)
+        if blocker != "":
+            return Err(
+                f"installed native {declared.crate_name} links {blocker}, which is absent from the installed native generation; rebuild its support generation",
+            )
+        mut native: Option[BuiltUnit] = None
+        if declared.kind != "":
+            native = Some(require_coherent_installed_producer(facet, declared, request, verified, search)?)
+        mut selected = native
+        if provider:
+            selected = None
+            if facet.project in standard_roots:
+                selected = installed_incan_provider(declared, request)?
+        match selected:
+            None => unavailable[facet.key()] = declared.package
+            Some(unit) =>
+                verified[facet.key()] = unit
+                search = search + [unit.directory] + unit.search
+    return Ok(None)
+
+
+def installed_incan_provider(declared: RustFacet, request: RustBuild) -> Result[Option[BuiltUnit], str]:
+    """The installed standard facade an activated source provider will select, if it is complete."""
+    directory = standard_artifact_dir(declared.package, request.profile)?
+    name = declared.package.replace("-", "_")
+    artifact = directory.joinpath(f"lib{name}.rlib")
+    if not artifact.is_file():
+        return Ok(None)
+    toolchain = selected_toolchain(request)?
+    search = native_search(directory.joinpath(f"{declared.package}.native.json"), toolchain.native_closures)?
+    return Ok(
+        Some(
+            BuiltUnit(crate_name=name, artifact=artifact.0, directory=directory.0, search=search, loaf=declared.package),
+        ),
+    )
 
 
 pub def receipt_document(built: Dict[str, BuiltUnit], keyed: bool) -> JsonValue:
@@ -214,6 +279,7 @@ def build_prepared_dependencies(
     validate_incan_packages(facets, root.0, request.manifests)?
     # A source build that would mix native generations is refused before any unit compiles.
     require_installed_sources(facets, request)?
+    require_coherent_installed_generation(ordered(facets)?, request)?
     output = rust_output(root, request.profile)
     mut built: Dict[str, BuiltUnit] = {}
     # The libraries built for the graph; `linking` adds the registry's and the toolchain's directories.
@@ -337,6 +403,20 @@ pub def compile_rust_library(
     # 2. A facet absent from the installed generation retains ordinary local compilation.
     unit = compile_local_rust_library(facet, declared, output, request, built, search, toolchain)?
     return stored_library(unit)
+
+
+pub def require_coherent_installed_producer(
+    facet: LocalFacet,
+    declared: RustFacet,
+    request: RustBuild,
+    built: Dict[str, BuiltUnit],
+    search: list[str],
+) -> Result[BuiltUnit, str]:
+    """Validate and select one installed producer through the same complete proof used by the per-unit guard."""
+    selected = installed_rust_library(facet, declared, request, built, search, selected_toolchain(request)?)?
+    match selected:
+        Some(unit) => return Ok(unit)
+        None => return Err(f"installed native {declared.crate_name} disappeared while validating its generation")
 
 
 pub def stored_library(unit: BuiltUnit) -> Result[BuiltUnit, str]:
