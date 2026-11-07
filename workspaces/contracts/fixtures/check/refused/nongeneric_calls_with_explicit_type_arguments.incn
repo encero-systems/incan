@@ -1,0 +1,16 @@
+# behavior: builtin and source methods and free functions that declare no type parameters refuse an explicit type-argument list (#2716)
+# expect-diagnostic: INCAN-T0129
+
+class Label:
+    pub def text(self) -> str:
+        return "label"
+
+
+def plain() -> str:
+    return "plain"
+
+
+def main() -> None:
+    println("hello".upper[int]())
+    println(Label().text[str]())
+    println(plain[bool]())

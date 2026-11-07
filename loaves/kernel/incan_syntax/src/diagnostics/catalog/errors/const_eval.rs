@@ -179,15 +179,15 @@ pub fn builtin_max_arity(name: &str, max: usize, found: usize, span: Span) -> Co
 pub fn explicit_type_arg_arity(name: &str, type_params: &[String], written: &[String], span: Span) -> CompileError {
     let expected = type_params.len();
     let found = written.len();
+    if expected == 0 {
+        return CompileError::type_error(format!("'{name}' takes no type arguments"), span)
+            .with_stable_code("INCAN-T0129")
+            .with_hint("Remove the type argument list");
+    }
     let error = CompileError::type_error(
         format!("{name} expects {expected} explicit type argument(s), got {found}"),
         span,
     );
-    if expected == 0 {
-        return error.with_hint(format!(
-            "'{name}' declares no type parameters; remove the type argument list"
-        ));
-    }
     let error = error.with_note(format!(
         "'{name}' declares type parameters [{}]; an explicit list binds every one of them in that order",
         type_params.join(", ")
