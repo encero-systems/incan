@@ -61,7 +61,7 @@ impl TypeChecker {
             self.report_namespace_resolution_failure(failure, span);
             return ResolvedType::Unknown;
         }
-        self.observe_binding_read(sym_id, span);
+        self.observe_comprehension_source_read(sym_id, span);
         self.note_mut_param_read(name, span);
         if self.symbols.identity_of(sym_id).is_some_and(|identity| {
             identity.kind == SemanticSourceTargetKind::Receiver && identity.declaration_name == "cls"

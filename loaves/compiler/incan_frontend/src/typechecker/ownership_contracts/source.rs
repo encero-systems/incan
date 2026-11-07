@@ -258,6 +258,8 @@ fn build_graph(
             permissions: BTreeMap::new(),
             loans: Vec::new(),
             direct_iteration_loans: BTreeSet::new(),
+            item_taking_loops: BTreeMap::new(),
+            taking_moves: BTreeMap::new(),
             dictionary_lookups: BTreeMap::new(),
             local_loans: BTreeMap::new(),
             dependent_locals: BTreeMap::new(),
@@ -449,7 +451,16 @@ impl Builder<'_> {
                 ))
             }
             Expr::Literal(_) => Ok(incoming),
-            Expr::List(entries) => self.scalar_list(entries, incoming),
+            Expr::List(entries)
+                if !consume
+                    || !entries.iter().any(|entry| match entry {
+                        crate::ast::ListEntry::Element(value) | crate::ast::ListEntry::Spread(value) => {
+                            self.is_loop_item_value(value)
+                        }
+                    }) =>
+            {
+                self.scalar_list(entries, incoming)
+            }
             Expr::FString(parts) => self.formatted_text(parts, expression.span, incoming),
             // A returned view, including one `?` takes out of its carrier, is a place, not a value: it may be bound,
             // used as a receiver or returned as a view.
@@ -474,6 +485,9 @@ impl Builder<'_> {
             Expr::MethodCall(receiver, _, _, arguments) => {
                 match super::builtins::list_method_writes(&self.checker.type_info, expression.span) {
                     Some(writes) => self.list_method(receiver, writes, arguments, expression.span, incoming),
+                    None if self.uses_ordinary_iteration_access(expression.span) => {
+                        self.ordinary_iteration_call(Some(receiver), arguments, incoming)
+                    }
                     None => self.apply_call(Some(receiver), arguments, expression.span, incoming),
                 }
             }
@@ -511,14 +525,55 @@ impl Builder<'_> {
                     reason: "await has no awaited expression".into(),
                 })?;
                 let call = super::builtins::view_call(awaited);
-                if !matches!(call.node, Expr::Call(..) | Expr::MethodCall(..)) {
+                if matches!(call.node, Expr::Call(..) | Expr::MethodCall(..)) {
+                    self.awaited.insert(call.span);
+                } else if !self.is_loop_item_value(awaited) {
                     return Err(Unavailable {
                         span: awaited.span,
                         reason: "await on a stored future needs checked task facts".into(),
                     });
                 }
-                self.awaited.insert(call.span);
-                self.expression(awaited, incoming, consume)
+                self.expression(awaited, incoming, true)
+            }
+            Expr::Yield(Some(value)) if self.is_loop_item_value(value) => self.expression(value, incoming, true),
+            Expr::Yield(None) => Ok(incoming),
+            Expr::Tuple(items) | Expr::Set(items) if items.iter().any(|item| self.is_loop_item_value(item)) => {
+                let mut outgoing = incoming;
+                for item in items {
+                    outgoing = self.expression(item, outgoing, true)?;
+                }
+                Ok(outgoing)
+            }
+            Expr::List(entries) => {
+                let mut outgoing = incoming;
+                for entry in entries {
+                    let value = match entry {
+                        crate::ast::ListEntry::Element(value) | crate::ast::ListEntry::Spread(value) => value,
+                    };
+                    outgoing = self.expression(value, outgoing, true)?;
+                }
+                Ok(outgoing)
+            }
+            Expr::Dict(entries)
+                if entries.iter().any(|entry| match entry {
+                    crate::ast::DictEntry::Pair(_, value) | crate::ast::DictEntry::Spread(value) => {
+                        self.is_loop_item_value(value)
+                    }
+                }) =>
+            {
+                let mut outgoing = incoming;
+                for entry in entries {
+                    match entry {
+                        crate::ast::DictEntry::Pair(key, value) => {
+                            outgoing = self.expression(key, outgoing, false)?;
+                            outgoing = self.expression(value, outgoing, true)?;
+                        }
+                        crate::ast::DictEntry::Spread(value) => {
+                            outgoing = self.expression(value, outgoing, true)?;
+                        }
+                    }
+                }
+                Ok(outgoing)
             }
             Expr::Closure(..) => Err(Unavailable {
                 span: expression.span,
@@ -528,6 +583,24 @@ impl Builder<'_> {
                 span: expression.span,
                 reason: "expression needs checked call or dependency access facts".into(),
             }),
+        }
+    }
+
+    /// Whether this expression names one of the non-copyable loop-item roots retained for graph settlement.
+    fn is_loop_item_value(&self, expression: &Spanned<Expr>) -> bool {
+        match &expression.node {
+            Expr::Paren(inner) => self.is_loop_item_value(inner),
+            Expr::Ident(_) => self
+                .checker
+                .type_info
+                .resolved_identity(expression.span)
+                .is_some_and(|identity| {
+                    self.checker
+                        .loop_item_candidates
+                        .values()
+                        .any(|candidate| candidate.items.contains(identity))
+                }),
+            _ => false,
         }
     }
 }

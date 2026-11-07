@@ -14,6 +14,7 @@ mod copy;
 mod dictionary;
 pub(super) mod flow;
 mod iteration;
+pub(in crate::typechecker) mod loop_items;
 pub(super) mod native;
 mod native_lifetimes;
 pub(super) mod projection;
@@ -102,9 +103,8 @@ impl TypeChecker {
 
     /// Mark a statement loop as borrowing a direct stored list. This is activation metadata only: the ownership graph
     /// later resolves the canonical place, loan, loop back-edge and any conflicting replacement.
-    pub(in crate::typechecker) fn note_borrowed_iteration_loop(&mut self, iter: &Spanned<Expr>, owns_items: bool) {
-        if owns_items
-            || !matches!(self.type_info.expr_type(iter.span), Some(ResolvedType::Generic(name, _))
+    pub(in crate::typechecker) fn note_borrowed_iteration_loop(&mut self, iter: &Spanned<Expr>) {
+        if !matches!(self.type_info.expr_type(iter.span), Some(ResolvedType::Generic(name, _))
                 if collections::from_str(name) == Some(CollectionTypeId::List))
         {
             return;
@@ -207,6 +207,7 @@ impl TypeChecker {
         let may_retain_lazy_result = self.lazy_result_bodies.remove(&identity);
         let may_replace_borrowed_iteration = self.iteration_replacement_bodies.remove(&identity);
         let may_classify_dictionary_lookup = self.dictionary_lookup_bodies.remove(&identity);
+        let may_take_loop_items = self.loop_item_bodies.remove(&identity);
         let retains_lazy_result = may_retain_lazy_result && body_retains_lazy_result(callable.body(), &self.type_info);
         // Existing explicit bodies already need complete flow. Ordinary bodies are scanned only when expression
         // checking observed a generator or authenticated lazy iterator member in that body, or when statement
@@ -214,6 +215,7 @@ impl TypeChecker {
         if !requires_explicit_flow
             && !may_replace_borrowed_iteration
             && !may_classify_dictionary_lookup
+            && !may_take_loop_items
             && !retains_lazy_result
         {
             self.type_info
@@ -226,8 +228,13 @@ impl TypeChecker {
         if body.is_some() {
             native::retain_native_input_calls(&mut self.type_info.protocols, &self.type_info.rust, &identity, body);
         }
-        let (graph, view_errors) =
-            source::build_reporting_views(self, callable, span, &identity, may_replace_borrowed_iteration);
+        let (graph, view_errors) = source::build_reporting_views(
+            self,
+            callable,
+            span,
+            &identity,
+            may_replace_borrowed_iteration || may_take_loop_items,
+        );
         let view_refused = !view_errors.is_empty();
         self.errors.extend(view_errors);
         let output = match graph {
@@ -236,17 +243,20 @@ impl TypeChecker {
                 span,
                 reason: "returned view does not borrow its declared source".into(),
             }),
-            Ok(graph) => match flow::analyze(&graph) {
-                Ok(analysis) => {
-                    for lookup in dictionary::read_only_lookups(&graph, &analysis) {
-                        self.type_info.record_read_only_dict_lookup(lookup);
+            Ok(mut graph) => {
+                self.errors.extend(loop_items::settle(&mut graph, &mut self.type_info));
+                match flow::analyze(&graph) {
+                    Ok(analysis) => {
+                        for lookup in dictionary::read_only_lookups(&graph, &analysis) {
+                            self.type_info.record_read_only_dict_lookup(lookup);
+                        }
+                        self.errors
+                            .extend(report::conflicts(&graph, &analysis, &self.type_info));
+                        InputFlow::Checked { graph, analysis }
                     }
-                    self.errors
-                        .extend(report::conflicts(&graph, &analysis, &self.type_info));
-                    InputFlow::Checked { graph, analysis }
+                    Err(fault) => InputFlow::Invalid { graph, fault },
                 }
-                Err(fault) => InputFlow::Invalid { graph, fault },
-            },
+            }
             Err(reason) => InputFlow::Unavailable(reason),
         };
         let has_source_conflicts =
@@ -257,8 +267,12 @@ impl TypeChecker {
             .insert(identity.clone(), output);
         // Iteration-only activation reports graph conflicts but does not turn an unrelated unsupported construct or
         // an otherwise ordinary body into an explicit-input admission requirement.
-        if may_replace_borrowed_iteration && !requires_declared_flow {
+        if (may_replace_borrowed_iteration || may_take_loop_items) && !requires_declared_flow {
             self.type_info.protocols.explicit_input_flow.remove(&identity);
+            self.type_info
+                .protocols
+                .explicit_input_calls
+                .retain(|_, call| call.owner.as_ref() != Some(&identity) || call.kind == InputCallKind::Explicit);
             return;
         }
         if may_classify_dictionary_lookup
@@ -442,7 +456,7 @@ impl TypeChecker {
 }
 
 /// Resolve the canonical graph place of the direct binding and stored-field shapes statement iteration supports.
-fn checked_graph_place(expression: &Spanned<Expr>, facts: &TypeCheckInfo) -> Option<flow::Place> {
+pub(super) fn checked_graph_place(expression: &Spanned<Expr>, facts: &TypeCheckInfo) -> Option<flow::Place> {
     match &expression.node {
         Expr::Ident(_) => Some(flow::Place {
             root: flow::Root::Binding(facts.resolved_identity(expression.span)?.clone()),
