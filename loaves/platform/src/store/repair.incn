@@ -14,8 +14,7 @@ from crate.store import (
     snapshot,
     sync_durable,
 )
-from crate.store.files import StoreError, failure, index_failure, io_failure, place_synced, sync_directory, sync_file
-from crate.store.hash import file_digest
+from crate.store.files import StoreError, failure, file_digest, index_failure, io_failure, place_synced, sync_directory, sync_file
 from crate.store.index import entries as index_entries, find as index_find
 from crate.store.path import StorePath as Path
 from crate.store.payloads import payload_intact, payload_path, put_payload
