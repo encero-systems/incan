@@ -38,17 +38,10 @@ pub(crate) fn implementation<'a>(
 }
 
 /// Write the source name and fields directly to the formatter without Rust's `DebugStruct` punctuation policy.
-fn rendering_body<'a>(
-    name: &str,
-    fields: impl IntoIterator<Item = &'a str>,
-    span: Span,
-) -> Box<ast::Block> {
+fn rendering_body<'a>(name: &str, fields: impl IntoIterator<Item = &'a str>, span: Span) -> Box<ast::Block> {
     let mut fields = fields.into_iter().peekable();
     if fields.peek().is_none() {
-        return block(
-            thin_vec![expression_statement(write_text(name, span), span)],
-            span,
-        );
+        return block(thin_vec![expression_statement(write_text(name, span), span)], span);
     }
 
     let mut statements = ThinVec::new();

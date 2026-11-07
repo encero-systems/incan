@@ -66,6 +66,7 @@ impl TypeChecker {
             .iter()
             .filter(|field| self.member_binding_is_active(field.span))
             .collect::<Vec<_>>();
+        self.validate_model_record_identities(model);
         self.refuse_awaitable_adoptions(&model.name, &resolved_trait_adoptions);
         self.refuse_pub_on_trait_implementations(&model.name, &model.traits, &model.methods);
 

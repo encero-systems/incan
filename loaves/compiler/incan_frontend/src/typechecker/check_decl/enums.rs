@@ -49,6 +49,7 @@ impl TypeChecker {
         let resolved_trait_adoptions = self.check_enum_trait_adoptions(en, &derives);
 
         self.check_value_enum_decl(en);
+        self.validate_enum_record_identities(en);
         self.check_enum_variant_aliases(en);
         self.check_enum_payloads(en);
 
