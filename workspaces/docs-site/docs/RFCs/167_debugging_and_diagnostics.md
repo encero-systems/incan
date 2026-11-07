@@ -564,6 +564,18 @@ At most one client may control a session's execution at a time, and handover mus
 
 Recorded program output and source text are evidence data, not instructions to the agent client.
 
+Debugger operations are RFC 104 capabilities, separate from the connection that carries them. Read-only inspection is the only default, and an operation with no assigned grant is refused. Every operation that changes the process, or what it does next, needs one of these grants:
+
+- **control:** resume, step, pause and detach, and setting, changing or removing breakpoints and watchpoints. A breakpoint or watchpoint condition that calls program code also needs evaluate;
+- **write:** change a variable, a field or memory, such as setting `approved = true`;
+- **evaluate:** evaluation that calls program code;
+- **patch:** live code changes;
+- **launch:** launch and rerun;
+- **attach;**
+- **terminate.**
+
+Each grant is bound to a session and a process, and is never part of an agent's default ceiling. In RFC 104's reporting modes, every use is recorded in a receipt. A permissive run keeps no receipts, as RFC 104 defines, so a session an agent drives runs in a reporting mode. Over HTTP, a session sits behind RFC 037 authentication. Over stdio, its grants come from the user who launched it.
+
 ### Platforms and engines
 
 The suite must support Linux, macOS and Windows with one contract. The debugger engine provides process control, breakpoints, memory access and unwinding; the session, presentation, evaluation, provenance and agent contracts belong to the suite and must not change with the platform or the engine. The capability report must name the engine in use.

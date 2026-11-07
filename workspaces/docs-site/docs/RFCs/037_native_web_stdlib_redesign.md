@@ -636,6 +636,16 @@ The platform must support routing, request extraction and response conversion, s
 
 47. `app.test_client(session=...)` must return an RFC 066 `Client` using an in-process transport and a memory cookie jar, and must behave as a same-origin browser. `session=` must be accepted only in a test context.
 
+### Local servers, output and request size
+
+48. A server bound only to loopback addresses must, by default, refuse a request whose `Host` header names anything other than a loopback name or address with the bound port. A page that rebinds its own domain to `127.0.0.1` shares the attacker's origin, so `Origin` and `Sec-Fetch-Site` alone cannot catch it. An application may accept further hosts only by naming them.
+49. Interpolation into `web.Html` is allowed only in data positions: element text, and quoted values of ordinary attributes, each escaped for its position.
+    - **URL attributes:** an attribute such as `href`, `src`, `action` or `formaction` also takes only a relative URL, or one whose scheme is `http`, `https` or `mailto`, and refuses any other. Escaping alone does not make a `javascript:` URL safe.
+    - **Refused positions:** interpolation into a script, a style element, an event-handler attribute, a `style` attribute, an unquoted attribute, a tag or attribute name, or a comment must be refused. The refusal comes at compile time when the template is static, and before any output otherwise.
+    - **Script data:** data a script needs goes through a JSON data block that `std.web` serializes and escapes, never into script text.
+    - **Raw markup:** markup that is not to be escaped comes through a distinct raw type. It goes only where element content is allowed, never into a refused position.
+50. Request bodies, header sections and multipart parts must be bounded before they are read, with limits an application can set. A request beyond a limit must be refused without reading the excess.
+
 ### Middleware and lifecycle
 
 The platform must support deterministic middleware ordering, short-circuiting, enrichment and error transformation, startup and shutdown hooks, and integration of background tasks and long-lived resources.
