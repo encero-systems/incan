@@ -57,6 +57,12 @@ Integer finalizers are intentionally absent from cryptographic namespaces. Use d
 
 `Sha256Hasher.update_view(view: MappedView) -> None` adds the bytes of a [`std.fs`](fs.md) mapped view where they lie; no byte is copied out of the mapping.
 
+`Sha256Hasher`, `ByteDigestHasher`, and `sha256` are declared by `std.primitives`. `std.hash` reexports the same declarations, so values cross the lower-level and higher-level import paths without conversion:
+
+```incan
+from std.primitives import ByteDigestHasher, Sha256Hasher, sha256
+```
+
 ## File and reader helpers
 
 | API | Returns | Description |

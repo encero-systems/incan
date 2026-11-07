@@ -10,7 +10,9 @@ The root `hexlify(data: bytes) -> str` operation returns lowercase hexadecimal t
 
 `std.primitives.hmac` owns the existing `HmacSha256Signer` class and `hmac_sha256` namespace. The old `std.hash` imports reexport those same declarations. Finalizing a signer resets its message state while retaining its key; verification uses the existing native verifier. The implementation depends on the `hmac` and `sha2` crates and the explicitly supplied native error runtime, without importing higher standard-package declarations.
 
-`std.primitives.io` owns the shared `IoError` and `Endian` declarations and a growable `WriteBuffer`. The buffer owns its storage and exposes copying only through `snapshot()`. `std.io` reexports the two declarations so existing imports retain one error and byte-order identity.
+`std.primitives` owns the existing `Sha256Hasher`, `sha256` namespace and shared byte-digest trait. `std.hash` reexports those same declarations and adds higher-level algorithms plus file and reader orchestration. The platform store consumes this primitive instead of keeping another SHA-256 implementation.
+
+`std.primitives.io` owns the shared `IoError` and `Endian` declarations, a growable `WriteBuffer`, and `ByteReader` for bounds-checked little-endian scalars and bounded length-prefixed payloads over owned bytes. Buffers expose copying only through explicit owned results. `std.io` reexports the shared error and byte-order declarations so existing imports retain one identity.
 
 `std.primitives.fs` owns simple paths, file handles, advisory lock guards and retained mapped views. Bounded and remaining-byte reads report host failures directly; higher-level filesystem mode policy and text-file conveniences stay in `std.fs`.
 
@@ -24,4 +26,4 @@ The `incan_std_primitives` facet owns the native carriers and operations that co
 
 `std.primitives` owns the structured telemetry values, logger types and root `log` static used by ambient logging. `std.logging` reexports those declarations, and the standard prelude reexports the same static identity. The primitive logger uses the package's declared native serialization, clock and output dependencies directly; it imports no higher standard package. Merely loading the prelude does not make a program that never reads `log` reach the logger implementation.
 
-Other hashing algorithms, argument-vector policy and temporary directories remain in their existing standard packages. This package does not implement database storage, a Crumb format or ownership features merely by providing these algorithms.
+Other hashing algorithms, file hashing policy, argument-vector policy and temporary directories remain in their existing standard packages. This package does not implement database storage, a Crumb format or ownership features merely by providing these algorithms.
