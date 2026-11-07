@@ -17,7 +17,7 @@
 
 ## Summary
 
-Propose compiler-visible deprecation metadata for declarations and fields: optional since and planned retirement text, checked replacement identity, migration message and typed diagnostic severity. Editor guidance, compiler use diagnostics, bounded runtime warnings and generated documentation consume the same checked facts. Replacements remain guidance rather than an automatic rewrite, and version text does not remove code automatically. A field carries the same facts in a nested `deprecated { ... }` metadata block, and the compact `deprecated=true` and `deprecated="message"` spellings fill the same descriptor.
+Propose compiler-visible deprecation metadata for declarations and fields: optional since and planned retirement text, checked replacement identity, migration message and typed diagnostic severity. Editor guidance, compiler use diagnostics, bounded runtime warnings and generated documentation consume the same checked facts. Replacements remain guidance rather than an automatic rewrite, and version text does not remove code automatically. A field carries the same facts in a nested `deprecated { ... }` metadata block, and the compact `deprecated=true` and `deprecated="message"` spellings fill the same descriptor. A member that used to be public and has been made private carries the same facts as `made_private`, so the refusal at a former public use explains what replaces it.
 
 ## Motivation
 
@@ -81,6 +81,27 @@ def greet(customer: Customer) -> str:
 
 `customer.name` in `greet` receives a warning that names `Customer.name`, the version it was deprecated in, its planned retirement, the message and `Customer.full_name` as the checked replacement. `nickname` produces the same kind of warning with only its message. `[deprecated=true]` deprecates a field with no message. All three spellings fill one checked descriptor, and authored field accesses, explicit constructor bindings and documentation consume it. Metadata traversal and serializer wire keys must not be treated as a new authored field reference for every record.
 
+A member that used to be public can be made private when callers should go through other operations. It states what replaces it, so the refusal a caller now receives explains the move instead of only saying that the member is private:
+
+```incan
+pub model Inventory:
+    items: List[str] = [] {
+        made_private {
+            since = "0.7"
+            message = "add items with add() and check them with contains()"
+            replacement = add
+        }
+    }
+
+    pub def add(mut self, item: str) -> None:
+        self.items.append(item)
+
+    pub def contains(self, item: str) -> bool:
+        return item in self.items
+```
+
+A different module writing `inventory.items.append("bolt")` is refused, as for any private field. The refusal names `Inventory.items`, the version it was made private in, the message and `Inventory.add` as the checked replacement. Code inside `Inventory` uses `items` with no diagnostic. A function or type that was made private takes the same facts as a decorator, `@made_private(since="0.7", replacement=checked_limit, message="use checked_limit")`.
+
 ## Reference-level explanation
 
 - Optional since, retire_in, message, by and issue must be compile-time strings, and are the shared lifecycle facts that RFC 085's `renamed_from` also uses. `by` names who or what made the decision, such as a person, a team or a tool's finding, and `issue` points at where the decision is recorded. Both are unverified descriptive text and grant nothing. Optional replacement must be a checked declaration reference, retained as canonical identity rather than a string-dispatch key. retire_in is an advisory plan, not an automatic removal trigger.
@@ -94,6 +115,9 @@ def greet(customer: Customer) -> str:
 - An automatic replacement must not be offered solely because a message contains another symbol's spelling. A checked replacement reference must identify the target in diagnostics alongside the supplied migration message. It must not be treated as proof of equal arguments, effects or result types, and must not authorize a tool to invent error recovery.
 - Field warnings must distinguish authored field access from unrelated runtime mapping keys and wire names.
 - A field's `deprecated` metadata must accept `true`, a message string, or a nested `deprecated { ... }` block under RFC 096. The nested block may contain only `message`, `since`, `retire_in`, `by`, `issue`, `replacement` and `severity`, each at most once, with the same types and rules as the decorator's arguments. `replacement` must be a checked reference to a field of the same declaration or to another declaration. `deprecated=true` and `deprecated="text"` must be equivalent to a nested block with no entries and with `message = "text"`, respectively. A field must not combine spellings: `deprecated` remains one metadata key under RFC 096's duplicate-key rule.
+- A declaration or field that used to be public may carry `made_private`: the `@made_private(...)` decorator on a declaration, or field metadata accepting `true`, a message string, or a nested `made_private { ... }` block. It may contain only `message`, `since`, `retire_in`, `by`, `issue` and `replacement`, each at most once, with the same types and rules as `deprecated`; it has no `severity`. `made_private` on a public declaration or field must be refused with a diagnostic naming the key, and a member must not carry both `made_private` and `deprecated`.
+- A use outside a `made_private` member's visibility receives the ordinary visibility refusal, and that refusal is the only error at the use. It names the member, the version guidance, the message and the checked replacement. A use the visibility admits receives no diagnostic. A refused use never compiles, so no runtime warning applies. Without `made_private`, a refusal must not suggest making a member public when the member belongs to another package.
+- `made_private` facts are preserved through compiled library metadata and generated documentation exactly as `deprecated` facts are, so a consumer of a compiled package receives the same refusal, and the `retire_in` lint applies to them.
 
 ## Design details
 
@@ -106,6 +130,8 @@ Report the consuming authored reference once when elaboration creates several in
 - Changelog-only deprecation: useful context, but disconnected from the actual caller.
 - Free-form replacement strings with automatic application: unsafe when argument binding, effects, or return types differ.
 - Immediate removal: sometimes deliberate, but offers no migration interval.
+- Reusing `deprecated` with Error severity on a member made private: the use would receive a deprecation error beside the visibility refusal, and the member would read as going away when it remains its owner's implementation.
+- A separate `replaced_by` key for members made private: a second name for the descriptor's `replacement`, without the lifecycle facts.
 
 ## Drawbacks
 
@@ -113,9 +139,9 @@ Warnings can become noisy across heavily used compatibility APIs. Defining-modul
 
 ## Layers affected
 
-- **Parser / Formatter:** the nested `deprecated { ... }` field metadata value.
-- **Declaration / field metadata:** stable deprecation facts, one descriptor for every spelling.
-- **Name resolution / diagnostics:** external use checks and deduplication.
+- **Parser / Formatter:** the nested `deprecated { ... }` and `made_private { ... }` field metadata values.
+- **Declaration / field metadata:** stable deprecation and `made_private` facts, one descriptor for every spelling.
+- **Name resolution / diagnostics:** external use checks and deduplication; the visibility refusal's `made_private` guidance.
 - **LSP / documentation:** visible guidance and checked replacement affordances if adopted.
 
 ## Design Decisions
@@ -127,3 +153,4 @@ Warnings can become noisy across heavily used compatibility APIs. Defining-modul
 - std.diagnostics.DeprecationSeverity.Warning is the default; Error rejects the use at compilation. Project policy may strengthen warnings without weakening an author-declared Error.
 - Aliases and re-exports retain canonical policy and an inspectable authored route. Generated references deduplicate at their responsible source operation; a real wrapper has its own declaration policy.
 - A checked replacement and migration message must be shown together; neither authorizes an automatic rewrite when call contracts differ.
+- A member taken out of the public surface states its replacement with `made_private`, which shares the deprecation descriptor without `severity`. `deprecated` is not reused. A deprecated member stays on the public surface: its uses warn, or at Error severity are refused with deprecation guidance. A member made private has left the public surface, so the ordinary visibility refusal is the one error at the use.
