@@ -15,6 +15,9 @@ use crate::typechecker::TypeCheckInfo;
 pub(super) fn conflicts(graph: &Graph, analysis: &Analysis, facts: &TypeCheckInfo) -> Vec<CompileError> {
     let mut projected: Vec<ProjectedConflict> = Vec::new();
     for conflict in &analysis.conflicts {
+        if super::dictionary::owns_conflict(graph, analysis, conflict) {
+            continue;
+        }
         let operation = &graph.nodes[conflict.node];
         if let Some(error) = super::iteration::conflict(graph, facts, conflict) {
             projected.push(ProjectedConflict {

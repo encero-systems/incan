@@ -626,18 +626,30 @@ impl Builder<'_> {
             Statement::If(branch) => self.if_statement(branch, incoming),
             Statement::While(loop_) => {
                 let header = self.event(incoming, Event::Nothing, statement.span)[0];
-                let condition = self.condition(&loop_.condition, vec![header])?;
+                let (condition, exit, dictionary_bindings) = match &loop_.condition {
+                    Condition::Let { pattern, value } => {
+                        match self.dictionary_condition(pattern, value, vec![header])? {
+                            Some((matched, unmatched, bindings)) => (matched, unmatched, bindings),
+                            None => (self.condition(&loop_.condition, vec![header])?, Vec::new(), Vec::new()),
+                        }
+                    }
+                    Condition::Expr(_) => {
+                        let evaluated = self.condition(&loop_.condition, vec![header])?;
+                        (evaluated.clone(), evaluated, Vec::new())
+                    }
+                };
                 self.loops.push(LoopEdges {
                     header,
                     breaks: Vec::new(),
                 });
                 let body = self.block(&loop_.body, condition.clone())?;
+                self.leave_dictionary_bindings(&dictionary_bindings);
                 self.connect(&body, header);
                 let loop_ = self.loops.pop().ok_or(Unavailable {
                     span: statement.span,
                     reason: "missing loop owner".into(),
                 })?;
-                Ok(condition.into_iter().chain(loop_.breaks).collect())
+                Ok(exit.into_iter().chain(loop_.breaks).collect())
             }
             Statement::Loop(loop_) => {
                 let header = self.event(incoming, Event::Nothing, statement.span)[0];

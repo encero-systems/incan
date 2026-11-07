@@ -22,6 +22,7 @@ mod builder_statements;
 mod calls;
 mod closures;
 mod comprehensions;
+mod dictionaries;
 mod matches;
 mod operations;
 mod retained_results;
@@ -257,6 +258,7 @@ fn build_graph(
             permissions: BTreeMap::new(),
             loans: Vec::new(),
             direct_iteration_loans: BTreeSet::new(),
+            dictionary_lookups: BTreeMap::new(),
             local_loans: BTreeMap::new(),
             dependent_locals: BTreeMap::new(),
             dependent_values: BTreeSet::new(),
