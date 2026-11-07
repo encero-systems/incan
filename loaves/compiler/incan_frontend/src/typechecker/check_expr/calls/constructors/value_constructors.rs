@@ -114,7 +114,17 @@ impl TypeChecker {
             ));
             return Some((ResolvedType::Unknown, std::collections::HashMap::new()));
         }
-        let resolved_args: Vec<ResolvedType> = type_args.iter().map(|ty| self.resolve_type_checked(ty)).collect();
+        let carries_view = matches!(type_info, TypeInfo::Model(_) | TypeInfo::Class(_));
+        let resolved_args: Vec<ResolvedType> = type_args
+            .iter()
+            .map(|ty| {
+                if carries_view {
+                    self.resolve_type_checked_deferring(ty, |_| true, false)
+                } else {
+                    self.resolve_type_checked(ty)
+                }
+            })
+            .collect();
         let bindings = type_param_subst_map_call_site(type_params, &resolved_args);
         Some((ResolvedType::Generic(name.to_string(), resolved_args), bindings))
     }

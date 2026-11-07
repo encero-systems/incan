@@ -135,6 +135,27 @@ A returned view can itself be the source of a further view or a fluent call; eve
 
 ### Carried views
 
+A model or class type parameter can be instantiated with `Borrowed[T]` or `Reference[T]`. A result whose type contains that instantiation and whose `from` clause names the view source carries the source dependency through the user-defined value. A field declared as that type parameter stores shared or exclusive access according to the instantiated mode; constructing the value from the source place, an alias of it or a view of it does not copy the referent. Binding, moving, passing, returning, field access, method calls and storage inside another aggregate preserve the dependency through the carrying value's last use. A method can return another generic carrier `from self`, and that carrier also retains every source dependency already held by `self`.
+
+```incan
+class Cursor[S]:
+    pub selection: S
+
+
+class Selection[R]:
+    pub reader: R
+    pub key: int
+
+    def cursor(self) -> Cursor[Borrowed[Selection[R]]] from self:
+        return Cursor[Borrowed[Selection[R]]](selection=self)
+
+
+def select(reader: Borrowed[GraphState], key: int) -> Selection[Borrowed[GraphState]] from reader:
+    return Selection[Borrowed[GraphState]](reader=reader, key=key)
+```
+
+The result's one named source must justify every borrowed component. A field such as `reader: GraphState` has owned `GraphState` storage; passing a borrowed reader to it is refused. A field declared directly as `reader: Borrowed[GraphState]` is also refused. A carrying field must use a type parameter, and the enclosing type must instantiate that parameter with the required ownership mode.
+
 A `Result[Borrowed[T], E]` or `Result[Reference[T], E]` result with a source clause carries a returned view in its success payload. The source rules of returned views apply to that payload.
 
 ```incan

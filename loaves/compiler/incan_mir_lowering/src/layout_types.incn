@@ -13,6 +13,7 @@ from rust::incan_lang::lang::types::collections import (
     as_str as collection_name,
     CollectionTypeId,
 )
+from rust::incan_lang::lang::types::ownership import from_str as ownership_mode, OwnershipMode
 from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import PlanType, ListLeaf, EnumDeclaration, TupleElement, tuple_element_type
 from numerics import sized_numeric
@@ -146,22 +147,12 @@ pub def native_source_type(
         RustType.Unsupported(description) => return Err(f"unsupported Body IR type {description}")
         RustType.NativeBuiltin(RuntimeBuiltinType.ValidationError) => return Ok(PlanType.ValidationError)
         RustType.Function(params=parameters, return_type=result) =>
-            mut signature: list[PlanType] = []
-            for parameter in parameters:
-                input = native_source_type(constructors, nominals, enums, unions, parameter.ty, intrinsics)?
-                signature.append(
-                    semantic_input(
-                        input,
-                        parameter.kind,
-                        parameter.is_mut,
-                        parameter.native_owned,
-                        parameter.input_access,
-                    )?,
-                )
-            signature.append(native_source_type(constructors, nominals, enums, unions, result, intrinsics)?)
-            return Ok(PlanType.FunctionPointer(signature))
+            return source_function_type(constructors, nominals, enums, unions, parameters, result, intrinsics)
         RustType.Generic(base=base, args=arguments) =>
             constructor: str = str(base)
+            match explicit_ownership_type(constructors, nominals, enums, unions, constructor, arguments, intrinsics)?:
+                Some(value) => return Ok(value)
+                None => pass
             if constructor == OWNED_CALLABLE_STORAGE and len(arguments) == 1:
                 match native_source_type(constructors, nominals, enums, unions, arguments[0], intrinsics)?:
                     PlanType.FunctionPointer(signature) => return Ok(PlanType.Closure(signature))
@@ -214,6 +205,49 @@ pub def native_source_type(
             return layout_tuple_type(constructors, nominals, enums, unions, elements, intrinsics)
         _ => pass
     return model_type(constructors, nominals, ty)
+
+
+def source_function_type(
+    constructors: &ConstructorIndex,
+    nominals: &list[NominalDeclaration],
+    enums: &list[RustEnumDeclaration],
+    unions: &list[RustType],
+    parameters: &list[IncanCallableParam],
+    result: &RustType,
+    intrinsics: &list[EnumDeclaration],
+) -> Result[PlanType, str]:
+    """Lower one complete callable signature through the same retained nominal and input-access context."""
+    mut signature: list[PlanType] = []
+    for parameter in parameters:
+        input = native_source_type(constructors, nominals, enums, unions, parameter.ty, intrinsics)?
+        signature.append(
+            semantic_input(input, parameter.kind, parameter.is_mut, parameter.native_owned, parameter.input_access)?,
+        )
+    signature.append(native_source_type(constructors, nominals, enums, unions, result, intrinsics)?)
+    return Ok(PlanType.FunctionPointer(signature))
+
+
+def explicit_ownership_type(
+    constructors: &ConstructorIndex,
+    nominals: &list[NominalDeclaration],
+    enums: &list[RustEnumDeclaration],
+    unions: &list[RustType],
+    constructor: str,
+    arguments: &list[RustType],
+    intrinsics: &list[EnumDeclaration],
+) -> Result[Option[PlanType], str]:
+    """Lower one canonical ownership wrapper to the physical reference mode selected by its registry identity."""
+    match ownership_mode(constructor):
+        None => return Ok(None)
+        Some(mode) =>
+            if len(arguments) != 1:
+                return Err("invalid Body IR ownership mode arity")
+            value = native_source_type(constructors, nominals, enums, unions, arguments[0], intrinsics)?
+            match mode:
+                OwnershipMode.Borrowed => return Ok(Some(shared_receiver_type(value)?))
+                (OwnershipMode.BorrowedMut | OwnershipMode.Reference) =>
+                    return Ok(Some(mutable_receiver_type(value)?))
+                OwnershipMode.Owned => return Ok(Some(value))
 
 
 def frozen_collection_type(

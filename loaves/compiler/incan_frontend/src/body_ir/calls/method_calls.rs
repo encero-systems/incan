@@ -321,15 +321,26 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
         // A carried view's call holds its callee's carrier, whose carrying payload is the view's reference; `?` and a
         // match continue on the substituted place recorded here.
-        let ty = match self.carried_view_place(span, receiver_argument.as_ref(), call_args.get(1..).unwrap_or_default())
-        {
-            Some(Ok((place, access, payload))) => {
-                self.carried_view_places.insert(span, (place, access, payload));
-                super::returned_views::reference_carrier(ty, access, payload)
+        let mut ty =
+            match self.carried_view_place(span, receiver_argument.as_ref(), call_args.get(1..).unwrap_or_default()) {
+                Some(Ok((place, access, payload))) => {
+                    self.carried_view_places.insert(span, (place, access, payload));
+                    super::returned_views::reference_carrier(ty, access, payload)
+                }
+                Some(Err(description)) => return self.unsupported_operand(description, scope, hir_span_value, out),
+                None => ty,
+            };
+        if let Some((access, _, _, component)) = self.type_info.selected_aggregate_view(span) {
+            if async_target {
+                return self.unsupported_operand(
+                    "async aggregate returned views need retained future component facts".into(),
+                    scope,
+                    hir_span_value,
+                    out,
+                );
             }
-            Some(Err(description)) => return self.unsupported_operand(description, scope, hir_span_value, out),
-            None => ty,
-        };
+            ty = super::returned_views::reference_authored_component(ty, access, &component);
+        }
         self.push_call_temp(
             bir::Callee::Method(target),
             call_args,
@@ -726,7 +737,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .get(&span)
             .filter(|_| matches!(receiver_type, Some(IncanType::Generic { .. })));
         let resolved_type_args = match method_arguments
-            .map(|arguments| Ok(arguments.iter().map(|ty| self.checked_type(ty)).collect()))
+            .map(|arguments| {
+                Ok(arguments
+                    .iter()
+                    .map(|ty| parameter_types::physical_type_argument(self.checked_type(ty)))
+                    .collect())
+            })
             .unwrap_or_else(|| self.call_site_type_arguments(span, type_args))
         {
             Ok(resolved_type_args) => resolved_type_args,

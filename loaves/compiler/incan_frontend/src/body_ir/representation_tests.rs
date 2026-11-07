@@ -98,6 +98,7 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
     assert_lent_and_moved_read()?;
     assert_equality_contract()?;
     assert_builtin_method_identities()?;
+    assert_generic_view_carrier_storage()?;
     let mut changed = seed.clone();
     changed.bodies[0].native_attributes.push(bir::NativeAttribute {
         path: "selected::attribute".to_owned(),
@@ -108,6 +109,113 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
         .err()
         .ok_or("baseline omitted an invocation-only field")?;
     assert!(difference.to_string().contains("native_attributes"));
+    Ok(())
+}
+
+/// Prove a generic carrier returned from a declared source keeps its nominal owner while replacing only the selected
+/// ownership argument with the physical reference used by the body and its callers.
+fn assert_generic_view_carrier_storage() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "class GraphState:\n    pub nodes: list[int]\nclass Cursor[S]:\n    pub selection: S\n    pub offset: int\nclass Selection[R]:\n    pub reader: R\n    pub key: int\n    pub def cursor(self, offset: int) -> Cursor[Borrowed[Selection[R]]] from self:\n        return Cursor[Borrowed[Selection[R]]](selection=self, offset=offset)\ndef select(reader: Borrowed[GraphState], key: int) -> Selection[Borrowed[GraphState]] from reader:\n    return Selection[Borrowed[GraphState]](reader=reader, key=key)\ndef select_mut(reader: BorrowedMut[GraphState], key: int) -> Selection[Reference[GraphState]] from reader:\n    return Selection[Reference[GraphState]](reader=reader, key=key)\ndef select_result(reader: Borrowed[GraphState]) -> Result[Selection[Borrowed[GraphState]], str] from reader:\n    return Ok(select(reader, 1))\ndef select_list(reader: Borrowed[GraphState]) -> list[Selection[Borrowed[GraphState]]] from reader:\n    return [select(reader, 0)]\ndef main() -> None:\n    mut state = GraphState(nodes=[1, 2])\n    selected = select(state, 1)\n    println(selected.reader.nodes[selected.key])\n    cursor = selected.cursor(0)\n    println(cursor.selection.reader.nodes[cursor.offset])\n    result = select_result(state)\n    match result:\n        Ok(matched) => println(matched.reader.nodes[matched.key])\n        Err(_) => pass\n    listed = select_list(state)\n    println(listed[0].reader.nodes[0])\n    mut exclusive = select_mut(state, 0)\n    exclusive.reader.nodes = [3]\n";
+    let (_, _, module) = checked_seed(source)?;
+    let select = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "select")
+        .ok_or("missing generic view producer")?;
+    let main = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "main")
+        .ok_or("missing generic view consumer")?;
+    let select_mut = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "select_mut")
+        .ok_or("missing exclusive generic view producer")?;
+    let select_list = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "select_list")
+        .ok_or("missing list generic view producer")?;
+    let cursor = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "cursor")
+        .ok_or("missing chained generic view producer")?;
+    let cursor_local = main
+        .locals
+        .iter()
+        .find(|local| local.name.as_deref() == Some("cursor"))
+        .ok_or("missing chained generic view consumer local")?;
+    assert!(
+        matches!(
+            &select.return_type,
+            super::IncanType::Generic { args, .. }
+                if matches!(args.as_slice(), [super::IncanType::Ref(_)])
+        ),
+        "select: {select:#?}"
+    );
+    assert!(
+        matches!(
+            &select_mut.return_type,
+            super::IncanType::Generic { args, .. }
+                if matches!(args.as_slice(), [super::IncanType::RefMut(_)])
+        ),
+        "select_mut: {select_mut:#?}"
+    );
+    assert!(
+        matches!(
+            &select_list.return_type,
+            super::IncanType::Generic { args, .. }
+                if matches!(
+                    args.as_slice(),
+                    [super::IncanType::Generic { args, .. }]
+                        if matches!(args.as_slice(), [super::IncanType::Ref(_)])
+                )
+        ),
+        "select_list: {select_list:#?}"
+    );
+    assert!(
+        matches!(
+            &cursor.return_type,
+            super::IncanType::Generic { args, .. }
+                if matches!(
+                    args.as_slice(),
+                    [super::IncanType::Ref(selection)]
+                        if matches!(selection.as_ref(), super::IncanType::Generic { .. })
+                )
+        ),
+        "cursor: {cursor:#?}"
+    );
+    assert_eq!(
+        cursor.returned_view.as_ref().map(|view| view.component.as_slice()),
+        Some(&[0][..]),
+        "cursor: {cursor:#?}"
+    );
+    assert!(
+        matches!(
+            &cursor_local.ty,
+            super::IncanType::Generic { args, .. }
+                if matches!(
+                    args.as_slice(),
+                    [super::IncanType::Ref(selection)]
+                        if matches!(
+                            selection.as_ref(),
+                            super::IncanType::Generic { args, .. }
+                                if matches!(args.as_slice(), [super::IncanType::Ref(_)])
+                        )
+                )
+        ),
+        "cursor local: {cursor_local:#?}"
+    );
+    assert!(
+        main.locals.iter().all(|local| !matches!(
+            &local.ty,
+            super::IncanType::Generic { args, .. }
+                if matches!(args.as_slice(), [super::IncanType::Generic { base, .. }] if base == "Borrowed")
+        )),
+        "main: {main:#?}"
+    );
     Ok(())
 }
 

@@ -46,6 +46,10 @@ pub struct ResultDependency<I> {
     pub slot: SourceSlot,
     /// Ordered stored-field declarations. Computed properties and opaque projections cannot stand in for fields.
     pub fields: Vec<I>,
+    /// Whether the returned access sits inside a user-defined or nested aggregate rather than one builtin carrier
+    /// payload. Aggregate values retain their own storage while carrying the source dependency.
+    #[serde(default)]
+    pub aggregate: bool,
 }
 
 /// Versioned explicit contract. Absence of this structure means no explicit request; it does not assert ownership.
@@ -87,6 +91,7 @@ impl<T, I> OwnershipContract<T, I> {
                     Ok(ResultDependency {
                         slot: source.slot.clone(),
                         fields: source.fields.iter().map(&mut identity).collect::<Result<_, E>>()?,
+                        aggregate: source.aggregate,
                     })
                 })
                 .transpose()?,
@@ -166,6 +171,8 @@ pub(crate) struct ReturnedView<'a> {
     pub mode: &'a AccessMode<crate::symbols::ResolvedType>,
     pub access: incan_semantics_core::IncanInputAccess,
     pub source: &'a ResultDependency<incan_semantics_core::CanonicalSymbolId>,
+    /// Complete structural path from the result root to the explicit access mode.
+    pub component: &'a [usize],
     /// The result component holding the view: `0` for `Ok` or `Some`, `1` for `Err`, or a tuple element's index;
     /// `None` for a view returned whole.
     pub carried: Option<usize>,
@@ -228,10 +235,10 @@ pub(crate) fn returned_view(
         (Some(mode), None) if mode.mode == OwnershipMode::Owned && mode.component.children.is_empty() => Ok(None),
         (Some(_), None) => Err("borrowed result has no source dependency"),
         (Some(mode), Some(source)) => {
-            let carried = match mode.component.children.as_slice() {
-                [] => None,
-                [component] => Some(*component),
-                _ => return Err("returned access inside another type requires aggregate dependency facts"),
+            let carried = match (source.aggregate, mode.component.children.as_slice()) {
+                (true, _) | (false, []) => None,
+                (false, [component]) => Some(*component),
+                (false, _) => return Err("returned access inside another type requires aggregate dependency facts"),
             };
             // The one `from` clause names one source, so one component of the result carries the view.
             if results.next().is_some() {
@@ -250,6 +257,7 @@ pub(crate) fn returned_view(
                 mode,
                 access,
                 source,
+                component: &mode.component.children,
                 carried,
             }))
         }
@@ -277,30 +285,64 @@ pub(crate) fn result_value_type(
         },
         _ => Err("selected ownership contract does not match its result metadata"),
     };
-    let Some(payload) = view.carried else {
-        return underlying(result);
-    };
-    if let Some(elements) = result.tuple_elements() {
-        let mut values = elements.to_vec();
-        let element = values
-            .get(payload)
-            .ok_or("a view carried in a tuple names an element the tuple lacks")?;
-        values[payload] = underlying(element)?;
-        // The result keeps its own tuple spelling.
-        return Ok(match result {
-            ResolvedType::Generic(name, _) => ResolvedType::Generic(name.clone(), values),
-            _ => ResolvedType::Tuple(values),
-        });
+    replace_result_component(result, view.component, &underlying)
+}
+
+/// Expose the checker-visible result of a returned view. Generic aggregates preserve their instantiated ownership
+/// argument so nominal assignment compares the authored type; direct and builtin carried views remain source-place
+/// aliases and expose their value type.
+pub(crate) fn result_expression_type(
+    contract: Option<&CheckedOwnershipContract>,
+    result: &crate::symbols::ResolvedType,
+) -> Result<crate::symbols::ResolvedType, &'static str> {
+    use crate::symbols::ResolvedType;
+    if let Some(mode) = owned_result(contract)? {
+        return Ok(mode.underlying.clone());
     }
-    let ResolvedType::Generic(carrier, arguments) = result else {
-        return Err("a carried returned view requires a Result, Option or tuple result");
+    let Some(view) = returned_view(contract)? else {
+        return Ok(result.clone());
     };
-    if !(result.is_result() || result.is_option()) || payload >= arguments.len() {
-        return Err("a carried returned view requires a Result or Option payload");
+    if view.source.aggregate {
+        return Ok(result.clone());
     }
-    let mut values = arguments.clone();
-    values[payload] = underlying(&arguments[payload])?;
-    Ok(ResolvedType::Generic(carrier.clone(), values))
+    replace_result_component(result, view.component, &|view_type| match view_type {
+        ResolvedType::Generic(_, arguments) => match arguments.as_slice() {
+            [underlying] => Ok(underlying.clone()),
+            _ => Err("selected returned access requires exactly one value type"),
+        },
+        _ => Err("selected ownership contract does not match its result metadata"),
+    })
+}
+
+/// Replace one checked ownership wrapper at its structural result path while preserving every enclosing carrier.
+fn replace_result_component(
+    result: &crate::symbols::ResolvedType,
+    component: &[usize],
+    leaf: &impl Fn(&crate::symbols::ResolvedType) -> Result<crate::symbols::ResolvedType, &'static str>,
+) -> Result<crate::symbols::ResolvedType, &'static str> {
+    use crate::symbols::ResolvedType;
+    let Some((&slot, rest)) = component.split_first() else {
+        return leaf(result);
+    };
+    match result {
+        ResolvedType::Generic(carrier, arguments) => {
+            let mut values = arguments.clone();
+            let selected = values
+                .get(slot)
+                .ok_or("returned access component is outside its generic carrier")?;
+            values[slot] = replace_result_component(selected, rest, leaf)?;
+            Ok(ResolvedType::Generic(carrier.clone(), values))
+        }
+        ResolvedType::Tuple(elements) => {
+            let mut values = elements.clone();
+            let selected = values
+                .get(slot)
+                .ok_or("returned access component is outside its tuple carrier")?;
+            values[slot] = replace_result_component(selected, rest, leaf)?;
+            Ok(ResolvedType::Tuple(values))
+        }
+        _ => Err("returned access component requires a generic or tuple carrier"),
+    }
 }
 
 /// Keep the source mode and its payload together after validating the selected structural slot.
@@ -340,6 +382,16 @@ pub(crate) fn input_value_type<'a>(
     slot: usize,
     parameter: &'a crate::symbols::ResolvedType,
 ) -> Result<&'a crate::symbols::ResolvedType, &'static str> {
+    input_value_type_matching(contract, slot, parameter, &|_, _| false)
+}
+
+/// Expose an instantiated input value after either exact payload matching or a caller-supplied canonical relation.
+pub(crate) fn input_value_type_matching<'a>(
+    contract: Option<&CheckedOwnershipContract>,
+    slot: usize,
+    parameter: &'a crate::symbols::ResolvedType,
+    equivalent: &impl Fn(&crate::symbols::ResolvedType, &crate::symbols::ResolvedType) -> bool,
+) -> Result<&'a crate::symbols::ResolvedType, &'static str> {
     let Some((mode, _)) = direct_input_mode(contract, slot)? else {
         return Ok(parameter);
     };
@@ -349,7 +401,7 @@ pub(crate) fn input_value_type<'a>(
     let [underlying] = arguments.as_slice() else {
         return Err("selected ownership input requires exactly one value type");
     };
-    if !input_payload::matches(&mode.underlying, underlying) {
+    if !input_payload::matches(&mode.underlying, underlying) && !equivalent(&mode.underlying, underlying) {
         return Err("selected ownership input payload differs from its checked declaration");
     }
     Ok(underlying)

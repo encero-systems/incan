@@ -7,6 +7,7 @@ use super::{
 use crate::resolved_type_subst::{map_resolved_type_leaves, substitute_resolved_type, type_param_subst_map};
 use crate::symbols::ResolvedType;
 use incan_lang::lang::derives::{self, DeriveId};
+use incan_lang::lang::types::ownership::{self, OwnershipMode};
 use incan_semantics_core::IncanCallableParamKind;
 
 /// Preserve the already checked source role independently from its element or packed carrier type.
@@ -83,6 +84,47 @@ pub(super) fn checked_context_type(
     conflicts: &std::collections::BTreeSet<String>,
 ) -> IncanType {
     refuse_runtime_conflicts(checked_parameter_type(ty, facts, parameters), conflicts)
+}
+
+/// Replace checked ownership annotations inside one instantiated type argument with their physical storage.
+/// Canonical source nominals that shadow these spellings have already been identity-qualified by
+/// [`checked_parameter_type`], so only the retained builtin names reach this boundary.
+pub(super) fn physical_type_argument(ty: IncanType) -> IncanType {
+    match ty {
+        IncanType::Generic { base, mut args } if args.len() == 1 && ownership::from_str(&base).is_some() => {
+            let value = physical_type_argument(args.remove(0));
+            match ownership::from_str(&base) {
+                Some(OwnershipMode::Borrowed) => IncanType::Ref(Box::new(value)),
+                Some(OwnershipMode::BorrowedMut | OwnershipMode::Reference) => IncanType::RefMut(Box::new(value)),
+                Some(OwnershipMode::Owned) | None => value,
+            }
+        }
+        IncanType::Generic { base, args } => IncanType::Generic {
+            base,
+            args: args.into_iter().map(physical_type_argument).collect(),
+        },
+        IncanType::Tuple(elements) => IncanType::Tuple(elements.into_iter().map(physical_type_argument).collect()),
+        IncanType::Ref(inner) => IncanType::Ref(Box::new(physical_type_argument(*inner))),
+        IncanType::RefMut(inner) => IncanType::RefMut(Box::new(physical_type_argument(*inner))),
+        IncanType::NativeArray { element, length } => IncanType::NativeArray {
+            element: Box::new(physical_type_argument(*element)),
+            length,
+        },
+        IncanType::TypeToken(inner) => IncanType::TypeToken(Box::new(physical_type_argument(*inner))),
+        IncanType::Function {
+            mut params,
+            return_type,
+        } => {
+            for parameter in &mut params {
+                parameter.ty = physical_type_argument(parameter.ty.clone());
+            }
+            IncanType::Function {
+                params,
+                return_type: Box::new(physical_type_argument(*return_type)),
+            }
+        }
+        other => other,
+    }
 }
 
 /// Collect same-spelled source types from checked provider declarations, including compiled function-only imports.
