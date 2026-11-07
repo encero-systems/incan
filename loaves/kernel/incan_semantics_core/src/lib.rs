@@ -39,6 +39,7 @@ mod facts;
 mod hir;
 pub mod namespace;
 pub mod receipts;
+pub mod record_identity;
 pub mod semantic_digest;
 pub mod stable_identity;
 mod types;

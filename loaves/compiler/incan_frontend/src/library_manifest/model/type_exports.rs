@@ -227,6 +227,18 @@ pub struct FieldExport {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub canonical: Option<CanonicalIdentityExport>,
+    /// Lowercase hexadecimal stored-record identity derived from the earliest field name.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub record_identity: String,
+    /// Whether the field participates in the canonical stored hash.
+    #[serde(
+        default = "default_record_canonical",
+        skip_serializing_if = "record_canonical_is_default"
+    )]
+    pub record_canonical: bool,
+    /// Earlier declared names in chronological order, earliest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub renamed_from: Vec<String>,
     pub ty: TypeRef,
     /// Source-level Incan type spelling used by reflection and documentation.
     ///
@@ -248,6 +260,35 @@ pub struct FieldExport {
     pub alias: Option<String>,
     /// Optional human-readable field description.
     pub description: Option<String>,
+}
+
+/// Supply the RFC 085 default for manifests written before the canonical field flag existed.
+fn default_record_canonical() -> bool {
+    true
+}
+
+/// Omit the default canonical-field value from the additive manifest representation.
+fn record_canonical_is_default(value: &bool) -> bool {
+    *value
+}
+
+impl FieldExport {
+    /// Derive the stored-record identity required by this field's retained rename history.
+    pub(crate) fn expected_record_identity(&self) -> Vec<u8> {
+        let earliest_name = self.renamed_from.first().map_or(self.name.as_str(), String::as_str);
+        incan_semantics_core::record_identity::record_member_identity(earliest_name).to_vec()
+    }
+
+    /// Decode the validated hexadecimal identity, deriving the legacy default when the field omitted it.
+    pub(crate) fn hydrated_record_identity(&self) -> Vec<u8> {
+        if self.record_identity.is_empty() {
+            return self.expected_record_identity();
+        }
+        match hex::decode(&self.record_identity) {
+            Ok(identity) => identity,
+            Err(_) => self.expected_record_identity(),
+        }
+    }
 }
 
 /// Exported public computed-property metadata for models and classes.

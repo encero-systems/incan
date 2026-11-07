@@ -802,7 +802,7 @@ pub model Order with Labeled:
     """
     Order contract.
     """
-    pub id [description="Stable id"] as "orderId": int
+    pub id [description="Stable id", renamed_from=["legacy_id", "order_id"], canonical=false] as "orderId": int
     pub fallback_label: str = DEFAULT_LABEL
 
     def label(self) -> str:
@@ -840,10 +840,62 @@ pub model Order with Labeled:
     );
     assert_eq!(model.fields[0].alias.as_deref(), Some("orderId"));
     assert_eq!(model.fields[0].description.as_deref(), Some("Stable id"));
+    assert_eq!(model.fields[0].record_identity, "1def36ed989f");
+    assert!(!model.fields[0].record_canonical);
+    assert_eq!(model.fields[0].renamed_from, vec!["legacy_id", "order_id"]);
     assert_eq!(
         model.methods[0].docstring.as_deref().map(str::trim),
         Some("Return the display label.")
     );
+    Ok(())
+}
+
+#[test]
+fn field_record_metadata_round_trips_and_legacy_manifests_derive_defaults() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+pub model Customer:
+    pub email_address [renamed_from=["email", "primary_email"], canonical=false]: str
+"#;
+    let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let mut checker = typechecker::TypeChecker::new();
+    checker.set_current_package_identity(Some("records".to_string()));
+    checker.set_current_module_path(Some(vec!["lib".to_string()]));
+    checker
+        .check_program(&program)
+        .map_err(|errors| format!("{errors:?}"))?;
+    let exports = collect_checked_public_exports(&program, &checker);
+    let manifest = crate::library_manifest::LibraryManifest::from_checked_exports("records", "0.1.0", &exports);
+    let json = manifest.to_json_string()?;
+    let decoded = crate::library_manifest::LibraryManifest::from_json_str(&json)?;
+    let field = decoded
+        .exports
+        .models
+        .first()
+        .and_then(|model| model.fields.first())
+        .ok_or("missing round-tripped model field")?;
+    assert_eq!(field.record_identity, "82244417f956");
+    assert!(!field.record_canonical);
+    assert_eq!(field.renamed_from, vec!["email", "primary_email"]);
+
+    let mut legacy: serde_json::Value = serde_json::from_str(&json)?;
+    let legacy_field = legacy
+        .pointer_mut("/exports/models/0/fields/0")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("missing raw manifest field")?;
+    legacy_field.remove("record_identity");
+    legacy_field.remove("record_canonical");
+    legacy_field.remove("renamed_from");
+    let legacy = crate::library_manifest::LibraryManifest::from_json_str(&serde_json::to_string(&legacy)?)?;
+    let field = legacy
+        .exports
+        .models
+        .first()
+        .and_then(|model| model.fields.first())
+        .ok_or("missing legacy model field")?;
+    assert!(field.record_identity.is_empty());
+    assert!(field.record_canonical);
+    assert!(field.renamed_from.is_empty());
     Ok(())
 }
 

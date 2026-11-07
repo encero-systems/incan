@@ -72,6 +72,7 @@ fn version_refusal_precedes_incompatible_header_or_module_decode() -> Result<(),
     for version in [
         37,
         38,
+        51,
         super::OLDEST_SUPPORTED_VERSION - 1,
         EXECUTABLE_REPRESENTATION_VERSION + 1,
     ] {

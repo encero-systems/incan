@@ -295,6 +295,9 @@ mod tests {
         FieldExport {
             name: name.into(),
             canonical,
+            record_identity: String::new(),
+            record_canonical: true,
+            renamed_from: Vec::new(),
             visibility,
             ty: TypeRef::Named {
                 name: "int".into(),

@@ -329,6 +329,7 @@ pub(super) fn validate_nominal_member_identities(
 ) -> Result<(), LibraryManifestError> {
     let mut seen = BTreeSet::new();
     for field in fields {
+        validate_record_field_metadata(owner, field)?;
         validate_member_identity(
             &format!("{owner} field `{}`", field.name),
             &field.name,
@@ -360,6 +361,27 @@ pub(super) fn validate_nominal_member_identities(
         Some(&mut seen),
         owner_inherits_members,
     )
+}
+
+/// Validate additive stored-record metadata without refusing an older manifest that omitted every new field.
+fn validate_record_field_metadata(owner: &str, field: &super::FieldExport) -> Result<(), LibraryManifestError> {
+    if field.record_identity.is_empty() {
+        if !field.renamed_from.is_empty() || !field.record_canonical {
+            return Err(LibraryManifestError::Invalid(format!(
+                "{owner} field `{}` carries record metadata without its derived identity",
+                field.name
+            )));
+        }
+        return Ok(());
+    }
+    let expected = hex::encode(field.expected_record_identity());
+    if field.record_identity != expected {
+        return Err(LibraryManifestError::Invalid(format!(
+            "{owner} field `{}` record identity must be the lowercase hexadecimal identity of its earliest name",
+            field.name
+        )));
+    }
+    Ok(())
 }
 
 /// Validate all canonical method identities exported for one nominal declaration.
