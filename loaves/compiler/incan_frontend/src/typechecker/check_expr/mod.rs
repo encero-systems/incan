@@ -20,7 +20,7 @@ use incan_lang::numeric_values::{IntegerBounds, integer_bounds};
 use incan_semantics_core::SurfaceExprTypeCheck;
 use std::collections::HashMap;
 
-use super::mut_arguments::MutArgumentCallee;
+use super::ownership_contracts::mutation::MutArgumentCallee;
 use super::{IdentKind, TypeChecker, YieldContext, numeric_type_id_for_compat};
 
 mod access;

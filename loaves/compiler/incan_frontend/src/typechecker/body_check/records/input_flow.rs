@@ -5,7 +5,7 @@ use super::types::next;
 use super::{NodeBindingError, Positions, Span};
 use crate::typechecker::ownership_contracts::flow::{
     Access, ClosureCaptures, Event, Graph, InputEvaluation, Invocation, InvocationArgument, Loan, LoanId, LoanKind,
-    Node, OperandDependency, OperationInputs, OwnedInitialization, Permission, Place, Projection, Root,
+    MutationBody, Node, OperandDependency, OperationInputs, OwnedInitialization, Permission, Place, Projection, Root,
 };
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, IncanInputAccess};
 use std::collections::{BTreeMap, BTreeSet};
@@ -427,6 +427,7 @@ impl Reader<'_> {
             operations: self.ordered_map(Self::semantic_span, Self::operation)?,
             invocations: self.ordered_map(Self::semantic_span, |reader| reader.invocation(schema))?,
             closures: self.ordered_map(Self::semantic_span, Self::closure)?,
+            mutation: MutationBody::default(),
             nodes: self.list(Self::node)?,
         })
     }
