@@ -40,7 +40,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and verify the checkout release
         run: >-
-          incan run scripts/release.incn -- "$GITHUB_SHA" "$RUNNER_TEMP/release"
+          incan run scripts/release.incn -- "$GITHUB_SHA" "$RUNNER_TEMP/release" --prove-fixed-point
           --jobs 6 --timeout 600
       - name: Retain release evidence
         if: always()

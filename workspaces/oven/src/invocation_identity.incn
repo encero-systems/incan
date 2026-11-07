@@ -1,6 +1,7 @@
 """Separate Rust compiler invocation facts from the locations used to deliver their inputs and outputs."""
 
 from std.fs import Path
+from codegen import TOOLCHAIN_PREFIX, WORKSPACE_PREFIX
 
 
 pub def invocation_facts(arguments: list[str], project: Path, directory: Path) -> list[str]:
@@ -26,6 +27,10 @@ pub def invocation_facts(arguments: list[str], project: Path, directory: Path) -
             facts.append(argument.split("=")[0])
         elif previous == "--emit":
             facts.append(",".join([item.split("=")[0] for item in argument.split(",")]))
+        elif previous == "--remap-path-prefix" and argument.endswith("=" + WORKSPACE_PREFIX):
+            facts.append("<workspace>=" + WORKSPACE_PREFIX)
+        elif previous == "--remap-path-prefix" and argument.endswith("=" + TOOLCHAIN_PREFIX):
+            facts.append("<toolchain>=" + TOOLCHAIN_PREFIX)
         elif previous == "--remap-path-prefix" and argument.startswith(project.0 + "="):
             facts.append("<project>=" + argument[len(project.0) + 1:])
         elif previous == "-C" and argument.startswith("metadata=incan-unit"):

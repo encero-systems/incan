@@ -4,9 +4,9 @@ Repository checks, release production, and development utilities are Incan progr
 
 ## Release and installed verification
 
-- `release.incn` builds and qualifies the complete native release closure from an installed seed. Run `incan run scripts/release.incn -- SHA OUT [--prove-fixed-point] [--jobs N] [--timeout SECONDS]`. The fixed-point flag rebuilds and compares DD-0010's six named artifacts; normal qualification omits it until the reproducibility stage lands.
+- `release.incn` builds and qualifies the complete native release closure from an installed seed. Run `incan run scripts/release.incn -- SHA OUT [--prove-fixed-point] [--jobs N] [--timeout SECONDS]`. Release production passes the fixed-point flag to rebuild and compare DD-0010's six named artifacts; ordinary stage qualification omits it because the proof builds two additional generations.
 - `native_build.incn` owns the typed native-build units used by release production and fixed-point verification.
-- `verify_fixed_point.incn` builds through generation three, retains all three digest sets, and requires byte-identical generation-two and generation-three driver, runtime, lowering, standard primitives, Oven, and contract runner artifacts.
+- `verify_fixed_point.incn` builds through generation three, retains all three digest sets, and requires byte-identical generation-two and generation-three driver, runtime, lowering, standard-library floor, Oven, and contract runner artifacts.
 - `verify_installation.incn` audits and verifies an installed toolchain. Run `incan run scripts/verify_installation.incn -- OUT [--jobs N] [--timeout SECONDS]` with the installation selected by `INCAN_HOME` and its server selected by `INCAN_LSP`.
 - `release_support.incn` holds shared release options, process evidence, receipts, census parsing, and baseline comparison. `incan test scripts/test_release_support.incn` proves its pure contracts.
 - `publish_build_toolchain.incn` validates and pushes complete macOS and Linux bundles, then rewrites `build-toolchain.json`. Publication is a maintainer operation and is not part of qualification.
@@ -29,13 +29,7 @@ Add `--lowering` when the lowering source must be rebuilt. Set `INCAN_DRIVER_INS
 - `run_examples.incn` discovers and runs repository examples in their declared mode. `make examples` invokes it; `incan test scripts/test_run_examples.incn` proves discovery and failure propagation.
 - `check_docs_examples.incn` checks every verified documentation snippet and source-backed tutorial, then requires canonical formatting. `make docs` invokes it. Pass `--build-web` only with a receipt-compatible Oven Loaf; `--offline` makes that backend build resolve offline.
 - `check_us_english.incn`, `check_changed_rustdocs.incn`, `check_agents_doc_sync.incn`, `check_doc_paths.incn`, and `check_reference_contract.incn` implement the local pre-commit checks.
-- `generate_feature_inventory.incn` regenerates the compiler-checked feature inventory from the registry records in `loaves/stdlib/primitives/src/features.incn`.
+- `generate_feature_inventory.incn` regenerates the compiler-checked feature inventory from the registry records in `loaves/stdlib/core/src/features.incn`.
 - `bench_build_times.incn` compares cold, warm, and observable incremental builds across installed toolchains. Run `incan run scripts/bench_build_times.incn -- --toolchain LABEL=PATH [--toolchain LABEL=PATH ...] [--project PATH] [--repetitions N] [--output PATH] [--scratch PATH] [--keep-work] [--warm-max-ms N]`. Incremental timings count only when running the result proves that the edit reached the binary.
 
 The docs site also owns `workspaces/docs-site/scripts/check_incapunk_components.incn` and `check_learning_journey.incn`; its strict build invokes those checks.
-
-## Workspace programs
-
-- `workspaces/benchmarks/run_all.incn`, `check_incan.incn`, the standalone OrdinalMap runner, and the development-loop runner and reporter own benchmark orchestration without shell parsing tools. They retain the existing inputs and result-file contracts.
-- `workspaces/docs-site/scripts/v0_6_roadmap/refresh_github.incn` fetches the governed GitHub snapshot through `gh api`; `render_roadmap.incn` renders it, and `test_roadmap.incn` proves the fixture contract during strict docs builds.
-- `loaves/toolchain/incan-rustc-driver/tests/verify_identity.incn` and `verify_runtime_requirements.incn` exercise direct-driver integration. `verify_installation.incn` runs both against every fresh release installation.

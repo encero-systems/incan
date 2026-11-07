@@ -14,6 +14,7 @@ from source_identity import source_inputs
 # current scan. That is not an error: the scan names no identity, and the unit is scanned again before anything is
 # hashed.
 const STALE_SCAN: str = "unit identity refused: no current dependency scan"
+const CODEGEN_DOMAIN: str = "incan.oven.rust-codegen/2"
 
 
 pub def library_key(
@@ -149,10 +150,12 @@ pub def reconciled_rust_key(
     native = fingerprint(sorted(artifacts))?
     ambient = fingerprint(environment_inputs(variables, environment)?)?
     digest = "sha256:" + fingerprint(["incan.oven.rust-unit/1", compiler, command, authored, native, ambient])?
+    codegen = "sha256:" + fingerprint([CODEGEN_DOMAIN, command, authored, ambient])?
     # 3. Provenance is recorded but deliberately absent from the digest above.
     return Ok(
         Key(
             digest=digest,
+            codegen=codegen,
             parts=[
                 f"compiler {compiler}",
                 f"command {command}",

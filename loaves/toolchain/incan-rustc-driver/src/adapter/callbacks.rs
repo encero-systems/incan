@@ -130,7 +130,7 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
         }
         self.timing.configure(config);
         config.input = Input::Str {
-            name: FileName::Custom(self.plan.span.file.as_str().to_owned()),
+            name: FileName::Custom(SYNTHETIC_SOURCE_NAME.to_owned()),
             input: String::new(),
         };
         config.override_queries = Some(|_session, providers| {
