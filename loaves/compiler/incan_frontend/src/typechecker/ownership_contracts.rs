@@ -15,6 +15,7 @@ mod dictionary;
 pub(super) mod flow;
 mod iteration;
 pub(in crate::typechecker) mod loop_items;
+pub(in crate::typechecker) mod mutation;
 pub(super) mod native;
 mod native_lifetimes;
 pub(super) mod projection;

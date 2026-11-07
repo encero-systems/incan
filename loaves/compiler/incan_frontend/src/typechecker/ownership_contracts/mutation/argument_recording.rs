@@ -42,13 +42,13 @@ impl TypeChecker {
         {
             let key = local.declaration_span;
             through_local = Some(key);
-            if let Some(callee) = self.mut_params.function_values.get(&key) {
+            if let Some(callee) = self.mutation.function_values.get(&key) {
                 identity = Some(callee.clone());
             }
         }
         let declared = identity
             .as_ref()
-            .and_then(|identity| self.mut_params.declared.get(identity).cloned());
+            .and_then(|identity| self.mutation.declared.get(identity).cloned());
         let slots = match declared {
             Some(slots) => slots,
             None => match self.callable_type_mut_slots(callee, call_span) {
@@ -110,7 +110,7 @@ impl TypeChecker {
                 .filter(|ty| self.value_type_cannot_be_copied(ty))
                 .map(ToString::to_string);
             let shared_native_field = self.shared_native_field_argument(value);
-            self.mut_params.pending.push(PendingMutArgument {
+            self.mutation.pending.push(PendingMutArgument {
                 order: self.check_work.mutation_arguments,
                 callee: identity.clone(),
                 callee_name: callee_name.clone(),
@@ -161,16 +161,16 @@ impl TypeChecker {
             return;
         };
         if self
-            .mut_params
+            .mutation
             .current
             .as_ref()
             .is_some_and(|body| body.closure_depth > 0)
         {
             self.refuse_held_mut_param(param, span);
         }
-        if let Some(body) = &self.mut_params.current {
+        if let Some(body) = &self.mutation.current {
             match identity {
-                Some(callee) => self.mut_params.forwards.push(MutParamForward {
+                Some(callee) => self.mutation.source.forwards.push(MutParamForward {
                     owner: body.identity.clone(),
                     param: param.clone(),
                     callee: callee.clone(),
@@ -179,7 +179,12 @@ impl TypeChecker {
                 }),
                 None => {
                     let owner = body.identity.clone();
-                    self.mut_params.changed.entry(owner).or_default().insert(param.clone());
+                    self.mutation
+                        .source
+                        .changed
+                        .entry(owner)
+                        .or_default()
+                        .insert(param.clone());
                 }
             }
         }
@@ -346,7 +351,7 @@ impl TypeChecker {
         }
         if !is_mutable
             && let Some((_, destructured)) = self
-                .mut_params
+                .mutation
                 .loop_variables
                 .iter()
                 .find(|(span, _)| *span == symbol.span)

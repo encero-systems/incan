@@ -75,7 +75,6 @@ mod json_member_requirements;
 mod lowering_facts;
 mod member_bindings;
 mod module_imports;
-mod mut_arguments;
 mod mut_marker;
 mod native_call_state;
 mod native_newtype_facts;
@@ -554,7 +553,7 @@ pub struct TypeChecker {
     pub mutable_bindings: HashSet<String>,
     /// Caller-visible `mut` parameters: which callables declare them, which the checked bodies change, and the call
     /// arguments waiting to be decided once the module's bodies are known (#1773, `INCAN-T0117`).
-    pub(crate) mut_params: mut_arguments::MutParamFacts,
+    pub(crate) mutation: ownership_contracts::mutation::MutationFacts,
     /// The method whose body is being checked while its receiver is a plain `self`, so a write through `self`
     /// inside it can be refused with the declaration to change (#1723). `None` outside a method body, and inside a
     /// `mut self` method.

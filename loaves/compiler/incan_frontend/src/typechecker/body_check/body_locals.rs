@@ -37,7 +37,7 @@ impl BodyLocal {
             rust: std::mem::take(rust),
             traits: std::mem::take(traits),
             c_abi: std::mem::take(c_abi),
-            mutation: checker.mut_params.take_body_local(),
+            mutation: checker.mutation.take_body_local(),
             dictionary: std::mem::take(&mut checker.pending_uncopyable_dict_lookups),
             iterator_sum_items: std::mem::take(body_ir_iterator_sum_items),
             diagnostic_slots: Vec::new(),
@@ -54,7 +54,7 @@ impl BodyLocal {
         checker.type_info.rust = self.rust;
         checker.type_info.traits = self.traits;
         checker.type_info.c_abi = self.c_abi;
-        checker.mut_params.install_body_local(self.mutation);
+        checker.mutation.install_body_local(self.mutation);
         checker.pending_uncopyable_dict_lookups = self.dictionary;
         checker.type_info.body_ir_iterator_sum_items = self.iterator_sum_items;
     }
@@ -146,7 +146,7 @@ impl BodyLocal {
         append_protocols(&mut checker.type_info.protocols, self.protocols);
         append_rust(&mut checker.type_info.rust, self.rust);
         append_traits(&mut checker.type_info.traits, self.traits);
-        checker.mut_params.append_body_local(self.mutation);
+        checker.mutation.append_body_local(self.mutation);
         checker.pending_uncopyable_dict_lookups.extend(self.dictionary);
         checker
             .type_info
@@ -163,7 +163,7 @@ impl BodyLocal {
     pub(in crate::typechecker) fn finalize(
         mut self,
         checker: &mut TypeChecker,
-        effects: &super::mut_arguments::MutEffects,
+        effects: &super::mutation::MutationEffects,
         positions: &mut DiagnosticPositions<'_>,
     ) -> CheckedBodyView {
         // ---- Complete lexical destinations ----
@@ -265,7 +265,7 @@ impl BodyCheckInput {
     pub(super) fn finalize(
         self,
         checker: &mut TypeChecker,
-        effects: &super::mut_arguments::MutEffects,
+        effects: &super::mutation::MutationEffects,
         positions: &mut DiagnosticPositions<'_>,
     ) -> Arc<CheckedBodyView> {
         match self {
