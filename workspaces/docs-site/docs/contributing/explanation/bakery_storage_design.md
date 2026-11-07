@@ -603,7 +603,7 @@ Preserve the existing `map_read` and native-consumer integration. Align the modu
 
 - [DD-0013: The Incan build engine](../../design_records/0013_the_incan_build_engine.md) and the [build engine architecture](build_engine_architecture.md), with its detailed contracts: the engine this store serves.
 - [DD-0012: Incremental compilation over a persistent semantic store](../../design_records/0012_incremental_compilation_over_a_semantic_store.md): per-declaration facets, name slots, the ranked graph, frozen Loaves and deterministic compaction.
-- RFC 124 (Oven store unit identity and cross-plan artifact sharing) and RFC 125 (incan.pub Loaf registry and baked asset distribution).
+- RFC 124 (Oven store unit identity and cross-plan artifact sharing) and RFC 125 (loaves.pub Loaf registry and baked asset distribution).
 - RFC 165 (typed embedded storage with `std.db`, over the `incan_platform.store` substrate) and RFC 166 (indexed graphs and snapshot-bound graph access in `std.graph`): the contracts this store implements and serves.
 - The platform segment store in `loaves/platform/src/store.incn` and its store submodules, plus the foundational mapping contract in `std.primitives`.
 

@@ -251,7 +251,7 @@
 <text x="640" y="928" class="dd13-s dd13-c">staged engine results</text>
 <rect x="768" y="888" width="216" height="56" rx="6" class="dd13-ext"/>
 <text x="876" y="910" class="dd13-n dd13-c">Registry asset</text>
-<text x="876" y="928" class="dd13-s dd13-c">incan.pub · RFC 125</text>
+<text x="876" y="928" class="dd13-s dd13-c">loaves.pub · RFC 125</text>
 
 <!-- program -->
 <rect x="1024" y="864" width="232" height="96" rx="6" class="dd13-box"/>

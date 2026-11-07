@@ -67,7 +67,7 @@ Every package identity takes this one route. No Body IR record, lowering branch 
 
 ### The standard library
 
-The standard packages are Loaves like any other. A project depends on the standard packages whose namespaces it imports, at the versions the compiler pins. Their artifacts come from the toolchain: built from `loaves/stdlib/*` in a checkout, and shipped in the local incan.pub cache by an installation. No source module of the standard library is collected into a consumer.
+The standard packages are Loaves like any other. A project depends on the standard packages whose namespaces it imports, at the versions the compiler pins. Their artifacts come from the toolchain: built from `loaves/stdlib/*` in a checkout, and shipped in the local loaves.pub cache by an installation. No source module of the standard library is collected into a consumer.
 
 ### Runtime dependency selection
 
@@ -83,7 +83,7 @@ An empty library or a scalar identity function does not acquire the ordinary cor
 
 ## Non-goals
 
-- Fetching Loaves from a remote registry, and version solving; the lock and incan.pub own those.
+- Fetching Loaves from a remote registry, and version solving; the lock and loaves.pub own those.
 - The format details of each file beyond what this record names.
 
 ## Revisit condition
