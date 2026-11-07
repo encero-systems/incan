@@ -375,7 +375,7 @@ impl TypeChecker {
                     method,
                     &info.type_params,
                     &Self::written_type_args(explicit_type_args),
-                    span,
+                    Self::explicit_type_argument_span(explicit_type_args, span),
                 ));
             } else {
                 let resolved = explicit_type_args

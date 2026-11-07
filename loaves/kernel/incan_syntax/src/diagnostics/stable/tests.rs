@@ -737,3 +737,29 @@ fn unreachable_code_warning_projects_as_an_explainable_typecheck_warning() {
         "INCAN-T0101 must have a catalog explanation"
     );
 }
+
+/// Issue #2716: explicit type arguments on a nongeneric callable are refused at the written list with an actionable,
+/// explainable diagnostic instead of reaching lowering.
+#[test]
+fn nongeneric_call_type_arguments_use_a_distinct_stable_code() -> Result<(), Box<dyn std::error::Error>> {
+    let span = Span::new(14, 17);
+    let refusal = errors::explicit_type_arg_arity("upper", &[], &["int".to_string()], span);
+
+    assert_eq!(code_for_error(&refusal, DiagnosticPhase::Typecheck), "INCAN-T0129");
+    assert_eq!(refusal.message, "'upper' takes no type arguments");
+    assert_eq!(refusal.span, span);
+    assert!(
+        refusal
+            .hints()
+            .iter()
+            .any(|hint| hint == "Remove the type argument list"),
+        "the refusal must name the source fix, got {:?}",
+        refusal.hints()
+    );
+    let Some(entry) = explain("INCAN-T0129") else {
+        return Err("INCAN-T0129 must have a catalog explanation".into());
+    };
+    assert_eq!(entry.severity, "error");
+    assert_eq!(entry.phase, "typecheck");
+    Ok(())
+}

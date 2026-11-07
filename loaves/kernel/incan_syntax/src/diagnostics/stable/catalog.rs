@@ -721,6 +721,24 @@ pub(super) const RECORD_MEMBER_IDENTITY_COLLISION: DiagnosticCatalogEntry = Diag
     docs_url: None,
 };
 
+pub(super) const NONGENERIC_CALL_TYPE_ARGUMENTS: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0129",
+    title: "Nongeneric call has type arguments",
+    severity: "error",
+    phase: "typecheck",
+    summary: "A function or method that declares no type parameters was called with an explicit type-argument list.",
+    explanation: "Explicit type arguments bind a callable's declared type parameters. A nongeneric callable has no slots for those arguments, so checking refuses the list at the call site instead of allowing it to reach lowering.",
+    examples: &["\"hello\".upper[int]()", "plain[str]()"],
+    common_causes: &[
+        "Adding a type argument to a builtin helper that has one fixed signature.",
+        "Treating a nongeneric source function or method as generic.",
+    ],
+    fixes: &[
+        "Remove the type-argument list, or declare type parameters on a source callable that is intended to be generic.",
+    ],
+    docs_url: None,
+};
+
 pub(super) const CATALOG: &[DiagnosticCatalogEntry] = &[
     OWNERSHIP_BOUNDARY_UNPROVABLE,
     RESULT_SOURCE_INVALID,
@@ -728,6 +746,7 @@ pub(super) const CATALOG: &[DiagnosticCatalogEntry] = &[
     EXPLICIT_OWNERSHIP_CONFLICT,
     STORE_RESERVED_MODEL_FIELD,
     RECORD_MEMBER_IDENTITY_COLLISION,
+    NONGENERIC_CALL_TYPE_ARGUMENTS,
     PARSER_SYNTAX,
     TYPECHECK,
     UNREACHABLE_CODE,

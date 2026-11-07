@@ -88,6 +88,18 @@ impl TypeChecker {
         base_ty: &ResolvedType,
         arg_types: &[ResolvedType],
     ) -> Option<ResolvedType> {
+        if (matches!(base_ty, ResolvedType::Str) || is_frozen_str(base_ty))
+            && !call.type_args.is_empty()
+            && let Some(method) = string_methods::from_str(call.method)
+        {
+            self.errors.push(errors::explicit_type_arg_arity(
+                string_methods::as_str(method),
+                &[],
+                &Self::written_type_args(call.type_args),
+                Self::explicit_type_argument_span(call.type_args, call.span),
+            ));
+            return Some(ResolvedType::Unknown);
+        }
         if matches!(base_ty, ResolvedType::Bytes) && call.method == "as_slice" && call.args.is_empty() {
             let native = self.native_rust_signature_type("&[u8]", "std");
             self.type_info.calls.body_ir_call_result_types.insert(call.span, native);
