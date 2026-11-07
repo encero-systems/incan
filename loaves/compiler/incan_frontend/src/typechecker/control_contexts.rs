@@ -30,6 +30,7 @@ impl TypeChecker {
             scope: self.symbols.current_scope_index(),
             block_depth: self.item_taking_block_depth(),
             span,
+            borrowed_iteration: None,
         });
     }
 

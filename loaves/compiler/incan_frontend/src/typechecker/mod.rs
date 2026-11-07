@@ -71,9 +71,7 @@ mod diagnostic_values;
 mod for_item_taking;
 mod hash_key_inference;
 mod helpers;
-mod iteration_borrows;
 mod json_member_requirements;
-mod lifetime_contracts;
 mod lowering_facts;
 mod member_bindings;
 mod module_imports;
@@ -205,6 +203,9 @@ pub struct LoopContext {
     pub block_depth: usize,
     /// The loop's original-source range and expansion context; exits compare this complete identity.
     pub span: Span,
+    /// Canonical graph place borrowed by direct list iteration, retained only to activate that body's graph once an
+    /// overlapping replacement is checked.
+    pub(in crate::typechecker) borrowed_iteration: Option<ownership_contracts::flow::Place>,
 }
 
 /// Resolved target for a source-level `type Alias = Target` declaration.
@@ -530,6 +531,9 @@ pub struct TypeChecker {
     /// Callable bodies that produced a checked lazy result and therefore need retained-result ownership analysis.
     /// The marker is consumed when that body's flow is finalized; it never becomes a published semantic fact.
     lazy_result_bodies: HashSet<CanonicalSymbolId>,
+    /// Callable bodies that replace storage inside a direct borrowed iteration and therefore need graph analysis.
+    /// The marker only activates the canonical ownership pass; it does not retain a parallel place or loan model.
+    iteration_replacement_bodies: HashSet<CanonicalSymbolId>,
     /// Nested producer diagnostic intervals used only while capturing independently owned outputs.
     diagnostic_owner_ranges: Vec<(std::ops::Range<usize>, std::ops::Range<usize>)>,
     /// Symbol table populated during the first pass.
@@ -639,8 +643,6 @@ pub struct TypeChecker {
     pub(in crate::typechecker) generic_partial_target: Option<check_expr::GenericPartialTarget>,
     /// Stack of active loop contexts, innermost last.
     pub loop_stack: Vec<LoopContext>,
-    /// Direct list places whose storage active statement loops still borrow.
-    iteration_borrows: Vec<iteration_borrows::IterationBorrow>,
     /// Active trait @requires context for default method bodies.
     pub current_trait_requires: Option<HashMap<String, ResolvedType>>,
     /// Active trait computed-property contract for default member bodies.

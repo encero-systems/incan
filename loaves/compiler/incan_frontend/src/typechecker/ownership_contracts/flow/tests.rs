@@ -42,6 +42,7 @@ fn graph(events: Vec<Event>, edges: Vec<Vec<usize>>, loans: Vec<Loan>) -> Graph 
         ]
         .into(),
         loans,
+        direct_iteration_loans: BTreeSet::new(),
         local_loans: BTreeMap::new(),
         dependent_locals: BTreeMap::new(),
         dependent_values: BTreeSet::new(),

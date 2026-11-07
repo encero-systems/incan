@@ -110,13 +110,6 @@ impl TypeChecker {
             }
         };
         let owns_items = self.plan_for_item_taking(for_stmt, &elem_ty);
-
-        // The iterated place is resolved before the loop's bindings shadow it (`for items in items:`).
-        let previous_borrows = if owns_items {
-            self.iteration_borrows.len()
-        } else {
-            self.enter_iteration_borrow(&for_stmt.iter)
-        };
         let loop_view_param = self.loop_view_param(&for_stmt.iter);
         let derived_views = if loop_view_param.is_none() {
             self.read_only_derived_loop_views(&for_stmt.iter, &for_stmt.pattern.node)
@@ -133,10 +126,10 @@ impl TypeChecker {
         self.retain_body_ir_iteration_binding(&for_stmt.pattern, &for_stmt.iter);
         self.remember_for_pattern_bindings(&for_stmt.pattern.node, owns_items);
         self.push_loop_context(LoopContextKind::Statement, None, span);
+        self.note_borrowed_iteration_loop(&for_stmt.iter, owns_items);
         let loop_body = self.enter_for_loop_body(&for_stmt.pattern.node, loop_view_param, derived_views);
 
         self.check_statement_block(&for_stmt.body);
-        self.iteration_borrows.truncate(previous_borrows);
         self.exit_for_loop_body(loop_body);
         let _ = self.pop_loop_context();
         self.symbols.exit_scope();

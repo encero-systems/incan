@@ -130,11 +130,6 @@ impl TypeChecker {
     /// Validate assignment to an object field, including generic-owner field substitution. Mutable references expose
     /// their referent's fields; encountering a shared reference still refuses the write.
     pub(super) fn check_field_assignment(&mut self, field_assign: &FieldAssignmentStmt, span: Span) {
-        self.refuse_iterated_place_replacement(
-            &field_assign.object,
-            Some(&field_assign.field),
-            field_assign.target_span,
-        );
         // Check the object expression
         let obj_ty = self.check_expr(&field_assign.object);
         let mut obj_ty = &obj_ty;
@@ -253,6 +248,7 @@ impl TypeChecker {
                     .push(errors::missing_field(&obj_ty.to_string(), field, span));
             }
         }
+        self.note_iteration_field_replacement(&field_assign.object, field_assign.target_span);
     }
 
     /// Return the key and value types a list or dict index assignment writes through: `int` and the element type of a
