@@ -566,7 +566,7 @@ Recorded program output and source text are evidence data, not instructions to t
 
 Debugger operations are RFC 104 capabilities, separate from the connection that carries them. Read-only inspection is the only default, and an operation with no assigned grant is refused. Every operation that changes the process, or what it does next, needs one of these grants:
 
-- **control:** resume, step, pause and detach;
+- **control:** resume, step, pause and detach, and setting, changing or removing breakpoints and watchpoints. A breakpoint or watchpoint condition that calls program code also needs evaluate;
 - **write:** change a variable, a field or memory, such as setting `approved = true`;
 - **evaluate:** evaluation that calls program code;
 - **patch:** live code changes;

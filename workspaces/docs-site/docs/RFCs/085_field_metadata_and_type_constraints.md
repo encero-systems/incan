@@ -270,7 +270,7 @@ variant_decl = IDENT field_meta? variant_payload? variant_value? ;
 
 ### Rename continuity
 
-`renamed_from` must accept an earlier name, a list of earlier names, or a nested block under RFC 096, on a field, an enum variant, or a model or enum declaration. The block must contain `name`, a string or list of strings, and may contain RFC 150's shared lifecycle facts, `since`, `retire_in`, `message`, `by` and `issue`, each at most once and using the same descriptor as `deprecated`. `by` and `issue` are unverified descriptive text and grant nothing.
+`renamed_from` must accept an earlier name, a list of earlier names, or a nested block under RFC 096, on a field, an enum variant, or a model or enum declaration. The block must contain `name`, a string or list of strings. On a model or enum declaration, it may also contain `package`, an earlier scoped package name, and `registry`, an earlier registry id. Each defaults to the declaring package's own, and together they carry the declaration's identity across a package rename or a move to another registry (RFC 165). The block may contain RFC 150's shared lifecycle facts, `since`, `retire_in`, `message`, `by` and `issue`, each at most once and using the same descriptor as `deprecated`. `by` and `issue` are unverified descriptive text and grant nothing.
 
 - The field or variant must keep its stable anchor across a declared rename. Without `renamed_from`, a rename is a new source identity.
 - A list of earlier names must be in the order the names were used, earliest first.

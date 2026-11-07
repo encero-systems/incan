@@ -311,7 +311,7 @@ capability refund:
 
 A session that holds all three risk classes can be steered by its untrusted input into reading private data and sending it out. The rule against that applies to an agent session as a whole, not to one server. One agent can use a browser server, a server over private records and an email server: each passes alone, and together they hold all three.
 
-The host that coordinates a governed agent session, such as an agent harness or `incan mcp`, must therefore combine the risk classes of every server and tool the session can reach. It must refuse to start or extend the session when the combination carries all three, unless the session's grant names that combination explicitly. A server running without such a host can enforce the rule only for its own grant, and its run report must say so.
+The host that coordinates a governed agent session, such as an agent harness or `incan mcp`, must therefore combine the risk classes of every server and tool the session can reach with every class the session has already held. Classes accumulate for the life of the session, because the input and data a session has received stay in its context: disconnecting a server or dropping a grant never removes the class it brought in. It must refuse to start or extend the session when the combination carries all three, unless the session's grant names that combination explicitly. A server running without such a host can enforce the rule only for its own grant, and its run report must say so.
 
 Arguments an agent passes to a tool count as untrusted input, whether or not the client is authenticated. A server whose tools read private data and send data out therefore already holds all three. The refusal and any explicit allowance must be recorded in receipts.
 
