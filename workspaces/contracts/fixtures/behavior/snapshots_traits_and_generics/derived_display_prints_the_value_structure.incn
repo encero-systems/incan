@@ -1,16 +1,23 @@
-# behavior: a model, class, enum, newtype and generic model that derive Display print their {value:?} structure through println, str, an f-string and a Display bound, and a generic model displays inside a generic function over its type argument
+# behavior: structural Debug uses Incan field separators for ordinary, nested, empty and generic models while a Rust-defined field keeps its own text, and Display delegates to that structure
 # expect-stdout:
-#   Point { x: 1, y: 2 }
-#   Point { x: 1, y: 2 }
-#   Point { x: 1, y: 2 } and Empty
-#   Account { owner: "Ada", balance: 3 }
+#   Point { x = 1, y = 2 }
+#   Point { x = 1, y = 2 }
+#   Point { x = 1, y = 2 } and Empty
+#   Account { owner = "Ada", balance = 3 }
 #   Circle(1.5)
 #   UserId(5)
-#   Box { value: "x" }
-#   <Point { x: 1, y: 2 }>
+#   Box { value = "x" }
+#   <Point { x = 1, y = 2 }>
 #   <UserId(6)>
-#   Box { value: 7 }
-#   [Box { value: 7 }] Box { value: 7 }
+#   Box { value = 7 }
+#   [Box { value = 7 }] Box { value = 7 }
+#   Point { x = 10, y = 20 }
+#   Nested { point = Point { x = 10, y = 20 } }
+#   Marker
+#   Box { value = 7 }
+#   NativeHolder { duration = 2s }
+
+from rust::std::time import Duration
 
 
 @derive(Display)
@@ -40,6 +47,22 @@ model Box[T]:
     value: T
 
 
+@derive(Debug)
+model Nested:
+    point: Point
+
+
+@derive(Debug)
+model Marker:
+    def marked(self) -> bool:
+        return true
+
+
+@derive(Debug)
+model NativeHolder:
+    duration: Duration
+
+
 def show[T with Display](value: T) -> str:
     return f"<{value}>"
 
@@ -61,3 +84,8 @@ def main() -> None:
     println(show(p))
     println(show(UserId(6)))
     println(describe(Box(value=7)))
+    println(f"{Point(x=10, y=20):?}")
+    println(f"{Nested(point=Point(x=10, y=20)):?}")
+    println(f"{Marker():?}")
+    println(f"{Box(value=7):?}")
+    println(f"{NativeHolder(duration=Duration.from_secs(2)):?}")
