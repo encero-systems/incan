@@ -313,25 +313,29 @@ impl TypeChecker {
     }
 
     /// Resolve imported module members from checked symbol metadata before treating a receiver as a value.
+    /// A receiver that ends at a type through a module keeps that type's identity; only a complete module receiver is
+    /// recorded as a namespace, so a following enum variant can still select its declaring carrier.
     pub(super) fn check_imported_module_field(
         &mut self,
         base: &Spanned<Expr>,
         field: &str,
         span: Span,
     ) -> Option<ResolvedType> {
-        let (module_name, module_path, resolved) =
+        let (module_name, module_path, resolved, base_is_module) =
             if let Some((module_name, module_path)) = self.imported_module_for_expr(base) {
                 let resolved = self.resolve_module_namespace_member(&module_path, field);
-                (module_name, module_path, resolved)
+                (module_name, module_path, resolved, true)
             } else {
                 let mut segments = crate::typechecker::collect::dotted_path_segments(&base.node)?;
                 let module_path = self.module_namespace_path(segments.first()?)?;
                 let module_name = segments.join(".");
                 segments.push(field.to_string());
                 let resolved = self.resolve_qualified_name(&segments);
-                (module_name, module_path, resolved)
+                (module_name, module_path, resolved, false)
             };
-        self.record_module_namespace_reference(base.span, &module_path);
+        if base_is_module {
+            self.record_module_namespace_reference(base.span, &module_path);
+        }
         if let Some((head, head_span)) = Self::dotted_namespace_head(base) {
             let _ = self.check_ident(head, head_span);
         }
@@ -356,7 +360,16 @@ impl TypeChecker {
             ResolvedNamespaceMemberKind::Symbol(SymbolKind::Field(info)) => Some(info.ty),
             ResolvedNamespaceMemberKind::Symbol(SymbolKind::Property(info)) => Some(info.return_type),
             ResolvedNamespaceMemberKind::Symbol(SymbolKind::Variant(info)) => {
-                let result = ResolvedType::Named(info.enum_name);
+                let qualified = crate::typechecker::collect::dotted_path_segments(&base.node)
+                    .and_then(|segments| self.qualified_nominal_carrier(&segments))
+                    .map(ResolvedType::Named);
+                let retained = self
+                    .body_ir_checked_value_type(base.span)
+                    .filter(|result| matches!(result, ResolvedType::Named(_) | ResolvedType::Generic(_, _)))
+                    .cloned();
+                let result = qualified
+                    .or(retained)
+                    .unwrap_or_else(|| ResolvedType::Named(info.enum_name));
                 if info.fields.is_empty() {
                     Some(result)
                 } else {

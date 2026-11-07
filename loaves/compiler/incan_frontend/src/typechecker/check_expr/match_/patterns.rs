@@ -1,6 +1,7 @@
 //! Pattern checking: lexical identities and constructor, nominal, enum, union, builtin, tuple and or patterns.
 
 use super::*;
+use crate::typechecker::ResolvedNamespaceMemberKind;
 
 impl TypeChecker {
     /// Record a constructor pattern that resolved through the active lexical binding.
@@ -16,7 +17,29 @@ impl TypeChecker {
     }
 
     /// Record the source enum variant selected by a checked constructor pattern.
-    pub(super) fn record_incan_enum_pattern_identity(&mut self, expected_ty: &ResolvedType, variant: &str, span: Span) {
+    pub(super) fn record_incan_enum_pattern_identity(
+        &mut self,
+        expected_ty: &ResolvedType,
+        qualifier: Option<&str>,
+        variant: &str,
+        span: Span,
+    ) {
+        if let Some(qualifier) = qualifier {
+            let segments = qualifier.split("::").map(str::to_owned).collect::<Vec<_>>();
+            let identity = self
+                .resolve_qualified_name(&segments)
+                .ok()
+                .and_then(|resolved| match resolved.kind {
+                    ResolvedNamespaceMemberKind::Symbol(SymbolKind::Type(TypeInfo::Enum(info))) => {
+                        info.variant_identities.get(variant).cloned()
+                    }
+                    _ => None,
+                });
+            if let Some(identity) = identity {
+                self.type_info.record_resolved_identity(span, identity);
+            }
+            return;
+        }
         let enum_name = match expected_ty {
             ResolvedType::Named(name) | ResolvedType::Generic(name, _) => name,
             _ => return,
@@ -258,7 +281,7 @@ impl TypeChecker {
         match field_types {
             Some(fields) => {
                 if incan_resolution.is_some() {
-                    self.record_incan_enum_pattern_identity(expected_ty, variant_name, name.span);
+                    self.record_incan_enum_pattern_identity(expected_ty, enum_qualifier_opt, variant_name, name.span);
                 }
                 if incan_resolution.is_some() || rust_resolution.is_some() {
                     // One sub-pattern per payload value (#1561); a named sub-pattern is refused on its own.

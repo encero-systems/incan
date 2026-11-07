@@ -149,17 +149,18 @@ impl<'a> Parser<'a> {
             let mut name = Spanned::new(name.clone(), self.current_span());
             self.advance();
 
-            // Check for qualified pattern: Type.Variant or Type.Variant(args)
-            if self.match_token(&TokenKind::Punctuation(PunctuationId::Dot)) {
-                let variant_span = self.current_span();
-                let variant = match &self.peek().kind {
-                    TokenKind::Ident(v) => {
-                        let v = v.clone();
+            // Normalize every segment of a qualified constructor path. Match checking already resolves the final
+            // segment as the variant and treats everything before it as one path to the enum declaration.
+            while self.match_token(&TokenKind::Punctuation(PunctuationId::Dot)) {
+                let segment_span = self.current_span();
+                let segment = match &self.peek().kind {
+                    TokenKind::Ident(segment) => {
+                        let segment = segment.clone();
                         self.advance();
-                        v
+                        segment
                     }
                     TokenKind::Keyword(KeywordId::None) => {
-                        // Allow "None" as a variant name (e.g., Maybe.None)
+                        // Allow `None` as a variant name, including through a module-qualified enum.
                         self.advance();
                         "None".to_string()
                     }
@@ -167,10 +168,9 @@ impl<'a> Parser<'a> {
                         return Err(errors::expected_variant_name_after_dot(self.current_span()));
                     }
                 };
-                // Build qualified name: "Type::Variant" for Rust
                 name = Spanned::new(
-                    format!("{}::{}", name.node, variant),
-                    Span::new(start, variant_span.end),
+                    format!("{}::{}", name.node, segment),
+                    Span::new(start, segment_span.end),
                 );
             }
 

@@ -694,9 +694,16 @@ impl TypeChecker {
             if let Some(identity) = identity {
                 self.type_info.record_resolved_identity(call.span, identity);
             }
-            return Some(match construction {
+            let result = match construction {
                 Some(construction) => ResolvedType::Generic(enum_name.clone(), construction.arguments),
                 None => base_ty.clone(),
+            };
+            let qualified = crate::typechecker::collect::dotted_path_segments(&call.base.node)
+                .and_then(|segments| self.qualified_nominal_carrier(&segments));
+            return Some(match (qualified, result) {
+                (Some(carrier), ResolvedType::Named(_)) => ResolvedType::Named(carrier),
+                (Some(carrier), ResolvedType::Generic(_, arguments)) => ResolvedType::Generic(carrier, arguments),
+                (_, result) => result,
             });
         }
         None

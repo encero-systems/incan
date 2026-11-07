@@ -179,7 +179,10 @@ impl TypeChecker {
                 if let Some(identity) = variant_identity {
                     self.type_info.record_resolved_identity(callee.span, identity);
                 }
-                return Some(ResolvedType::Named(enum_name.clone()));
+                let result = crate::typechecker::collect::dotted_path_segments(&base.node)
+                    .and_then(|segments| self.qualified_nominal_carrier(&segments))
+                    .map_or(base_ty, ResolvedType::Named);
+                return Some(result);
             }
             if self.receiver_has_computed_property(&base_ty, member_name, span) {
                 self.check_call_args(args);

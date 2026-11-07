@@ -1,6 +1,7 @@
 //! Constructor subpatterns and Incan, Rust and native enum payload types.
 
 use super::*;
+use crate::typechecker::ResolvedNamespaceMemberKind;
 
 impl TypeChecker {
     /// Collect variable bindings defined while checking one isolated alternation alternative.
@@ -120,7 +121,7 @@ impl TypeChecker {
     /// winning same-scope shadowing. The scrutinee already tells us which enum is being matched, so resolve the
     /// variant from that enum's table. The caller compares the pattern's sub-pattern count with the payload count.
     pub(super) fn incan_enum_constructor_payload_types(
-        &self,
+        &mut self,
         expected_ty: &ResolvedType,
         variant_name: &str,
         enum_qualifier_opt: Option<&str>,
@@ -129,12 +130,29 @@ impl TypeChecker {
             ResolvedType::Named(type_name) | ResolvedType::Generic(type_name, _) => type_name,
             _ => return None,
         };
-        if enum_qualifier_opt.is_some_and(|qualifier| !self.pattern_type_spelling_names_subject(qualifier, enum_name)) {
-            return None;
+        if let Some(qualifier) = enum_qualifier_opt {
+            if !self.pattern_type_spelling_names_subject(qualifier, enum_name) {
+                return None;
+            }
+            let segments = qualifier.split("::").map(str::to_owned).collect::<Vec<_>>();
+            let resolved = self.resolve_qualified_name(&segments).ok()?;
+            let ResolvedNamespaceMemberKind::Symbol(SymbolKind::Type(TypeInfo::Enum(enum_info))) = resolved.kind else {
+                return None;
+            };
+            return Self::source_enum_variant_payload_types(&enum_info, expected_ty, variant_name);
         }
         let Some(TypeInfo::Enum(enum_info)) = self.lookup_semantic_type_info(enum_name) else {
             return None;
         };
+        Self::source_enum_variant_payload_types(enum_info, expected_ty, variant_name)
+    }
+
+    /// Select one source enum variant's payloads and substitute the matched subject's type arguments.
+    fn source_enum_variant_payload_types(
+        enum_info: &EnumInfo,
+        expected_ty: &ResolvedType,
+        variant_name: &str,
+    ) -> Option<Vec<ResolvedType>> {
         let canonical_variant = enum_info
             .variant_aliases
             .get(variant_name)
@@ -164,16 +182,18 @@ impl TypeChecker {
 
     /// Whether a pattern qualifier names a rusttype other than the rusttype being matched. Wrappers over one Rust enum
     /// share its identity path, yet each is its own type, so another wrapper's qualifier does not name the subject.
-    pub(super) fn qualifier_is_other_rusttype(&self, qualifier: &str, subject: &ResolvedType) -> bool {
+    pub(super) fn qualifier_is_other_rusttype(&mut self, qualifier: &str, subject: &ResolvedType) -> bool {
         let (ResolvedType::Named(subject_name) | ResolvedType::Generic(subject_name, _)) = subject else {
             return false;
         };
-        let is_rusttype = |name: &str| {
-            self.lookup_type_info(name)
-                .is_some_and(|info| matches!(info, TypeInfo::Newtype(nt) if nt.is_rusttype))
-        };
-        is_rusttype(qualifier)
-            && is_rusttype(subject_name)
+        let qualifier_is_rusttype = self
+            .lookup_type_info(qualifier)
+            .is_some_and(|info| matches!(info, TypeInfo::Newtype(nt) if nt.is_rusttype));
+        let subject_is_rusttype = self
+            .lookup_type_info(subject_name)
+            .is_some_and(|info| matches!(info, TypeInfo::Newtype(nt) if nt.is_rusttype));
+        qualifier_is_rusttype
+            && subject_is_rusttype
             && !self.pattern_type_spelling_names_subject(qualifier, subject_name)
     }
 

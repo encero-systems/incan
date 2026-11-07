@@ -315,11 +315,26 @@ fn retain_checked_nominal_names(ty: IncanType, facts: &TypeCheckInfo) -> IncanTy
 
 /// Copy checked carrier bindings and preserve unambiguous short names selected by standard storage projection.
 /// A projected name carries its original canonical owner; conflicting owners never grant a short binding.
-/// Native paths from structural storage add their declaration identities without replacing a source binding.
+/// Qualified source references and native paths from structural storage add their declaration identities without
+/// replacing a source binding.
 pub(super) fn retained_type_identities(
     facts: &TypeCheckInfo,
 ) -> std::collections::BTreeMap<String, super::CanonicalSymbolId> {
     let mut identities = facts.declarations.named_type_identities.clone();
+    // A re-exporting module can resolve a qualified source spelling to a public route different from the provider's
+    // own retained aliases. Keep that exact checked route so Body IR projects parameters, locals and match subjects
+    // through the declaring nominal carrier instead of treating the public spelling as a structurally shaped model.
+    for reference in facts.declarations.qualified_type_references.values() {
+        let route = match &reference.resolved {
+            ResolvedType::Named(name) | ResolvedType::Generic(name, _) => name,
+            _ => continue,
+        };
+        if crate::typechecker::split_canonical_public_library_type_name(route).is_some() {
+            identities
+                .entry(route.clone())
+                .or_insert_with(|| reference.identity.clone());
+        }
+    }
     // Generated SDK results need no source import. Retain their checked provider binding for publication without
     // replacing an ordinary source binding or interpreting an equal short spelling as a native declaration.
     for (name, identity) in &facts.declarations.body_ir_native_type_identities {
