@@ -10,13 +10,13 @@ from rust::blake2 import Blake2b512, Blake2s256
 from rust::blake3 import Hasher as Blake3Hasher, hash as blake3_hash
 from rust::md5 import Md5
 from rust::sha1 import Sha1
-from rust::sha2 import Digest, Sha224, Sha256, Sha384, Sha512
+from rust::sha2 import Digest, Sha224, Sha384, Sha512
 from rust::sha3 import Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128, Shake256
 from rust::sha3::digest import ExtendableOutputReset, Update, XofReader
 from rust::xxhash_rust::xxh3 import Xxh3Default, xxh3_64 as rust_xxh3_64, xxh3_128 as rust_xxh3_128
 from rust::xxhash_rust::xxh32 import Xxh32
 from rust::xxhash_rust::xxh64 import Xxh64
-from std.fs.mapping import MappedView
+pub from std.primitives import ByteDigestHasher, Sha256Hasher, sha256
 from std.traits.error import Error
 
 
@@ -47,16 +47,6 @@ pub model HashError with Error:
         Hash errors currently do not wrap structured source errors.
         """
         return None
-
-
-pub trait ByteDigestHasher:
-    """
-    Incremental byte-digest hasher contract used by fixed-length digest algorithms.
-    """
-
-    def update(mut self, chunk: bytes) -> None: ...
-
-    def finalize_bytes(mut self) -> bytes: ...
 
 
 pub trait ShakeDigestHasher:
@@ -181,29 +171,6 @@ pub class _Sha224Hasher with ByteDigestHasher:
 
     def update(mut self, chunk: bytes) -> None:
         Digest.update(self.handle, chunk.as_slice())
-
-    def finalize_bytes(mut self) -> bytes:
-        return self.handle.finalize_reset().to_vec()
-
-
-pub class Sha256Hasher with ByteDigestHasher:
-    """
-    Storable incremental SHA-256 hasher.
-
-    Create a handle with `sha256.new()`, retain it in a model or class field, then call `update` from each method that
-    contributes canonical bytes. `finalize_bytes()` returns the digest for bytes already supplied and resets the handle
-    for a subsequent byte stream; this type does not define which bytes are canonical for an application identity.
-    `update_view` hashes a mapped view where it lies, so verifying mapped content copies none of it.
-    """
-
-    handle: Sha256
-
-    def update(mut self, chunk: bytes) -> None:
-        Digest.update(self.handle, chunk.as_slice())
-
-    pub def update_view(mut self, view: MappedView) -> None:
-        """Add the bytes of `view` without copying them out of the mapping."""
-        Digest.update(self.handle, view.0)
 
     def finalize_bytes(mut self) -> bytes:
         return self.handle.finalize_reset().to_vec()
@@ -481,20 +448,6 @@ pub class sha224:
     @staticmethod
     pub def new() -> _Sha224Hasher:
         return _Sha224Hasher(handle=Sha224.default())
-
-
-pub class sha256:
-    """
-    SHA-256 namespace with one-shot and incremental hashing.
-    """
-
-    @staticmethod
-    pub def digest(data: bytes) -> bytes:
-        return _must_digest_bytes(data, "sha256", 0)
-
-    @staticmethod
-    pub def new() -> Sha256Hasher:
-        return Sha256Hasher(handle=Sha256.default())
 
 
 pub class sha384:
