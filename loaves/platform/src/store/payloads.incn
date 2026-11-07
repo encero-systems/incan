@@ -4,8 +4,7 @@ from rust::std::process import id
 from rust::std::rc import Rc
 from std.primitives import hexlify
 from crate.store import PreparedPayload, sync_durable
-from crate.store.files import StoreError, ensure_directory, failure, io_failure, sync_directory, sync_file
-from crate.store.hash import file_digest
+from crate.store.files import StoreError, ensure_directory, failure, file_digest, io_failure, sync_directory, sync_file
 from crate.store.index import view_digest
 from crate.store.path import StorePath as Path
 
