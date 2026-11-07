@@ -32,7 +32,7 @@ impl TypeChecker {
             errors: Vec::new(),
             warnings: Vec::new(),
             mutable_bindings: HashSet::new(),
-            mut_params: mut_arguments::MutParamFacts::default(),
+            mutation: ownership_contracts::mutation::MutationFacts::default(),
             current_immutable_self_method: None,
             consumed_iterator_bindings: HashMap::new(),
             pending_uncopyable_dict_lookups: Vec::new(),

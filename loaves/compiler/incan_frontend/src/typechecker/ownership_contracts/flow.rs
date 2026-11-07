@@ -8,7 +8,9 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, IncanInputAccess};
 
+mod mutation;
 mod operations;
+pub(in crate::typechecker) use mutation::{MutationBody, MutationEffects, MutationForward, analyze_mutation};
 pub(in crate::typechecker) use operations::{OperandDependency, OperationInputs};
 
 /// One source storage projection. Dynamic indices conservatively overlap every element projection.
@@ -250,8 +252,45 @@ pub(in crate::typechecker) struct Graph {
     pub operations: BTreeMap<HirSourceSpan, OperationInputs>,
     /// Closures bound to a local, by closure expression, with the captures they read or borrow when built.
     pub closures: BTreeMap<HirSourceSpan, ClosureCaptures>,
+    /// Caller-visible parameter changes and forwarding calls from this callable. These are ordinary source-graph
+    /// facts; the module flow phase closes their interprocedural edges after every callable graph is available.
+    pub mutation: MutationBody,
     pub nodes: Vec<Node>,
     pub entry: usize,
+}
+
+impl Graph {
+    /// Create a minimal callable graph for caller-visible mutation facts when no explicit-flow rule needs the full
+    /// source CFG. The real callable identity and span remain authenticated; no synthetic place or access is added.
+    pub(in crate::typechecker) fn mutation_only(
+        owner: CanonicalSymbolId,
+        span: HirSourceSpan,
+        mutation: MutationBody,
+    ) -> Self {
+        Self {
+            owner,
+            permissions: BTreeMap::new(),
+            loans: Vec::new(),
+            direct_iteration_loans: BTreeSet::new(),
+            item_taking_loops: BTreeMap::new(),
+            taking_moves: BTreeMap::new(),
+            dictionary_lookups: BTreeMap::new(),
+            local_loans: BTreeMap::new(),
+            dependent_locals: BTreeMap::new(),
+            dependent_values: BTreeSet::new(),
+            owned_locals: BTreeMap::new(),
+            invocations: BTreeMap::new(),
+            operations: BTreeMap::new(),
+            closures: BTreeMap::new(),
+            mutation,
+            nodes: vec![Node {
+                event: Event::Nothing,
+                successors: Vec::new(),
+                span,
+            }],
+            entry: 0,
+        }
+    }
 }
 
 /// A closure bound to a local. It reads each captured Copy value when it is built and retains one shared loan for

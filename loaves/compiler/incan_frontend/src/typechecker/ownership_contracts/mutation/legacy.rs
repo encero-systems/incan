@@ -19,10 +19,10 @@ impl TypeChecker {
     pub(in crate::typechecker) fn legacy_resolve_mut_arguments(&mut self) {
         self.check_work.mutation_settlements += 1;
         let changed = self.legacy_mut_param_change_closure();
-        let pending = std::mem::take(&mut self.mut_params.pending);
+        let pending = std::mem::take(&mut self.mutation.pending);
         for argument in pending {
             let known_callee = argument.callee.as_ref().filter(|callee| {
-                self.mut_params.bodies_checked.contains(*callee)
+                self.mutation.source.bodies_checked.contains(*callee)
                     && !self.call_goes_through_a_reassigned_local(argument.through_local)
             });
             let change = match known_callee {
@@ -81,21 +81,22 @@ impl TypeChecker {
     /// Return whether a call went through a local that is reassigned somewhere in the module, so the callable it runs
     /// is not known at the call.
     fn call_goes_through_a_reassigned_local(&self, through_local: Option<Span>) -> bool {
-        through_local.is_some_and(|local| self.mut_params.reassigned_locals.contains(&local))
+        through_local.is_some_and(|local| self.mutation.source.reassigned_locals.contains(&local))
     }
 
     /// Return every (callable, parameter) pair whose caller-visible parameter the callable changes, transitively.
     pub(in crate::typechecker) fn legacy_mut_param_change_closure(&self) -> HashSet<(CanonicalSymbolId, String)> {
         let mut changed = self
-            .mut_params
+            .mutation
+            .source
             .changed
             .iter()
             .flat_map(|(identity, params)| params.iter().map(move |param| (identity.clone(), param.clone())))
             .collect::<HashSet<_>>();
         loop {
             let mut grew = false;
-            for forward in &self.mut_params.forwards {
-                let callee_changes = !self.mut_params.bodies_checked.contains(&forward.callee)
+            for forward in &self.mutation.source.forwards {
+                let callee_changes = !self.mutation.source.bodies_checked.contains(&forward.callee)
                     || self.call_goes_through_a_reassigned_local(forward.through_local)
                     || changed.contains(&(forward.callee.clone(), forward.callee_param.clone()));
                 if callee_changes && changed.insert((forward.owner.clone(), forward.param.clone())) {

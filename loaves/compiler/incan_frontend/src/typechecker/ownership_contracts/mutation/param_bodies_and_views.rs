@@ -35,7 +35,7 @@ impl TypeChecker {
         if let Some(identity) = identity
             && slots.iter().any(|slot| slot.shows_changes_to_caller)
         {
-            self.mut_params.declared.insert(identity.clone(), slots);
+            self.mutation.declared.insert(identity.clone(), slots);
         }
     }
 
@@ -71,19 +71,21 @@ impl TypeChecker {
             .filter(|(_, (param, resolved))| self.def_param_shows_changes_to_caller(&param.node, resolved))
             .map(|(_, (param, _))| (param.node.name.clone(), param.span))
             .collect::<HashMap<_, _>>();
-        self.mut_params.bodies_checked.insert(identity.clone());
+        if !caller_visible.is_empty() {
+            self.mutation.source.bodies_checked.insert(identity.clone());
+        }
         let next = MutParamBody {
             identity,
             params: caller_visible,
             closure_depth: 0,
             views: Vec::new(),
         };
-        MutParamBodyState(self.mut_params.current.replace(next))
+        MutParamBodyState(self.mutation.current.replace(next))
     }
 
     /// Return the declaration identity of the function or method whose body is being checked, if any.
     pub(in crate::typechecker) fn current_body_identity(&self) -> Option<&CanonicalSymbolId> {
-        self.mut_params.current.as_ref().map(|body| &body.identity)
+        self.mutation.current.as_ref().map(|body| &body.identity)
     }
 
     /// Detach a validated declaration's mutation frame before its independent body producer is entered. Knowing a
@@ -94,9 +96,12 @@ impl TypeChecker {
         previous: MutParamBodyState,
         has_statement_body: bool,
     ) -> MutParamBodyState {
-        let prepared = MutParamBodyState(std::mem::replace(&mut self.mut_params.current, previous.0));
-        if has_statement_body && let Some(frame) = &prepared.0 {
-            self.mut_params.bodies_checked.remove(&frame.identity);
+        let prepared = MutParamBodyState(std::mem::replace(&mut self.mutation.current, previous.0));
+        if has_statement_body
+            && let Some(frame) = &prepared.0
+            && !frame.params.is_empty()
+        {
+            self.mutation.source.bodies_checked.remove(&frame.identity);
         }
         prepared
     }
@@ -108,15 +113,18 @@ impl TypeChecker {
         prepared: MutParamBodyState,
         has_statement_body: bool,
     ) -> MutParamBodyState {
-        if has_statement_body && let Some(frame) = &prepared.0 {
-            self.mut_params.bodies_checked.insert(frame.identity.clone());
+        if has_statement_body
+            && let Some(frame) = &prepared.0
+            && !frame.params.is_empty()
+        {
+            self.mutation.source.bodies_checked.insert(frame.identity.clone());
         }
-        MutParamBodyState(std::mem::replace(&mut self.mut_params.current, prepared.0))
+        MutParamBodyState(std::mem::replace(&mut self.mutation.current, prepared.0))
     }
 
     /// Leave a body entered with [`Self::enter_mut_param_body`].
     pub(in crate::typechecker) fn exit_mut_param_body(&mut self, previous: MutParamBodyState) {
-        self.mut_params.current = previous.0;
+        self.mutation.current = previous.0;
     }
 
     /// Make a parameter declared `mut` a mutable binding of the body it belongs to.
@@ -135,7 +143,7 @@ impl TypeChecker {
     ///
     /// A local that shadows the parameter is not the parameter: the name must resolve to the parameter's own binding.
     pub(super) fn current_caller_visible_param(&self, name: &str) -> Option<String> {
-        let body = self.mut_params.current.as_ref()?;
+        let body = self.mutation.current.as_ref()?;
         let declared_span = body.params.get(name)?;
         self.lookup_symbol(name)
             .is_some_and(|symbol| symbol.span == *declared_span)
@@ -184,7 +192,7 @@ impl TypeChecker {
                     SymbolKind::Variable(info) if info.is_mutable => ViewAccess::Writable,
                     SymbolKind::Variable(_)
                         if self
-                            .mut_params
+                            .mutation
                             .loop_variables
                             .iter()
                             .any(|(span, _)| *span == symbol.span) =>
@@ -226,7 +234,7 @@ impl TypeChecker {
         if let Some(param) = self.current_caller_visible_param(name) {
             return Some(ViewSource::writable(Some(param)));
         }
-        let body = self.mut_params.current.as_ref()?;
+        let body = self.mutation.current.as_ref()?;
         let binding_span = self.lookup_symbol(name)?.span;
         body.views
             .iter()
@@ -281,12 +289,12 @@ impl TypeChecker {
                 Some((name, span))
             })
             .collect::<Vec<_>>();
-        let previous_variables = self.mut_params.loop_variables.len();
+        let previous_variables = self.mutation.loop_variables.len();
         let destructured = !matches!(pattern, Pattern::Binding(_));
-        self.mut_params
+        self.mutation
             .loop_variables
             .extend(bindings.iter().map(|(_, span)| (*span, destructured)));
-        let Some(body) = &mut self.mut_params.current else {
+        let Some(body) = &mut self.mutation.current else {
             return (0, previous_variables);
         };
         let previous_views = body.views.len();
@@ -502,7 +510,7 @@ impl TypeChecker {
                 Some(ParamView { name, span, source })
             })
             .collect::<Vec<_>>();
-        let Some(body) = &mut self.mut_params.current else {
+        let Some(body) = &mut self.mutation.current else {
             return 0;
         };
         let previous = body.views.len();
@@ -540,7 +548,7 @@ impl TypeChecker {
 
     /// Leave a loop body entered with [`Self::enter_for_loop_body`].
     pub(in crate::typechecker) fn exit_for_loop_body(&mut self, (previous_views, previous_variables): (usize, usize)) {
-        self.mut_params.loop_variables.truncate(previous_variables);
+        self.mutation.loop_variables.truncate(previous_variables);
         self.exit_pattern_views(previous_views);
     }
 
@@ -605,7 +613,7 @@ impl TypeChecker {
                 Some((name, span))
             })
             .collect::<Vec<_>>();
-        let Some(body) = &mut self.mut_params.current else {
+        let Some(body) = &mut self.mutation.current else {
             return 0;
         };
         let previous = body.views.len();
@@ -621,7 +629,7 @@ impl TypeChecker {
 
     /// Leave the views entered with [`Self::enter_pattern_views`] or [`Self::enter_for_loop_body`].
     pub(in crate::typechecker) fn exit_pattern_views(&mut self, previous: usize) {
-        if let Some(body) = &mut self.mut_params.current {
+        if let Some(body) = &mut self.mutation.current {
             body.views.truncate(previous);
         }
     }

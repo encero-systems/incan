@@ -104,6 +104,8 @@ pub(super) fn protocol_artifacts(value: &ProtocolArtifacts) -> Result<(), NodeBi
         native_input_contracts: _,
         explicit_local_modes: _,
         explicit_input_flow: _,
+        // The mutation record transports this graph's source projection; restore rebuilds it at settlement.
+        mutation_flows: _,
         explicit_input_copy: _,
         body_ir_truthiness_receivers,
         body_ir_iterations,

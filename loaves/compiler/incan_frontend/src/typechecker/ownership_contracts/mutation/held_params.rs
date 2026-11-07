@@ -67,15 +67,16 @@ impl TypeChecker {
             return;
         };
         let in_closure = self
-            .mut_params
+            .mutation
             .current
             .as_ref()
             .is_some_and(|body| body.closure_depth > 0);
         if in_closure {
             self.refuse_held_mut_param(&param, span);
         }
-        if let Some(body) = &self.mut_params.current {
-            self.mut_params
+        if let Some(body) = &self.mutation.current {
+            self.mutation
+                .source
                 .changed
                 .entry(body.identity.clone())
                 .or_default()
@@ -109,7 +110,7 @@ impl TypeChecker {
     /// A value is only refused where it is the parameter itself; a name the arm's pattern, the branch, a closure
     /// parameter or a comprehension's `for` clause rebinds in its own scope is not the parameter.
     pub(in crate::typechecker) fn refuse_mut_params_held_in(&mut self, expr: &Spanned<Expr>) {
-        if self.mut_params.current.is_none() {
+        if self.mutation.current.is_none() {
             return;
         }
         match &expr.node {
@@ -240,7 +241,7 @@ impl TypeChecker {
     /// scoped C text view it reads is refused as captured.
     pub(in crate::typechecker) fn enter_mut_param_closure(&mut self) {
         self.closure_depth += 1;
-        if let Some(body) = &mut self.mut_params.current {
+        if let Some(body) = &mut self.mutation.current {
             body.closure_depth += 1;
         }
     }
@@ -248,7 +249,7 @@ impl TypeChecker {
     /// Leave a closure entered with [`Self::enter_mut_param_closure`].
     pub(in crate::typechecker) fn exit_mut_param_closure(&mut self) {
         self.closure_depth = self.closure_depth.saturating_sub(1);
-        if let Some(body) = &mut self.mut_params.current {
+        if let Some(body) = &mut self.mutation.current {
             body.closure_depth = body.closure_depth.saturating_sub(1);
         }
     }
@@ -338,8 +339,8 @@ impl TypeChecker {
         let Some(callee) = self.type_info.resolved_identity(value.span).cloned() else {
             return;
         };
-        if self.mut_params.declared.contains_key(&callee) {
-            self.mut_params.function_values.insert(target_span, callee);
+        if self.mutation.declared.contains_key(&callee) {
+            self.mutation.function_values.insert(target_span, callee);
         }
     }
 
@@ -352,7 +353,7 @@ impl TypeChecker {
             .and_then(|symbol_id| self.symbols.get(symbol_id))
             && matches!(symbol.kind, SymbolKind::Variable(_))
         {
-            self.mut_params.reassigned_locals.insert(symbol.span);
+            self.mutation.source.reassigned_locals.insert(symbol.span);
         }
     }
 }
