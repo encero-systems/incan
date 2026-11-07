@@ -46,3 +46,4 @@ Start from the [design-record template](TEMPLATE.md) when proposing a new decisi
 | [DD-0012](0012_incremental_compilation_over_a_semantic_store.md) | Incremental compilation over a persistent semantic store | Accepted | v0.6 |
 | [DD-0013](0013_the_incan_build_engine.md) | The Incan build engine | Accepted | v0.6 |
 | [DD-0014](0014_resolved_project_lock.md) | Resolved project lock | Accepted | v0.6 |
+| [DD-0016](0016_signed_toolchain_releases.md) | Signed toolchain releases | Accepted | v0.6 |
