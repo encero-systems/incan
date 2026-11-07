@@ -349,6 +349,9 @@ pub model FieldMetadata:
     """Immutable source field presentation values selected by the checked reflection visibility policy."""
 
     pub name: str
+    pub record_identity: list[int]
+    pub record_canonical: bool
+    pub renamed_from: list[str]
     pub alias: Option[str]
     pub description: Option[str]
     pub type_name: str

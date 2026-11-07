@@ -33,6 +33,18 @@ model Customer:
     display_name [renamed_from=["name", "full_name"], canonical=false]: str
 ```
 
+## Reflection
+
+`__fields__()` keeps its existing field order and visibility rules. Each returned `FieldInfo` exposes these rename and storage facts:
+
+| Field | Type | Value |
+| --- | --- | --- |
+| `identity` | `FrozenBytes` | The first six bytes of SHA-256 over the UTF-8 bytes of the earliest name, or the declared name when no earlier name exists. |
+| `canonical` | `bool` | The authored `canonical` value, or `true` when the key is absent. |
+| `renamed_from` | `FrozenList[FrozenStr]` | Every earlier declared name in authored order, earliest first; empty when no history is declared. |
+
+`FieldInfo.name` remains the current declared field name. `alias` and `wire_name` remain controlled only by `alias` or `as`.
+
 ## Refusals
 
 | Condition | Code |
