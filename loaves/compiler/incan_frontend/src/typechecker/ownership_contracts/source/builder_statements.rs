@@ -181,12 +181,8 @@ impl Builder<'_> {
             .call_relation(&assignment.value)?
             .filter(|relation| !relation.component.is_empty() && relation.carried.is_none())
         {
-            let (incoming, path) = self.evaluate_view_call(&assignment.value, relation, incoming)?;
-            let loan = path.through.ok_or(Unavailable {
-                span: assignment.value.span,
-                reason: "aggregate view has no retained source loan".into(),
-            })?;
-            if self.graph.dependent_locals.insert(root.clone(), vec![loan]).is_some() {
+            let (incoming, loans) = self.evaluate_aggregate_view_call(&assignment.value, relation, incoming)?;
+            if self.graph.dependent_locals.insert(root.clone(), loans).is_some() {
                 return Err(Unavailable {
                     span: assignment.name_span,
                     reason: "aggregate view has more than one dependency destination".into(),
