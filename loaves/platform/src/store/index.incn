@@ -13,10 +13,9 @@ name. Entries are sorted by key, and an inner entry's key is the smallest key be
 
 from rust::std::process import id
 from rust::std::string import String as RustString
-from std.primitives import hexlify
+from std.primitives import hexlify, sha256
 from std.primitives.fs.mapping import MappedView
 from crate.store.bytes import append_bytes, append_u64
-from crate.store.hash import sha256
 from crate.store.path import StorePath as Path
 
 const FANOUT: int = 32

@@ -1,8 +1,7 @@
 """Encode a segment's frames and the index entries that locate them."""
 
-from std.primitives import hexlify
+from std.primitives import hexlify, sha256
 from crate.store.bytes import append_bytes, append_u64
-from crate.store.hash import sha256
 from crate.store.index import Entry, Location
 from crate.store.files import StoreError, failure
 
