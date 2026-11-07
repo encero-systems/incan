@@ -10404,6 +10404,7 @@ metadata_key = IDENT (&quot;.&quot; IDENT)* ;
 <li><code>title: str</code></li>
 <li><code>examples: list[T]</code> where each example is a safe metadata value assignable to the field type, or a string example when type-checked examples are not available;</li>
 <li><code>deprecated: bool | str</code>, or the structured <code>deprecated { ... }</code> value of RFC 150, all filling one deprecation descriptor</li>
+<li><code>made_private: bool | str</code>, or the structured <code>made_private { ... }</code> value of RFC 150, on a field that used to be public, saying what replaces it</li>
 <li><code>classification: str</code></li>
 <li><code>tags: list[str]</code></li>
 <li><code>primary_key: bool</code></li>

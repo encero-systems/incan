@@ -9861,7 +9861,7 @@
 <li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>Propose compiler-visible deprecation metadata for declarations and fields: optional since and planned retirement text, checked replacement identity, migration message and typed diagnostic severity. Editor guidance, compiler use diagnostics, bounded runtime warnings and generated documentation consume the same checked facts. Replacements remain guidance rather than an automatic rewrite, and version text does not remove code automatically. A field carries the same facts in a nested <code>deprecated { ... }</code> metadata block, and the compact <code>deprecated=true</code> and <code>deprecated="message"</code> spellings fill the same descriptor.</p>
+<p>Propose compiler-visible deprecation metadata for declarations and fields: optional since and planned retirement text, checked replacement identity, migration message and typed diagnostic severity. Editor guidance, compiler use diagnostics, bounded runtime warnings and generated documentation consume the same checked facts. Replacements remain guidance rather than an automatic rewrite, and version text does not remove code automatically. A field carries the same facts in a nested <code>deprecated { ... }</code> metadata block, and the compact <code>deprecated=true</code> and <code>deprecated="message"</code> spellings fill the same descriptor. A member that used to be public and has been made private carries the same facts as <code>made_private</code>, so the refusal at a former public use explains what replaces it.</p>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
 <p>A replacement API can exist for months while callers continue using an older name because the migration is recorded only in a changelog. A declaration-carried diagnostic connects the use directly to the reason and replacement guidance without requiring the compiler to guess a rewrite.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
@@ -9912,6 +9912,23 @@
     <span class="k">return</span> <span class="n">customer</span><span class="o">.</span><span class="n">name</span>
 </code></pre></div>
 <p><code>customer.name</code> in <code>greet</code> receives a warning that names <code>Customer.name</code>, the version it was deprecated in, its planned retirement, the message and <code>Customer.full_name</code> as the checked replacement. <code>nickname</code> produces the same kind of warning with only its message. <code>[deprecated=true]</code> deprecates a field with no message. All three spellings fill one checked descriptor, and authored field accesses, explicit constructor bindings and documentation consume it. Metadata traversal and serializer wire keys must not be treated as a new authored field reference for every record.</p>
+<p>A member that used to be public can be made private when callers should go through other operations. It states what replaces it, so the refusal a caller now receives explains the move instead of only saying that the member is private:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">pub</span> <span class="k">model</span> <span class="nc">Inventory</span><span class="p">:</span>
+    <span class="n">items</span><span class="p">:</span> <span class="kt">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span> <span class="p">{</span>
+        <span class="n">made_private</span> <span class="p">{</span>
+            <span class="n">since</span> <span class="o">=</span> <span class="s2">&quot;0.7&quot;</span>
+            <span class="n">message</span> <span class="o">=</span> <span class="s2">&quot;add items with add() and check them with contains()&quot;</span>
+            <span class="n">replacement</span> <span class="o">=</span> <span class="nb">add</span>
+        <span class="p">}</span>
+    <span class="p">}</span>
+
+    <span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">add</span><span class="p">(</span><span class="k">mut</span> <span class="bp">self</span><span class="p">,</span> <span class="n">item</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">items</span><span class="o">.</span><span class="nb">append</span><span class="p">(</span><span class="n">item</span><span class="p">)</span>
+
+    <span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">contains</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">item</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">item</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">items</span>
+</code></pre></div>
+<p>A different module writing <code>inventory.items.append("bolt")</code> is refused, as for any private field. The refusal names <code>Inventory.items</code>, the version it was made private in, the message and <code>Inventory.add</code> as the checked replacement. Code inside <code>Inventory</code> uses <code>items</code> with no diagnostic. A function or type that was made private takes the same facts as a decorator, <code>@made_private(since="0.7", replacement=checked_limit, message="use checked_limit")</code>.</p>
 <h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Optional since, retire_in, message, by and issue must be compile-time strings, and are the shared lifecycle facts that RFC 085's <code>renamed_from</code> also uses. <code>by</code> names who or what made the decision, such as a person, a team or a tool's finding, and <code>issue</code> points at where the decision is recorded. Both are unverified descriptive text and grant nothing. Optional replacement must be a checked declaration reference, retained as canonical identity rather than a string-dispatch key. retire_in is an advisory plan, not an automatic removal trigger.</li>
@@ -9925,6 +9942,9 @@
 <li>An automatic replacement must not be offered solely because a message contains another symbol's spelling. A checked replacement reference must identify the target in diagnostics alongside the supplied migration message. It must not be treated as proof of equal arguments, effects or result types, and must not authorize a tool to invent error recovery.</li>
 <li>Field warnings must distinguish authored field access from unrelated runtime mapping keys and wire names.</li>
 <li>A field's <code>deprecated</code> metadata must accept <code>true</code>, a message string, or a nested <code>deprecated { ... }</code> block under RFC 096. The nested block may contain only <code>message</code>, <code>since</code>, <code>retire_in</code>, <code>by</code>, <code>issue</code>, <code>replacement</code> and <code>severity</code>, each at most once, with the same types and rules as the decorator's arguments. <code>replacement</code> must be a checked reference to a field of the same declaration or to another declaration. <code>deprecated=true</code> and <code>deprecated="text"</code> must be equivalent to a nested block with no entries and with <code>message = "text"</code>, respectively. A field must not combine spellings: <code>deprecated</code> remains one metadata key under RFC 096's duplicate-key rule.</li>
+<li>A declaration or field that used to be public may carry <code>made_private</code>: the <code>@made_private(...)</code> decorator on a declaration, or field metadata accepting <code>true</code>, a message string, or a nested <code>made_private { ... }</code> block. It may contain only <code>message</code>, <code>since</code>, <code>retire_in</code>, <code>by</code>, <code>issue</code> and <code>replacement</code>, each at most once, with the same types and rules as <code>deprecated</code>; it has no <code>severity</code>. <code>made_private</code> on a public declaration or field must be refused with a diagnostic naming the key, and a member must not carry both <code>made_private</code> and <code>deprecated</code>.</li>
+<li>A use outside a <code>made_private</code> member's visibility receives the ordinary visibility refusal, and that refusal is the only error at the use. It names the member, the version guidance, the message and the checked replacement. A use the visibility admits receives no diagnostic. A refused use never compiles, so no runtime warning applies. Without <code>made_private</code>, a refusal must not suggest making a member public when the member belongs to another package.</li>
+<li><code>made_private</code> facts are preserved through compiled library metadata and generated documentation exactly as <code>deprecated</code> facts are, so a consumer of a compiled package receives the same refusal, and the <code>retire_in</code> lint applies to them.</li>
 </ul>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
 <p>Rust's <a href="https://doc.rust-lang.org/reference/attributes/diagnostics.html">deprecation attribute</a> is useful prior art for a compiler-visible warning with explanatory metadata. Incan should additionally expose this information as structured diagnostics so an agent can locate and assess the migration rather than parse prose alone.</p>
@@ -9934,14 +9954,16 @@
 <li>Changelog-only deprecation: useful context, but disconnected from the actual caller.</li>
 <li>Free-form replacement strings with automatic application: unsafe when argument binding, effects, or return types differ.</li>
 <li>Immediate removal: sometimes deliberate, but offers no migration interval.</li>
+<li>Reusing <code>deprecated</code> with Error severity on a member made private: the use would receive a deprecation error beside the visibility refusal, and the member would read as going away when it remains its owner's implementation.</li>
+<li>A separate <code>replaced_by</code> key for members made private: a second name for the descriptor's <code>replacement</code>, without the lifecycle facts.</li>
 </ul>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <p>Warnings can become noisy across heavily used compatibility APIs. Defining-module suppression can hide internal migration debt. Field deprecation spans language references and data-schema expectations, which need an explicit shared contract.</p>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Parser / Formatter:</strong> the nested <code>deprecated { ... }</code> field metadata value.</li>
-<li><strong>Declaration / field metadata:</strong> stable deprecation facts, one descriptor for every spelling.</li>
-<li><strong>Name resolution / diagnostics:</strong> external use checks and deduplication.</li>
+<li><strong>Parser / Formatter:</strong> the nested <code>deprecated { ... }</code> and <code>made_private { ... }</code> field metadata values.</li>
+<li><strong>Declaration / field metadata:</strong> stable deprecation and <code>made_private</code> facts, one descriptor for every spelling.</li>
+<li><strong>Name resolution / diagnostics:</strong> external use checks and deduplication; the visibility refusal's <code>made_private</code> guidance.</li>
 <li><strong>LSP / documentation:</strong> visible guidance and checked replacement affordances if adopted.</li>
 </ul>
 <h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
@@ -9953,6 +9975,7 @@
 <li>std.diagnostics.DeprecationSeverity.Warning is the default; Error rejects the use at compilation. Project policy may strengthen warnings without weakening an author-declared Error.</li>
 <li>Aliases and re-exports retain canonical policy and an inspectable authored route. Generated references deduplicate at their responsible source operation; a real wrapper has its own declaration policy.</li>
 <li>A checked replacement and migration message must be shown together; neither authorizes an automatic rewrite when call contracts differ.</li>
+<li>A member taken out of the public surface states its replacement with <code>made_private</code>, which shares the deprecation descriptor without <code>severity</code>. <code>deprecated</code> is not reused. A deprecated member stays on the public surface: its uses warn, or at Error severity are refused with deprecation guidance. A member made private has left the public surface, so the ordinary visibility refusal is the one error at the use.</li>
 </ul>
 
 
