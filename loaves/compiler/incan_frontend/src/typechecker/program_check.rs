@@ -106,6 +106,7 @@ impl TypeChecker {
         self.collect_program_check_declarations(program);
         self.record_program_header_facts();
         self.record_source_declaration_identities(program);
+        self.record_type_param_declaration_spans(program);
         self.visibility_point = VisibilityPoint::Collected;
         self.prepare_program_body_facts();
         self.check_program_declaration_bodies(program);

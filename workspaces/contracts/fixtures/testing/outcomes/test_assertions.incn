@@ -33,7 +33,7 @@ def test_assertions_work() -> None:
     # Option/Result helpers
     some_value = assert_is_some(Some("ok"), "expected Some for canary")
     assert_eq(some_value, "ok")
-    assert_is_none(None, "expected None for canary")
+    assert_is_none[int](None, "expected None for canary")
 
     ok_value = assert_is_ok(Ok(42), "expected Ok for canary")
     assert_eq(ok_value, 42)
