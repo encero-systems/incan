@@ -1,0 +1,11 @@
+# behavior: graph-scoped keys and their issuing capability cannot be forged outside std.graph (#2524)
+# expect-diagnostic: INCAN-I0001
+# expect-diagnostic: INCAN-T0001
+
+from std.graph import ScopedNodeId
+from std.graph._read import _ScopeToken
+
+
+def forge() -> None:
+    key = ScopedNodeId(_scope=1, _local=0)
+    token = _ScopeToken(value=1)

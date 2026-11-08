@@ -1,0 +1,71 @@
+# behavior: relation graphs keep scoped typed node and edge identities distinct through replacement and deletion (#2524)
+# expect-stdout:
+#   parallel 0 1 title body
+#   replaced title summary
+#   node replaced cold-storage
+#   incident false false
+#   ids 0 1 3 0 1 4
+#   equal distinct true true
+#   wrong scope true true true true
+
+from std.graph import GraphError, GraphRead, RelationGraph
+
+
+model Region:
+    name: str
+
+
+model ReadsState:
+    field: str
+
+
+def main() -> Result[None, GraphError]:
+    mut graph = RelationGraph[Region, ReadsState]()
+    editor = graph.add_node(Region(name="editor"))
+    preview = graph.add_node(Region(name="preview"))
+    title = graph.add_edge(editor, preview, ReadsState(field="title"))?
+    body = graph.add_edge(editor, preview, ReadsState(field="body"))?
+    mut title_value = graph.edge_value(title)?
+    mut body_value = graph.edge_value(body)?
+    println(f"parallel {title.to_int()} {body.to_int()} {title_value.field} {body_value.field}")
+    graph.replace_edge(body, ReadsState(field="summary"))?
+    title_value = graph.edge_value(title)?
+    body_value = graph.edge_value(body)?
+    println(f"replaced {title_value.field} {body_value.field}")
+
+    archive = graph.add_node(Region(name="archive"))
+    graph.replace_node(archive, Region(name="cold-storage"))?
+    archive_value = graph.node_value(archive)?
+    println(f"node replaced {archive_value.name}")
+    incoming = graph.add_edge(archive, preview, ReadsState(field="incoming"))?
+    outgoing = graph.add_edge(preview, archive, ReadsState(field="outgoing"))?
+    graph.remove_node(preview)?
+    println(f"incident {graph.contains_edge(incoming)} {graph.contains_edge(outgoing)}")
+    replacement = graph.add_node(Region(name="replacement"))
+    replacement_edge = graph.add_edge(editor, replacement, ReadsState(field="replacement"))?
+    editor_id = editor.to_int()
+    preview_id = preview.to_int()
+    replacement_id = replacement.to_int()
+    title_id = title.to_int()
+    body_id = body.to_int()
+    replacement_edge_id = replacement_edge.to_int()
+    println(f"ids {editor_id} {preview_id} {replacement_id} {title_id} {body_id} {replacement_edge_id}")
+
+    duplicate = graph.add_node(Region(name="editor"))
+    duplicate_value = graph.node_value(duplicate)?
+    editor_value = graph.node_value(editor)?
+    println(f"equal distinct {duplicate != editor} {duplicate_value.name == editor_value.name}")
+
+    mut other = RelationGraph[Region, ReadsState]()
+    foreign = other.add_node(Region(name="foreign"))
+    wrong = graph.add_edge(editor, foreign, ReadsState(field="wrong"))
+    unknown = graph.add_edge(editor, preview, ReadsState(field="unknown"))
+    mut cloned = graph.clone()
+    cloned.add_node(Region(name="clone-only"))
+    original_in_clone = cloned.contains_node(editor)
+    println(
+        f"wrong scope {wrong.is_err()} {unknown.is_err()} {original_in_clone.is_err()} {graph.contains_edge(
+            replacement_edge,
+        )}",
+    )
+    return Ok(None)

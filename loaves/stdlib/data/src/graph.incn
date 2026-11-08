@@ -6,6 +6,25 @@ RFC 047's value-owned containers remain available while RFC 166 seals their phys
 
 pub from crate.graph._ids import EdgeId, GraphError, NodeId
 pub from crate.graph._legacy import Dag, DiGraph, MultiDiGraph
+pub from crate.graph._read import (
+    EdgePage,
+    GraphEdgeItem,
+    GraphOrdering,
+    GraphPageBudget,
+    GraphPageToken,
+    GraphProvider,
+    GraphRead,
+    GraphReadError,
+    GraphReadErrorKind,
+    GraphScope,
+    GraphSelection,
+    MemoryGraphFailure,
+    NodePage,
+    PageCounters,
+    RelationGraph,
+    ScopedEdgeId,
+    ScopedNodeId,
+)
 
 
 @made_private(since="0.6", message="Graph storage records are private; use node ids and graph operations", replacement=NodeId)
