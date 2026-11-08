@@ -57,6 +57,8 @@ impl TypeChecker {
             open_rust_generic_calls: HashMap::new(),
             open_rust_generic_bindings: Vec::new(),
             tied_rust_trait_callees: HashMap::new(),
+            type_param_declaration_spans: HashMap::new(),
+            unannotated_binding_value: None,
             statement_blocks: StatementBlockState::default(),
             c_abi_raw_call_results: Vec::new(),
             available_c_abi_output_slots: HashSet::new(),

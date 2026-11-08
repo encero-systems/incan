@@ -396,18 +396,16 @@ pub fn conflicting_type_argument_bindings(
         ))
 }
 
-/// Refuse a call that leaves a type parameter with a declared bound open: no argument, and no expected type, fixes
-/// it (#1561).
-pub fn bounded_type_param_left_open(callee: &str, type_param: &str, bound: &str, span: Span) -> CompileError {
+/// Refuse a call or construction that leaves a type parameter of `owner` undetermined: no written type argument, no
+/// `sources` (`argument`, `field` or `payload`) and no expected type fixes it, and the checker never chooses one
+/// (#1561, #2762). The caller adds the declared parameter's location and the written form that fixes it.
+pub fn type_param_not_determined(owner: &str, type_param: &str, sources: &str, span: Span) -> CompileError {
     CompileError::type_error(
-        format!(
-            "Cannot infer type parameter '{type_param}' of '{callee}': no argument fixes it, and its bound '{bound}' needs a type"
-        ),
+        format!("Type parameter '{type_param}' of '{owner}' is not determined: no {sources} or expected type fixes it"),
         span,
     )
-    .with_hint(format!(
-        "Write the type argument, as in `{callee}[...](...)`, pass an argument whose type fixes '{type_param}', or bind the result to an annotated name"
-    ))
+    .with_stable_code(crate::diagnostics::stable::TYPECHECK_CODE)
+    .with_primary_label(format!("'{type_param}' is not determined here"))
 }
 
 /// Refuse a method call on a value of a type parameter whose bounds declare no method of that name (#1561).

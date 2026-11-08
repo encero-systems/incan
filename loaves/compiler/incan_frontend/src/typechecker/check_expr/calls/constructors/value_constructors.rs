@@ -435,7 +435,9 @@ impl TypeChecker {
     }
 
     /// Return owner type parameters whose explicit constructor arguments specialize the `Self` receiver.
-    pub(super) fn constructor_hook_owner_type_params(type_info: &TypeInfo) -> &[String] {
+    pub(in crate::typechecker::check_expr::calls) fn constructor_hook_owner_type_params(
+        type_info: &TypeInfo,
+    ) -> &[String] {
         match type_info {
             TypeInfo::Model(info) => &info.type_params,
             TypeInfo::Class(info) => &info.type_params,

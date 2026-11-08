@@ -1,6 +1,7 @@
 //! Direct calls to declared types, functions, Rust items, legacy constructors, decorated generics and values.
 
 use super::*;
+use crate::typechecker::undetermined_type_params::{OpenConstruction, written_arguments, written_expression};
 
 impl TypeChecker {
     /// Check construction hooks and surface constructors before contextual nominal construction.
@@ -117,6 +118,9 @@ impl TypeChecker {
         let constructor_ty = self.check_model_or_class_constructor_call(name, name, &fields, &field_order, args, span);
         if self.errors.len() == errors_before_constructor {
             self.retain_body_ir_constructor_type(name, type_info, constructor_context.as_ref(), args, span);
+            if constructor_context.is_none() && !self.expected_type_names_declaration(expected_return_ty, name) {
+                self.refuse_open_model_construction(name, type_info, callee, args, &constructor_ty, span);
+            }
         }
         self.record_expr_type(callee.span, ResolvedType::Named(name.to_owned()));
         self.type_info
@@ -124,6 +128,46 @@ impl TypeChecker {
             .ident_kinds
             .insert(callee.span, IdentKind::TypeName);
         contextual_constructor_ty.unwrap_or(constructor_ty)
+    }
+
+    /// Refuse a generic model or class construction whose fields fix fewer than all of the type's parameters, when
+    /// neither a written type argument nor an expected type can fix the rest (#2762).
+    ///
+    /// The checked construction names each parameter its fields left open as `Unknown`. An expected type that names
+    /// the declaration, such as a generic callee's parameter or an enclosing constructor's field, leaves the rest to
+    /// that caller.
+    fn refuse_open_model_construction(
+        &mut self,
+        name: &str,
+        type_info: &TypeInfo,
+        callee: &Spanned<Expr>,
+        args: &[CallArg],
+        constructed: &ResolvedType,
+        span: Span,
+    ) {
+        let ResolvedType::Generic(_, arguments) = constructed else {
+            return;
+        };
+        let type_params = Self::constructor_hook_owner_type_params(type_info);
+        let fixed = type_params
+            .iter()
+            .zip(arguments)
+            .filter(|(_, argument)| {
+                Self::is_settled_type_argument(argument) || self.active_type_param_name(argument).is_some()
+            })
+            .map(|(type_param, argument)| (type_param.clone(), argument.clone()))
+            .collect();
+        let owner = written_expression(&callee.node).unwrap_or_else(|| name.to_owned());
+        let declaration = self.type_info.resolved_identity(callee.span).cloned();
+        self.refuse_undetermined_construction(OpenConstruction {
+            owner: &owner,
+            declaration,
+            type_params,
+            fixed,
+            written_rest: format!("({})", written_arguments(args)),
+            sources: "field",
+            span,
+        });
     }
 
     /// Validate a direct function call and attach capturing, async and related-declaration facts in diagnostic order.

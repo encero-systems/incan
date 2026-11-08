@@ -1,0 +1,31 @@
+# behavior: a generic call whose type parameter no argument, written type argument or expected type fixes is refused, whether the argument is `None` or a unit variant of a generic enum (#2762)
+# expect-diagnostic: INCAN-T0001
+
+"""A call is refused when nothing at the call determines one of its callee's type parameters."""
+
+
+enum Slot[T]:
+    """Hold one generic value or none."""
+
+    Filled(T)
+    Vacant
+
+
+def maybe[T](value: Option[T]) -> str:
+    """Name whether an optional value is present."""
+    match value:
+        Some(_) => return "some"
+        None => return "none"
+
+
+def label[T](slot: Slot[T]) -> str:
+    """Name whether a slot is filled."""
+    match slot:
+        Slot.Filled(_) => return "filled"
+        Slot.Vacant => return "vacant"
+
+
+def main() -> None:
+    """Pass values that leave `T` open."""
+    println(maybe(None))
+    println(label(Slot.Vacant))

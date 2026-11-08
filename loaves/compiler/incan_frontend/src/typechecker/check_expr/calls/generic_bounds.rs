@@ -1,4 +1,4 @@
-//! Generic call-site inference, monomorph recording, and explicit bound validation.
+//! Generic call-site inference, monomorph recording, explicit bound validation and undetermined type parameters.
 
 use std::collections::HashMap;
 
@@ -21,7 +21,10 @@ use incan_semantics_core::CanonicalSymbolId;
 mod argument_bindings;
 mod function_calls;
 mod instantiations_and_methods;
+mod open_type_params;
 mod type_param_inference;
+
+use open_type_params::OpenTypeParamCall;
 
 /// Settled function-call facts consumed by result and monomorph publication. Owned inventories move from the
 /// validator; argument type references still borrow its live substituted parameter inventory.

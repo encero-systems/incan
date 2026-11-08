@@ -636,7 +636,8 @@ impl TypeChecker {
     ///
     /// A constructor preserves explicit or expected type arguments, or infers them from its checked payloads when
     /// neither is written, instead of erasing them to the enum name. Payload expressions are checked once with their
-    /// context, then ordinary call binding validates their types and arity.
+    /// context, then ordinary call binding validates their types and arity. A construction that none of these
+    /// determines is refused (#2762).
     pub(super) fn check_enum_method_call(
         &mut self,
         call: &MethodCallSite<'_>,
@@ -690,6 +691,7 @@ impl TypeChecker {
                     .collect::<Vec<_>>()
             })
             .or(parameters);
+        let errors_before_payloads = self.errors.len();
         if let Some(parameters) = parameters {
             self.validate_callable_arg_bindings(
                 &format!("{enum_name}.{}", call.method),
@@ -705,9 +707,13 @@ impl TypeChecker {
         if let Some(identity) = identity {
             self.type_info.record_resolved_identity(call.span, identity);
         }
-        let result = match construction {
-            Some(construction) => ResolvedType::Generic(enum_name.clone(), construction.arguments),
-            None => base_ty.clone(),
+        let refused = (construction.is_none() && self.errors.len() == errors_before_payloads)
+            .then(|| self.refuse_open_enum_construction(call, base_ty, arg_types))
+            .flatten();
+        let result = match (construction, refused) {
+            (Some(construction), _) => ResolvedType::Generic(enum_name.clone(), construction.arguments),
+            (None, Some(arguments)) => ResolvedType::Generic(enum_name.clone(), arguments),
+            (None, None) => base_ty.clone(),
         };
         let qualified = crate::typechecker::collect::dotted_path_segments(&call.base.node)
             .and_then(|segments| self.qualified_nominal_carrier(&segments));

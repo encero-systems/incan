@@ -59,16 +59,27 @@ impl TypeChecker {
     }
 
     /// Attach one already-resolved declaration to errors produced while validating its call surface.
+    ///
+    /// An error that already points at a place inside a declaration of this module, such as the type parameter an
+    /// undetermined call leaves open, shows that declaration's line already and keeps its own label alone.
     pub(in crate::typechecker::check_expr::calls) fn attach_related_declaration_to_new_errors(
         &mut self,
         first_error: usize,
         identity: &CanonicalSymbolId,
     ) {
+        let declared_here = identity.origin == self.symbols.declaration_origin();
+        let declaration = identity.declaration_span;
         for error in &mut self.errors[first_error..] {
-            if error
-                .related_declarations()
-                .iter()
-                .any(|related| related.identity == *identity)
+            let shows_declaration = declared_here
+                && error
+                    .related_spans()
+                    .iter()
+                    .any(|related| declaration.start <= related.span.start && related.span.end <= declaration.end);
+            if shows_declaration
+                || error
+                    .related_declarations()
+                    .iter()
+                    .any(|related| related.identity == *identity)
             {
                 continue;
             }
@@ -85,7 +96,7 @@ impl TypeChecker {
     /// Bounds and hashed type parameters (#1758) are checked against what the call instantiates the callee with: the
     /// inferred bindings, with any binding a literal argument leaves open closed from the literal's elements, and the
     /// side an `Ok(...)` or `Err(...)` argument leaves open settled. The arguments that bind one type parameter bind it
-    /// to one type, and a bounded type parameter no argument fixes is refused (#1561).
+    /// to one type, and a type parameter that no argument or expected type fixes is refused (#1561, #2762).
     /// Successful calls share the fully checked native result with enclosing expressions and Body IR, preserving
     /// associated outputs inferred from future and callable bounds.
     pub(in crate::typechecker::check_expr::calls) fn validate_function_call(
@@ -200,14 +211,18 @@ impl TypeChecker {
             self.record_argument_destinations_at_bindings(&info.type_params, &arguments, &type_bindings);
         }
         if self.errors.len() == errors_before_call && explicit_type_args.is_empty() {
-            self.refuse_bounded_type_params_left_open(
-                func_name,
-                &info.type_params,
-                &info.type_param_bound_details,
-                &arguments,
-                &instantiation,
-                call_span,
-            );
+            self.refuse_type_params_left_open(OpenTypeParamCall {
+                callee: func_name,
+                method: false,
+                declaration: callee_identity.as_ref(),
+                type_params: &info.type_params,
+                bound_details: &info.type_param_bound_details,
+                params: &params_with_explicit,
+                return_type: &info.return_type,
+                args,
+                bindings: &instantiation,
+                span: call_span,
+            });
         }
         self.refuse_unhashable_type_arguments(
             func_name,
