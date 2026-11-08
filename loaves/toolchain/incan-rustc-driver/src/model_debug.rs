@@ -1,7 +1,7 @@
 //! Structural `Debug` implementations for models and classes declared in Incan.
 //!
-//! Concrete and generic layouts use this one renderer so their source names, declaration-order fields and separators
-//! cannot drift. Each field still delegates its value to that field type's own `Debug` implementation.
+//! Concrete and generic layouts use this one renderer so their source names, declaration-order fields and call-form
+//! punctuation cannot drift. Each field still delegates its value to that field type's own `Debug` implementation.
 
 use crate::ast_build::{
     RUST_FMT_DEBUG_SYMBOL, block, expression, expression_statement, global_path, ident, local, self_value,
@@ -37,24 +37,27 @@ pub(crate) fn implementation<'a>(
     )
 }
 
-/// Write the source name and fields directly to the formatter without Rust's `DebugStruct` punctuation policy.
+/// Write the source call form directly to the formatter without Rust's `DebugStruct` punctuation policy.
 fn rendering_body<'a>(name: &str, fields: impl IntoIterator<Item = &'a str>, span: Span) -> Box<ast::Block> {
     let mut fields = fields.into_iter().peekable();
     if fields.peek().is_none() {
-        return block(thin_vec![expression_statement(write_text(name, span), span)], span);
+        return block(
+            thin_vec![expression_statement(write_text(&format!("{name}()"), span), span)],
+            span,
+        );
     }
 
     let mut statements = ThinVec::new();
     for (index, field) in fields.enumerate() {
         let prefix = if index == 0 {
-            format!("{name} {{ {field} = ")
+            format!("{name}({field}=")
         } else {
-            format!(", {field} = ")
+            format!(", {field}=")
         };
         statements.push(fallible_statement(write_text(&prefix, span), span));
         statements.push(fallible_statement(write_field(field, span), span));
     }
-    statements.push(expression_statement(write_text(" }", span), span));
+    statements.push(expression_statement(write_text(")", span), span));
     block(statements, span)
 }
 
