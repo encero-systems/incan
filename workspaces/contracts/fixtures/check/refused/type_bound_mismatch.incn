@@ -1,4 +1,4 @@
-# behavior: a type argument that is not the type its bound names is refused (#1033)
+# behavior: a type argument that is not the type its bound names is refused, including Self under a different generic trait instantiation (#1033, #2774)
 # expect-diagnostic: INCAN-T0001
 
 model Col:
@@ -7,6 +7,15 @@ model Col:
 
 model IntCol:
     src: str
+
+
+trait WrongWalk:
+    def walk[W with WrongWalker[int]](self, mut walker: W) -> None
+
+
+trait WrongWalker[E]:
+    def field[V with WrongWalk](mut self, value: V) -> None:
+        value.walk(self)
 
 
 def cast[T with Int](expr: Col) -> IntCol:
