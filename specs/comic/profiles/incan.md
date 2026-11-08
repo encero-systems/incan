@@ -27,7 +27,20 @@ A binding's kind is named by its language, because one word can mean different t
 
 A path and a kind together are unique, so one name can hold two kinds: `pub.crates-io.serde.Serialize = Rust.Trait { … }` and `pub.crates-io.serde.Serialize = Rust.DeriveMacro { … }` are two bindings. An overload adds its parameter types, as `overload = [shop.ColumnExpr, Type[Int]]`. Each language's block holds that language's own facts, such as `Rust.Struct { lifetimes = ["a"] }` or `C.Struct { header = "zstd.h", size = 24, align = 8 }`. An optional `binding` field names the toolchain, target, profile and feature set a description holds for, because a Rust item can exist only on one target or gain a field from a feature.
 
-Proposed: `Incan.Model` is the model's schema descriptor (RFC 086) printed, not a second description of a model.
+`Incan.Model` and `Incan.Class` map to the core `Record`, and `Incan.Enum` to the core `Enum`, so a document's data shapes and its program records are one form. A model is described the way it is written in Incan, with its fields as `name: Type` and Incan's own facts as properties:
+
+~~~text
+shop.billing.Invoice = Incan.Model {
+    visibility = Public
+    id: Int
+    customer: Str
+    total: shop.billing.Cents
+}
+
+shop.billing.Status = Incan.Enum { Draft, Sent, Paid(on: Str) }
+~~~
+
+This is the model's schema descriptor (RFC 086) printed, not a second description of a model.
 
 ## Modules and links
 
@@ -35,9 +48,9 @@ A module is a binding, and an import is a link on it:
 
 ~~~text
 shop.billing = Incan.Module {
-    links { name, target } [
-        ("encode", pub.crates-io.hex.encode),
-        ("web", std.web),
+    links = [
+        (name="encode", target=pub.crates-io.hex.encode),
+        (name="web", target=std.web),
     ]
 }
 ~~~
@@ -56,11 +69,11 @@ shop.billing.charge = Incan.Function {
         Decorator(shop.audit.logged, ["billing"]),
     ]
     type = {
-        parameters { name, type } [
-            ("invoice", shop.billing.Invoice),
-            ("amount", shop.billing.Cents),
+        parameters = [
+            (name="invoice", type=shop.billing.Invoice),
+            (name="amount", type=shop.billing.Cents),
         ]
-        returns = Result { ok = shop.billing.Cents, err = Str }
+        returns = Result[shop.billing.Cents, Str]
         requires = [Compare(Gt, Parameter(1, "amount"), Construct(shop.billing.Cents, [0]))]
     }
     body = [
