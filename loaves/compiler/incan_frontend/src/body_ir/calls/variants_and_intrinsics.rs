@@ -113,7 +113,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .body_ir_call_site_callable_params(span)
             .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect())
             .or_else(|| {
-                self.enum_payload_types(&target.variant_canonical, &self.resolve_ty(span))
+                self.enum_payload_types(&target.variant_canonical, &self.resolve_constructor_ty(span))
                     .map(|fields| {
                         fields
                             .into_iter()
@@ -136,7 +136,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             }
         };
         target.binding = binding;
-        let ty = self.resolve_ty(span);
+        let ty = self.resolve_constructor_ty(span);
         self.push_assign_temp(
             bir::Rvalue::Aggregate(bir::AggregateKind::EnumVariant(Box::new(target)), operands),
             ty,

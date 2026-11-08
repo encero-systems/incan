@@ -315,25 +315,72 @@ impl TypeChecker {
                 .filter(|(expr, _)| !is_built_from_literals(&expr.node))
                 .map(|(_, ty)| ty)
                 .collect::<Vec<_>>();
-            if candidates.len() < 2 {
+            self.unify_type_param_candidates(type_param, type_params, &candidates, bindings);
+        }
+    }
+
+    /// Unify constructor field bindings, including one checked nested field that closes an open owner parameter.
+    ///
+    /// Ordinary generic calls retain [`Self::unify_argument_type_bindings`]'s multi-candidate rule. Constructor fields
+    /// additionally authenticate the sole candidate through their recorded field binding, so a nested constructor can
+    /// close the enclosing constructor's self-binding without changing general call inference.
+    pub(in crate::typechecker::check_expr::calls) fn unify_constructor_argument_type_bindings(
+        &self,
+        type_params: &[String],
+        arguments: &[(&Spanned<Expr>, &ResolvedType)],
+        bindings: &mut std::collections::HashMap<String, ResolvedType>,
+    ) {
+        for type_param in type_params {
+            let candidates = self
+                .argument_type_param_bindings(type_param, type_params, arguments)
+                .into_iter()
+                .filter(|(expression, _)| !is_built_from_literals(&expression.node))
+                .collect::<Vec<_>>();
+            if let [(expression, candidate)] = candidates.as_slice() {
+                if self.type_info.constructor_field_binding(expression.span).is_some()
+                    && bindings
+                        .get(type_param)
+                        .is_some_and(|current| is_open_binding(current, type_params))
+                {
+                    bindings.insert(type_param.clone(), candidate.clone());
+                }
                 continue;
             }
-            let current_unifies = bindings.get(type_param).is_some_and(|current| {
-                !is_open_binding(current, type_params)
-                    && candidates
-                        .iter()
-                        .all(|candidate| self.types_compatible(candidate, current))
-            });
-            if current_unifies {
-                continue;
-            }
-            if let Some(unifier) = candidates.iter().find(|unifier| {
-                candidates
+            let candidates = candidates.into_iter().map(|(_, ty)| ty).collect::<Vec<_>>();
+            self.unify_type_param_candidates(type_param, type_params, &candidates, bindings);
+        }
+    }
+
+    /// Bind `type_param` to the one candidate every other candidate is compatible with, when two or more arguments
+    /// bind it and its current binding does not already unify them all.
+    ///
+    /// A parameter that fewer than two arguments bind keeps the binding argument checking settled. A candidate set
+    /// with no unifier leaves the binding unchanged for [`Self::refuse_conflicting_type_arguments`] to refuse.
+    fn unify_type_param_candidates(
+        &self,
+        type_param: &str,
+        type_params: &[String],
+        candidates: &[ResolvedType],
+        bindings: &mut std::collections::HashMap<String, ResolvedType>,
+    ) {
+        if candidates.len() < 2 {
+            return;
+        }
+        let current_unifies = bindings.get(type_param).is_some_and(|current| {
+            !is_open_binding(current, type_params)
+                && candidates
                     .iter()
-                    .all(|candidate| self.types_compatible(candidate, unifier))
-            }) {
-                bindings.insert(type_param.clone(), unifier.clone());
-            }
+                    .all(|candidate| self.types_compatible(candidate, current))
+        });
+        if current_unifies {
+            return;
+        }
+        if let Some(unifier) = candidates.iter().find(|unifier| {
+            candidates
+                .iter()
+                .all(|candidate| self.types_compatible(candidate, unifier))
+        }) {
+            bindings.insert(type_param.to_owned(), unifier.clone());
         }
     }
 

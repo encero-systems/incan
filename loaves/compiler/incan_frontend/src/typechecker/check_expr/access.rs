@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use crate::ast::*;
 use crate::diagnostics::errors::SelfMutation;
+use crate::diagnostics::errors::TypeArgumentOrigin;
 use crate::diagnostics::{CompileError, errors};
 use crate::resolved_type_subst::{map_resolved_type_leaves, substitute_resolved_type, type_param_subst_map};
 use crate::symbols::*;

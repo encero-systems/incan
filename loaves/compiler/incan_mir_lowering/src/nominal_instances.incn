@@ -4,6 +4,7 @@ from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTarg
 from rust::incan_semantics_core::body_ir import (
     BodyIrModule,
     Body,
+    EnumDeclaration,
     NominalDeclaration,
     LocalOrigin,
     TraitImplementation,
@@ -107,15 +108,16 @@ def retains_declaration(declarations: &list[NominalDeclaration], declaration: &N
 pub def specialize_nominals_with_instances(
     constructors: &ConstructorIndex,
     mut module: &mut BodyIrModule,
+    enum_layouts: &list[EnumDeclaration],
 ) -> Result[list[NominalInstance], str]:
     """
     Retain checked instances beside concrete layouts and dispatch records for native planning.
 
-    1. Collect checked frame and external-signature instances.
+    1. Collect checked frame, external-signature and concrete enum-payload instances.
     2. Close their field and method dependencies.
     3. Retain concrete layouts, trait dispatch records and method frames together.
     """
-    # 1. Collect checked frame and external-signature instances.
+    # 1. Collect checked frame, external-signature and concrete enum-payload instances.
     inherited = specialize_classes(module)?
     mut instances: list[NominalInstance] = []
     mut selected: list[SelectedMember] = []
@@ -130,8 +132,8 @@ pub def specialize_nominals_with_instances(
             collect_nominal_type(constructors, module, argument, instances, [])?
     for ty in declaration_storage(module):
         collect_nominal_type(constructors, module, ty, instances, [])?
-    for enum_position in range(len(module.enum_declarations)):
-        declaration = borrowed_at(module.enum_declarations, enum_position)
+    for enum_position in range(len(enum_layouts)):
+        declaration = borrowed_at(enum_layouts, enum_position)
         for variant in declaration.variants:
             for field in variant.fields:
                 collect_nominal_type(constructors, module, field, instances, [])?
