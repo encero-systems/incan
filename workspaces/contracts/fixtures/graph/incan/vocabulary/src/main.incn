@@ -1,8 +1,10 @@
-# behavior: graph inspection checks a vocabulary consumer and keeps dependency records in their published graphs (#2484)
+# behavior: unattended graph inspection stops before an untrusted vocabulary provider runs (#2484)
 # graph-commands:
 #   src/main.incn --query defs main
-# expect-stdout-contains:
-#   declaration main src/main.incn:10
+# expect-stderr-contains:
+#   error[INCAN-T0134]
+#   Loaf `words`
+# expect-exit: 1
 
 from provider import helper
 

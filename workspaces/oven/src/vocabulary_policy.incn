@@ -8,6 +8,7 @@ from graph_queries import nested, text
 from manifest_vocabulary import manifest_vocabulary
 from publication import publish
 from unit import UnitDescription
+from compile_time_trust import cover_loaf, missing_stop
 
 
 pub def admit_vocabulary(unit: UnitDescription) -> Result[UnitDescription, str]:
@@ -32,6 +33,14 @@ pub def admit_vocabulary(unit: UnitDescription) -> Result[UnitDescription, str]:
         if text(artifact, "artifact_kind") != "NativeWorker":
             continue
         identity = text(artifact, "unit_identity")
+        executable = Path(loaf.dir).joinpath(text(artifact, "relative_path"))
+        covered = cover_loaf(
+            loaf.name,
+            loaf.source_root,
+            Some(executable),
+            ready.project_root,
+            ready.unattended,
+        )?
         providers.append(
             JsonValue.object(
                 {"dependency": JsonValue.string(loaf.key), "loaf": JsonValue.string(loaf.name), "unit_identity": JsonValue.string(
@@ -39,8 +48,25 @@ pub def admit_vocabulary(unit: UnitDescription) -> Result[UnitDescription, str]:
                 ), "manifest_sha256": JsonValue.string(declared.digest), "worker_sha256": nested(artifact, "sha256")},
             ),
         )
-        # 2. A host may deny all providers even when they are locked dependencies.
-        if ready.vocab_policy == "locked-dependencies":
+        # 2. A host may deny all providers even when they are locked dependencies, and an unattended request also
+        #    requires trust before the compiler may start the selected worker.
+        mut trusted = false
+        match covered:
+            Some(label) =>
+                ready.covered_by[loaf.name] = label
+                trusted = true
+            None =>
+                if loaf.name not in ready.not_prepared_loaves:
+                    ready.not_prepared_loaves.append(loaf.name)
+                mut project = loaf.dir
+                if let Some(root) = loaf.source_root:
+                    project = root
+                stop = missing_stop(loaf.name, project)
+                if ready.trust_stop == "":
+                    ready.trust_stop = stop
+                else:
+                    ready.trust_stop += "\n" + stop
+        if trusted and ready.vocab_policy == "locked-dependencies":
             ready.vocab_admissions.append(identity)
     # 3. The lock is evidence of the resolved artifacts; the compiler separately checks admission and artifact bytes.
     if len(providers) > 0:

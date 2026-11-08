@@ -27,6 +27,7 @@ from toolchain import NativeCrate, Toolchain, rust_compiler
 from unit import UnitLoaf
 from unit_rust import compile_incan_library
 from unit_freshness import artifact_identity, compiler_fingerprint, fingerprint, native_identities
+from compile_time_trust import combine as combine_trust, decide, decide_registry
 
 # The version of the key native preparation is cached under; changing it discards every cached preparation.
 const NATIVE_DOMAIN: str = "incan.graph.native/2"
@@ -207,7 +208,7 @@ def prepare_project_graph(
     facets = ordered(local_facets(demand, target_configuration(rustc)?, substitutes, reader)?)?
     trace(f"graph unit discovery {root.0}: {started.elapsed().as_millis()} ms")
     prepared = Instant.now()
-    request = RustBuild(
+    mut request = RustBuild(
         project=root.0,
         profile=profile,
         rustc=rustc,
@@ -221,7 +222,13 @@ def prepare_project_graph(
         compiler=compiler_fingerprint(toolchain)?,
         incan_compiler=Some(compile_incan_library),
         manifests=reader,
+        unattended=true,
     )
+    local_trust = decide(facets, root.0, true, reader)?
+    trust = combine_trust(local_trust, decide_registry(request.registry, root.0, true)?)
+    request.covered_by = trust.covered_by
+    if len(trust.missing) > 0:
+        return Err(trust.stop())
     # 3. Native libraries exist before the Incan units are checked, and each unit is checked after its dependencies.
     mut built: Dict[str, BuiltUnit] = {}
     if requires_vocabulary_execution(facets, reader)?:

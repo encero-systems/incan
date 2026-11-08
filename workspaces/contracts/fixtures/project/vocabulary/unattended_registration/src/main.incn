@@ -1,0 +1,15 @@
+# behavior: unattended description stops before an untrusted path Loaf's vocabulary registration and reports it as not prepared
+# cli-commands:
+#   oven describe-unit --unattended src/main.incn
+# expect-stderr-contains:
+#   error[INCAN-T0134]
+#   Loaf `words`
+#   oven trust add project
+# expect-exit: 0
+
+from pub::words import marker
+
+
+def main() -> None:
+    """Keep the path Loaf in the selected dependency graph without explicitly executing it."""
+    println(marker())
