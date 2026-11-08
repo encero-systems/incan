@@ -10044,10 +10044,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#public-name-and-internal-namespace" class="md-nav__link">
+  <a href="#one-name-and-the-records-written-before-it" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Public name and internal namespace
+        One name, and the records written before it
       
     </span>
   </a>
@@ -10575,8 +10575,9 @@ adopt  crates-io/some-crate 1.2.3  revision 2  sha256:bbb…  supersedes 1: &quo
 <h3 id="mirrors">Mirrors<a class="headerlink" href="#mirrors" title="Permanent link">&para;</a></h3>
 <p>Because every artifact and index file is immutable or event-derived, a mirror is a copy of the index, asset manifest, artifact, and event directories. Oven must accept a mirror as a registered compatible source and must verify against the same digests and signatures, so a mirror can never alter content.</p>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
-<h3 id="public-name-and-internal-namespace">Public name and internal namespace<a class="headerlink" href="#public-name-and-internal-namespace" title="Permanent link">&para;</a></h3>
-<p><code>loaves.pub</code> is the registry's public identity, and <code>incan.pub</code> is its internal namespace. The event schema <code>incan.pub/event/1</code>, the event actor, the catalog schemas, the container-registry paths that hold published artifacts, the attestation identities and URLs of the registry's build workflows, and the notice adoption writes into an added file all keep <code>incan.pub</code>. They are permanent wire identifiers: the event strings are hashed into event ids, and the notice sits inside archives that published digests name, so rewriting them would change identities that lockfiles rest on. Tools must not treat them as stale.</p>
+<h3 id="one-name-and-the-records-written-before-it">One name, and the records written before it<a class="headerlink" href="#one-name-and-the-records-written-before-it" title="Permanent link">&para;</a></h3>
+<p><code>loaves.pub</code> is the registry's only name. Its repository, its tools, the container-registry paths that hold published artifacts, the event schema <code>loaves.pub/event/1</code>, the event actor and the catalog schemas all carry it.</p>
+<p>Records written while the registry was named <code>incan.pub</code> keep the strings they were written with. That covers events under <code>incan.pub/event/1</code> and their actor, the attestation identities of builds that ran under the earlier repository name, and the notice adoption wrote into the archives it published then. The event strings are hashed into event ids, and the notice sits inside archives that published digests name, so rewriting either would change identities that lockfiles rest on. Readers must accept both forms as the same records, and tools must not treat the earlier ones as stale. Artifacts are identified by their digests, not their paths, so moving them to the <code>loaves.pub</code> paths changes no identity a lockfile records.</p>
 <h3 id="interaction-with-rfc-117">Interaction with RFC 117<a class="headerlink" href="#interaction-with-rfc-117" title="Permanent link">&para;</a></h3>
 <p><code>loaf.toml</code> declares every package dependency with the <code>loaf</code> key and lets a project name a registered Loaf registry; RFC 117 retires the <code>crate</code> key. This RFC adds no manifest syntax; an adopted Loaf's manifest uses RFC 119's Rust facet grammar. The <code>requires</code> index field maps to the requirement ranges RFC 117 lets a project declare. Registry trust policy, credentials, and registered sources stay in Oven-controlled user or organization configuration, never in <code>loaf.toml</code>.</p>
 <h3 id="interaction-with-rfc-118">Interaction with RFC 118<a class="headerlink" href="#interaction-with-rfc-118" title="Permanent link">&para;</a></h3>
@@ -10655,6 +10656,7 @@ adopt  crates-io/some-crate 1.2.3  revision 2  sha256:bbb…  supersedes 1: &quo
 <h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Every dependency is a Loaf.</strong> Adoption is how other ecosystems arrive, and the <code>crate</code> dependency kind does not exist.</li>
+<li><strong><code>loaves.pub</code> is the registry's only name,</strong> in its repository, tools, artifact paths and schemas. Records written under <code>incan.pub</code> keep their strings, because their identities rest on them, and readers accept both forms.</li>
 <li><strong>A miss can be filled locally,</strong> as a separate, sandboxed, visible step that runs the registry's tool, on by default and off by policy. The registry can't cover every package and feature combination, so refusing would leave uncommon packages unusable.</li>
 <li><strong>Faulty adoptions are corrected by revisions,</strong> and only adopted scopes have them. Authors never set or see one.</li>
 <li><strong>The first part of a name is its owner,</strong> with <code>incan</code>, <code>crates-io</code>, <code>c</code>, <code>std</code> and <code>oven</code> reserved, plus any scopes a registry's published policy adds.</li>

@@ -9845,6 +9845,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#trusting-compile-time-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Trusting compile-time code
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#declaring-c-abi-and-carriers" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9943,6 +9954,17 @@
     <span class="md-ellipsis">
       
         Registry registration and trust
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compile-time-code-trust" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Compile-time code trust
       
     </span>
   </a>
@@ -10486,6 +10508,17 @@
 <span class="n">allow</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;acme&quot;</span><span class="p">]</span>
 </code></pre></div>
 <p>The registry alias is convenience, not the security identity. <code>oven.lock</code> records the canonical registry endpoint and protocol, exact package identity, immutable digest, and observed signature/trust result. Credentials never enter <code>loaf.toml</code> or the lock. A project cannot silently register, rebind, or trust a registry on a developer's machine.</p>
+<h3 id="trusting-compile-time-code">Trusting compile-time code<a class="headerlink" href="#trusting-compile-time-code" title="Permanent link">&para;</a></h3>
+<p>Building a project runs code from its dependencies before the program itself runs: procedural macros (RFC 119), and vocabulary registration and desugarers (RFC 160). That code runs governed under RFC 104, with a grant that allows no network and no view of the user's files or credentials. Vocabulary code has no exception. Procedural macros have one: the user or organization may relax containment explicitly, under RFC 119's rules. The editor and Oven also run this code without being asked. The editor expands macros while a file is edited, and Oven prepares dependencies as soon as <code>loaf.toml</code> changes. They do that only for code the user trusts.</p>
+<p>Trust is kept in Oven-controlled user or organization configuration, never in a project:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="c1"># Illustrative Oven user/organization configuration, not loaf.toml.</span>
+<span class="k">[trust]</span>
+<span class="n">publishers</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;acme&quot;</span><span class="p">]</span><span class="w">                 </span><span class="c1"># every Loaf that acme publishes</span>
+<span class="n">loaves</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;crates-io/serde_derive&quot;</span><span class="p">]</span><span class="w">   </span><span class="c1"># one adopted Loaf</span>
+<span class="n">projects</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;~/work/inventory&quot;</span><span class="p">]</span><span class="w">       </span><span class="c1"># this project&#39;s own sources</span>
+</code></pre></div>
+<p>Trusting a publisher covers every Loaf it publishes, so a new package or version from <code>acme</code> does not ask again. A scope that holds adopted packages, such as <code>crates-io</code>, cannot be trusted as a whole, because its packages come from many unrelated authors; its Loaves are trusted one at a time. Loaves that ship inside the signed toolchain, such as the standard library, need no entry. A toolchain release may carry default trusted publishers. They appear in the configuration like any other entry and can be removed.</p>
+<p>When trust is missing, Oven names the publishers and Loaves that lack it and offers to trust each publisher, so one answer covers all of that publisher's Loaves. Until then, the editor checks the project without expanding macros or running desugarers, and Oven stops preparing once dependencies are fetched and verified. An explicit <code>oven build</code>, <code>oven run</code> or <code>oven test</code> is the user's own request and runs the code in its usual execution mode. Trust and execution mode are separate settings: trust decides whether code runs without an explicit request, the mode decides how it runs, and neither one implies the other.</p>
 <h3 id="declaring-c-abi-and-carriers">Declaring C ABI and carriers<a class="headerlink" href="#declaring-c-abi-and-carriers" title="Permanent link">&para;</a></h3>
 <p>A package declares interface intent and physical input requirements. Oven resolves the concrete target toolchain, SDK, artifacts, and deployment placement when it plans a bake.</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[project]</span>
@@ -10587,6 +10620,18 @@ was ignored.
 <li>Resolution in locked or offline mode must not query an unrecorded registry, substitute an ambient local package, or accept a source with different trust facts.</li>
 </ol>
 <p>RFC 125 (superseding RFC 034) is the protocol and publication authority for <code>loaves.pub</code>, including how it adopts packages from crates.io into Loaves; this RFC defines how <code>loaves.pub</code> participates in the generic Loaf graph. No Cargo registry participates in it.</p>
+<h3 id="compile-time-code-trust">Compile-time code trust<a class="headerlink" href="#compile-time-code-trust" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Compile-time code is code from a Loaf that runs while a project is checked, built or prepared: procedural macros (RFC 119), and vocabulary registration and desugarers (RFC 160). Its authority is an RFC 104 grant, run in governed mode. The grant is empty for a desugarer, and covers the declared inputs for vocabulary registration and procedural macros. Governed execution enforces the grant with capability checks for Incan code and the Rust code it calls, and with operating-system containment generated from the grant for native code that in-process checks cannot see. The one exception is a relaxed mode for procedural macros, which only user or organization policy may select, under RFC 119's rules for a compiler process; vocabulary code has no exception (RFC 160). Trust and execution mode are separate. Trust decides only whether the language server and eager preparation run the code without an explicit request. It never selects, widens or implies a relaxed mode, and a relaxed mode never implies trust.</li>
+<li>Trust entries live only in Oven-controlled user or organization configuration. A Loaf, a workspace or a lock must not add, widen or imply one.</li>
+<li>An entry names a publisher, a Loaf or a project root. A publisher entry is bound to the publisher's identity as its registry records the scope claim (RFC 125), not to the scope's name alone, so a scope later claimed by a different owner does not inherit it. A scope that holds adopted packages accepts only Loaf entries.</li>
+<li>A Loaf's compile-time code is trusted when an entry covers its publisher or the Loaf itself, or when it is a Loaf that the installed signed toolchain ships, matched by digest. A Loaf that only carries a reserved name, such as <code>std</code>, is not exempt.</li>
+<li>Default publisher entries that a toolchain release carries are ordinary entries. Oven lists them with the others, the user or organization can remove them, and they are bound to publisher identity in the same way.</li>
+<li>A project's compile-time code is trusted when its root is trusted and every Loaf in its locked closure that carries compile-time code is trusted. A lock change that brings in untrusted compile-time code leaves that code untrusted until an entry covers it.</li>
+<li>Without trust, the language server performs only the checks that need no compile-time code, and eager preparation stops after fetching and verifying. Neither runs compile-time code for an unsaved editor buffer.</li>
+<li>A stop for missing trust must name each publisher and Loaf that lacks it, and offer a publisher entry wherever one is allowed.</li>
+<li>Build evidence records which entry covered each Loaf's compile-time code, or that an explicit request ran it without one.</li>
+</ol>
 <h3 id="targets-carriers-profiles-and-delivery-policy">Targets, carriers, profiles, and delivery policy<a class="headerlink" href="#targets-carriers-profiles-and-delivery-policy" title="Permanent link">&para;</a></h3>
 <p>Target selection has three distinct levels:</p>
 <table>
@@ -10840,6 +10885,7 @@ was ignored.
 <li><strong>Locking, stores, and publication</strong> — must rename the canonical lock to <code>oven.lock</code>, preserve deterministic whole-workspace resolution, reserve immutable target-bound <code>*.loaf</code> identities, and keep locks, receipts, caches, and publication artifacts distinct.</li>
 <li><strong>Cargo-project conversion</strong> — must read a Cargo manifest only when the one-time conversion is explicitly selected, never invoke Cargo, and never act as a fallback inside a Loaf build.</li>
 <li><strong>CLI and inspection</strong> — must expose manifest shape, plan, target selection, registry/trust facts, effects, <code>*.loaf</code> assets, and receipts; RFC 118 owns final binary/subcommand spelling and alias behavior.</li>
+<li><strong>Compile-time trust</strong> — must keep trust entries in user/organization configuration, bind publisher entries to registry-recorded identity, exempt toolchain-shipped Loaves by digest, and make the language server and eager preparation consult trust before running compile-time code.</li>
 <li><strong>Documentation, templates, LSP, and IDEs</strong> — must create, discover, edit, display, and diagnose <code>loaf.toml</code> consistently without making generated Rust or hidden backend state the public model.</li>
 </ul>
 <h2 id="acceptance-criteria">Acceptance criteria<a class="headerlink" href="#acceptance-criteria" title="Permanent link">&para;</a></h2>
@@ -10892,6 +10938,7 @@ was ignored.
 </table>
 <h2 id="design-decisions">Design decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ul>
+<li><strong>Compile-time code runs unasked only when trusted, and trust is granted per publisher:</strong> the editor and eager preparation run procedural macros and desugarers only for trusted code, so cloning and opening a project runs none of it. Trusting a publisher covers all of its Loaves, so the question comes once per publisher rather than once per package, and Loaves that ship inside the signed toolchain need no trust. Trust lives in user or organization configuration and is a separate setting from the execution mode. It never relaxes containment, so neither a project nor a default entry opens a path around it.</li>
 <li><strong>Loafified-package distribution advantage:</strong> the <code>loaves.pub</code> value proposition is a verified, target-compatible pre-warmed Loaf closure that Oven can reuse across consumers after compatibility and trust verification. It is not universal-binary distribution or an implicit network effect. The package/lock/receipt model must preserve the identities needed to make it a registry capability rather than a new authority model.</li>
 <li><strong>Nested Loaf topology:</strong> <code>loaves/</code> is the conventional home for all non-root workspace member projects, including Rust-only members. It supports arbitrary nested groups such as <code>loaves/stdlib/web</code>; paths are never implicit membership, dependency, linkage, or publication edges. A group gains a <code>loaf.toml</code> only when it needs a real structural parent contract, and it always inherits the root authority.</li>
 <li><strong>Built-in source facets:</strong> Incan and Rust are the built-in authored source facets. Simple one-language projects use <code>src/</code> by convention. Mixed or nonstandard projects use <code>[incan.source]</code> and <code>[rust.source]</code> with non-overlapping roots; the compiler diagnoses co-located <code>.incn</code> and <code>.rs</code> source files instead of imposing precedence. Rust exceptions remain beneath <code>rust.*</code>.</li>

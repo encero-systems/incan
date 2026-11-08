@@ -10166,10 +10166,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#exported-identity-and-provenance" class="md-nav__link">
+  <a href="#exported-identity-and-keys" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Exported identity and provenance
+        Exported identity and keys
       
     </span>
   </a>
@@ -10859,7 +10859,7 @@ graph_summary(project_id)
 </ul>
 <p>A consumer that skips work on the strength of a reachability answer must err toward doing the work. Missing an affected node yields a wrong build; a spurious one costs time.</p>
 <h3 id="building-it">Building it<a class="headerlink" href="#building-it" title="Permanent link">&para;</a></h3>
-<p>The compiler already sees both languages. <code>rust_inspect</code> loads a Cargo project through rust-analyzer — <code>ra_ap_hir</code>, <code>ra_ap_ide_db</code>, <code>ra_ap_syntax</code> and <code>ra_ap_project_model</code> are workspace dependencies — and extracts typed Rust metadata that today serves interop checking. The Rust half of this graph is mostly a question of emitting what that already resolves, in the record shapes the schema already defines.</p>
+<p>The compiler already sees both languages. It checks Incan through its own frontend and reads Rust through rustc: interop facts come from the toolchain's ABI caches, and from rustc extraction for the paths those caches do not cover, as DD-0009 defines. The Rust half of this graph projects those compiler-owned facts into the record shapes the schema already defines, with no second resolver beside them.</p>
 <p>That single-observer position is the substantive advantage over the alternative. Polyglot indexers merge independently-derived per-language indexes and must reconcile their symbol identities afterwards. One compiler observing both languages has nothing to reconcile: the identity an Incan declaration uses to name a Rust one is the identity the Rust side was recorded under.</p>
 <p>SCIP remains the reference for symbol naming and for separating definitions from reference occurrences, and remains an export adapter rather than the internal model, consistent with native JSONL being the source of truth. Following its conventions where they fit keeps an exporter a projection rather than a translation.</p>
 <h2 id="semantic-digests">Semantic digests<a class="headerlink" href="#semantic-digests" title="Permanent link">&para;</a></h2>
@@ -10899,10 +10899,10 @@ graph_summary(project_id)
 <p>The digest must exclude non-semantic source details: comments, documentation, formatting, physical location, and declaration ordering only where reordering preserves checked meaning. It must include observable order, including parameter and payload-field order, ordered construction pipelines, and control-flow arm order, alongside signatures, types, visibility, ownership and borrowing facts, and resolved call and reference targets. A field or pipeline reorder that changes argument binding or execution must not produce a cache hit merely because its declarations otherwise have the same content.</p>
 <p>The digest must be language-neutral. An Incan declaration and a Rust declaration contribute the same kind of fact and are compared the same way; a consumer asking whether a declaration changed must not need to know which language it is written in. A digest that covers only one language is not partial but <strong>unsound</strong>, because a consumer folding it will report a hit for a change it cannot see.</p>
 <p>Where an implementation cannot compute a declaration's semantic digest, it must report the declaration as changed. Erring toward changed costs redundant work; erring the other way yields a wrong build.</p>
-<h3 id="exported-identity-and-provenance">Exported identity and provenance<a class="headerlink" href="#exported-identity-and-provenance" title="Permanent link">&para;</a></h3>
-<p>The identity rules above govern what a consumer may key on. The identity carried on declaration, reference, call, import-binding and export records mirrors the compiler's own, span and scope discriminant included. That is correct as <em>provenance</em> — it names where a declaration sat in the compilation that produced the record — and wrong as a key.</p>
-<p>A key therefore needs a second, span-free identity exported alongside it rather than a change to the existing one, since both jobs are real. It also needs a signature, which a compiler identity does not carry and which comes from the declaration's lowered body; an exported identity without one cannot separate overloads, and publishing it would push the collision this section exists to prevent out to every consumer at once.</p>
-<p>A consumer must treat the compiler-mirroring identity as provenance and must not cache against it across compilations.</p>
+<h3 id="exported-identity-and-keys">Exported identity and keys<a class="headerlink" href="#exported-identity-and-keys" title="Permanent link">&para;</a></h3>
+<p>The identity rules above govern what a consumer may key on. Declaration, reference, call, import-binding and export records carry the compiler's own identity as <code>canonical_identity</code>, span and scope discriminant included. That is correct as <em>provenance</em> — it names where a declaration sat in the compilation that produced the record — and wrong as a key. A consumer must not cache against it across compilations.</p>
+<p>Every declaration therefore also carries a <code>stable_key</code>, exported alongside its <code>canonical_identity</code> rather than in place of it, since both jobs are real. The key is span-free, scoped by its package's name, and derived from an identity that includes the declaration's signature, so overloads stay apart. Package version, source spans, file layout and the semantic digest never enter it. A reference, call, import binding or export carries its target's <code>stable_key</code> only when the target is proved; an ambiguous or unproved target carries none, and no key is inferred for it.</p>
+<p>The graph header's <code>declaration_digests</code> maps each <code>stable_key</code> to the declaration's semantic digest, so identity and meaning stay in separate fields. A digest is <code>null</code> where the producer has none, including a Rust declaration it has no checked digest for, and a consumer must treat a <code>null</code> digest as changed. Renaming a module or a declaration may change its key, and a declaration whose logical identity cannot be established justifies no reuse across compilations.</p>
 <h3 id="the-documentation-digest">The documentation digest<a class="headerlink" href="#the-documentation-digest" title="Permanent link">&para;</a></h3>
 <p>Documentation is output for some consumers and invisible to others. A declaration must therefore carry a separate <code>doc_digest</code> covering its documentation, excluded from the semantic digest.</p>
 <p>A consumer gating a compiled artifact uses the semantic digest alone, because documentation cannot change compiled output. A consumer gating published reference documentation or a manifest surface uses both. One digest per consumer, rather than one digest with a policy attached.</p>
@@ -11024,7 +11024,7 @@ graph_summary(project_id)
 <li><strong>Typechecker / Symbol resolution</strong>: checked declarations, imports, aliases, references, calls, public API signatures, dispatch targets where known, and diagnostics provide high-provenance graph facts.</li>
 <li><strong>IR Lowering</strong>: lowering does not define the graph, but generated or materialized structures may need source/metadata anchors so tools can connect emitted behavior back to source.</li>
 <li><strong>Emission</strong>: generated Rust is not the graph source of truth, but emission may expose artifact metadata that can be linked to source graph identities.</li>
-<li><strong>Stdlib / Runtime (<code>incan_stdlib</code>)</strong>: stdlib source and manifests should be graphable as ordinary Incan packages, and stdlib builtins should appear as external or stdlib nodes when referenced.</li>
+<li><strong>Stdlib / Runtime (<code>loaves/stdlib/</code>)</strong>: stdlib source and manifests should be graphable as ordinary Incan packages, and stdlib builtins should appear as external or stdlib nodes when referenced.</li>
 <li><strong>Generated behavior explanation</strong>: derives, decorators, vocabularies, trait resolution, type-directed mappings, ownership plans, and generated artifacts should contribute source-anchored explanation records when available.</li>
 <li><strong>Formatter</strong>: no syntax changes are required by this RFC, but compact graph/context output should have deterministic formatting.</li>
 <li><strong>LSP / Tooling</strong>: CLI, MCP, editor integrations, graph export, graph stale checks, live graph snapshots, context packing, architecture-advice tooling, risk scoring, and checked metadata/documentation tooling are directly affected.</li>
@@ -11035,8 +11035,8 @@ graph_summary(project_id)
 <h3 id="graph-export">Graph export<a class="headerlink" href="#graph-export" title="Permanent link">&para;</a></h3>
 <ul class="task-list">
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Compiler-backed <code>incan inspect codegraph --format jsonl</code> with files, modules, declarations, imports, exports, references, calls, diagnostics, spans, provenance and degraded-state records.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Canonical declaration identities that survive edits (<code>incan-v1</code>, span-free).</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Graph-schema version on every export (schema 7).</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Span-free declaration identities kept apart from compiler provenance (<code>canonical_identity</code>).</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Graph-schema version on every export (schema 9).</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Strict checked export and tolerant export.</li>
 </ul>
 <h3 id="cross-language-graph-progress">Cross-language graph progress<a class="headerlink" href="#cross-language-graph-progress" title="Permanent link">&para;</a></h3>
@@ -11051,21 +11051,25 @@ graph_summary(project_id)
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Per-declaration semantic digest excluding position, formatting, comments and documentation; documentation digest kept apart.</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Closure digests over codegraph edges and MIR-backed Rust body digests (#1504).</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Corpus and invariant tests: every standard-library declaration digests; a comment, a docstring, an insertion and a reorder move only what they should.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> The exported identity carries the digest as its key (see "Exported identity and provenance").</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Exported declarations carry a <code>stable_key</code>, and the header's <code>declaration_digests</code> maps each key to its semantic digest, <code>null</code> where unavailable (see "Exported identity and keys").</li>
 </ul>
 <h3 id="context-surfaces">Context surfaces<a class="headerlink" href="#context-surfaces" title="Permanent link">&para;</a></h3>
 <ul class="task-list">
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> MCP surface for graph exploration and task-ranked context packing.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Compact deterministic agent context format beside JSON and JSONL.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Snapshot identities and staleness checks.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Optional process-risk facts (churn, ownership, co-change, coverage) with provenance and absence when inputs are unavailable.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Feedback and task-memory signals with automatic expiry.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> LSP features reading the same graph records.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> MCP surface for graph exploration and task-ranked context packing.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> <code>incan mcp</code> served as a <code>std.mcp</code> server under RFC 156, with its tools in that server's catalog.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Task-ranked packs served by <code>incan inspect context</code>.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Compact deterministic agent context format beside JSON and JSONL, stating its format version.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Content-addressed snapshot identities and staleness checks.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Optional git churn, author-touch ownership and co-change records with provenance; absent inputs produce no observations.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Coverage-backed process-risk facts, with no synthesized values when coverage is unavailable.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Session-only MCP feedback and task memory with automatic snapshot and TTL expiry.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> LSP definition, references and incoming/outgoing call hierarchy project the same records from captured-buffer analysis and refuse stale views.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Authored text carries its author, and context packs and MCP spans render workspace and dependency text as quoted evidence.</li>
 </ul>
 <h3 id="docs">Docs<a class="headerlink" href="#docs" title="Permanent link">&para;</a></h3>
 <ul class="task-list">
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> <code>incan inspect codegraph</code> documented in the CLI reference.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Agent context format and MCP surface documented.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Agent context CLI, format and MCP surface documented in the agent context reference.</li>
 </ul>
 <h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ul>
@@ -11082,7 +11086,7 @@ graph_summary(project_id)
 <li>Identity and digest are separate fields. Identity answers which declaration a fact is about and must survive edits; a semantic digest answers whether its meaning changed. A single content-addressed field cannot do both, and the graph is the normative source of the digest RFC 124 folds into unit identity.</li>
 <li>One graph spans both languages. A declaration is a <code>Declaration</code> whatever its surface syntax, and <code>language</code> is an attribute of the fact rather than a partition of the schema. The reserved <code>rust_item</code> node kind and <code>uses_rust_item</code> edge kind are retired: they encode the distinction <code>language</code> exists to dissolve, and would leave two ways to state one relationship.</li>
 <li>Reachability over Rust is a lower bound, not an exact answer. Unresolved edges count as reachable and affectedness propagates downstream. This binds consumers: anything skipping work on a reachability answer must err toward doing the work, because a missed node is a wrong build while a spurious one is only slow.</li>
-<li>Rust-side facts should come from what <code>rust_inspect</code> already resolves through rust-analyzer before any independent analysis is written. Re-deriving name resolution would reproduce the low-trust rediscovery this RFC exists to avoid.</li>
+<li>Rust-side facts come from rustc and the toolchain's ABI caches through the compiler's own fact boundary (DD-0009), not from a separate resolver. Re-deriving name resolution would reproduce the low-trust rediscovery this RFC exists to avoid.</li>
 <li>SCIP remains an export adapter rather than the internal model, but its symbol naming and its separation of definitions from reference occurrences should be followed where they fit, so an exporter stays a projection rather than a translation.</li>
 </ul>
 
