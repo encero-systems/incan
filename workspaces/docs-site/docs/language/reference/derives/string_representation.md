@@ -6,7 +6,7 @@ This page specifies `Debug` and `Display`. The derive catalog and the automatic 
 
 - **Provides**: `{value:?}` formatting.
 - **Provided by**: every `model`, `class` and `enum`, except that a class whose name starts with `_` and whose fields contain a directly imported Rust type needs an explicit or implied `Debug` derive; a `newtype` whose underlying type implements `Debug`.
-- **Behavior**: a model or class formats as its type name followed by its fields in declaration order, each as `name = value`, in braces. A model or class with no fields formats as its type name. An enum value formats as its variant name, followed by its payloads in parentheses when it has any: `Red`, `Leaf(1)`, `Error(404, "missing")`. A newtype formats as its type name followed by its underlying value in parentheses: `UserId(42)`. A `str` value is quoted. A Rust-defined field delegates to that type's Rust `Debug` implementation and keeps its own representation.
+- **Behavior**: a model or class formats as the call form used to construct it: its type name followed by its fields in declaration order, each as `name=value`, in parentheses. A model or class with no fields formats as `Name()`. An enum value formats as its variant name, followed by its payloads in parentheses when it has any: `Red`, `Leaf(1)`, `Error(404, "missing")`. A newtype formats as its type name followed by its underlying value in parentheses: `UserId(42)`. A `str` value is quoted. A Rust-defined field delegates to that type's Rust `Debug` implementation and keeps its own representation.
 - **Dunder**: none.
 - **Requires**: every field type implements `Debug` (see [Automatic derives](../derives_and_traits.md#automatic-derives), `INCAN-T0113` or a Rust trait-bound diagnostic for a directly imported Rust field type).
 
@@ -63,11 +63,11 @@ def main() -> None:
 
 | Expression | Output |
 | --- | --- |
-| `f"{p:?}"` | `Point { x = 10, y = 20 }` |
-| `f"{u:?}"` | `User { name = "Alice", email = "alice@example.com" }` |
+| `f"{p:?}"` | `Point(x=10, y=20)` |
+| `f"{u:?}"` | `User(name="Alice", email="alice@example.com")` |
 | `f"{u}"` | `Alice <alice@example.com>` |
 | `f"{Level.WARN}"` | `warn` |
 | `f"{leaf:?}"` | `Leaf(1)` |
 | `f"{error:?}"` | `Error(404, "missing")` |
 | `f"{user_id:?}"` | `UserId(42)` |
-| `f"{t}"` | `Tag { name = "new" }` |
+| `f"{t}"` | `Tag(name="new")` |
