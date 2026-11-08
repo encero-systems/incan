@@ -162,6 +162,40 @@ fn provider_import_failures_use_distinct_stable_codes() {
     }
 }
 
+#[test]
+fn field_rename_refusals_keep_codes_locations_and_explanations() -> Result<(), Box<dyn std::error::Error>> {
+    let still_declared = errors::field_rename_still_declared(
+        "Customer",
+        "email_address",
+        "email",
+        Span::new(60, 67),
+        Span::new(20, 30),
+    );
+    let claimed_twice = errors::field_rename_claimed_twice("Customer", "email", Span::new(40, 47), Span::new(80, 87));
+
+    assert_eq!(
+        code_for_error(&still_declared, DiagnosticPhase::Typecheck),
+        "INCAN-T0130"
+    );
+    assert_eq!(
+        code_for_error(&claimed_twice, DiagnosticPhase::Typecheck),
+        "INCAN-T0131"
+    );
+    assert!(still_declared.message.contains("still exists"));
+    assert!(claimed_twice.message.contains("claimed more than once"));
+    assert_eq!(still_declared.related_spans().len(), 1);
+    assert_eq!(still_declared.related_spans()[0].span, Span::new(20, 30));
+    assert_eq!(claimed_twice.related_spans().len(), 1);
+    assert_eq!(claimed_twice.related_spans()[0].span, Span::new(40, 47));
+    for code in ["INCAN-T0130", "INCAN-T0131"] {
+        let Some(entry) = explain(code) else {
+            return Err(format!("missing catalog explanation for {code}").into());
+        };
+        assert_eq!(entry.code, code);
+    }
+    Ok(())
+}
+
 /// Checker refusal families retain distinct codes and the remedies attached by their owning catalog entries.
 #[test]
 fn checker_refusals_of_unbuildable_programs_use_distinct_stable_codes() -> Result<(), Box<dyn std::error::Error>> {

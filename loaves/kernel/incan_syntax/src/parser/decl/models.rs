@@ -1,4 +1,34 @@
 /// Parsing for models, classes, traits, and their fields/methods.
+
+enum ParsedFieldMetadataValue {
+    String(Spanned<String>),
+    StringList { values: Vec<Spanned<String>>, span: Span },
+    Boolean(Spanned<bool>),
+}
+
+impl ParsedFieldMetadataValue {
+    /// Return whether this parsed syntax satisfies the registry's accepted value shape.
+    fn is_accepted_by(&self, expected: FieldMetadataValueKind) -> bool {
+        matches!(
+            (self, expected),
+            (
+                Self::String(_),
+                FieldMetadataValueKind::String | FieldMetadataValueKind::StringOrStringList
+            ) | (Self::StringList { .. }, FieldMetadataValueKind::StringOrStringList)
+                | (Self::Boolean(_), FieldMetadataValueKind::Boolean)
+        )
+    }
+
+    /// Return the source span covering this metadata value.
+    fn span(&self) -> Span {
+        match self {
+            Self::String(value) => value.span,
+            Self::StringList { span, .. } => *span,
+            Self::Boolean(value) => value.span,
+        }
+    }
+}
+
 impl<'a> Parser<'a> {
     /// Parse a model declaration.
     fn model_decl(
@@ -320,7 +350,144 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    fn field_metadata(&mut self) -> Result<FieldMetadata, CompileError> {
+    /// Parse one field-metadata value without deciding which AST slot owns it.
+    fn field_metadata_value(
+        &mut self,
+        key: &str,
+        expected: FieldMetadataValueKind,
+        field: &str,
+    ) -> Result<ParsedFieldMetadataValue, CompileError> {
+        let span = self.current_span();
+        match self.peek().kind.clone() {
+            TokenKind::String(value) => {
+                self.advance();
+                Ok(ParsedFieldMetadataValue::String(Spanned::new(value, span)))
+            }
+            TokenKind::Keyword(KeywordId::True) => {
+                self.advance();
+                Ok(ParsedFieldMetadataValue::Boolean(Spanned::new(true, span)))
+            }
+            TokenKind::Keyword(KeywordId::False) => {
+                self.advance();
+                Ok(ParsedFieldMetadataValue::Boolean(Spanned::new(false, span)))
+            }
+            TokenKind::Punctuation(PunctuationId::LBracket) => {
+                self.advance();
+                let mut values = Vec::new();
+                while !self.check(&TokenKind::Punctuation(PunctuationId::RBracket)) {
+                    let value_span = self.current_span();
+                    let TokenKind::String(value) = self.peek().kind.clone() else {
+                        return Err(errors::invalid_field_metadata_value(
+                            key,
+                            field_metadata::value_kind_description(expected),
+                            field,
+                            value_span,
+                        ));
+                    };
+                    self.advance();
+                    values.push(Spanned::new(value, value_span));
+                    if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
+                        break;
+                    }
+                }
+                self.expect_punct(PunctuationId::RBracket, "Expected ']' after field metadata list")?;
+                let end = self.tokens[self.pos.saturating_sub(1)].span.end;
+                Ok(ParsedFieldMetadataValue::StringList {
+                    values,
+                    span: Span::new(span.start, end),
+                })
+            }
+            _ => Err(errors::invalid_field_metadata_value(
+                key,
+                field_metadata::value_kind_description(expected),
+                field,
+                span,
+            )),
+        }
+    }
+
+    /// Store a registry-validated field-metadata entry while rejecting duplicate keys.
+    fn apply_field_metadata(
+        metadata: &mut FieldMetadata,
+        key: FieldMetadataKey,
+        key_raw: &str,
+        key_span: Span,
+        expected: FieldMetadataValueKind,
+        field: &str,
+        value: ParsedFieldMetadataValue,
+    ) -> Result<(), CompileError> {
+        match key {
+            FieldMetadataKey::Alias => {
+                if metadata.alias.is_some() {
+                    return Err(errors::duplicate_field_metadata_key(key_raw, key_span));
+                }
+                let ParsedFieldMetadataValue::String(value) = value else {
+                    return Err(errors::invalid_field_metadata_value(
+                        key_raw,
+                        field_metadata::value_kind_description(expected),
+                        field,
+                        key_span,
+                    ));
+                };
+                metadata.alias = Some(value.node);
+            }
+            FieldMetadataKey::Description => {
+                if metadata.description.is_some() {
+                    return Err(errors::duplicate_field_metadata_key(key_raw, key_span));
+                }
+                let ParsedFieldMetadataValue::String(value) = value else {
+                    return Err(errors::invalid_field_metadata_value(
+                        key_raw,
+                        field_metadata::value_kind_description(expected),
+                        field,
+                        key_span,
+                    ));
+                };
+                metadata.description = Some(value.node);
+            }
+            FieldMetadataKey::RenamedFrom => {
+                if metadata.renamed_from_key_span.is_some() {
+                    return Err(errors::duplicate_field_metadata_key(key_raw, key_span));
+                }
+                metadata.renamed_from_key_span = Some(key_span);
+                match value {
+                    ParsedFieldMetadataValue::String(value) => metadata.renamed_from.push(value),
+                    ParsedFieldMetadataValue::StringList { values, .. } => {
+                        metadata.renamed_from = values;
+                        metadata.renamed_from_was_list = true;
+                    }
+                    ParsedFieldMetadataValue::Boolean(value) => {
+                        return Err(errors::invalid_field_metadata_value(
+                            key_raw,
+                            field_metadata::value_kind_description(expected),
+                            field,
+                            value.span,
+                        ));
+                    }
+                }
+            }
+            FieldMetadataKey::Canonical => {
+                if metadata.canonical_key_span.is_some() {
+                    return Err(errors::duplicate_field_metadata_key(key_raw, key_span));
+                }
+                let ParsedFieldMetadataValue::Boolean(value) = value else {
+                    return Err(errors::invalid_field_metadata_value(
+                        key_raw,
+                        field_metadata::value_kind_description(expected),
+                        field,
+                        key_span,
+                    ));
+                };
+                metadata.canonical_key_span = Some(key_span);
+                metadata.canonical = Some(value);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Parse a comma-separated metadata block using the shared key registry.
+    fn field_metadata(&mut self, field: &str) -> Result<FieldMetadata, CompileError> {
         let mut metadata = FieldMetadata::default();
 
         loop {
@@ -331,32 +498,29 @@ impl<'a> Parser<'a> {
                 &TokenKind::Operator(OperatorId::Eq),
                 "Expected '=' after field metadata key",
             )?;
-            let value = self.string_literal()?;
-
             let Some(key) = field_metadata::from_str(&key_raw) else {
                 return Err(errors::unknown_field_metadata_key(&key_raw, key_span));
             };
-
-            match key {
-                FieldMetadataKey::Alias => {
-                    if metadata.alias.is_some() {
-                        return Err(errors::duplicate_field_metadata_key(
-                            field_metadata::as_str(key),
-                            key_span,
-                        ));
-                    }
-                    metadata.alias = Some(value);
-                }
-                FieldMetadataKey::Description => {
-                    if metadata.description.is_some() {
-                        return Err(errors::duplicate_field_metadata_key(
-                            field_metadata::as_str(key),
-                            key_span,
-                        ));
-                    }
-                    metadata.description = Some(value);
-                }
+            let expected = field_metadata::value_kind(key);
+            let value = self.field_metadata_value(&key_raw, expected, field)?;
+            if !value.is_accepted_by(expected) {
+                return Err(errors::invalid_field_metadata_value(
+                    &key_raw,
+                    field_metadata::value_kind_description(expected),
+                    field,
+                    value.span(),
+                ));
             }
+
+            Self::apply_field_metadata(
+                &mut metadata,
+                key,
+                field_metadata::as_str(key),
+                key_span,
+                expected,
+                field,
+                value,
+            )?;
 
             if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
                 break;
@@ -377,7 +541,7 @@ impl<'a> Parser<'a> {
         let name = self.identifier()?;
         let mut metadata = FieldMetadata::default();
         if self.match_token(&TokenKind::Punctuation(PunctuationId::LBracket)) {
-            metadata = self.field_metadata()?;
+            metadata = self.field_metadata(&name)?;
             self.expect(
                 &TokenKind::Punctuation(PunctuationId::RBracket),
                 "Expected ']' after field metadata",

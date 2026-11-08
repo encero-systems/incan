@@ -28,11 +28,21 @@ pub struct ModelDecl {
     pub methods: Vec<Spanned<MethodDecl>>,
 }
 
-/// Optional metadata on a model/class field (alias, description).
+/// Optional compiler-known metadata on a model or class field.
 #[derive(Debug, Clone, PartialEq, Default, serde::Serialize)]
 pub struct FieldMetadata {
     pub alias: Option<String>,
     pub description: Option<String>,
+    /// Earlier declared names in authored order, with one span per string value.
+    pub renamed_from: Vec<Spanned<String>>,
+    /// Whether `renamed_from` used the authored list spelling, including a one-item list.
+    pub renamed_from_was_list: bool,
+    /// Source span of the `renamed_from` key when present.
+    pub renamed_from_key_span: Option<Span>,
+    /// Whether this field participates in a canonical stored hash, when explicitly written.
+    pub canonical: Option<Spanned<bool>>,
+    /// Source span of the `canonical` key when present.
+    pub canonical_key_span: Option<Span>,
 }
 
 /// A field declaration within a model or class.
