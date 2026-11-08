@@ -431,6 +431,7 @@ impl CompilationSession {
                 self.unit.vocab_admissions.clone(),
                 self.unit.project_root.clone(),
                 self.unit.vocab_policy.clone(),
+                self.unit.covered_by.clone(),
             );
             let expansion = vocab_desugar_pass::desugar_program_vocab_blocks_with_runtime(
                 &mut ast,

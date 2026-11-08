@@ -15,7 +15,7 @@ const CHECK_OPERANDS: str = "check PATH [--format text|json] [UNIT OPTIONS]"
 const TEST_OPERANDS: str = "test PATH [UNIT OPTIONS]"
 const BUILD_OPERANDS: str = "build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"
 const EXPLAIN_USAGE: str = "incan explain CODE"
-const DESCRIBE_USAGE: str = "oven describe-unit PATH [UNIT OPTIONS]"
+const DESCRIBE_USAGE: str = "oven describe-unit PATH [--unattended] [UNIT OPTIONS]"
 const OWNER_USAGE: str = "oven owner stop"
 const BAKERY_USAGE: str = "oven bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE"
 const DEPENDENCIES_USAGE: str = "oven inspect dependencies PATH [UNIT OPTIONS]"
@@ -176,7 +176,11 @@ def unit_help(surface: str, command: str) -> str:
             f"{surface} test tests/test_example.incn",
         )
     if command == "describe-unit":
-        return render(DESCRIBE_USAGE, options, "oven describe-unit src/main.incn")
+        return render(
+            DESCRIBE_USAGE,
+            options + ["  --unattended  Stop before compile-time code that no trust entry covers."],
+            "oven describe-unit --unattended src/main.incn",
+        )
     if command == "inspect dependencies":
         return render(DEPENDENCIES_USAGE, options, "oven inspect dependencies src/main.incn")
     return render(

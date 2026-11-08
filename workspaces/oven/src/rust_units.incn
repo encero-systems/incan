@@ -38,6 +38,7 @@ from rust_freshness import (
 from rust_portable import portable_reusable, record_portable
 from rust_bakery import baked_rust, claim_rust, rust_store, rust_unit_name, seal_rust, view_prior_evidence
 from installed_sources import require_installed_sources
+from compile_time_trust import combine as combine_trust, decide, decide_registry
 from bakery import bakery, forget_view, library_directory
 from rust_registry import selected_registry
 from rust_manifest import RustFacet, package_environment, rust_facet
@@ -85,6 +86,7 @@ def build_prepared_rust(request: RustBuild) -> Result[list[str], str]:
     3. Any report fails the build, and the error carries them all.
     4. Publish the receipt of the libraries built, which the code graph reads.
     """
+    mut request = request
     # 1. The graph is the one the pinned rustc's own target selects, and every unit comes after those it links.
     configuration = target_configuration(request.rustc)?
     root = Path(request.project).resolve().map_err((error) => f"{request.project}: {error.message()}")?
@@ -102,6 +104,11 @@ def build_prepared_rust(request: RustBuild) -> Result[list[str], str]:
     # A source build that would mix native generations is refused before any unit compiles.
     require_installed_sources(facets, request)?
     require_coherent_installed_generation(facets, request)?
+    local_trust = decide(facets, root.0, request.unattended, request.manifests)?
+    trust = combine_trust(local_trust, decide_registry(request.registry, root.0, request.unattended)?)
+    request.covered_by = trust.covered_by
+    if len(trust.missing) > 0:
+        return Err(trust.stop())
     output = rust_output(root, request.profile)
     # 2. A unit that fails blocks only the units that link it, so every other unit is still attempted.
     mut built: Dict[str, BuiltUnit] = {}
@@ -219,6 +226,7 @@ pub def receipt_document(built: Dict[str, BuiltUnit], keyed: bool) -> JsonValue:
         fields["directory"] = JsonValue.string(built[key].directory)
         fields["search"] = JsonValue.array([JsonValue.string(path) for path in built[key].search])
         fields["loaf"] = JsonValue.string(built[key].loaf)
+        fields["covered_by"] = JsonValue.string(built[key].covered_by)
         units.append(JsonValue.object(fields))
     return JsonValue.object({"schema": JsonValue.string(RECEIPT_SCHEMA), "units": JsonValue.array(units)})
 
@@ -250,7 +258,17 @@ pub def read_receipt(path: Path, keyed: bool = false) -> Result[Dict[str, BuiltU
             mut loaf = ""
             if item.contains_key("loaf"):
                 loaf = required_text(item, "loaf")?
-            result[key] = BuiltUnit(crate_name=name, artifact=artifact, directory=directory, search=search, loaf=loaf)
+            mut covered_by = ""
+            if item.contains_key("covered_by"):
+                covered_by = required_text(item, "covered_by")?
+            result[key] = BuiltUnit(
+                crate_name=name,
+                artifact=artifact,
+                directory=directory,
+                search=search,
+                loaf=loaf,
+                covered_by=covered_by,
+            )
     return Ok(result)
 
 
@@ -276,10 +294,16 @@ def build_prepared_dependencies(
     Analysis may leave out the project's own library (`include_root` false) when no binary links it.
     """
     root = Path(request.project).resolve().map_err((error) => error.message())?
+    mut request = request
     validate_incan_packages(facets, root.0, request.manifests)?
     # A source build that would mix native generations is refused before any unit compiles.
     require_installed_sources(facets, request)?
     require_coherent_installed_generation(ordered(facets)?, request)?
+    local_trust = decide(facets, root.0, request.unattended, request.manifests)?
+    trust = combine_trust(local_trust, decide_registry(request.registry, root.0, request.unattended)?)
+    request.covered_by = trust.covered_by
+    if len(trust.missing) > 0:
+        return Err(trust.stop())
     output = rust_output(root, request.profile)
     mut built: Dict[str, BuiltUnit] = {}
     # The libraries built for the graph; `linking` adds the registry's and the toolchain's directories.
@@ -293,7 +317,7 @@ def build_prepared_dependencies(
             if own:
                 continue
             return Err(f"{facet.project} declares no Rust library")
-        unit = compile_library(facet, declared, output, request, built, search)?
+        unit = covered_unit(compile_library(facet, declared, output, request, built, search)?, facet, request)
         built[facet.key()] = unit
         search = search + [unit.directory] + unit.search
     return Ok(built)
@@ -325,7 +349,7 @@ def unit_outputs(
     mut library: Option[BuiltUnit] = None
     mut local_built = built
     if declared.kind != "":
-        unit = compile_library(facet, declared, output, request, built, search)?
+        unit = covered_unit(compile_library(facet, declared, output, request, built, search)?, facet, request)
         if unit.loaf != "":
             println(f"prepared {unit.crate_name} ({facet.domain.value()})")
         elif unit.reused:
@@ -379,6 +403,14 @@ pub def compile_library(
         if facet.project != root.0:
             return compile_incan_library(facet, declared, output, request, built, search)
     return compile_rust_library(facet, declared, output, request, built, search)
+
+
+def covered_unit(unit: BuiltUnit, facet: LocalFacet, request: RustBuild) -> BuiltUnit:
+    """Attach stable trust evidence for this selected Loaf without making it part of artifact identity."""
+    mut result = unit
+    if facet.package in request.covered_by:
+        result.covered_by = request.covered_by[facet.package]
+    return result
 
 
 pub def compile_rust_library(
@@ -835,6 +867,7 @@ def compile_incan_library(
                 toolchain,
                 request.compiler,
                 request.manifests,
+                request.unattended,
             )?
         None => return Err(f"no Incan unit compiler was supplied for {declared.package}")
     if code != 0:
