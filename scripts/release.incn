@@ -709,7 +709,7 @@ def phase(run: ReleaseRun, name: str) -> Result[None, str]:
 
 
 def complete_receipt(run: ReleaseRun, counts: Counts) -> Result[None, str]:
-    """Publish the successful receipt with artifact digests, counts, Oven results, and fixed-point mode."""
+    """Measure the full run, remove passing-only work trees unless retained, and publish final evidence."""
     mut oven_tests = JsonValue.null()
     runs = run.paths.output.joinpath("ci").glob("run.*").map_err((error) => error.message())?
     if len(runs) == 1 and runs[0].joinpath("oven-tests.json").is_file():
@@ -718,9 +718,31 @@ def complete_receipt(run: ReleaseRun, counts: Counts) -> Result[None, str]:
             .joinpath("oven-tests.json")
             .copy(run.paths.output.joinpath("oven-tests.json"), true, true)
             .map_err((error) => error.message())?
-    measured = measure_release_tree_bytes(run)?
-    record_release_tree_bytes(run.paths.output.joinpath("timings.tsv"), measured)?
-    return write_receipt(run, "complete", "passed", 0, Some(counts), oven_tests, release_tree_bytes_json(measured))
+    before_cleanup = measure_release_tree_bytes(run)?
+    record_release_tree_bytes(run.paths.output.joinpath("timings.tsv"), "before-cleanup/", before_cleanup)?
+    phase(run, "cleanup")?
+    if not run.options.keep_trees:
+        remove_passing_work_trees(run)?
+    retained = measure_release_tree_bytes(run)?
+    record_release_tree_bytes(run.paths.output.joinpath("timings.tsv"), "", retained)?
+    return write_receipt(run, "complete", "passed", 0, Some(counts), oven_tests, release_tree_bytes_json(retained))
+
+
+def remove_passing_work_trees(run: ReleaseRun) -> Result[None, str]:
+    """Remove only reproducible work and scratch trees after every release gate has passed."""
+    disposable = [
+        run.paths.home,
+        run.paths.lane,
+        run.paths.source,
+        run.paths.output.joinpath("verification-source"),
+        run.paths.output.joinpath("verification-home"),
+        run.paths.output.joinpath("baseline-contracts-scratch"),
+        run.paths.output.joinpath("reference-contracts-scratch"),
+    ]
+    for path in disposable:
+        if path.exists() or path.is_symlink():
+            path.remove_tree().map_err((error) => f"cannot remove passing work tree {path.0}: {error.message()}")?
+    return Ok(None)
 
 
 def write_receipt(
@@ -790,17 +812,17 @@ def measure_release_tree_bytes(run: ReleaseRun) -> Result[ReleaseTreeBytes, str]
     )
 
 
-def record_release_tree_bytes(path: Path, measured: ReleaseTreeBytes) -> Result[None, str]:
-    """Append every measured release tree and their total to the timing evidence."""
-    append_bytes(path, "build-home", measured.build_home)?
-    append_bytes(path, "source", measured.source)?
-    append_bytes(path, "verification-source", measured.verification_source)?
-    append_bytes(path, "verification-home", measured.verification_home)?
-    append_bytes(path, "relocated-rust", measured.relocated_rust)?
-    append_bytes(path, "lane", measured.lane)?
-    append_bytes(path, "bundle", measured.bundle)?
-    append_bytes(path, "ci", measured.ci)?
-    return append_bytes(path, "total", measured.total)
+def record_release_tree_bytes(path: Path, prefix: str, measured: ReleaseTreeBytes) -> Result[None, str]:
+    """Append every measured release tree and their total under one evidence label prefix."""
+    append_bytes(path, prefix + "build-home", measured.build_home)?
+    append_bytes(path, prefix + "source", measured.source)?
+    append_bytes(path, prefix + "verification-source", measured.verification_source)?
+    append_bytes(path, prefix + "verification-home", measured.verification_home)?
+    append_bytes(path, prefix + "relocated-rust", measured.relocated_rust)?
+    append_bytes(path, prefix + "lane", measured.lane)?
+    append_bytes(path, prefix + "bundle", measured.bundle)?
+    append_bytes(path, prefix + "ci", measured.ci)?
+    return append_bytes(path, prefix + "total", measured.total)
 
 
 def release_tree_bytes_json(measured: ReleaseTreeBytes) -> JsonValue:

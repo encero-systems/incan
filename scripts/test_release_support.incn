@@ -33,20 +33,25 @@ total: 8 passed, 0 failed, 0 pending
 
 
 def test_release_arguments_keep_fixed_point_and_process_budgets_explicit() -> Result[None, str]:
-    """The two operands and optional fixed-point, jobs, and timeout choices parse in any option position."""
-    options = parse_release_options(["--jobs", "6", SHA, "out", "--prove-fixed-point", "--timeout", "900"])?
+    """The two operands and optional retention, proof, jobs, and timeout choices parse in any option position."""
+    options = parse_release_options(
+        ["--jobs", "6", SHA, "out", "--keep-trees", "--prove-fixed-point", "--timeout", "900"],
+    )?
     assert options.source_sha == SHA
     assert options.output.0 == "out"
+    assert options.keep_trees
     assert options.prove_fixed_point
     assert options.jobs == 6
     assert options.timeout_seconds == 900
-    assert parse_release_options([SHA, "out"])?.jobs == 4
+    defaults = parse_release_options([SHA, "out"])?
+    assert not defaults.keep_trees
+    assert defaults.jobs == 4
     return Ok(None)
 
 
 def test_release_arguments_refuse_ambiguous_or_unbounded_invocations() -> Result[None, str]:
     """Missing operands, abbreviated SHAs, unknown options, and nonpositive budgets fail closed."""
-    assert refused_release([SHA]) == "usage: release.incn SHA OUT [--prove-fixed-point] [--jobs N] [--timeout SECONDS]"
+    assert refused_release([SHA]) == "usage: release.incn SHA OUT [--keep-trees] [--prove-fixed-point] [--jobs N] [--timeout SECONDS]"
     assert refused_release(["deadbeef", "out"]) == "SHA must be a full lowercase source commit"
     assert refused_release([SHA, "out", "--fast"]) == "unknown option `--fast`"
     assert refused_release([SHA, "out", "--jobs", "0"]) == "--jobs needs a positive integer"
