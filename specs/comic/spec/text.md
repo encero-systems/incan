@@ -32,7 +32,8 @@ Named fields go in `{ }`, as `key = value`. Positional data goes in `( )`, and o
 - The printer writes fields in declaration order. A reader accepts any order. Hashes use member identity order, never presentation order.
 - A field at its declared absent value is left out: an optional that is absent, or a collection that is empty where the description declares empty as its absent value. Every other field is written, including a field equal to a default, because the text must not depend on defaults.
 - A block's type name is left out when its slot admits only one type. Root entries and slots admitting several types keep it.
-- A record with exactly one field, in a slot whose type is that record, prints as that field's value: `body = Block { statements = […] }` prints as `body = […]`.
+- A record with exactly one field, in a slot whose type is that record, prints as that field's value: `body = Block { statements = […] }` prints as `body = […]`. The printer uses this shorter form only while the description has exactly one field.
+- A reader still accepts the shorter form after the record gains fields, so a document printed earlier keeps reading. The bare value goes to the one field of the current description that can hold it. Every other field must have a declared absent value, and takes it. If no field or more than one field can hold the value, or another field has no absent value, the reader refuses it.
 
 ## Literals
 
