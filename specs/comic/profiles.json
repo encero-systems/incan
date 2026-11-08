@@ -5,7 +5,7 @@
       "id": "crumb1",
       "role": "value-and-hash-semantics",
       "owner": "Encero Systems",
-      "status": "foundation; digest preimage pending",
+      "status": "experimental; exact preimage draft and vectors",
       "spec": "spec/hashes.md"
     },
     {
