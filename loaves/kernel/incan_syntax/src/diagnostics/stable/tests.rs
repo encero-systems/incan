@@ -196,6 +196,34 @@ fn field_rename_refusals_keep_codes_locations_and_explanations() -> Result<(), B
     Ok(())
 }
 
+#[test]
+fn made_private_refusal_keeps_code_and_explanation() -> Result<(), Box<dyn std::error::Error>> {
+    let refusal = errors::invalid_made_private_annotation("field 'value'", "the field is public", Span::new(4, 9));
+    assert_eq!(code_for_error(&refusal, DiagnosticPhase::Typecheck), "INCAN-T0132");
+    let Some(entry) = explain("INCAN-T0132") else {
+        return Err("INCAN-T0132 must have a catalog explanation".into());
+    };
+    assert_eq!(entry.code, "INCAN-T0132");
+    Ok(())
+}
+
+#[test]
+fn made_private_import_refusal_keeps_code_and_explanation() -> Result<(), Box<dyn std::error::Error>> {
+    let refusal = errors::import_made_private(
+        "GraphNode",
+        "std.graph",
+        Some("Use scoped keys"),
+        Some("DiGraph.read_view"),
+        Span::new(4, 13),
+    );
+    assert_eq!(code_for_error(&refusal, DiagnosticPhase::Typecheck), "INCAN-T0133");
+    let Some(entry) = explain("INCAN-T0133") else {
+        return Err("INCAN-T0133 must have a catalog explanation".into());
+    };
+    assert_eq!(entry.code, "INCAN-T0133");
+    Ok(())
+}
+
 /// Checker refusal families retain distinct codes and the remedies attached by their owning catalog entries.
 #[test]
 fn checker_refusals_of_unbuildable_programs_use_distinct_stable_codes() -> Result<(), Box<dyn std::error::Error>> {

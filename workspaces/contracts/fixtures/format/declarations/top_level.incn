@@ -24,6 +24,7 @@
 #
 #       x: int
 #       y [renamed_from=["vertical", "ordinate"], canonical=false] as "wireY": int
+#       legacy [made_private { since="0.6", message="Use x", replacement=Point.x }]: int
 
 from std.collections import Dict
 from std.fs import Path
@@ -41,3 +42,4 @@ model Point:
 
     x:int
     y [canonical=false, renamed_from=["vertical","ordinate"]] as "wireY":int
+    legacy [made_private { replacement=Point.x,message="Use x",since="0.6" }]:int

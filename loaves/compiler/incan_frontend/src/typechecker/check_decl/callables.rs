@@ -743,6 +743,11 @@ impl TypeChecker {
         owner_params: &[TypeParam],
     ) -> Option<(PreparedMethodCheck, Option<String>)> {
         self.validate_decorators_allowing_user_defined(&method.decorators);
+        self.validate_made_private_decorators(
+            &method.decorators,
+            method.visibility,
+            &format!("method '{owner}.{}'", method.name),
+        );
         let declaration_name = format!("{owner}.{}", method.name);
         self.check_registry_description_decorators(
             &method.decorators,

@@ -62,14 +62,34 @@ impl TypeChecker {
         if !field.is_type_private {
             return false;
         }
-        let owner = field.owner.as_deref().unwrap_or(type_name);
+        let owner = field.owner.as_deref().map_or(type_name, |owner| owner);
         self.type_private_member_is_inaccessible(owner, field.identity.as_ref())
     }
 
     /// Report a private field under the source name of the class or model that declares it. The receiver's type
     /// may name the declaration's generated carrier, which no diagnostic shows.
-    pub(super) fn private_field_error(type_name: &str, field: &FieldInfo, name: &str, span: Span) -> CompileError {
-        errors::private_field(field.owner.as_deref().unwrap_or(type_name), name, span)
+    pub(super) fn private_field_error(
+        &self,
+        type_name: &str,
+        field: &FieldInfo,
+        name: &str,
+        span: Span,
+    ) -> CompileError {
+        let suggest_public = field
+            .identity
+            .as_ref()
+            .is_none_or(|identity| identity.origin == self.symbols.declaration_origin());
+        errors::private_field(
+            field.owner.as_deref().map_or(type_name, |owner| owner),
+            name,
+            span,
+            field.made_private.as_ref().and_then(|facts| facts.message.as_deref()),
+            field
+                .made_private
+                .as_ref()
+                .and_then(|facts| facts.replacement.as_deref()),
+            suggest_public,
+        )
     }
 
     /// Resolve an expression receiver like `math` to the module namespace its checked binding exposes.

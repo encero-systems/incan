@@ -2,6 +2,42 @@
 
 use super::*;
 
+/// Collect private nominal declarations whose compiler-owned decorator preserves migration guidance for consumers.
+pub fn collect_checked_made_private_types(
+    program: &Program,
+    module_path: &[String],
+) -> Vec<crate::library_manifest::MadePrivateTypeExport> {
+    let mut exports = program
+        .declarations
+        .iter()
+        .filter_map(|declaration| {
+            let (visibility, decorators, name) = match &declaration.node {
+                Declaration::Model(value) => (value.visibility, &value.decorators, &value.name),
+                Declaration::Class(value) => (value.visibility, &value.decorators, &value.name),
+                Declaration::Trait(value) => (value.visibility, &value.decorators, &value.name),
+                Declaration::Enum(value) => (value.visibility, &value.decorators, &value.name),
+                Declaration::Newtype(value) => (value.visibility, &value.decorators, &value.name),
+                _ => return None,
+            };
+            if visibility != Visibility::Private {
+                return None;
+            }
+            let facts = crate::symbols::made_private_from_decorators(decorators)?;
+            Some(crate::library_manifest::MadePrivateTypeExport {
+                module_path: module_path.to_vec(),
+                name: name.clone(),
+                facts: (&facts).into(),
+            })
+        })
+        .collect::<Vec<_>>();
+    exports.sort_by(|left, right| {
+        left.module_path
+            .cmp(&right.module_path)
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    exports
+}
+
 /// Collect checked public exports from one program while preserving alias identity.
 pub fn collect_checked_public_exports(program: &Program, checker: &TypeChecker) -> Vec<CheckedNamedExport> {
     let mut exports = Vec::new();

@@ -10,6 +10,7 @@ impl TypeChecker {
 
         // ---- Declared derives ----
         self.validate_decorators_rejecting_user_defined(&model.decorators, "model");
+        self.validate_made_private_decorators(&model.decorators, model.visibility, &format!("model '{}'", model.name));
         self.reject_registry_description_decorators(&model.decorators, "model");
         // Validate @derive decorators
         self.validate_derives(&model.decorators);
@@ -77,6 +78,17 @@ impl TypeChecker {
         }
         method_names.extend(self.collect_trait_method_names(&model.traits));
         self.validate_field_metadata(&model.name, &model.fields, &method_names);
+        for field in &active_model_fields {
+            if field.node.visibility == Visibility::Public
+                && let Some(span) = field.node.metadata.made_private_key_span
+            {
+                self.errors.push(errors::invalid_made_private_annotation(
+                    &format!("field '{}.{}'", model.name, field.node.name),
+                    "the field is public",
+                    span,
+                ));
+            }
+        }
         if let Some(TypeInfo::Model(info)) = self.lookup_type_info(&model.name).cloned() {
             let method_spans = Self::method_decl_spans_by_name(&model.methods);
             self.validate_multi_instantiation_trait_surface(
@@ -241,6 +253,12 @@ impl TypeChecker {
                     has_default: field.node.default.is_some(),
                     alias: field.node.metadata.alias.clone(),
                     description: field.node.metadata.description.clone(),
+                    made_private: field
+                        .node
+                        .metadata
+                        .made_private
+                        .as_ref()
+                        .map(crate::symbols::MadePrivateInfo::from_field),
                 }),
                 span: field.span,
                 scope: 0,

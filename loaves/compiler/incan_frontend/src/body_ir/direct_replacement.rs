@@ -7,11 +7,9 @@ use super::*;
 /// it names as a Rust builtin retained among the model's derives. A field alias crosses the boundary in the retained
 /// declaration, so a serde form can rename the field as legacy does.
 pub fn is_direct_replacement_checked_model(model: &ast::ModelDecl, type_info: &TypeCheckInfo) -> bool {
-    if model
-        .decorators
-        .iter()
-        .all(|decorator| is_direct_replacement_model_derive(&decorator.node))
-        && has_direct_replacement_model_shape(model, Some(type_info))
+    if model.decorators.iter().all(|decorator| {
+        is_direct_replacement_model_derive(&decorator.node) || is_direct_replacement_metadata_decorator(&decorator.node)
+    }) && has_direct_replacement_model_shape(model, Some(type_info))
     {
         return true;
     }
@@ -40,9 +38,10 @@ pub(super) fn has_checked_native_derives(
     };
     decorators.iter().all(|decorator| {
         let derive = &decorator.node;
-        derive.name == "derive"
-            && derive.type_args.is_empty()
-            && (derive.path.segments == ["derive"] || (rust_derives && derive.path.segments == ["rust", "derive"]))
+        is_direct_replacement_metadata_decorator(derive)
+            || derive.name == "derive"
+                && derive.type_args.is_empty()
+                && (derive.path.segments == ["derive"] || (rust_derives && derive.path.segments == ["rust", "derive"]))
     }) && names.iter().all(|name| {
         type_info.derivations.native_macro_paths.contains(name)
             || matches!(
@@ -70,21 +69,31 @@ pub(super) fn has_checked_native_derives(
     })
 }
 
-/// Admit builtin static and class method markers.
+/// Admit builtin static and class method markers, plus checked metadata-only migration markers.
 ///
 /// Checking already reflects both markers in the method's facts: a static method has no receiver, and a
 /// classmethod's `cls` is a checked type token whose constructions resolve to the owner. Every other method decorator
 /// rebinds or wraps the method and stays refused.
 pub fn is_direct_replacement_method_decorator(decorator: &ast::Decorator) -> bool {
-    decorator.args.is_empty()
-        && decorator.type_args.is_empty()
-        && matches!(
-            incan_lang::lang::decorators::from_segments(&decorator.path.segments),
-            Some(
-                incan_lang::lang::decorators::DecoratorId::StaticMethod
-                    | incan_lang::lang::decorators::DecoratorId::ClassMethod
+    is_direct_replacement_metadata_decorator(decorator)
+        || decorator.args.is_empty()
+            && decorator.type_args.is_empty()
+            && matches!(
+                incan_lang::lang::decorators::from_segments(&decorator.path.segments),
+                Some(
+                    incan_lang::lang::decorators::DecoratorId::StaticMethod
+                        | incan_lang::lang::decorators::DecoratorId::ClassMethod
+                )
             )
-        )
+}
+
+/// Admit a compiler-validated decorator whose payload contributes migration metadata but no executable behavior.
+///
+/// The checker owns argument validation and public-declaration refusal. Body IR therefore preserves no runtime
+/// application for this marker; it only keeps the declaration shape eligible for direct lowering.
+pub fn is_direct_replacement_metadata_decorator(decorator: &ast::Decorator) -> bool {
+    incan_lang::lang::decorators::from_segments(&decorator.path.segments)
+        == Some(incan_lang::lang::decorators::DecoratorId::MadePrivate)
 }
 
 /// Determine whether a nominal declaration uses at most one of type parameters, a generic trait adoption and method
@@ -371,7 +380,10 @@ pub fn is_direct_replacement_checked_class(class: &ast::ClassDecl, type_info: &T
 /// payload construction, aliases, trait dispatch, custom methods, decorators, and generic substitution. The direct
 /// runtime can therefore materialize only a canonical unit carrier and compare its retained identity.
 pub fn is_direct_replacement_fieldless_enum(enum_decl: &ast::EnumDecl) -> bool {
-    enum_decl.decorators.is_empty()
+    enum_decl
+        .decorators
+        .iter()
+        .all(|decorator| is_direct_replacement_metadata_decorator(&decorator.node))
         && enum_decl.type_params.is_empty()
         && enum_decl.value_type.is_none()
         && enum_decl.traits.is_empty()
@@ -397,8 +409,13 @@ pub fn is_direct_native_enum(value: &ast::EnumDecl) -> bool {
     is_direct_replacement_value_enum(value)
         || ((value.type_params.is_empty() || (value.methods.is_empty() && value.traits.is_empty()))
             && value.value_type.is_none()
-            && value.methods.iter().all(|method| method.node.decorators.is_empty())
-            && value.decorators.iter().all(|decorator| is_bare_derive(&decorator.node)))
+            && value
+                .methods
+                .iter()
+                .all(|method| has_direct_replacement_method_decorators(&method.node))
+            && value.decorators.iter().all(|decorator| {
+                is_bare_derive(&decorator.node) || is_direct_replacement_metadata_decorator(&decorator.node)
+            }))
 }
 
 /// Whether checking selected only derives the native route realizes for a source enum: Rust's builtin derives and
@@ -448,7 +465,7 @@ pub fn is_direct_replacement_value_enum(enum_decl: &ast::EnumDecl) -> bool {
     enum_decl
         .decorators
         .iter()
-        .all(|decorator| is_bare_derive(&decorator.node))
+        .all(|decorator| is_bare_derive(&decorator.node) || is_direct_replacement_metadata_decorator(&decorator.node))
         && enum_decl.type_params.is_empty()
         && enum_decl.value_type.is_some()
         && enum_decl.traits.is_empty()

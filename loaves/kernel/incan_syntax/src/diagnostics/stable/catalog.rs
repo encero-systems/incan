@@ -774,6 +774,42 @@ pub(super) const FIELD_RENAME_CLAIMED_TWICE: DiagnosticCatalogEntry = Diagnostic
     docs_url: None,
 };
 
+pub(super) const INVALID_MADE_PRIVATE_ANNOTATION: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0132",
+    title: "Invalid made-private migration metadata",
+    severity: "error",
+    phase: "typecheck",
+    summary: "`made_private` is attached to a public declaration or its lifecycle descriptor is not valid.",
+    explanation: "RFC 150's `made_private` descriptor explains a refusal after an API is made private. It therefore belongs only on a private declaration. Method and type decorators accept named string lifecycle facts and a checked declaration reference for `replacement`.",
+    examples: &[
+        "pub model Visible:\n    value [made_private=true]: int",
+        "@made_private(message=\"Use Graph.read_view\", replacement=Graph.read_view)\npub class Graph:\n    pass",
+    ],
+    common_causes: &[
+        "The declaration still has `pub` visibility.",
+        "A decorator argument is positional, unknown, or has the wrong value shape.",
+        "The replacement does not resolve to a declaration.",
+    ],
+    fixes: &[
+        "Remove `pub` before recording the migration descriptor.",
+        "Use the supported named lifecycle arguments and a resolvable replacement reference.",
+    ],
+    docs_url: None,
+};
+
+pub(super) const IMPORTED_TYPE_MADE_PRIVATE: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0133",
+    title: "Imported type was made private",
+    severity: "error",
+    phase: "typecheck",
+    summary: "A compiled provider records that an imported nominal type moved from public to private visibility.",
+    explanation: "A `made_private` type is no longer part of the provider's public API, but its compiled manifest retains checked migration guidance. The consumer receives that guidance instead of a suggestion to edit the dependency.",
+    examples: &["from std.graph import GraphNode"],
+    common_causes: &["Consumer code still imports a provider type that was removed from the public surface."],
+    fixes: &["Use the replacement named by the provider, or keep the value behind the provider's public abstraction."],
+    docs_url: None,
+};
+
 pub(super) const CATALOG: &[DiagnosticCatalogEntry] = &[
     OWNERSHIP_BOUNDARY_UNPROVABLE,
     RESULT_SOURCE_INVALID,
@@ -784,6 +820,8 @@ pub(super) const CATALOG: &[DiagnosticCatalogEntry] = &[
     NONGENERIC_CALL_TYPE_ARGUMENTS,
     FIELD_RENAME_STILL_DECLARED,
     FIELD_RENAME_CLAIMED_TWICE,
+    INVALID_MADE_PRIVATE_ANNOTATION,
+    IMPORTED_TYPE_MADE_PRIVATE,
     PARSER_SYNTAX,
     TYPECHECK,
     UNREACHABLE_CODE,

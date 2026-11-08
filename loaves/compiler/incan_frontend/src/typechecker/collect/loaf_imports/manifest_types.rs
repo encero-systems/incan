@@ -506,6 +506,7 @@ impl TypeChecker {
                         },
                         alias: field.alias.clone(),
                         description: field.description.clone(),
+                        made_private: field.made_private.as_ref().map(Into::into),
                     },
                 )
             })
@@ -632,6 +633,7 @@ impl TypeChecker {
             is_async: method.is_async,
             has_body: method.has_body,
             alias_of: method.alias_of.clone(),
+            made_private: method.made_private.as_ref().map(Into::into),
         }
     }
 

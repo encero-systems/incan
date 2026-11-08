@@ -16,8 +16,29 @@ The `as "WIRE_NAME"` form is equivalent to `alias="WIRE_NAME"`. It can follow br
 | `description` | String literal | None | Records field documentation. |
 | `renamed_from` | String literal or list of string literals | Empty | Records earlier declared field names in chronological order, earliest first. |
 | `canonical` | Boolean literal | `true` | Records whether the field participates in the canonical stored hash. |
+| `made_private` | `true`, a message string, or a lifecycle block | None | Retains migration guidance after a field moves from public to private visibility. |
 
 An explicit `canonical=true` is retained. A one-item `renamed_from=["old_name"]` list remains a list when formatted.
+
+## Made-private lifecycle descriptor
+
+`made_private` is valid only on a private field. `true` records the migration without additional prose, and a string is the migration message. The block form accepts these optional keys:
+
+| Key | Value | Effect |
+| --- | --- | --- |
+| `since` | String literal | Version in which the declaration became private. |
+| `retire_in` | String literal | Version in which the retained migration fact may be retired. |
+| `message` | String literal | Guidance shown by the ordinary private-member refusal. |
+| `by` | String literal | Date by which the migration should be complete. |
+| `issue` | String literal | Tracking issue identifier. |
+| `replacement` | Checked declaration reference | Replacement shown by the ordinary private-member refusal. |
+
+```incan
+model LegacyGraph:
+    nodes [made_private { since="0.6", message="Use read_view", replacement=LegacyGraph.read_view }]: list[int]
+```
+
+Methods and nominal types use `@made_private(...)` with the same named lifecycle arguments. A `made_private` declaration is refused while it remains `pub`. It cannot also be `deprecated`: `deprecated` describes a callable declaration that still works, while `made_private` explains an access refusal. Compiled library metadata retains field, method and type migration facts for consumers.
 
 ## Rename rules
 
@@ -56,3 +77,5 @@ model Customer:
 | Earlier name is claimed more than once | `INCAN-T0131` |
 | `renamed_from` or `canonical` is used on a class field | `INCAN-T0001` |
 | Construction, access, a pattern or decoding uses an earlier name | `INCAN-T0001` |
+| `made_private` is attached to a public field, method or type | `INCAN-T0132` |
+| A compiled consumer imports a type recorded as made private | `INCAN-T0133` |

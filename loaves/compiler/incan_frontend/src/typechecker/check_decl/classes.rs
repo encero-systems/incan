@@ -32,6 +32,7 @@ impl TypeChecker {
         );
 
         let derives = self.check_class_derives(class);
+        self.validate_made_private_decorators(&class.decorators, class.visibility, &format!("class '{}'", class.name));
 
         // Check base class exists
         if let Some(base) = &class.extends
@@ -78,6 +79,15 @@ impl TypeChecker {
                 self.errors.push(errors::canonical_not_supported_on_class(
                     &class.name,
                     &field.node.name,
+                    span,
+                ));
+            }
+            if field.node.visibility == Visibility::Public
+                && let Some(span) = field.node.metadata.made_private_key_span
+            {
+                self.errors.push(errors::invalid_made_private_annotation(
+                    &format!("field '{}.{}'", class.name, field.node.name),
+                    "the field is public",
                     span,
                 ));
             }
@@ -409,6 +419,12 @@ impl TypeChecker {
                     has_default: field.node.default.is_some(),
                     alias: field.node.metadata.alias.clone(),
                     description: field.node.metadata.description.clone(),
+                    made_private: field
+                        .node
+                        .metadata
+                        .made_private
+                        .as_ref()
+                        .map(crate::symbols::MadePrivateInfo::from_field),
                 }),
                 span: field.span,
                 scope: 0,

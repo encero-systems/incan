@@ -1,7 +1,8 @@
-# behavior: rename history refuses names still declared on the model, duplicate claims, empty or invalid names, class-field metadata and construction through an earlier name (#2519)
+# behavior: field metadata refuses invalid rename histories, class storage keys, construction through an earlier name and made-private facts on declarations that remain public (#2519, #2524)
 # expect-diagnostic: INCAN-T0130
 # expect-diagnostic: INCAN-T0131
 # expect-diagnostic: INCAN-T0001
+# expect-diagnostic: INCAN-T0132
 
 model ExistingNames:
     email: str
@@ -24,6 +25,15 @@ model InvalidHistory:
 class LiveObject:
     renamed [renamed_from="old"]: str
     excluded [canonical=false]: str
+
+
+@made_private(message="This type remains public")
+pub class PublicMigration:
+    pub value [made_private=true]: int
+
+    @made_private(message="This method remains public")
+    pub def value_copy(self) -> int:
+        return self.value
 
 
 def construct_with_old_name() -> None:

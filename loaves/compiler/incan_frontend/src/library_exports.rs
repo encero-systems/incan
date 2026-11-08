@@ -260,6 +260,7 @@ pub struct CheckedField {
     pub default: Option<CheckedParamDefault>,
     pub alias: Option<String>,
     pub description: Option<String>,
+    pub made_private: Option<crate::symbols::MadePrivateInfo>,
 }
 
 /// Public computed-property metadata preserved for compiled-library consumers.
@@ -286,6 +287,7 @@ pub struct CheckedMethod {
     pub return_type: ResolvedType,
     pub is_async: bool,
     pub has_body: bool,
+    pub made_private: Option<crate::symbols::MadePrivateInfo>,
 }
 
 #[derive(Debug, Clone)]

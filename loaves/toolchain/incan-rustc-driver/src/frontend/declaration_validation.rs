@@ -262,6 +262,9 @@ pub(super) fn refused_decorator_feature(
 /// and each adopter's conformance before admission; default method bodies retain their checked field accesses.
 pub(super) fn retained_trait_marker(decorator: &incan_frontend::ast::Decorator) -> bool {
     let id = incan_lang::lang::decorators::from_segments(&decorator.path.segments);
+    if id == Some(incan_lang::lang::decorators::DecoratorId::MadePrivate) {
+        return true;
+    }
     if id == Some(incan_lang::lang::decorators::DecoratorId::Requires)
         && decorator.type_args.is_empty()
         && decorator

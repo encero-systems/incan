@@ -290,6 +290,7 @@ fn method_info_from_decl(
         is_async: method.node.is_async(),
         has_body: method.node.body.is_some(),
         alias_of: None,
+        made_private: crate::symbols::made_private_from_decorators(&method.node.decorators),
     }
 }
 
@@ -436,6 +437,12 @@ pub(super) fn collect_fields(
                     has_default: f.node.default.is_some(),
                     alias: f.node.metadata.alias.clone(),
                     description: f.node.metadata.description.clone(),
+                    made_private: f
+                        .node
+                        .metadata
+                        .made_private
+                        .as_ref()
+                        .map(crate::symbols::MadePrivateInfo::from_field),
                 },
             )
         })
@@ -559,6 +566,7 @@ pub(super) fn inject_validate_methods(
             is_async: false,
             has_body: true,
             alias_of: None,
+            made_private: None,
         },
     );
 }
