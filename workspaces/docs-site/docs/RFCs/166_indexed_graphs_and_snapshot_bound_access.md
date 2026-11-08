@@ -203,6 +203,31 @@ An existing function record can participate in a call graph and a type-use graph
 
 The proposed `read_view()` on an in-memory graph produces a consistent, scoped read borrow. A database snapshot produces a reader over explicitly selected node and relation families. Both implement the reading protocol below.
 
+`read_view()` reads the whole graph, and `read_selected(...)` reads part of it. The selection is fixed when the reader opens, as a database projection fixes its families:
+
+```incan
+from std.graph import GraphError, RelationGraph, ScopedNodeId
+
+def title_reads(
+    graph: RelationGraph[Region, ReadsState],
+    editor: ScopedNodeId,
+    preview: ScopedNodeId,
+) -> Result[int, GraphError]:
+    """Count the title dependencies leaving the editor within two regions."""
+    view = graph.read_selected(
+        node_keys=[editor, preview],
+        edge_filter=(edge) => edge.value.field == StateField.Title,
+    )?
+    mut count = 0
+    with view.outgoing(editor).cursor(max_records=64, max_bytes=65_536) as cursor:
+        while let Some(batch) = cursor.next_batch()?:
+            for edge in batch:
+                count += 1
+    return Ok(count)
+```
+
+Over the graph built by `region_dependencies()`, the count is 1: the body read between the same regions fails the filter. An edge from the editor to a third region would not count either, because its target is outside `node_keys`, even though the edge exists in the graph.
+
 Algorithms accept this protocol, a start key, direction and a budget. A bounded walk returns a page with visited keys, observed edges and a completion outcome. The caller may continue with the returned cursor or stop. It must not treat a budget-limited result as the complete descendant set.
 
 Read-only access does not require a writable graph. A database graph view must not load every node into `DiGraph` before answering a neighbor query.
@@ -282,6 +307,27 @@ The default selection is an induced graph: an edge is visible only when both end
 
 An adapter may normalize backend-specific keys into a tagged key type, but the mapping must retain origin and family scope. It must not require an eager whole-graph key map. Database-local row offsets must not escape as durable keys.
 
+### Selecting a read scope
+
+A reader's selection is fixed when the reader opens. An open reader is never narrowed or widened; another selection means another reader.
+
+On an in-memory graph, `graph.read_view()` selects the whole graph, and `graph.read_selected(...)` selects through the arguments below. Each argument is one of the three selector kinds a projection declares:
+
+| Argument | Selector kind | Selects |
+| --- | --- | --- |
+| `node_keys` | Indexed keys | Nodes, as a collection of the graph's own scoped node keys. |
+| `edge_kinds` | Relation families | Relationship kinds, as the `VariantInfo` of declared variants of `E` (RFC 085). The family/variant index serves this selection, so no other payload is read. |
+| `node_filter` | Post-read predicate | Nodes for which the filter returns `true`. The filter receives the node's scoped key and its payload. |
+| `edge_filter` | Post-read predicate | Edges for which the filter returns `true`. The filter receives the item an adjacency batch yields: the edge's scoped identity, its endpoints and its payload. |
+
+An omitted argument selects everything of its kind. The induced rule combines the arguments. A node is visible when it is in `node_keys` and passes `node_filter`. An edge is visible when both endpoints are visible, its kind is in `edge_kinds`, and it passes `edge_filter`. A filter receives payloads read-only. Rejected candidates, and the payloads the filters read, count in the traversal report.
+
+A filter judges only the candidate it receives. A filter whose captures depend on the graph, or on a reader over it, is refused. This keeps a filter from hiding a scan of the graph, and the reader never carries a second view of its own source. Under RFC 164, any other capture is a source dependency of the reader, and so is a borrowed key collection.
+
+`read_selected` validates its selection and is fallible. A key from another graph instance is a scope mismatch, and a `VariantInfo` that is not a variant of `E` is an unsupported selection. Each failure names its argument. A key of a removed node selects nothing and is not an error. Opening the reader costs work proportional to the selection, not to the graph.
+
+A database reader takes the same arguments: `snapshot.graph[N, E](name, node_keys=..., edge_kinds=..., node_filter=..., edge_filter=...)`, with typed record keys in place of scoped node keys. The explicit projection form keeps its family descriptors. An algorithm's relation selection applies within its reader's scope and never widens it.
+
 ### Read scopes, ownership and cursor lifetime
 
 RFC 164 owns explicit borrowing and returned reference contracts. Read-only projections use `Borrowed[T]`; `Reference[T]` is exclusive access and must not be used as a generic name for every retained view. A borrowed in-memory reader and its cursor must preserve their source dependencies. A database reader may instead own a lease retaining one immutable selection and may outlive the local snapshot binding when its complete resource contract permits that escape. Neither `Owned` nor a cursor type name alone proves independent retention. Views into reusable buffers remain borrowed until their last dependent use; advancing must not invalidate them. Implementation declarations must carry RFC 164 source dependencies in public metadata; neither a reader wrapper nor a cursor may erase them.
@@ -299,6 +345,7 @@ The required public operation shapes are below. Concrete generic parameter names
 | Operation | Result and retained dependency |
 | --- | --- |
 | `graph.read_view()` on an in-memory graph | A shared reader that borrows the graph. Its public source dependency is the graph receiver; it cannot escape that owner or permit conflicting graph mutation. |
+| `graph.read_selected(...)` on an in-memory graph | A fallible shared reader over the validated selection, with the same borrow of the graph. Its public source dependencies are the graph receiver, a borrowed key collection and the filters' captures. |
 | `snapshot.graph[N, E](name)` | A fallible database reader that owns a lease on the selected snapshot, graph definition and indexes. Successful acquisition establishes that retention; the handle may outlive the binding used to obtain it. |
 | `reader.incoming(key)` / `reader.outgoing(key)` | A lazy adjacency selection retaining the reader dependency and direction. Constructing it does not materialize neighbors. |
 | `selection.cursor(max_records=..., max_bytes=...)` | A scoped cursor borrowing its selection/reader, with checked keys, fixed ordering and bounded state. Entering the scope acquires cursor resources; exit releases them without committing. |
@@ -419,6 +466,7 @@ Read scopes, typed failures, cursors and completeness add concepts beyond a smal
 - **Typed payloads and direction:** nodes and edges accept full models, with explicit payload enums for multiple kinds. Directed edges preserve separate identities and payloads; incoming lookup does not create reverse edges. Endpoint legality follows declared adapters, not naming conventions.
 - **Graph-first storage:** named typed graphs can be authored directly through a database transaction. Existing record attachment and explicit projections avoid model duplication. RFC 165 handles Crumb, snapshots, storage placement and publication; large graphs never require whole-graph materialization.
 - **Storage ownership:** graph definitions, node memberships and edge records are logical structures. Incoming/outgoing indexes are derived access paths. Raw structural fields become private in indexed containers, with migration diagnostics and supported replacements; constructor and method compatibility remains governed by RFC 047.
+- **Selection at opening:** a reader's selection is fixed when it opens, through the same arguments in memory and in a database. Filters judge only the candidate they receive, so cost accounting stays exact and a reader carries no hidden second view of its graph.
 - **Reader lifetime:** memory readers and ordinary cursors borrow their actual source. Database snapshot graph readers own acquired leases; explicitly retained continuations may do the same. Borrowed buffers cannot outlive or be invalidated by their owners, and ordinary users rely on duckborrowing.
 - **Traversal surface:** explicit pages and scoped batch cursors are required. Fallible iterator convenience uses the same engine and preserves limited outcomes; it is not a separate prerequisite. Limits must never look like successful exhaustion.
 - **Record-set boundary:** RFC 169 owns general projections over records of several kinds, record streams and change streams. Supporting multiple graph payload kinds and implementing the graph reader do not depend on that surface.
