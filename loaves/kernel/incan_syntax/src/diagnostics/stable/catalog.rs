@@ -40,6 +40,9 @@ pub(super) const TYPECHECK: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     docs_url: Some("https://encero-systems.github.io/incan/language/reference/types/"),
 };
 
+/// The stable code of [`TYPECHECK`], for a type-checking diagnostic that names its code in its heading.
+pub const TYPECHECK_CODE: &str = TYPECHECK.code;
+
 pub(super) const UNREACHABLE_CODE: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     code: "INCAN-T0101",
     title: "Unreachable code",

@@ -108,6 +108,7 @@ pub use declaration_views::{CheckEnvironmentView, CheckedBindingView, Declaratio
 mod trait_bound_relations;
 mod type_info;
 pub(crate) use type_info::{ClassLayoutInfo, RustCheckedCall};
+mod undetermined_type_params;
 mod union_member_identity;
 mod web_routes;
 
@@ -626,6 +627,12 @@ pub struct TypeChecker {
     /// Equally ranked trait callees of a native method call, by call span, kept for that call's refusal when no later
     /// selection step chooses a callee (#2481).
     tied_rust_trait_callees: HashMap<crate::ast::Span, Vec<String>>,
+    /// Where each generic declaration of the program being checked declares its type parameters, by the declaration
+    /// span its canonical identity carries, so an undetermined-parameter refusal can point at one (#2762).
+    type_param_declaration_spans: HashMap<crate::ast::Span, Vec<(String, crate::ast::Span)>>,
+    /// The value span and name of the unannotated assignment whose value is being checked, so an undetermined
+    /// construction's hint can spell the annotation that fixes it (#2762).
+    unannotated_binding_value: Option<(crate::ast::Span, String)>,
     /// Statement-block identities used to scope pending generic-call bindings.
     statement_blocks: StatementBlockState,
     /// Slot identities currently readable in the active control-flow path.

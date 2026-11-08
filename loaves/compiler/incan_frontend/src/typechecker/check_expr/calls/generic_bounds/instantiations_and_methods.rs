@@ -330,14 +330,18 @@ impl TypeChecker {
             self.record_argument_destinations_at_bindings(&method_info.type_params, &arguments, &type_bindings);
         }
         if self.errors.len() == errors_before_call && explicit_type_args.is_empty() {
-            self.refuse_bounded_type_params_left_open(
-                method,
-                &method_info.type_params,
-                &method_info.type_param_bound_details,
-                &arguments,
-                &instantiation,
-                call_site_span,
-            );
+            self.refuse_type_params_left_open(OpenTypeParamCall {
+                callee: method,
+                method: true,
+                declaration: method_info.identity.as_ref(),
+                type_params: &method_info.type_params,
+                bound_details: &method_info.type_param_bound_details,
+                params: &params,
+                return_type: &return_type,
+                args,
+                bindings: &instantiation,
+                span: call_site_span,
+            });
         }
         self.finish_checked_method_call(MethodCallCompletion {
             method,
