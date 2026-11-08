@@ -90,6 +90,8 @@ pub enum DecoratorFeature {
     Requires,
     Describe,
     ProviderOperation,
+    /// Lifecycle metadata for a declaration that moved from public to private visibility.
+    MadePrivate,
     StdlibDecoratorFunction,
 }
 
@@ -393,5 +395,6 @@ pub fn decorator_feature_from_id(id: DecoratorId) -> DecoratorFeature {
         DecoratorId::Requires => DecoratorFeature::Requires,
         DecoratorId::Describe => DecoratorFeature::Describe,
         DecoratorId::ProviderOperation => DecoratorFeature::ProviderOperation,
+        DecoratorId::MadePrivate => DecoratorFeature::MadePrivate,
     }
 }

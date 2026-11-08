@@ -79,6 +79,8 @@ pub struct LibraryManifest {
     pub manifest_format: u32,
     /// Public exports visible to consumers of the library.
     pub exports: LibraryExports,
+    /// Private nominal declarations that retain an RFC 150 migration refusal for compiled consumers.
+    pub made_private_types: Vec<MadePrivateTypeExport>,
     /// Optional vocab-provider metadata for DSL registration and desugaring.
     pub vocab: Option<VocabExports>,
     /// Optional soft-keyword activations exported by this library.
@@ -103,6 +105,14 @@ pub struct LibraryExports {
     pub newtypes: Vec<NewtypeExport>,
     pub consts: Vec<ConstExport>,
     pub statics: Vec<StaticExport>,
+}
+
+/// Published refusal metadata for a nominal type that used to be public.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MadePrivateTypeExport {
+    pub module_path: Vec<String>,
+    pub name: String,
+    pub facts: MadePrivateExport,
 }
 
 /// Exported declaration-level alias metadata.

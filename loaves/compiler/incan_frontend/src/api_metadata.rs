@@ -389,6 +389,8 @@ pub struct ApiMethod {
     pub return_type: TypeRef,
     pub is_async: bool,
     pub has_body: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub made_private: Option<crate::library_manifest::MadePrivateExport>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

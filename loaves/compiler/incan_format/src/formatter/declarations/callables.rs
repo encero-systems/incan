@@ -332,7 +332,8 @@ impl Formatter {
         let has_bracket_metadata = !use_as_sugar && alias.is_some()
             || description.is_some()
             || field.metadata.renamed_from_key_span.is_some()
-            || field.metadata.canonical.is_some();
+            || field.metadata.canonical.is_some()
+            || field.metadata.made_private.is_some();
 
         if has_bracket_metadata {
             self.writer.write(" [");
@@ -379,6 +380,13 @@ impl Formatter {
                 }
                 self.writer.write("canonical=");
                 self.writer.write(if canonical.node { "true" } else { "false" });
+                wrote = true;
+            }
+            if let Some(made_private) = &field.metadata.made_private {
+                if wrote {
+                    self.writer.write(", ");
+                }
+                self.format_made_private_field_metadata(made_private);
             }
             self.writer.write("]");
         }
@@ -394,6 +402,64 @@ impl Formatter {
             self.format_spanned_expr(default);
         }
         self.writer.newline();
+    }
+
+    /// Render RFC 150 field lifecycle metadata in its shortest canonical form.
+    fn format_made_private_field_metadata(&mut self, metadata: &MadePrivateMetadata) {
+        let only_message = metadata.message.is_some()
+            && metadata.since.is_none()
+            && metadata.retire_in.is_none()
+            && metadata.by.is_none()
+            && metadata.issue.is_none()
+            && metadata.replacement.is_none();
+        if only_message {
+            self.writer.write("made_private=\"");
+            if let Some(message) = &metadata.message {
+                self.writer.write(&message.node);
+            }
+            self.writer.write("\"");
+            return;
+        }
+        let has_lifecycle_facts = metadata.since.is_some()
+            || metadata.retire_in.is_some()
+            || metadata.message.is_some()
+            || metadata.by.is_some()
+            || metadata.issue.is_some()
+            || metadata.replacement.is_some();
+        if !has_lifecycle_facts {
+            self.writer.write("made_private=true");
+            return;
+        }
+
+        self.writer.write("made_private { ");
+        let mut wrote = false;
+        for (key, value) in [
+            ("since", &metadata.since),
+            ("retire_in", &metadata.retire_in),
+            ("message", &metadata.message),
+            ("by", &metadata.by),
+            ("issue", &metadata.issue),
+        ] {
+            let Some(value) = value else {
+                continue;
+            };
+            if wrote {
+                self.writer.write(", ");
+            }
+            self.writer.write(key);
+            self.writer.write("=\"");
+            self.writer.write(&value.node);
+            self.writer.write("\"");
+            wrote = true;
+        }
+        if let Some(replacement) = &metadata.replacement {
+            if wrote {
+                self.writer.write(", ");
+            }
+            self.writer.write("replacement=");
+            self.format_import_path(&replacement.node);
+        }
+        self.writer.write(" }");
     }
 
     /// Write an inline parameter list, preserving each parameter's default expression spelling.

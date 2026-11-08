@@ -20,6 +20,7 @@ impl LibraryManifest {
             incan_version: incan_lang::version::INCAN_VERSION.to_string(),
             manifest_format: LIBRARY_MANIFEST_FORMAT,
             exports: LibraryExports::default(),
+            made_private_types: Vec::new(),
             vocab: None,
             soft_keywords: SoftKeywordExports::default(),
             contract_metadata: LibraryContractMetadata::default(),

@@ -43,6 +43,22 @@ pub struct FieldMetadata {
     pub canonical: Option<Spanned<bool>>,
     /// Source span of the `canonical` key when present.
     pub canonical_key_span: Option<Span>,
+    /// Migration facts for a field that used to be public and is now private.
+    pub made_private: Option<MadePrivateMetadata>,
+    /// Source span of the `made_private` key when present.
+    pub made_private_key_span: Option<Span>,
+}
+
+/// Checked-safe lifecycle facts attached to a member that used to be public.
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize)]
+pub struct MadePrivateMetadata {
+    pub since: Option<Spanned<String>>,
+    pub retire_in: Option<Spanned<String>>,
+    pub message: Option<Spanned<String>>,
+    pub by: Option<Spanned<String>>,
+    pub issue: Option<Spanned<String>>,
+    /// Authored checked-reference path. Type checking validates the target; parsing never treats it as dispatch text.
+    pub replacement: Option<Spanned<ImportPath>>,
 }
 
 /// A field declaration within a model or class.

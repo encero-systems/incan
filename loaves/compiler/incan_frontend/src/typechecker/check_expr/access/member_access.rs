@@ -51,7 +51,18 @@ impl TypeChecker {
         let type_name = info.owner.clone().unwrap_or_else(|| receiver_ty.to_string());
         self.errors.push(match info.scope {
             MethodScope::Module => errors::module_private_method(&type_name, method, span),
-            MethodScope::Type | MethodScope::Public => errors::private_method(&type_name, method, span),
+            MethodScope::Type | MethodScope::Public => errors::private_method(
+                &type_name,
+                method,
+                span,
+                info.made_private.as_ref().and_then(|facts| facts.message.as_deref()),
+                info.made_private
+                    .as_ref()
+                    .and_then(|facts| facts.replacement.as_deref()),
+                info.identity
+                    .as_ref()
+                    .is_none_or(|identity| identity.origin == self.symbols.declaration_origin()),
+            ),
         });
     }
 }

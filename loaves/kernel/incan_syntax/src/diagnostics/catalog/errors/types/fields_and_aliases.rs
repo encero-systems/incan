@@ -18,9 +18,29 @@ pub fn direct_recursive_class_field(class_name: &str, field: &str, span: Span) -
 }
 
 /// Report access to a class field that is not visible from the current member-access context.
-pub fn private_field(type_name: &str, field: &str, span: Span) -> CompileError {
-    CompileError::type_error(format!("Field '{field}' on '{type_name}' is private"), span)
-        .with_hint("Access this field from a method on the declaring class, or mark the field `pub`")
+pub fn private_field(
+    type_name: &str,
+    field: &str,
+    span: Span,
+    message: Option<&str>,
+    replacement: Option<&str>,
+    suggest_public: bool,
+) -> CompileError {
+    let mut error = CompileError::type_error(format!("Field '{field}' on '{type_name}' is private"), span);
+    if let Some(message) = message {
+        error = error.with_hint(message);
+    }
+    if let Some(replacement) = replacement {
+        error = error.with_hint(format!("Use `{replacement}` instead"));
+    }
+    if message.is_none() && replacement.is_none() {
+        error = if suggest_public {
+            error.with_hint("Access this field from a method on the declaring class, or mark the field `pub`")
+        } else {
+            error.with_hint("Access this field from a method on the declaring class")
+        };
+    }
+    error
 }
 
 /// Report access to a class computed property that is not visible from the current member-access context.
@@ -30,9 +50,36 @@ pub fn private_property(type_name: &str, property: &str, span: Span) -> CompileE
 }
 
 /// Report a call to an unmarked method from outside the methods of its declaring type (#2570).
-pub fn private_method(type_name: &str, method: &str, span: Span) -> CompileError {
-    CompileError::type_error(format!("Method '{method}' on '{type_name}' is private"), span)
-        .with_hint("Call this method from a method on the declaring type, or mark the method `pub`")
+pub fn private_method(
+    type_name: &str,
+    method: &str,
+    span: Span,
+    message: Option<&str>,
+    replacement: Option<&str>,
+    suggest_public: bool,
+) -> CompileError {
+    let mut error = CompileError::type_error(format!("Method '{method}' on '{type_name}' is private"), span);
+    if let Some(message) = message {
+        error = error.with_hint(message);
+    }
+    if let Some(replacement) = replacement {
+        error = error.with_hint(format!("Use `{replacement}` instead"));
+    }
+    if message.is_none() && replacement.is_none() {
+        error = if suggest_public {
+            error.with_hint("Call this method from a method on the declaring type, or mark the method `pub`")
+        } else {
+            error.with_hint("Call this method from a method on the declaring type")
+        };
+    }
+    error
+}
+
+/// Refuse migration metadata that does not describe an already-private declaration or has an invalid descriptor.
+pub fn invalid_made_private_annotation(subject: &str, details: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("Invalid `made_private` metadata on {subject}: {details}"), span)
+        .with_stable_code("INCAN-T0132")
+        .with_hint("Keep `made_private` only on a private declaration and use named lifecycle arguments")
 }
 
 /// Report a call, from another module, to a method that takes the visibility of a trait that is not `pub` (#2570).

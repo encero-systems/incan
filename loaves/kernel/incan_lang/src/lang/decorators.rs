@@ -28,6 +28,7 @@ pub enum DecoratorId {
     Requires,
     Describe,
     ProviderOperation,
+    MadePrivate,
 }
 
 // ---- Decorator namespace constants ----
@@ -151,6 +152,14 @@ pub const DECORATORS: &[DecoratorInfo] = &[
         &[],
         "Attach one checked RFC 104 capability requirement to a provider function.",
         RFC::_104,
+        Since(0, 6),
+    ),
+    info(
+        DecoratorId::MadePrivate,
+        "made_private",
+        &[],
+        "Describe the supported replacement for a declaration that used to be public.",
+        RFC::_150,
         Since(0, 6),
     ),
 ];

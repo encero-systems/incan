@@ -56,6 +56,7 @@ pub fn method_export_from_api(method: &ApiMethod) -> MethodExport {
         return_type: method.return_type.clone(),
         is_async: method.is_async,
         has_body: method.has_body,
+        made_private: method.made_private.clone(),
     }
 }
 

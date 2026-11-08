@@ -66,6 +66,7 @@ pub(super) fn map_fields(
                 default: defaults.get(name.as_str()).cloned(),
                 alias: info.alias.clone(),
                 description: info.description.clone(),
+                made_private: info.made_private.clone(),
             });
         }
     }
@@ -91,6 +92,7 @@ pub(super) fn map_fields(
                     default: defaults.get(name.as_str()).cloned(),
                     alias: info.alias.clone(),
                     description: info.description.clone(),
+                    made_private: info.made_private.clone(),
                 })
             })
             .collect::<Option<Vec<_>>>()?,
@@ -315,6 +317,7 @@ pub(super) fn checked_method_from_info(name: &str, info: &MethodInfo) -> Checked
         return_type: info.return_type.clone(),
         is_async: info.is_async,
         has_body: info.has_body,
+        made_private: info.made_private.clone(),
     }
 }
 
