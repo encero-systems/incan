@@ -97,6 +97,12 @@ impl SourcePaths<'_> {
                     let incoming = self.expression(&value.value, incoming)?;
                     self.region(statement.span, incoming)
                 }
+                Statement::IndexAssignment(value) => {
+                    let incoming = self.expression(&value.object, incoming)?;
+                    let incoming = self.expression(&value.index, incoming)?;
+                    let incoming = self.expression(&value.value, incoming)?;
+                    self.region(statement.span, incoming)
+                }
                 Statement::Expr(value) => {
                     let incoming = self.expression(value, incoming)?;
                     self.region(statement.span, incoming)

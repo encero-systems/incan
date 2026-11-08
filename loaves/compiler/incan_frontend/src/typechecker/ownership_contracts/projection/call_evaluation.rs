@@ -24,6 +24,7 @@ pub(super) fn validate_invocation_events(
             let source = graph.loans.get(loan.0).ok_or("receiver loan is absent")?;
             validate_evaluation(graph, source.span, evaluation, Some(&source.source), Some(loan), None)?;
             end = Some(evaluation.end_node);
+            loans.extend(&invocation.receiver_dependencies);
             loans.push(loan);
         }
         (None, Some(evaluation)) if invocation.receiver_owned => {
@@ -305,6 +306,14 @@ impl CheckedInputBody<'_> {
                 )))
             }
             Expr::Paren(inner) => self.call_place(inner),
+            Expr::Field(_, _)
+                if self
+                    .facts
+                    .resolved_identity(expression.span)
+                    .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Variant) =>
+            {
+                Ok(None)
+            }
             Expr::Field(base, _) => {
                 let (mut place, through) = self.call_place(base)?.ok_or("input field has no stored owner")?;
                 let field = self

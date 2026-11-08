@@ -148,7 +148,7 @@ pub(in crate::typechecker) struct Invocation {
     /// A native by-value receiver has an evaluation and optional source but no borrow loan.
     pub receiver_owned: bool,
     pub receiver_source: Option<Place>,
-    /// Loans held by a native by-value receiver and transferred through this invocation.
+    /// Loans held by a by-value receiver or carried by a borrowed aggregate temporary through this invocation.
     pub receiver_dependencies: Vec<LoanId>,
     pub arguments: Vec<InvocationArgument>,
     pub receiver_evaluation: Option<InputEvaluation>,
@@ -641,11 +641,38 @@ fn validate_invocations(graph: &Graph) -> Result<(), InvalidGraph> {
             {
                 return Err(InvalidGraph("owned receiver has an unknown dependency loan"));
             }
-        } else if invocation.receiver_source.is_some() || !invocation.receiver_dependencies.is_empty() {
+        } else if invocation.receiver_source.is_some() {
             return Err(InvalidGraph("borrowed receiver retains separate owned state"));
+        } else if invocation
+            .receiver_dependencies
+            .iter()
+            .any(|dependency| graph.loans.get(dependency.0).is_none())
+        {
+            return Err(InvalidGraph("borrowed receiver has an unknown carried dependency loan"));
         }
         if let Some(receiver) = invocation.receiver {
+            let loan = graph
+                .loans
+                .get(receiver.0)
+                .ok_or(InvalidGraph("invocation has an unknown receiver loan"))?;
+            if !invocation.receiver_dependencies.is_empty()
+                && !matches!(
+                    &loan.source.root,
+                    Root::Temporary {
+                        owner,
+                        expression,
+                        invocation,
+                    } if owner == &graph.owner && expression == &loan.span && invocation == span
+                )
+            {
+                return Err(InvalidGraph(
+                    "carried receiver dependencies do not belong to its temporary",
+                ));
+            }
             validate_invocation_loan(graph, *span, receiver)?;
+        }
+        for dependency in &invocation.receiver_dependencies {
+            validate_invocation_loan(graph, *span, *dependency)?;
         }
     }
     Ok(())

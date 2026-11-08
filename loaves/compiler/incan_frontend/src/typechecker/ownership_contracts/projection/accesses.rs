@@ -777,6 +777,16 @@ impl SourceAccesses<'_, '_> {
                         },
                     )?;
                 }
+                Statement::IndexAssignment(assignment) => {
+                    let (mut place, through) = self
+                        .place(&assignment.object)?
+                        .ok_or("index write has no source owner")?;
+                    place.projection.push(flow::Projection::Element(assignment.index.span));
+                    self.expression(&assignment.object, false)?;
+                    self.expression(&assignment.index, false)?;
+                    self.expression(&assignment.value, true)?;
+                    self.access(assignment.index.span, &place, through, flow::Access::Write)?;
+                }
                 Statement::Assert(assertion) => {
                     let AssertKind::Condition(condition) = &assertion.kind else {
                         return Err("source access requires ordinary assertions");

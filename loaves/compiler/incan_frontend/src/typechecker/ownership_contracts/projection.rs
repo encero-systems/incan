@@ -125,7 +125,7 @@ impl TypeCheckInfo {
                         .ok_or("ordinary method invocation has no canonical source header")?,
                     _ => return Err("ordinary invocation syntax differs from its canonical declaration"),
                 };
-                if binding.is_async || binding.params != call.parameters {
+                if binding.is_async || !ordinary_header_matches(&binding.params, &call.parameters) {
                     return Err("ordinary invocation differs from its synchronous concrete header");
                 }
                 Ok(None)
@@ -336,7 +336,7 @@ impl TypeCheckInfo {
                 return Err("invocation omits a required selected parameter");
             }
             let contract = self.selected_input_contract(call)?;
-            if matches!(call.kind, InputCallKind::Ordinary | InputCallKind::Indirect) {
+            if call.kind == InputCallKind::Indirect {
                 for (slot, parameter) in call.parameters.iter().enumerate() {
                     // A closure local passed to a function-typed parameter: checking admits a capturing closure only
                     // where its callee calls it and keeps it no longer.
@@ -347,7 +347,7 @@ impl TypeCheckInfo {
                             .find(|argument| argument.slot == slot)
                             .is_some_and(|argument| closure_argument(graph, argument));
                     if parameter.is_mut || !(closure || self.checked_input_copy_value(owner, &parameter.ty)?) {
-                        return Err("ordinary invocation needs checked immutable Copy inputs");
+                        return Err("indirect invocation needs checked immutable Copy inputs");
                     }
                 }
             }
@@ -415,6 +415,23 @@ impl TypeCheckInfo {
         }
         Ok(())
     }
+}
+
+/// Authenticate an instantiated ordinary call against its selected declaration without comparing open type
+/// variables to their closed call-site types. Expression checking already proved those type substitutions; this
+/// boundary owns only the parameter slots and passing shape consumed by the source-flow graph.
+fn ordinary_header_matches(
+    declared: &[crate::symbols::CallableParam],
+    selected: &[crate::symbols::CallableParam],
+) -> bool {
+    declared.len() == selected.len()
+        && declared.iter().zip(selected).all(|(declared, selected)| {
+            declared.name == selected.name
+                && declared.kind == selected.kind
+                && declared.has_default == selected.has_default
+                && declared.is_mut == selected.is_mut
+                && declared.is_partial_preset == selected.is_partial_preset
+        })
 }
 
 /// Whether an invocation argument passes a closure local: its source read is of the closure local itself.

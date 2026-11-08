@@ -270,6 +270,11 @@ impl Builder<'_> {
         }
         match &value.node {
             Expr::Literal(_) | Expr::FString(_) | Expr::List(_) => true,
+            Expr::Field(_, _) => self
+                .checker
+                .type_info
+                .resolved_identity(value.span)
+                .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Variant),
             Expr::Paren(inner) => self.fresh_or_copy_field(inner),
             Expr::Call(_, _, _) => {
                 self.checker.type_info.constructor_field_binding(value.span).is_some()

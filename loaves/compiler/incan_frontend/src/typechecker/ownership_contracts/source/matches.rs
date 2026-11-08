@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use incan_lang::lang::surface::constructors::{self, ConstructorId};
-use incan_semantics_core::CanonicalSymbolId;
+use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 
 use super::{Builder, Event, Path, Place, Root, Unavailable};
 use crate::ast::{
@@ -629,6 +629,16 @@ impl Builder<'_> {
         };
         let arguments = match &pattern.node {
             Pattern::Wildcard | Pattern::Literal(_) => return Ok(()),
+            Pattern::Constructor(name, arguments)
+                if arguments.is_empty()
+                    && self
+                        .checker
+                        .type_info
+                        .resolved_identity(name.span)
+                        .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Variant) =>
+            {
+                return Ok(());
+            }
             Pattern::Constructor(name, arguments) => match constructors::from_str(&name.node) {
                 Some(ConstructorId::None) if arguments.is_empty() => return Ok(()),
                 Some(ConstructorId::Ok | ConstructorId::Err | ConstructorId::Some) => arguments,
