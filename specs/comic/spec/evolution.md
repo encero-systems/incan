@@ -24,6 +24,18 @@ A stored customer has email and a legacy code. A later description calls email c
 
 If a later description requires age with no absent policy, that same record fails at age. An empty or optional model still cannot read another model's record: nominal identity is checked before missing fields can be supplied.
 
+## A forgotten rename
+
+A rename without its earlier name looks like one field dropped and another added. The refusal must say so when the written shape points at it. If a required field is missing, and exactly one written field matches no requested field and has a compatible type, the refusal names that field and the fix:
+
+~~~text
+Line[0].price: required, and the written shape has no such field
+  the written shape has unit_price: Decimal { scale = 2 }, which matches no requested field
+  if price is its new name, declare price [renamed_from = ["unit_price"]]
+~~~
+
+The hint never changes the outcome. The reader still refuses, because matching by type alone could pair two unrelated fields.
+
 ## Migration is separate
 
 An explicit application migration can transform incompatible data. Decoding does not invoke a migration selected by untrusted text, import code or overwrite the stored record. Store publication, snapshots, atomic replacement and retention are external contracts. Original-shape re-encoding and adapted-value re-encoding are different conformance checks.

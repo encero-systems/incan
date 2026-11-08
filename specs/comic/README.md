@@ -8,7 +8,7 @@ This folder is the experimental specification and conformance corpus. It is self
 
 ## Status
 
-This first foundation fixes the existing value, identity and compatibility requirements as test data. It does **not** freeze a complete text grammar, binary layout or hash preimage encoding. The distinction is deliberate: a value rule can be settled before its byte spelling. The open encoding items are enumerated in [text](spec/text.md), [binary](spec/binary.md) and [hashes](spec/hashes.md). The corpus must not be advertised as full codec conformance until those items have exact vectors and an implementation runs them.
+This foundation fixes the value, identity and compatibility requirements as test data, and writes the COMIC text rules as a draft grammar. It does **not** freeze a binary layout or hash preimage encoding. A value rule can be settled before its byte spelling. The open items are listed in [text](spec/text.md), [binary](spec/binary.md) and [hashes](spec/hashes.md). The corpus must not be advertised as full codec conformance until those items have exact vectors and an implementation runs them.
 
 The initial corpus includes independently checkable member-identity vectors, typed-value comparisons, shape admission and evolution cases. Its JSON is test notation, not COMIC syntax or a proposed Crumb encoding. There are no fake binary goldens or object-hash digests inferred from illustrative text.
 
@@ -17,8 +17,10 @@ The initial corpus includes independently checkable member-identity vectors, typ
 1. [Typed values and shapes](spec/values.md): what a record contains.
 2. [Identity and hashes](spec/hashes.md): what changes identity or equality.
 3. [Compatibility](spec/evolution.md): what a reader may adapt.
-4. [COMIC text](spec/text.md) and [Crumb bytes](spec/binary.md): representation boundaries and remaining choices.
-5. [Conformance](spec/conformance.md): the executable meaning of the [corpus manifest](corpus/manifest.json).
+4. [COMIC text](spec/text.md): the draft grammar and canonical printing.
+5. [Crumb bytes](spec/binary.md): binary invariants and remaining choices.
+6. [Conformance](spec/conformance.md): the executable meaning of the [corpus manifest](corpus/manifest.json).
+7. Profiles that build on the core: [Incan](profiles/incan.md), for Incan, Rust and C program records, and [store import](profiles/store.md), for loading documents into a store.
 
 [Profile registrations](profiles.json) identify the contracts named by tests. Unknown profiles are refused. Registrations are documentation, never permission to fetch code, contact a registry, open a database or execute a constructor. An application supplies its admitted descriptions and runtime implementations separately.
 

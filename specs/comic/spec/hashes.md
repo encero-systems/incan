@@ -13,6 +13,7 @@ Nominal type identity belongs to the binding's identity scheme, which must ident
 ## Value profile crumb1
 
 - Integers compare and contribute to hashes by mathematical value. A representation-preserving integer widening changes no value hash.
+- Decimals compare and contribute by mathematical value too, whatever scale their type declares: `19.90` in a `decimal<10, 2>` field and `19.9` in a `decimal<10, 1>` field contribute alike. Text still writes a decimal at its type's scale, as `19.90d`.
 - Binary32 contributes as the binary64 value it exactly equals.
 - Positive and negative zero remain distinct. NaN signs and payloads normalize to one positive quiet NaN with no payload beyond its quiet bit; encodings restore that value.
 - Strings have no Unicode normalization. Bytes compare bytewise.
@@ -31,12 +32,16 @@ These rules do not redefine a programming language's equality operator. Stored c
 | --- | --- | --- |
 | Object | All stored field contributions | Changing a received-at field changes this projection. |
 | Canonical | Fields with canonical participation, recursively | A received-at field marked noncanonical does not affect this projection. |
-| Model | Field identities, declared types and canonical flags, recursively | A new optional field changes this projection even when its value is absent. |
+| Model | Field identities, declared types, absent-value policies and canonical flags, recursively | A new optional field changes this projection even when its value is absent. |
 
 Object and canonical projections do not include the model hash. Model projection excludes methods, documentation, declaration order, display paths and names. A recursive model already being folded contributes a back-reference by ancestor depth. Aliases fold as their target, newtypes as the underlying type, generics as concrete instantiations, and union members sort by their hashed spelling. Nominal identity is checked separately from model shape.
 
-A renamed or reordered field changes none of these projections. An added absent optional changes the model projection but not the value projections. Removing a nonempty field produces an adapted value with different contributions; it cannot claim the original value's hashes. Hash equality only locates candidates where collisions matter; it does not prove equality or trust.
+A renamed or reordered field changes none of these projections. An added absent optional changes the model projection but not the value projections. A changed absent-value policy changes the model projection, because it decides which values contribute nothing: an empty `tags` list contributes nothing when its description declares `tags: list<string> = []`, and contributes an empty list when it declares `tags: list<string>`. Removing a nonempty field produces an adapted value with different contributions; it cannot claim the original value's hashes. Hash equality only locates candidates where collisions matter; it does not prove equality or trust.
+
+## Description digest
+
+A description digest covers one complete description: its nominal identity and everything it declares about each member, including names, absent-value policies and properties. It names exactly one description, which is what a crumb's shape reference binds (see [binary](binary.md)). A model hash cannot do that, because it leaves out nominal identity and names: `crm.Customer` and `billing.Customer` with the same fields share a model hash, and so do two descriptions that differ only in a field's display name.
 
 ## Before digest vectors are frozen
 
-Specify domain separation, exact scalar tags and lengths, canonical type spellings, numeric encodings, recursive references, reference identity encoding, decimal treatment, absent contribution framing and projection boundaries. Specify how to distinguish an empty sequence, an empty record and empty bytes. Publish independently reviewed preimage bytes and SHA-256 results. A codec byte layout must not secretly become the hash preimage. Profile names accompany hashes, for example crumb1:sha256:…; profiles with different meanings are not comparable.
+Specify domain separation, exact scalar tags and lengths, canonical type spellings, numeric encodings, recursive references, reference identity encoding, decimal treatment, absent contribution framing, projection boundaries and the description digest's preimage. Specify how to distinguish an empty sequence, an empty record and empty bytes. Publish independently reviewed preimage bytes and SHA-256 results. A codec byte layout must not secretly become the hash preimage. Profile names accompany hashes, for example crumb1:sha256:…; profiles with different meanings are not comparable.
