@@ -15,8 +15,8 @@ A document is a sequence of root entries, separated by one blank line in canonic
 | Form | Means |
 | --- | --- |
 | `path = Kind { … }` | What exists at `path`: a type's description, or another declaration a profile records. |
-| `Type << ( … )` | One value of `Type`, with its fields by name. |
-| `Type << [ … ]` | Several values of `Type`, each by position. |
+| `Type << ( … )` | One value of `Type`. |
+| `Type << [ … ]` | Several values of `Type`, one per row. |
 
 A complete document:
 
@@ -41,7 +41,7 @@ example.Order << (
 )
 
 example.Order << [
-    (1000, "2026-11-01T09:10:00Z", ("1 Compiler Court", "Zurich", "CH"), Pending, None),
+    (1000, "2026-11-01T09:10:00Z", ("1 Compiler Court", "Zurich", "CH"), Pending),
     (1001, "2026-11-02T09:11:00Z", ("1 Compiler Court", "Boston", "US"), Pending, "Leave at the door"),
 ]
 ~~~
@@ -87,12 +87,31 @@ Types are written as follows:
 
 Data is written in `( )`. A root value names its type with `<<`; inside it, every value's type is known from its slot, so none is named.
 
-- **By name.** `Type << (name=value, …)` lists fields by name. A reader accepts them in any order; the printer writes declaration order. A key given twice, or a key the description does not declare, is refused.
-- **By position.** In a table, `Type << [(…), (…)]`, each row lists every field in the document's declaration order. Nested records and lists of records inside a row are positional too. A cell is never skipped: a row writes `None` for an absent optional and `[]` or `{}` for an empty collection.
-- **Absent fields.** A value written by name leaves out every field at its declared absent value. Every other field is written, including one equal to a default, because the text must not depend on defaults.
-- **Nested records.** A nested record is `( … )`, by name inside a value written by name and by position inside a row.
-- **Variants.** A variant is its name, with its payload in `( )`: `Pending`, `Shipped(carrier="DHL", tracking="JD144155")` inside a value written by name, and `Shipped("DHL", "JD144155")` inside a row.
-- **Wrapped values.** Where a slot admits more than one type, a value names its type with `<<`: `Month << 4` for a newtype, `Int << 3` in a union slot. Elsewhere a newtype or union member is written bare.
+Every record and every variant payload is one list of cells, read the same way wherever it appears:
+
+- **Positions first.** Leading cells fill fields in the document's declaration order.
+- **Then keys.** After the positions, a cell names its field, `city="Utrecht"`, or gives its declaration index counted from 0, `4="Utrecht"`. Keyed cells may come in any order and may mix names and indexes.
+- **Everything else is absent.** A field without a cell takes its declared absent value. A required field without one is refused.
+- A field given twice, whether by position, name or index, is refused, and so are a positional cell after a keyed one, a name the description does not declare and an index past its last field.
+
+~~~text
+example.Person << [
+    (1001, "Jansen", city="Utrecht"),
+    (1002, "de Vries"),
+    (1003, "Bakker", "Anna", partner_id=1001),
+    (id=1004, family_name="Visser", 4="Delft"),
+]
+~~~
+
+The printer writes one form:
+
+- **A value written alone** prints every present field by name: `example.Order << (id=1003, …)`.
+- **A row** prints positions up to its first absent field, then each later present field by name.
+- **A field at its declared absent value is never printed.** Every other field is, including one equal to a default, because the text must not depend on defaults.
+- **Nested records and variant payloads** follow the value they sit in: by name inside a value written alone, and as a row inside a row. A variant is its name with its payload in `( )`: `Pending`, `Shipped(carrier="DHL", tracking="JD144155")`, and in a row `Shipped("DHL", "JD144155")`.
+- Indexes are accepted on reading and never printed.
+
+**Wrapped values.** Where a slot admits more than one type, a value names its type with `<<`: `Month << 4` for a newtype, `Int << 3` in a union slot. Elsewhere a newtype or union member is written bare.
 
 `Type << ( … )` lists stored fields. It is not a constructor call, and reading one never runs a constructor, field method or default. It rebuilds the stored state and runs the type's final validation, the same as decoding a Crumb.
 
@@ -115,7 +134,7 @@ Consecutive values of one type may be written one at a time or as one table; the
 | Tuple | `(10, 20)`, `(7,)` | A one-element tuple keeps its trailing comma. |
 | Map | `{"a": 1}` | Sorted in the value profile's order, so one map prints one way. `{}` is the empty map or set its slot's type names. |
 | Set | `{1, 2}` | Sorted in the value profile's order. |
-| Optional | `note="mail"` | A present value is written bare. `Some(…)` is written only for a present inner optional, as `Some(None)`. |
+| Optional | `note="mail"` | A present value is written bare, and a field at its absent value is left out. `None` is written only where absence is not a field left out: a list element (`[1, None, 3]`), a tuple or map member, a present inner optional (`Some(None)`), and an optional field with no declared absent value. |
 | Reference | `example.billing.Cents` | An unquoted path. A string equal to that path is a string, not a reference. |
 | Secret | `<secret>` | A secret-typed value is withheld (see [values](values.md)). Reading yields a withheld value. |
 
@@ -137,7 +156,7 @@ example.readings.Reading << (
 )
 ~~~
 
-In a table of stored records, each row adds the same five cells after its fields. Three underscores mark a key as the store's. The list is closed: any other `___` key is refused, and a description cannot declare a `___` field. No hash covers a `___` key. A hash names its value profile and algorithm, as `crumb1:sha256:`, and hashes under different profiles are never compared. A value that was never stored has no `___` keys. The [store profile](../profiles/store.md) owns the text form of `___id` and `___revision`.
+In a table of stored records, each row writes the same five keys by name after its fields. Three underscores mark a key as the store's. The list is closed: any other `___` key is refused, and a description cannot declare a `___` field. No hash covers a `___` key. A hash names its value profile and algorithm, as `crumb1:sha256:`, and hashes under different profiles are never compared. A value that was never stored has no `___` keys. The [store profile](../profiles/store.md) owns the text form of `___id` and `___revision`.
 
 ## Layout
 
