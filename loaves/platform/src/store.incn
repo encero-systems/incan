@@ -1,10 +1,11 @@
 """
-A durable store of typed records with an indexed directory and virtual views (DD-0012, decision 9; DD-0013 §1).
+A segment store of typed records with an indexed directory and virtual views (DD-0012, decision 9; DD-0013 §1).
 
 This module is the platform storage substrate; with `crate.store.index` it names no compiler, unit or Oven type. Store
 owners supply typed record families, scheduling, retention policy and observation destinations above this boundary.
 
-Layout under the store root:
+The disk placement keeps this layout under its store root; the memory placement retains the same logical objects and
+format bytes without naming host paths:
 
 - `FORMAT`: the format this store is written in; a store in another format is refused, never read as empty.
 - `CURRENT`: the committed generation and the digest of its manifest; replaced by rename, never edited.
@@ -13,7 +14,7 @@ Layout under the store root:
   root of each view.
 - `segments/<sha256>.seg`: immutable segments of frames: full key and value, or full key alone for a tombstone.
 - `indexes/<sha256>.page`: immutable copy-on-write B+tree pages from full keys to frame locations (`crate.store.index`).
-- `payloads/<aa>/<sha256>`: content-named files the OS and other tools read directly.
+- `payloads/<aa>/<sha256>`: content-named objects, exposed as files by the disk placement.
 - `staging/<transaction>/`, `leases/<lease>`, `locks/publication`, `claims/<key>`.
 
 Views: every generation names an index root per view. A view forked from another starts at the same root and shares
@@ -23,23 +24,25 @@ a chain of parents, and a parent's later writes never reach its forks.
 Reading: a snapshot is one validated generation and one view's root; it holds no decoded records. A lookup reads the
 index pages on one root-to-leaf path and the one frame it finds, checks the page names, the frame digest and the full
 key, and answers `Found`, `Deleted` or `Absent`. Damage is a `StoreError`, never absence, and a read never falls
-through a damaged entry to an older value. Pages, frames and payloads are mapped and checked in place: `Found` holds a
-view of the value inside its segment, and `owned` is the one place a found value is copied into owned bytes. Every
-object read this way is content-named and never rewritten in place, as a mapping requires of its inode.
+through a damaged entry to an older value. Pages, frames and payloads are anchored and checked in place: `Found` holds
+a view of the value inside its segment, and `owned` is the one place a found value is copied into owned bytes. Every
+object read this way is content-named and never rewritten while a view can retain its immutable backing.
 
 Writing: a transaction begun on one view collects writes with their preconditions. Under the publication lock it
 validates every precondition against the latest generation, stages only changed records, then installs the segment,
-pages, manifest and `CURRENT`, each synced with its directory,
-in that order. Related transactions across views share one generation switch; an execution pin's durable descriptor
-and live lock precede that switch. A transaction whose writes are all already present commits nothing and adds no bytes.
+pages, manifest and `CURRENT` in that order. The disk placement synchronizes every object and directory at the existing
+publication boundaries; memory satisfies the same ordering in one state cell. Related transactions across views share
+one generation switch, and an execution pin precedes that switch. A transaction whose writes are all already present
+commits nothing and adds no bytes.
 """
 
 from rust::std::process import id
 from rust::std::rc import Rc
-from std.primitives import hexlify, sha256
-from std.primitives.fs.locking import FileLock
-from std.primitives.fs.mapping import MappedView
-from crate.trace import Operation
+from std.primitives.hash import sha256
+from std.primitives.hex import hexlify
+from std.primitives.locking import LockGuard
+from std.primitives.views import MappedView
+from crate.trace.schema import Operation
 from crate.store.files import file_digest
 from crate.store.index import Entry, Location, build, entries as index_entries, find as index_find, insert
 from crate.store.index import copied_index_bytes, page_path, page_reads, view_digest, staged_pages
@@ -91,7 +94,7 @@ pub model Snapshot:
     One committed generation seen through one view; it never changes after it is taken.
 
     A snapshot is a descriptor, not a cache: it names the generation, the view and that view's index root, and the
-    generation's segment inventory and view roots for publication. An opened nonempty view owns its scoped OS lease
+    generation's segment inventory and view roots for publication. An opened nonempty view owns its placement lease
     through the descriptor's lifetime. It holds no decoded records.
     """
 
@@ -102,7 +105,7 @@ pub model Snapshot:
     pub index: str
     pub segments: list[str]
     pub views: list[ViewRoot]
-    pub pin: Option[Rc[FileLock]] = None
+    pub pin: Option[Rc[LockGuard]] = None
 
 
 pub model Transaction:
@@ -164,7 +167,7 @@ pub def snapshot(root: Path, view: str = HOME_VIEW) -> Result[Snapshot, StoreErr
 
 
 def empty_snapshot(root: Path, view: str) -> Snapshot:
-    """An absent selection owns no persisted objects and needs neither a lease nor a filesystem mutation."""
+    """An absent selection owns no stored objects and needs neither a lease nor a placement mutation."""
     return Snapshot(root=root, generation=0, digest="", view=view, index="", segments=[], views=[])
 
 
@@ -174,14 +177,14 @@ def registered_snapshot(root: Path, view: str) -> Result[Snapshot, StoreError]:
     pointer = root.joinpath("CURRENT")
     if not pointer.exists() and not pointer.is_symlink():
         if root.joinpath("FORMAT").exists():
-            return Err(failure("integrity", pointer.0, "committed store has no CURRENT pointer"))
+            return Err(failure("integrity", pointer.value, "committed store has no CURRENT pointer"))
         return Ok(empty_snapshot(root, view))
     text = pointer.store_read_text("utf-8", "strict").map_err((error) => io_failure(pointer, error))?
     fields = text.strip().split(" ")
     if len(fields) != 2 or len(fields[1]) != 64:
-        return Err(failure("format", pointer.0, "malformed generation pointer"))
+        return Err(failure("format", pointer.value, "malformed generation pointer"))
     match natural(fields[0]):
-        None => return Err(failure("format", pointer.0, "malformed generation"))
+        None => return Err(failure("format", pointer.value, "malformed generation"))
         Some(generation) =>
             mut selected = read_manifest(root, generation, fields[1], view)?
             if selected.index != "":
@@ -233,11 +236,11 @@ pub def check_format(root: Path) -> Result[None, StoreError]:
     marker = root.joinpath("FORMAT")
     if not marker.is_file():
         if root.joinpath("CURRENT").is_file():
-            return Err(failure("format", marker.0, "a committed store has no format descriptor"))
+            return Err(failure("format", marker.value, "a committed store has no format descriptor"))
         return Ok(None)
     text = marker.store_read_text("utf-8", "strict").map_err((error) => io_failure(marker, error))?
     if text.strip() != FORMAT:
-        return Err(failure("format", marker.0, f"unsupported store format {text.strip()}"))
+        return Err(failure("format", marker.value, f"unsupported store format {text.strip()}"))
     return Ok(None)
 
 
@@ -259,15 +262,15 @@ pub def manifest_path(root: Path, generation: int, digest: str) -> Path:
 pub def read_manifest(root: Path, generation: int, digest: str, view: str) -> Result[Snapshot, StoreError]:
     """One committed generation, after checking its manifest's digest, seen through `view`."""
     path = manifest_path(root, generation, digest)
-    data = path.store_read_bytes().map_err((error) => failure("integrity", path.0, error.message()))?
+    data = path.store_read_bytes().map_err((error) => failure("integrity", path.value, error.message()))?
     if hexlify(sha256.digest(data)) != digest:
-        return Err(failure("integrity", path.0, "manifest does not match its committed digest"))
+        return Err(failure("integrity", path.value, "manifest does not match its committed digest"))
     match decode_text(data):
-        None => return Err(failure("integrity", path.0, "manifest is not text"))
+        None => return Err(failure("integrity", path.value, "manifest is not text"))
         Some(text) =>
             lines = text.strip().split("\n")
             if len(lines) < 4 or lines[0] != MANIFEST_SCHEMA or lines[1] != f"generation {generation}":
-                return Err(failure("integrity", path.0, "malformed manifest"))
+                return Err(failure("integrity", path.value, "malformed manifest"))
             mut segments: list[str] = []
             mut views: list[ViewRoot] = []
             mut index = ""
@@ -284,7 +287,7 @@ pub def read_manifest(root: Path, generation: int, digest: str, view: str) -> Re
                     check_view_key(fields[1])?
                     views.append(ViewRoot(view=fields[1], root=""))
                 else:
-                    return Err(failure("integrity", path.0, f"malformed manifest line {line}"))
+                    return Err(failure("integrity", path.value, f"malformed manifest line {line}"))
             return Ok(
                 Snapshot(
                     root=root,
@@ -336,22 +339,22 @@ pub def read_frame(root: Path, key: str, location: Location) -> Result[Lookup, S
     Only the frame's key is copied out to compare; a found value stays a view inside the segment.
     """
     path = root.joinpath("segments").joinpath(f"{location.segment}.seg")
-    mapped = path.store_map_read().map_err((error) => failure("integrity", path.0, error.message()))?
+    mapped = path.store_map_read().map_err((error) => failure("integrity", path.value, error.message()))?
     frame = part(path, mapped.view(location.offset, location.length), "frame runs past its segment")?
     counted["bytes"] = counted.get("bytes", 0) + location.length
     if view_digest(frame) != location.digest:
-        return Err(failure("integrity", path.0, "frame does not match its digest"))
+        return Err(failure("integrity", path.value, "frame does not match its digest"))
     size = match frame.read_u64_le(0):
         Some(width) => int(width)
-        None => return Err(failure("integrity", path.0, "malformed frame"))
+        None => return Err(failure("integrity", path.value, "malformed frame"))
 
     stored = part(path, frame.slice(8, size), "frame key runs past the frame")?
     counted["copied"] = counted.get("copied", 0) + size
     match decode_text(stored.to_bytes()):
-        None => return Err(failure("integrity", path.0, "frame key is not text"))
+        None => return Err(failure("integrity", path.value, "frame key is not text"))
         Some(found) =>
             if found != key:
-                return Err(failure("integrity", path.0, "frame holds another key"))
+                return Err(failure("integrity", path.value, "frame holds another key"))
     if location.tombstone:
         return Ok(Lookup.Deleted)
     value = part(path, frame.slice(8 + size, frame.len() - 8 - size), "frame key runs past the frame")?
@@ -362,7 +365,7 @@ def part(path: Path, found: Option[MappedView], detail: str) -> Result[MappedVie
     """A bounded view inside a segment, or an integrity error naming the segment when the range does not fit."""
     match found:
         Some(view) => return Ok(view)
-        None => return Err(failure("integrity", path.0, detail))
+        None => return Err(failure("integrity", path.value, detail))
 
 
 pub def keys(view: Snapshot) -> Result[list[str], StoreError]:
@@ -432,7 +435,7 @@ pub model Publication:
     """One atomic generation and its optional already-held execution pin."""
 
     pub snapshot: Snapshot
-    pub pin: Option[Rc[FileLock]] = None
+    pub pin: Option[Rc[LockGuard]] = None
 
 
 pub def commit_group(transactions: list[Transaction]) -> Result[Snapshot, StoreError]:
@@ -461,7 +464,7 @@ def publish_group(transactions: list[Transaction], execution_view: str) -> Resul
     ensure_directory(root.joinpath("locks"))?
     locking = begin_work()
     held = root.joinpath("locks/publication").store_lock_exclusive().map_err((error) => io_failure(root, error))?
-    record_work(Operation.StoreLock, root.0, locking)
+    record_work(Operation.StoreLock, root.value, locking)
     mut selected_view = first.view
     if execution_view != "":
         selected_view = execution_view
@@ -474,7 +477,11 @@ def publish_group(transactions: list[Transaction], execution_view: str) -> Resul
     # 1. Duplicate views are combined before their preconditions are checked.
     mut writes: Dict[str, list[Write]] = {}
     for transaction in transactions:
-        if transaction.root.0 != root.0 or transaction.fork != "":
+        if (
+            transaction.root.placement != root.placement
+            or transaction.root.value != root.value
+            or transaction.fork != ""
+        ):
             return Err(failure("format", "transaction", "a group needs one store and no forks"))
         check_view_key(transaction.view)?
         mut combined = writes.get(transaction.view, [])
@@ -589,9 +596,9 @@ def install_segment(root: Path, data: bytes, source: Path) -> Result[str, StoreE
     target = root.joinpath("segments").joinpath(f"{name}.seg")
     ensure_directory(target.parent())?
     if target.is_file():
-        found = file_digest(target, "sha256").map_err((error) => failure("integrity", target.0, error.message()))?
+        found = file_digest(target, "sha256").map_err((error) => failure("integrity", target.value, error.message()))?
         if hexlify(found) != name:
-            return Err(failure("integrity", target.0, "an installed segment does not match its name"))
+            return Err(failure("integrity", target.value, "an installed segment does not match its name"))
         sync_directory(target.parent())?
         return Ok(name)
     source.store_replace(target).map_err((error) => io_failure(target, error))?
@@ -687,7 +694,7 @@ def publish_switch(
     return Ok(pinned)
 
 
-pub def claim(root: Path, key: str) -> Result[FileLock, StoreError]:
+pub def claim(root: Path, key: str) -> Result[LockGuard, StoreError]:
     """
     Claim the full `key` for computing its value; waits while another process holds it, and lasts as long as the lock.
 
@@ -715,22 +722,22 @@ def pinned_publication(view: Snapshot, name: str) -> Result[Publication, StoreEr
     return Ok(Publication(snapshot=selected, pin=selected.pin))
 
 
-pub def lease(view: Snapshot) -> Result[FileLock, StoreError]:
+pub def lease(view: Snapshot) -> Result[LockGuard, StoreError]:
     """
     Register a lease on `view`'s generation and view for as long as the returned lock is held.
 
-    The lock name identifies the generation, manifest digest and view; the immutable manifest is the one durable
-    descriptor of its index root. The OS lock proves live interest and needs no second durable descriptor file.
+    The lock name identifies the generation, manifest digest and view; the immutable manifest is the descriptor of its
+    index root. The placement guard proves live interest without a second descriptor object.
     Equal snapshot/view descriptors share the lock identity with independent guards. Collection must take that
-    identity's exclusive lock and retain the selected view's roots while a shared holder is alive. Host failure ends
-    every live interest; recovery reads the committed manifest, never a duplicate lease record.
+    identity's exclusive lock and retain the selected view's roots while a shared holder is alive. Process failure ends
+    every live interest; disk recovery reads the committed manifest, while a memory placement has no restart state.
     """
     ensure_directory(view.root.joinpath("locks"))?
     gate = view.root.joinpath("locks/lifecycle").store_lock_exclusive().map_err((error) => io_failure(view.root, error))?
     return lease_registered(view)
 
 
-def lease_registered(view: Snapshot) -> Result[FileLock, StoreError]:
+def lease_registered(view: Snapshot) -> Result[LockGuard, StoreError]:
     """Register a validated immutable root while its caller holds the lifecycle gate; expired roots cannot reopen."""
     check_retained(view)?
     leases = view.root.joinpath("leases")
@@ -741,7 +748,7 @@ def lease_registered(view: Snapshot) -> Result[FileLock, StoreError]:
     if view.generation > 0:
         checked = read_manifest(view.root, view.generation, view.digest, view.view)?
         if checked.index != view.index:
-            return Err(failure("integrity", path.0, "lease disagrees with its immutable manifest"))
+            return Err(failure("integrity", path.value, "lease disagrees with its immutable manifest"))
     return Ok(held)
 
 
@@ -836,10 +843,10 @@ def in_key_order(entries: list[Entry]) -> list[Entry]:
 
 
 pub model PreparedPayload:
-    """An immutable digest with an OS lease spanning preparation through commit or abandonment."""
+    """An immutable digest with a placement lease spanning preparation through commit or abandonment."""
 
     pub digest: str
-    pub pin: Rc[FileLock]
+    pub pin: Rc[LockGuard]
 
 
 pub def quarantine_path(root: Path, object: str) -> Result[Path, StoreError]:
@@ -856,7 +863,7 @@ pub def sync_durable(path: Path) -> Result[None, StoreError]:
     clock = begin_work()
     path.store_sync().map_err((error) => io_failure(path, error))?
     counted["durable_syncs"] = counted.get("durable_syncs", 0) + 1
-    record_work(Operation.StoreDurableSync, path.0, clock)
+    record_work(Operation.StoreDurableSync, path.value, clock)
     return Ok(None)
 
 
@@ -882,10 +889,10 @@ pub def check_retained(view: Snapshot) -> Result[None, StoreError]:
     text = registry.store_read_text("utf-8", "strict").map_err((error) => io_failure(registry, error))?
     lines = text.strip().split("\n")
     if len(lines) == 0:
-        return Err(failure("integrity", registry.0, "empty retention registry"))
+        return Err(failure("integrity", registry.value, "empty retention registry"))
     boundary = natural(lines[0])
     match boundary:
-        None => return Err(failure("integrity", registry.0, "malformed retention generation"))
+        None => return Err(failure("integrity", registry.value, "malformed retention generation"))
         Some(generation) =>
             if view.generation > generation or lease_token(view) in lines[1:]:
                 return Ok(None)

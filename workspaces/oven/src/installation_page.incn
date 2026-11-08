@@ -7,7 +7,7 @@ from rust::std::thread import sleep
 from rust::std::time import Duration
 from std.encoding.hex import hexlify
 from std.fs import Path
-from std.fs.locking import FileLock
+from std.primitives.locking import LockGuard
 from std.hash import sha256
 from std.tempfile import TemporaryDirectory
 from pub::incan_platform.trace import Clock
@@ -36,14 +36,14 @@ model ReadScope:
     """One pinned bakery revision and, for a short CLI command, its reconciled installation observation."""
 
     revision: str = ""
-    held: Option[Arc[FileLock]] = None
+    held: Option[Arc[LockGuard]] = None
     command: bool = false
     validated: str = ""
     directory: str = ""
 
-    def pin(mut self, view: Snapshot) -> Result[Arc[FileLock], str]:
+    def pin(mut self, view: Snapshot) -> Result[Arc[LockGuard], str]:
         """Share one lease across readers of the same immutable view; a different view replaces its guard."""
-        revision = f"{view.root.0}\n{view.generation}\n{view.digest}\n{view.view}"
+        revision = f"{view.root.value}\n{view.generation}\n{view.digest}\n{view.view}"
         if self.revision != revision:
             self.held = Some(Arc.new(lease(view).map_err((error) => error.message())?))
             self.revision = revision
@@ -123,7 +123,7 @@ pub def recall(directory: Path) -> Result[Option[Installation], str]:
             spec = specification(key, digest)
             payload = selected_value(view, spec, spec.records[0], digest).map_err((error) => error.message())?
             generation = observe(payload)?.stamp
-            cache_key = f"{view.root.0}\n{digest}"
+            cache_key = f"{view.root.value}\n{digest}"
             page = recalled_page(cache_key, generation, view, spec, digest, directory, clock)?
             # 3. In-place edits and replacements cannot retain admission through a directory timestamp alone.
             reading = f"{cache_key}\n{generation}"

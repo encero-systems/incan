@@ -1,7 +1,7 @@
 """Convert Oven paths at the platform store boundary."""
 
 from std.fs import Path
-from std.primitives.fs.locking import FileLock
+from std.primitives.locking import LockGuard
 from pub::incan_platform.store import HOME_VIEW, PreparedPayload, Snapshot
 from pub::incan_platform.store import claim as platform_claim, compact as platform_compact
 from pub::incan_platform.store import snapshot as platform_snapshot
@@ -11,6 +11,7 @@ from pub::incan_platform.store.collection import (
     collect_records as platform_collect_records,
 )
 from pub::incan_platform.store.files import StoreError
+from pub::incan_platform.store.disk import root as disk_root
 from pub::incan_platform.store.path import StorePath
 from pub::incan_platform.store.payloads import (
     payload_intact as platform_payload_intact,
@@ -30,12 +31,12 @@ pub def store_path(path: Union[Path, StorePath]) -> StorePath:
     if isinstance(path, StorePath):
         return path
     elif isinstance(path, Path):
-        return StorePath(path.0)
+        return disk_root(path.0)
 
 
 pub def oven_path(path: StorePath) -> Path:
     """Project a platform store path back into Oven's application-facing path contract."""
-    return Path(path.0)
+    return Path(path.value)
 
 
 pub def snapshot(root: Path, view: str = HOME_VIEW) -> Result[Snapshot, StoreError]:
@@ -43,7 +44,7 @@ pub def snapshot(root: Path, view: str = HOME_VIEW) -> Result[Snapshot, StoreErr
     return platform_snapshot(store_path(root), view)
 
 
-pub def claim(root: Path, key: str) -> Result[FileLock, StoreError]:
+pub def claim(root: Path, key: str) -> Result[LockGuard, StoreError]:
     """Acquire a platform computation claim from an Oven path."""
     return platform_claim(store_path(root), key)
 

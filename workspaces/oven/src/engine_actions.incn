@@ -1,7 +1,7 @@
 """Settle one captured program request, select its result and protect the caller's execution roots."""
 
 from std.fs import Path
-from std.fs.locking import FileLock
+from std.primitives.locking import LockGuard
 from rust::std::rc import Rc
 from std.encoding.hex import hexlify
 from engine_messages import BindingOutcome, Complete, CompletionStatus
@@ -33,7 +33,7 @@ pub model ExecutionLease:
     pub token: str
     pub snapshot: str
     pub handle: str
-    pub held: Rc[FileLock]
+    pub held: Rc[LockGuard]
 
 
 pub model Ready:
@@ -139,7 +139,7 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
             )
 
 
-def required_pin(pin: Option[Rc[FileLock]]) -> Result[Rc[FileLock], str]:
+def required_pin(pin: Option[Rc[LockGuard]]) -> Result[Rc[LockGuard], str]:
     """A completed request must already hold its selected generation's execution pin."""
     match pin:
         Some(held) => return Ok(held)

@@ -1,7 +1,7 @@
 """Checked graph exports are claimed and published once through the home bakery."""
 
 from std.fs import Path
-from std.fs.locking import FileLock
+from std.primitives.locking import LockGuard
 from bakery import bakery, claim, find, seal, staging, view_directory
 from home import home
 from unit_freshness import fingerprint
@@ -22,7 +22,7 @@ pub def exported(entry: Path) -> Result[bool, str]:
             return Ok(true)
 
 
-pub def claim_export(entry: Path) -> Result[FileLock, str]:
+pub def claim_export(entry: Path) -> Result[LockGuard, str]:
     """Claim this completed export identity; callers recheck after acquiring the claim."""
     return claim(bakery()?, entry.parent().name())
 
