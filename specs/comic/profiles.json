@@ -14,6 +14,20 @@
       "owner": "Encero Systems",
       "status": "experimental",
       "spec": "spec/conformance.md"
+    },
+    {
+      "id": "incan/1",
+      "role": "language-profile",
+      "owner": "Encero Systems",
+      "status": "draft",
+      "spec": "profiles/incan.md"
+    },
+    {
+      "id": "store-import/1",
+      "role": "store-profile",
+      "owner": "Encero Systems",
+      "status": "draft",
+      "spec": "profiles/store.md"
     }
   ],
   "external_profiles": []
