@@ -3,7 +3,7 @@
 from std.traits.error import Error
 
 
-@derive(Clone, Copy, Eq, Ord)
+@derive(Clone, Copy, Eq, Hash, Ord)
 pub type NodeId = newtype int:
     """Stable handle for one node in a graph instance."""
 
@@ -12,7 +12,7 @@ pub type NodeId = newtype int:
         return self.0
 
 
-@derive(Clone, Copy, Eq, Ord)
+@derive(Clone, Copy, Eq, Hash, Ord)
 pub type EdgeId = newtype int:
     """Stable handle for one edge in a graph instance."""
 
@@ -53,6 +53,11 @@ pub def duplicate_edge(from_: NodeId, to: NodeId) -> GraphError:
 pub def missing_edge(from_: NodeId, to: NodeId) -> GraphError:
     """Build the shared missing-edge refusal."""
     return GraphError(detail=f"graph edge does not exist: {from_.to_int()} -> {to.to_int()}")
+
+
+pub def wrong_graph_scope() -> GraphError:
+    """Build the shared graph-scope mismatch refusal."""
+    return GraphError(detail="graph key belongs to another graph instance")
 
 
 pub def contains_node_id(nodes: list[NodeId], node: NodeId) -> bool:
