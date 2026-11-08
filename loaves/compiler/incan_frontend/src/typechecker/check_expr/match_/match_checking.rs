@@ -23,8 +23,45 @@ impl TypeChecker {
     /// type.
     /// A retained storage key is compared through that same canonical declaration identity, never by parsing its
     /// spelling.
-    pub(super) fn pattern_type_spelling_names_subject(&self, written: &str, subject_name: &str) -> bool {
-        self.source_type_names_same_declaration(written, subject_name)
+    pub(super) fn pattern_type_spelling_names_subject(&mut self, written: &str, subject_name: &str) -> bool {
+        if self.source_type_names_same_declaration(written, subject_name) {
+            return true;
+        }
+        let segments = written.split("::").map(str::to_owned).collect::<Vec<_>>();
+        if segments.len() < 2 {
+            return false;
+        }
+        let spelling = segments.join(".");
+        let reference = self
+            .type_info
+            .qualified_type_reference(&spelling)
+            .cloned()
+            .or_else(|| self.qualified_type_declaration(&segments));
+        let Some(reference) = reference else {
+            return false;
+        };
+        let resolved_matches = matches!(
+            &reference.resolved,
+            ResolvedType::Named(name) | ResolvedType::Generic(name, _) if name == subject_name
+        );
+        let carrier = incan_semantics_core::body_ir::nominal_carrier_key(&reference.identity);
+        let subject_identity = self
+            .symbols
+            .module_type_identity(subject_name)
+            .or_else(|| self.type_info.declarations.named_type_identities.get(subject_name))
+            .or_else(|| {
+                self.public_library_type_identities
+                    .get(subject_name)
+                    .and_then(|identity| identity.canonical.as_ref())
+            });
+        let names_same_declaration = resolved_matches
+            || carrier.as_deref() == Some(subject_name)
+            || carrier.as_ref().is_some_and(|carrier| {
+                subject_identity.is_some_and(|identity| {
+                    incan_semantics_core::body_ir::nominal_carrier_key(identity).as_deref() == Some(carrier.as_str())
+                })
+            });
+        names_same_declaration
     }
 
     /// Whether an explicit pattern qualifier names the same enum-like scrutinee type being matched.

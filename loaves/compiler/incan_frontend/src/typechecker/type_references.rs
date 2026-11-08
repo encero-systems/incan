@@ -305,6 +305,20 @@ impl TypeChecker {
         })
     }
 
+    /// Return the canonical carrier proven for a module-qualified nominal spelling.
+    ///
+    /// Declaration collection records annotation proofs before body checking. Expression and pattern sites consume
+    /// that same proof when present; a spelling used only in a body resolves through the same namespace boundary once
+    /// instead. Neither path reconstructs declaration ownership from source text.
+    pub(in crate::typechecker) fn qualified_nominal_carrier(&mut self, segments: &[String]) -> Option<String> {
+        let spelling = segments.join(".");
+        let identity = match self.type_info.qualified_type_reference(&spelling) {
+            Some(reference) => reference.identity.clone(),
+            None => self.qualified_type_declaration(segments)?.identity,
+        };
+        incan_semantics_core::body_ir::nominal_carrier_key(&identity)
+    }
+
     /// Record one type-like lexical binding without guessing an identity from its source spelling.
     pub(super) fn record_named_type_reference_identity(&mut self, name: &str, span: Span) {
         if let Some(identity) = self.named_type_reference_identity(name) {
