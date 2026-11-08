@@ -2,9 +2,7 @@
 //! describe a source shape whose native storage or cleanup is still deliberately unavailable.
 
 use super::CallableSource;
-use crate::ast::{
-    BinaryOp, Condition, Expr, FunctionDecl, MatchBody, MethodDecl, Param, ParamKind, Spanned, Statement,
-};
+use crate::ast::{Condition, Expr, FunctionDecl, MatchBody, MethodDecl, Param, ParamKind, Spanned, Statement};
 use crate::ast_walk::any_expr_in_body;
 use crate::typechecker::{CheckedInputBody, TypeCheckInfo};
 use incan_semantics_core::{CanonicalSymbolId, IncanInputAccess};
@@ -54,6 +52,7 @@ fn input_statements_supported(body: &[Spanned<Statement>], conditionals: bool) -
         Statement::Pass
         | Statement::Assignment(_)
         | Statement::FieldAssignment(_)
+        | Statement::IndexAssignment(_)
         | Statement::CompoundAssignment(_)
         | Statement::Expr(_)
         | Statement::Return(_)
@@ -182,8 +181,7 @@ impl TypeCheckInfo {
         proof.validate_local_storage()?;
         if !input_statements_supported(callable.body(), conditionals)
             || any_expr_in_body(callable.body(), |expression| {
-                matches!(expression, Expr::Binary(_, BinaryOp::And | BinaryOp::Or, _))
-                    || (!conditionals && matches!(expression, Expr::Try(_) | Expr::Match(..)))
+                !conditionals && matches!(expression, Expr::Try(_) | Expr::Match(..))
             })
         {
             return Err("explicit inputs require direct straight-line source access in this implementation stage");
@@ -282,20 +280,14 @@ impl CheckedInputBody<'_> {
                     .parameters
                     .get(argument.slot)
                     .ok_or("missing explicit call parameter")?;
-                let copy = if matches!(argument.access, IncanInputAccess::Owned | IncanInputAccess::Inferred) {
+                let copy = if argument.access == IncanInputAccess::Owned {
                     self.facts
                         .checked_input_copy_value(self.canonical_owner(), &parameter.ty)?
                 } else {
                     false
                 };
-                // A closure local passed to a parameter its callee only calls lends its callable object for the call.
-                if argument.access == IncanInputAccess::Inferred
-                    && !copy
-                    && argument.source.is_some()
-                    && !super::projection::closure_argument(self.graph, argument)
-                {
-                    return Err("ordinary non-Copy input requires its inferred access proof");
-                }
+                // Ordinary inferred calls retain evaluation evidence in this graph but continue through Body IR's
+                // ordinary call path, where complete-body shared-read inference owns their physical access.
                 if argument.access == IncanInputAccess::Owned
                     && !copy
                     && argument

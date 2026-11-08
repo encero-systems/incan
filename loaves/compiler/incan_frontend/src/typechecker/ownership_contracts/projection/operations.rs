@@ -99,6 +99,11 @@ impl CheckedInputBody<'_> {
                     self.visit_operation_expression(&value.object, parameters, execution, seen)?;
                     self.visit_operation_expression(&value.value, parameters, execution, seen)?;
                 }
+                Statement::IndexAssignment(value) => {
+                    self.visit_operation_expression(&value.object, parameters, execution, seen)?;
+                    self.visit_operation_expression(&value.index, parameters, execution, seen)?;
+                    self.visit_operation_expression(&value.value, parameters, execution, seen)?;
+                }
                 // Every arm starts from the evaluated scrutinee; the match reaches what follows when one arm does.
                 Statement::Expr(Spanned {
                     node: Expr::Match(scrutinee, arms),
@@ -606,6 +611,13 @@ impl CheckedInputBody<'_> {
                     return Err("operation alias cannot infer computed property access");
                 }
                 place.projection.push(flow::Projection::Field(field.clone()));
+                Ok(Some((place, loan)))
+            }
+            Expr::Index(base, index) => {
+                let Some((mut place, loan)) = self.operation_borrowed_place(base, parameters)? else {
+                    return Ok(None);
+                };
+                place.projection.push(flow::Projection::Element(index.span));
                 Ok(Some((place, loan)))
             }
             _ => Ok(None),

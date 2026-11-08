@@ -10,7 +10,7 @@ use super::flow::{
 };
 use crate::ast::{
     AssignmentStmt, BinaryOp, BindingKind, CompoundAssignmentStmt, Condition, Expr, FieldAssignmentStmt, ForStmt,
-    FunctionDecl, IfStmt, MethodDecl, Param, Receiver, Span, Spanned, Statement, Type,
+    FunctionDecl, IfStmt, IndexAssignmentStmt, MethodDecl, Param, Receiver, Span, Spanned, Statement, Type,
 };
 use crate::ownership_metadata::SourceSlot;
 use crate::symbols::{ResolvedType, SymbolKind};

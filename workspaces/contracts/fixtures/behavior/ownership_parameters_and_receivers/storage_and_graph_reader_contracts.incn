@@ -17,7 +17,10 @@
 #   2
 #   0
 #   3
+#   12
 """Exercise the RFC 164 ownership shapes required by storage and graph readers."""
+
+from std.datetime import Instant
 
 
 class ColumnBuffer:
@@ -130,6 +133,79 @@ class MemoryGraph:
     pub def read_view(self) -> Borrowed[GraphState] from self.state:
         """Borrow the in-memory graph state selected by this reader."""
         return self.state
+
+
+model CoverageLabel:
+    pub name: str
+
+
+enum CoverageMode:
+    First
+    Second
+
+
+class CoverageBox[T]:
+    pub values: list[T]
+
+    pub def append(mut self, value: T) -> None:
+        """Store one ordinary generic method argument."""
+        self.values.append(value)
+
+
+class CoverageGraph:
+    pub out: list[list[int]]
+    pub labels: list[CoverageLabel]
+
+    pub def add_label(mut self, label: CoverageLabel) -> None:
+        """Store one fresh model argument."""
+        self.labels.append(label)
+
+    pub def read_view(self) -> Borrowed[CoverageGraph] from self:
+        """Borrow the graph after ordinary setup operations complete."""
+        return self
+
+
+def build_coverage_graph() -> CoverageGraph:
+    """Return fresh owned graph storage to an explicit body."""
+    return CoverageGraph(out=[[1, 2], []], labels=[])
+
+
+def plain_degree(graph: CoverageGraph) -> int:
+    """Read through an ordinary inferred parameter."""
+    return len(graph.out[0])
+
+
+def borrowed_degree(graph: Borrowed[CoverageGraph]) -> int:
+    """Read an indexed nested list through an explicit parameter."""
+    return len(graph.out[0])
+
+
+def ordinary_operation_coverage() -> int:
+    """Exercise ordinary constructs inside a body that later borrows graph storage."""
+    mut graph = build_coverage_graph()
+    graph.add_label(CoverageLabel(name="editor"))
+    mut generic = CoverageBox[CoverageLabel](values=[])
+    generic.append(CoverageLabel(name="preview"))
+    mut seen: set[int] = set()
+    seen.add(0)
+    mut flags = [False]
+    flags[0] = True
+    mut total = 0
+    for value in graph.out[0]:
+        total += value
+    mode = CoverageMode.First
+    match mode:
+        CoverageMode.First => total += 1
+        CoverageMode.Second => total += 2
+    started = Instant.now()
+    mut index = 0
+    enabled = True
+    while enabled and index < len(graph.out[0]):
+        index += 1
+    reader = graph.read_view()
+    assert started.elapsed().whole_seconds() >= 0
+    assert flags[0] and seen.contains(0)
+    return total + index + borrowed_degree(reader) + plain_degree(graph) + len(generic.values) + len(graph.labels)
 
 
 class Cursor[S]:
@@ -262,3 +338,4 @@ def main() -> None:
     assert copy_reader.contains_index(keyed.key.local) == Ok(True)
     println(key_local(keyed.key))
     println(key_through_borrowed(KeyHolder(key=GraphKey(local=3))))
+    println(ordinary_operation_coverage())
