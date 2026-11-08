@@ -451,7 +451,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 );
             }
         };
-        let ty = self.resolve_ty(span);
+        let ty = self.resolve_constructor_ty(span);
         // A constructor field binding proves argument slots, but not that this constructor names one of the plain
         // models admitted to this lowering context. Preserve the selected declaration's identity and layout together;
         // imported aliases use their original canonical identity, while absent or unsupported context retains
