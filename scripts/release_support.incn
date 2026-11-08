@@ -6,7 +6,7 @@ from rust::std::thread import sleep
 from rust::std::time import Duration, Instant
 from std.encoding.hex import hexlify
 from std.fs import Path
-from std.hash import file_digest
+from std.hash import file_digest, sha256
 from std.json import JsonValue
 from std.regex import Regex
 
@@ -238,7 +238,9 @@ pub def release_receipt(
             host,
         ), "outcome": JsonValue.string(outcome), "phase": JsonValue.string(phase), "exit_code": JsonValue.int(exit_code), "elapsed_seconds": JsonValue.int(
             elapsed_seconds,
-        ), "tree_bytes": tree_bytes, "sha256": JsonValue.object(artifacts), "compiler_build": JsonValue.string(compiler_build), "contracts": contracts, "oven_tests": oven_tests, "baseline_parity": baseline_parity},
+        ), "tree_bytes": tree_bytes, "sha256": JsonValue.object(artifacts), "compiler_build": JsonValue.string(
+            compiler_build,
+        ), "contracts": contracts, "oven_tests": oven_tests, "baseline_parity": baseline_parity},
     )
 
 
@@ -272,6 +274,93 @@ pub def tree_bytes(root: Path) -> Result[int, str]:
             continue
         total += entry.stat().and_then((value) => value.size()).map_err((error) => error.message())?
     return Ok(total)
+
+
+pub def tree_digest(root: Path) -> Result[str, str]:
+    """Hash one tree's relative directory names and complete regular-file contents in stable order."""
+    if not root.is_dir():
+        return Err(f"cannot digest missing tree: {root.0}")
+    prefix = root.0 + "/"
+    mut entries = sorted([entry.0 for entry in root.rglob("*").map_err((error) => error.message())?])
+    mut hasher = sha256.new()
+    for value in entries:
+        if not value.startswith(prefix):
+            return Err(f"tree entry escapes its root: {value}")
+        entry = Path(value)
+        relative = value[len(prefix):]
+        encoded = relative.encode("utf-8")
+        if entry.is_dir():
+            hasher.update(f"d{len(encoded)}:".encode("utf-8"))
+            hasher.update(encoded)
+        elif entry.is_file():
+            hasher.update(f"f{len(encoded)}:".encode("utf-8"))
+            hasher.update(encoded)
+            hasher.update(file_digest(entry, "sha256").map_err((error) => error.message())?)
+        else:
+            return Err(f"tree contains an unsupported entry: {value}")
+    return Ok(hexlify(hasher.finalize_bytes()))
+
+
+pub def shared_relocated_sysroot(source: Path, cache: Path) -> Result[Path, str]:
+    """Create or verify one content-addressed read-only Rust home and return it for reuse."""
+    identity = tree_digest(source)?
+    home = cache.joinpath(identity)
+    toolchains = home.joinpath("toolchains")
+    destination = toolchains.joinpath(source.name())
+    source_update = source.parent().parent().joinpath("update-hashes").joinpath(source.name())
+    cached_update = home.joinpath("update-hashes").joinpath(source.name())
+    if not source_update.is_file():
+        return Err(f"source Rust home has no update hash: {source_update.0}")
+    if home.exists():
+        if not valid_relocated_home(home, source.name()):
+            return Err(f"cached relocated Rust home has unexpected entries: {home.0}")
+        if tree_digest(destination)? != identity:
+            return Err(f"cached relocated tree digest disagrees with {identity}: {destination.0}")
+        if not same_bytes(source_update, cached_update)?:
+            return Err(f"cached relocated Rust update hash disagrees: {cached_update.0}")
+    else:
+        toolchains.mkdir(true, true).map_err((error) => error.message())?
+        _ = source.copy(destination, true, true).map_err((error) => error.message())?
+        cached_update.parent().mkdir(true, true).map_err((error) => error.message())?
+        _ = source_update.copy(cached_update, true, true).map_err((error) => error.message())?
+        home
+            .joinpath("settings.toml")
+            .write_text("version = \"12\"\n\n[overrides]\n", "utf-8", "strict", None)
+            .map_err((error) => error.message())?
+        if tree_digest(destination)? != identity:
+            return Err(f"new relocated tree digest disagrees with {identity}: {destination.0}")
+    make_tree_readonly(home)?
+    return Ok(home)
+
+
+def valid_relocated_home(home: Path, sysroot_name: str) -> bool:
+    """Recognize the minimal Rustup home that selects exactly one copied sysroot without requiring a write."""
+    settings = home.joinpath("settings.toml")
+    expected_settings = "version = \"12\"\n\n[overrides]\n"
+    match settings.read_text("utf-8", "strict"):
+        Err(_) => return false
+        Ok(found) =>
+            return (
+                found == expected_settings
+                and only_children(home, ["settings.toml", "toolchains", "update-hashes"])
+                and only_children(home.joinpath("toolchains"), [sysroot_name])
+                and only_children(home.joinpath("update-hashes"), [sysroot_name])
+            )
+
+
+def only_children(parent: Path, names: list[str]) -> bool:
+    """Whether `parent` contains exactly the expected direct children."""
+    match parent.iterdir():
+        Ok(children) => return sorted([child.name() for child in children]) == sorted(names)
+        Err(_) => return false
+
+
+def make_tree_readonly(root: Path) -> Result[None, str]:
+    """Remove write permission from every cached entry after its content identity is verified."""
+    for entry in root.rglob("*").map_err((error) => error.message())?:
+        entry.chmod(true).map_err((error) => error.message())?
+    root.chmod(true).map_err((error) => error.message())?
+    return Ok(None)
 
 
 pub def log_tail(path: Path, limit: int = 30) -> str:
