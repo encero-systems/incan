@@ -790,10 +790,15 @@ def receiver_place_type(mut builder: Builder, place: RustPlace, span: SourceSpan
 
 
 def nominal_owner(module: &BodyIrModule, actual: PlanType) -> Option[PlanType]:
-    """A retained model or source enum owns trait slots; any other receiver type is no retained nominal."""
+    """A retained model or source enum owns trait slots, including a receiver reached through stored reference."""
     match actual:
         PlanType.Model(owner, name) => return Some(PlanType.Model(owner, name))
+        (PlanType.ModelRef(owner, name) | PlanType.ModelMutRef(owner, name)) =>
+            return Some(PlanType.Model(owner, name))
         PlanType.Enum(owner, name) =>
+            if owner < len(module.enum_declarations):
+                return Some(PlanType.Enum(owner, name))
+        PlanType.EnumRef(owner, name) =>
             if owner < len(module.enum_declarations):
                 return Some(PlanType.Enum(owner, name))
         _ => pass
