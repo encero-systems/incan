@@ -150,8 +150,13 @@ pub const source_defined_derives_traits_references: FrozenList[CapabilityReferen
     CapabilityReference(label="std.derives", path="stdlib/derives.md"),
     CapabilityReference(label="std.traits", path="stdlib/traits.md"),
 ]
-pub const model_field_metadata_forms: FrozenList[str] = ["name as \"wire_name\": str", "user.__fields__()"]
+pub const model_field_metadata_forms: FrozenList[str] = [
+    "name as \"wire_name\": str",
+    "name [renamed_from=\"old_name\", canonical=false]: str",
+    "user.__fields__()",
+]
 pub const model_field_metadata_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Field metadata", path="field_metadata.md"),
     CapabilityReference(label="Reflection", path="reflection.md"),
     CapabilityReference(label="std.reflection", path="stdlib/reflection.md"),
     CapabilityReference(label="Release 0.2", path="../../release_notes/0_2.md"),

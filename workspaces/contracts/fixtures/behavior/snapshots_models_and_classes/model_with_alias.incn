@@ -5,6 +5,11 @@
 #   2024-01-01 true
 #   0 nick USD
 #   ext-9 1 2
+#   title aaf232064610 true 0
+#   email_address 82244417f956 false 1 email
+#   display_name 00d8d3f11739 true 2 mail,cached_at
+
+from std.primitives import copy_frozen_bytes, hexlify
 
 model Account:
     # keyword clashing fields some with alias + description
@@ -33,8 +38,22 @@ model Account:
     # whitespace in alias
     two [alias="t w o", description="whitespace key example"]: int
     # rename continuity and canonical participation do not change construction or field access
+    title: str = ""
     email_address [renamed_from="email", canonical=false]: str = ""
-    display_name [renamed_from=["name", "full_name"], canonical=true] as "displayName": str = ""
+    display_name [renamed_from=["mail", "cached_at"], canonical=true] as "displayName": str = ""
+
+
+def print_record_metadata(account: Account) -> None:
+    """Print the identity, canonical flag and rename history for the three metadata forms."""
+    for info in account.__fields__():
+        if str(info.name) in ["title", "email_address", "display_name"]:
+            identity = hexlify(copy_frozen_bytes(info.identity))
+            earlier_names = ",".join([str(name) for name in info.renamed_from])
+            history_size = len(info.renamed_from)
+            if history_size == 0:
+                println(f"{info.name} {identity} {info.canonical} 0")
+            else:
+                println(f"{info.name} {identity} {info.canonical} {history_size} {earlier_names}")
 
 
 def main() -> None:
@@ -57,3 +76,4 @@ def main() -> None:
         Some(value) => println(f"{len(account.tags)} {value} {account.prefs["currency"]}")
         None => println("no nickname")
     println(f"{account.external_id} {account.one} {account.two}")
+    print_record_metadata(account)

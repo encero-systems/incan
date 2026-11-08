@@ -247,6 +247,12 @@ def planned_field_metadata(declaration: &NominalDeclaration) -> Option[list[Fiel
             for field in fields:
                 mut alias: Option[str] = None
                 mut description: Option[str] = None
+                mut record_identity: list[int] = []
+                mut renamed_from: list[str] = []
+                for byte in field.record_identity:
+                    record_identity.append(int(byte))
+                for earlier in field.renamed_from:
+                    renamed_from.append(str(earlier))
                 match field.alias:
                     Some(value) => alias = Some(str(value))
                     None => pass
@@ -256,6 +262,9 @@ def planned_field_metadata(declaration: &NominalDeclaration) -> Option[list[Fiel
                 result.append(
                     FieldMetadata(
                         name=str(field.name),
+                        record_identity=record_identity,
+                        record_canonical=field.record_canonical,
+                        renamed_from=renamed_from,
                         alias=alias,
                         description=description,
                         type_name=str(field.type_name),

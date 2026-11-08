@@ -1,16 +1,30 @@
 # behavior: field metadata for an imported model builds by value, by type and through a type parameter while private fields stay hidden (#2519)
 # expect-stdout:
-#   type_:type, balance:balance, external_id:externalId
-#   type_:type, balance:balance, external_id:externalId
-#   type_:type, balance:balance, external_id:externalId
-#   type_:type, balance:balance, external_id:externalId
+#   type_:type, balance:balance, external_id:externalId, title:title
+#   type_:type, balance:balance, external_id:externalId, title:title
+#   type_:type, balance:balance, external_id:externalId, title:title
+#   type_:type, balance:balance, external_id:externalId, title:title
+#   type_:82244417f956:true:email, balance:00d8d3f11739:false:mail,cached_at, title:aaf232064610:true:
+#   type_:82244417f956:true:email, balance:00d8d3f11739:false:mail,cached_at, title:aaf232064610:true:
 
-from pub::catalog import Account, local_fields
+from std.primitives import copy_frozen_bytes, hexlify
+from pub::catalog import Account, local_fields, local_record_metadata
 
 
 def fields_by_type[T]() -> list[str]:
     """Describe the fields selected from a type parameter."""
     return [f"{info.name}:{info.wire_name}" for info in T.__fields__()]
+
+
+def record_metadata_by_type[T]() -> list[str]:
+    """Describe compiler-derived field identity facts selected from a type parameter."""
+    mut result: list[str] = []
+    for info in T.__fields__():
+        if str(info.name) in ["type_", "balance", "title"]:
+            result.append(
+                f"{info.name}:{hexlify(copy_frozen_bytes(info.identity))}:{info.canonical}:{','.join([str(name) for name in info.renamed_from])}",
+            )
+    return result
 
 
 def main() -> None:
@@ -20,3 +34,5 @@ def main() -> None:
     println(", ".join([f"{info.name}:{info.wire_name}" for info in account.__fields__()]))
     println(", ".join([f"{info.name}:{info.wire_name}" for info in Account.__fields__()]))
     println(", ".join(fields_by_type[Account]()))
+    println(", ".join(local_record_metadata()))
+    println(", ".join(record_metadata_by_type[Account]()))
