@@ -557,20 +557,21 @@
       "input": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point = Record { x: i64, y: i64 }\n\n",
       "expected": {
         "status": "refused",
-        "kind": "duplicate_description",
+        "kind": "duplicate_declaration_kind",
         "line": 3,
         "column": 1
       }
     },
     {
       "id": "read-refuse-two-kinds",
-      "input": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point = Enum { Empty }\n",
+      "input": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point = Enum { Empty }\n\nexample.Point << (1, 2)\n",
       "expected": {
         "status": "refused",
-        "kind": "duplicate_description",
-        "line": 3,
+        "kind": "value_type_no_single_declaration",
+        "line": 5,
         "column": 1
-      }
+      },
+      "purpose": "A value cannot choose silently between two value-bearing kinds at one path."
     },
     {
       "id": "read-refuse-store-field-declaration",
@@ -2268,6 +2269,325 @@
         "line": 5,
         "column": 18
       }
+    },
+    {
+      "id": "read-payload-variant-rows",
+      "input": "example.Event = Enum { Sent(code: i64) }\n\nexample.Log = Record { events: list<example.Event> }\n\nexample.Log << (events=[Sent(code=7), Sent(code=8)])\n",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Event",
+              "kind": "Enum",
+              "variants": [
+                {
+                  "name": "Sent",
+                  "fields": [
+                    {
+                      "name": "code",
+                      "type": "i64",
+                      "absent": "required",
+                      "canonical": true
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "path": "example.Log",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "events",
+                  "type": "list<example.Event>",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Log",
+              "fields": {
+                "events": {
+                  "kind": "list",
+                  "items": [
+                    {
+                      "kind": "enum",
+                      "type": "example.Event",
+                      "variant": "Sent",
+                      "fields": {
+                        "code": {
+                          "kind": "int",
+                          "type": "i64",
+                          "value": "7"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "enum",
+                      "type": "example.Event",
+                      "variant": "Sent",
+                      "fields": {
+                        "code": {
+                          "kind": "int",
+                          "type": "i64",
+                          "value": "8"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "read-payload-free-variants-inline",
+      "input": "example.Kind = Enum { Percent, Fixed }\n\nexample.Rule = Record { kinds: list<example.Kind> }\n\nexample.Rule << (kinds=[Percent, Fixed])\n",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Kind",
+              "kind": "Enum",
+              "variants": [
+                {
+                  "name": "Percent",
+                  "fields": []
+                },
+                {
+                  "name": "Fixed",
+                  "fields": []
+                }
+              ]
+            },
+            {
+              "path": "example.Rule",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "kinds",
+                  "type": "list<example.Kind>",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Rule",
+              "fields": {
+                "kinds": {
+                  "kind": "list",
+                  "items": [
+                    {
+                      "kind": "enum",
+                      "type": "example.Kind",
+                      "variant": "Percent",
+                      "fields": {}
+                    },
+                    {
+                      "kind": "enum",
+                      "type": "example.Kind",
+                      "variant": "Fixed",
+                      "fields": {}
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "read-same-short-type-name",
+      "input": "a.Id = Record { value: i64 }\n\nb.Id = Record { value: i64 }\n\nexample.Value = Record { value: a.Id | b.Id }\n\nexample.Value << (value=a.Id << (3))\n",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "a.Id",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "value",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            },
+            {
+              "path": "b.Id",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "value",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            },
+            {
+              "path": "example.Value",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "value",
+                  "type": "a.Id | b.Id",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Value",
+              "fields": {
+                "value": {
+                  "kind": "union",
+                  "member": "a.Id",
+                  "value": {
+                    "kind": "record",
+                    "type": "a.Id",
+                    "fields": {
+                      "value": {
+                        "kind": "int",
+                        "type": "i64",
+                        "value": "3"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "read-qualified-variant",
+      "input": "a.Status = Enum { Pending }\n\nb.State = Enum { Pending }\n\nexample.Value = Record { value: a.Status | b.State }\n\nexample.Value << (value=Status.Pending)\n",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "a.Status",
+              "kind": "Enum",
+              "variants": [
+                {
+                  "name": "Pending",
+                  "fields": []
+                }
+              ]
+            },
+            {
+              "path": "b.State",
+              "kind": "Enum",
+              "variants": [
+                {
+                  "name": "Pending",
+                  "fields": []
+                }
+              ]
+            },
+            {
+              "path": "example.Value",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "value",
+                  "type": "a.Status | b.State",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Value",
+              "fields": {
+                "value": {
+                  "kind": "union",
+                  "member": "a.Status",
+                  "value": {
+                    "kind": "enum",
+                    "type": "a.Status",
+                    "variant": "Pending",
+                    "fields": {}
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "read-declaration-reference",
+      "input": "example.Link = Record { target: ref<example.Target> }\n\nexample.Target = Record { id: i64 }\n\nexample.Link << (target=example.remote.point)\n",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Link",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "target",
+                  "type": "ref<example.Target>",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            },
+            {
+              "path": "example.Target",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "id",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Link",
+              "fields": {
+                "target": {
+                  "kind": "reference",
+                  "target_type": "example.Target",
+                  "identity": "example.remote.point"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "purpose": "The target path is retained as an identity without resolving it or requiring the referenced declaration to be loaded."
     }
   ]
 }

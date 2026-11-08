@@ -29,14 +29,14 @@
     {
       "path": "text-read.json",
       "operation": "text_read",
-      "cases": 70,
-      "sha256": "486622d391b1ae72f08738cd0f8989eb78d2e21a21afa856cee94d89579028e7"
+      "cases": 75,
+      "sha256": "4e1eb1d47712b4187ebc8a714ec35b9ccc3cae8bd2e22d5e77855c95dc334280"
     },
     {
       "path": "text-print.json",
       "operation": "text_print",
-      "cases": 41,
-      "sha256": "da3ca5a950fedbae222bc7b2e2350507fa9ca1a539069a53ee9191fb482d928f"
+      "cases": 46,
+      "sha256": "e3a42d829e1bd6dffe371f3dffe60a0a9a115e0d61b578c015279a87fd4a1f98"
     }
   ],
   "pending": [
@@ -44,6 +44,6 @@
     "Crumb binary profile and byte vectors",
     "resource-limit and streaming executions",
     "recursive shapes, enums, unions, maps, sets and decimal coverage",
-    "text parser/printer execution, long-line wrapping, profile reference and store-key spellings"
+    "text parser/printer execution, long-line wrapping, stored-reference and store-key spellings"
   ]
 }
