@@ -35,6 +35,7 @@ from release_support import (
     require_candidate_census,
     release_receipt,
     run_step,
+    shared_relocated_sysroot,
     tree_bytes,
     verification_program,
     write_json,
@@ -598,13 +599,10 @@ def retain_seed_digests(run: ReleaseRun, seed: Path) -> Result[None, str]:
 
 
 def relocate_rust(run: ReleaseRun) -> Result[Path, str]:
-    """Copy the pinned sysroot to a second Rust home with different path and file identities."""
+    """Select a verified shared copy of the pinned sysroot at a second path with different file identities."""
     sysroot = Path(command_text("rustup", ["run", "1.98.0", "rustc", "--print", "sysroot"])?.strip())
-    home = run.paths.output.joinpath("rustup")
-    destination = home.joinpath("toolchains").joinpath(sysroot.name())
-    destination.parent().mkdir(true, true).map_err((error) => error.message())?
-    _ = sysroot.copy(destination, true, true).map_err((error) => error.message())?
-    return Ok(home)
+    cache = run.seed_home.parent().joinpath("release-rust-cache")
+    return shared_relocated_sysroot(sysroot, cache)
 
 
 def fetch_c_toolchain(run: ReleaseRun) -> Result[Path, str]:
@@ -808,17 +806,13 @@ def record_release_tree_bytes(path: Path, measured: ReleaseTreeBytes) -> Result[
 def release_tree_bytes_json(measured: ReleaseTreeBytes) -> JsonValue:
     """Encode every measured release tree and their total for the receipt."""
     return JsonValue.object(
-        {
-            "build_home": JsonValue.int(measured.build_home),
-            "source": JsonValue.int(measured.source),
-            "verification_source": JsonValue.int(measured.verification_source),
-            "verification_home": JsonValue.int(measured.verification_home),
-            "relocated_rust": JsonValue.int(measured.relocated_rust),
-            "lane": JsonValue.int(measured.lane),
-            "bundle": JsonValue.int(measured.bundle),
-            "ci": JsonValue.int(measured.ci),
-            "total": JsonValue.int(measured.total),
-        },
+        {"build_home": JsonValue.int(measured.build_home), "source": JsonValue.int(measured.source), "verification_source": JsonValue.int(
+            measured.verification_source,
+        ), "verification_home": JsonValue.int(measured.verification_home), "relocated_rust": JsonValue.int(
+            measured.relocated_rust,
+        ), "lane": JsonValue.int(measured.lane), "bundle": JsonValue.int(measured.bundle), "ci": JsonValue.int(
+            measured.ci,
+        ), "total": JsonValue.int(measured.total)},
     )
 
 

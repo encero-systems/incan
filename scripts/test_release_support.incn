@@ -13,7 +13,9 @@ from release_support import (
     release_receipt,
     require_candidate_census,
     same_bytes,
+    shared_relocated_sysroot,
     tree_bytes,
+    tree_digest,
     verification_program,
 )
 
@@ -141,10 +143,16 @@ def test_byte_comparison_reads_complete_content() -> Result[None, str]:
 
 
 def test_tree_measurement_walks_regular_files_once_and_records_bytes() -> Result[None, str]:
-    """A tree measurement sums nested regular files, excludes symlink targets, and writes one typed TSV row."""
+    """Tree evidence measures bytes, hashes content, and reuses only a verified read-only relocated copy."""
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
-    tree = temporary.path().joinpath("tree")
+    rustup = temporary.path().joinpath("rustup")
+    tree = rustup.joinpath("toolchains/tree")
     tree.joinpath("nested").mkdir(true, true).map_err((error) => error.message())?
+    rustup.joinpath("update-hashes").mkdir(true, true).map_err((error) => error.message())?
+    rustup
+        .joinpath("update-hashes/tree")
+        .write_text("pinned\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
     tree.joinpath("one").write_bytes(b"one").map_err((error) => error.message())?
     tree.joinpath("nested/two").write_bytes(b"two!!").map_err((error) => error.message())?
     tree.joinpath("alias").symlink_to(tree.joinpath("nested/two")).map_err((error) => error.message())?
@@ -153,6 +161,40 @@ def test_tree_measurement_walks_regular_files_once_and_records_bytes() -> Result
     timings = temporary.path().joinpath("timings.tsv")
     append_bytes(timings, "build-home", 8)?
     assert timings.read_text("utf-8", "strict").map_err((error) => error.message())? == "bytes/build-home\t8\n"
+
+    identity = tree_digest(tree)?
+    cache = temporary.path().joinpath("cache")
+    home = shared_relocated_sysroot(tree, cache)?
+    cached = home.joinpath("toolchains/tree/nested/two")
+    assert home.name() == identity
+    settings = home.joinpath("settings.toml").read_text("utf-8", "strict").map_err((error) => error.message())?
+    assert settings == "version = \"12\"\n\n[overrides]\n"
+    assert home.joinpath("update-hashes/tree").read_text("utf-8", "strict").map_err((error) => error.message())? == "pinned\n"
+    assert cached.read_bytes().map_err((error) => error.message())? == b"two!!"
+    match cached.write_bytes(b"changed"):
+        Ok(_) => return Err("the shared relocated tree remained writable")
+        Err(_) => pass
+    assert shared_relocated_sysroot(tree, cache)?.0 == home.0
+    rustup
+        .joinpath("update-hashes/tree")
+        .write_text("changed\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    match shared_relocated_sysroot(tree, cache):
+        Ok(_) => return Err("a stale Rust update hash was reused")
+        Err(message) =>
+            assert message.contains("update hash disagrees"), message
+    rustup
+        .joinpath("update-hashes/tree")
+        .write_text("pinned\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+
+    make_tree_writable(cache)?
+    cached.write_bytes(b"changed").map_err((error) => error.message())?
+    match shared_relocated_sysroot(tree, cache):
+        Ok(_) => return Err("a damaged shared relocated tree was reused")
+        Err(message) =>
+            assert message.contains("cached relocated tree digest disagrees"), message
+    make_tree_writable(cache)?
     return Ok(None)
 
 
@@ -199,3 +241,11 @@ def candidate_refusal(reference: &BaselineReport, candidate: &BaselineReport) ->
     match require_candidate_census(reference, candidate):
         Ok(_) => return "accepted"
         Err(message) => return message
+
+
+def make_tree_writable(root: Path) -> Result[None, str]:
+    """Restore temporary cache permissions so the test can mutate and remove its fixture."""
+    for entry in root.rglob("*").map_err((error) => error.message())?:
+        entry.chmod(false).map_err((error) => error.message())?
+    root.chmod(false).map_err((error) => error.message())?
+    return Ok(None)
