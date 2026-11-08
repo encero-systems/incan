@@ -1,4 +1,4 @@
-//! Literal argument retyping, argument type bindings, conflicting type arguments, and open bounded parameters.
+//! Literal argument retyping, argument type bindings and conflicting type arguments.
 
 use super::*;
 
@@ -449,54 +449,6 @@ impl TypeChecker {
             };
             if arg_ty != destination {
                 self.record_value_destination_if_compatible(expr.span, &arg_ty, &destination);
-            }
-        }
-    }
-
-    /// Refuse a call that leaves a type parameter with a declared bound open: no argument fixes it, since every
-    /// argument passed for a parameter that names it is built from literals that do not say what it is (`None`) or
-    /// there is none, and the expected type does not name it either (#1561).
-    ///
-    /// The bound says what the callee needs of the type argument, and such a call names no type argument for the bound
-    /// to hold of: `show(None)` for `def show[T with Display](o: Option[T])` and `make()` for
-    /// `def make[T with Display]() -> list[T]` are refused by rustc for want of a type. Only a bound the checker judges
-    /// counts: a trait whose declaration it has. A Rust capability marker (`Send`) or a Rust trait is left to the
-    /// Rust compiler, which may fix the parameter from what the checker does not model (a future's output). An
-    /// argument that fixes the parameter, a constructor argument whose open side the call settled, and explicit type
-    /// arguments, which the explicit-argument path checks, leave nothing open.
-    pub(super) fn refuse_bounded_type_params_left_open(
-        &mut self,
-        callee: &str,
-        type_params: &[String],
-        bound_details: &std::collections::HashMap<String, Vec<crate::symbols::TypeBoundInfo>>,
-        arguments: &[(&Spanned<Expr>, &ResolvedType)],
-        bindings: &std::collections::HashMap<String, ResolvedType>,
-        call_span: Span,
-    ) {
-        for type_param in type_params {
-            let Some(bound) = bound_details.get(type_param).and_then(|bounds| {
-                bounds.iter().find(|bound| {
-                    !bound.inferred
-                        && !is_rust_capability_bound(Self::type_bound_source_name(bound))
-                        && self.lookup_trait_adoption_info(bound).is_some()
-                })
-            }) else {
-                continue;
-            };
-            let open = bindings
-                .get(type_param)
-                .is_none_or(|ty| is_open_binding(ty, type_params));
-            let only_literals_name_it = arguments.iter().all(|(expr, param_ty)| {
-                first_open_type_param(param_ty, std::slice::from_ref(type_param)).is_none()
-                    || is_built_from_literals(&expr.node)
-            });
-            if open && only_literals_name_it {
-                self.errors.push(errors::bounded_type_param_left_open(
-                    callee,
-                    type_param,
-                    &self.type_bound_display(bound, bindings),
-                    call_span,
-                ));
             }
         }
     }

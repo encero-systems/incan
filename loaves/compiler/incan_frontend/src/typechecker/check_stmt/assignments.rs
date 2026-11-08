@@ -89,7 +89,7 @@ impl TypeChecker {
         let value_ty = if let Some(var_ty) = reassignment_ty.as_ref() {
             self.check_expr_with_expected(&assign.value, Some(var_ty))
         } else {
-            self.check_expr_with_expected(&assign.value, annotated_ty.as_ref())
+            self.check_new_binding_value(assign, annotated_ty.as_ref())
         };
         self.refuse_mut_param_held_by(&assign.value);
 
@@ -171,6 +171,25 @@ impl TypeChecker {
         self.declare_assignment_binding(assign, ty, is_mutable, introduces_binding, span);
         self.retain_qualified_assignment_storage(assign, span);
         self.record_explicit_local_mode(assign, explicit_mode, is_mutable);
+    }
+
+    /// Check the value a new binding receives against its annotation. While an unannotated binding's value is checked,
+    /// the binding's name is kept, so an undetermined construction's hint can spell the annotation that fixes it
+    /// (#2762).
+    fn check_new_binding_value(
+        &mut self,
+        assign: &AssignmentStmt,
+        annotated_ty: Option<&ResolvedType>,
+    ) -> ResolvedType {
+        if annotated_ty.is_some() {
+            return self.check_expr_with_expected(&assign.value, annotated_ty);
+        }
+        let enclosing = self
+            .unannotated_binding_value
+            .replace((assign.value.span, assign.name.clone()));
+        let value_ty = self.check_expr_with_expected(&assign.value, None);
+        self.unannotated_binding_value = enclosing;
+        value_ty
     }
 
     /// Preserve a module-qualified annotation's selected nominal owner after source compatibility is checked.

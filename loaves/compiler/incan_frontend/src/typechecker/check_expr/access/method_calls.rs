@@ -1,6 +1,7 @@
 //! Method call checking entry points, receiver mutation checks, and builtin method argument expectations.
 
 use super::*;
+use crate::typechecker::undetermined_type_params::{OpenConstruction, written_arguments, written_expression};
 
 impl TypeChecker {
     /// Validate the RFC 006 `Generator[T].map(fn)` helper and return the mapped element type.
@@ -448,23 +449,51 @@ impl TypeChecker {
         let ResolvedType::Named(enum_name) = base_ty else {
             return None;
         };
+        let (type_params, declared_payloads, bindings) =
+            self.enum_variant_payload_bindings(enum_name, method, args, arg_types)?;
+        let arguments = type_params
+            .iter()
+            .map(|parameter| {
+                bindings
+                    .get(parameter)
+                    .filter(|argument| self.enum_construction_argument_is_fixed(argument))
+                    .cloned()
+            })
+            .collect::<Option<Vec<_>>>()?;
+        self.refuse_unsatisfied_nominal_type_arguments(enum_name, &bindings, TypeArgumentOrigin::Inferred, span);
+        let payloads = declared_payloads
+            .iter()
+            .map(|payload| substitute_resolved_type(payload, &bindings))
+            .collect();
+        Some(EnumVariantInstantiation { arguments, payloads })
+    }
+
+    /// Bind a plain-named generic enum variant's parameters from its checked payloads.
+    ///
+    /// Returns the enum's type parameters, the variant's declared payloads and the bindings the payloads give, reading
+    /// a nested constructor's exact inferred type first. `None` for `Option` and `Result`, which keep their
+    /// constructor rules, for an enum without type parameters, and for payloads that do not match the variant.
+    fn enum_variant_payload_bindings(
+        &self,
+        enum_name: &str,
+        method: &str,
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+    ) -> Option<(Vec<String>, Vec<ResolvedType>, HashMap<String, ResolvedType>)> {
         if matches!(
             collection_type_id(enum_name),
             Some(CollectionTypeId::Option | CollectionTypeId::Result)
         ) {
             return None;
         }
-        let (type_params, declared_payloads) = {
-            let TypeInfo::Enum(info) = self.lookup_semantic_type_info(enum_name)? else {
-                return None;
-            };
-            if info.type_params.is_empty() {
-                return None;
-            }
-            let canonical_variant = info.variant_aliases.get(method).map(String::as_str).unwrap_or(method);
-            let declared = info.variant_fields.get(canonical_variant)?.clone();
-            (info.type_params.clone(), declared)
+        let TypeInfo::Enum(info) = self.lookup_semantic_type_info(enum_name)? else {
+            return None;
         };
+        if info.type_params.is_empty() {
+            return None;
+        }
+        let canonical_variant = info.variant_aliases.get(method).map(String::as_str).unwrap_or(method);
+        let declared_payloads = info.variant_fields.get(canonical_variant)?.clone();
         if declared_payloads.len() != args.len() || declared_payloads.len() != arg_types.len() {
             return None;
         }
@@ -487,21 +516,53 @@ impl TypeChecker {
                 .unwrap_or(actual);
             self.infer_type_param_bindings(declared, actual, &mut bindings);
         }
+        Some((info.type_params.clone(), declared_payloads, bindings))
+    }
+
+    /// Refuse a plain-named generic enum variant construction whose payloads fix fewer than all of the enum's
+    /// parameters, when neither a written type argument nor an expected type can fix the rest (#2762).
+    ///
+    /// An expected type that names the enum, such as a generic callee's `RecordState[T]` parameter, leaves the rest to
+    /// that callee. A payload of an unknown type was reported where it was checked. Returns the construction's type
+    /// arguments when it is refused, `Unknown` for each open one, so later uses of the value are not refused again.
+    pub(super) fn refuse_open_enum_construction(
+        &mut self,
+        call: &MethodCallSite<'_>,
+        base_ty: &ResolvedType,
+        arg_types: &[ResolvedType],
+    ) -> Option<Vec<ResolvedType>> {
+        let ResolvedType::Named(enum_name) = base_ty else {
+            return None;
+        };
+        if arg_types.iter().any(|ty| matches!(ty, ResolvedType::Unknown))
+            || self.expected_type_names_declaration(call.expected_return_ty, enum_name)
+        {
+            return None;
+        }
+        let (type_params, _, bindings) =
+            self.enum_variant_payload_bindings(enum_name, call.method, call.args, arg_types)?;
+        let fixed = bindings
+            .into_iter()
+            .filter(|(_, argument)| self.enum_construction_argument_is_fixed(argument))
+            .collect::<HashMap<_, _>>();
         let arguments = type_params
             .iter()
-            .map(|parameter| {
-                bindings
-                    .get(parameter)
-                    .filter(|argument| self.enum_construction_argument_is_fixed(argument))
-                    .cloned()
-            })
-            .collect::<Option<Vec<_>>>()?;
-        self.refuse_unsatisfied_nominal_type_arguments(enum_name, &bindings, TypeArgumentOrigin::Inferred, span);
-        let payloads = declared_payloads
-            .iter()
-            .map(|payload| substitute_resolved_type(payload, &bindings))
+            .map(|type_param| fixed.get(type_param).cloned().unwrap_or(ResolvedType::Unknown))
             .collect();
-        Some(EnumVariantInstantiation { arguments, payloads })
+        let owner = written_expression(&call.base.node).unwrap_or_else(|| enum_name.clone());
+        let declaration = self
+            .named_type_reference_identity(enum_name)
+            .or_else(|| self.type_info.resolved_identity(call.base.span).cloned());
+        self.refuse_undetermined_construction(OpenConstruction {
+            owner: &owner,
+            declaration,
+            type_params: &type_params,
+            fixed,
+            written_rest: format!(".{}({})", call.method, written_arguments(call.args)),
+            sources: "payload",
+            span: call.span,
+        });
+        Some(arguments)
     }
 
     /// Type-check `receiver.method(...)` once the receiver, method name, explicit type arguments, and value arguments

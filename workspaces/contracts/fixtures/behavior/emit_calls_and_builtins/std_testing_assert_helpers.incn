@@ -60,7 +60,7 @@ def main() -> None:
     maybe: Option[int] = Some(5)
     unwrapped = assert_is_some(maybe)
     println(f"some {unwrapped}")
-    assert_is_none(None)
+    assert_is_none[int](None)
     println("none passed")
     ok_value = assert_is_ok(Ok(42))
     println(f"ok {ok_value}")

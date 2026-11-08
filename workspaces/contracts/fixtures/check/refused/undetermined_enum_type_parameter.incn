@@ -1,0 +1,25 @@
+# behavior: a generic enum variant construction whose type parameter its payload does not name, with no written type argument or expected type, is refused instead of settling to a guessed type (#2715, #2762)
+# expect-diagnostic: INCAN-T0001
+
+"""A variant is refused when nothing at its construction determines one of the enum's type parameters."""
+
+
+model Tombstone:
+    """Describe a deletion without the record's value type."""
+
+    serial: int
+
+
+enum RecordState[T]:
+    """Represent a present or deleted record of value type `T`."""
+
+    Present(T)
+    Deleted(Tombstone)
+
+
+def main() -> None:
+    """Build a deleted state whose `T` nothing fixes."""
+    state = RecordState.Deleted(Tombstone(serial=1))
+    match state:
+        RecordState.Present(_) => println("present")
+        RecordState.Deleted(_) => println("deleted")
