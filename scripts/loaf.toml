@@ -1,0 +1,10 @@
+[project]
+name = "incan_release_scripts"
+version = "0.6.0-dev.8"
+description = "Incan repository checks, release production and development utilities"
+
+[project.scripts]
+memory_budget = "memory_budget.incn"
+
+[dependencies]
+incan_platform = { path = "../loaves/platform" }

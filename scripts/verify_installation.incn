@@ -53,7 +53,7 @@ def main() -> None:
 
 pub def verify(output: Path, jobs: int, timeout_seconds: int) -> Result[Path, str]:
     """
-    Verify an installed toolchain in seven steps.
+    Verify an installed toolchain in eight steps.
 
     1. Audit installation paths and select only shipped standard packages.
     2. Build this checkout's contract runner with the installed compiler.
@@ -61,7 +61,8 @@ pub def verify(output: Path, jobs: int, timeout_seconds: int) -> Result[Path, st
     4. Exercise direct-driver identity and minimal runtime-closure integration.
     5. Require the installed LSP contract independently.
     6. Run all eight contract families and preserve every committed PASS key.
-    7. Retain checksums, complete logs, counts, and a stable summary.
+    7. Record one cold process-tree footprint run for each release measurement command.
+    8. Retain checksums, complete logs, counts, and a stable summary.
     """
     installation = prepare(output, jobs, timeout_seconds)?
 
@@ -84,7 +85,10 @@ pub def verify(output: Path, jobs: int, timeout_seconds: int) -> Result[Path, st
     # 6. Every family runs once under one budget and the committed PASS baseline is a lower bound.
     report = run_contracts(installation, runner)?
 
-    # 7. The caller receives one durable evidence directory even on hosts with shared temporary storage.
+    # 7. Hosted CI records one run per command; local release qualification already records three.
+    measure_memory(installation)?
+
+    # 8. The caller receives one durable evidence directory even on hosts with shared temporary storage.
     summary = baseline_summary(report) + f"; {suites} Rust facet suites\n"
     installation.run
         .joinpath("summary.txt")
@@ -482,6 +486,30 @@ def run_contracts(installation: Installation, runner: Path) -> Result[BaselineRe
     )?
     write_json(installation.run.joinpath("counts.json"), counts_json(report.counts))?
     return Ok(report)
+
+
+def measure_memory(installation: Installation) -> Result[None, str]:
+    """Record one cold footprint run per release command through the relocated installed toolchain."""
+    return require_step(
+        Step(
+            name="memory-budget",
+            executable=installation.oven.0,
+            arguments=[
+                "run",
+                installation.root.joinpath("scripts/memory_budget.incn").0,
+                "--",
+                installation.oven.0,
+                installation.run.0,
+                "--runs",
+                "1",
+            ],
+            environment=command_environment(installation),
+            remove_environment=["RUSTC_BOOTSTRAP", "INCAN_LSP"],
+            directory=Some(installation.root),
+            log=installation.run.joinpath("memory-budget.log"),
+            timeout_seconds=installation.timeout_seconds * 20,
+        ),
+    )
 
 
 def command_step(
