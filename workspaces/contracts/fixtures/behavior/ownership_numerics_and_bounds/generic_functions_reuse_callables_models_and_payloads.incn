@@ -15,6 +15,7 @@
 from std.collections import OrderedSet
 from std.graph import Dag
 
+
 model Algorithm:
     name: str
 
@@ -62,7 +63,8 @@ def increment(value: int) -> int:
 
 
 def main() -> None:
-    """Exercise concrete generic values, then close a constructor's owner binder exactly once.
+    """
+    Exercise concrete generic values, then close a constructor's owner binder exactly once.
 
     1. Call generic functions with concrete callable, model and payload values.
     2. Construct an empty generic model through its static constructor.
@@ -82,9 +84,9 @@ def main() -> None:
     # 2. Keep the owner's argument separate from the constructor's method arguments.
     batch = OrderedSet[str]()
     println(len(batch))
-    println(f"{position(['kept'], 'kept')} {position(['kept'], 'missing')} {position([2, 3], 3)}")
+    println(f"{position(["kept"], "kept")} {position(["kept"], "missing")} {position([2, 3], 3)}")
     graph = Dag[str]()
-    println(graph.graph.next_node_id)
+    println(len(graph.active_node_ids()))
 
 
 def position[T with (Clone, Eq)](items: list[T], value: T) -> int:

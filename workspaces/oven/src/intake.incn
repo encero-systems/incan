@@ -252,7 +252,7 @@ pub def intake(root: Path, reader: ManifestReader = ManifestReader()) -> Result[
         nodes[project.root] = graph.add_node(project.root)
         sources[project.root] = project.evidence.source
     for edge in edges:
-        if not graph.graph.contains_edge(nodes[edge.dependency_root], nodes[edge.requester_root]):
+        if not graph.contains_edge(nodes[edge.dependency_root], nodes[edge.requester_root]):
             graph
                 .add_edge(nodes[edge.dependency_root], nodes[edge.requester_root])
                 .map_err(

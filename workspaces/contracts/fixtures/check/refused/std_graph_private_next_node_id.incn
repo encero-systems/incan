@@ -1,0 +1,9 @@
+# behavior: graph node allocation state is private and names active_node_ids as its replacement (#2524)
+# expect-diagnostic: INCAN-T0001
+
+from std.graph import DiGraph
+
+
+def bypass() -> None:
+    graph = DiGraph[str]()
+    println(graph.next_node_id)
