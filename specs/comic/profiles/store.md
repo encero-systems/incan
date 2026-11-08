@@ -19,6 +19,8 @@ A load must:
 
 A binding loaded this way is a queryable description. A program cannot import it as a type, which still takes a declaration in source. Writing a document out of a store is an export, and follows the store's declared privacy and retention profiles.
 
+An export written as Crumbs is a sealed set, and loading a sealed set checks its seal before anything is published. A COMIC text document is never sealed: it loads whole when every entry is closed, so a caller that must know an export arrived complete asks for Crumbs.
+
 ## Open
 
 - **Import keys.** Crumbling the same document twice must change nothing, which one transaction does not give: a fresh identity on each load would duplicate every value that has no `___id`. Proposed: such a value takes its identity from the load's import key, its type, its canonical projection and its occurrence index, so two identical rows stay two records.
