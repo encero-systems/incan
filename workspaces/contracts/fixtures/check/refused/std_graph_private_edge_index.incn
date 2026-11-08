@@ -1,0 +1,12 @@
+# behavior: physical edge indexes are private and name active_edge_ids as their replacement (#2524)
+# expect-diagnostic: INCAN-T0001
+
+from std.graph import DiGraph
+
+
+def bypass() -> None:
+    mut graph = DiGraph[str]()
+    from_ = graph.add_node("from")
+    to = graph.add_node("to")
+    graph.add_edge(from_, to)
+    println(graph.edge_index(graph.active_edge_ids()[0]))

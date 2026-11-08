@@ -1,0 +1,55 @@
+# behavior: indexed graph storage preserves RFC 047 neighbor, traversal and multigraph deduplication orders (#2524)
+# expect-stdout:
+#   successors(a) 1 2 3
+#   predecessors(b) 0 2 3
+#   bfs(a) 0 1 2 3
+#   dfs(a) 0 1 2 3
+#   topological 0 2 3 1
+#   topological late-first 2 1 0
+#   multi successors(p) 1
+
+from std.graph import DiGraph, GraphError, MultiDiGraph, NodeId
+
+
+def ids(result: Result[list[NodeId], GraphError]) -> str:
+    """Render one legacy ordered result."""
+    match result:
+        Ok(nodes) =>
+            mut values: list[str] = []
+            for node in nodes:
+                values.append(str(node.to_int()))
+            return " ".join(values)
+        Err(_) => return "error"
+
+
+def main() -> None:
+    mut graph = DiGraph[str]()
+    a = graph.add_node("a")
+    b = graph.add_node("b")
+    c = graph.add_node("c")
+    d = graph.add_node("d")
+    graph.add_edge(a, d)
+    graph.add_edge(a, c)
+    graph.add_edge(a, b)
+    graph.add_edge(d, b)
+    graph.add_edge(c, b)
+    println(f"successors(a) {ids(graph.successors(a))}")
+    println(f"predecessors(b) {ids(graph.predecessors(b))}")
+    println(f"bfs(a) {ids(graph.bfs_nodes(a))}")
+    println(f"dfs(a) {ids(graph.dfs_preorder_nodes(a))}")
+    println(f"topological {ids(graph.topological_order())}")
+
+    mut late = DiGraph[str]()
+    x = late.add_node("x")
+    y = late.add_node("y")
+    z = late.add_node("z")
+    late.add_edge(z, y)
+    late.add_edge(y, x)
+    println(f"topological late-first {ids(late.topological_order())}")
+
+    mut multi = MultiDiGraph[str]()
+    p = multi.add_node("p")
+    q = multi.add_node("q")
+    multi.add_edge(p, q)
+    multi.add_edge(p, q)
+    println(f"multi successors(p) {ids(multi.successors(p))}")

@@ -44,13 +44,22 @@ Construct a directed graph with `DiGraph[T]()`.
 | `g.contains_edge(from_, to)` | `bool` | Return whether the directed edge `from_ -> to` exists. |
 | `g.successors(node)` | `Result[list[NodeId], GraphError]` | Return outgoing neighbors for `node`. |
 | `g.predecessors(node)` | `Result[list[NodeId], GraphError]` | Return incoming neighbors for `node`. |
+| `g.active_node_ids()` | `list[NodeId]` | Return live node ids in allocation order. |
+| `g.active_edge_ids()` | `list[EdgeId]` | Return live edge ids in allocation order. |
+| `g.adjacency_physical_count(node)` | `Result[int, GraphError]` | Return the number of physical outgoing adjacency entries for `node`. |
+| `g.adjacency_live_count(node)` | `Result[int, GraphError]` | Return the number of live outgoing adjacency entries for `node`. |
+| `g.adjacency_tombstone_count(node)` | `Result[int, GraphError]` | Return the number of deleted outgoing adjacency entries retained for `node`. |
 | `g.roots()` | `list[NodeId]` | Return active nodes with no incoming edges. |
 | `g.sinks()` | `list[NodeId]` | Return active nodes with no outgoing edges. |
 | `g.bfs_nodes(start)` | `Result[list[NodeId], GraphError]` | Return reachable nodes in breadth-first order. |
 | `g.dfs_preorder_nodes(start)` | `Result[list[NodeId], GraphError]` | Return reachable nodes in depth-first preorder. |
 | `g.topological_order()` | `Result[list[NodeId], GraphError]` | Return a topological order, or `Err(GraphError)` when the graph contains a cycle. |
 
-`add_edge` rejects unknown endpoints and duplicate active edges. `remove_node` marks the node inactive and removes every incoming and outgoing edge attached to that node.
+`add_edge` rejects unknown endpoints and duplicate active edges. `remove_node` marks the node inactive and removes every incoming and outgoing edge attached to that node. Node and edge ids are never reused.
+
+`successors` and `predecessors` return distinct neighbors in ascending `NodeId` order. Breadth-first and depth-first traversal use that neighbor order. `topological_order` uses repeated passes over active nodes in allocation order, so a node that becomes ready during a pass is emitted when that same pass reaches it. These legacy orders remain distinct from the edge-insertion order used by the indexed reader API.
+
+The three adjacency count methods expose deterministic storage metrics. Physical entries equal live plus retained tombstones. An adjacency list compacts after tombstones outnumber live entries, after which the retained tombstone count is zero.
 
 ## `Dag[T]`
 
@@ -64,8 +73,11 @@ Construct a directed acyclic graph with `Dag[T]()`.
 | `g.node_payload(node)` | `Result[T, GraphError]` | Return the payload stored for `node`. |
 | `g.add_edge(from_, to)` | `Result[None, GraphError]` | Add `from_ -> to`, rejecting duplicates and cycle-creating edges. |
 | `g.remove_edge(from_, to)` | `Result[None, GraphError]` | Remove the directed edge `from_ -> to`. |
+| `g.contains_edge(from_, to)` | `bool` | Return whether the directed edge `from_ -> to` exists. |
 | `g.successors(node)` | `Result[list[NodeId], GraphError]` | Return outgoing neighbors for `node`. |
 | `g.predecessors(node)` | `Result[list[NodeId], GraphError]` | Return incoming neighbors for `node`. |
+| `g.active_node_ids()` | `list[NodeId]` | Return live node ids in allocation order. |
+| `g.active_edge_ids()` | `list[EdgeId]` | Return live edge ids in allocation order. |
 | `g.roots()` | `list[NodeId]` | Return active nodes with no incoming edges. |
 | `g.sinks()` | `list[NodeId]` | Return active nodes with no outgoing edges. |
 | `g.bfs_nodes(start)` | `Result[list[NodeId], GraphError]` | Return reachable nodes in breadth-first order. |
@@ -73,7 +85,7 @@ Construct a directed acyclic graph with `Dag[T]()`.
 | `g.topological_order()` | `list[NodeId]` | Return the DAG's topological order. |
 | `g.can_reach(start, target)` | `bool` | Return whether `target` is reachable from `start`. |
 
-`Dag[T]` keeps acyclicity as an insertion-time invariant. Its `topological_order()` returns a list directly because successful edge insertion maintains the ordering precondition.
+`Dag[T]` keeps acyclicity as an insertion-time invariant. Its `topological_order()` returns a list directly because successful edge insertion maintains the ordering precondition. Neighbor and topological orders match the corresponding legacy `DiGraph[T]` orders.
 
 ## `MultiDiGraph[T]`
 
@@ -92,13 +104,32 @@ Construct a directed multigraph with `MultiDiGraph[T]()`.
 | `g.edge_endpoints(edge)` | `Result[Tuple[NodeId, NodeId], GraphError]` | Return the source and target node ids for `edge`. |
 | `g.successors(node)` | `Result[list[NodeId], GraphError]` | Return outgoing neighbors for `node`. |
 | `g.predecessors(node)` | `Result[list[NodeId], GraphError]` | Return incoming neighbors for `node`. |
+| `g.active_node_ids()` | `list[NodeId]` | Return live node ids in allocation order. |
+| `g.active_edge_ids()` | `list[EdgeId]` | Return live edge ids in allocation order. |
 | `g.roots()` | `list[NodeId]` | Return active nodes with no incoming edges. |
 | `g.sinks()` | `list[NodeId]` | Return active nodes with no outgoing edges. |
 | `g.bfs_nodes(start)` | `Result[list[NodeId], GraphError]` | Return reachable nodes in breadth-first order. |
 | `g.dfs_preorder_nodes(start)` | `Result[list[NodeId], GraphError]` | Return reachable nodes in depth-first preorder. |
 | `g.topological_order()` | `Result[list[NodeId], GraphError]` | Return a topological order, or `Err(GraphError)` when the graph contains a cycle. |
 
-Parallel edges are distinct when their `EdgeId` values differ, even when they connect the same source and target node ids.
+Parallel edges are distinct when their `EdgeId` values differ, even when they connect the same source and target node ids. `edges_between` returns live edge ids in edge-insertion order. `successors` and `predecessors` deduplicate parallel relationships and return distinct neighbors in ascending `NodeId` order.
+
+## Sealed storage migration
+
+Graph containers own indexed storage whose physical representation is private. Code that previously inspected that representation must use the supported operations below.
+
+| Private surface | Replacement |
+| --- | --- |
+| `DiGraph.next_node_id`, `DiGraph.nodes` | `active_node_ids()` |
+| `DiGraph.next_edge_id`, `DiGraph.edges` | `active_edge_ids()` |
+| `Dag.graph` | `Dag` methods, including `contains_edge()` and `active_node_ids()` |
+| `MultiDiGraph.graph` | `MultiDiGraph` methods, including `active_edge_ids()` |
+| `GraphNode`, `GraphEdge` | `NodeId`, `EdgeId`, and graph lookup methods |
+| `DiGraph.insert_edge()` | `add_edge()` or `MultiDiGraph.add_edge()` |
+| `DiGraph.node_index()` | `contains_node()` and `node_payload()` |
+| `DiGraph.edge_index()` | `active_edge_ids()` |
+
+The migration diagnostics name these replacements. They are refusals, not deprecation warnings: direct access could bypass acyclicity, parallel-edge, lifetime, or compaction invariants.
 
 ## Error cases
 

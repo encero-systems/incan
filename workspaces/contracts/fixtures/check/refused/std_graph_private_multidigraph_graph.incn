@@ -1,0 +1,9 @@
+# behavior: multigraph storage is private so callers use multigraph operations (#2524)
+# expect-diagnostic: INCAN-T0001
+
+from std.graph import MultiDiGraph
+
+
+def bypass() -> None:
+    graph = MultiDiGraph[str]()
+    println(len(graph.graph.active_edge_ids()))

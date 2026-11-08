@@ -25,10 +25,13 @@ use incan_frontend::api_metadata::{
 use incan_frontend::ast::{Declaration, ImportKind, Visibility};
 use incan_frontend::contract_metadata::{CanonicalModelBundle, ContractMetadataPackage};
 use incan_frontend::diagnostics;
-use incan_frontend::library_exports::{CheckedNamedExport, checked_exports_by_name, collect_checked_public_exports};
+use incan_frontend::library_exports::{
+    CheckedNamedExport, checked_exports_by_name, collect_checked_made_private_types, collect_checked_public_exports,
+};
 use incan_frontend::library_manifest::public_identities::public_executable_identities;
 use incan_frontend::library_manifest::{
-    ExecutableRepresentationExport, LibraryManifest, LibraryRustAbi, NativeUnionExport, NativeUnionOwnerExport, TypeRef,
+    ExecutableRepresentationExport, LibraryManifest, LibraryRustAbi, MadePrivateTypeExport, NativeUnionExport,
+    NativeUnionOwnerExport, TypeRef,
 };
 use incan_frontend::loaf_index::LoafNativeClosure;
 use incan_frontend::parsed_module::ParsedModule;
@@ -53,6 +56,8 @@ pub struct PublicationFacts {
     exports_by_module: HashMap<String, HashMap<String, Vec<CheckedNamedExport>>>,
     /// Checked public exports by source module, in checking order.
     exports_by_source_module: Vec<(Vec<String>, Vec<CheckedNamedExport>)>,
+    /// Migration refusals for private nominal types, across every checked source module.
+    made_private_types: Vec<MadePrivateTypeExport>,
     /// Checked API metadata, one per module.
     api_modules: Vec<CheckedApiMetadata>,
     /// The `pub from … import` aliases each module declares, under its registry module path.
@@ -70,6 +75,7 @@ impl PublicationFacts {
             package: package.to_string(),
             exports_by_module: HashMap::new(),
             exports_by_source_module: Vec::new(),
+            made_private_types: Vec::new(),
             api_modules: Vec::new(),
             alias_modules: Vec::new(),
             registry_modules: Vec::new(),
@@ -77,11 +83,20 @@ impl PublicationFacts {
         }
     }
 
-    /// Collect one checked module's public exports, API metadata and registries. A registry declared in the unit's
-    /// entry module is published under the module path `lib`.
+    /// Collect one checked module's public exports, API metadata and registries.
+    ///
+    /// A registry declared in the unit's entry module is published under the module path `lib`; a migration tombstone
+    /// from that same module is published at the package root because that is where consumers import its former name.
     pub fn visit(&mut self, module: &ParsedModule, checker: &TypeChecker, entry: bool) {
         self.collect_native_rust_items(module, checker);
         let exports = collect_checked_public_exports(&module.ast, checker);
+        let published_module_path = if entry {
+            Vec::new()
+        } else {
+            module.path_segments.clone()
+        };
+        self.made_private_types
+            .extend(collect_checked_made_private_types(&module.ast, &published_module_path));
         let registry_path = if entry {
             vec!["lib".to_string()]
         } else {
@@ -203,6 +218,12 @@ impl PublicationFacts {
                 CliError::failure(rendered.trim_end())
             })?;
         let mut manifest = LibraryManifest::from_checked_exports(&self.package, &unit.version, &selected);
+        self.made_private_types.sort_by(|left, right| {
+            left.module_path
+                .cmp(&right.module_path)
+                .then_with(|| left.name.cmp(&right.name))
+        });
+        manifest.made_private_types = self.made_private_types;
         manifest.vocab = vocab::prepared_registration(unit)?;
         manifest.rust_abi =
             LibraryRustAbi::from_items(self.rust_items.into_values().map(Arc::unwrap_or_clone).collect());

@@ -192,6 +192,16 @@ impl TypeChecker {
                 self.define_import_symbol(local_name, namespace_path, false, target_identity, span);
                 continue;
             }
+            if let Some(migration) = Self::made_private_type(&manifest, path, &item.name) {
+                self.errors.push(errors::import_made_private(
+                    &item.name,
+                    &format!("{}.{}", root.join("."), path.join(".")),
+                    migration.facts.message.as_deref(),
+                    migration.facts.replacement.as_deref(),
+                    span,
+                ));
+                continue;
+            }
             self.errors.push(errors::pub_library_symbol_not_exported(
                 &item.name,
                 &format!("{}.{}", root.join("."), path.join(".")),
@@ -279,12 +289,21 @@ impl TypeChecker {
                     span,
                 ));
             } else {
-                self.errors.push(errors::pub_library_symbol_not_exported(
-                    &item.name,
-                    library,
-                    &Self::loaf_module_member_names(manifest, &[]),
-                    span,
-                ));
+                match Self::made_private_type(manifest, &[], &item.name) {
+                    Some(migration) => self.errors.push(errors::import_made_private(
+                        &item.name,
+                        library,
+                        migration.facts.message.as_deref(),
+                        migration.facts.replacement.as_deref(),
+                        span,
+                    )),
+                    None => self.errors.push(errors::pub_library_symbol_not_exported(
+                        &item.name,
+                        library,
+                        &Self::loaf_module_member_names(manifest, &[]),
+                        span,
+                    )),
+                }
             }
             return;
         };
@@ -298,6 +317,18 @@ impl TypeChecker {
             imported_type_aliases,
             span,
         );
+    }
+
+    /// Find one provider-published migration refusal for an exact module and type name.
+    fn made_private_type<'a>(
+        manifest: &'a LibraryManifest,
+        module_path: &[String],
+        name: &str,
+    ) -> Option<&'a crate::library_manifest::MadePrivateTypeExport> {
+        manifest
+            .made_private_types
+            .iter()
+            .find(|migration| migration.module_path == module_path && migration.name == name)
     }
 
     /// Record the compiler-known surface a `std.*` import binds: surface types (`Html`), surface functions and the

@@ -30,6 +30,7 @@ impl TypeChecker {
         );
 
         let derives = self.check_newtype_derives(nt);
+        self.validate_made_private_decorators(&nt.decorators, nt.visibility, &format!("newtype '{}'", nt.name));
 
         // Check underlying type exists
         let underlying = self.resolve_type_checked(&nt.underlying);

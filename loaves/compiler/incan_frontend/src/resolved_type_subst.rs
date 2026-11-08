@@ -150,6 +150,7 @@ pub fn substitute_method_info(info: &MethodInfo, map: &HashMap<String, ResolvedT
         is_async: info.is_async,
         has_body: info.has_body,
         alias_of: info.alias_of.clone(),
+        made_private: info.made_private.clone(),
     }
 }
 
@@ -219,6 +220,7 @@ mod tests {
             is_async: false,
             has_body: true,
             alias_of: None,
+            made_private: None,
         };
         let substitutions = HashMap::from([("E".to_string(), ResolvedType::Named("IoError".to_string()))]);
 

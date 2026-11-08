@@ -10,6 +10,7 @@ pub enum FieldMetadataKey {
     Description,
     RenamedFrom,
     Canonical,
+    MadePrivate,
 }
 
 /// Ordered list of supported field metadata keys.
@@ -18,6 +19,7 @@ pub const FIELD_METADATA_KEYS: &[FieldMetadataKey] = &[
     FieldMetadataKey::Description,
     FieldMetadataKey::RenamedFrom,
     FieldMetadataKey::Canonical,
+    FieldMetadataKey::MadePrivate,
 ];
 
 /// Safe value shape accepted by one compiler-known field metadata key.
@@ -26,6 +28,7 @@ pub enum FieldMetadataValueKind {
     String,
     StringOrStringList,
     Boolean,
+    BooleanStringOrLifecycle,
 }
 
 /// Return the safe value shape accepted by a compiler-known field metadata key.
@@ -34,6 +37,7 @@ pub fn value_kind(key: FieldMetadataKey) -> FieldMetadataValueKind {
         FieldMetadataKey::Alias | FieldMetadataKey::Description => FieldMetadataValueKind::String,
         FieldMetadataKey::RenamedFrom => FieldMetadataValueKind::StringOrStringList,
         FieldMetadataKey::Canonical => FieldMetadataValueKind::Boolean,
+        FieldMetadataKey::MadePrivate => FieldMetadataValueKind::BooleanStringOrLifecycle,
     }
 }
 
@@ -43,6 +47,9 @@ pub fn value_kind_description(kind: FieldMetadataValueKind) -> &'static str {
         FieldMetadataValueKind::String => "a string literal",
         FieldMetadataValueKind::StringOrStringList => "a string literal or a list of string literals",
         FieldMetadataValueKind::Boolean => "a boolean literal",
+        FieldMetadataValueKind::BooleanStringOrLifecycle => {
+            "a boolean literal, a string literal, or a nested lifecycle descriptor"
+        }
     }
 }
 
@@ -53,6 +60,7 @@ pub fn from_str(s: &str) -> Option<FieldMetadataKey> {
         "description" => Some(FieldMetadataKey::Description),
         "renamed_from" => Some(FieldMetadataKey::RenamedFrom),
         "canonical" => Some(FieldMetadataKey::Canonical),
+        "made_private" => Some(FieldMetadataKey::MadePrivate),
         _ => None,
     }
 }
@@ -64,5 +72,6 @@ pub fn as_str(key: FieldMetadataKey) -> &'static str {
         FieldMetadataKey::Description => "description",
         FieldMetadataKey::RenamedFrom => "renamed_from",
         FieldMetadataKey::Canonical => "canonical",
+        FieldMetadataKey::MadePrivate => "made_private",
     }
 }

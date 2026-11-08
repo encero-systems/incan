@@ -227,6 +227,117 @@ impl TypeChecker {
         }
     }
 
+    /// Validate RFC 150's migration descriptor on a private method or nominal type.
+    pub(in crate::typechecker) fn validate_made_private_decorators(
+        &mut self,
+        decorators: &[Spanned<Decorator>],
+        visibility: Visibility,
+        subject: &str,
+    ) {
+        for decorator in decorators {
+            if decorators::from_segments(&decorator.node.path.segments) != Some(DecoratorId::MadePrivate) {
+                continue;
+            }
+            if visibility == Visibility::Public {
+                self.errors.push(errors::invalid_made_private_annotation(
+                    subject,
+                    "the declaration is public",
+                    decorator.span,
+                ));
+            }
+            let mut seen = HashSet::new();
+            for argument in &decorator.node.args {
+                let DecoratorArg::Named(name, DecoratorArgValue::Expr(value)) = argument else {
+                    self.errors.push(errors::invalid_made_private_annotation(
+                        subject,
+                        "arguments must be named values",
+                        decorator.span,
+                    ));
+                    continue;
+                };
+                if !seen.insert(name.as_str()) {
+                    self.errors.push(errors::invalid_made_private_annotation(
+                        subject,
+                        &format!("`{name}` is repeated"),
+                        value.span,
+                    ));
+                    continue;
+                }
+                match name.as_str() {
+                    "since" | "retire_in" | "message" | "by" | "issue"
+                        if matches!(value.node, Expr::Literal(Literal::String(_))) => {}
+                    "replacement" if crate::typechecker::collect::dotted_path_segments(&value.node).is_some() => {
+                        if !self.made_private_reference_exists(&value.node) {
+                            self.errors.push(errors::invalid_made_private_annotation(
+                                subject,
+                                "`replacement` does not resolve to a declaration",
+                                value.span,
+                            ));
+                        }
+                    }
+                    "since" | "retire_in" | "message" | "by" | "issue" => {
+                        self.errors.push(errors::invalid_made_private_annotation(
+                            subject,
+                            &format!("`{name}` must be a string literal"),
+                            value.span,
+                        ));
+                    }
+                    "replacement" => self.errors.push(errors::invalid_made_private_annotation(
+                        subject,
+                        "`replacement` must be a declaration reference",
+                        value.span,
+                    )),
+                    _ => self.errors.push(errors::invalid_made_private_annotation(
+                        subject,
+                        &format!("`{name}` is not a lifecycle argument"),
+                        value.span,
+                    )),
+                }
+            }
+        }
+    }
+
+    /// Resolve one migration replacement as a declaration path without evaluating it as a field access.
+    fn made_private_reference_exists(&mut self, expression: &Expr) -> bool {
+        let Some(segments) = crate::typechecker::collect::dotted_path_segments(expression) else {
+            return false;
+        };
+        let Some((member, owner_path)) = segments.split_last() else {
+            return false;
+        };
+        if owner_path.is_empty() {
+            return self.lookup_symbol(member).is_some();
+        }
+        if let [owner] = owner_path {
+            let local_member = self.lookup_symbol(owner).is_some_and(|symbol| match &symbol.kind {
+                SymbolKind::Type(TypeInfo::Class(info)) => {
+                    info.fields.contains_key(member)
+                        || info.properties.contains_key(member)
+                        || info.methods.contains_key(member)
+                }
+                SymbolKind::Type(TypeInfo::Model(info)) => {
+                    info.fields.contains_key(member)
+                        || info.properties.contains_key(member)
+                        || info.methods.contains_key(member)
+                }
+                SymbolKind::Type(TypeInfo::Newtype(info)) => info.methods.contains_key(member),
+                SymbolKind::Type(TypeInfo::Enum(info)) => {
+                    info.variants.iter().any(|variant| variant == member) || info.methods.contains_key(member)
+                }
+                SymbolKind::Trait(info) => {
+                    info.methods.contains_key(member)
+                        || info.properties.contains_key(member)
+                        || info.requires.iter().any(|(field, _)| field == member)
+                }
+                _ => false,
+            });
+            if local_member {
+                return true;
+            }
+        }
+        self.resolve_module_namespace_member(owner_path, member).is_ok()
+    }
+
     /// Validate the checked metadata shape accepted by RFC 171's `@marker(...)` declaration annotation.
     pub fn validate_testing_marker_args(&mut self, dec: &Spanned<Decorator>) {
         let mut kind = false;

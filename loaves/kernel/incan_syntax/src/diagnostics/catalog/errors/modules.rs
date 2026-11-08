@@ -309,6 +309,28 @@ pub fn import_not_exported(name: &str, module_path: &str, exported_names: &[Stri
     .with_hint(format!("Public exports from `{}`: {}", module_path, exports))
 }
 
+/// Refuse an import of a type whose provider explicitly records its public-to-private migration.
+pub fn import_made_private(
+    name: &str,
+    module_path: &str,
+    message: Option<&str>,
+    replacement: Option<&str>,
+    span: Span,
+) -> CompileError {
+    let mut error = CompileError::new(
+        format!("Cannot import `{name}` from `{module_path}`: the type is private"),
+        span,
+    )
+    .with_stable_code("INCAN-T0133");
+    if let Some(message) = message {
+        error = error.with_hint(message);
+    }
+    if let Some(replacement) = replacement {
+        error = error.with_hint(format!("Use `{replacement}` instead"));
+    }
+    error
+}
+
 /// `src/lib.incn` public exports must use `pub from ... import ...`.
 pub fn library_pub_reexport_requires_from(span: Span) -> CompileError {
     CompileError::new("Library exports must use `pub from ... import ...`".to_string(), span)

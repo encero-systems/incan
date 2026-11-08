@@ -415,6 +415,7 @@ pub(super) fn method_from_checked(package_name: &str, method: &crate::library_ex
         return_type: type_ref_from_resolved(&method.return_type),
         is_async: method.is_async,
         has_body: method.has_body,
+        made_private: method.made_private.as_ref().map(Into::into),
     };
     super::ownership::mark_types(
         projected.ownership.as_ref(),
@@ -446,6 +447,7 @@ pub(super) fn field_from_checked(package_name: &str, field: &crate::library_expo
         default,
         alias: field.alias.clone(),
         description: field.description.clone(),
+        made_private: field.made_private.as_ref().map(Into::into),
     }
 }
 

@@ -606,6 +606,7 @@ pub class Writer:
             return_type: crate::symbols::ResolvedType::Unit,
             is_async: false,
             has_body: true,
+            made_private: None,
         },
         CheckedMethod {
             ownership: None,
@@ -624,6 +625,7 @@ pub class Writer:
             return_type: crate::symbols::ResolvedType::Int,
             is_async: false,
             has_body: true,
+            made_private: None,
         },
     ];
     let checker = typechecker::TypeChecker::new();
@@ -699,6 +701,7 @@ pub class Parser:
             return_type: crate::symbols::ResolvedType::Bytes,
             is_async: false,
             has_body: true,
+            made_private: None,
         },
         CheckedMethod {
             ownership: None,
@@ -717,6 +720,7 @@ pub class Parser:
             return_type: crate::symbols::ResolvedType::Str,
             is_async: false,
             has_body: true,
+            made_private: None,
         },
     ];
     let checker = typechecker::TypeChecker::new();

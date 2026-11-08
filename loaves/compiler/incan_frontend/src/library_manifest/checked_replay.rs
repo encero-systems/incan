@@ -675,6 +675,7 @@ fn fields(values: &[FieldExport]) -> Result<Vec<CheckedField>, LibraryManifestEr
                 default: value.default.as_ref().map(default_value).transpose()?,
                 alias: value.alias.clone(),
                 description: value.description.clone(),
+                made_private: value.made_private.as_ref().map(Into::into),
             })
         })
         .collect()
@@ -713,6 +714,7 @@ fn methods(values: &[MethodExport]) -> Result<Vec<CheckedMethod>, LibraryManifes
                 return_type: resolved_type_from_manifest_type_ref(&value.return_type),
                 is_async: value.is_async,
                 has_body: value.has_body,
+                made_private: value.made_private.as_ref().map(Into::into),
             })
         })
         .collect()

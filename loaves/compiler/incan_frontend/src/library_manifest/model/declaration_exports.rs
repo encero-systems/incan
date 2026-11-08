@@ -27,6 +27,9 @@ pub struct MethodExport {
     pub is_async: bool,
     /// Whether the originating declaration included a body.
     pub has_body: bool,
+    /// Migration facts used by the ordinary private-method refusal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub made_private: Option<MadePrivateExport>,
 }
 
 /// One exported callable parameter.

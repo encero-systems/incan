@@ -40,7 +40,7 @@ impl TypeChecker {
                 }
                 if self.private_field_is_inaccessible(type_name, &info) {
                     self.errors
-                        .push(Self::private_field_error(type_name, &info, field, span));
+                        .push(self.private_field_error(type_name, &info, field, span));
                     return Some(ResolvedType::Unknown);
                 }
                 self.retain_declared_nominal_field(span, &info.ty, &subst, info.identity.as_ref());
@@ -57,7 +57,7 @@ impl TypeChecker {
                 }
                 if self.private_field_is_inaccessible(type_name, &info) {
                     self.errors
-                        .push(Self::private_field_error(type_name, &info, field, span));
+                        .push(self.private_field_error(type_name, &info, field, span));
                     return Some(ResolvedType::Unknown);
                 }
                 self.retain_declared_nominal_field(span, &info.ty, &subst, info.identity.as_ref());
