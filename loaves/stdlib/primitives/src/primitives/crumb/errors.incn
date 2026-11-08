@@ -1,0 +1,20 @@
+"""Typed framing failures without embedding potentially sensitive input bytes."""
+
+
+pub enum CrumbError:
+    """The caller can distinguish malformed framing, host limits and incomplete input."""
+
+    InvalidInput(str)
+    Truncated(int)
+    Nonminimal(int)
+    Overflow(int)
+    Limit(str)
+
+    pub def message(self) -> str:
+        """Describe the failure category and boundary, without reproducing input contents."""
+        match self:
+            CrumbError.InvalidInput(operation) => return f"invalid Crumb input for {operation}"
+            CrumbError.Truncated(offset) => return f"truncated Crumb input at byte {offset}"
+            CrumbError.Nonminimal(offset) => return f"nonminimal Crumb integer at byte {offset}"
+            CrumbError.Overflow(offset) => return f"Crumb length exceeds u64 at byte {offset}"
+            CrumbError.Limit(resource) => return f"Crumb request limit exceeded: {resource}"
