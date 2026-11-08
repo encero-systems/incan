@@ -44,8 +44,8 @@
           }
         ]
       },
-      "expected": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (x=1, y=2)\n",
-      "read_case": "read-positions"
+      "read_case": "read-positions",
+      "expected_file": "text/read-entry-boundary-cut.comic"
     },
     {
       "id": "print-names-reversed",
@@ -89,8 +89,8 @@
           }
         ]
       },
-      "expected": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (x=1, y=2)\n",
-      "read_case": "read-names-reversed"
+      "read_case": "read-names-reversed",
+      "expected_file": "text/read-entry-boundary-cut.comic"
     },
     {
       "id": "print-indexes-reversed",
@@ -134,8 +134,8 @@
           }
         ]
       },
-      "expected": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (x=1, y=2)\n",
-      "read_case": "read-indexes-reversed"
+      "read_case": "read-indexes-reversed",
+      "expected_file": "text/read-entry-boundary-cut.comic"
     },
     {
       "id": "print-mixed",
@@ -179,8 +179,8 @@
           }
         ]
       },
-      "expected": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (x=1, y=2)\n",
-      "read_case": "read-mixed"
+      "read_case": "read-mixed",
+      "expected_file": "text/read-entry-boundary-cut.comic"
     },
     {
       "id": "print-mixed-keys",
@@ -224,8 +224,8 @@
           }
         ]
       },
-      "expected": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (x=1, y=2)\n",
-      "read_case": "read-mixed-keys"
+      "read_case": "read-mixed-keys",
+      "expected_file": "text/read-entry-boundary-cut.comic"
     },
     {
       "id": "print-one-row-table",
@@ -269,8 +269,8 @@
           }
         ]
       },
-      "expected": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (x=1, y=2)\n",
-      "read_case": "read-one-row-table"
+      "read_case": "read-one-row-table",
+      "expected_file": "text/read-entry-boundary-cut.comic"
     },
     {
       "id": "print-comments",
@@ -314,8 +314,8 @@
           }
         ]
       },
-      "expected": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (x=1, y=2)\n",
-      "read_case": "read-comments"
+      "read_case": "read-comments",
+      "expected_file": "text/read-entry-boundary-cut.comic"
     },
     {
       "id": "print-two-rows",
@@ -375,8 +375,8 @@
           }
         ]
       },
-      "expected": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << [\n    (1, 2),\n    (3, 4),\n]\n",
-      "read_case": "read-two-rows"
+      "read_case": "read-two-rows",
+      "expected_file": "text/print-two-rows.comic"
     },
     {
       "id": "print-entry-boundary-cut",
@@ -420,8 +420,8 @@
           }
         ]
       },
-      "expected": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (x=1, y=2)\n",
-      "read_case": "read-entry-boundary-cut"
+      "read_case": "read-entry-boundary-cut",
+      "expected_file": "text/read-entry-boundary-cut.comic"
     },
     {
       "id": "print-absent-gap",
@@ -493,8 +493,8 @@
           }
         ]
       },
-      "expected": "example.Person = Record { id: i64, note: string? = None, city: string? = None }\n\nexample.Person << [\n    (1, city=\"Delft\"),\n    (2),\n]\n",
-      "read_case": "read-absent-gap"
+      "read_case": "read-absent-gap",
+      "expected_file": "text/print-absent-gap.comic"
     },
     {
       "id": "print-explicit-absent",
@@ -545,8 +545,8 @@
           }
         ]
       },
-      "expected": "example.Person = Record { id: i64, note: string? = None, city: string? = None }\n\nexample.Person << (id=2)\n",
-      "read_case": "read-explicit-absent"
+      "read_case": "read-explicit-absent",
+      "expected_file": "text/print-explicit-absent.comic"
     },
     {
       "id": "print-boolean",
@@ -578,8 +578,8 @@
           }
         ]
       },
-      "expected": "example.Value = Record { value: boolean }\n\nexample.Value << (value=true)\n",
-      "read_case": "read-boolean"
+      "read_case": "read-boolean",
+      "expected_file": "text/read-boolean.comic"
     },
     {
       "id": "print-i8-min",
@@ -612,8 +612,8 @@
           }
         ]
       },
-      "expected": "example.Value = Record { value: i8 }\n\nexample.Value << (value=-128)\n",
-      "read_case": "read-i8-min"
+      "read_case": "read-i8-min",
+      "expected_file": "text/read-i8-min.comic"
     },
     {
       "id": "print-u16-max",
@@ -646,8 +646,8 @@
           }
         ]
       },
-      "expected": "example.Value = Record { value: u16 }\n\nexample.Value << (value=65535)\n",
-      "read_case": "read-u16-max"
+      "read_case": "read-u16-max",
+      "expected_file": "text/read-u16-max.comic"
     },
     {
       "id": "print-exact-large-integer",
@@ -680,8 +680,8 @@
           }
         ]
       },
-      "expected": "example.Value = Record { value: u64 }\n\nexample.Value << (value=18446744073709551615)\n",
-      "read_case": "read-exact-large-integer"
+      "read_case": "read-exact-large-integer",
+      "expected_file": "text/read-exact-large-integer.comic"
     },
     {
       "id": "print-positive-zero",
@@ -714,8 +714,8 @@
           }
         ]
       },
-      "expected": "example.Value = Record { value: fp64 }\n\nexample.Value << (value=0.0)\n",
-      "read_case": "read-positive-zero"
+      "read_case": "read-positive-zero",
+      "expected_file": "text/read-positive-zero.comic"
     },
     {
       "id": "print-negative-zero",
@@ -748,8 +748,8 @@
           }
         ]
       },
-      "expected": "example.Value = Record { value: fp64 }\n\nexample.Value << (value=-0.0)\n",
-      "read_case": "read-negative-zero"
+      "read_case": "read-negative-zero",
+      "expected_file": "text/read-negative-zero.comic"
     },
     {
       "id": "print-float32",
@@ -782,8 +782,8 @@
           }
         ]
       },
-      "expected": "example.Value = Record { value: fp32 }\n\nexample.Value << (value=1.5)\n",
-      "read_case": "read-float32"
+      "read_case": "read-float32",
+      "expected_file": "text/read-float32.comic"
     },
     {
       "id": "print-infinity",
@@ -816,8 +816,8 @@
           }
         ]
       },
-      "expected": "example.Value = Record { value: fp64 }\n\nexample.Value << (value=inf)\n",
-      "read_case": "read-infinity"
+      "read_case": "read-infinity",
+      "expected_file": "text/read-infinity.comic"
     },
     {
       "id": "print-negative-infinity",
@@ -850,8 +850,8 @@
           }
         ]
       },
-      "expected": "example.Value = Record { value: fp64 }\n\nexample.Value << (value=-inf)\n",
-      "read_case": "read-negative-infinity"
+      "read_case": "read-negative-infinity",
+      "expected_file": "text/read-negative-infinity.comic"
     },
     {
       "id": "print-nan",
@@ -884,8 +884,8 @@
           }
         ]
       },
-      "expected": "example.Value = Record { value: fp64 }\n\nexample.Value << (value=nan)\n",
-      "read_case": "read-nan"
+      "read_case": "read-nan",
+      "expected_file": "text/read-nan.comic"
     },
     {
       "id": "print-decimal",
@@ -919,8 +919,8 @@
           }
         ]
       },
-      "expected": "example.Value = Record { value: decimal<10, 2> }\n\nexample.Value << (value=19.90d)\n",
-      "read_case": "read-decimal"
+      "read_case": "read-decimal",
+      "expected_file": "text/read-decimal.comic"
     },
     {
       "id": "print-unicode-preserved",
@@ -952,8 +952,8 @@
           }
         ]
       },
-      "expected": "example.Value = Record { value: string }\n\nexample.Value << (value=\"é\")\n",
-      "read_case": "read-unicode-preserved"
+      "read_case": "read-unicode-preserved",
+      "expected_file": "text/read-unicode-preserved.comic"
     },
     {
       "id": "print-string-escapes",
@@ -985,8 +985,8 @@
           }
         ]
       },
-      "expected": "example.Value = Record { value: string }\n\nexample.Value << (value=\"a\\n\\t\\r\\\"\\\\\\u{1}\\u{202e}\")\n",
-      "read_case": "read-string-escapes"
+      "read_case": "read-string-escapes",
+      "expected_file": "text/read-string-escapes.comic"
     },
     {
       "id": "print-binary",
@@ -1018,8 +1018,8 @@
           }
         ]
       },
-      "expected": "example.Value = Record { value: binary }\n\nexample.Value << (value=b\"A\\x00\\xff\")\n",
-      "read_case": "read-binary"
+      "read_case": "read-binary",
+      "expected_file": "text/read-binary.comic"
     },
     {
       "id": "print-secret-string",
@@ -1051,8 +1051,8 @@
           }
         ]
       },
-      "expected": "example.Value = Record { value: secret_string }\n\nexample.Value << (value=<secret>)\n",
-      "read_case": "read-secret-string"
+      "read_case": "read-secret-string",
+      "expected_file": "text/read-secret-string.comic"
     },
     {
       "id": "print-secret-bytes",
@@ -1084,8 +1084,8 @@
           }
         ]
       },
-      "expected": "example.Value = Record { value: secret_bytes }\n\nexample.Value << (value=<secret>)\n",
-      "read_case": "read-secret-bytes"
+      "read_case": "read-secret-bytes",
+      "expected_file": "text/read-secret-bytes.comic"
     },
     {
       "id": "print-required-optional-absence",
@@ -1116,8 +1116,8 @@
           }
         ]
       },
-      "expected": "example.Value = Record { value: string? }\n\nexample.Value << (value=None)\n",
-      "read_case": "read-required-optional-absence"
+      "read_case": "read-required-optional-absence",
+      "expected_file": "text/read-required-optional-absence.comic"
     },
     {
       "id": "print-nested-absence",
@@ -1151,8 +1151,8 @@
           }
         ]
       },
-      "expected": "example.Value = Record { value: option<string?> }\n\nexample.Value << (value=Some(None))\n",
-      "read_case": "read-nested-absence"
+      "read_case": "read-nested-absence",
+      "expected_file": "text/read-nested-absence.comic"
     },
     {
       "id": "print-list-optionals",
@@ -1204,8 +1204,8 @@
           }
         ]
       },
-      "expected": "example.Value = Record { value: list<i64?> }\n\nexample.Value << (value=[1, None, 3])\n",
-      "read_case": "read-list-optionals"
+      "read_case": "read-list-optionals",
+      "expected_file": "text/read-list-optionals.comic"
     },
     {
       "id": "print-union-integer",
@@ -1242,8 +1242,8 @@
           }
         ]
       },
-      "expected": "example.Value = Record { value: i64 | string }\n\nexample.Value << (value=i64 << 3)\n",
-      "read_case": "read-union-integer"
+      "read_case": "read-union-integer",
+      "expected_file": "text/read-union-integer.comic"
     },
     {
       "id": "print-union-string",
@@ -1279,8 +1279,8 @@
           }
         ]
       },
-      "expected": "example.Value = Record { value: i64 | string }\n\nexample.Value << (value=string << \"3\")\n",
-      "read_case": "read-union-string"
+      "read_case": "read-union-string",
+      "expected_file": "text/read-union-string.comic"
     },
     {
       "id": "print-map-order",
@@ -1335,8 +1335,8 @@
           }
         ]
       },
-      "expected": "example.Value = Record { value: map<string, i64> }\n\nexample.Value << (value={\"a\": 1, \"b\": 2})\n",
-      "read_case": "read-map-order"
+      "read_case": "read-map-order",
+      "expected_file": "text/print-map-order.comic"
     },
     {
       "id": "print-set-order",
@@ -1379,8 +1379,8 @@
           }
         ]
       },
-      "expected": "example.Value = Record { value: set<i64> }\n\nexample.Value << (value={1, 2})\n",
-      "read_case": "read-set-order"
+      "read_case": "read-set-order",
+      "expected_file": "text/print-set-order.comic"
     },
     {
       "id": "print-enum-payload",
@@ -1450,8 +1450,8 @@
           }
         ]
       },
-      "expected": "example.State = Enum { Pending, Sent(code: i64, note: string? = None) }\n\nexample.Value = Record { value: example.State }\n\nexample.Value << (value=Sent(code=7))\n",
-      "read_case": "read-enum-payload"
+      "read_case": "read-enum-payload",
+      "expected_file": "text/print-enum-payload.comic"
     },
     {
       "id": "print-enum-empty",
@@ -1512,8 +1512,8 @@
           }
         ]
       },
-      "expected": "example.State = Enum { Pending, Sent(code: i64, note: string? = None) }\n\nexample.Value = Record { value: example.State }\n\nexample.Value << (value=Pending)\n",
-      "read_case": "read-enum-empty"
+      "read_case": "read-enum-empty",
+      "expected_file": "text/read-enum-empty.comic"
     },
     {
       "id": "print-nested-row-group",
@@ -1605,8 +1605,8 @@
           }
         ]
       },
-      "expected": "example.Line = Record { sku: string, quantity: i64 }\n\nexample.Order = Record { id: i64, lines: list<example.Line> }\n\nexample.Order << (\n    id=7,\n    lines=[\n        (\"A\", 2),\n        (\"B\", 1),\n    ],\n)\n",
-      "read_case": "read-nested-row-group"
+      "read_case": "read-nested-row-group",
+      "expected_file": "text/print-nested-row-group.comic"
     },
     {
       "id": "print-single-nested-record",
@@ -1683,8 +1683,8 @@
           }
         ]
       },
-      "expected": "example.Line = Record { sku: string, quantity: i64 }\n\nexample.Order = Record { id: i64, lines: list<example.Line> }\n\nexample.Order << (id=7, lines=[(sku=\"A\", quantity=2)])\n",
-      "read_case": "read-single-nested-record"
+      "read_case": "read-single-nested-record",
+      "expected_file": "text/print-single-nested-record.comic"
     },
     {
       "id": "print-mixed-union-list",
@@ -1769,8 +1769,8 @@
           }
         ]
       },
-      "expected": "example.File = Record { name: string }\n\nexample.Folder = Record { name: string }\n\nexample.Tree = Record { entries: list<example.File | example.Folder> }\n\nexample.Tree << (\n    entries=[\n        File << (name=\"a\"),\n        Folder << (name=\"b\"),\n    ],\n)\n",
-      "read_case": "read-mixed-union-list"
+      "read_case": "read-mixed-union-list",
+      "expected_file": "text/print-mixed-union-list.comic"
     },
     {
       "id": "print-description-order",
@@ -1814,8 +1814,8 @@
           }
         ]
       },
-      "expected": "example.Z = Record { z: i64, a: i64 }\n\nexample.Z << (z=1, a=2)\n",
-      "read_case": "read-description-order"
+      "read_case": "read-description-order",
+      "expected_file": "text/print-description-order.comic"
     },
     {
       "id": "print-canonical-metadata",
@@ -1867,8 +1867,8 @@
           }
         ]
       },
-      "expected": "example.Event = Record { id: i64, seen [canonical = false]: string, note: string? = None }\n\nexample.Event << (id=1, seen=\"now\")\n",
-      "read_case": "read-canonical-metadata"
+      "read_case": "read-canonical-metadata",
+      "expected_file": "text/print-canonical-metadata.comic"
     },
     {
       "id": "print-payload-variant-rows",
@@ -1942,8 +1942,8 @@
           }
         ]
       },
-      "expected": "example.Event = Enum { Sent(code: i64) }\n\nexample.Log = Record { events: list<example.Event> }\n\nexample.Log << (\n    events=[\n        Sent(7),\n        Sent(8),\n    ],\n)\n",
-      "read_case": "read-payload-variant-rows"
+      "read_case": "read-payload-variant-rows",
+      "expected_file": "text/print-payload-variant-rows.comic"
     },
     {
       "id": "print-payload-free-variants-inline",
@@ -2002,8 +2002,8 @@
           }
         ]
       },
-      "expected": "example.Kind = Enum { Percent, Fixed }\n\nexample.Rule = Record { kinds: list<example.Kind> }\n\nexample.Rule << (kinds=[Percent, Fixed])\n",
-      "read_case": "read-payload-free-variants-inline"
+      "read_case": "read-payload-free-variants-inline",
+      "expected_file": "text/read-payload-free-variants-inline.comic"
     },
     {
       "id": "print-same-short-type-name",
@@ -2070,8 +2070,8 @@
           }
         ]
       },
-      "expected": "a.Id = Record { value: i64 }\n\nb.Id = Record { value: i64 }\n\nexample.Value = Record { value: a.Id | b.Id }\n\nexample.Value << (value=a.Id << (value=3))\n",
-      "read_case": "read-same-short-type-name"
+      "read_case": "read-same-short-type-name",
+      "expected_file": "text/print-same-short-type-name.comic"
     },
     {
       "id": "print-qualified-variant",
@@ -2129,8 +2129,8 @@
           }
         ]
       },
-      "expected": "a.Status = Enum { Pending }\n\nb.State = Enum { Pending }\n\nexample.Value = Record { value: a.Status | b.State }\n\nexample.Value << (value=Status.Pending)\n",
-      "read_case": "read-qualified-variant"
+      "read_case": "read-qualified-variant",
+      "expected_file": "text/read-qualified-variant.comic"
     },
     {
       "id": "print-declaration-reference",
@@ -2175,8 +2175,8 @@
           }
         ]
       },
-      "expected": "example.Link = Record { target: ref<example.Target> }\n\nexample.Target = Record { id: i64 }\n\nexample.Link << (target=example.remote.point)\n",
-      "read_case": "read-declaration-reference"
+      "read_case": "read-declaration-reference",
+      "expected_file": "text/read-declaration-reference.comic"
     }
   ]
 }

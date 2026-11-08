@@ -4,7 +4,6 @@
   "cases": [
     {
       "id": "read-positions",
-      "input": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (1, 2)\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -47,11 +46,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-positions.comic"
     },
     {
       "id": "read-names-reversed",
-      "input": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (y=2, x=1)\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -94,11 +93,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-names-reversed.comic"
     },
     {
       "id": "read-indexes-reversed",
-      "input": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (1=2, 0=1)\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -141,11 +140,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-indexes-reversed.comic"
     },
     {
       "id": "read-mixed",
-      "input": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (1, y=2)\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -188,11 +187,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-mixed.comic"
     },
     {
       "id": "read-mixed-keys",
-      "input": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (1=2, x=1)\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -235,11 +234,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-mixed-keys.comic"
     },
     {
       "id": "read-one-row-table",
-      "input": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << [(1, 2)]\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -282,11 +281,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-one-row-table.comic"
     },
     {
       "id": "read-comments",
-      "input": "# Before\nexample.Point = Record { x: i64, y: i64 }\n\n# Value\nexample.Point << ( 1, # x\n 2 ) # end\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -329,11 +328,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-comments.comic"
     },
     {
       "id": "read-two-rows",
-      "input": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (1, 2)\n\nexample.Point << (3, 4)\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -392,11 +391,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-two-rows.comic"
     },
     {
       "id": "read-entry-boundary-cut",
-      "input": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (x=1, y=2)\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -440,162 +439,162 @@
           ]
         }
       },
-      "purpose": "A complete first entry is a valid shorter document; no document seal is inferred."
+      "purpose": "A complete first entry is a valid shorter document; no document seal is inferred.",
+      "input_file": "text/read-entry-boundary-cut.comic"
     },
     {
       "id": "read-refuse-duplicate-name",
-      "input": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (x=1, x=2, y=3)\n",
       "expected": {
         "status": "refused",
         "kind": "duplicate_field",
         "line": 3,
         "column": 24
-      }
+      },
+      "input_file": "text/read-refuse-duplicate-name.comic"
     },
     {
       "id": "read-refuse-position-name-duplicate",
-      "input": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (1, x=2, y=3)\n",
       "expected": {
         "status": "refused",
         "kind": "duplicate_field",
         "line": 3,
         "column": 22
-      }
+      },
+      "input_file": "text/read-refuse-position-name-duplicate.comic"
     },
     {
       "id": "read-refuse-position-index-duplicate",
-      "input": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (1, 0=2, y=3)\n",
       "expected": {
         "status": "refused",
         "kind": "duplicate_field",
         "line": 3,
         "column": 22
-      }
+      },
+      "input_file": "text/read-refuse-position-index-duplicate.comic"
     },
     {
       "id": "read-refuse-index-name-duplicate",
-      "input": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (0=1, x=2, y=3)\n",
       "expected": {
         "status": "refused",
         "kind": "duplicate_field",
         "line": 3,
         "column": 24
-      }
+      },
+      "input_file": "text/read-refuse-index-name-duplicate.comic"
     },
     {
       "id": "read-refuse-position-after-key",
-      "input": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (x=1, 2)\n",
       "expected": {
         "status": "refused",
         "kind": "positional_after_key",
         "line": 3,
         "column": 24
-      }
+      },
+      "input_file": "text/read-refuse-position-after-key.comic"
     },
     {
       "id": "read-refuse-unknown-name",
-      "input": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (x=1, z=2)\n",
       "expected": {
         "status": "refused",
         "kind": "unknown_field",
         "line": 3,
         "column": 24
-      }
+      },
+      "input_file": "text/read-refuse-unknown-name.comic"
     },
     {
       "id": "read-refuse-index-outside",
-      "input": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (x=1, 2=2)\n",
       "expected": {
         "status": "refused",
         "kind": "field_index_out_of_range",
         "line": 3,
         "column": 24
-      }
+      },
+      "input_file": "text/read-refuse-index-outside.comic"
     },
     {
       "id": "read-refuse-required-missing",
-      "input": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (x=1)\n",
       "expected": {
         "status": "refused",
         "kind": "missing_required_field",
         "line": 3,
         "column": 22
-      }
+      },
+      "input_file": "text/read-refuse-required-missing.comic"
     },
     {
       "id": "read-refuse-value-cut",
-      "input": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (1,",
       "expected": {
         "status": "refused",
         "kind": "unexpected_end",
         "line": 3,
         "column": 21
-      }
+      },
+      "input_file": "text/read-refuse-value-cut.comic"
     },
     {
       "id": "read-refuse-table-cut",
-      "input": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << [\n    (1, 2),\n",
       "expected": {
         "status": "refused",
         "kind": "unexpected_end",
         "line": 5,
         "column": 1
-      }
+      },
+      "input_file": "text/read-refuse-table-cut.comic"
     },
     {
       "id": "read-refuse-unknown-description",
-      "input": "example.Unknown << (1)\n",
       "expected": {
         "status": "refused",
         "kind": "unknown_description",
         "line": 1,
         "column": 1
-      }
+      },
+      "input_file": "text/read-refuse-unknown-description.comic"
     },
     {
       "id": "read-refuse-duplicate-description",
-      "input": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point = Record { x: i64, y: i64 }\n\n",
       "expected": {
         "status": "refused",
         "kind": "duplicate_declaration_kind",
         "line": 3,
         "column": 1
-      }
+      },
+      "input_file": "text/read-refuse-duplicate-description.comic"
     },
     {
       "id": "read-refuse-two-kinds",
-      "input": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point = Enum { Empty }\n\nexample.Point << (1, 2)\n",
       "expected": {
         "status": "refused",
         "kind": "value_type_no_single_declaration",
         "line": 5,
         "column": 1
       },
-      "purpose": "A value cannot choose silently between two value-bearing kinds at one path."
+      "purpose": "A value cannot choose silently between two value-bearing kinds at one path.",
+      "input_file": "text/read-refuse-two-kinds.comic"
     },
     {
       "id": "read-refuse-store-field-declaration",
-      "input": "example.Bad = Record { ___id: string }\n",
       "expected": {
         "status": "refused",
         "kind": "reserved_field",
         "line": 1,
         "column": 24
-      }
+      },
+      "input_file": "text/read-refuse-store-field-declaration.comic"
     },
     {
       "id": "read-refuse-unknown-store-key",
-      "input": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (1, 2, ___extra=\"x\")\n",
       "expected": {
         "status": "refused",
         "kind": "unknown_store_key",
         "line": 3,
         "column": 25
-      }
+      },
+      "input_file": "text/read-refuse-unknown-store-key.comic"
     },
     {
       "id": "read-absent-gap",
-      "input": "example.Person = Record { id: i64, note: string? = None, city: string? = None }\n\nexample.Person << [(1, city=\"Delft\"), (2)]\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -666,11 +665,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-absent-gap.comic"
     },
     {
       "id": "read-explicit-absent",
-      "input": "example.Person = Record { id: i64, note: string? = None, city: string? = None }\n\nexample.Person << (id=2, note=None, city=None)\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -720,11 +719,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-explicit-absent.comic"
     },
     {
       "id": "read-boolean",
-      "input": "example.Value = Record { value: boolean }\n\nexample.Value << (value=true)\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -755,11 +754,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-boolean.comic"
     },
     {
       "id": "read-i8-min",
-      "input": "example.Value = Record { value: i8 }\n\nexample.Value << (value=-128)\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -791,11 +790,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-i8-min.comic"
     },
     {
       "id": "read-u16-max",
-      "input": "example.Value = Record { value: u16 }\n\nexample.Value << (value=65535)\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -827,11 +826,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-u16-max.comic"
     },
     {
       "id": "read-exact-large-integer",
-      "input": "example.Value = Record { value: u64 }\n\nexample.Value << (value=18446744073709551615)\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -863,11 +862,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-exact-large-integer.comic"
     },
     {
       "id": "read-positive-zero",
-      "input": "example.Value = Record { value: fp64 }\n\nexample.Value << (value=0.0)\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -899,11 +898,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-positive-zero.comic"
     },
     {
       "id": "read-negative-zero",
-      "input": "example.Value = Record { value: fp64 }\n\nexample.Value << (value=-0.0)\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -935,11 +934,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-negative-zero.comic"
     },
     {
       "id": "read-float32",
-      "input": "example.Value = Record { value: fp32 }\n\nexample.Value << (value=1.5)\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -971,11 +970,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-float32.comic"
     },
     {
       "id": "read-infinity",
-      "input": "example.Value = Record { value: fp64 }\n\nexample.Value << (value=inf)\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -1007,11 +1006,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-infinity.comic"
     },
     {
       "id": "read-negative-infinity",
-      "input": "example.Value = Record { value: fp64 }\n\nexample.Value << (value=-inf)\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -1043,11 +1042,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-negative-infinity.comic"
     },
     {
       "id": "read-nan",
-      "input": "example.Value = Record { value: fp64 }\n\nexample.Value << (value=nan)\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -1079,11 +1078,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-nan.comic"
     },
     {
       "id": "read-decimal",
-      "input": "example.Value = Record { value: decimal<10, 2> }\n\nexample.Value << (value=19.90d)\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -1116,11 +1115,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-decimal.comic"
     },
     {
       "id": "read-unicode-preserved",
-      "input": "example.Value = Record { value: string }\n\nexample.Value << (value=\"é\")\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -1151,11 +1150,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-unicode-preserved.comic"
     },
     {
       "id": "read-string-escapes",
-      "input": "example.Value = Record { value: string }\n\nexample.Value << (value=\"a\\n\\t\\r\\\"\\\\\\u{1}\\u{202e}\")\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -1186,11 +1185,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-string-escapes.comic"
     },
     {
       "id": "read-multiline-exact",
-      "input": "example.Value = Record { value: string }\n\nexample.Value << (value=\"\"\"\n  hello\n\"\"\")\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -1222,11 +1221,11 @@
           ]
         }
       },
-      "purpose": "Opening/closing newlines and indentation are data, not dedented."
+      "purpose": "Opening/closing newlines and indentation are data, not dedented.",
+      "input_file": "text/read-multiline-exact.comic"
     },
     {
       "id": "read-binary",
-      "input": "example.Value = Record { value: binary }\n\nexample.Value << (value=b\"A\\x00\\xff\")\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -1257,11 +1256,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-binary.comic"
     },
     {
       "id": "read-secret-string",
-      "input": "example.Value = Record { value: secret_string }\n\nexample.Value << (value=<secret>)\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -1292,11 +1291,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-secret-string.comic"
     },
     {
       "id": "read-secret-bytes",
-      "input": "example.Value = Record { value: secret_bytes }\n\nexample.Value << (value=<secret>)\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -1327,11 +1326,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-secret-bytes.comic"
     },
     {
       "id": "read-required-optional-absence",
-      "input": "example.Value = Record { value: string? }\n\nexample.Value << (value=None)\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -1361,11 +1360,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-required-optional-absence.comic"
     },
     {
       "id": "read-nested-absence",
-      "input": "example.Value = Record { value: option<string?> }\n\nexample.Value << (value=Some(None))\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -1398,11 +1397,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-nested-absence.comic"
     },
     {
       "id": "read-list-optionals",
-      "input": "example.Value = Record { value: list<i64?> }\n\nexample.Value << (value=[1, None, 3])\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -1453,11 +1452,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-list-optionals.comic"
     },
     {
       "id": "read-union-integer",
-      "input": "example.Value = Record { value: i64 | string }\n\nexample.Value << (value=i64 << 3)\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -1493,11 +1492,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-union-integer.comic"
     },
     {
       "id": "read-union-string",
-      "input": "example.Value = Record { value: i64 | string }\n\nexample.Value << (value=string << \"3\")\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -1532,11 +1531,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-union-string.comic"
     },
     {
       "id": "read-map-order",
-      "input": "example.Value = Record { value: map<string, i64> }\n\nexample.Value << (value={\"b\": 2, \"a\": 1})\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -1590,11 +1589,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-map-order.comic"
     },
     {
       "id": "read-set-order",
-      "input": "example.Value = Record { value: set<i64> }\n\nexample.Value << (value={2, 1})\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -1636,111 +1635,111 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-set-order.comic"
     },
     {
       "id": "read-refuse-integer-plus",
-      "input": "example.Value = Record { value: i64 }\n\nexample.Value << (value=+1)\n",
       "expected": {
         "status": "refused",
         "kind": "invalid_integer",
         "line": 3,
         "column": 25
-      }
+      },
+      "input_file": "text/read-refuse-integer-plus.comic"
     },
     {
       "id": "read-refuse-integer-leading-zero",
-      "input": "example.Value = Record { value: i64 }\n\nexample.Value << (value=01)\n",
       "expected": {
         "status": "refused",
         "kind": "invalid_integer",
         "line": 3,
         "column": 25
-      }
+      },
+      "input_file": "text/read-refuse-integer-leading-zero.comic"
     },
     {
       "id": "read-refuse-integer-underscore",
-      "input": "example.Value = Record { value: i64 }\n\nexample.Value << (value=1_000)\n",
       "expected": {
         "status": "refused",
         "kind": "invalid_integer",
         "line": 3,
         "column": 25
-      }
+      },
+      "input_file": "text/read-refuse-integer-underscore.comic"
     },
     {
       "id": "read-refuse-integer-range",
-      "input": "example.Value = Record { value: i8 }\n\nexample.Value << (value=128)\n",
       "expected": {
         "status": "refused",
         "kind": "integer_out_of_range",
         "line": 3,
         "column": 25
-      }
+      },
+      "input_file": "text/read-refuse-integer-range.comic"
     },
     {
       "id": "read-refuse-float-in-int",
-      "input": "example.Value = Record { value: i64 }\n\nexample.Value << (value=inf)\n",
       "expected": {
         "status": "refused",
         "kind": "type_mismatch",
         "line": 3,
         "column": 25
-      }
+      },
+      "input_file": "text/read-refuse-float-in-int.comic"
     },
     {
       "id": "read-refuse-decimal-scale",
-      "input": "example.Value = Record { value: decimal<10, 2> }\n\nexample.Value << (value=1.0d)\n",
       "expected": {
         "status": "refused",
         "kind": "decimal_scale_mismatch",
         "line": 3,
         "column": 25
-      }
+      },
+      "input_file": "text/read-refuse-decimal-scale.comic"
     },
     {
       "id": "read-refuse-opaque-marker",
-      "input": "example.Value = Record { value: string }\n\nexample.Value << (value=<Duration: 1.5s>)\n",
       "expected": {
         "status": "refused",
         "kind": "unsupported_marker",
         "line": 3,
         "column": 25
-      }
+      },
+      "input_file": "text/read-refuse-opaque-marker.comic"
     },
     {
       "id": "read-refuse-string-escape",
-      "input": "example.Value = Record { value: string }\n\nexample.Value << (value=\"\\q\")\n",
       "expected": {
         "status": "refused",
         "kind": "invalid_escape",
         "line": 3,
         "column": 26
-      }
+      },
+      "input_file": "text/read-refuse-string-escape.comic"
     },
     {
       "id": "read-refuse-map-duplicate",
-      "input": "example.Value = Record { value: map<string, i64> }\n\nexample.Value << (value={\"a\": 1, \"a\": 2})\n",
       "expected": {
         "status": "refused",
         "kind": "duplicate_key",
         "line": 3,
         "column": 34
-      }
+      },
+      "input_file": "text/read-refuse-map-duplicate.comic"
     },
     {
       "id": "read-refuse-raw-bidi",
-      "input": "example.Value = Record { value: string }\n\n# forbidden ‮\nexample.Value << (value=\"ok\")\n",
       "expected": {
         "status": "refused",
         "kind": "bidirectional_control",
         "line": 3,
         "column": 13
-      }
+      },
+      "input_file": "text/read-refuse-raw-bidi.comic"
     },
     {
       "id": "read-enum-payload",
-      "input": "example.State = Enum { Pending, Sent(code: i64, note: string? = None) }\n\nexample.Value = Record { value: example.State }\n\nexample.Value << (value=Sent(0=7))\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -1809,11 +1808,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-enum-payload.comic"
     },
     {
       "id": "read-enum-empty",
-      "input": "example.State = Enum { Pending, Sent(code: i64, note: string? = None) }\n\nexample.Value = Record { value: example.State }\n\nexample.Value << (value=Pending)\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -1873,31 +1872,31 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-enum-empty.comic"
     },
     {
       "id": "read-refuse-enum-duplicate",
-      "input": "example.State = Enum { Pending, Sent(code: i64, note: string? = None) }\n\nexample.Value = Record { value: example.State }\n\nexample.Value << (value=Sent(7, code=8))\n",
       "expected": {
         "status": "refused",
         "kind": "duplicate_field",
         "line": 5,
         "column": 33
-      }
+      },
+      "input_file": "text/read-refuse-enum-duplicate.comic"
     },
     {
       "id": "read-refuse-enum-unknown",
-      "input": "example.State = Enum { Pending, Sent(code: i64, note: string? = None) }\n\nexample.Value = Record { value: example.State }\n\nexample.Value << (value=Missing)\n",
       "expected": {
         "status": "refused",
         "kind": "unknown_variant",
         "line": 5,
         "column": 25
-      }
+      },
+      "input_file": "text/read-refuse-enum-unknown.comic"
     },
     {
       "id": "read-nested-row-group",
-      "input": "example.Line = Record { sku: string, quantity: i64 }\n\nexample.Order = Record { id: i64, lines: list<example.Line> }\n\nexample.Order << (id=7, lines=[(sku=\"A\", quantity=2), (sku=\"B\", quantity=1)])\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -1988,11 +1987,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-nested-row-group.comic"
     },
     {
       "id": "read-single-nested-record",
-      "input": "example.Line = Record { sku: string, quantity: i64 }\n\nexample.Order = Record { id: i64, lines: list<example.Line> }\n\nexample.Order << (7, [(\"A\", 2)])\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -2068,11 +2067,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-single-nested-record.comic"
     },
     {
       "id": "read-mixed-union-list",
-      "input": "example.File = Record { name: string }\n\nexample.Folder = Record { name: string }\n\nexample.Tree = Record { entries: list<example.File | example.Folder> }\n\nexample.Tree << (entries=[example.File << (\"a\"), example.Folder << (\"b\")])\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -2156,11 +2155,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-mixed-union-list.comic"
     },
     {
       "id": "read-description-order",
-      "input": "example.Z = Record { z: i64, a: i64 }\n\nexample.Z << (1, 2)\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -2203,11 +2202,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-description-order.comic"
     },
     {
       "id": "read-canonical-metadata",
-      "input": "example.Event = Record { id: i64, seen [canonical = false]: string, note: string? = None }\n\nexample.Event << (1, \"now\")\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -2258,21 +2257,21 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-canonical-metadata.comic"
     },
     {
       "id": "read-refuse-record-bare-value",
-      "input": "example.Line = Record { sku: string, quantity: i64 }\n\nexample.Order = Record { id: i64, lines: list<example.Line> }\n\nexample.Order << 7\n",
       "expected": {
         "status": "refused",
         "kind": "type_mismatch",
         "line": 5,
         "column": 18
-      }
+      },
+      "input_file": "text/read-refuse-record-bare-value.comic"
     },
     {
       "id": "read-payload-variant-rows",
-      "input": "example.Event = Enum { Sent(code: i64) }\n\nexample.Log = Record { events: list<example.Event> }\n\nexample.Log << (events=[Sent(code=7), Sent(code=8)])\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -2345,11 +2344,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-payload-variant-rows.comic"
     },
     {
       "id": "read-payload-free-variants-inline",
-      "input": "example.Kind = Enum { Percent, Fixed }\n\nexample.Rule = Record { kinds: list<example.Kind> }\n\nexample.Rule << (kinds=[Percent, Fixed])\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -2407,11 +2406,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-payload-free-variants-inline.comic"
     },
     {
       "id": "read-same-short-type-name",
-      "input": "a.Id = Record { value: i64 }\n\nb.Id = Record { value: i64 }\n\nexample.Value = Record { value: a.Id | b.Id }\n\nexample.Value << (value=a.Id << (3))\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -2477,11 +2476,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-same-short-type-name.comic"
     },
     {
       "id": "read-qualified-variant",
-      "input": "a.Status = Enum { Pending }\n\nb.State = Enum { Pending }\n\nexample.Value = Record { value: a.Status | b.State }\n\nexample.Value << (value=Status.Pending)\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -2538,11 +2537,11 @@
             }
           ]
         }
-      }
+      },
+      "input_file": "text/read-qualified-variant.comic"
     },
     {
       "id": "read-declaration-reference",
-      "input": "example.Link = Record { target: ref<example.Target> }\n\nexample.Target = Record { id: i64 }\n\nexample.Link << (target=example.remote.point)\n",
       "expected": {
         "status": "accepted",
         "document": {
@@ -2587,7 +2586,8 @@
           ]
         }
       },
-      "purpose": "The target path is retained as an identity without resolving it or requiring the referenced declaration to be loaded."
+      "purpose": "The target path is retained as an identity without resolving it or requiring the referenced declaration to be loaded.",
+      "input_file": "text/read-declaration-reference.comic"
     }
   ]
 }

@@ -33,3 +33,7 @@ A program may inspect that record as COMIC, encode it as a standalone Crumb, or 
 ## License
 
 This folder is distributed under the [Apache License 2.0](LICENSE).
+
+## Inspecting text cases
+
+Read the `.comic` files in [corpus/text](corpus/text/) directly. `input_file` and `expected_file` in the JSON cases identify inputs and canonical outputs; identical texts share one file. The expected typed values stay in JSON, independently authored. The [manifest](corpus/manifest.json) pins every file, including deliberately truncated or invalid input.
