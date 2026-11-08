@@ -28,6 +28,13 @@
       "owner": "Encero Systems",
       "status": "draft",
       "spec": "profiles/store.md"
+    },
+    {
+      "id": "comic.text/1",
+      "role": "text-grammar-corpus",
+      "owner": "Encero Systems",
+      "status": "experimental; partial grammar coverage",
+      "spec": "spec/text.md"
     }
   ],
   "external_profiles": []

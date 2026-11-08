@@ -1,0 +1,2593 @@
+{
+  "operation": "text_read",
+  "profile": "comic.text/1",
+  "cases": [
+    {
+      "id": "read-positions",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Point",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "x",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                },
+                {
+                  "name": "y",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Point",
+              "fields": {
+                "x": {
+                  "kind": "int",
+                  "type": "i64",
+                  "value": "1"
+                },
+                "y": {
+                  "kind": "int",
+                  "type": "i64",
+                  "value": "2"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-positions.comic"
+    },
+    {
+      "id": "read-names-reversed",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Point",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "x",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                },
+                {
+                  "name": "y",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Point",
+              "fields": {
+                "x": {
+                  "kind": "int",
+                  "type": "i64",
+                  "value": "1"
+                },
+                "y": {
+                  "kind": "int",
+                  "type": "i64",
+                  "value": "2"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-names-reversed.comic"
+    },
+    {
+      "id": "read-indexes-reversed",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Point",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "x",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                },
+                {
+                  "name": "y",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Point",
+              "fields": {
+                "x": {
+                  "kind": "int",
+                  "type": "i64",
+                  "value": "1"
+                },
+                "y": {
+                  "kind": "int",
+                  "type": "i64",
+                  "value": "2"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-indexes-reversed.comic"
+    },
+    {
+      "id": "read-mixed",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Point",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "x",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                },
+                {
+                  "name": "y",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Point",
+              "fields": {
+                "x": {
+                  "kind": "int",
+                  "type": "i64",
+                  "value": "1"
+                },
+                "y": {
+                  "kind": "int",
+                  "type": "i64",
+                  "value": "2"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-mixed.comic"
+    },
+    {
+      "id": "read-mixed-keys",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Point",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "x",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                },
+                {
+                  "name": "y",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Point",
+              "fields": {
+                "x": {
+                  "kind": "int",
+                  "type": "i64",
+                  "value": "1"
+                },
+                "y": {
+                  "kind": "int",
+                  "type": "i64",
+                  "value": "2"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-mixed-keys.comic"
+    },
+    {
+      "id": "read-one-row-table",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Point",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "x",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                },
+                {
+                  "name": "y",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Point",
+              "fields": {
+                "x": {
+                  "kind": "int",
+                  "type": "i64",
+                  "value": "1"
+                },
+                "y": {
+                  "kind": "int",
+                  "type": "i64",
+                  "value": "2"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-one-row-table.comic"
+    },
+    {
+      "id": "read-comments",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Point",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "x",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                },
+                {
+                  "name": "y",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Point",
+              "fields": {
+                "x": {
+                  "kind": "int",
+                  "type": "i64",
+                  "value": "1"
+                },
+                "y": {
+                  "kind": "int",
+                  "type": "i64",
+                  "value": "2"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-comments.comic"
+    },
+    {
+      "id": "read-two-rows",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Point",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "x",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                },
+                {
+                  "name": "y",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Point",
+              "fields": {
+                "x": {
+                  "kind": "int",
+                  "type": "i64",
+                  "value": "1"
+                },
+                "y": {
+                  "kind": "int",
+                  "type": "i64",
+                  "value": "2"
+                }
+              }
+            },
+            {
+              "kind": "record",
+              "type": "example.Point",
+              "fields": {
+                "x": {
+                  "kind": "int",
+                  "type": "i64",
+                  "value": "3"
+                },
+                "y": {
+                  "kind": "int",
+                  "type": "i64",
+                  "value": "4"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-two-rows.comic"
+    },
+    {
+      "id": "read-entry-boundary-cut",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Point",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "x",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                },
+                {
+                  "name": "y",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Point",
+              "fields": {
+                "x": {
+                  "kind": "int",
+                  "type": "i64",
+                  "value": "1"
+                },
+                "y": {
+                  "kind": "int",
+                  "type": "i64",
+                  "value": "2"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "purpose": "A complete first entry is a valid shorter document; no document seal is inferred.",
+      "input_file": "text/read-entry-boundary-cut.comic"
+    },
+    {
+      "id": "read-refuse-duplicate-name",
+      "expected": {
+        "status": "refused",
+        "kind": "duplicate_field",
+        "line": 3,
+        "column": 24
+      },
+      "input_file": "text/read-refuse-duplicate-name.comic"
+    },
+    {
+      "id": "read-refuse-position-name-duplicate",
+      "expected": {
+        "status": "refused",
+        "kind": "duplicate_field",
+        "line": 3,
+        "column": 22
+      },
+      "input_file": "text/read-refuse-position-name-duplicate.comic"
+    },
+    {
+      "id": "read-refuse-position-index-duplicate",
+      "expected": {
+        "status": "refused",
+        "kind": "duplicate_field",
+        "line": 3,
+        "column": 22
+      },
+      "input_file": "text/read-refuse-position-index-duplicate.comic"
+    },
+    {
+      "id": "read-refuse-index-name-duplicate",
+      "expected": {
+        "status": "refused",
+        "kind": "duplicate_field",
+        "line": 3,
+        "column": 24
+      },
+      "input_file": "text/read-refuse-index-name-duplicate.comic"
+    },
+    {
+      "id": "read-refuse-position-after-key",
+      "expected": {
+        "status": "refused",
+        "kind": "positional_after_key",
+        "line": 3,
+        "column": 24
+      },
+      "input_file": "text/read-refuse-position-after-key.comic"
+    },
+    {
+      "id": "read-refuse-unknown-name",
+      "expected": {
+        "status": "refused",
+        "kind": "unknown_field",
+        "line": 3,
+        "column": 24
+      },
+      "input_file": "text/read-refuse-unknown-name.comic"
+    },
+    {
+      "id": "read-refuse-index-outside",
+      "expected": {
+        "status": "refused",
+        "kind": "field_index_out_of_range",
+        "line": 3,
+        "column": 24
+      },
+      "input_file": "text/read-refuse-index-outside.comic"
+    },
+    {
+      "id": "read-refuse-required-missing",
+      "expected": {
+        "status": "refused",
+        "kind": "missing_required_field",
+        "line": 3,
+        "column": 22
+      },
+      "input_file": "text/read-refuse-required-missing.comic"
+    },
+    {
+      "id": "read-refuse-value-cut",
+      "expected": {
+        "status": "refused",
+        "kind": "unexpected_end",
+        "line": 3,
+        "column": 21
+      },
+      "input_file": "text/read-refuse-value-cut.comic"
+    },
+    {
+      "id": "read-refuse-table-cut",
+      "expected": {
+        "status": "refused",
+        "kind": "unexpected_end",
+        "line": 5,
+        "column": 1
+      },
+      "input_file": "text/read-refuse-table-cut.comic"
+    },
+    {
+      "id": "read-refuse-unknown-description",
+      "expected": {
+        "status": "refused",
+        "kind": "unknown_description",
+        "line": 1,
+        "column": 1
+      },
+      "input_file": "text/read-refuse-unknown-description.comic"
+    },
+    {
+      "id": "read-refuse-duplicate-description",
+      "expected": {
+        "status": "refused",
+        "kind": "duplicate_declaration_kind",
+        "line": 3,
+        "column": 1
+      },
+      "input_file": "text/read-refuse-duplicate-description.comic"
+    },
+    {
+      "id": "read-refuse-two-kinds",
+      "expected": {
+        "status": "refused",
+        "kind": "value_type_no_single_declaration",
+        "line": 5,
+        "column": 1
+      },
+      "purpose": "A value cannot choose silently between two value-bearing kinds at one path.",
+      "input_file": "text/read-refuse-two-kinds.comic"
+    },
+    {
+      "id": "read-refuse-store-field-declaration",
+      "expected": {
+        "status": "refused",
+        "kind": "reserved_field",
+        "line": 1,
+        "column": 24
+      },
+      "input_file": "text/read-refuse-store-field-declaration.comic"
+    },
+    {
+      "id": "read-refuse-unknown-store-key",
+      "expected": {
+        "status": "refused",
+        "kind": "unknown_store_key",
+        "line": 3,
+        "column": 25
+      },
+      "input_file": "text/read-refuse-unknown-store-key.comic"
+    },
+    {
+      "id": "read-absent-gap",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Person",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "id",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                },
+                {
+                  "name": "note",
+                  "type": "string?",
+                  "absent": "none",
+                  "canonical": true
+                },
+                {
+                  "name": "city",
+                  "type": "string?",
+                  "absent": "none",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Person",
+              "fields": {
+                "id": {
+                  "kind": "int",
+                  "type": "i64",
+                  "value": "1"
+                },
+                "note": {
+                  "kind": "none"
+                },
+                "city": {
+                  "kind": "some",
+                  "value": {
+                    "kind": "string",
+                    "value": "Delft"
+                  }
+                }
+              }
+            },
+            {
+              "kind": "record",
+              "type": "example.Person",
+              "fields": {
+                "id": {
+                  "kind": "int",
+                  "type": "i64",
+                  "value": "2"
+                },
+                "note": {
+                  "kind": "none"
+                },
+                "city": {
+                  "kind": "none"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-absent-gap.comic"
+    },
+    {
+      "id": "read-explicit-absent",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Person",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "id",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                },
+                {
+                  "name": "note",
+                  "type": "string?",
+                  "absent": "none",
+                  "canonical": true
+                },
+                {
+                  "name": "city",
+                  "type": "string?",
+                  "absent": "none",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Person",
+              "fields": {
+                "id": {
+                  "kind": "int",
+                  "type": "i64",
+                  "value": "2"
+                },
+                "note": {
+                  "kind": "none"
+                },
+                "city": {
+                  "kind": "none"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-explicit-absent.comic"
+    },
+    {
+      "id": "read-boolean",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Value",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "value",
+                  "type": "boolean",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Value",
+              "fields": {
+                "value": {
+                  "kind": "boolean",
+                  "value": true
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-boolean.comic"
+    },
+    {
+      "id": "read-i8-min",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Value",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "value",
+                  "type": "i8",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Value",
+              "fields": {
+                "value": {
+                  "kind": "int",
+                  "type": "i8",
+                  "value": "-128"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-i8-min.comic"
+    },
+    {
+      "id": "read-u16-max",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Value",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "value",
+                  "type": "u16",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Value",
+              "fields": {
+                "value": {
+                  "kind": "int",
+                  "type": "u16",
+                  "value": "65535"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-u16-max.comic"
+    },
+    {
+      "id": "read-exact-large-integer",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Value",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "value",
+                  "type": "u64",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Value",
+              "fields": {
+                "value": {
+                  "kind": "int",
+                  "type": "u64",
+                  "value": "18446744073709551615"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-exact-large-integer.comic"
+    },
+    {
+      "id": "read-positive-zero",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Value",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "value",
+                  "type": "fp64",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Value",
+              "fields": {
+                "value": {
+                  "kind": "float",
+                  "width": 64,
+                  "bits": "0000000000000000"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-positive-zero.comic"
+    },
+    {
+      "id": "read-negative-zero",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Value",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "value",
+                  "type": "fp64",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Value",
+              "fields": {
+                "value": {
+                  "kind": "float",
+                  "width": 64,
+                  "bits": "8000000000000000"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-negative-zero.comic"
+    },
+    {
+      "id": "read-float32",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Value",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "value",
+                  "type": "fp32",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Value",
+              "fields": {
+                "value": {
+                  "kind": "float",
+                  "width": 32,
+                  "bits": "3fc00000"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-float32.comic"
+    },
+    {
+      "id": "read-infinity",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Value",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "value",
+                  "type": "fp64",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Value",
+              "fields": {
+                "value": {
+                  "kind": "float",
+                  "width": 64,
+                  "bits": "7ff0000000000000"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-infinity.comic"
+    },
+    {
+      "id": "read-negative-infinity",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Value",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "value",
+                  "type": "fp64",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Value",
+              "fields": {
+                "value": {
+                  "kind": "float",
+                  "width": 64,
+                  "bits": "fff0000000000000"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-negative-infinity.comic"
+    },
+    {
+      "id": "read-nan",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Value",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "value",
+                  "type": "fp64",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Value",
+              "fields": {
+                "value": {
+                  "kind": "float",
+                  "width": 64,
+                  "bits": "7ff8000000000000"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-nan.comic"
+    },
+    {
+      "id": "read-decimal",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Value",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "value",
+                  "type": "decimal<10, 2>",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Value",
+              "fields": {
+                "value": {
+                  "kind": "decimal",
+                  "precision": 10,
+                  "scale": 2,
+                  "coefficient": "1990"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-decimal.comic"
+    },
+    {
+      "id": "read-unicode-preserved",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Value",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "value",
+                  "type": "string",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Value",
+              "fields": {
+                "value": {
+                  "kind": "string",
+                  "value": "é"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-unicode-preserved.comic"
+    },
+    {
+      "id": "read-string-escapes",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Value",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "value",
+                  "type": "string",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Value",
+              "fields": {
+                "value": {
+                  "kind": "string",
+                  "value": "a\n\t\r\"\\\u0001‮"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-string-escapes.comic"
+    },
+    {
+      "id": "read-multiline-exact",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Value",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "value",
+                  "type": "string",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Value",
+              "fields": {
+                "value": {
+                  "kind": "string",
+                  "value": "\n  hello\n"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "purpose": "Opening/closing newlines and indentation are data, not dedented.",
+      "input_file": "text/read-multiline-exact.comic"
+    },
+    {
+      "id": "read-binary",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Value",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "value",
+                  "type": "binary",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Value",
+              "fields": {
+                "value": {
+                  "kind": "binary",
+                  "hex": "4100ff"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-binary.comic"
+    },
+    {
+      "id": "read-secret-string",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Value",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "value",
+                  "type": "secret_string",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Value",
+              "fields": {
+                "value": {
+                  "kind": "withheld",
+                  "type": "secret_string"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-secret-string.comic"
+    },
+    {
+      "id": "read-secret-bytes",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Value",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "value",
+                  "type": "secret_bytes",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Value",
+              "fields": {
+                "value": {
+                  "kind": "withheld",
+                  "type": "secret_bytes"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-secret-bytes.comic"
+    },
+    {
+      "id": "read-required-optional-absence",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Value",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "value",
+                  "type": "string?",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Value",
+              "fields": {
+                "value": {
+                  "kind": "none"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-required-optional-absence.comic"
+    },
+    {
+      "id": "read-nested-absence",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Value",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "value",
+                  "type": "option<string?>",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Value",
+              "fields": {
+                "value": {
+                  "kind": "some",
+                  "value": {
+                    "kind": "none"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-nested-absence.comic"
+    },
+    {
+      "id": "read-list-optionals",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Value",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "value",
+                  "type": "list<i64?>",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Value",
+              "fields": {
+                "value": {
+                  "kind": "list",
+                  "items": [
+                    {
+                      "kind": "some",
+                      "value": {
+                        "kind": "int",
+                        "type": "i64",
+                        "value": "1"
+                      }
+                    },
+                    {
+                      "kind": "none"
+                    },
+                    {
+                      "kind": "some",
+                      "value": {
+                        "kind": "int",
+                        "type": "i64",
+                        "value": "3"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-list-optionals.comic"
+    },
+    {
+      "id": "read-union-integer",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Value",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "value",
+                  "type": "i64 | string",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Value",
+              "fields": {
+                "value": {
+                  "kind": "union",
+                  "member": "i64",
+                  "value": {
+                    "kind": "int",
+                    "type": "i64",
+                    "value": "3"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-union-integer.comic"
+    },
+    {
+      "id": "read-union-string",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Value",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "value",
+                  "type": "i64 | string",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Value",
+              "fields": {
+                "value": {
+                  "kind": "union",
+                  "member": "string",
+                  "value": {
+                    "kind": "string",
+                    "value": "3"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-union-string.comic"
+    },
+    {
+      "id": "read-map-order",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Value",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "value",
+                  "type": "map<string, i64>",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Value",
+              "fields": {
+                "value": {
+                  "kind": "map",
+                  "entries": [
+                    [
+                      {
+                        "kind": "string",
+                        "value": "a"
+                      },
+                      {
+                        "kind": "int",
+                        "type": "i64",
+                        "value": "1"
+                      }
+                    ],
+                    [
+                      {
+                        "kind": "string",
+                        "value": "b"
+                      },
+                      {
+                        "kind": "int",
+                        "type": "i64",
+                        "value": "2"
+                      }
+                    ]
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-map-order.comic"
+    },
+    {
+      "id": "read-set-order",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Value",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "value",
+                  "type": "set<i64>",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Value",
+              "fields": {
+                "value": {
+                  "kind": "set",
+                  "items": [
+                    {
+                      "kind": "int",
+                      "type": "i64",
+                      "value": "1"
+                    },
+                    {
+                      "kind": "int",
+                      "type": "i64",
+                      "value": "2"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-set-order.comic"
+    },
+    {
+      "id": "read-refuse-integer-plus",
+      "expected": {
+        "status": "refused",
+        "kind": "invalid_integer",
+        "line": 3,
+        "column": 25
+      },
+      "input_file": "text/read-refuse-integer-plus.comic"
+    },
+    {
+      "id": "read-refuse-integer-leading-zero",
+      "expected": {
+        "status": "refused",
+        "kind": "invalid_integer",
+        "line": 3,
+        "column": 25
+      },
+      "input_file": "text/read-refuse-integer-leading-zero.comic"
+    },
+    {
+      "id": "read-refuse-integer-underscore",
+      "expected": {
+        "status": "refused",
+        "kind": "invalid_integer",
+        "line": 3,
+        "column": 25
+      },
+      "input_file": "text/read-refuse-integer-underscore.comic"
+    },
+    {
+      "id": "read-refuse-integer-range",
+      "expected": {
+        "status": "refused",
+        "kind": "integer_out_of_range",
+        "line": 3,
+        "column": 25
+      },
+      "input_file": "text/read-refuse-integer-range.comic"
+    },
+    {
+      "id": "read-refuse-float-in-int",
+      "expected": {
+        "status": "refused",
+        "kind": "type_mismatch",
+        "line": 3,
+        "column": 25
+      },
+      "input_file": "text/read-refuse-float-in-int.comic"
+    },
+    {
+      "id": "read-refuse-decimal-scale",
+      "expected": {
+        "status": "refused",
+        "kind": "decimal_scale_mismatch",
+        "line": 3,
+        "column": 25
+      },
+      "input_file": "text/read-refuse-decimal-scale.comic"
+    },
+    {
+      "id": "read-refuse-opaque-marker",
+      "expected": {
+        "status": "refused",
+        "kind": "unsupported_marker",
+        "line": 3,
+        "column": 25
+      },
+      "input_file": "text/read-refuse-opaque-marker.comic"
+    },
+    {
+      "id": "read-refuse-string-escape",
+      "expected": {
+        "status": "refused",
+        "kind": "invalid_escape",
+        "line": 3,
+        "column": 26
+      },
+      "input_file": "text/read-refuse-string-escape.comic"
+    },
+    {
+      "id": "read-refuse-map-duplicate",
+      "expected": {
+        "status": "refused",
+        "kind": "duplicate_key",
+        "line": 3,
+        "column": 34
+      },
+      "input_file": "text/read-refuse-map-duplicate.comic"
+    },
+    {
+      "id": "read-refuse-raw-bidi",
+      "expected": {
+        "status": "refused",
+        "kind": "bidirectional_control",
+        "line": 3,
+        "column": 13
+      },
+      "input_file": "text/read-refuse-raw-bidi.comic"
+    },
+    {
+      "id": "read-enum-payload",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.State",
+              "kind": "Enum",
+              "variants": [
+                {
+                  "name": "Pending",
+                  "fields": []
+                },
+                {
+                  "name": "Sent",
+                  "fields": [
+                    {
+                      "name": "code",
+                      "type": "i64",
+                      "absent": "required",
+                      "canonical": true
+                    },
+                    {
+                      "name": "note",
+                      "type": "string?",
+                      "absent": "none",
+                      "canonical": true
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "path": "example.Value",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "value",
+                  "type": "example.State",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Value",
+              "fields": {
+                "value": {
+                  "kind": "enum",
+                  "type": "example.State",
+                  "variant": "Sent",
+                  "fields": {
+                    "code": {
+                      "kind": "int",
+                      "type": "i64",
+                      "value": "7"
+                    },
+                    "note": {
+                      "kind": "none"
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-enum-payload.comic"
+    },
+    {
+      "id": "read-enum-empty",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.State",
+              "kind": "Enum",
+              "variants": [
+                {
+                  "name": "Pending",
+                  "fields": []
+                },
+                {
+                  "name": "Sent",
+                  "fields": [
+                    {
+                      "name": "code",
+                      "type": "i64",
+                      "absent": "required",
+                      "canonical": true
+                    },
+                    {
+                      "name": "note",
+                      "type": "string?",
+                      "absent": "none",
+                      "canonical": true
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "path": "example.Value",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "value",
+                  "type": "example.State",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Value",
+              "fields": {
+                "value": {
+                  "kind": "enum",
+                  "type": "example.State",
+                  "variant": "Pending",
+                  "fields": {}
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-enum-empty.comic"
+    },
+    {
+      "id": "read-refuse-enum-duplicate",
+      "expected": {
+        "status": "refused",
+        "kind": "duplicate_field",
+        "line": 5,
+        "column": 33
+      },
+      "input_file": "text/read-refuse-enum-duplicate.comic"
+    },
+    {
+      "id": "read-refuse-enum-unknown",
+      "expected": {
+        "status": "refused",
+        "kind": "unknown_variant",
+        "line": 5,
+        "column": 25
+      },
+      "input_file": "text/read-refuse-enum-unknown.comic"
+    },
+    {
+      "id": "read-nested-row-group",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Line",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "sku",
+                  "type": "string",
+                  "absent": "required",
+                  "canonical": true
+                },
+                {
+                  "name": "quantity",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            },
+            {
+              "path": "example.Order",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "id",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                },
+                {
+                  "name": "lines",
+                  "type": "list<example.Line>",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Order",
+              "fields": {
+                "id": {
+                  "kind": "int",
+                  "type": "i64",
+                  "value": "7"
+                },
+                "lines": {
+                  "kind": "list",
+                  "items": [
+                    {
+                      "kind": "record",
+                      "type": "example.Line",
+                      "fields": {
+                        "sku": {
+                          "kind": "string",
+                          "value": "A"
+                        },
+                        "quantity": {
+                          "kind": "int",
+                          "type": "i64",
+                          "value": "2"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "record",
+                      "type": "example.Line",
+                      "fields": {
+                        "sku": {
+                          "kind": "string",
+                          "value": "B"
+                        },
+                        "quantity": {
+                          "kind": "int",
+                          "type": "i64",
+                          "value": "1"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-nested-row-group.comic"
+    },
+    {
+      "id": "read-single-nested-record",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Line",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "sku",
+                  "type": "string",
+                  "absent": "required",
+                  "canonical": true
+                },
+                {
+                  "name": "quantity",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            },
+            {
+              "path": "example.Order",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "id",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                },
+                {
+                  "name": "lines",
+                  "type": "list<example.Line>",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Order",
+              "fields": {
+                "id": {
+                  "kind": "int",
+                  "type": "i64",
+                  "value": "7"
+                },
+                "lines": {
+                  "kind": "list",
+                  "items": [
+                    {
+                      "kind": "record",
+                      "type": "example.Line",
+                      "fields": {
+                        "sku": {
+                          "kind": "string",
+                          "value": "A"
+                        },
+                        "quantity": {
+                          "kind": "int",
+                          "type": "i64",
+                          "value": "2"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-single-nested-record.comic"
+    },
+    {
+      "id": "read-mixed-union-list",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.File",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "name",
+                  "type": "string",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            },
+            {
+              "path": "example.Folder",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "name",
+                  "type": "string",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            },
+            {
+              "path": "example.Tree",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "entries",
+                  "type": "list<example.File | example.Folder>",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Tree",
+              "fields": {
+                "entries": {
+                  "kind": "list",
+                  "items": [
+                    {
+                      "kind": "union",
+                      "member": "example.File",
+                      "value": {
+                        "kind": "record",
+                        "type": "example.File",
+                        "fields": {
+                          "name": {
+                            "kind": "string",
+                            "value": "a"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "kind": "union",
+                      "member": "example.Folder",
+                      "value": {
+                        "kind": "record",
+                        "type": "example.Folder",
+                        "fields": {
+                          "name": {
+                            "kind": "string",
+                            "value": "b"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-mixed-union-list.comic"
+    },
+    {
+      "id": "read-description-order",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Z",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "z",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                },
+                {
+                  "name": "a",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Z",
+              "fields": {
+                "z": {
+                  "kind": "int",
+                  "type": "i64",
+                  "value": "1"
+                },
+                "a": {
+                  "kind": "int",
+                  "type": "i64",
+                  "value": "2"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-description-order.comic"
+    },
+    {
+      "id": "read-canonical-metadata",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Event",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "id",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                },
+                {
+                  "name": "seen",
+                  "type": "string",
+                  "absent": "required",
+                  "canonical": false
+                },
+                {
+                  "name": "note",
+                  "type": "string?",
+                  "absent": "none",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Event",
+              "fields": {
+                "id": {
+                  "kind": "int",
+                  "type": "i64",
+                  "value": "1"
+                },
+                "seen": {
+                  "kind": "string",
+                  "value": "now"
+                },
+                "note": {
+                  "kind": "none"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-canonical-metadata.comic"
+    },
+    {
+      "id": "read-refuse-record-bare-value",
+      "expected": {
+        "status": "refused",
+        "kind": "type_mismatch",
+        "line": 5,
+        "column": 18
+      },
+      "input_file": "text/read-refuse-record-bare-value.comic"
+    },
+    {
+      "id": "read-payload-variant-rows",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Event",
+              "kind": "Enum",
+              "variants": [
+                {
+                  "name": "Sent",
+                  "fields": [
+                    {
+                      "name": "code",
+                      "type": "i64",
+                      "absent": "required",
+                      "canonical": true
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "path": "example.Log",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "events",
+                  "type": "list<example.Event>",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Log",
+              "fields": {
+                "events": {
+                  "kind": "list",
+                  "items": [
+                    {
+                      "kind": "enum",
+                      "type": "example.Event",
+                      "variant": "Sent",
+                      "fields": {
+                        "code": {
+                          "kind": "int",
+                          "type": "i64",
+                          "value": "7"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "enum",
+                      "type": "example.Event",
+                      "variant": "Sent",
+                      "fields": {
+                        "code": {
+                          "kind": "int",
+                          "type": "i64",
+                          "value": "8"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-payload-variant-rows.comic"
+    },
+    {
+      "id": "read-payload-free-variants-inline",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Kind",
+              "kind": "Enum",
+              "variants": [
+                {
+                  "name": "Percent",
+                  "fields": []
+                },
+                {
+                  "name": "Fixed",
+                  "fields": []
+                }
+              ]
+            },
+            {
+              "path": "example.Rule",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "kinds",
+                  "type": "list<example.Kind>",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Rule",
+              "fields": {
+                "kinds": {
+                  "kind": "list",
+                  "items": [
+                    {
+                      "kind": "enum",
+                      "type": "example.Kind",
+                      "variant": "Percent",
+                      "fields": {}
+                    },
+                    {
+                      "kind": "enum",
+                      "type": "example.Kind",
+                      "variant": "Fixed",
+                      "fields": {}
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-payload-free-variants-inline.comic"
+    },
+    {
+      "id": "read-same-short-type-name",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "a.Id",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "value",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            },
+            {
+              "path": "b.Id",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "value",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            },
+            {
+              "path": "example.Value",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "value",
+                  "type": "a.Id | b.Id",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Value",
+              "fields": {
+                "value": {
+                  "kind": "union",
+                  "member": "a.Id",
+                  "value": {
+                    "kind": "record",
+                    "type": "a.Id",
+                    "fields": {
+                      "value": {
+                        "kind": "int",
+                        "type": "i64",
+                        "value": "3"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-same-short-type-name.comic"
+    },
+    {
+      "id": "read-qualified-variant",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "a.Status",
+              "kind": "Enum",
+              "variants": [
+                {
+                  "name": "Pending",
+                  "fields": []
+                }
+              ]
+            },
+            {
+              "path": "b.State",
+              "kind": "Enum",
+              "variants": [
+                {
+                  "name": "Pending",
+                  "fields": []
+                }
+              ]
+            },
+            {
+              "path": "example.Value",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "value",
+                  "type": "a.Status | b.State",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Value",
+              "fields": {
+                "value": {
+                  "kind": "union",
+                  "member": "a.Status",
+                  "value": {
+                    "kind": "enum",
+                    "type": "a.Status",
+                    "variant": "Pending",
+                    "fields": {}
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-qualified-variant.comic"
+    },
+    {
+      "id": "read-declaration-reference",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Link",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "target",
+                  "type": "ref<example.Target>",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            },
+            {
+              "path": "example.Target",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "id",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Link",
+              "fields": {
+                "target": {
+                  "kind": "reference",
+                  "target_type": "example.Target",
+                  "identity": "example.remote.point"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "purpose": "The target path is retained as an identity without resolving it or requiring the referenced declaration to be loaded.",
+      "input_file": "text/read-declaration-reference.comic"
+    }
+  ]
+}

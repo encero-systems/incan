@@ -1,0 +1,3 @@
+example.Value = Record { value: list<i64?> }
+
+example.Value << (value=[1, None, 3])

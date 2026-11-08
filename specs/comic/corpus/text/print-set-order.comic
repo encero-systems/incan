@@ -1,0 +1,3 @@
+example.Value = Record { value: set<i64> }
+
+example.Value << (value={1, 2})

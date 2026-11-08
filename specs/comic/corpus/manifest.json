@@ -25,13 +25,379 @@
       "operation": "adaptation",
       "cases": 12,
       "sha256": "2f29c722eb4caf6b21badec8530c33a46cefddc895ad912823454690a487106e"
+    },
+    {
+      "path": "text-read.json",
+      "operation": "text_read",
+      "cases": 75,
+      "sha256": "25ba682096fffc4803b590a6a15a678cbaf98e7302e3898652845e7b2ed6ecb7"
+    },
+    {
+      "path": "text-print.json",
+      "operation": "text_print",
+      "cases": 46,
+      "sha256": "f90cf3440002b12baaced1faa8a76106b12804ede4c93029d99fc351779f057f"
     }
   ],
   "pending": [
     "exact hash preimages and digests",
-    "COMIC grammar and canonical text vectors",
     "Crumb binary profile and byte vectors",
     "resource-limit and streaming executions",
-    "recursive shapes, enums, unions, maps, sets and decimal coverage"
+    "recursive shapes, enums, unions, maps, sets and decimal coverage",
+    "text parser/printer execution, long-line wrapping, stored-reference and store-key spellings"
+  ],
+  "text_files": [
+    {
+      "path": "text/print-absent-gap.comic",
+      "sha256": "602f71717ec7c3f316f7e4dde92627a681d30a4e35bfc01ccbf5590b2c0d82fb"
+    },
+    {
+      "path": "text/print-canonical-metadata.comic",
+      "sha256": "9ab626d407b9381f49e307449f82f792f1fe88f003e83801c2aaaaaacea00294"
+    },
+    {
+      "path": "text/print-description-order.comic",
+      "sha256": "e8891da95527ea68c1115b61d13624583eda9629d3922124aab3d58213bf2374"
+    },
+    {
+      "path": "text/print-enum-payload.comic",
+      "sha256": "8989ad967c16085cd7b0e7aa125f8cd23df10e229acf11707e6efd420c85c38f"
+    },
+    {
+      "path": "text/print-explicit-absent.comic",
+      "sha256": "16fdc499a647af90921731037bccb363a031c4488d03e53d39240100bf709ade"
+    },
+    {
+      "path": "text/print-map-order.comic",
+      "sha256": "3f84f9c4fd7dfe1f3afb818b50c52df2206960a5acbffcf3d94886ee09439a88"
+    },
+    {
+      "path": "text/print-mixed-union-list.comic",
+      "sha256": "3f0d804a72d749598db63071b9bf954f049b1ab1ef2f9a193f6203ec36a7bb0b"
+    },
+    {
+      "path": "text/print-nested-row-group.comic",
+      "sha256": "829abed2ac62cf4c4dea6e271a836b2ea7d00649274428e525d3627c7d2ec12f"
+    },
+    {
+      "path": "text/print-payload-variant-rows.comic",
+      "sha256": "1b03348d25928db07dab0cf9305638352103c2eba0c2a067786741299f0b108e"
+    },
+    {
+      "path": "text/print-same-short-type-name.comic",
+      "sha256": "399903b8f0240c645c296f075f223dfa070d5375891da73bc300b291f5ca4d2d"
+    },
+    {
+      "path": "text/print-set-order.comic",
+      "sha256": "328c7ac78c0f45656917410d7f9c389a9f711c7058b105a1dcc0f2ce43b6156b"
+    },
+    {
+      "path": "text/print-single-nested-record.comic",
+      "sha256": "c553f3dd8b4fd6f5a1d03c8b490c97bc3cd07e75882729b84a1359478d3d4583"
+    },
+    {
+      "path": "text/print-two-rows.comic",
+      "sha256": "8dc0071747b406d187e066df9c600f1b27f696ebac9f13390f453362e0c3cf00"
+    },
+    {
+      "path": "text/read-absent-gap.comic",
+      "sha256": "da83c17d8d935ce1d7f2bf2cd2e19ab5a75f1f6bae06b55ecf669440448ea35c"
+    },
+    {
+      "path": "text/read-binary.comic",
+      "sha256": "ca8e5629a3dad069e98ce0c3032554f8b88c435c54520d3393363591215269c5"
+    },
+    {
+      "path": "text/read-boolean.comic",
+      "sha256": "f5f40ab857b3dfcde3ea0b53f912e9eedab1aeb0aac34c44a3ef54f52bda38a6"
+    },
+    {
+      "path": "text/read-canonical-metadata.comic",
+      "sha256": "e8c8c44ac196f34e454afec780e7243fd9fde4d837c38498999e9bfe67607f2e"
+    },
+    {
+      "path": "text/read-comments.comic",
+      "sha256": "b4a38c4eb5212ffcc4bbdee6c0c4f08a3e5a2def1dca5b49e4d0a5f8882f4845"
+    },
+    {
+      "path": "text/read-decimal.comic",
+      "sha256": "7e629fd1af892b3bdef627a1e097be09c218318a0e88fa63108334720bfe7aca"
+    },
+    {
+      "path": "text/read-declaration-reference.comic",
+      "sha256": "8018d29fba2527143447dee5d906fd1d252ce4040fdebcdbf39291d903591ea9"
+    },
+    {
+      "path": "text/read-description-order.comic",
+      "sha256": "5c18dca84ec32a142758cecb874fee3b6646b92b1725478c5e32cbf4270d252c"
+    },
+    {
+      "path": "text/read-entry-boundary-cut.comic",
+      "sha256": "0467f083cc626fbc3377ea7311340f5158505fd82f7b15498a9d9f509d6f89fd"
+    },
+    {
+      "path": "text/read-enum-empty.comic",
+      "sha256": "db26613580572272b8eaeef73fa462237647214802e9e66165f671eb2e67bcce"
+    },
+    {
+      "path": "text/read-enum-payload.comic",
+      "sha256": "6cc94fccbf2db80e263cef2d43600b2f0274dc343cc099f8e00e482a8ca252a0"
+    },
+    {
+      "path": "text/read-exact-large-integer.comic",
+      "sha256": "44cc03f0996381b3fe31ee2081ecd65b3d7fd867022767374bd89af78c7e4beb"
+    },
+    {
+      "path": "text/read-explicit-absent.comic",
+      "sha256": "b074397b0157bff757025b5c0324b6c33c26c91d7f1db0862de9f6b24e18d587"
+    },
+    {
+      "path": "text/read-float32.comic",
+      "sha256": "7ae5ae2e307d485c0503ed77b18d2ba712706373feefb578ffa60cfd7966404c"
+    },
+    {
+      "path": "text/read-i8-min.comic",
+      "sha256": "7fdc1558040eb3baf3c0f665552566ffbd5c32d481cce6e5e02906bc8a8b1a4e"
+    },
+    {
+      "path": "text/read-indexes-reversed.comic",
+      "sha256": "6cbff51cf850a6960025c75db4b7325040c402cc59ead875ef5d1d7aec6b9234"
+    },
+    {
+      "path": "text/read-infinity.comic",
+      "sha256": "1a7a0bccf5685e9e67149a5945e6e332ffc767889aa6aba30b50e2ef1b2d38e5"
+    },
+    {
+      "path": "text/read-list-optionals.comic",
+      "sha256": "3ef74a23e8ce22e55356184ef023dfac1c9fa606f2317b0aae01495202bd149a"
+    },
+    {
+      "path": "text/read-map-order.comic",
+      "sha256": "5509852390ef40ecad880aa37f649bd7c235f53204f3fe92f83141dcca05ce0a"
+    },
+    {
+      "path": "text/read-mixed-keys.comic",
+      "sha256": "b7015761ac2b6262552050a6a27fe309c712b4e9ca86172fb0cab204d456f121"
+    },
+    {
+      "path": "text/read-mixed-union-list.comic",
+      "sha256": "3a30f678ca3c57ac692a0d5539b516a48115167052fb5adb4463f009ec89272a"
+    },
+    {
+      "path": "text/read-mixed.comic",
+      "sha256": "345ee2f388555888ea0af2cfd0cbd0f655d4272d9afab286f61b1d2a599dc7f7"
+    },
+    {
+      "path": "text/read-multiline-exact.comic",
+      "sha256": "4af2c4ed680e55f76b072578e6d5a0bb644b43cf94f3ed6772d2322aae97b674"
+    },
+    {
+      "path": "text/read-names-reversed.comic",
+      "sha256": "0d313388da31b31af61773345ca6ae04d623931d71123079442dabb8e33732e9"
+    },
+    {
+      "path": "text/read-nan.comic",
+      "sha256": "61cd101ee8626d68ffcd9c44549436bb0c57c8980852554e27b982b8f0bbcb7d"
+    },
+    {
+      "path": "text/read-negative-infinity.comic",
+      "sha256": "33467dcd96a83f4534b46c8991eb374331c950d901b4adec5996e1bbbae21db3"
+    },
+    {
+      "path": "text/read-negative-zero.comic",
+      "sha256": "143ace160e62519fd2079e636e2259c0fe3870aead1d7bdf5e06c877f24a887d"
+    },
+    {
+      "path": "text/read-nested-absence.comic",
+      "sha256": "a3d9eca77414878a59ace6dfb42bc15778bfb1468a820aa8bb83cbd4b6cbd079"
+    },
+    {
+      "path": "text/read-nested-row-group.comic",
+      "sha256": "d81e0500339ebf6671785a9b1f57701422177f01bfa0f6b6950194bcb145b84a"
+    },
+    {
+      "path": "text/read-one-row-table.comic",
+      "sha256": "c8c4049e90dca34b0de189436ed2f07562583d5b15a77fce1cfb60e556bf199a"
+    },
+    {
+      "path": "text/read-payload-free-variants-inline.comic",
+      "sha256": "c4210c704b42e0f669ee529b61d381dfb8460ccfd5a2df75a19ff5c476070da1"
+    },
+    {
+      "path": "text/read-payload-variant-rows.comic",
+      "sha256": "cfd8b3e2a89fe5ae057af81e8d529801228bf8b624a35eca338148cd2cb0ebb9"
+    },
+    {
+      "path": "text/read-positions.comic",
+      "sha256": "3e3c971fac1818c2179e4ab19eb7545e110fcef16c5e093efa52c7a8fb1197e1"
+    },
+    {
+      "path": "text/read-positive-zero.comic",
+      "sha256": "68f7c534fc9dd0b343a867d0bbb46b095d8a1e021c82dc82a1c3852995d55a4f"
+    },
+    {
+      "path": "text/read-qualified-variant.comic",
+      "sha256": "a961219b7f13520abc21b513a6501d8a0f3526d229afe7eab6730e08aa075d54"
+    },
+    {
+      "path": "text/read-refuse-decimal-scale.comic",
+      "sha256": "b4c419429e28a41b4dd874e60b2256335d13aeb0c37e802e73e2a6847c1f8e67"
+    },
+    {
+      "path": "text/read-refuse-duplicate-description.comic",
+      "sha256": "0212b0b3722dc0cc3164d92651e56b16835136124c221a6f5562ff5c9320efa6"
+    },
+    {
+      "path": "text/read-refuse-duplicate-name.comic",
+      "sha256": "54288fe7f07f3b7b97ddf814d83f7d56c4017d63d113ec82ff9068b35bb06f19"
+    },
+    {
+      "path": "text/read-refuse-enum-duplicate.comic",
+      "sha256": "826ebf53942d7f9f9dd5c60dd2e13561db838be233d8ee22e9a18e54dc45f6b9"
+    },
+    {
+      "path": "text/read-refuse-enum-unknown.comic",
+      "sha256": "c0ec94abe249ced0c57f09b6394cd292bef99f93abd30a276b3831683fc2599a"
+    },
+    {
+      "path": "text/read-refuse-float-in-int.comic",
+      "sha256": "74c32471156e3f1118e1fd4517ccfe0f963c26bced7c3bf988d13c66fd9b9001"
+    },
+    {
+      "path": "text/read-refuse-index-name-duplicate.comic",
+      "sha256": "aba0ee8950e47e6a250d417d97eafbf7f7b2e3b98a9e41f81e342c7589a8069a"
+    },
+    {
+      "path": "text/read-refuse-index-outside.comic",
+      "sha256": "826b7f9dd8423cac9b98341c9862f78c54b14a55f01a10f4bfca99d321550910"
+    },
+    {
+      "path": "text/read-refuse-integer-leading-zero.comic",
+      "sha256": "4daf429ef92010561770b9b892bb5fdad1b471aff09107d3dcc5a3a15489c7c9"
+    },
+    {
+      "path": "text/read-refuse-integer-plus.comic",
+      "sha256": "16815f6ad7dd0e8bb17466016edc61d678180827672aeef7d9177692135369b3"
+    },
+    {
+      "path": "text/read-refuse-integer-range.comic",
+      "sha256": "524767f9b0158ae21569d1d15ad00217c3ff8c1b065b3448251782fc63f9e9b6"
+    },
+    {
+      "path": "text/read-refuse-integer-underscore.comic",
+      "sha256": "244881ea48c4daa798d6ad4974123a3d3d7fca09f99528c8bb42643e4803b1f9"
+    },
+    {
+      "path": "text/read-refuse-map-duplicate.comic",
+      "sha256": "8ed880a6525f32c7e27ea5414e30fe14fb8f73a8a40d5b5674a01143bfe8b941"
+    },
+    {
+      "path": "text/read-refuse-opaque-marker.comic",
+      "sha256": "158da67185fcf9d45a784d5e1e3accb85287966c9244c016e4ddbbbaea536f73"
+    },
+    {
+      "path": "text/read-refuse-position-after-key.comic",
+      "sha256": "fb6d82ea5c56e04ab8cd7946832fbd036d13d74254db1124a63845635bdc1bd1"
+    },
+    {
+      "path": "text/read-refuse-position-index-duplicate.comic",
+      "sha256": "f32ce7fd2664ed36798e1003c6575e1ee8cbba5fd5392cac203fd04c07da3589"
+    },
+    {
+      "path": "text/read-refuse-position-name-duplicate.comic",
+      "sha256": "05b6f653fecc7840ef4e848d30bc96fc24d271d6c210d4a0eecd1f17f8b160f2"
+    },
+    {
+      "path": "text/read-refuse-raw-bidi.comic",
+      "sha256": "739b64f79a2011459874126a097e68699321d7ccb8d6ffb28febe83281e137e4"
+    },
+    {
+      "path": "text/read-refuse-record-bare-value.comic",
+      "sha256": "c13921c925b45024080e1c424291ad0bef35dee375c5f34d496bda4e67e67e4d"
+    },
+    {
+      "path": "text/read-refuse-required-missing.comic",
+      "sha256": "f23fef5b66849ab2ea5267ab18f5f77f202c65319c9a95dbba51b02fc15c7ac5"
+    },
+    {
+      "path": "text/read-refuse-store-field-declaration.comic",
+      "sha256": "a8badd3d14487bd3a81e7b102a0241e0616801bab541822e996ab04d7cddd43f"
+    },
+    {
+      "path": "text/read-refuse-string-escape.comic",
+      "sha256": "095dfda01095483af745be32cd6d5abd936d83e0447fa51f46dfb870fb00be52"
+    },
+    {
+      "path": "text/read-refuse-table-cut.comic",
+      "sha256": "b3f4166198ec3e82c46496f7fb6d8cce98dadc498d5bca3299728b2a26e6e01e"
+    },
+    {
+      "path": "text/read-refuse-two-kinds.comic",
+      "sha256": "c6831f05d74e0be552f02d39a27ee9cdcb2f361cf6e62942f533bb7182fb33cb"
+    },
+    {
+      "path": "text/read-refuse-unknown-description.comic",
+      "sha256": "e9d8c05667b21751215a696014b053c9448650dd41eeb3f12b3c5b9aa50ecd33"
+    },
+    {
+      "path": "text/read-refuse-unknown-name.comic",
+      "sha256": "cc757a4460aef7712962f13698f00cbe7dcd7295883e8caabe4af2680a35e769"
+    },
+    {
+      "path": "text/read-refuse-unknown-store-key.comic",
+      "sha256": "631605d2d9c5eb1b5d483dc3ed69a8eb6814ba7084492bf879fb9f38d11eeccd"
+    },
+    {
+      "path": "text/read-refuse-value-cut.comic",
+      "sha256": "ae7c3d8c615844ca67686d9eb1abe60b4a782e2b27ae4b1b7a3c506172d9ba24"
+    },
+    {
+      "path": "text/read-required-optional-absence.comic",
+      "sha256": "0b88084b1781f281980e98af8fd19c7fe3d262a9d432d45d21ea32cc195a9eab"
+    },
+    {
+      "path": "text/read-same-short-type-name.comic",
+      "sha256": "3341074ae3d44fdad6ff53a08a222a630fcba97a9b4ffcac377966767771e589"
+    },
+    {
+      "path": "text/read-secret-bytes.comic",
+      "sha256": "5c302d4b9de50007f9496b43dcd75fec15782280e34d62de7f3df11b722bba49"
+    },
+    {
+      "path": "text/read-secret-string.comic",
+      "sha256": "7f4383976f9508cdec07ef19afb8acf541953c37ce330b20f5b94590fb186ff6"
+    },
+    {
+      "path": "text/read-set-order.comic",
+      "sha256": "8cfb6a8b21e629888eb1bd87f64db37bf343d96a83d972c636b198591b5a431a"
+    },
+    {
+      "path": "text/read-single-nested-record.comic",
+      "sha256": "bcf74f88766778cf87c6aa97b659ca2ca75166f98e14ce78d067723aac30067b"
+    },
+    {
+      "path": "text/read-string-escapes.comic",
+      "sha256": "a000d2b68ea722bf791d27aca0c0461d1aa498f5f013338be46f217cf00e57fd"
+    },
+    {
+      "path": "text/read-two-rows.comic",
+      "sha256": "3cfae42b9ffd01b6e5fd2eaf9a7081b64ec1d618dd23f58b2d27cde8e8738136"
+    },
+    {
+      "path": "text/read-u16-max.comic",
+      "sha256": "b5b6e510d40d57a54344d531a205007dd59c5c193ffc37a84d64e4a0184f778f"
+    },
+    {
+      "path": "text/read-unicode-preserved.comic",
+      "sha256": "c1de4ca3c06d62aac93a8499323e72f9dbaac8ecb53aa8ce4c682d611eb479e4"
+    },
+    {
+      "path": "text/read-union-integer.comic",
+      "sha256": "edfc80783d295fa6234e619d5bd316b9bfa21a249e25c24564fb8c20cf129e65"
+    },
+    {
+      "path": "text/read-union-string.comic",
+      "sha256": "86f259a8fedfbb2a0f1fefe8a96ad1c763be512c4111ac9f3c2c92da39fa7331"
+    }
   ]
 }
