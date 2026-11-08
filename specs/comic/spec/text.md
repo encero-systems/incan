@@ -115,7 +115,7 @@ The printer writes one form:
 
 `Type << ( … )` lists stored fields. It is not a constructor call, and reading one never runs a constructor, field method or default. It rebuilds the stored state and runs the type's final validation, the same as decoding a Crumb.
 
-Consecutive values of one type may be written one at a time or as one table; the printer writes two or more consecutive values as a table. Each row is one value with its own hashes. A table is layout only; no hash covers it.
+`<<` takes one value or a list of them, and every value in either is the same cell list. `Type << [(…)]` reads exactly as `Type << (…)`. Consecutive values of one type may be written one at a time or as one table; the printer writes a single value as `Type << ( … )` and two or more consecutive values as one table. Each row is one value with its own hashes. A table is layout only; no hash covers it.
 
 ## Literals
 
