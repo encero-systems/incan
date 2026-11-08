@@ -1,0 +1,1874 @@
+{
+  "operation": "text_print",
+  "profile": "comic.text/1",
+  "cases": [
+    {
+      "id": "print-positions",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Point",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "x",
+                "type": "i64",
+                "absent": "required",
+                "canonical": true
+              },
+              {
+                "name": "y",
+                "type": "i64",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Point",
+            "fields": {
+              "x": {
+                "kind": "int",
+                "type": "i64",
+                "value": "1"
+              },
+              "y": {
+                "kind": "int",
+                "type": "i64",
+                "value": "2"
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (x=1, y=2)\n",
+      "read_case": "read-positions"
+    },
+    {
+      "id": "print-names-reversed",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Point",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "x",
+                "type": "i64",
+                "absent": "required",
+                "canonical": true
+              },
+              {
+                "name": "y",
+                "type": "i64",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Point",
+            "fields": {
+              "x": {
+                "kind": "int",
+                "type": "i64",
+                "value": "1"
+              },
+              "y": {
+                "kind": "int",
+                "type": "i64",
+                "value": "2"
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (x=1, y=2)\n",
+      "read_case": "read-names-reversed"
+    },
+    {
+      "id": "print-indexes-reversed",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Point",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "x",
+                "type": "i64",
+                "absent": "required",
+                "canonical": true
+              },
+              {
+                "name": "y",
+                "type": "i64",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Point",
+            "fields": {
+              "x": {
+                "kind": "int",
+                "type": "i64",
+                "value": "1"
+              },
+              "y": {
+                "kind": "int",
+                "type": "i64",
+                "value": "2"
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (x=1, y=2)\n",
+      "read_case": "read-indexes-reversed"
+    },
+    {
+      "id": "print-mixed",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Point",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "x",
+                "type": "i64",
+                "absent": "required",
+                "canonical": true
+              },
+              {
+                "name": "y",
+                "type": "i64",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Point",
+            "fields": {
+              "x": {
+                "kind": "int",
+                "type": "i64",
+                "value": "1"
+              },
+              "y": {
+                "kind": "int",
+                "type": "i64",
+                "value": "2"
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (x=1, y=2)\n",
+      "read_case": "read-mixed"
+    },
+    {
+      "id": "print-mixed-keys",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Point",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "x",
+                "type": "i64",
+                "absent": "required",
+                "canonical": true
+              },
+              {
+                "name": "y",
+                "type": "i64",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Point",
+            "fields": {
+              "x": {
+                "kind": "int",
+                "type": "i64",
+                "value": "1"
+              },
+              "y": {
+                "kind": "int",
+                "type": "i64",
+                "value": "2"
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (x=1, y=2)\n",
+      "read_case": "read-mixed-keys"
+    },
+    {
+      "id": "print-one-row-table",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Point",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "x",
+                "type": "i64",
+                "absent": "required",
+                "canonical": true
+              },
+              {
+                "name": "y",
+                "type": "i64",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Point",
+            "fields": {
+              "x": {
+                "kind": "int",
+                "type": "i64",
+                "value": "1"
+              },
+              "y": {
+                "kind": "int",
+                "type": "i64",
+                "value": "2"
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (x=1, y=2)\n",
+      "read_case": "read-one-row-table"
+    },
+    {
+      "id": "print-comments",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Point",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "x",
+                "type": "i64",
+                "absent": "required",
+                "canonical": true
+              },
+              {
+                "name": "y",
+                "type": "i64",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Point",
+            "fields": {
+              "x": {
+                "kind": "int",
+                "type": "i64",
+                "value": "1"
+              },
+              "y": {
+                "kind": "int",
+                "type": "i64",
+                "value": "2"
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (x=1, y=2)\n",
+      "read_case": "read-comments"
+    },
+    {
+      "id": "print-two-rows",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Point",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "x",
+                "type": "i64",
+                "absent": "required",
+                "canonical": true
+              },
+              {
+                "name": "y",
+                "type": "i64",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Point",
+            "fields": {
+              "x": {
+                "kind": "int",
+                "type": "i64",
+                "value": "1"
+              },
+              "y": {
+                "kind": "int",
+                "type": "i64",
+                "value": "2"
+              }
+            }
+          },
+          {
+            "kind": "record",
+            "type": "example.Point",
+            "fields": {
+              "x": {
+                "kind": "int",
+                "type": "i64",
+                "value": "3"
+              },
+              "y": {
+                "kind": "int",
+                "type": "i64",
+                "value": "4"
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << [\n    (1, 2),\n    (3, 4),\n]\n",
+      "read_case": "read-two-rows"
+    },
+    {
+      "id": "print-entry-boundary-cut",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Point",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "x",
+                "type": "i64",
+                "absent": "required",
+                "canonical": true
+              },
+              {
+                "name": "y",
+                "type": "i64",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Point",
+            "fields": {
+              "x": {
+                "kind": "int",
+                "type": "i64",
+                "value": "1"
+              },
+              "y": {
+                "kind": "int",
+                "type": "i64",
+                "value": "2"
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (x=1, y=2)\n",
+      "read_case": "read-entry-boundary-cut"
+    },
+    {
+      "id": "print-absent-gap",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Person",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "id",
+                "type": "i64",
+                "absent": "required",
+                "canonical": true
+              },
+              {
+                "name": "note",
+                "type": "string?",
+                "absent": "none",
+                "canonical": true
+              },
+              {
+                "name": "city",
+                "type": "string?",
+                "absent": "none",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Person",
+            "fields": {
+              "id": {
+                "kind": "int",
+                "type": "i64",
+                "value": "1"
+              },
+              "note": {
+                "kind": "none"
+              },
+              "city": {
+                "kind": "some",
+                "value": {
+                  "kind": "string",
+                  "value": "Delft"
+                }
+              }
+            }
+          },
+          {
+            "kind": "record",
+            "type": "example.Person",
+            "fields": {
+              "id": {
+                "kind": "int",
+                "type": "i64",
+                "value": "2"
+              },
+              "note": {
+                "kind": "none"
+              },
+              "city": {
+                "kind": "none"
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Person = Record { id: i64, note: string? = None, city: string? = None }\n\nexample.Person << [\n    (1, city=\"Delft\"),\n    (2),\n]\n",
+      "read_case": "read-absent-gap"
+    },
+    {
+      "id": "print-explicit-absent",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Person",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "id",
+                "type": "i64",
+                "absent": "required",
+                "canonical": true
+              },
+              {
+                "name": "note",
+                "type": "string?",
+                "absent": "none",
+                "canonical": true
+              },
+              {
+                "name": "city",
+                "type": "string?",
+                "absent": "none",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Person",
+            "fields": {
+              "id": {
+                "kind": "int",
+                "type": "i64",
+                "value": "2"
+              },
+              "note": {
+                "kind": "none"
+              },
+              "city": {
+                "kind": "none"
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Person = Record { id: i64, note: string? = None, city: string? = None }\n\nexample.Person << (id=2)\n",
+      "read_case": "read-explicit-absent"
+    },
+    {
+      "id": "print-boolean",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Value",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "value",
+                "type": "boolean",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Value",
+            "fields": {
+              "value": {
+                "kind": "boolean",
+                "value": true
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Value = Record { value: boolean }\n\nexample.Value << (value=true)\n",
+      "read_case": "read-boolean"
+    },
+    {
+      "id": "print-i8-min",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Value",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "value",
+                "type": "i8",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Value",
+            "fields": {
+              "value": {
+                "kind": "int",
+                "type": "i8",
+                "value": "-128"
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Value = Record { value: i8 }\n\nexample.Value << (value=-128)\n",
+      "read_case": "read-i8-min"
+    },
+    {
+      "id": "print-u16-max",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Value",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "value",
+                "type": "u16",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Value",
+            "fields": {
+              "value": {
+                "kind": "int",
+                "type": "u16",
+                "value": "65535"
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Value = Record { value: u16 }\n\nexample.Value << (value=65535)\n",
+      "read_case": "read-u16-max"
+    },
+    {
+      "id": "print-exact-large-integer",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Value",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "value",
+                "type": "u64",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Value",
+            "fields": {
+              "value": {
+                "kind": "int",
+                "type": "u64",
+                "value": "18446744073709551615"
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Value = Record { value: u64 }\n\nexample.Value << (value=18446744073709551615)\n",
+      "read_case": "read-exact-large-integer"
+    },
+    {
+      "id": "print-positive-zero",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Value",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "value",
+                "type": "fp64",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Value",
+            "fields": {
+              "value": {
+                "kind": "float",
+                "width": 64,
+                "bits": "0000000000000000"
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Value = Record { value: fp64 }\n\nexample.Value << (value=0.0)\n",
+      "read_case": "read-positive-zero"
+    },
+    {
+      "id": "print-negative-zero",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Value",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "value",
+                "type": "fp64",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Value",
+            "fields": {
+              "value": {
+                "kind": "float",
+                "width": 64,
+                "bits": "8000000000000000"
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Value = Record { value: fp64 }\n\nexample.Value << (value=-0.0)\n",
+      "read_case": "read-negative-zero"
+    },
+    {
+      "id": "print-float32",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Value",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "value",
+                "type": "fp32",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Value",
+            "fields": {
+              "value": {
+                "kind": "float",
+                "width": 32,
+                "bits": "3fc00000"
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Value = Record { value: fp32 }\n\nexample.Value << (value=1.5)\n",
+      "read_case": "read-float32"
+    },
+    {
+      "id": "print-infinity",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Value",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "value",
+                "type": "fp64",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Value",
+            "fields": {
+              "value": {
+                "kind": "float",
+                "width": 64,
+                "bits": "7ff0000000000000"
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Value = Record { value: fp64 }\n\nexample.Value << (value=inf)\n",
+      "read_case": "read-infinity"
+    },
+    {
+      "id": "print-negative-infinity",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Value",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "value",
+                "type": "fp64",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Value",
+            "fields": {
+              "value": {
+                "kind": "float",
+                "width": 64,
+                "bits": "fff0000000000000"
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Value = Record { value: fp64 }\n\nexample.Value << (value=-inf)\n",
+      "read_case": "read-negative-infinity"
+    },
+    {
+      "id": "print-nan",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Value",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "value",
+                "type": "fp64",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Value",
+            "fields": {
+              "value": {
+                "kind": "float",
+                "width": 64,
+                "bits": "7ff8000000000000"
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Value = Record { value: fp64 }\n\nexample.Value << (value=nan)\n",
+      "read_case": "read-nan"
+    },
+    {
+      "id": "print-decimal",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Value",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "value",
+                "type": "decimal<10, 2>",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Value",
+            "fields": {
+              "value": {
+                "kind": "decimal",
+                "precision": 10,
+                "scale": 2,
+                "coefficient": "1990"
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Value = Record { value: decimal<10, 2> }\n\nexample.Value << (value=19.90d)\n",
+      "read_case": "read-decimal"
+    },
+    {
+      "id": "print-unicode-preserved",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Value",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "value",
+                "type": "string",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Value",
+            "fields": {
+              "value": {
+                "kind": "string",
+                "value": "é"
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Value = Record { value: string }\n\nexample.Value << (value=\"é\")\n",
+      "read_case": "read-unicode-preserved"
+    },
+    {
+      "id": "print-string-escapes",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Value",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "value",
+                "type": "string",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Value",
+            "fields": {
+              "value": {
+                "kind": "string",
+                "value": "a\n\t\r\"\\\u0001‮"
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Value = Record { value: string }\n\nexample.Value << (value=\"a\\n\\t\\r\\\"\\\\\\u{1}\\u{202e}\")\n",
+      "read_case": "read-string-escapes"
+    },
+    {
+      "id": "print-binary",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Value",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "value",
+                "type": "binary",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Value",
+            "fields": {
+              "value": {
+                "kind": "binary",
+                "hex": "4100ff"
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Value = Record { value: binary }\n\nexample.Value << (value=b\"A\\x00\\xff\")\n",
+      "read_case": "read-binary"
+    },
+    {
+      "id": "print-secret-string",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Value",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "value",
+                "type": "secret_string",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Value",
+            "fields": {
+              "value": {
+                "kind": "withheld",
+                "type": "secret_string"
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Value = Record { value: secret_string }\n\nexample.Value << (value=<secret>)\n",
+      "read_case": "read-secret-string"
+    },
+    {
+      "id": "print-secret-bytes",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Value",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "value",
+                "type": "secret_bytes",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Value",
+            "fields": {
+              "value": {
+                "kind": "withheld",
+                "type": "secret_bytes"
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Value = Record { value: secret_bytes }\n\nexample.Value << (value=<secret>)\n",
+      "read_case": "read-secret-bytes"
+    },
+    {
+      "id": "print-required-optional-absence",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Value",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "value",
+                "type": "string?",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Value",
+            "fields": {
+              "value": {
+                "kind": "none"
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Value = Record { value: string? }\n\nexample.Value << (value=None)\n",
+      "read_case": "read-required-optional-absence"
+    },
+    {
+      "id": "print-nested-absence",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Value",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "value",
+                "type": "option<string?>",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Value",
+            "fields": {
+              "value": {
+                "kind": "some",
+                "value": {
+                  "kind": "none"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Value = Record { value: option<string?> }\n\nexample.Value << (value=Some(None))\n",
+      "read_case": "read-nested-absence"
+    },
+    {
+      "id": "print-list-optionals",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Value",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "value",
+                "type": "list<i64?>",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Value",
+            "fields": {
+              "value": {
+                "kind": "list",
+                "items": [
+                  {
+                    "kind": "some",
+                    "value": {
+                      "kind": "int",
+                      "type": "i64",
+                      "value": "1"
+                    }
+                  },
+                  {
+                    "kind": "none"
+                  },
+                  {
+                    "kind": "some",
+                    "value": {
+                      "kind": "int",
+                      "type": "i64",
+                      "value": "3"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Value = Record { value: list<i64?> }\n\nexample.Value << (value=[1, None, 3])\n",
+      "read_case": "read-list-optionals"
+    },
+    {
+      "id": "print-union-integer",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Value",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "value",
+                "type": "i64 | string",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Value",
+            "fields": {
+              "value": {
+                "kind": "union",
+                "member": "i64",
+                "value": {
+                  "kind": "int",
+                  "type": "i64",
+                  "value": "3"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Value = Record { value: i64 | string }\n\nexample.Value << (value=i64 << 3)\n",
+      "read_case": "read-union-integer"
+    },
+    {
+      "id": "print-union-string",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Value",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "value",
+                "type": "i64 | string",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Value",
+            "fields": {
+              "value": {
+                "kind": "union",
+                "member": "string",
+                "value": {
+                  "kind": "string",
+                  "value": "3"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Value = Record { value: i64 | string }\n\nexample.Value << (value=string << \"3\")\n",
+      "read_case": "read-union-string"
+    },
+    {
+      "id": "print-map-order",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Value",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "value",
+                "type": "map<string, i64>",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Value",
+            "fields": {
+              "value": {
+                "kind": "map",
+                "entries": [
+                  [
+                    {
+                      "kind": "string",
+                      "value": "a"
+                    },
+                    {
+                      "kind": "int",
+                      "type": "i64",
+                      "value": "1"
+                    }
+                  ],
+                  [
+                    {
+                      "kind": "string",
+                      "value": "b"
+                    },
+                    {
+                      "kind": "int",
+                      "type": "i64",
+                      "value": "2"
+                    }
+                  ]
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Value = Record { value: map<string, i64> }\n\nexample.Value << (value={\"a\": 1, \"b\": 2})\n",
+      "read_case": "read-map-order"
+    },
+    {
+      "id": "print-set-order",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Value",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "value",
+                "type": "set<i64>",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Value",
+            "fields": {
+              "value": {
+                "kind": "set",
+                "items": [
+                  {
+                    "kind": "int",
+                    "type": "i64",
+                    "value": "1"
+                  },
+                  {
+                    "kind": "int",
+                    "type": "i64",
+                    "value": "2"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Value = Record { value: set<i64> }\n\nexample.Value << (value={1, 2})\n",
+      "read_case": "read-set-order"
+    },
+    {
+      "id": "print-enum-payload",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.State",
+            "kind": "Enum",
+            "variants": [
+              {
+                "name": "Pending",
+                "fields": []
+              },
+              {
+                "name": "Sent",
+                "fields": [
+                  {
+                    "name": "code",
+                    "type": "i64",
+                    "absent": "required",
+                    "canonical": true
+                  },
+                  {
+                    "name": "note",
+                    "type": "string?",
+                    "absent": "none",
+                    "canonical": true
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "path": "example.Value",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "value",
+                "type": "example.State",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Value",
+            "fields": {
+              "value": {
+                "kind": "enum",
+                "type": "example.State",
+                "variant": "Sent",
+                "fields": {
+                  "code": {
+                    "kind": "int",
+                    "type": "i64",
+                    "value": "7"
+                  },
+                  "note": {
+                    "kind": "none"
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.State = Enum { Pending, Sent(code: i64, note: string? = None) }\n\nexample.Value = Record { value: example.State }\n\nexample.Value << (value=Sent(code=7))\n",
+      "read_case": "read-enum-payload"
+    },
+    {
+      "id": "print-enum-empty",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.State",
+            "kind": "Enum",
+            "variants": [
+              {
+                "name": "Pending",
+                "fields": []
+              },
+              {
+                "name": "Sent",
+                "fields": [
+                  {
+                    "name": "code",
+                    "type": "i64",
+                    "absent": "required",
+                    "canonical": true
+                  },
+                  {
+                    "name": "note",
+                    "type": "string?",
+                    "absent": "none",
+                    "canonical": true
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "path": "example.Value",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "value",
+                "type": "example.State",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Value",
+            "fields": {
+              "value": {
+                "kind": "enum",
+                "type": "example.State",
+                "variant": "Pending",
+                "fields": {}
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.State = Enum { Pending, Sent(code: i64, note: string? = None) }\n\nexample.Value = Record { value: example.State }\n\nexample.Value << (value=Pending)\n",
+      "read_case": "read-enum-empty"
+    },
+    {
+      "id": "print-nested-row-group",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Line",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "sku",
+                "type": "string",
+                "absent": "required",
+                "canonical": true
+              },
+              {
+                "name": "quantity",
+                "type": "i64",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          },
+          {
+            "path": "example.Order",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "id",
+                "type": "i64",
+                "absent": "required",
+                "canonical": true
+              },
+              {
+                "name": "lines",
+                "type": "list<example.Line>",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Order",
+            "fields": {
+              "id": {
+                "kind": "int",
+                "type": "i64",
+                "value": "7"
+              },
+              "lines": {
+                "kind": "list",
+                "items": [
+                  {
+                    "kind": "record",
+                    "type": "example.Line",
+                    "fields": {
+                      "sku": {
+                        "kind": "string",
+                        "value": "A"
+                      },
+                      "quantity": {
+                        "kind": "int",
+                        "type": "i64",
+                        "value": "2"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "record",
+                    "type": "example.Line",
+                    "fields": {
+                      "sku": {
+                        "kind": "string",
+                        "value": "B"
+                      },
+                      "quantity": {
+                        "kind": "int",
+                        "type": "i64",
+                        "value": "1"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Line = Record { sku: string, quantity: i64 }\n\nexample.Order = Record { id: i64, lines: list<example.Line> }\n\nexample.Order << (\n    id=7,\n    lines=[\n        (\"A\", 2),\n        (\"B\", 1),\n    ],\n)\n",
+      "read_case": "read-nested-row-group"
+    },
+    {
+      "id": "print-single-nested-record",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Line",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "sku",
+                "type": "string",
+                "absent": "required",
+                "canonical": true
+              },
+              {
+                "name": "quantity",
+                "type": "i64",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          },
+          {
+            "path": "example.Order",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "id",
+                "type": "i64",
+                "absent": "required",
+                "canonical": true
+              },
+              {
+                "name": "lines",
+                "type": "list<example.Line>",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Order",
+            "fields": {
+              "id": {
+                "kind": "int",
+                "type": "i64",
+                "value": "7"
+              },
+              "lines": {
+                "kind": "list",
+                "items": [
+                  {
+                    "kind": "record",
+                    "type": "example.Line",
+                    "fields": {
+                      "sku": {
+                        "kind": "string",
+                        "value": "A"
+                      },
+                      "quantity": {
+                        "kind": "int",
+                        "type": "i64",
+                        "value": "2"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Line = Record { sku: string, quantity: i64 }\n\nexample.Order = Record { id: i64, lines: list<example.Line> }\n\nexample.Order << (id=7, lines=[(sku=\"A\", quantity=2)])\n",
+      "read_case": "read-single-nested-record"
+    },
+    {
+      "id": "print-mixed-union-list",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.File",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "name",
+                "type": "string",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          },
+          {
+            "path": "example.Folder",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "name",
+                "type": "string",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          },
+          {
+            "path": "example.Tree",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "entries",
+                "type": "list<example.File | example.Folder>",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Tree",
+            "fields": {
+              "entries": {
+                "kind": "list",
+                "items": [
+                  {
+                    "kind": "union",
+                    "member": "example.File",
+                    "value": {
+                      "kind": "record",
+                      "type": "example.File",
+                      "fields": {
+                        "name": {
+                          "kind": "string",
+                          "value": "a"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "kind": "union",
+                    "member": "example.Folder",
+                    "value": {
+                      "kind": "record",
+                      "type": "example.Folder",
+                      "fields": {
+                        "name": {
+                          "kind": "string",
+                          "value": "b"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.File = Record { name: string }\n\nexample.Folder = Record { name: string }\n\nexample.Tree = Record { entries: list<example.File | example.Folder> }\n\nexample.Tree << (\n    entries=[\n        File << (name=\"a\"),\n        Folder << (name=\"b\"),\n    ],\n)\n",
+      "read_case": "read-mixed-union-list"
+    },
+    {
+      "id": "print-description-order",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Z",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "z",
+                "type": "i64",
+                "absent": "required",
+                "canonical": true
+              },
+              {
+                "name": "a",
+                "type": "i64",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Z",
+            "fields": {
+              "z": {
+                "kind": "int",
+                "type": "i64",
+                "value": "1"
+              },
+              "a": {
+                "kind": "int",
+                "type": "i64",
+                "value": "2"
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Z = Record { z: i64, a: i64 }\n\nexample.Z << (z=1, a=2)\n",
+      "read_case": "read-description-order"
+    },
+    {
+      "id": "print-canonical-metadata",
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Event",
+            "kind": "Record",
+            "fields": [
+              {
+                "name": "id",
+                "type": "i64",
+                "absent": "required",
+                "canonical": true
+              },
+              {
+                "name": "seen",
+                "type": "string",
+                "absent": "required",
+                "canonical": false
+              },
+              {
+                "name": "note",
+                "type": "string?",
+                "absent": "none",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": [
+          {
+            "kind": "record",
+            "type": "example.Event",
+            "fields": {
+              "id": {
+                "kind": "int",
+                "type": "i64",
+                "value": "1"
+              },
+              "seen": {
+                "kind": "string",
+                "value": "now"
+              },
+              "note": {
+                "kind": "none"
+              }
+            }
+          }
+        ]
+      },
+      "expected": "example.Event = Record { id: i64, seen [canonical = false]: string, note: string? = None }\n\nexample.Event << (id=1, seen=\"now\")\n",
+      "read_case": "read-canonical-metadata"
+    }
+  ]
+}
