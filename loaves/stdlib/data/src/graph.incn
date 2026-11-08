@@ -341,6 +341,10 @@ pub model Dag[T]:
         """Remove the directed edge `from_ -> to`."""
         return self.graph.remove_edge(from_, to)
 
+    pub def contains_edge(self, from_: NodeId, to: NodeId) -> bool:
+        """Return whether the directed edge `from_ -> to` exists."""
+        return self.graph.contains_edge(from_, to)
+
     pub def successors(self, node: NodeId) -> Result[list[NodeId], GraphError]:
         """Return outgoing neighbors for `node`."""
         return self.graph.successors(node)

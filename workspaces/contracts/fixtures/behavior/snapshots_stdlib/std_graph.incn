@@ -6,6 +6,7 @@
 #   roots 1 sinks 1
 #   removed successors 0
 #   dag order 2
+#   dag contains true false
 #   dag cycle refused
 #   multi edges 2
 
@@ -35,6 +36,7 @@ def exercise_graphs() -> None:
     leaf: NodeId = dag.add_node("leaf")
     dag_edge: Result[None, GraphError] = dag.add_edge(root, leaf)
     println(f"dag order {len(dag.topological_order())}")
+    println(f"dag contains {dag.contains_edge(root, leaf)} {dag.contains_edge(leaf, root)}")
     match dag.add_edge(leaf, root):
         Ok(_) => println("dag cycle accepted")
         Err(_) => println("dag cycle refused")
