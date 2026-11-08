@@ -12,6 +12,7 @@ from release_support import (
     release_receipt,
     require_candidate_census,
     same_bytes,
+    verification_program,
 )
 
 const SHA: str = "0123456789abcdef0123456789abcdef01234567"
@@ -129,6 +130,30 @@ def test_byte_comparison_reads_complete_content() -> Result[None, str]:
     assert same_bytes(left, right)?
     right.write_bytes(b"alpHa").map_err((error) => error.message())?
     assert not same_bytes(left, right)?
+    return Ok(None)
+
+
+def test_installed_verification_uses_only_the_clean_checkout() -> Result[None, str]:
+    """An ignored launching-checkout fixture cannot enter verification through the selected program source."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    launching = temporary.path().joinpath("launching")
+    verification = temporary.path().joinpath("verification-source")
+    for source in [launching, verification]:
+        source.joinpath("scripts").mkdir(true, true).map_err((error) => error.message())?
+        source
+            .joinpath("scripts/verify_installation.incn")
+            .write_text("# verifier\n", "utf-8", "strict", None)
+            .map_err((error) => error.message())?
+        source.joinpath("workspaces/contracts/fixtures").mkdir(true, true).map_err((error) => error.message())?
+    ignored = launching.joinpath("workspaces/contracts/fixtures/project/example/target/ignored")
+    ignored.parent().mkdir(true, true).map_err((error) => error.message())?
+    ignored.write_text("stale\n", "utf-8", "strict", None).map_err((error) => error.message())?
+
+    program = verification_program(verification)?
+    selected_source = program.parent().parent()
+    assert program.0 == verification.joinpath("scripts/verify_installation.incn").0
+    assert ignored.is_file()
+    assert not selected_source.joinpath("workspaces/contracts/fixtures/project/example/target/ignored").exists()
     return Ok(None)
 
 
