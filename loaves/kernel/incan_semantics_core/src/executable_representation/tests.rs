@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::{
     CoverageReason, DeclarationCoverage, EXECUTABLE_REPRESENTATION_VERSION, ExecutableDeclaration,
     ExecutableRepresentationError, MAX_SURFACE_INDEX_BYTES, OLDEST_SUPPORTED_VERSION, SurfaceIndex, SurfaceReader,
-    build_surface, decode_module, publication, require_supported_version,
+    build_surface, decode_module, encode_module, publication, require_supported_version,
 };
 use crate::body_ir::{
     ArgumentBinding, Block, Body, BodyIrModule, CallableParam, CallableParamDefault, CallableTarget, Callee,
@@ -164,4 +164,49 @@ fn generic_holder_declaration(
         type_parameters: vec!["T".into()],
         type_parameter_count: 1,
     }
+}
+
+/// Current Body IR retains record metadata byte for byte and validates its identity from the earliest name.
+#[test]
+fn field_record_metadata_round_trips_and_is_revalidated() -> Result<(), Box<dyn std::error::Error>> {
+    let mut owner = identity("Holder", 2);
+    owner.origin = SymbolOrigin::Module(vec!["lib".into()]);
+    owner.kind = SemanticSourceTargetKind::Model;
+    owner.declaration_span = HirSourceSpan::new(200, 499);
+    let mut field = identity("value", 3);
+    field.origin = SymbolOrigin::Module(vec!["lib".into()]);
+    field.kind = SemanticSourceTargetKind::Field;
+    field.namespace = SymbolNamespace::Member;
+    let mut declaration = generic_holder_declaration(owner, field);
+    declaration.reflection_fields = Some(vec![0]);
+    declaration.reflection_metadata = Some(vec![crate::body_ir::FieldMetadata {
+        name: "value".into(),
+        record_identity: crate::record_identity::record_member_identity("old_value").to_vec(),
+        record_canonical: false,
+        renamed_from: vec!["old_value".into()],
+        alias: Some("wireValue".into()),
+        description: Some("Retained value".into()),
+        type_name: "T".into(),
+        has_default: false,
+    }]);
+    let mut module = module(Vec::new());
+    module.nominal_declarations.push(declaration.clone());
+    assert!(module.is_well_formed_nominal_declaration(&declaration));
+    let decoded = decode_module(&encode_module(&module)?)?;
+    assert_eq!(decoded, module);
+
+    let record = module
+        .nominal_declarations
+        .first_mut()
+        .and_then(|declaration| declaration.reflection_metadata.as_mut())
+        .and_then(|metadata| metadata.first_mut())
+        .ok_or("missing reflection record")?;
+    record.record_identity[0] ^= 255;
+    let invalid = module
+        .nominal_declarations
+        .first()
+        .cloned()
+        .ok_or("missing nominal declaration")?;
+    assert!(!module.is_well_formed_nominal_declaration(&invalid));
+    Ok(())
 }

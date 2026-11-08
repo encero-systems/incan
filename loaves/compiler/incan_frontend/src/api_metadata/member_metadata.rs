@@ -234,6 +234,9 @@ pub(super) fn field(field: &crate::library_exports::CheckedField) -> FieldExport
     FieldExport {
         name: field.name.clone(),
         canonical: canonical_identity_export(field.canonical.as_ref()),
+        record_identity: hex::encode(&field.record_identity),
+        record_canonical: field.record_canonical,
+        renamed_from: field.renamed_from.clone(),
         ty: type_ref_from_resolved(&field.ty),
         surface_type_name: field.surface_type_name.clone(),
         visibility: match field.visibility {

@@ -45,7 +45,7 @@ pub const STORE_RESERVED_FIELD_NAMES: &[&str] = &[
 
 /// Number of leading SHA-256 bytes in an RFC 165 field or enum-variant identity.
 ///
-/// Keep the width centralized: widening it is a format decision and every compiler consumer must move together.
+/// Keep the width centralized: changing it is a format decision and every compiler consumer must move together.
 pub const RECORD_MEMBER_IDENTITY_BYTES: usize = 6;
 
 /// Static method the compiler reads as a type's source-defined constructor hook.

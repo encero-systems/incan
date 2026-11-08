@@ -315,6 +315,9 @@ pub(super) fn retain_class_reflection(retained: &mut bir::NominalDeclaration, fa
             .filter(|field| field.visibility == ast::Visibility::Public)
             .map(|field| bir::FieldMetadata {
                 name: field.name.clone(),
+                record_identity: field.record_identity.clone(),
+                record_canonical: field.record_canonical,
+                renamed_from: field.renamed_from.clone(),
                 alias: field.alias.clone(),
                 description: field.description.clone(),
                 type_name: field.surface_type_name.clone().unwrap_or_else(|| field.ty.to_string()),
@@ -462,6 +465,9 @@ pub(super) fn collect_field_metadata(
             let ty = facts.declarations.model_field_types.get(&field.span)?;
             Some(bir::FieldMetadata {
                 name: field.node.name.clone(),
+                record_identity: crate::symbols::field_record_identity(&field.node),
+                record_canonical: crate::symbols::field_record_canonical(&field.node),
+                renamed_from: crate::symbols::field_renamed_from(&field.node),
                 alias: field.node.metadata.alias.clone(),
                 description: field.node.metadata.description.clone(),
                 type_name: crate::symbols::field_surface_type_name(&field.node.ty.node, ty),

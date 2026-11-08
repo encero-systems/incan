@@ -246,6 +246,12 @@ pub struct CheckedTypeBound {
 pub struct CheckedField {
     pub name: String,
     pub canonical: Option<CanonicalSymbolId>,
+    /// Compiler-derived stored-record identity from the field's earliest declared name.
+    pub record_identity: Vec<u8>,
+    /// Whether this field participates in the canonical stored hash.
+    pub record_canonical: bool,
+    /// Earlier declared names in chronological order, earliest first.
+    pub renamed_from: Vec<String>,
     pub ty: ResolvedType,
     /// Source-level Incan type spelling retained for reflection across compiled-library boundaries.
     pub surface_type_name: Option<String>,

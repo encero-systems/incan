@@ -56,6 +56,9 @@ pub(super) fn map_fields(
             entries.push(CheckedField {
                 name: name.clone(),
                 canonical: info.identity.clone(),
+                record_identity: info.record_identity.clone(),
+                record_canonical: info.record_canonical,
+                renamed_from: info.renamed_from.clone(),
                 ty: map_type(name, info)?,
                 surface_type_name: info.surface_type_name.clone(),
                 visibility: info.visibility,
@@ -78,6 +81,9 @@ pub(super) fn map_fields(
                 Some(CheckedField {
                     name: name.clone(),
                     canonical: info.identity.clone(),
+                    record_identity: info.record_identity.clone(),
+                    record_canonical: info.record_canonical,
+                    renamed_from: info.renamed_from.clone(),
                     ty: map_type(name, info)?,
                     surface_type_name: info.surface_type_name.clone(),
                     visibility: info.visibility,

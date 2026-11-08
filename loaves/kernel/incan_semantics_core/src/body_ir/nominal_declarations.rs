@@ -86,6 +86,12 @@ pub struct TraitFieldImplementation {
 pub struct FieldMetadata {
     /// Canonical written field name.
     pub name: String,
+    /// Compiler-derived stored-record identity from the field's earliest declared name.
+    pub record_identity: Vec<u8>,
+    /// Whether this field participates in the canonical stored hash.
+    pub record_canonical: bool,
+    /// Earlier declared names in chronological order, earliest first.
+    pub renamed_from: Vec<String>,
     /// Explicit field alias, including an explicitly empty string.
     pub alias: Option<String>,
     /// Explicit source description, absent when none is declared.

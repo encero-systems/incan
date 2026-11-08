@@ -232,6 +232,12 @@ pub struct VariantInfo {
 pub struct FieldInfo {
     /// Canonical identity of the source field declaration, when declaration provenance is available.
     pub identity: Option<CanonicalSymbolId>,
+    /// Compiler-derived stored-record identity from the field's earliest declared name.
+    pub record_identity: Vec<u8>,
+    /// Whether this field participates in the canonical stored hash.
+    pub record_canonical: bool,
+    /// Earlier declared names in chronological order, earliest first.
+    pub renamed_from: Vec<String>,
     pub ty: ResolvedType,
     /// Canonical Incan source spelling retained for reflection and documentation.
     ///
@@ -245,6 +251,31 @@ pub struct FieldInfo {
     pub has_default: bool,
     pub alias: Option<String>,
     pub description: Option<String>,
+}
+
+/// Derive the stored-record identity from a field's earliest declared name.
+pub fn field_record_identity(field: &crate::ast::FieldDecl) -> Vec<u8> {
+    let earliest_name = field
+        .metadata
+        .renamed_from
+        .first()
+        .map_or(field.name.as_str(), |earlier| earlier.node.as_str());
+    incan_semantics_core::record_identity::record_member_identity(earliest_name).to_vec()
+}
+
+/// Return whether a field participates in the canonical stored hash, defaulting an absent key to true.
+pub fn field_record_canonical(field: &crate::ast::FieldDecl) -> bool {
+    field.metadata.canonical.as_ref().is_none_or(|canonical| canonical.node)
+}
+
+/// Copy a field's earlier names into checked metadata without retaining parser spans.
+pub fn field_renamed_from(field: &crate::ast::FieldDecl) -> Vec<String> {
+    field
+        .metadata
+        .renamed_from
+        .iter()
+        .map(|earlier| earlier.node.clone())
+        .collect()
 }
 
 /// Whether the unmarked members of a type, its fields and methods alike, are private to it (#884, #2570).
