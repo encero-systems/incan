@@ -61,6 +61,12 @@
       "operation": "type_selector",
       "cases": 8,
       "sha256": "e834b74e2569a5a1a068ff59b42e9e662456a8d82bfba40a0361c9b67c631348"
+    },
+    {
+      "path": "binary-columns.json",
+      "operation": "column_codec",
+      "cases": 107,
+      "sha256": "d0fc88a923c0123291293c2fe7144b1e574d72dc555fb35e5115e553452cdf06"
     }
   ],
   "pending": [
