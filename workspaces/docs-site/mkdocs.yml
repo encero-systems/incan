@@ -375,6 +375,7 @@ nav:
           - "DD-0012: Incremental compilation over a semantic store": design_records/0012_incremental_compilation_over_a_semantic_store.md
           - "DD-0013: The Incan build engine": design_records/0013_the_incan_build_engine.md
           - "DD-0014: Resolved project lock": design_records/0014_resolved_project_lock.md
+          - "DD-0016: Signed toolchain releases": design_records/0016_signed_toolchain_releases.md
       - Whitepapers:
           - Overview: whitepapers/index.md
           - Incan ecosystem north star: whitepapers/incan_ecosystem_north_star.md
