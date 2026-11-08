@@ -34,6 +34,7 @@ from release_support import (
     require_candidate_census,
     release_receipt,
     run_step,
+    verification_program,
     write_json,
 )
 from relink_driver import Relink, absolute_manifest, run as relink
@@ -438,7 +439,7 @@ def installed_verification(run: ReleaseRun, candidate: Candidate) -> Result[Path
             home.joinpath("bin/incan").0,
             [
                 "run",
-                run.root.joinpath("scripts/verify_installation.incn").0,
+                verification_program(verification)?.0,
                 "--",
                 run.paths.output.joinpath("ci").0,
                 "--jobs",

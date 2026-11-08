@@ -253,6 +253,14 @@ pub def same_bytes(left: Path, right: Path) -> Result[bool, str]:
     return Ok(digest(left)? == digest(right)?)
 
 
+pub def verification_program(source: Path) -> Result[Path, str]:
+    """Select the installed verifier from the detached verification source so its binary resolves that checkout."""
+    program = source.joinpath("scripts/verify_installation.incn")
+    if not program.is_file():
+        return Err(f"verification source has no installed verifier: {program.0}")
+    return Ok(program)
+
+
 pub def log_tail(path: Path, limit: int = 30) -> str:
     """Return the final lines of one UTF-8 phase log, or a diagnostic when the log cannot be read."""
     match path.read_text("utf-8", "replace"):
