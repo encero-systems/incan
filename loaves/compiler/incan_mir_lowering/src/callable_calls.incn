@@ -30,7 +30,7 @@ from rust::incan_semantics_core::body_ir import (
 )
 from classes import function_name, static_type_arguments
 from string_conversion import string_conversion_callee
-from traits import close_trait_dispatch_arguments, validate_static_receiver
+from traits import close_trait_dispatch_arguments, static_receiver_target, validate_static_receiver
 from derived_defaults import is_derived_default, lower_derived_default
 from reflection import lower_static_field_metadata
 from model_values import is_json_deserialize_method, lower_model_from_json
@@ -143,25 +143,32 @@ pub def lower_named_target(
     match value_enum_from_value_owner(module, target)?:
         Some(owner) => return lower_value_enum_from_value(builder, owner, arguments, destination, span)
         None => pass
-    match target.canonical:
+    selected = static_receiver_target(
+        builder.constructors,
+        module,
+        target,
+        builder.type_parameters,
+        builder.type_arguments,
+    )?
+    match selected.canonical:
         None => return Err("unsupported Body IR builtin or unproven NamedCallableTarget")
         Some(identity) =>
             match builder.program.body_indices.unique(identity):
-                None => return lower_loaf_call(module, builder, target, arguments, destination, span)
+                None => return lower_loaf_call(module, builder, selected, arguments, destination, span)
                 Some(index) =>
                     body = module.bodies[index]
                     if len(body.type_parameters) != 0:
-                        return lower_type_parameter_call(module, builder, target, body, arguments, destination, span)
-                    if len(target.type_args) != 0:
+                        return lower_type_parameter_call(module, builder, selected, body, arguments, destination, span)
+                    if len(selected.type_args) != 0:
                         return Err("unsupported Body IR type arguments on a function without type parameters")
                     _ = validate_static_receiver(
                         builder.constructors,
                         module,
-                        target,
+                        selected,
                         builder.type_parameters,
                         builder.type_arguments,
                     )?
-                    return lower_local_call(module, builder, target, body, arguments, destination, span)
+                    return lower_local_call(module, builder, selected, body, arguments, destination, span)
 
 
 def lower_type_parameter_call(
