@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use crate::dependency_report::RootOrigin;
 use incan_driver::body_ir::{load_loaf_modules, required_loaf_identities};
 use incan_driver::diagnostics::CliDiagnosticFailure;
-use incan_driver::loaf_publication::{PublicationFacts, publish_native_unions, write_loaf};
+use incan_driver::loaf_publication::{PublicationFacts, prepare_loaf_publication, publish_native_unions, write_loaf};
 use incan_driver::modules::{collect_library_modules_detailed_with_session, collect_modules_detailed_with_session};
 use incan_driver::session::{CompilationAnalysis, CompilationSession, RustFactsSetup};
 use incan_driver::unit::{UnitDescription, UnitKind};
@@ -380,6 +380,28 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
     // ---- Exact native dependencies, including checked Loaf implementation layouts ----
     let native_externs =
         crate::native_crates::link_externs(&plan, &dependencies.externs, &loaves, &reached_names(&program))?;
+    let library_facades = crate::library_exports::resolve_facades(&plan, program.manifest.as_ref())?;
+    let publication = if let Some(mut manifest) = program.manifest.take() {
+        publish_native_unions(&mut manifest, published_unions).map_err(|error| error.to_string())?;
+        let directory = output.parent().ok_or("library output has no directory")?.to_path_buf();
+        let closure = LoafNativeClosure {
+            externs: native_externs.clone(),
+            search: published_search,
+            macro_externs: macro_externs(&manifest, &dependencies.externs, &loaf_links),
+        };
+        let prepared = prepare_loaf_publication(
+            &directory,
+            manifest,
+            &program.modules[program.own..],
+            &closure,
+            &program.graph,
+        )
+        .map_err(|error| error.to_string())?;
+        Some((directory, prepared))
+    } else {
+        None
+    };
+    drop(program);
     crate::adapter::compile(
         plan,
         &arguments[1],
@@ -392,7 +414,7 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
         dependencies.shared_native.as_deref(),
         kind,
         overflow_checks,
-        program.manifest.as_ref(),
+        library_facades,
     )
     .map_err(|error| {
         if matches!(error, crate::adapter::DriverError::Plan(_)) {
@@ -405,22 +427,8 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
     }
 
     // ---- The Loaf beside a library unit's rlib (DD-0007) ----
-    if let Some(mut manifest) = program.manifest {
-        publish_native_unions(&mut manifest, published_unions).map_err(|error| error.to_string())?;
-        let directory = output.parent().ok_or("library output has no directory")?;
-        let closure = LoafNativeClosure {
-            externs: native_externs,
-            search: published_search,
-            macro_externs: macro_externs(&manifest, &dependencies.externs, &loaf_links),
-        };
-        write_loaf(
-            directory,
-            manifest,
-            &program.modules[program.own..],
-            &closure,
-            &program.graph,
-        )
-        .map_err(|error| error.to_string())?;
+    if let Some((directory, publication)) = publication {
+        publication.write(&directory).map_err(|error| error.to_string())?;
     }
     Ok(())
 }

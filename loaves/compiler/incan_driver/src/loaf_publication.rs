@@ -48,6 +48,37 @@ use incan_semantics_core::executable_representation::{
     EXECUTABLE_REPRESENTATION_VERSION, SurfaceReader, build_surface,
 };
 
+/// Encoded Loaf artifacts retained across native compilation without retaining checked modules or Body IR.
+///
+/// Writing remains a separate operation so a failed native compilation cannot publish a partial library. The
+/// manifest is written last, preserving its role as the completeness marker for the sibling artifact set.
+pub struct PreparedLoafPublication {
+    name: String,
+    surface: Vec<u8>,
+    graph: Vec<u8>,
+    rust_abi: Option<Vec<u8>>,
+    closure: Vec<u8>,
+    manifest: String,
+}
+
+impl PreparedLoafPublication {
+    /// Publish the prepared artifact set beside a successfully compiled rlib, with the manifest written last.
+    pub fn write(self, dir: &Path) -> CliResult<()> {
+        let write = |file: String, bytes: &[u8]| {
+            let path = dir.join(file);
+            fs::write(&path, bytes)
+                .map_err(|error| CliError::failure(format!("cannot write {}: {error}", path.display())))
+        };
+        write(format!("{}.incnbody", self.name), &self.surface)?;
+        write(format!("{}.incngraph", self.name), &self.graph)?;
+        if let Some(rust_abi) = self.rust_abi {
+            write(format!("{}.rustabi", self.name), &rust_abi)?;
+        }
+        write(format!("{}.native.json", self.name), &self.closure)?;
+        write(format!("{}.incnlib", self.name), self.manifest.as_bytes())
+    }
+}
+
 /// What a library unit's checking pass collects for its publication, one module at a time.
 pub struct PublicationFacts {
     /// The package identity every declaration of the unit carries.
@@ -298,18 +329,14 @@ fn retain_feature_requirements(manifest: &mut LibraryManifest, modules: &[Parsed
 /// graph from that same checking pass; `<name>.native.json`, the unit's native closure; an indexed `<name>.rustabi`
 /// when dependency-owned native facts are needed; and `<name>.incnlib` last,
 /// so its presence means the artifact set is complete.
-pub fn write_loaf(
+pub fn prepare_loaf_publication(
     dir: &Path,
     mut manifest: LibraryManifest,
     bodies: &[BodyIrModule],
     closure: &LoafNativeClosure,
     graph: &[u8],
-) -> CliResult<()> {
+) -> CliResult<PreparedLoafPublication> {
     let name = manifest.name.clone();
-    let write = |file: String, bytes: &[u8]| {
-        let path = dir.join(file);
-        fs::write(&path, bytes).map_err(|error| CliError::failure(format!("cannot write {}: {error}", path.display())))
-    };
 
     // ---- Executable representation ----
     // A Body IR gap refuses publication of that executable body. A compiled export can independently publish its
@@ -334,18 +361,33 @@ pub fn write_loaf(
         representation_version: EXECUTABLE_REPRESENTATION_VERSION,
         content_digest: hex::encode(Sha256::digest(&surface)),
     });
-    write(format!("{name}.incnbody"), &surface)?;
-    write(format!("{name}.incngraph"), graph)?;
-    write_rust_abi_cache(dir, &mut manifest)?;
+    let rust_abi = prepare_rust_abi_cache(&mut manifest)?;
 
     // ---- Native closure and manifest ----
     let closure = serde_json::to_vec_pretty(&sibling_relative_closure(dir, closure))
         .map_err(|error| CliError::failure(format!("cannot encode the native closure of {name}: {error}")))?;
-    write(format!("{name}.native.json"), &closure)?;
     let manifest = manifest
         .to_json_string()
         .map_err(|error| CliError::failure(format!("invalid library manifest for {name}: {error}")))?;
-    write(format!("{name}.incnlib"), manifest.as_bytes())
+    Ok(PreparedLoafPublication {
+        name,
+        surface,
+        graph: graph.to_vec(),
+        rust_abi,
+        closure,
+        manifest,
+    })
+}
+
+/// Prepare and immediately write a Loaf publication for callers that do not cross native compilation.
+pub fn write_loaf(
+    dir: &Path,
+    manifest: LibraryManifest,
+    bodies: &[BodyIrModule],
+    closure: &LoafNativeClosure,
+    graph: &[u8],
+) -> CliResult<()> {
+    prepare_loaf_publication(dir, manifest, bodies, closure, graph)?.write(dir)
 }
 
 /// Publish sibling artifacts relative to their common artifact root so moving an otherwise identical build to a new
@@ -372,7 +414,7 @@ fn sibling_relative_closure(directory: &Path, closure: &LoafNativeClosure) -> Lo
 
 /// Keep explicit Rust reexports embedded for their source binding contract, and publish other checked native facts
 /// through the existing indexed ABI codec. The manifest digest authenticates the asset without eager item decoding.
-fn write_rust_abi_cache(dir: &Path, manifest: &mut LibraryManifest) -> CliResult<()> {
+fn prepare_rust_abi_cache(manifest: &mut LibraryManifest) -> CliResult<Option<Vec<u8>>> {
     let public = manifest
         .contract_metadata
         .identity_graph
@@ -383,24 +425,22 @@ fn write_rust_abi_cache(dir: &Path, manifest: &mut LibraryManifest) -> CliResult
         .map(|path| path[1..].join("::"))
         .collect::<BTreeSet<_>>();
     let Some(abi) = &mut manifest.rust_abi else {
-        return Ok(());
+        return Ok(None);
     };
     let (embedded, indexed): (Vec<_>, Vec<_>) = std::mem::take(&mut abi.items)
         .into_iter()
         .partition(|item| public.contains(&item.canonical_path));
     abi.items = embedded;
     if indexed.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
     let indexed = indexed
         .into_iter()
         .map(|item| (item.canonical_path.clone(), item))
         .collect::<BTreeMap<_, _>>();
     let bytes = incan_frontend::rust_abi_cache::encode_rust_abi_cache(&indexed).map_err(CliError::failure)?;
-    let path = dir.join(format!("{}.rustabi", manifest.name));
-    fs::write(&path, &bytes).map_err(|error| CliError::failure(format!("cannot write {}: {error}", path.display())))?;
     abi.cache_digest = Some(format!("sha256:{:x}", Sha256::digest(&bytes)));
-    Ok(())
+    Ok(Some(bytes))
 }
 
 /// Record the lowering's actual native union definitions in the manifest that authenticates their rlib. The semantic
