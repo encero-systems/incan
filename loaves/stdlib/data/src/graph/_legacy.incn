@@ -1,7 +1,14 @@
-"""RFC 047 graph containers backed by RFC 166's indexed memory store."""
+"""Value-owned graph containers backed by RFC 166's indexed memory store."""
 
-from crate.graph._ids import EdgeId, GraphError, NodeId, contains_node_id, duplicate_edge, unknown_node
-from crate.graph._store import _GraphStore
+from crate.graph._ids import (
+    EdgeId,
+    GraphError,
+    NodeId,
+    contains_node_id,
+    duplicate_edge,
+    unknown_node,
+)
+from crate.graph._read import _GraphStore
 
 
 pub model DiGraph[T]:
