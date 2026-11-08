@@ -39,7 +39,7 @@ pub def test_help_uses_each_commands_synopsis_and_respects_operands() -> Result[
     assert_help(
         "incan",
         [
-            ("run", "incan run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"),
+            ("run", "incan run [--direct] PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"),
             ("check", "incan check PATH [--format text|json] [UNIT OPTIONS]"),
             ("explain", "incan explain CODE"),
             ("test", "incan test PATH [UNIT OPTIONS]"),
@@ -79,6 +79,16 @@ pub def test_help_uses_each_commands_synopsis_and_respects_operands() -> Result[
     assert command_help("incan", "nonexistent", ["--help"]) == None
     assert command_help("oven", "owner", ["nonexistent", "--help"]) == None
     assert command_help("oven", "bakery", ["status", "--format", "--help"]) == None
+    incan_run = command_help("incan", "run", ["--help"])
+    oven_run = command_help("oven", "run", ["--help"])
+    match incan_run:
+        None => fail("incan run help is missing")
+        Some(text) =>
+            assert "--direct" in text
+    match oven_run:
+        None => fail("oven run help is missing")
+        Some(text) =>
+            assert "--direct" not in text
     selected = mcp_options([".", "--profile", "release"])?
     assert selected.path.0 == "." and selected.profile == "release"
     assert mcp_options(["."]).map((selected) => selected.profile) == Ok("debug")

@@ -60,6 +60,7 @@ pub model Options:
     pub feature_options: bool = false
     pub engine_report: bool = false
     pub locked: bool = false
+    pub direct: bool = false
     # One CLI preparation owns its source readings, including its provider callbacks.
     pub manifests: ManifestReader = ManifestReader()
 
@@ -128,6 +129,14 @@ def dispatch(command: str, rest: list[str]) -> None:
     if command == "lock":
         lock(rest)
         return
+    if command == "run":
+        own, _passed = program_arguments(rest)
+        match parse_options(own):
+            Ok(options) =>
+                if options.direct:
+                    run(rest)
+                    return
+            Err(_) => pass
     match select_engine(get_or("INCAN_ENGINE", "legacy")):
         Err(reason) => fail(f"{invoked()} {command}: engine refusal {refusal_code(reason.kind)}: {reason.detail}", 2)
         Ok(Engine.Records) =>
@@ -275,6 +284,8 @@ def parse_options(arguments: list[str]) -> Result[Options, str]:
             options.engine_report = true
         elif argument == "--locked":
             options.locked = true
+        elif argument == "--direct":
+            options.direct = true
         elif argument == "--no-default-features":
             options.feature_options = true
             options.request.default_features = false
@@ -374,7 +385,9 @@ def program_arguments(arguments: list[str]) -> tuple[list[str], list[str]]:
 
 
 def prepared_lock(command: str, options: Options) -> None:
-    """Reconcile a mutating project command's root lock before resident or in-process preparation begins."""
+    """Reconcile a project command's root lock; explicit direct source execution has no project lock to prepare."""
+    if options.direct:
+        return
     match ensure_project_lock(
         Path(options.path),
         options.profile,
@@ -389,26 +402,35 @@ def prepared_lock(command: str, options: Options) -> None:
 
 def ran(options: Options, passed: list[str]) -> Result[i32, str]:
     """
-    Make the unit's executable, through its owner or in this process, and become it; a refused compile is the run's
-    result.
+    Make the unit's executable, through its owner or in this process, and become it; direct source execution always
+    stays in process and a refused compile is the run's result.
 
-    1. The project's owner makes the executable when it serves the unit.
+    1. The project's owner makes the executable when it serves a project unit.
     2. Otherwise describe the unit, compile it here and keep the stored executable while its inputs are unchanged.
     3. Become the program.
     """
     # 1. When the project's owner serves the unit, it made the executable, and a refused compile is the run's result.
-    requesting = begin_work()
-    owned = via_owner("run", options, Path(options.path))
-    record_work(Operation.LegacyRequest, options.path, requesting)
-    match owned:
-        Some(reply) =>
-            if reply.exit != 0:
-                return Ok(status_code(reply.exit))
-            return run_program(Path(reply.binary), passed, options.argv0)
-        None => pass
+    if not options.direct:
+        requesting = begin_work()
+        owned = via_owner("run", options, Path(options.path))
+        record_work(Operation.LegacyRequest, options.path, requesting)
+        match owned:
+            Some(reply) =>
+                if reply.exit != 0:
+                    return Ok(status_code(reply.exit))
+                return run_program(Path(reply.binary), passed, options.argv0)
+            None => pass
     # 2. Otherwise this process describes and compiles the unit, keeping the stored executable while its inputs hold.
     preparing = begin_work()
-    mut unit = describe(Path(options.path), options.profile, options.request, options.manifests)?
+    mut unit = describe(
+        Path(options.path),
+        options.profile,
+        options.request,
+        options.manifests,
+        None,
+        [],
+        options.direct,
+    )?
     unit.program_entries = options.program_entries
     toolchain = toolchain_for(unit)?
     binary = program_binary(unit)
@@ -566,6 +588,16 @@ def validated(command: str, options: Options) -> Options:
 
 def require_command_options(command: str, options: Options) -> Result[None, str]:
     """Each command admits only options it applies, and feature selection requires an owning project."""
+    if options.direct:
+        if invoked() == OVEN or command != "run":
+            return Err("--direct requires incan run")
+        if options.engine_report:
+            return Err("--direct does not produce an Oven engine report")
+        if options.locked:
+            return Err("--direct does not use an Oven lock")
+        if options.feature_options or len(options.program_entries) > 0 or len(options.substitutes) > 0:
+            return Err("--direct does not accept project features, substitutions or additional program entries")
+        return Ok(None)
     if options.engine_report:
         return Err("--engine-report requires INCAN_ENGINE=records run or build")
     if options.locked and command not in ["run", "build", "test"]:

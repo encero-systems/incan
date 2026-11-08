@@ -1,6 +1,6 @@
 # CLI reference
 
-An Incan installation provides two commands, `oven` and `incan`, as one program. `oven` is the project command: it runs, checks, tests, builds and describes units, inspects their operational facts, and manages the bakery and resident owners. `incan` is the language command: compiler diagnostics, formatting, semantic inspection, the context server and the toolchain. `incan run`, `incan check`, `incan test` and `incan build` perform the same operation as the `oven` command of the same name: the same unit, profile, features, artifacts and exit status.
+An Incan installation provides two commands, `oven` and `incan`, as one program. `oven` is the project command: it runs, checks, tests, builds and describes units, inspects their operational facts, and manages the bakery and resident owners. `incan` is the language command: compiler diagnostics, formatting, semantic inspection, the context server and the toolchain. Except for explicit direct-source execution, `incan run`, `incan check`, `incan test` and `incan build` perform the same operation as the `oven` command of the same name: the same unit, profile, features, artifacts and exit status.
 
 ## Usage
 
@@ -20,7 +20,7 @@ oven inspect run ID --proofs
 
 incan --help | -h | help
 incan --version
-incan run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
+incan run [--direct] PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
 incan check PATH [--format text|json] [UNIT OPTIONS]
 incan explain CODE
 incan test PATH [UNIT OPTIONS]
@@ -49,8 +49,11 @@ There is no implicit command or implicit source path. Each name runs only its ow
 | `--no-default-features` | Boolean, false | Disables selection of the root package's `default` feature. |
 | `--all-features` | Boolean, false | Selects every declared root-package feature. |
 | `--locked` | Boolean, false | On `oven run`, `oven build` and `oven test`, refuses a missing lock or any resolution that would change it. |
+| `--direct` | Boolean, false | On `incan run`, runs `PATH` as one source file without Oven planning, even when a Loaf is discovered. |
 
 Unknown features, invalid feature edges and unknown options fail the command. Feature-selection options require an owning project. Unsupported command-option combinations exit `2` before dependency preparation. Unit commands accept one path. Package features are specified in [Project configuration](project_configuration.md#projectfeatures).
+
+`incan run --direct` accepts `--profile`, `--argv0` and program arguments after `--`. It refuses feature selection, substitutions, additional program entries, `--locked` and `--engine-report`.
 
 ## `oven lock`
 
