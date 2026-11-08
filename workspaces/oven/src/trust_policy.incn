@@ -1,0 +1,253 @@
+"""
+Compile-time trust from Oven-controlled user and organization configuration.
+
+Trust answers only whether unattended preparation may run a Loaf's compile-time code. It does not select or widen
+the execution mode. Publisher entries temporarily match the scope name until registry-signed scope claims provide
+the durable publisher identity required by RFC 117.
+"""
+
+from rust::std::env::consts import OS
+from std.environ import get_or
+from std.fs import Path
+from std.toml import TomlValue
+from files import read, read_json
+from home_paths import TOOLCHAIN, home, toolchain_directory
+from installation_codec import Installation
+from loaf_identity import is_adopted_scope, validate_loaf_identity
+from observation import file_digest
+
+pub const PUBLISHER: str = "publisher"
+pub const LOAF: str = "loaf"
+pub const PROJECT: str = "project"
+const TRUST_KEYS: str = "publishers, loaves and projects"
+
+
+pub model TrustEntry:
+    """One effective trust entry and the configuration source that supplied it."""
+
+    pub kind: str
+    pub value: str
+    pub source: str
+
+
+pub model TrustPolicy:
+    """The effective entries from the toolchain release, organization and user, in deterministic order."""
+
+    pub entries: list[TrustEntry] = []
+
+    pub def values(self, kind: str) -> list[str]:
+        """The unique effective values of `kind`, sorted for stable command and evidence output."""
+        return sorted([entry.value for entry in self.entries if entry.kind == kind])
+
+
+model ConfigTrust:
+    """The entries read from one file and whether it explicitly selected a publisher list."""
+
+    entries: list[TrustEntry] = []
+    publishers_explicit: bool = false
+
+
+pub def user_config() -> Result[Path, str]:
+    """The current user's Oven-controlled configuration file."""
+    return Ok(home()?.joinpath("config.toml"))
+
+
+pub def organization_config() -> Option[Path]:
+    """The read-only host-wide organization configuration file on supported desktop and server hosts."""
+    if OS == "macos":
+        return Some(Path("/Library/Application Support/Incan/config.toml"))
+    if OS == "linux":
+        return Some(Path("/etc/incan/config.toml"))
+    return None
+
+
+pub def toolchain_defaults() -> Result[list[str], str]:
+    """The ordinary default publisher entries carried by the installed toolchain release."""
+    path = toolchain_directory()?.joinpath("toolchain.json")
+    document = read_json(path)?
+    match document.get("default_trusted_publishers"):
+        None => return Ok([])
+        Some(value) =>
+            mut result: list[str] = []
+            for item in value.expect_array().map_err((error) => error.message())?:
+                result.append(item.expect_str().map_err((error) => error.message())?)
+            return Ok(sorted(result))
+
+
+pub def load(project_root: Option[Path] = None) -> Result[TrustPolicy, str]:
+    """Load the installed defaults and the host's organization and user entries for an optional consuming project."""
+    return read_policy(user_config()?, organization_config(), toolchain_defaults()?, project_root)
+
+
+pub def read_policy(
+    user: Path,
+    organization: Option[Path],
+    defaults: list[str],
+    project_root: Option[Path] = None,
+) -> Result[TrustPolicy, str]:
+    """
+    Read one effective trust policy without allowing project-owned configuration to contribute.
+
+    1. Parse the organization and user files independently, rejecting unknown keys and malformed entries.
+    2. Use release defaults only while neither configuration explicitly selects `trust.publishers`; this makes a
+       default entry removable by writing the ordinary resulting list.
+    3. Merge unique organization and user entries while preserving the source that supplies each value.
+    """
+    # 1. A configuration beneath the consuming project could be changed by the project and is never trust authority.
+    mut organization_entries = ConfigTrust()
+    if let Some(file) = organization:
+        organization_entries = read_config(file, project_root)?
+    user_entries = read_config(user, project_root)?
+    mut entries: list[TrustEntry] = []
+    # 2. Defaults remain ordinary entries and disappear when either policy layer explicitly chooses its publisher set.
+    if not organization_entries.publishers_explicit and not user_entries.publishers_explicit:
+        for publisher in defaults:
+            validate_entry(PUBLISHER, publisher)?
+            append_unique(entries, TrustEntry(kind=PUBLISHER, value=publisher, source=f"toolchain {TOOLCHAIN}"))
+    # 3. Organization entries precede user entries so a duplicate retains its host-wide provenance.
+    for entry in organization_entries.entries + user_entries.entries:
+        append_unique(entries, entry)
+    return Ok(TrustPolicy(entries=entries))
+
+
+def read_config(file: Path, project_root: Option[Path]) -> Result[ConfigTrust, str]:
+    """Read the `[trust]` table from `file`, leaving every other table to its owner."""
+    if not file.is_file():
+        return Ok(ConfigTrust())
+    refuse_project_config(file, project_root)?
+    parsed = TomlValue.parse(read(file)?).map_err((error) => f"{file.0}: {error.message()}")?
+    document = parsed.as_table().map_err((error) => f"{file.0}: {error.message()}")?
+    if "trust" not in document:
+        return Ok(ConfigTrust())
+    table = document["trust"].as_table().map_err((_) => f"{file.0}: `trust` must be a table")?
+    for key in table.keys():
+        if key not in ["publishers", "loaves", "projects"]:
+            return Err(f"{file.0}: unknown key `trust.{key}`; [trust] accepts {TRUST_KEYS}")
+    mut result = ConfigTrust(publishers_explicit="publishers" in table)
+    for kind, key in [(PUBLISHER, "publishers"), (LOAF, "loaves"), (PROJECT, "projects")]:
+        if key not in table:
+            continue
+        values = table[key].as_array().map_err((_) => f"{file.0}: `trust.{key}` must be an array of strings")?
+        for value in values:
+            mut text = value.as_str().map_err((_) => f"{file.0}: `trust.{key}` must be an array of strings")?
+            if kind == PROJECT:
+                text = project_path(file, text)?.0
+            validate_entry(kind, text).map_err((reason) => f"{file.0}: `trust.{key}`: {reason}")?
+            append_unique(result.entries, TrustEntry(kind=kind, value=text, source=file.0))
+    return Ok(result)
+
+
+def refuse_project_config(file: Path, project_root: Option[Path]) -> Result[None, str]:
+    """Reject a trust source located inside the project whose code the decision would authorize."""
+    if let Some(root) = project_root:
+        configured = canonical(file)?
+        project = canonical(root)?
+        if configured.0 == project.0 or configured.0.startswith(project.0 + "/"):
+            return Err(f"{file.0}: trust configuration must not be inside the consuming project {project.0}")
+    return Ok(None)
+
+
+def canonical(path: Path) -> Result[Path, str]:
+    """An absolute physical spelling, resolving the deepest existing ancestor when the final path is not yet made."""
+    absolute = path.absolute().map_err((error) => error.message())?
+    if absolute.exists():
+        return absolute.resolve().map_err((error) => error.message())
+    parent = absolute.parent()
+    if parent.0 == absolute.0:
+        return Ok(absolute)
+    return Ok(canonical(parent)?.joinpath(absolute.name()))
+
+
+def project_path(file: Path, value: str) -> Result[Path, str]:
+    """Resolve a configured project root against the user home or the configuration file's directory."""
+    if value == "":
+        return Err("project roots must be nonempty paths")
+    mut selected = Path(value)
+    if value == "~" or value.startswith("~/"):
+        user = get_or("HOME", "")
+        if user == "":
+            return Err("`~` needs HOME to name a project root")
+        selected = Path(user)
+        if value != "~":
+            selected = selected.joinpath(value[2:])
+    elif not value.startswith("/"):
+        selected = file.parent().joinpath(value)
+    return canonical(selected)
+
+
+pub def normalize_entry(kind: str, value: str, relative_to: Path) -> Result[str, str]:
+    """Validate a CLI entry and normalize a project path relative to the user's configuration file."""
+    if kind == PROJECT:
+        selected = project_path(relative_to, value)?.0
+        validate_entry(kind, selected)?
+        return Ok(selected)
+    validate_entry(kind, value)?
+    return Ok(value)
+
+
+def validate_entry(kind: str, value: str) -> Result[None, str]:
+    """Validate one entry without folding authored publisher or Loaf identities."""
+    if kind == PROJECT:
+        if not value.startswith("/"):
+            return Err("project roots must resolve to absolute paths")
+        return Ok(None)
+    if kind == LOAF:
+        return validate_loaf_identity(value)
+    if kind != PUBLISHER or "/" in value:
+        return Err("publisher entries must name one scope")
+    validate_loaf_identity(f"{value}/package")?
+    if is_adopted_scope(value):
+        return Err(f"adopted scope `{value}` accepts only Loaf entries")
+    return Ok(None)
+
+
+def append_unique(mut entries: list[TrustEntry], entry: TrustEntry) -> None:
+    """Append `entry` unless its kind and value are already effective."""
+    for existing in entries:
+        if existing.kind == entry.kind and existing.value == entry.value:
+            return
+    entries.append(entry)
+
+
+pub def coverage(
+    policy: TrustPolicy,
+    loaf: str,
+    source_root: Option[str],
+    artifact: Option[Path],
+    installed: Option[Installation],
+) -> Result[Option[str], str]:
+    """The stable evidence label covering `loaf`, or `None` when unattended compile-time code is not trusted."""
+    if let Some(path) = artifact:
+        if let Some(page) = installed:
+            if let Some(digest) = toolchain_digest(path, page)?:
+                return Ok(Some(f"toolchain sha256:{digest}"))
+    for entry in policy.entries:
+        if entry.kind == LOAF and entry.value == loaf:
+            return Ok(Some(f"entry trust.loaves.{entry.value}"))
+        if entry.kind == PUBLISHER and loaf.startswith(entry.value + "/"):
+            return Ok(Some(f"entry trust.publishers.{entry.value}"))
+        if entry.kind == PROJECT:
+            if let Some(root) = source_root:
+                selected = canonical(Path(root))?
+                trusted = canonical(Path(entry.value))?
+                if selected.0 == trusted.0 or selected.0.startswith(trusted.0 + "/"):
+                    return Ok(Some(f"entry trust.projects.{entry.value}"))
+    return Ok(None)
+
+
+pub def toolchain_digest(path: Path, installed: Installation) -> Result[Option[str], str]:
+    """
+    Match an exact installed payload path and its current digest against the admitted installation page.
+
+    Names, standard-package flags and directories are deliberately not evidence: a foreign artifact called `std`
+    remains untrusted unless the signed installed generation carries these exact bytes at this exact path.
+    """
+    if not path.is_file():
+        return Ok(None)
+    selected = canonical(path)?
+    actual = file_digest(selected)?
+    for payload in installed.payloads:
+        admitted = canonical(Path(payload.path))?
+        if admitted.0 == selected.0 and payload.admission.payload == actual:
+            return Ok(Some(actual))
+    return Ok(None)
