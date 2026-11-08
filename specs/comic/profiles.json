@@ -43,6 +43,14 @@
       "owner": "Encero Systems",
       "status": "experimental draft",
       "spec": "spec/row-v1.md"
+    },
+    {
+      "id": "crumb-columns/1",
+      "role": "binary-codec",
+      "numeric_id": 2,
+      "owner": "Encero Systems",
+      "status": "experimental draft",
+      "spec": "spec/columns-v1.md"
     }
   ],
   "external_profiles": []

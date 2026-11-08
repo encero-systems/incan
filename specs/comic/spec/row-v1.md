@@ -124,4 +124,4 @@ The profile assigns no universal memory budget. Tests pass explicit limits and e
 
 ## Columns remain separate
 
-This profile specifies row storage and direct field/element projection. It does not specify a column codec. The [binary worklist](binary.md) retains exact-width frame-of-reference packing, deltas, runs, prefix-sharing dictionaries, encoding IDs and positional indexes as obligations of a separately registered column profile. Its performance experiments are evidence for choosing that profile, not conformance vectors for this one.
+This profile specifies row storage and direct field/element projection. It does not specify a column codec. The separate [crumb-columns/1 draft](columns-v1.md) specifies exact-width frame-of-reference packing, deltas, runs, column-wide prefix-sharing dictionaries, encoding IDs and positional indexes. Its performance experiments are evidence for choosing that profile, not conformance vectors for this one.
