@@ -20,6 +20,7 @@ const OWNER_USAGE: str = "oven owner stop"
 const BAKERY_USAGE: str = "oven bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE"
 const DEPENDENCIES_USAGE: str = "oven inspect dependencies PATH [UNIT OPTIONS]"
 const LOCK_USAGE: str = "oven lock [--versions lowest|lowest-direct|newest] [PATH]"
+const TRUST_USAGE: str = "oven trust list | add publisher|loaf|project VALUE | remove publisher|loaf|project VALUE"
 pub const UNIT_VALUE_OPTIONS: FrozenList[str] = [
     "--profile",
     "--features",
@@ -43,6 +44,7 @@ pub def usage(surface: str) -> str:
                 BAKERY_USAGE,
                 DEPENDENCIES_USAGE,
                 LOCK_USAGE,
+                TRUST_USAGE,
             ],
         )
     return overview(
@@ -80,6 +82,8 @@ pub def command_help(surface: str, command: str, arguments: list[str]) -> Option
                 "oven lock --versions lowest .",
             ),
         )
+    elif command == "trust" and requested(arguments):
+        return Some(render(TRUST_USAGE, [], "oven trust add publisher acme"))
     elif (
         command == "bakery"
         and len(arguments) > 0

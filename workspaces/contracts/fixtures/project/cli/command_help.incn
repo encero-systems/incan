@@ -7,6 +7,7 @@
 #   test --help
 #   oven describe-unit --help
 #   oven lock --help
+#   oven trust --help
 #   build --help
 #   fmt --help
 #   oven owner stop --help
@@ -20,6 +21,7 @@
 #   test -h
 #   oven describe-unit -h
 #   oven lock -h
+#   oven trust -h
 #   build -h
 #   fmt -h
 #   oven owner stop -h

@@ -1,11 +1,14 @@
 """Validate Loaf package identities at the manifest boundary."""
 
-
 # Compatible registries may define policy for every syntactically valid scope; intake reserves none.
 pub const RESERVED_SCOPES: FrozenList[str] = []
-
 # Registry-owned adoption scopes retain exact upstream package spellings, including underscores.
 const ADOPTED_SCOPES: FrozenList[str] = ["crates-io"]
+
+
+pub def is_adopted_scope(scope: str) -> bool:
+    """Whether `scope` holds packages adopted from another ecosystem and therefore cannot be trusted wholesale."""
+    return scope in ADOPTED_SCOPES
 
 
 pub def validate_loaf_identity(identity: str) -> Result[None, str]:
