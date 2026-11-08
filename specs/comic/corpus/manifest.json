@@ -37,10 +37,15 @@
       "operation": "text_print",
       "cases": 46,
       "sha256": "e3a42d829e1bd6dffe371f3dffe60a0a9a115e0d61b578c015279a87fd4a1f98"
+    },
+    {
+      "path": "hash-preimages.json",
+      "operation": "hash_preimage",
+      "cases": 60,
+      "sha256": "36f9495bf314b94b1b02c97900d573664308e8f3840e34e388355153542e6744"
     }
   ],
   "pending": [
-    "exact hash preimages and digests",
     "Crumb binary profile and byte vectors",
     "resource-limit and streaming executions",
     "recursive shapes, enums, unions, maps, sets and decimal coverage",
