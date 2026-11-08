@@ -300,8 +300,77 @@ pub fn field_surface_type_name(source: &Type, resolved: &ResolvedType) -> String
     if resolved_type_contains_rust_path(resolved) {
         source.to_string()
     } else {
-        canonical_incan_type_name(resolved)
+        canonical_incan_type_name(&restore_qualified_surface_names(source, resolved))
     }
+}
+
+/// Restore declaration names at module-qualified source nodes before rendering reflection metadata.
+///
+/// Checked types retain canonical carrier keys so equal-spelled declarations from different modules stay distinct.
+/// Those keys are semantic identities, not source spellings: field metadata presents the declaration name a direct
+/// import would expose while preserving the normalized spelling of surrounding builtin types.
+fn restore_qualified_surface_names(source: &Type, resolved: &ResolvedType) -> ResolvedType {
+    match (source, resolved) {
+        (Type::Dotted(segments), ResolvedType::Named(_)) => segments
+            .last()
+            .cloned()
+            .map(ResolvedType::Named)
+            .unwrap_or_else(|| resolved.clone()),
+        (Type::DottedGeneric(segments, source_args), ResolvedType::Generic(base, resolved_args)) => {
+            let base = segments.last().cloned().unwrap_or_else(|| base.clone());
+            ResolvedType::Generic(base, restore_qualified_surface_arguments(source_args, resolved_args))
+        }
+        (Type::Generic(_, source_args), ResolvedType::Generic(base, resolved_args)) => ResolvedType::Generic(
+            base.clone(),
+            restore_qualified_surface_arguments(source_args, resolved_args),
+        ),
+        (Type::Function(source_params, source_return), ResolvedType::Function(resolved_params, resolved_return)) => {
+            let params = source_params
+                .iter()
+                .zip(resolved_params)
+                .map(|(source, resolved)| CallableParam {
+                    ty: restore_qualified_surface_names(&source.node, &resolved.ty),
+                    ..resolved.clone()
+                })
+                .collect();
+            ResolvedType::Function(
+                params,
+                Box::new(restore_qualified_surface_names(&source_return.node, resolved_return)),
+            )
+        }
+        (Type::Tuple(source_items), ResolvedType::Tuple(resolved_items)) => ResolvedType::Tuple(
+            source_items
+                .iter()
+                .zip(resolved_items)
+                .map(|(source, resolved)| restore_qualified_surface_names(&source.node, resolved))
+                .collect(),
+        ),
+        (Type::Ref(source), ResolvedType::Ref(resolved)) => {
+            ResolvedType::Ref(Box::new(restore_qualified_surface_names(&source.node, resolved)))
+        }
+        (Type::RefMut(source), ResolvedType::RefMut(resolved)) => {
+            ResolvedType::RefMut(Box::new(restore_qualified_surface_names(&source.node, resolved)))
+        }
+        (Type::MutParam(source), resolved) => restore_qualified_surface_names(&source.node, resolved),
+        _ => resolved.clone(),
+    }
+}
+
+/// Restore qualified declaration names in paired generic arguments without changing unmatched checked arguments.
+fn restore_qualified_surface_arguments(
+    source: &[crate::ast::Spanned<Type>],
+    resolved: &[ResolvedType],
+) -> Vec<ResolvedType> {
+    resolved
+        .iter()
+        .enumerate()
+        .map(|(index, resolved)| {
+            source.get(index).map_or_else(
+                || resolved.clone(),
+                |source| restore_qualified_surface_names(&source.node, resolved),
+            )
+        })
+        .collect()
 }
 
 /// Computed property information.

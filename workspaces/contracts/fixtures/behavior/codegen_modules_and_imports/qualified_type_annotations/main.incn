@@ -1,12 +1,21 @@
-# behavior: a module-qualified type spelling names the same type as the direct import in return, field, optional field, parameter and local annotations, and its fields reflect the declaration name (#1437)
+# behavior: a module-qualified plain or generic type names the same declaration as its direct import and provider return in result, field, optional field, parameter and local annotations, while same-named declarations from another provider stay distinct, and reflected fields retain the declaration name (#1437, #2712)
 # expect-stdout:
 #   x
 #   ok
 #   TomlError
 #   Option[TomlError]
 #   direct:x
+#   failed
+#   direct failed
+#   other failed
+#   7
+#   7
+#   8
 
 import errors
+import other
+from errors import DbError
+from errors import Envelope
 from errors import TomlError
 
 
@@ -24,8 +33,34 @@ pub def direct_result() -> Result[None, TomlError]:
 
 
 pub def describe(failure: errors.TomlError) -> str:
-    held: errors.TomlError = failure
+    held: errors.TomlError = failure.clone()
     return held.message
+
+
+pub def fetch() -> Result[int, errors.DbError]:
+    value = errors.fetch()?
+    return Ok(value)
+
+
+pub def fetch_other() -> Result[int, other.DbError]:
+    value = other.fetch()?
+    return Ok(value)
+
+
+pub def fetch_direct() -> Result[int, DbError]:
+    return fetch()
+
+
+pub def envelope() -> errors.Envelope[int]:
+    return errors.envelope()
+
+
+pub def direct_envelope() -> Envelope[int]:
+    return envelope()
+
+
+pub def other_envelope() -> other.Envelope[int]:
+    return other.envelope()
 
 
 def main() -> None:
@@ -38,3 +73,15 @@ def main() -> None:
         println(field.type_name)
     direct: TomlError = errors.make()
     println(f"direct:{direct.message}")
+    match fetch():
+        Ok(value) => println(value)
+        Err(_) => println("failed")
+    match fetch_direct():
+        Ok(value) => println(value)
+        Err(_) => println("direct failed")
+    match fetch_other():
+        Ok(value) => println(value)
+        Err(_) => println("other failed")
+    println(envelope().value)
+    println(direct_envelope().value)
+    println(other_envelope().value)

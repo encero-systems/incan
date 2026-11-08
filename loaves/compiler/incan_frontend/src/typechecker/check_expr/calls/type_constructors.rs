@@ -98,7 +98,7 @@ impl TypeChecker {
             self.retain_body_ir_defaulted_module_class(type_info, span);
         }
         let result = explicit_ty.unwrap_or(constructor_ty);
-        self.retain_module_constructor_owner(span, &result);
+        let result = self.retain_module_constructor_owner(span, result);
         self.record_expr_type(callee_span, result.clone());
         self.type_info
             .expressions
@@ -107,28 +107,32 @@ impl TypeChecker {
         result
     }
 
-    /// Preserve the selected module constructor's exact nominal owner for Body IR type projection.
+    /// Preserve the selected module constructor's exact nominal owner in its checked result and Body IR projection.
     ///
-    /// Two source modules may publish the same type name. The ordinary checked result keeps that source-facing name,
-    /// while the private constructor carrier keys the executable type by the canonical identity already selected at
-    /// the call. This prevents a qualified constructor from borrowing another same-named declaration's layout.
-    fn retain_module_constructor_owner(&mut self, span: Span, result: &ResolvedType) {
+    /// Two source modules may publish the same type name. The canonical identity already selected at the call keys
+    /// both compatibility and executable layout, so a qualified constructor cannot be mistaken for another
+    /// same-named declaration when it flows into a qualified annotation.
+    fn retain_module_constructor_owner(&mut self, span: Span, result: ResolvedType) -> ResolvedType {
         let Some(identity) = self.type_info.resolved_identity(span).cloned() else {
-            return;
+            return result;
         };
         let Some(carrier) = incan_semantics_core::body_ir::nominal_carrier_key(&identity) else {
-            return;
+            return result;
         };
         let retained = match result {
             ResolvedType::Named(_) => ResolvedType::Named(carrier.clone()),
-            ResolvedType::Generic(_, arguments) => ResolvedType::Generic(carrier.clone(), arguments.clone()),
-            _ => return,
+            ResolvedType::Generic(_, arguments) => ResolvedType::Generic(carrier.clone(), arguments),
+            result => return result,
         };
         self.type_info
             .declarations
             .named_type_identities
             .insert(carrier, identity);
-        self.type_info.calls.body_ir_constructor_types.insert(span, retained);
+        self.type_info
+            .calls
+            .body_ir_constructor_types
+            .insert(span, retained.clone());
+        retained
     }
 
     /// Return whether inspected type metadata proves omitted named fields can be filled through `Default`.
