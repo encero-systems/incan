@@ -1,0 +1,6 @@
+shop.billing.charge = Incan.Function {
+    body = []
+    type = { requires = [], returns = Int, parameters = [] }
+    decorators = []
+    visibility = Public
+}
