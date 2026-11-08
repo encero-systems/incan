@@ -128,7 +128,7 @@ The printer writes one form:
 | Non-finite | `inf`, `-inf`, `nan` | Only in a float slot. |
 | Decimal | `19.90d`, `-0.50d` | Exactly the type's scale, then `d`. |
 | String | `"text"` | Double quotes, no normalization. Escapes: `\\`, `\"`, `\n`, `\t`, `\r`, and `\u{…}` in lowercase hexadecimal without leading zeros for every other control character and every bidirectional control. All other characters are literal UTF-8. |
-| Multi-line string | `"""` … `"""` | Written flush left, because indentation would be part of the value. |
+| Multi-line string | `"""` … `"""` | Everything between the opening and closing `"""` is the value, exactly: every line break and every space of indentation. So it's written flush left. |
 | Bytes | `b"abc\x00"` | Printable ASCII is literal except `\` and `"`; every other byte is `\x` and two lowercase hexadecimal digits. |
 | List | `[1, None, 3]` | Keeps order and absent elements. |
 | Tuple | `(10, 20)`, `(7,)` | A one-element tuple keeps its trailing comma. |
@@ -178,7 +178,4 @@ One text reads as one value or is refused. A key given twice, two kinds at one p
 
 ## Open
 
-- The exact framing of a multi-line string: which line breaks after the opening and before the closing `"""` belong to the value.
-- The table form of a map of records.
 - Date and time literals. Until decided, they are strings in a slot whose type validates them.
-- An optional closing `___` entry holding a document hash, for text that must cross a boundary anyway. It would be checked when present and never required, so it seals nothing by default.

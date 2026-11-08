@@ -13,6 +13,7 @@ A load must:
 - refuse a value whose `___model_hash` differs from its family's model, unless an explicit migration or compatible description applies;
 - resolve each reference against the store and the rest of the document, so forward references work, and refuse one that finds nothing in either;
 - keep or remap `___id` and `___revision` explicitly;
+- give a value without `___id` an identity derived from the load's import key, its type, its canonical projection and its position among equal values, so crumbling the same document twice changes nothing and two identical rows stay two records;
 - refuse to write outside the namespace it loads into, so a document cannot claim `std` or another Loaf;
 - load a secret-typed field withheld, so the store holds the marker and never the contents, and refuse every other marker;
 - leave a document's namespace remapping unable to change a value's nominal identity.
@@ -23,6 +24,5 @@ An export written as Crumbs is a sealed set, and loading a sealed set checks its
 
 ## Open
 
-- **Import keys.** Crumbling the same document twice must change nothing, which one transaction does not give: a fresh identity on each load would duplicate every value that has no `___id`. Proposed: such a value takes its identity from the load's import key, its type, its canonical projection and its occurrence index, so two identical rows stay two records.
 - **Families.** A store keeps records in families connected by relationships, so a namespace has to land on those. A path cannot simply name a family, because moving a type or publishing a Loaf must not rename one. Crumbling needs a declared, stable mapping from a type to its family, and a binding's left side becomes a relationship.
 - **Identity text.** The text form of `___id` and `___revision`.

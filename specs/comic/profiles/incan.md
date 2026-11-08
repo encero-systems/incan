@@ -99,7 +99,6 @@ A proof is a value, not a binding, because a function can have one proof per obl
 
 ## Values and diagnostics
 
-- `{value:?}` prints a model as `Point { x = 10, y = 20 }`. Rust-defined types keep Rust's text.
 - `SecretStr` and `SecretBytes` map to the core's `secret_string` and `secret_bytes`. Incan keeps secrets out of stored data: a model holding one cannot be crumbled or stored, so Incan writes `<secret>` only in printed text.
 - A value with private state, such as a Rust `Duration`, prints as a marker with its own debug text, `<Duration: 1.5s>`. C pointers, handles and untagged unions print as `<ZSTD_CCtx>` or `<union Value>`. Reading or crumbling one is refused unless the type provides a conversion.
 
@@ -162,5 +161,4 @@ oven.Lock << (
 
 ## Open
 
-- Which tree a body prints. Proposed: SCIR's versioned, read-only inspection view (RFC 161), so every source surface meets in one tree.
-- How Incan fills a withheld secret in a nested field or a table, if it ever stores one.
+- Which tree a function body prints. The tree as written (RFC 160) leaves names unresolved, so a reference is only a word. The compiler's checked tree is resolved but private, so a stored body would break when the compiler changes. Proposed: SCIR's versioned, read-only inspection view (RFC 161), which is resolved, versioned and the form every source surface lowers into, at the cost of spelling out copies, moves and borrows.
