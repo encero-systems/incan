@@ -113,14 +113,49 @@ A vocabulary or source surface that lowers to the same tree has the same canonic
 
 ## Lock files
 
-Proposed: `oven.lock` contents as COMIC. An entry always spells its version, and a reference spells it only when the lock holds two versions of one Loaf:
+Proposed: `oven.lock` contents as COMIC. The lock declares its own shape; the locked Loaves are one table and the root is one value. `Loaf` is this profile's reference to a Loaf, written as its path. A reference spells a version, as `pub.crates-io.hashbrown[0.14.5]`, only when the lock holds two versions of one Loaf; a locked row always has its version in its own column. Digests are shortened here:
 
 ~~~text
-pub.crates-io.memchr[2.8.0] = Oven.Locked {
-    digest = "sha256:a734fee195ec40202911942863e3212bf0cf21529ee1372dafdc98ded71eb2c3"
-    satisfied_by = Source
-    target_features = ["alloc", "std"]
+oven.Lock = Record {
+    root: Str
+    mode: oven.Mode
+    registry: oven.Registry
+    toolchain: Str
+    target: Str
+    dependencies: List[Loaf]
 }
+
+oven.Locked = Record {
+    loaf: Loaf
+    version: Str
+    digest: Str
+    trust [canonical = false]: oven.Trust
+    satisfied_by [canonical = false]: oven.Satisfied
+    target_features: List[Str] = []
+    dependencies: List[Loaf] = []
+}
+
+oven.Mode = Enum { Lowest, Highest }
+
+oven.Registry = Record { endpoint: Str, protocol: Str }
+
+oven.Satisfied = Enum { Source, Asset }
+
+oven.Trust = Enum { Verified(signer: Str), Unverified }
+
+oven.Locked << [
+    (pub.crates-io.aho-corasick, "1.1.4", "sha256:558ce675…", Verified("…"), Source, ["perf-literal", "std"], [pub.crates-io.memchr]),
+    (pub.crates-io.memchr, "2.8.0", "sha256:a734fee1…", Verified("…"), Source, ["alloc", "std"]),
+]
+
+oven.Lock << (
+    root="regex_tutorial",
+    mode=Lowest,
+    registry=(endpoint="https://loaves.pub", protocol="sparse/1"),
+    toolchain="rustc 1.98.0 (88d9e12ae 2026-08-18)",
+    target="aarch64-apple-darwin",
+    dependencies=[pub.crates-io.regex],
+)
 ~~~
 
 `satisfied_by` and `trust` are noncanonical, so a newly baked asset moves the object projection and not the graph identity. The resolved graph identity binds each entry's origin, name, version and dependency edges, shaped like RFC 106's closure digest. `oven.lock` stays TOML until this proposal is adopted.
