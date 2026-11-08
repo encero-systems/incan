@@ -258,10 +258,11 @@ def emit_local_call(
 ) -> Result[None, str]:
     """Emit a previously validated local call, sharing owned-result replacement between functions and methods."""
     callee = CalleeKind.Planned(function_name(module, body))
-    return emit_selected_body_call(builder, body, callee, operands, destination, span)
+    return emit_selected_body_call(module, builder, body, callee, operands, destination, span)
 
 
 pub def emit_selected_body_call(
+    module: &BodyIrModule,
     mut builder: Builder,
     body: RustBody,
     callee: CalleeKind,
@@ -270,7 +271,7 @@ pub def emit_selected_body_call(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Preserve the selected body's result carrier and unwind cleanup for direct and guarded static calls."""
-    validate_source_input_call(builder, body)?
+    validate_source_input_call(module, builder, body)?
     declared = native_source_type(
         builder.constructors,
         builder.nominals,
@@ -516,8 +517,7 @@ def borrowed_callable_argument(
     """Move a call-owned envelope that lends the source callable for the callee's calls."""
     mut borrowing_source = false
     match place_type(builder.locals, callable):
-        (PlanType.BorrowingClosure(_held) | PlanType.BorrowingClosureRef(_held)) =>
-            borrowing_source = true
+        (PlanType.BorrowingClosure(_held) | PlanType.BorrowingClosureRef(_held)) => borrowing_source = true
         (PlanType.Closure(_held) | PlanType.ClosureRef(_held)) => pass
         _ => return Err("unsupported Body IR borrowing callable argument")
     source = callable_object(builder, callable, signature, span)?
@@ -527,18 +527,7 @@ def borrowed_callable_argument(
     name = f"__incan_borrowed_callable_{builder.name}_{len(builder.synthesized)}"
     synthesize(builder, borrowed_callable_forwarder(name, signature, borrowing_source, span)?)
     constructor = f"{name}_new"
-    synthesize(
-        builder,
-        closure_constructor(
-            constructor,
-            name,
-            [capture],
-            signature,
-            false,
-            span,
-            borrowing=true,
-        ),
-    )
+    synthesize(builder, closure_constructor(constructor, name, [capture], signature, false, span, borrowing=true))
     boxed = temporary(builder, PlanType.BorrowingClosure(signature), span)
     terminate_call(builder, CalleeKind.Planned(constructor), [source], boxed, span)
     builder.owned.append(boxed.local)

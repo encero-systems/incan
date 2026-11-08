@@ -172,9 +172,10 @@ pub def intrinsic_declarations(
     constructors: &ConstructorIndex,
     module: &BodyIrModule,
     file: str,
+    retained: list[EnumDeclaration] = [],
 ) -> Result[list[EnumDeclaration], str]:
-    """Collect concrete declaration, frame and computed-static carriers; function instances add closed layouts when scheduled."""
-    mut declarations: list[EnumDeclaration] = []
+    """Retain concrete carriers after any layouts whose indices an earlier lowering already published."""
+    mut declarations = list(retained)
     for ty in declaration_storage(module):
         if closed_type(ty):
             retain_carrier(constructors, module, declarations, ty, file)?
@@ -683,10 +684,10 @@ pub def lower_carrier_method_plan(
     mut present = 0
     if declaration.carrier == Carrier.Option:
         present = 1
-    predicate = option_method in [Some(RustOptionMethodId.IsSome), Some(RustOptionMethodId.IsNone)] or result_method in [
-        Some(RustResultMethodId.IsOk),
-        Some(RustResultMethodId.IsErr),
-    ]
+    predicate = (
+        option_method in [Some(RustOptionMethodId.IsSome), Some(RustOptionMethodId.IsNone)]
+        or result_method in [Some(RustResultMethodId.IsOk), Some(RustResultMethodId.IsErr)]
+    )
     if predicate:
         if option_method == Some(RustOptionMethodId.IsNone) or result_method == Some(RustResultMethodId.IsErr):
             present = 1 - present
