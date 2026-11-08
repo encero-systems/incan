@@ -10,7 +10,7 @@ This folder is the experimental specification and conformance corpus. It is self
 
 This foundation fixes the value, identity and compatibility requirements as test data, and writes the COMIC text rules as a draft grammar. It does **not** freeze a binary layout or hash preimage encoding. A value rule can be settled before its byte spelling. The open items are listed in [text](spec/text.md), [binary](spec/binary.md) and [hashes](spec/hashes.md). The corpus must not be advertised as full codec conformance until those items have exact vectors and an implementation runs them.
 
-The initial corpus includes independently checkable member-identity vectors, typed-value comparisons, shape admission and evolution cases. Its JSON is test notation, not COMIC syntax or a proposed Crumb encoding. There are no fake binary goldens or object-hash digests inferred from illustrative text.
+The initial corpus includes independently checkable member-identity vectors, typed-value comparisons, shape admission and evolution cases. Hand-authored text read and print cases additionally cover descriptions, rows, literals and refusals. Its JSON is test notation, not COMIC syntax or a proposed Crumb encoding. There are no fake binary goldens or object-hash digests inferred from illustrative text.
 
 ## Read in this order
 
@@ -33,3 +33,7 @@ A program may inspect that record as COMIC, encode it as a standalone Crumb, or 
 ## License
 
 This folder is distributed under the [Apache License 2.0](LICENSE).
+
+## Inspecting text cases
+
+Read the `.comic` files in [corpus/text](corpus/text/) directly. `input_file` and `expected_file` in the JSON cases identify inputs and canonical outputs; identical texts share one file. The expected typed values stay in JSON, independently authored. The [manifest](corpus/manifest.json) pins every file, including deliberately truncated or invalid input.

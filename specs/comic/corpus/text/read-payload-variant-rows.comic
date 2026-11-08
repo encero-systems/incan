@@ -1,0 +1,5 @@
+example.Event = Enum { Sent(code: i64) }
+
+example.Log = Record { events: list<example.Event> }
+
+example.Log << (events=[Sent(code=7), Sent(code=8)])

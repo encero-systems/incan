@@ -12,9 +12,9 @@ An optional distinguishes absence from a present inner optional that is absent. 
 
 ## Foundation type vocabulary
 
-The corpus uses these neutral names. They identify test types, not final hash-preimage tokens: bool is a Boolean; i32/i64 are signed integers of 32/64 bits; u32/u64 are unsigned integers of 32/64 bits; f32/f64 are IEEE binary32/binary64 values; string is a Unicode scalar sequence; bytes is a byte sequence; secret_string and secret_bytes are the secret types, whose contents are never written. list is an ordered variable-length sequence, tuple is fixed-position data, and option adds one absence layer. An implementation must not substitute its host-sized integer for a declared width. When canonical hash spellings are fixed, the corpus and specification must use one vocabulary.
+The specification and corpus share core type names: `boolean`; signed `i8`, `i16`, `i32`, `i64`; unsigned `u8`, `u16`, `u32`, `u64`; IEEE `fp32`, `fp64`; `string`; `binary`; `secret_string`; and `secret_bytes`. Decimal types carry precision and scale. Collections, optional layers, unions and described types follow [COMIC text](text.md). An implementation must not substitute its host-sized integer for a declared width.
 
-The core kinds, `Record` and `Enum`, spell their types as Apache Substrait's built-in types, with COMIC's additions for what Substrait doesn't have: unsigned integers, sets, nested optionals, unions, secrets, enums with payloads and references (see [COMIC text](text.md)). Substrait's `boolean`, `fp32`, `fp64` and `binary` are the corpus's `bool`, `f32`, `f64` and `bytes`. A profile's own kinds use the profile's type names, and the profile maps them onto this value domain itself, not through Substrait's names.
+The core kinds, `Record` and `Enum`, use the type spellings listed in the text specification. A language profile maps its own type vocabulary into this domain. Test notation's tagged kinds such as `int` and `float` classify values; their declared widths remain explicit. They are not additional type spellings.
 
 ## Written shape
 
