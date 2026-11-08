@@ -42,17 +42,14 @@ shop.billing.Status = Incan.Enum { Draft, Sent, Paid(on: Str) }
 
 This is the model's schema descriptor (RFC 086) printed, not a second description of a model.
 
+Inside Incan's kinds, types are Incan's own, written as Incan writes them, in either case: `int`, `float`, `str`, `bytes`, `bool`, `Decimal { scale = 2 }`, `list[T]`, `dict[K, V]`, `set[T]`, `tuple[A, B]`, `Option[T]`, `SecretStr`, `SecretBytes`, and model and enum paths. A width or bound is written as Incan writes it, as `Int { storage = u32, ge = 0 }`. This profile maps them onto COMIC's value domain itself and doesn't bind them to the core kinds' Substrait types; an implementation may still reuse Substrait's types where they fit.
+
 ## Modules and links
 
 A module is a binding, and an import is a link on it:
 
 ~~~text
-shop.billing = Incan.Module {
-    links = [
-        (name="encode", target=pub.crates-io.hex.encode),
-        (name="web", target=std.web),
-    ]
-}
+shop.billing = Incan.Module { links = [("encode", pub.crates-io.hex.encode), ("web", std.web)] }
 ~~~
 
 A binding references the real target, never a link.
@@ -69,10 +66,7 @@ shop.billing.charge = Incan.Function {
         Decorator(shop.audit.logged, ["billing"]),
     ]
     type = {
-        parameters = [
-            (name="invoice", type=shop.billing.Invoice),
-            (name="amount", type=shop.billing.Cents),
-        ]
+        parameters = [("invoice", shop.billing.Invoice), ("amount", shop.billing.Cents)]
         returns = Result[shop.billing.Cents, Str]
         requires = [Compare(Gt, Parameter(1, "amount"), Construct(shop.billing.Cents, [0]))]
     }
@@ -88,8 +82,22 @@ shop.billing.charge = Incan.Function {
 - **Contracts and capabilities** sit in `type`, because callers rely on them.
 - **A closure** is the same block with `captures` and no path, so it sits where it is written.
 - **A Rust or C function** has no `body`, because its body is opaque.
-- **Code nodes** are enum variants, so they print positionally, as `Compare(Gt, a, b)`. Every name in a body is a slot or an absolute path, so a record has no scope.
+- **Code nodes** are enum variants and print like any other value. Every name in a body is a strict absolute path or a slot reference, so a record has no scope.
 - **Result variants** print unqualified, as `Ok(2)` and `Err("bad")`.
+
+## Bodies and compiler passes
+
+A body is the resolved tree: every type, function and field is named by its strict absolute path or by a reference to its slot, never by a short name. Compiler passes are visitors over that record. A pass extends it with what it learns, or rewrites a part so the program works, and its result is again a record of this profile. The duckborrowing pass, for example, adds borrows and lifetimes. Here it finds that `invoice` is only read:
+
+~~~text
+# Before the pass
+Binary(Sub, Project(Field(Parameter(0, "invoice"), "total"), 0), Project(Parameter(1, "amount"), 0))
+
+# After it
+Binary(Sub, Project(Field(Borrow(Parameter(0, "invoice")), "total"), 0), Project(Parameter(1, "amount"), 0))
+~~~
+
+One printer therefore shows every stage, and a diff between two stages shows exactly what a pass did. What this asks of Incan's compiler is an API that makes visiting and rewriting these records easy; how a record is printed is the serializer's concern.
 
 ## Declaration identity and change
 
@@ -115,32 +123,32 @@ A vocabulary or source surface that lowers to the same tree has the same canonic
 Proposed: `oven.lock` contents as COMIC. The lock declares its own shape; the locked Loaves are one table and the root is one value. `Loaf` is this profile's reference to a Loaf, written as its path. A reference spells a version, as `pub.crates-io.hashbrown[0.14.5]`, only when the lock holds two versions of one Loaf; a locked row always has its version in its own column. Digests are shortened here:
 
 ~~~text
-oven.Lock = Record {
-    root: Str
+oven.Lock = Incan.Model {
+    root: str
     mode: oven.Mode
     registry: oven.Registry
-    toolchain: Str
-    target: Str
-    dependencies: List[Loaf]
+    toolchain: str
+    target: str
+    dependencies: list[Loaf]
 }
 
-oven.Locked = Record {
+oven.Locked = Incan.Model {
     loaf: Loaf
-    version: Str
-    digest: Str
+    version: str
+    digest: str
     trust [canonical = false]: oven.Trust
     satisfied_by [canonical = false]: oven.Satisfied
-    target_features: List[Str] = []
-    dependencies: List[Loaf] = []
+    target_features: list[str] = []
+    dependencies: list[Loaf] = []
 }
 
-oven.Mode = Enum { Lowest, Highest }
+oven.Mode = Incan.Enum { Lowest, Highest }
 
-oven.Registry = Record { endpoint: Str, protocol: Str }
+oven.Registry = Incan.Model { endpoint: str, protocol: str }
 
-oven.Satisfied = Enum { Source, Asset }
+oven.Satisfied = Incan.Enum { Source, Asset }
 
-oven.Trust = Enum { Verified(signer: Str), Unverified }
+oven.Trust = Incan.Enum { Verified(signer: str), Unverified }
 
 oven.Locked << [
     (pub.crates-io.aho-corasick, "1.1.4", "sha256:558ce675…", Verified("…"), Source, ["perf-literal", "std"], [pub.crates-io.memchr]),
@@ -158,7 +166,3 @@ oven.Lock << (
 ~~~
 
 `satisfied_by` and `trust` are noncanonical, so a newly baked asset moves the object projection and not the graph identity. The resolved graph identity binds each entry's origin, name, version and dependency edges, shaped like RFC 106's closure digest. `oven.lock` stays TOML until this proposal is adopted.
-
-## Open
-
-- Which tree a function body prints. The tree as written (RFC 160) leaves names unresolved, so a reference is only a word. The compiler's checked tree is resolved but private, so a stored body would break when the compiler changes. Proposed: SCIR's versioned, read-only inspection view (RFC 161), which is resolved, versioned and the form every source surface lowers into, at the cost of spelling out copies, moves and borrows.

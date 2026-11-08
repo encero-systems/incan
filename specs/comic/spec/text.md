@@ -21,16 +21,16 @@ A document is a sequence of root entries, separated by one blank line in canonic
 A complete document:
 
 ~~~text
-example.Address = Record { street: Str, city: Str, country: Str }
+example.Address = Record { street: string, city: string, country: string }
 
-example.Fulfillment = Enum { Shipped(carrier: Str, tracking: Str), Pending }
+example.Fulfillment = Enum { Shipped(carrier: string, tracking: string), Pending }
 
 example.Order = Record {
-    id: Int
-    placed_at [canonical = false]: Str
+    id: i64
+    placed_at [canonical = false]: string
     address: example.Address
     fulfillment: example.Fulfillment
-    note: Option[Str] = None
+    note: string? = None
 }
 
 example.Order << (
@@ -62,26 +62,30 @@ A description is written in `{ }`. Inside it, `:` declares and `=` sets:
 
 - `name: Type` declares a field, in declaration order. A row lists its cells in this order.
 - `name: Type = None`, or `= []`, `= {}` for a collection, declares the field's absent value. A field without one is required.
-- Field metadata goes in `[ ]` after the name, as in `placed_at [canonical = false]: Str` and `price [renamed_from = ["unit_price"]]: Decimal { scale = 2 }`. `canonical` defaults to `true`.
+- Field metadata goes in `[ ]` after the name, as in `placed_at [canonical = false]: string` and `price [renamed_from = ["unit_price"]]: decimal<10, 2>`. `canonical` defaults to `true`.
 - `key = value` sets a property of the declaration itself, such as a profile's `visibility = Public`. A property may group further properties in `{ }`, as a profile's function signature `type = { … }` does.
-- In an enum, each member is a variant: `Pending`, or `Shipped(carrier: Str, tracking: Str)` with named payload fields.
+- In an enum, each member is a variant: `Pending`, or `Shipped(carrier: string, tracking: string)` with named payload fields.
 
 The core kinds are `Record` and `Enum`. A profile may define its own kinds, such as `Incan.Model` and `Incan.Enum`, which add that language's facts. The [profile registrations](../profiles.json) map each such kind to `Record` or `Enum`, so a reader that does not know the profile still reads the description.
 
-Types are written as follows:
+A declaration's kind decides its type names. Inside a profile's kind, the profile's own types apply: an `Incan.Model` declares `int`, `str` and `Option[str]`, and a `Rust.Struct` declares `Vec<u8>`. Each profile maps its types onto the [value domain](values.md) itself. Inside the core kinds, types are [Apache Substrait](https://substrait.io/types/type_classes/)'s built-in types, with COMIC's additions for what Substrait doesn't have:
 
 | Type | Text |
 | --- | --- |
-| Boolean | `Bool` |
-| Integer | `Int`, which is 64-bit signed. Another width or a bound: `Int { storage = u32, ge = 0 }`. |
-| Float | `Float`, which is binary64. Binary32: `Float { storage = f32 }`. |
-| Decimal | `Decimal { scale = 2 }` |
-| String, bytes | `Str`, `Bytes` |
-| Secret | `SecretStr`, `SecretBytes` |
-| Collections | `List[T]`, `Tuple[A, B]`, `Dict[K, V]`, `Set[T]` |
-| Optional | `Option[T]` |
-| Union | `A \| B` |
-| Described type | its path, with type arguments in `[ ]`, as `example.Box[Int]` |
+| Boolean | `boolean` |
+| Integers | `i8`, `i16`, `i32`, `i64` |
+| Unsigned integers | `u8`, `u16`, `u32`, `u64`, from Substrait's unsigned-integer extension |
+| Floats | `fp32`, `fp64` |
+| Decimal | `decimal<P, S>`, precision and scale |
+| String, binary | `string`, `binary`, and `varchar<L>`, `fixedchar<L>`, `fixedbinary<L>` |
+| Date and time | `date`, `precision_time<P>`, `precision_timestamp<P>`, `precision_timestamp_tz<P>`, `interval_year`, `interval_day<P>`, `interval_compound<P>`, `uuid` |
+| Collections | `list<T>`, `map<K, V>`, and COMIC's `set<T>` |
+| Optional | `T?`, one optional layer, and COMIC's `option<T>` for a nested one, as `option<string?>` |
+| Union | COMIC's `A \| B` |
+| Secret | COMIC's `secret_string`, `secret_bytes` |
+| Described type | its path, as `example.Address` |
+
+A record, an enum with payloads and a reference are COMIC's own: they are declared by path, as above.
 
 ## Values
 
@@ -108,10 +112,11 @@ The printer writes one form:
 - **A value written alone** prints every present field by name: `example.Order << (id=1003, …)`.
 - **A row** prints positions up to its first absent field, then each later present field by name.
 - **A field at its declared absent value is never printed.** Every other field is, including one equal to a default, because the text must not depend on defaults.
-- **Nested records and variant payloads** follow the value they sit in: by name inside a value written alone, and as a row inside a row. A variant is its name with its payload in `( )`: `Pending`, `Shipped(carrier="DHL", tracking="JD144155")`, and in a row `Shipped("DHL", "JD144155")`.
+- **Two or more records of one type together, in a list or a map, print as rows** wherever they appear, so a value's own collections read like tables: `lines=[("SKU-1", 2, 4.50d), ("SKU-2", 1, 9.95d)]`.
+- **A single nested record and a variant payload follow the value they sit in:** by name inside a value written alone, and as a row inside a row. A variant is its name with its payload in `( )`: `Pending`, `Shipped(carrier="DHL", tracking="JD144155")`, and in a row `Shipped("DHL", "JD144155")`.
 - Indexes are accepted on reading and never printed.
 
-**Wrapped values.** Where a slot admits more than one type, a value names its type with `<<`: `Month << 4` for a newtype, `Int << 3` in a union slot. Elsewhere a newtype or union member is written bare.
+**Wrapped values.** Where a slot admits more than one type, a value names its type with `<<`: `Month << 4` for a newtype, `i64 << 3` in an `i64 | string` slot. Elsewhere a newtype or union member is written bare.
 
 `Type << ( … )` lists stored fields. It is not a constructor call, and reading one never runs a constructor, field method or default. It rebuilds the stored state and runs the type's final validation, the same as decoding a Crumb.
 
