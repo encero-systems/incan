@@ -177,11 +177,12 @@ pub def describe(
     reader: ManifestReader = ManifestReader(),
     selected_toolchain: Option[Toolchain] = None,
     selected_facets: list[LocalFacet] = [],
+    direct: bool = false,
 ) -> Result[UnitDescription, str]:
-    """Describe the unit whose entry source is `source`, for `profile` and the features `request` asks for."""
+    """Describe `source` for `profile` and `request`, bypassing a Loaf only for explicit direct source execution."""
     clock = begin()
-    result = described(source, profile, request, reader, selected_toolchain, selected_facets)
-    key = f"{source.0}|{profile}|{",".join(sorted(request.features))}|{request.default_features}|{request.all_features}"
+    result = described(source, profile, request, reader, selected_toolchain, selected_facets, direct)
+    key = f"{source.0}|{profile}|{",".join(sorted(request.features))}|{request.default_features}|{request.all_features}|direct={direct}"
     record(Operation.UnitDescription, key, clock)
     return result
 
@@ -193,11 +194,14 @@ def described(
     reader: ManifestReader,
     selected_toolchain: Option[Toolchain],
     selected_facets: list[LocalFacet],
+    direct: bool,
 ) -> Result[UnitDescription, str]:
-    """Resolve the source's canonical project and use its selected graph for one description."""
+    """Resolve the source's canonical project unless an explicit direct invocation requires a standalone unit."""
     entry = source.absolute().map_err((error) => f"{source.0}: {error.message()}")?
     if not entry.is_file():
         return Err(f"{entry.0}: no such source file")
+    if direct:
+        return Ok(single_file_unit(entry, profile, standard_loaves("", profile, reader)?))
     match project_root_of(entry):
         None => return Ok(single_file_unit(entry, profile, standard_loaves("", profile, reader)?))
         Some(found) =>
