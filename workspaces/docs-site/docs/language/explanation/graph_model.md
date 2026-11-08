@@ -26,6 +26,14 @@ Some domains need more than one edge between the same two nodes. A dataflow edge
 
 Labels and attributes still belong in user-owned data. `std.graph` tracks structure and ids; richer relationship metadata can live in payload models, side tables keyed by `EdgeId`, or a higher-level library.
 
+## Indexed storage is sealed
+
+The containers keep node and edge identity stable while storing them in dense, never-reused slots. Each node owns outgoing and incoming adjacency indexes, so a local adjacency query depends on that node's degree rather than on every unrelated node and edge in the graph. Deleted entries become tombstones and compact locally once tombstones outnumber live entries.
+
+That representation is private because it carries graph invariants. Writing an identity counter could reuse an id, changing a tombstone could revive a removed relationship, and reaching through `Dag.graph` could insert a cycle without the DAG check. Public operations preserve those invariants and leave the physical layout free to change without changing graph semantics.
+
+The eager RFC 047 methods retain their observable orders for compatibility: neighbors are ordered by `NodeId`, parallel neighbors are deduplicated, and topological order follows repeated allocation-order passes. Indexed readers use edge-insertion adjacency instead, because resumable pages need a stable structural order that does not allocate and sort a complete neighbor list.
+
 ## Boundaries are intentional
 
 `std.graph` is a small in-memory graph module. It is not a graph database, query language, persistence format, or distributed synchronization layer. Weighted edges, property graph queries, alternate storage backends, and serialization-specific contracts should be designed as explicit extensions rather than folded into the core reference surface by accident.

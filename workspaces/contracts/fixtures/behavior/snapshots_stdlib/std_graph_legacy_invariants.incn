@@ -1,0 +1,43 @@
+# behavior: indexed legacy containers remove incident edges, never reuse ids, preserve DAG acyclicity and remove one parallel edge at a time (#2524)
+# expect-stdout:
+#   incident false false
+#   node ids 0 1 2
+#   dag false true
+#   parallel 1 false true
+
+from std.graph import Dag, DiGraph, EdgeId, MultiDiGraph
+
+
+def main() -> None:
+    mut graph = DiGraph[str]()
+    a = graph.add_node("a")
+    b = graph.add_node("b")
+    graph.add_edge(a, b)
+    graph.add_edge(b, a)
+    graph.remove_node(b)
+    println(f"incident {graph.contains_edge(a, b)} {graph.contains_edge(b, a)}")
+    c = graph.add_node("c")
+    println(f"node ids {a.to_int()} {b.to_int()} {c.to_int()}")
+
+    mut dag = Dag[str]()
+    x = dag.add_node("x")
+    y = dag.add_node("y")
+    dag.add_edge(x, y)
+    cycle = dag.add_edge(y, x)
+    println(f"dag {dag.contains_edge(y, x)} {cycle.is_err()}")
+
+    mut multi = MultiDiGraph[str]()
+    left = multi.add_node("left")
+    right = multi.add_node("right")
+    mut first = EdgeId(-1)
+    mut second = EdgeId(-1)
+    match multi.add_edge(left, right):
+        Ok(edge) => first = edge
+        Err(_) => pass
+    match multi.add_edge(left, right):
+        Ok(edge) => second = edge
+        Err(_) => pass
+    multi.remove_edge(first)
+    match multi.edges_between(left, right):
+        Ok(edges) => println(f"parallel {len(edges)} {multi.contains_edge(first)} {multi.contains_edge(second)}")
+        Err(_) => println("parallel error")

@@ -1,0 +1,11 @@
+# behavior: direct edge insertion is private and names add_edge as its replacement (#2524)
+# expect-diagnostic: INCAN-T0001
+
+from std.graph import DiGraph
+
+
+def bypass() -> None:
+    mut graph = DiGraph[str]()
+    from_ = graph.add_node("from")
+    to = graph.add_node("to")
+    graph.insert_edge(from_, to, true)
