@@ -250,6 +250,7 @@ def prepare_candidate_home(run: ReleaseRun) -> Result[None, str]:
         .joinpath("toolchain.json")
         .write_text(absolute_manifest(manifest, seed.0)?, "utf-8", "strict", None)
         .map_err((error) => error.message())?
+    apply_release_trust(run.paths.source, run.paths.toolchain)?
     share_seed_tree(seed, run.paths.toolchain, "loaves")?
     share_seed_tree(seed, run.paths.toolchain, "native")?
     share_seed_tree(seed, run.paths.toolchain, "registry")?
@@ -272,6 +273,18 @@ def prepare_candidate_home(run: ReleaseRun) -> Result[None, str]:
     )
     require_release_step(run, rust_step)?
     return Ok(None)
+
+
+def apply_release_trust(source: Path, toolchain: Path) -> Result[None, str]:
+    """Carry the release-configured ordinary publisher defaults in the installed toolchain description."""
+    policy = read_json(source.joinpath("scripts/release-trust.json"))?
+    publishers = policy.require("default_publishers").map_err((error) => error.message())?.expect_array().map_err(
+        (error) => error.message(),
+    )?
+    path = toolchain.joinpath("toolchain.json")
+    mut fields = read_json(path)?.expect_object().map_err((error) => error.message())?
+    fields["default_trusted_publishers"] = JsonValue.array(publishers)
+    return replace_json(path, JsonValue.object(fields))
 
 
 def build_source_closure(run: ReleaseRun) -> Result[Candidate, str]:

@@ -8,6 +8,7 @@ An Incan installation provides two commands, `oven` and `incan`, as one program.
 oven --help | -h | help
 oven --version
 oven lock [--versions lowest|lowest-direct|newest] [PATH]
+oven trust list | add publisher|loaf|project VALUE | remove publisher|loaf|project VALUE
 oven run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
 oven check PATH [--format text|json] [UNIT OPTIONS]
 oven test PATH [UNIT OPTIONS]
@@ -62,6 +63,14 @@ Resolves the root project at `PATH` and atomically writes its generated [`oven.l
 `--versions` accepts `lowest`, `lowest-direct` or `newest`. Without the option, an existing same-toolchain lock keeps its recorded mode; otherwise the mode is `lowest`. The current compiled-unit resolver applies the mode before its exact-producer and profile tie-breaks.
 
 This command is available only as `oven lock`. `incan lock` is an unknown command.
+
+## `oven trust`
+
+`oven trust list` lists the effective compile-time trust entries and each entry's source. `oven trust add KIND VALUE` and `oven trust remove KIND VALUE` update the user's `config.toml` atomically, where `KIND` is `publisher`, `loaf` or `project`. A publisher value is one package scope; `crates-io` is an adopted scope and accepts only individual Loaf entries. A project value is stored as an absolute project root. A project manifest, workspace or lock file cannot add trust.
+
+The installed toolchain may carry default publisher entries. They are listed as `toolchain VERSION` entries and are removable like other entries. A publisher entry in 0.6 matches the scope name; binding it to the registry-recorded publisher identity requires signed scope-claim records.
+
+Trust controls only whether unattended preparation and the language server may run compile-time code. It does not select or widen that code's execution mode. Explicit `run`, `build` and `test` requests execute as documented for those commands.
 
 ## `oven run`
 
@@ -196,7 +205,15 @@ A bake whose producer released its claim without sealing has ended. Its staging 
 
 ## Storage policy
 
-`config.toml` in the Incan home may hold a `[storage]` table. Omitting the file, the table or a key selects the default.
+`config.toml` in the Incan home may hold `[trust]` and `[storage]` tables. The read-only organization file is `/Library/Application Support/Incan/config.toml` on macOS and `/etc/incan/config.toml` on Linux. Trust entries from a configuration file inside the consuming project are refused.
+
+| Trust key | Type | Meaning |
+| --- | --- | --- |
+| `publishers` | Array of scope strings | Every Loaf published under each non-adopted scope |
+| `loaves` | Array of Loaf identity strings | The named Loaves only |
+| `projects` | Array of path strings | Compile-time code authored below each project root; relative paths resolve beside the configuration file and `~` resolves through `HOME` |
+
+Omitting `[storage]` or one of its keys selects the storage default.
 
 | Key | Type | Meaning | Default |
 | --- | --- | --- | --- |
