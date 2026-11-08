@@ -3,7 +3,7 @@
 //! Oven reads a project's manifest once and describes each unit it compiles, checks or analyzes. The compiler reads
 //! no manifest: everything a session needs about the project arrives here.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -96,6 +96,15 @@ pub struct UnitDescription {
     /// This vocabulary unit is the generated adapter for the required public desugar export.
     #[serde(default)]
     pub vocab_desugarer: bool,
+    /// Stable authority labels covering each selected Loaf whose compile-time code may run for this unit.
+    #[serde(default)]
+    pub covered_by: BTreeMap<String, String>,
+    /// Selected Loaves unavailable to code-free analysis because preparing them would run untrusted code.
+    #[serde(default)]
+    pub not_prepared_loaves: Vec<String>,
+    /// Stable missing-trust stop retained for editor presentation while code-free analysis continues.
+    #[serde(default)]
+    pub trust_stop: String,
     /// The exact Rust libraries this unit links, including its toolchain and reached Loaves.
     pub externs: Vec<UnitNativeCrate>,
     /// Directories containing the transitive dependencies of the named libraries. Once read, this also holds the
