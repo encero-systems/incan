@@ -40,6 +40,9 @@ pub def read_unit(value: JsonValue) -> Result[UnitDescription, str]:
             vocab_admissions=texts(value, "vocab_admissions")?,
             vocab_policy=required_text(value, "vocab_policy")?,
             vocab_desugarer=flag(value, "vocab_desugarer")?,
+            covered_by=string_map(value, "covered_by")?,
+            not_prepared_loaves=texts(value, "not_prepared_loaves")?,
+            trust_stop=required_text(value, "trust_stop")?,
             toolchain_access=read_access(value)?,
         ),
     )
@@ -100,3 +103,14 @@ def optional_flag(value: JsonValue, name: str) -> Result[bool, str]:
     if value.get(name) == None:
         return Ok(false)
     return flag(value, name)
+
+
+def string_map(value: JsonValue, name: str) -> Result[Dict[str, str], str]:
+    """Require one string-valued object, preserving its exact Loaf keys and evidence labels."""
+    fields = value.require(name).map_err((error) => error.message())?.expect_object().map_err(
+        (error) => error.message(),
+    )?
+    mut result: Dict[str, str] = {}
+    for key in fields.keys():
+        result[key] = fields[key].expect_str().map_err((error) => error.message())?
+    return Ok(result)

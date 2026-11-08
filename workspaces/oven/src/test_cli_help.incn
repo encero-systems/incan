@@ -61,7 +61,7 @@ pub def test_help_uses_each_commands_synopsis_and_respects_operands() -> Result[
             ("lock", "oven lock [--versions lowest|lowest-direct|newest] [PATH]"),
             ("trust", "oven trust list | add publisher|loaf|project VALUE | remove publisher|loaf|project VALUE"),
             ("test", "oven test PATH [UNIT OPTIONS]"),
-            ("describe-unit", "oven describe-unit PATH [UNIT OPTIONS]"),
+            ("describe-unit", "oven describe-unit PATH [--unattended] [UNIT OPTIONS]"),
             ("build", "oven build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"),
             ("owner stop", "oven owner stop"),
             ("bakery status", "oven bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE"),

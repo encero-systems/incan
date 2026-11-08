@@ -12,7 +12,7 @@ oven trust list | add publisher|loaf|project VALUE | remove publisher|loaf|proje
 oven run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
 oven check PATH [--format text|json] [UNIT OPTIONS]
 oven test PATH [UNIT OPTIONS]
-oven describe-unit PATH [UNIT OPTIONS]
+oven describe-unit PATH [--unattended] [UNIT OPTIONS]
 oven build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
 oven owner stop
 oven bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE
@@ -104,7 +104,7 @@ With `INCAN_ENGINE=records`, only explicit program source files are accepted, wi
 
 ## `oven describe-unit`
 
-Writes the selected source's unit description as a JSON object. Execution-only options are refused.
+Writes the selected source's unit description as a JSON object. Execution-only options are refused. `--unattended` prevents preparation from running compile-time code unless user or organization trust covers its Loaf; the command writes `INCAN-T0134` to standard error when trust is missing and retains the code-free description on standard output.
 
 | Fields | JSON type | Contract |
 | --- | --- | --- |
@@ -121,6 +121,9 @@ Writes the selected source's unit description as a JSON object. Execution-only o
 | `vocab`, `vocab_entry` | String or null | Prepared vocabulary registration path and declared vocabulary entry path. |
 | `vocabulary`, `vocab_desugarer` | Booleans | Whether vocabulary is active and whether this unit supplies its desugarer. |
 | `vocab_admissions` | Array of strings | Admitted vocabulary dependency keys. |
+| `covered_by` | Object of strings | Compile-time Loaf package identities mapped to the trust entry, installed-toolchain digest or `explicit-request` that authorized execution. |
+| `not_prepared_loaves` | Array of strings | Selected Loaf identities not prepared under the unattended trust policy. |
+| `trust_stop` | String | Empty when preparation is complete; otherwise the stable `INCAN-T0134` stop also written to standard error. |
 | `vocab_policy` | String | Vocabulary policy identity. |
 | `externs` | Array of objects | Exact native bindings, each with string `name` and `path`. |
 | `search`, `rust_abi` | Arrays of strings | Additional native search directories and Rust ABI cache paths. |

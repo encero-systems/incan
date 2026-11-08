@@ -62,6 +62,7 @@ pub model Options:
     pub engine_report: bool = false
     pub locked: bool = false
     pub direct: bool = false
+    pub unattended: bool = false
     # One CLI preparation owns its source readings, including its provider callbacks.
     pub manifests: ManifestReader = ManifestReader()
 
@@ -292,6 +293,8 @@ def parse_options(arguments: list[str]) -> Result[Options, str]:
             options.locked = true
         elif argument == "--direct":
             options.direct = true
+        elif argument == "--unattended":
+            options.unattended = true
         elif argument == "--no-default-features":
             options.feature_options = true
             options.request.default_features = false
@@ -608,6 +611,8 @@ def require_command_options(command: str, options: Options) -> Result[None, str]
         return Err("--engine-report requires INCAN_ENGINE=records run or build")
     if options.locked and command not in ["run", "build", "test"]:
         return Err("--locked requires run, build or test")
+    if options.unattended and command != "describe-unit":
+        return Err("--unattended requires oven describe-unit")
     if options.argv0 != None and command != "run":
         return Err("--argv0 requires run")
     if len(options.program_entries) > 0 and command not in ["run", "build"]:
@@ -650,9 +655,12 @@ def print_description(options: Options) -> None:
     """
     # 1. Options that only a run or build understands are refused with the usage exit status.
     # 2. A unit that cannot be described against the toolchain ends the command with status 1.
-    match describe_native(Path(options.path), options.profile, options.request):
+    match describe_native(Path(options.path), options.profile, options.request, options.unattended):
         Err(reason) => fail(f"oven describe-unit: {reason}", 1)
         Ok(unit) =>
+            if unit.trust_stop != "":
+                mut err = stderr()
+                _ = err.write_all(RustString.from(unit.trust_stop + "\n").into_bytes())
             # 3. The description is printed as JSON, or ends the command with status 1 when it cannot be encoded.
             match unit.to_json().to_pretty_json():
                 Err(error) => fail(f"oven describe-unit: {error.message()}", 1)

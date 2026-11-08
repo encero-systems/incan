@@ -813,6 +813,25 @@ pub(super) const IMPORTED_TYPE_MADE_PRIVATE: DiagnosticCatalogEntry = Diagnostic
     docs_url: None,
 };
 
+pub(super) const COMPILE_TIME_CODE_NOT_TRUSTED: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0134",
+    title: "Compile-time code is not trusted for unattended preparation",
+    severity: "error",
+    phase: "tooling",
+    summary: "An unasked preparation stopped before running compile-time code from one or more Loaves without trust.",
+    explanation: "The language server and unattended Oven inspection run procedural macros, vocabulary registration and vocabulary workers only when user or organization configuration covers every selected provider. Explicit build, run and test requests keep their usual execution behavior. Trust does not select or widen an execution mode.",
+    examples: &["oven describe-unit --unattended src/main.incn"],
+    common_causes: &[
+        "A path dependency with a procedural macro or vocabulary entry is outside every trusted project root.",
+        "A registry Loaf's publisher or package has no trust entry.",
+    ],
+    fixes: &[
+        "Review the named Loaf and add the offered publisher, Loaf or project entry with `oven trust add`.",
+        "Run an explicit build, run or test when executing the selected compile-time code is the intended action.",
+    ],
+    docs_url: Some("https://encero-systems.github.io/incan/tooling/reference/cli_reference/#oven-describe-unit"),
+};
+
 pub(super) const PRIVATE_CLASS_CONSTRUCTOR_FIELD: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     code: "INCAN-T0135",
     title: "Private class field named by an external constructor",
@@ -844,6 +863,7 @@ pub(super) const CATALOG: &[DiagnosticCatalogEntry] = &[
     FIELD_RENAME_CLAIMED_TWICE,
     INVALID_MADE_PRIVATE_ANNOTATION,
     IMPORTED_TYPE_MADE_PRIVATE,
+    COMPILE_TIME_CODE_NOT_TRUSTED,
     PRIVATE_CLASS_CONSTRUCTOR_FIELD,
     PARSER_SYNTAX,
     TYPECHECK,

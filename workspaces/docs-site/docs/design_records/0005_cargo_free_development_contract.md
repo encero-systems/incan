@@ -53,6 +53,8 @@ The complete developer path is Cargo-free, including compiler bootstrap, depende
 
 For an active project, observing a valid requirement change in `loaf.toml` starts resolution and preparation without waiting for Run or Test. Use compatible units already in the local cache, obtain missing compatible assets through `loaves.pub`, and compile from admitted source when no compatible prepared asset is available, according to [RFC 125](../RFCs/125_incan_pub_loaf_registry_and_baked_asset_distribution.md).
 
+Unattended preparation stops after fetching and verifying when trust does not cover compile-time code. An explicit command runs that code in its configured execution mode; trust and execution mode remain separate decisions.
+
 Preparation is bound to the selected graph. A later manifest change cannot cause a command to execute a stale graph. Run and Test join preparation of the graph they require; they do not start a duplicate copy of the same work. If that preparation is incomplete, they show concise progress and continue automatically once it succeeds. A preparation failure produces an actionable diagnostic.
 
 The local readiness requirement is **under 100 ms from observing the valid manifest change to the dependency graph becoming ready**, including necessary resolution, compatibility checks, and project dependency-state updates. This case assumes the required metadata and compatible prepared units are already admitted locally. It requires no network access or compilation and no copying of the dependency closure into the project. Observation delay must be reported separately rather than hidden by this measurement boundary.
