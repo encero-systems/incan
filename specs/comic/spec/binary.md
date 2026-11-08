@@ -21,6 +21,8 @@ A finite set of crumbs may be sealed. Its envelope ends with the number of value
 | Description sharing | Dictionary scope, type/member identity encoding, recursive references and invalid-description refusal. |
 | Collections | Counts, optional presence, enum/union selection, map/set order and duplicate handling. |
 | Projection | Field/column ranges, empty values, range validation and retained backing. |
+| Column encodings | For a set arranged by column: each column's encoding, named in its header and chosen per column among frame-of-reference bit-packing at an exact width, zigzag deltas, runs, and sorted dictionaries whose keys share prefixes and whose codes are bit-packed or run-coded. Whether a column or block keeps positional access, and the block size of its index when it does not. |
+| Shape references | Whether a crumb may name a description by its model hash instead of carrying it, so a small message to a reader that already has the description doesn't repeat it. |
 | Canonicality | Shortest numbers/lengths, unique descriptions, exact consumption and original-shape re-encoding. |
 | Limits | Checks before allocation, shared nested budgets, decompression accounting and cycle refusal. |
 
