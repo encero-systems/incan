@@ -39,6 +39,7 @@ impl BodyBuilder<'_, '_> {
             view: bir::ReturnedView {
                 slot,
                 access: view.access,
+                component: view.component.to_vec(),
                 carried: view.carried,
             },
             local: parameter.local,
@@ -157,6 +158,32 @@ impl BodyBuilder<'_, '_> {
             span,
         });
         Ok(())
+    }
+
+    /// Lower a stored aggregate return as an ordinary value while fixing its root expression to the physical result
+    /// type whose selected component is a reference. Nested construction remains source-shaped; the checked result
+    /// dependency and native type validation jointly prevent an owned payload from crossing this boundary.
+    pub(super) fn lower_aggregate_return(
+        &mut self,
+        value: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) {
+        let previous = self.type_overrides.insert(value.span, self.owner_return_type.clone());
+        let operand = self.lower_return_operand(value, scope, out);
+        match previous {
+            Some(previous) => {
+                self.type_overrides.insert(value.span, previous);
+            }
+            None => {
+                self.type_overrides.remove(&value.span);
+            }
+        }
+        out.push(bir::Statement {
+            kind: bir::StatementKind::Return { value: Some(operand) },
+            span,
+        });
     }
 
     /// Build the body's reference-carrying tuple in element order, as any tuple is built: the `carried` element is a
@@ -308,6 +335,17 @@ impl BodyBuilder<'_, '_> {
         Some((expression.span, payload))
     }
 
+    /// The span and complete selected component of a call returning a user-defined or nested aggregate that stores
+    /// one physical view. Parentheses do not change the call selected by the checker.
+    pub(super) fn aggregate_view_call(&self, expression: &ast::Spanned<ast::Expr>) -> Option<(ast::Span, Vec<usize>)> {
+        let expression = unparenthesized(expression);
+        if !matches!(expression.node, ast::Expr::Call(..) | ast::Expr::MethodCall(..)) {
+            return None;
+        }
+        let (.., component) = self.type_info.selected_aggregate_view(expression.span)?;
+        Some((expression.span, component))
+    }
+
     /// For a call whose selected callee carries a view in its `Result` or `Option`, the same substituted place a
     /// direct view would give, with the payload carrying the view. `?` on a success-carried view continues on it; the
     /// carrier's own reference is never read.
@@ -387,15 +425,68 @@ fn substituted_place(
 /// with an exclusive view in the success payload, `Result[T, &E]` with a shared view in the error, `(int, &T)` for
 /// `(int, T)` with a shared view in its second element. Other types are returned unchanged.
 pub(super) fn reference_carrier(carrier: IncanType, access: IncanInputAccess, payload: usize) -> IncanType {
+    reference_component(carrier, access, &[payload])
+}
+
+/// Put a physical reference at one checked structural component of a generic or tuple result.
+pub(super) fn reference_component(carrier: IncanType, access: IncanInputAccess, component: &[usize]) -> IncanType {
+    let Some((&slot, rest)) = component.split_first() else {
+        return reference_value(carrier, access);
+    };
     match carrier {
-        IncanType::Generic { base, mut args } if payload < args.len() => {
-            args[payload] = reference_value(args[payload].clone(), access);
+        IncanType::Generic { base, mut args } if slot < args.len() => {
+            args[slot] = reference_component(args[slot].clone(), access, rest);
             IncanType::Generic { base, args }
         }
-        IncanType::Tuple(mut elements) if payload < elements.len() => {
-            elements[payload] = reference_value(elements[payload].clone(), access);
+        IncanType::Tuple(mut elements) if slot < elements.len() => {
+            elements[slot] = reference_component(elements[slot].clone(), access, rest);
             IncanType::Tuple(elements)
         }
+        other => other,
+    }
+}
+
+/// Replace the authored ownership mode at one selected result component with its physical reference. The checker has
+/// already authenticated the mode identity; this boundary removes its presentation wrapper rather than borrowing
+/// the wrapper as if it were runtime storage.
+pub(super) fn reference_authored_component(
+    carrier: IncanType,
+    access: IncanInputAccess,
+    component: &[usize],
+) -> IncanType {
+    super::parameter_types::physical_type_argument(reference_authored_component_inner(carrier, access, component))
+}
+
+/// Replace the selected authored mode before the public boundary projects every nested ownership argument.
+fn reference_authored_component_inner(carrier: IncanType, access: IncanInputAccess, component: &[usize]) -> IncanType {
+    match carrier {
+        IncanType::Generic { base, mut args } => {
+            if incan_lang::lang::types::ownership::from_str(&base).is_some() {
+                if args.len() != 1 {
+                    return IncanType::Unsupported("ownership result component does not contain one value type".into());
+                }
+                return reference_value(args.remove(0), access);
+            }
+            let Some((&slot, rest)) = component.split_first() else {
+                return reference_value(IncanType::Generic { base, args }, access);
+            };
+            if slot < args.len() {
+                args[slot] = reference_authored_component_inner(args[slot].clone(), access, rest);
+            }
+            IncanType::Generic { base, args }
+        }
+        IncanType::Tuple(mut elements) => {
+            let Some((&slot, rest)) = component.split_first() else {
+                return reference_value(IncanType::Tuple(elements), access);
+            };
+            if slot < elements.len() {
+                elements[slot] = reference_authored_component_inner(elements[slot].clone(), access, rest);
+            }
+            IncanType::Tuple(elements)
+        }
+        IncanType::Ref(inner) if component.is_empty() => IncanType::Ref(inner),
+        IncanType::RefMut(inner) if component.is_empty() => IncanType::RefMut(inner),
+        other if component.is_empty() => reference_value(other, access),
         other => other,
     }
 }

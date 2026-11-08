@@ -126,7 +126,7 @@ impl TypeCheckInfo {
     )> {
         let view = self
             .selected_returned_view(span)
-            .filter(|view| view.carried.is_none())?;
+            .filter(|view| view.component.is_empty())?;
         Some((view.access, view.source.slot.clone(), view.source.fields.clone()))
     }
 
@@ -148,6 +148,27 @@ impl TypeCheckInfo {
             view.source.slot.clone(),
             view.source.fields.clone(),
             view.carried?,
+        ))
+    }
+
+    /// The returned view stored inside a user-defined or nested aggregate, including its complete result component.
+    pub(crate) fn selected_aggregate_view(
+        &self,
+        span: HirSourceSpan,
+    ) -> Option<(
+        IncanInputAccess,
+        crate::ownership_metadata::SourceSlot,
+        Vec<CanonicalSymbolId>,
+        Vec<usize>,
+    )> {
+        let view = self
+            .selected_returned_view(span)
+            .filter(|view| !view.component.is_empty() && view.carried.is_none())?;
+        Some((
+            view.access,
+            view.source.slot.clone(),
+            view.source.fields.clone(),
+            view.component.to_vec(),
         ))
     }
 

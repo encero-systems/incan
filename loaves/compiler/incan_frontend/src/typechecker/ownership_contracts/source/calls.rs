@@ -743,7 +743,7 @@ impl Builder<'_> {
             },
             _ => Ok(self
                 .call_relation(expression)?
-                .filter(|relation| relation.carried.is_none())),
+                .filter(|relation| relation.component.is_empty())),
         }
     }
 
@@ -815,6 +815,7 @@ impl Builder<'_> {
                 exclusive: view.access == IncanInputAccess::Exclusive,
                 slot: view.source.slot.clone(),
                 fields: view.source.fields.clone(),
+                component: view.component.to_vec(),
                 carried: view.carried,
             }))
     }
@@ -854,6 +855,7 @@ impl Builder<'_> {
             exclusive,
             slot: source.slot.clone(),
             fields: source.fields.clone(),
+            component: Vec::new(),
             carried: None,
         }))
     }
@@ -1046,6 +1048,85 @@ impl Builder<'_> {
             },
         ))
     }
+
+    /// Evaluate an aggregate returned view and retain both its immediate source storage and every dependency stored
+    /// by that source value. A cursor borrowing a selection therefore keeps the selection local alive and carries
+    /// the selection's graph loan forward; neither dependency may be reconstructed from the nominal field shape.
+    pub(super) fn evaluate_aggregate_view_call(
+        &mut self,
+        expression: &Spanned<Expr>,
+        relation: ViewRelation,
+        incoming: Vec<usize>,
+    ) -> Result<(Vec<usize>, Vec<LoanId>), Unavailable> {
+        let source_slot = relation.slot.clone();
+        let (mut incoming, path) = self.evaluate_view_call(expression, relation, incoming)?;
+        let direct = path.through.ok_or(Unavailable {
+            span: expression.span,
+            reason: "aggregate view has no retained source loan".into(),
+        })?;
+        let call = super::super::builtins::view_call(expression);
+        let invocation = self.graph.invocations.get(&call.span).ok_or(Unavailable {
+            span: call.span,
+            reason: "aggregate view call has no checked invocation".into(),
+        })?;
+        let source = match source_slot {
+            SourceSlot::Receiver => invocation.receiver,
+            SourceSlot::Parameter(slot) => invocation
+                .arguments
+                .iter()
+                .find(|argument| argument.slot == slot)
+                .and_then(|argument| argument.loan),
+        }
+        .and_then(|loan| self.graph.loans.get(loan.0))
+        .ok_or(Unavailable {
+            span: call.span,
+            reason: "aggregate view source was not borrowed by its invocation".into(),
+        })?;
+        let dependencies = match &source.source.root {
+            Root::Binding(root) => self.graph.dependent_locals.get(root).cloned().unwrap_or_default(),
+            Root::Temporary { .. } => Vec::new(),
+        };
+        let mut loans = vec![direct];
+        for dependency in dependencies {
+            let (next, _, loan) = self.carry_dependency(dependency, call.span, incoming)?;
+            incoming = next;
+            loans.push(loan);
+        }
+        Ok((incoming, loans))
+    }
+
+    /// Recover the substituted source place of an already evaluated view call without creating another result loan.
+    /// Aggregate-return validation uses this after ordinary value evaluation so its graph matches the stored value's
+    /// execution while still proving the declaration's exact `from` relationship.
+    pub(super) fn evaluated_view_call_place(
+        &self,
+        expression: &Spanned<Expr>,
+        relation: &ViewRelation,
+    ) -> Result<Place, Unavailable> {
+        let expression = super::super::builtins::view_call(expression);
+        let invocation = self.graph.invocations.get(&expression.span).ok_or(Unavailable {
+            span: expression.span,
+            reason: "aggregate view call has no checked invocation".into(),
+        })?;
+        let base = match relation.slot {
+            SourceSlot::Receiver => invocation.receiver,
+            SourceSlot::Parameter(slot) => invocation
+                .arguments
+                .iter()
+                .find(|argument| argument.slot == slot)
+                .and_then(|argument| argument.loan),
+        }
+        .and_then(|loan| self.graph.loans.get(loan.0))
+        .ok_or(Unavailable {
+            span: expression.span,
+            reason: "aggregate view source was not borrowed by its invocation".into(),
+        })?;
+        let mut place = base.source.clone();
+        place
+            .projection
+            .extend(relation.fields.iter().cloned().map(Projection::Field));
+        Ok(place)
+    }
 }
 
 /// A selected callee's returned view: its access, the source slot, the declared stored-field path, and the carrier
@@ -1054,6 +1135,7 @@ pub(super) struct ViewRelation {
     exclusive: bool,
     slot: SourceSlot,
     fields: Vec<incan_semantics_core::CanonicalSymbolId>,
+    pub(super) component: Vec<usize>,
     pub(super) carried: Option<usize>,
 }
 

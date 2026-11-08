@@ -157,7 +157,10 @@ impl TypeChecker {
             }
             self.record_body_ir_constructor_field_requirement(type_name, field_info, field_name.span);
 
-            let value_ty = self.check_expr_with_expected(expr, Some(&field_info.ty));
+            let field_value_ty = self
+                .explicit_ownership_value_type(&field_info.ty)
+                .unwrap_or_else(|| field_info.ty.clone());
+            let value_ty = self.check_expr_with_expected(expr, Some(&field_value_ty));
             self.record_value_destination_if_compatible(expr.span, &value_ty, &field_info.ty);
 
             if provided.contains_key(&canonical_name) {
@@ -186,17 +189,17 @@ impl TypeChecker {
             self.infer_type_param_bindings(&field_info.ty, &value_ty, &mut type_bindings);
             field_arguments.push((expr, field_info.ty.clone()));
 
-            if !self.types_compatible(&value_ty, &field_info.ty)
+            if !self.types_compatible(&value_ty, &field_value_ty)
                 && !self.record_validated_newtype_field_coercion_if_possible(
                     &value_ty,
-                    &field_info.ty,
+                    &field_value_ty,
                     &canonical_name,
                     expr.span,
                 )
             {
                 self.errors.push(errors::field_type_mismatch(
                     &field_name.node,
-                    &field_info.ty.to_string(),
+                    &field_value_ty.to_string(),
                     &value_ty.to_string(),
                     expr.span,
                 ));

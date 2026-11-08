@@ -144,10 +144,10 @@ impl BodyBuilder<'_, '_> {
                 .parameters
                 .get(*slot)
                 .ok_or("explicit input has no selected value parameter")?;
-            let ty = self.checked_type(&parameter.ty);
+            let ty = super::parameter_types::physical_type_argument(self.checked_type(&parameter.ty));
             let value = match argument.source {
                 Some(CheckedInputSource::Place { root, fields, elements }) => {
-                    if self.resolve_ty(expression.span) != ty {
+                    if super::parameter_types::physical_type_argument(self.resolve_ty(expression.span)) != ty {
                         return Err("explicit source-place input cannot coerce or copy its owner".into());
                     }
                     let place = self.lower_expr_to_place(expression, scope, out);

@@ -349,7 +349,10 @@ fn method_return_witness(
     }
     let mut bindings = HashMap::new();
     for (parameter, argument) in owner.type_parameters.iter().zip(owner_arguments) {
-        bindings.insert(parameter.clone(), argument.clone());
+        bindings.insert(
+            parameter.clone(),
+            super::parameter_types::physical_type_argument(argument.clone()),
+        );
     }
     let mut adopted = implementations.iter().filter(|record| {
         record.owner == owner.canonical
@@ -495,6 +498,12 @@ fn instantiate_witness(
                 .map(|ty| instantiate_witness(ty, bindings, receiver))
                 .collect::<Option<_>>()?,
         )),
+        IncanType::Ref(inner) => Some(IncanType::Ref(Box::new(instantiate_witness(
+            inner, bindings, receiver,
+        )?))),
+        IncanType::RefMut(inner) => Some(IncanType::RefMut(Box::new(instantiate_witness(
+            inner, bindings, receiver,
+        )?))),
         IncanType::Unknown | IncanType::Infer | IncanType::Unsupported(_) => None,
         ty => Some(ty.clone()),
     }

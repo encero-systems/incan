@@ -539,6 +539,9 @@ pub struct TypeChecker {
     loop_item_candidates: std::collections::BTreeMap<Span, ownership_contracts::loop_items::Candidate>,
     /// Active loop-item roots, used only to retain the lexical parent relation of nested candidate loops.
     active_loop_items: std::collections::BTreeMap<CanonicalSymbolId, Span>,
+    /// Local declarations whose explicit ownership bodies were refused before callers were checked. The marker
+    /// suppresses dependent caller-graph diagnostics without becoming serialized type information.
+    refused_ownership_authorities: HashSet<CanonicalSymbolId>,
     /// Nested producer diagnostic intervals used only while capturing independently owned outputs.
     diagnostic_owner_ranges: Vec<(std::ops::Range<usize>, std::ops::Range<usize>)>,
     /// Symbol table populated during the first pass.

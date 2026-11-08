@@ -642,7 +642,16 @@ pub fn model_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> Result<Ty<'tcx>, PlanE
             function: name.into(),
             reason: "model declaration is missing".into(),
         })?;
-    Ok(tcx.type_of(definition).instantiate_identity().skip_normalization())
+    let arguments =
+        rustc_middle::ty::GenericArgs::for_item(tcx, definition, |parameter, arguments| match parameter.kind {
+            rustc_middle::ty::GenericParamDefKind::Lifetime => tcx.lifetimes.re_erased.into(),
+            _ => tcx
+                .type_of(parameter.def_id)
+                .instantiate(tcx, arguments)
+                .skip_normalization()
+                .into(),
+        });
+    Ok(tcx.type_of(definition).instantiate(tcx, arguments).skip_normalization())
 }
 
 /// Select the primitive leaf and wrap it in the standard Vec ADT once per retained list dimension.

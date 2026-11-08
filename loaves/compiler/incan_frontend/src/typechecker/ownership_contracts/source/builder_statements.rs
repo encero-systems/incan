@@ -175,6 +175,21 @@ impl Builder<'_> {
             self.graph.dependent_values.insert(assignment.value.span);
             return Ok((result.incoming, true));
         }
+        // A user-defined or nested aggregate stores its physical reference while retaining the substituted source
+        // loan on the aggregate local. Unlike a builtin carried view, ordinary field access reads that stored value.
+        if let Some(relation) = self
+            .call_relation(&assignment.value)?
+            .filter(|relation| !relation.component.is_empty() && relation.carried.is_none())
+        {
+            let (incoming, loans) = self.evaluate_aggregate_view_call(&assignment.value, relation, incoming)?;
+            if self.graph.dependent_locals.insert(root.clone(), loans).is_some() {
+                return Err(Unavailable {
+                    span: assignment.name_span,
+                    reason: "aggregate view has more than one dependency destination".into(),
+                });
+            }
+            return Ok((incoming, true));
+        }
         // A new local initialized by a returned view aliases its substituted place under the call's result loan.
         if let Some(view) = self.view_source(&assignment.value)? {
             let (incoming, path) = self.evaluate_view_source(&assignment.value, view, incoming)?;
@@ -606,6 +621,11 @@ impl Builder<'_> {
             }
             Statement::Return(value) => {
                 match (value, self.view.clone(), self.owned_source.clone()) {
+                    (Some(value), Some((exclusive, source)), None)
+                        if !self.view_component.is_empty() && self.view_carried.is_none() =>
+                    {
+                        self.aggregate_return(value, &self.view_component.clone(), exclusive, &source, incoming)?;
+                    }
                     (Some(value), Some((exclusive, source)), None) => match self.view_carried {
                         Some(payload) => self.carried_return(value, payload, exclusive, &source, incoming)?,
                         None => {

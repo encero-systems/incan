@@ -126,6 +126,40 @@ impl<'a> CheckedInputBody<'a> {
         }))
     }
 
+    /// The access held by an unannotated local that owns a user-defined or nested aggregate returned from one
+    /// authenticated view call. The aggregate remains value storage; its one dependency loan must be keyed to the
+    /// initializer call selected by the checker.
+    pub(crate) fn aggregate_view_local(
+        &self,
+        destination: &CanonicalSymbolId,
+        initializer: &Spanned<Expr>,
+    ) -> Result<Option<IncanInputAccess>, &'static str> {
+        if self.facts.protocols.explicit_local_modes.contains_key(destination) {
+            return Ok(None);
+        }
+        let Some(loans) = self.graph.dependent_locals.get(destination) else {
+            return Ok(None);
+        };
+        if loans.is_empty() {
+            return Err("aggregate view local must retain at least one source loan");
+        };
+        let call = super::super::builtins::view_call(initializer);
+        let Some((access, ..)) = self.facts.selected_aggregate_view(call.span) else {
+            return Ok(None);
+        };
+        for id in loans {
+            let loan = self
+                .graph
+                .loans
+                .get(id.0)
+                .ok_or("aggregate view local has no retained source loan")?;
+            if loan.span != call.span {
+                return Err("aggregate view local differs from its initializer call");
+            }
+        }
+        Ok(Some(access))
+    }
+
     /// The declarations the closure at `span` captures, as this body's ownership graph records them.
     pub(crate) fn closure_captures(&self, span: HirSourceSpan) -> Option<&'a [CanonicalSymbolId]> {
         self.graph

@@ -82,6 +82,20 @@ pub(super) enum InputCallKind {
 }
 
 impl TypeChecker {
+    /// Return the runtime value beneath one canonical ownership wrapper in a checked type position.
+    pub(in crate::typechecker) fn explicit_ownership_value_type(&self, ty: &ResolvedType) -> Option<ResolvedType> {
+        let ResolvedType::Generic(name, arguments) = ty else {
+            return None;
+        };
+        if self.explicit_ownership_mode(name).is_none() {
+            return None;
+        }
+        let [underlying] = arguments.as_slice() else {
+            return None;
+        };
+        Some(underlying.clone())
+    }
+
     /// The body writer starts with isolated references. Retain the prepared parameter bindings before statement
     /// checking can shadow their names, so source admission and persisted restoration use the same canonical facts.
     pub(super) fn retain_callable_input_bindings(&mut self, callable: CallableSource<'_>) {
@@ -199,12 +213,11 @@ impl TypeChecker {
                 .values()
                 .any(|mode| mode.owner == identity);
         let requires_explicit_flow = requires_declared_flow
-            || self
-                .type_info
-                .protocols
-                .explicit_input_calls
-                .values()
-                .any(|call| call.owner.as_ref() == Some(&identity) && call.kind == InputCallKind::Explicit);
+            || self.type_info.protocols.explicit_input_calls.values().any(|call| {
+                call.owner.as_ref() == Some(&identity)
+                    && call.kind == InputCallKind::Explicit
+                    && !self.refused_ownership_authorities.contains(&call.callee)
+            });
         let may_retain_lazy_result = self.lazy_result_bodies.remove(&identity);
         let may_replace_borrowed_iteration = self.iteration_replacement_bodies.remove(&identity);
         let may_classify_dictionary_lookup = self.dictionary_lookup_bodies.remove(&identity);
@@ -292,6 +305,21 @@ impl TypeChecker {
         // reject that graph if lowering asks for it, but repeating the rejection here exposes an internal proof
         // consequence as a second source error.
         if has_source_conflicts {
+            return;
+        }
+        if let Some(InputFlow::Unavailable(unavailable)) = self.type_info.protocols.explicit_input_flow.get(&identity)
+            && unavailable.reason == source::BORROWED_VALUE_IN_OWNED_FIELD
+        {
+            self.refused_ownership_authorities.insert(identity.clone());
+            self.errors.push(
+                CompileError::type_error(
+                    "A plain owned field cannot store a borrowed value".to_string(),
+                    unavailable.span,
+                )
+                    .with_stable_code("INCAN-T0123")
+                    .with_note("The field's declared type owns its value; the borrowed source is not copied or cloned into it")
+                    .with_hint("Declare the carrying field as a type parameter and instantiate the carrier as Carrier[Borrowed[T]]"),
+            );
             return;
         }
         let admission = match callable {

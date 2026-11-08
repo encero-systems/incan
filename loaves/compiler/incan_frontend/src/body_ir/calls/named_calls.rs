@@ -569,6 +569,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             Some(Err(description)) => return self.unsupported_operand(description, scope, hir_span_value, out),
             None => {}
         }
+        if let Some((access, _, _, component)) = self.type_info.selected_aggregate_view(span) {
+            if bound.is_async {
+                return self.unsupported_operand(
+                    "async aggregate returned views need retained future component facts".into(),
+                    scope,
+                    hir_span_value,
+                    out,
+                );
+            }
+            ty = super::returned_views::reference_authored_component(ty, access, &component);
+        }
         self.push_call_temp(target, bound.arguments, ty, scope, hir_span_value, false, out)
     }
 
