@@ -1,0 +1,617 @@
+{
+  "operation": "adaptation",
+  "cases": [
+    {
+      "id": "field-rename",
+      "written": {
+        "nominal": "example.Customer",
+        "fields": [
+          {
+            "id": "82244417f956",
+            "name": "email",
+            "type": "string",
+            "canonical": true,
+            "absent": "required"
+          }
+        ]
+      },
+      "requested": {
+        "nominal": "example.Customer",
+        "fields": [
+          {
+            "id": "82244417f956",
+            "name": "contact",
+            "type": "string",
+            "canonical": true,
+            "absent": "required"
+          }
+        ]
+      },
+      "values": [
+        {
+          "kind": "string",
+          "value": "ana@example.invalid"
+        }
+      ],
+      "expected": {
+        "status": "accepted",
+        "values": [
+          {
+            "kind": "string",
+            "value": "ana@example.invalid"
+          }
+        ],
+        "projections": {
+          "object": "same",
+          "canonical": "same",
+          "model": "same"
+        }
+      }
+    },
+    {
+      "id": "optional-addition",
+      "written": {
+        "nominal": "example.Customer",
+        "fields": [
+          {
+            "id": "82244417f956",
+            "name": "email",
+            "type": "string",
+            "canonical": true,
+            "absent": "required"
+          }
+        ]
+      },
+      "requested": {
+        "nominal": "example.Customer",
+        "fields": [
+          {
+            "id": "82244417f956",
+            "name": "email",
+            "type": "string",
+            "canonical": true,
+            "absent": "required"
+          },
+          {
+            "id": "a0fb3f1159c9",
+            "name": "nickname",
+            "type": {
+              "kind": "option",
+              "item": "string"
+            },
+            "canonical": true,
+            "absent": "none"
+          }
+        ]
+      },
+      "values": [
+        {
+          "kind": "string",
+          "value": "Ana"
+        }
+      ],
+      "expected": {
+        "status": "accepted",
+        "values": [
+          {
+            "kind": "string",
+            "value": "Ana"
+          },
+          {
+            "kind": "none"
+          }
+        ],
+        "projections": {
+          "object": "same",
+          "canonical": "same",
+          "model": "changed"
+        }
+      }
+    },
+    {
+      "id": "required-addition",
+      "written": {
+        "nominal": "example.Customer",
+        "fields": [
+          {
+            "id": "82244417f956",
+            "name": "email",
+            "type": "string",
+            "canonical": true,
+            "absent": "required"
+          }
+        ]
+      },
+      "requested": {
+        "nominal": "example.Customer",
+        "fields": [
+          {
+            "id": "82244417f956",
+            "name": "email",
+            "type": "string",
+            "canonical": true,
+            "absent": "required"
+          },
+          {
+            "id": "013f54400c82",
+            "name": "age",
+            "type": "i32",
+            "canonical": true,
+            "absent": "required"
+          }
+        ]
+      },
+      "values": [
+        {
+          "kind": "string",
+          "value": "Ana"
+        }
+      ],
+      "expected": {
+        "status": "refused",
+        "kind": "MissingField",
+        "path": "/fields/013f54400c82"
+      }
+    },
+    {
+      "id": "integer-widen",
+      "written": {
+        "nominal": "example.Customer",
+        "fields": [
+          {
+            "id": "013f54400c82",
+            "name": "age",
+            "type": "i32",
+            "canonical": true,
+            "absent": "required"
+          }
+        ]
+      },
+      "requested": {
+        "nominal": "example.Customer",
+        "fields": [
+          {
+            "id": "013f54400c82",
+            "name": "age",
+            "type": "i64",
+            "canonical": true,
+            "absent": "required"
+          }
+        ]
+      },
+      "values": [
+        {
+          "kind": "int",
+          "type": "i32",
+          "value": "12"
+        }
+      ],
+      "expected": {
+        "status": "accepted",
+        "values": [
+          {
+            "kind": "int",
+            "type": "i64",
+            "value": "12"
+          }
+        ],
+        "projections": {
+          "object": "same",
+          "canonical": "same",
+          "model": "changed"
+        }
+      }
+    },
+    {
+      "id": "integer-narrow-even-small-value",
+      "written": {
+        "nominal": "example.Customer",
+        "fields": [
+          {
+            "id": "013f54400c82",
+            "name": "age",
+            "type": "i64",
+            "canonical": true,
+            "absent": "required"
+          }
+        ]
+      },
+      "requested": {
+        "nominal": "example.Customer",
+        "fields": [
+          {
+            "id": "013f54400c82",
+            "name": "age",
+            "type": "i32",
+            "canonical": true,
+            "absent": "required"
+          }
+        ]
+      },
+      "values": [
+        {
+          "kind": "int",
+          "type": "i64",
+          "value": "12"
+        }
+      ],
+      "expected": {
+        "status": "refused",
+        "kind": "IncompatibleType",
+        "path": "/fields/013f54400c82"
+      }
+    },
+    {
+      "id": "present-misfit-not-absence",
+      "written": {
+        "nominal": "example.Customer",
+        "fields": [
+          {
+            "id": "82244417f956",
+            "name": "email",
+            "type": "string",
+            "canonical": true,
+            "absent": "required"
+          }
+        ]
+      },
+      "requested": {
+        "nominal": "example.Customer",
+        "fields": [
+          {
+            "id": "82244417f956",
+            "name": "email",
+            "type": {
+              "kind": "option",
+              "item": "i64"
+            },
+            "canonical": true,
+            "absent": "none"
+          }
+        ]
+      },
+      "values": [
+        {
+          "kind": "string",
+          "value": "12"
+        }
+      ],
+      "expected": {
+        "status": "refused",
+        "kind": "IncompatibleType",
+        "path": "/fields/82244417f956"
+      }
+    },
+    {
+      "id": "wrong-nominal-optional",
+      "written": {
+        "nominal": "example.Customer",
+        "fields": [
+          {
+            "id": "a0fb3f1159c9",
+            "name": "nickname",
+            "type": {
+              "kind": "option",
+              "item": "string"
+            },
+            "canonical": true,
+            "absent": "none"
+          }
+        ]
+      },
+      "requested": {
+        "nominal": "example.Supplier",
+        "fields": [
+          {
+            "id": "a0fb3f1159c9",
+            "name": "nickname",
+            "type": {
+              "kind": "option",
+              "item": "string"
+            },
+            "canonical": true,
+            "absent": "none"
+          }
+        ]
+      },
+      "values": [
+        {
+          "kind": "none"
+        }
+      ],
+      "expected": {
+        "status": "refused",
+        "kind": "NominalMismatch",
+        "path": "/nominal"
+      }
+    },
+    {
+      "id": "optional-cannot-unwrap",
+      "written": {
+        "nominal": "example.Customer",
+        "fields": [
+          {
+            "id": "82244417f956",
+            "name": "email",
+            "type": {
+              "kind": "option",
+              "item": "string"
+            },
+            "canonical": true,
+            "absent": "none"
+          }
+        ]
+      },
+      "requested": {
+        "nominal": "example.Customer",
+        "fields": [
+          {
+            "id": "82244417f956",
+            "name": "email",
+            "type": "string",
+            "canonical": true,
+            "absent": "required"
+          }
+        ]
+      },
+      "values": [
+        {
+          "kind": "some",
+          "value": {
+            "kind": "string",
+            "value": "Ana"
+          }
+        }
+      ],
+      "expected": {
+        "status": "refused",
+        "kind": "IncompatibleType",
+        "path": "/fields/82244417f956"
+      }
+    },
+    {
+      "id": "optional-wrap",
+      "written": {
+        "nominal": "example.Customer",
+        "fields": [
+          {
+            "id": "82244417f956",
+            "name": "email",
+            "type": "string",
+            "canonical": true,
+            "absent": "required"
+          }
+        ]
+      },
+      "requested": {
+        "nominal": "example.Customer",
+        "fields": [
+          {
+            "id": "82244417f956",
+            "name": "email",
+            "type": {
+              "kind": "option",
+              "item": "string"
+            },
+            "canonical": true,
+            "absent": "none"
+          }
+        ]
+      },
+      "values": [
+        {
+          "kind": "string",
+          "value": "Ana"
+        }
+      ],
+      "expected": {
+        "status": "accepted",
+        "values": [
+          {
+            "kind": "some",
+            "value": {
+              "kind": "string",
+              "value": "Ana"
+            }
+          }
+        ],
+        "projections": {
+          "object": "same",
+          "canonical": "same",
+          "model": "changed"
+        }
+      }
+    },
+    {
+      "id": "drop-nonempty-field",
+      "written": {
+        "nominal": "example.Customer",
+        "fields": [
+          {
+            "id": "013f54400c82",
+            "name": "age",
+            "type": "i32",
+            "canonical": true,
+            "absent": "required"
+          },
+          {
+            "id": "82244417f956",
+            "name": "email",
+            "type": "string",
+            "canonical": true,
+            "absent": "required"
+          }
+        ]
+      },
+      "requested": {
+        "nominal": "example.Customer",
+        "fields": [
+          {
+            "id": "82244417f956",
+            "name": "email",
+            "type": "string",
+            "canonical": true,
+            "absent": "required"
+          }
+        ]
+      },
+      "values": [
+        {
+          "kind": "int",
+          "type": "i32",
+          "value": "12"
+        },
+        {
+          "kind": "string",
+          "value": "Ana"
+        }
+      ],
+      "expected": {
+        "status": "accepted",
+        "values": [
+          {
+            "kind": "string",
+            "value": "Ana"
+          }
+        ],
+        "projections": {
+          "object": "changed",
+          "canonical": "changed",
+          "model": "changed"
+        }
+      }
+    },
+    {
+      "id": "declaration-reorder",
+      "written": {
+        "nominal": "example.Customer",
+        "fields": [
+          {
+            "id": "013f54400c82",
+            "name": "age",
+            "type": "i32",
+            "canonical": true,
+            "absent": "required"
+          },
+          {
+            "id": "82244417f956",
+            "name": "email",
+            "type": "string",
+            "canonical": true,
+            "absent": "required"
+          }
+        ]
+      },
+      "requested": {
+        "nominal": "example.Customer",
+        "fields": [
+          {
+            "id": "82244417f956",
+            "name": "email",
+            "type": "string",
+            "canonical": true,
+            "absent": "required"
+          },
+          {
+            "id": "013f54400c82",
+            "name": "age",
+            "type": "i32",
+            "canonical": true,
+            "absent": "required"
+          }
+        ]
+      },
+      "values": [
+        {
+          "kind": "int",
+          "type": "i32",
+          "value": "12"
+        },
+        {
+          "kind": "string",
+          "value": "Ana"
+        }
+      ],
+      "expected": {
+        "status": "accepted",
+        "values": [
+          {
+            "kind": "string",
+            "value": "Ana"
+          },
+          {
+            "kind": "int",
+            "type": "i32",
+            "value": "12"
+          }
+        ],
+        "projections": {
+          "object": "same",
+          "canonical": "same",
+          "model": "same"
+        }
+      }
+    },
+    {
+      "id": "empty-default-addition",
+      "written": {
+        "nominal": "example.Customer",
+        "fields": [
+          {
+            "id": "82244417f956",
+            "name": "email",
+            "type": "string",
+            "canonical": true,
+            "absent": "required"
+          }
+        ]
+      },
+      "requested": {
+        "nominal": "example.Customer",
+        "fields": [
+          {
+            "id": "82244417f956",
+            "name": "email",
+            "type": "string",
+            "canonical": true,
+            "absent": "required"
+          },
+          {
+            "id": "978c2f894135",
+            "name": "tags",
+            "type": {
+              "kind": "list",
+              "item": "string"
+            },
+            "canonical": true,
+            "absent": "empty"
+          }
+        ]
+      },
+      "values": [
+        {
+          "kind": "string",
+          "value": "Ana"
+        }
+      ],
+      "expected": {
+        "status": "accepted",
+        "values": [
+          {
+            "kind": "string",
+            "value": "Ana"
+          },
+          {
+            "kind": "list",
+            "items": []
+          }
+        ],
+        "projections": {
+          "object": "same",
+          "canonical": "same",
+          "model": "changed"
+        }
+      }
+    }
+  ]
+}

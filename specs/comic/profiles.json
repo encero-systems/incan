@@ -1,0 +1,20 @@
+{
+  "schema": "comic.profile-directory/1",
+  "profiles": [
+    {
+      "id": "crumb1",
+      "role": "value-and-hash-semantics",
+      "owner": "Encero Systems",
+      "status": "foundation; digest preimage pending",
+      "spec": "spec/hashes.md"
+    },
+    {
+      "id": "comic.foundation-corpus/1",
+      "role": "test-notation",
+      "owner": "Encero Systems",
+      "status": "experimental",
+      "spec": "spec/conformance.md"
+    }
+  ],
+  "external_profiles": []
+}

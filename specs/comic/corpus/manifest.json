@@ -1,0 +1,37 @@
+{
+  "schema": "comic.foundation-corpus/1",
+  "status": "experimental foundation, no codec conformance claim",
+  "files": [
+    {
+      "path": "member-identities.json",
+      "operation": "member_identity",
+      "cases": 10,
+      "sha256": "fcaaaed020f73720b4b8b6bed3df49440e0dd21a744697b3808c3c93a19443ce"
+    },
+    {
+      "path": "value-relations.json",
+      "operation": "value_relation",
+      "cases": 13,
+      "sha256": "d23a6ebe7978f8b633071a99bdaccae0f190f61f282bc6774307aa79030ac829"
+    },
+    {
+      "path": "shape-admission.json",
+      "operation": "shape_admission",
+      "cases": 5,
+      "sha256": "a48e55268d5a3e2bda904eed397bfd8c9e8b1adf5ad6c694cd437366b14f03cf"
+    },
+    {
+      "path": "evolution.json",
+      "operation": "adaptation",
+      "cases": 12,
+      "sha256": "2f29c722eb4caf6b21badec8530c33a46cefddc895ad912823454690a487106e"
+    }
+  ],
+  "pending": [
+    "exact hash preimages and digests",
+    "COMIC grammar and canonical text vectors",
+    "Crumb binary profile and byte vectors",
+    "resource-limit and streaming executions",
+    "recursive shapes, enums, unions, maps, sets and decimal coverage"
+  ]
+}
